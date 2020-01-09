@@ -1,0 +1,67 @@
+{
+  "name": "loki",
+  "version": "1.0.0",
+  "main": "src/electron.js",
+  "homepage": "./",
+  "license": "MIT",
+  "author": {
+    "name": "Stephen Castle",
+    "email": "stephen@callsignmedia.com",
+    "url": "http://lokiviewer.com/"
+  },
+  "scripts": {
+    "react-start": "parcel -p 3000 index.html --out-dir build",
+    "react-build": "parcel build index.html --out-dir build --public-url ./",
+    "electron-build": "electron-builder -mwl",
+    "clean-build": "rm -rf build/ .cache dist/",
+    "build": "yarn clean-build && yarn react-build && yarn electron-build",
+    "start": "concurrently \"cross-env BROWSER=none yarn react-start\" \"wait-on http://localhost:3000 && electron . \""
+  },
+  "build": {
+    "appId": "com.loki",
+    "files": [
+      "src/electron.js",
+      "src/assets/*",
+      "build/**/*"
+    ],
+    "mac": {
+      "target": "dmg",
+      "icon": "src/assets/logo.png"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "src/assets/logo.png"
+    },
+    "linux": {
+      "target": "deb",
+      "icon": "src/assets/logo.png",
+      "category": "Development"
+    }
+  },
+  "dependencies": {
+    "atob": "^2.1.2",
+    "babel-polyfill": "^6.26.0",
+    "bluebird": "^3.7.2",
+    "btoa": "^1.2.1",
+    "electron-is-dev": "^1.1.0",
+    "electron-settings": "^3.2.0",
+    "react": "^16.12.0",
+    "react-dom": "^16.12.0",
+    "react-window": "^1.8.5",
+    "readdir": "^0.1.0"
+  },
+  "devDependencies": {
+    "babel-core": "^6.26.3",
+    "babel-plugin-transform-object-rest-spread": "^6.26.0",
+    "babel-plugin-transform-react-jsx": "^6.24.1",
+    "babel-plugin-transform-runtime": "^6.23.0",
+    "babel-preset-env": "^1.7.0",
+    "babel-preset-react": "^6.24.1",
+    "concurrently": "^5.0.2",
+    "cross-env": "^6.0.3",
+    "electron": "^7.1.7",
+    "electron-builder": "^21.2.0",
+    "parcel-bundler": "^1.12.4",
+    "wait-on": "^3.3.0"
+  }
+}
