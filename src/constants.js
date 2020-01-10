@@ -1,3 +1,8 @@
+export const VIEW = {
+  DETAIL: "DETAIL",
+  LIST: "LIST"
+};
+
 export const SIZE = {
   COVER: "COVER",
   ACTUAL: "ACTUAL"

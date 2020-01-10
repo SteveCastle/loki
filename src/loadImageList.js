@@ -29,5 +29,11 @@ export default async function loadImageList({
       modified: fs.statSync(item).mtime.getTime()
     }))
     .sort(sorts[sortOrder]);
-  return sortedItems;
+  console.log(sortOrder);
+  // Get the position of the initial item in the results, unless its not found, then return 0;
+  let cursor = sortedItems.findIndex(item => item.fileName === path);
+  if (cursor < 0) {
+    cursor = 0;
+  }
+  return { items: sortedItems, cursor };
 }

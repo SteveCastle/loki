@@ -12,15 +12,16 @@ let filePath = "/Users/tracer/Pictures/Astronomy/1000863413l.jpg";
 
 function createWindow() {
   // Initialize React Dev Tools
-  BrowserWindow.addDevToolsExtension(
-    path.join(
-      os.homedir(),
-      "/Library/Application Support/Google/Chrome/Default/Extensions/fmkadmapgofadopljbjfkapdkoienihi/4.3.0_0"
-    )
-  );
+  // BrowserWindow.addDevToolsExtension(
+  //   path.join(
+  //     os.homedir(),
+  //     "/Library/Application Support/Google/Chrome/Default/Extensions/fmkadmapgofadopljbjfkapdkoienihi/4.3.0_0"
+  //   )
+  // );
 
   // Configure new Window options.
   mainWindow = new BrowserWindow({
+    name: "Loki",
     webPreferences: {
       nodeIntegration: true,
       webSecurity: false
