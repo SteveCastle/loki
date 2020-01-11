@@ -4,7 +4,7 @@ const path = require("path");
 const os = require("os");
 var btoa = require("btoa");
 const BrowserWindow = electron.BrowserWindow;
-
+const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
 
 let mainWindow;
@@ -12,22 +12,34 @@ let filePath = "/Users/tracer/Pictures/Ix4oPwv.mp4";
 
 function createWindow() {
   // Initialize React Dev Tools
-  // BrowserWindow.addDevToolsExtension(
-  //   path.join(
-  //     os.homedir(),
-  //     "/Library/Application Support/Google/Chrome/Default/Extensions/fmkadmapgofadopljbjfkapdkoienihi/4.3.0_0"
-  //   )
-  // );
-
+  isDev &&
+    BrowserWindow.addDevToolsExtension(
+      path.join(
+        os.homedir(),
+        "/Library/Application Support/Google/Chrome/Default/Extensions/fmkadmapgofadopljbjfkapdkoienihi/4.3.0_0"
+      )
+    );
+  if (!settings.has("settings")) {
+    settings.set("settings", {
+      alwaysOnTop: true,
+      openFullScreen: true,
+      defaultSort: "ALPHA",
+      defaultView: "DETAIL",
+      defaultFilter: "ALL",
+      listScaleMode: "OVERSCAN",
+      controlMode: "TRACKPAD",
+      scaleMode: "OVERSCAN"
+    });
+  }
   // Configure new Window options.
   mainWindow = new BrowserWindow({
-    name: "Loki",
+    name: "Lowkey Image Viewer",
     webPreferences: {
       nodeIntegration: true,
       webSecurity: false
     },
-    fullscreen: true,
-    alwaysOnTop: true,
+    fullscreen: settings.get("settings.openFullScreen"),
+    alwaysOnTop: settings.get("settings.alwaysOnTop"),
     width: 900,
     height: 680
   });

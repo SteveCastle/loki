@@ -4,21 +4,11 @@ const path = window.require("path");
 
 import { SIZE, EXTENSIONS } from "./constants";
 
-function Detail({ fileName, size, handleClick, handleKeyPress }) {
+function Detail({ fileName, size, handleClick }) {
   const ref = useRef(null);
 
-  useEffect(() => {
-    ref.current.focus();
-  }, []);
-
   return (
-    <div
-      className="container"
-      onClick={handleClick}
-      tabIndex="0"
-      onKeyPress={handleKeyPress}
-      ref={ref}
-    >
+    <div className="container" onClick={handleClick} tabIndex="0">
       {EXTENSIONS.img.includes(path.extname(fileName)) && (
         <img
           key={fileName}

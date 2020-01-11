@@ -4,7 +4,7 @@ export const VIEW = {
 };
 
 export const SIZE = {
-  COVER: "COVER",
+  OVERSCAN: "OVERSCAN",
   ACTUAL: "ACTUAL"
 };
 
@@ -14,9 +14,9 @@ export const SORT = {
 };
 
 export const FILTER = {
-  ALL: ["**.jpg", "**.gif", "**.jpeg", "**.png", "**.webm", "**.mp4"],
+  ALL: ["**.jpg", "**.gif", "**.jpeg", "**.png", "**.webm", "**.mp4", "**.flv"],
   STATIC: ["**.jpg", "**.jpeg", "**.png"],
-  VIDEO: ["**.webm", "**.mp4"],
+  VIDEO: ["**.webm", "**.mp4", "**.mpeg", "**.flv"],
   GIF: ["**.gif"]
 };
 

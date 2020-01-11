@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import ReactDOM from "react-dom";
 import "babel-polyfill";
 import "./style.css";
+import HotKeyController from "./HotKeyController";
+
 import Detail from "./Detail";
 import List from "./List";
 
@@ -17,11 +19,17 @@ function App() {
   const [path, setPath] = useState(atob(window.location.search.substr(1)));
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
-  const [sort, setSort] = useState(SORT.ALPHA);
+  const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(FILTER.ALL);
   const [size, setSize] = useState(SIZE.COVER);
   const [recursive, setRecursive] = useState(false);
 
+  // Initialize State from settings.
+  useEffect(() => {
+    if (settings.has("settings.scaleMode")) {
+      setSize(SIZE[settings.get("settings.scaleMode")]);
+    }
+  }, []);
   // Reload data from image provider if directory, filter, or recursive setting changes
   useEffect(() => {
     async function fetchData() {
@@ -107,24 +115,29 @@ function App() {
   switch (view) {
     case VIEW.DETAIL:
       return (
-        <Detail
-          fileName={items[cursor].fileName}
-          size={size}
-          handleClick={handleClick}
-          handleKeyPress={handleKeyPress}
-        />
+        <React.Fragment>
+          <HotKeyController handleKeyPress={handleKeyPress} />
+          <Detail
+            fileName={items[cursor].fileName}
+            size={size}
+            handleClick={handleClick}
+          />
+        </React.Fragment>
       );
     case VIEW.LIST:
       return (
-        <List
-          fileList={items}
-          size={size}
-          cursor={cursor}
-          handleClick={i => {
-            setCursor(i);
-            setView(VIEW.DETAIL);
-          }}
-        />
+        <React.Fragment>
+          <HotKeyController handleKeyPress={handleKeyPress} />
+          <List
+            fileList={items}
+            size={size}
+            cursor={cursor}
+            handleClick={i => {
+              setCursor(i);
+              setView(VIEW.DETAIL);
+            }}
+          />
+        </React.Fragment>
       );
     default:
       return (
