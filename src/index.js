@@ -6,7 +6,6 @@ import HotKeyController from "./HotKeyController";
 
 import Detail from "./Detail";
 import List from "./List";
-
 // NODE IMPORTS
 const settings = window.require("electron-settings");
 const atob = window.require("atob");
@@ -21,7 +20,7 @@ function App() {
   const [cursor, setCursor] = useState(0);
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(FILTER.ALL);
-  const [size, setSize] = useState(SIZE.COVER);
+  const [size, setSize] = useState(SIZE.OVERSCAN);
   const [recursive, setRecursive] = useState(false);
 
   // Initialize State from settings.
@@ -73,7 +72,7 @@ function App() {
         break;
       case "c":
         e.preventDefault();
-        setSize(size === SIZE.ACTUAL ? SIZE.COVER : SIZE.ACTUAL);
+        setSize(size === SIZE.ACTUAL ? SIZE.OVERSCAN : SIZE.ACTUAL);
         break;
       case "r":
         e.preventDefault();

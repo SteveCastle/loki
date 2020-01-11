@@ -39,7 +39,7 @@ body {
   user-select: none;
 }
 
-.cover {
+.overscan {
   max-height: 120%;
   min-height: 100%;
 }

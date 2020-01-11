@@ -16,12 +16,12 @@ function Detail({ fileName, size, handleClick }) {
             protocol: "file",
             pathname: fileName
           })}
-          className={`${size === SIZE.COVER ? "cover" : null}`}
+          className={`${size === SIZE.OVERSCAN ? "overscan" : null}`}
         />
       )}
       {EXTENSIONS.video.includes(path.extname(fileName)) && (
         <video
-          className={`${size === SIZE.COVER ? "cover" : null}`}
+          className={`${size === SIZE.OVERSCAN ? "overscan" : null}`}
           src={url.format({
             protocol: "file",
             pathname: fileName

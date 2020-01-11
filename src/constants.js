@@ -14,9 +14,9 @@ export const SORT = {
 };
 
 export const FILTER = {
-  ALL: ["**.jpg", "**.gif", "**.jpeg", "**.png", "**.webm", "**.mp4", "**.flv"],
+  ALL: ["**.jpg", "**.gif", "**.jpeg", "**.png", "**.webm", "**.mp4"],
   STATIC: ["**.jpg", "**.jpeg", "**.png"],
-  VIDEO: ["**.webm", "**.mp4", "**.mpeg", "**.flv"],
+  VIDEO: ["**.webm", "**.mp4", "**.mpeg"],
   GIF: ["**.gif"]
 };
 
