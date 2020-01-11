@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import ReactDOM from "react-dom";
 import "babel-polyfill";
 import "./style.css";
@@ -14,7 +14,7 @@ import loadImageList from "./loadImageList";
 
 function App() {
   const [view, setView] = useState(VIEW.DETAIL);
-  const [path, setPath] = useState(atob(window.location.pathname.substr(1)));
+  const [path, setPath] = useState(atob(window.location.search.substr(1)));
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
   const [sort, setSort] = useState(SORT.ALPHA);

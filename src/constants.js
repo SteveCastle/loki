@@ -19,3 +19,8 @@ export const FILTER = {
   VIDEO: ["**.webm", "**.mp4"],
   GIF: ["**.gif"]
 };
+
+export const EXTENSIONS = {
+  img: [".jpg", ".jpeg", ".gif", ".png"],
+  video: [".webm", ".avi", ".mpg", ".mpeg", ".mp4"]
+};

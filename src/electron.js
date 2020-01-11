@@ -8,7 +8,7 @@ const BrowserWindow = electron.BrowserWindow;
 const isDev = require("electron-is-dev");
 
 let mainWindow;
-let filePath = "/Users/tracer/Pictures/Astronomy/1000863413l.jpg";
+let filePath = "/Users/tracer/Pictures/Ix4oPwv.mp4";
 
 function createWindow() {
   // Initialize React Dev Tools
@@ -35,8 +35,11 @@ function createWindow() {
   // Load the react app html in the window.
   mainWindow.loadURL(
     isDev
-      ? `http://localhost:3000/${btoa(filePath)}`
-      : `file://${path.join(__dirname, "../build/index.html", btoa(filePath))}`
+      ? `http://localhost:3000?${btoa(filePath)}`
+      : `file://${path.join(
+          __dirname,
+          `../build/index.html?${btoa(filePath)}`
+        )}`
   );
   mainWindow.on("closed", () => (mainWindow = null));
 }
@@ -50,7 +53,12 @@ app.on("will-finish-launching", info => {
     console.log("on file open fired", path);
     filePath = path;
     mainWindow &&
-      mainWindow.loadURL(`file://${__dirname}/app.html#/${btoa(filePath)}`);
+      mainWindow.loadURL(
+        `file://${path.join(
+          __dirname,
+          `../build/index.html?${btoa(filePath)}`
+        )}`
+      );
   });
 });
 

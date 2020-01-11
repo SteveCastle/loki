@@ -35,7 +35,20 @@ const Cell = ({ data, columnIndex, rowIndex, style }) => (
           cursor: "pointer"
         }}
       >
-        Video Here
+        <video
+          className="listImage"
+          src={
+            data.fileList[rowIndex * data.columns + columnIndex] &&
+            url.format({
+              protocol: "file",
+              pathname:
+                data.fileList[rowIndex * data.columns + columnIndex].fileName
+            })
+          }
+          loop
+          autoPlay
+          controls
+        />
       </div>
     ) : (
       <img

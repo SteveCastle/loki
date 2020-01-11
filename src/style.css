@@ -33,6 +33,12 @@ body {
   user-select: none;
 }
 
+.container video {
+  display: block;
+  margin: auto;
+  user-select: none;
+}
+
 .cover {
   max-height: 120%;
   min-height: 100%;

@@ -1,5 +1,6 @@
 {
   "name": "loki",
+  "productName": "LowKey Image Viewer",
   "version": "1.0.0",
   "main": "src/electron.js",
   "homepage": "./",
@@ -7,22 +8,50 @@
   "author": {
     "name": "Stephen Castle",
     "email": "stephen@callsignmedia.com",
-    "url": "http://lokiviewer.com/"
+    "url": "http://lowkeyviewer.com/"
   },
   "scripts": {
     "react-start": "parcel -p 3000 index.html --out-dir build",
     "react-build": "parcel build index.html --out-dir build --public-url ./",
-    "electron-build": "electron-builder -mwl",
+    "electron-build": "electron-builder -m",
     "clean-build": "rm -rf build/ .cache dist/",
     "build": "yarn clean-build && yarn react-build && yarn electron-build",
     "start": "concurrently \"cross-env BROWSER=none yarn react-start\" \"wait-on http://localhost:3000 && electron . \""
   },
   "build": {
-    "appId": "com.loki",
+    "productName": "LowKey Image Viewer",
+    "appId": "com.callsign.LowKeyImageViewer",
     "files": [
       "src/electron.js",
       "src/assets/*",
       "build/**/*"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "jpg",
+        "name": "Jpg Image File",
+        "role": "Viewer"
+      },
+      {
+        "ext": "jpeg",
+        "name": "Jpg Image File",
+        "role": "Viewer"
+      },
+      {
+        "ext": "png",
+        "name": "PNG Image File",
+        "role": "Viewer"
+      },
+      {
+        "ext": "gif",
+        "name": "Gif Image File",
+        "role": "Viewer"
+      },
+      {
+        "ext": "webm",
+        "name": "Jpg Image File",
+        "role": "Viewer"
+      }
     ],
     "mac": {
       "target": "dmg",
