@@ -29,27 +29,25 @@ const Cell = ({ data, columnIndex, rowIndex, style }) => (
       //     autoPlay
       //     muted
       //   />
-      <div
+      <video
         onClick={() => data.handleClick(rowIndex * data.columns + columnIndex)}
         style={{
           cursor: "pointer"
         }}
-      >
-        <video
-          className="listImage"
-          src={
-            data.fileList[rowIndex * data.columns + columnIndex] &&
-            url.format({
-              protocol: "file",
-              pathname:
-                data.fileList[rowIndex * data.columns + columnIndex].fileName
-            })
-          }
-          loop
-          autoPlay
-          controls
-        />
-      </div>
+        className="listImage"
+        src={
+          data.fileList[rowIndex * data.columns + columnIndex] &&
+          url.format({
+            protocol: "file",
+            pathname:
+              data.fileList[rowIndex * data.columns + columnIndex].fileName
+          })
+        }
+        loop
+        muted
+        autoPlay
+        controls
+      />
     ) : (
       <img
         className="listImage"
@@ -69,8 +67,12 @@ const Cell = ({ data, columnIndex, rowIndex, style }) => (
 
 export default class List extends Component {
   gridRef = null;
-  rows = Math.ceil(Math.sqrt(this.props.fileList.length));
-  columns = Math.ceil(Math.sqrt(this.props.fileList.length));
+  rows = this.props.tall
+    ? Math.ceil(this.props.fileList.length / 3)
+    : Math.ceil(Math.sqrt(this.props.fileList.length));
+  columns = this.props.tall
+    ? 3
+    : Math.ceil(Math.sqrt(this.props.fileList.length));
   componentDidMount() {
     this.gridRef.scrollToItem({
       columnIndex: this.props.cursor % this.columns,
@@ -79,7 +81,7 @@ export default class List extends Component {
     });
   }
   render() {
-    const { fileList, cursor, size, handleClick } = this.props;
+    const { fileList, handleClick } = this.props;
     return (
       <div className="container" data-tid="container">
         <Grid
@@ -87,7 +89,7 @@ export default class List extends Component {
             this.gridRef = r;
           }}
           columnCount={this.columns}
-          columnWidth={600}
+          columnWidth={window.innerWidth / 3}
           height={window.innerHeight}
           rowCount={this.rows}
           rowHeight={600}

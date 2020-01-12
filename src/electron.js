@@ -60,10 +60,10 @@ app.on("will-finish-launching", info => {
   console.log("will finish launching");
 
   // Handle file open event from OS.
-  app.on("open-file", (event, path) => {
+  app.on("open-file", (event, newFilePath) => {
     event.preventDefault();
-    console.log("on file open fired", path);
-    filePath = path;
+    console.log("on file open fired", newFilePath);
+    filePath = newFilePath;
     mainWindow &&
       mainWindow.loadURL(
         `file://${path.join(

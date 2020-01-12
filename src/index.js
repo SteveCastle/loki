@@ -21,6 +21,8 @@ function App() {
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(FILTER.ALL);
   const [size, setSize] = useState(SIZE.OVERSCAN);
+  const [tall, setTall] = useState(true);
+
   const [recursive, setRecursive] = useState(false);
 
   // Initialize State from settings.
@@ -78,6 +80,10 @@ function App() {
         e.preventDefault();
         setRecursive(!recursive);
         break;
+      case "t":
+        e.preventDefault();
+        setTall(!tall);
+        break;
       case "g":
         e.preventDefault();
         setFilter(FILTER.GIF);
@@ -130,6 +136,7 @@ function App() {
           <List
             fileList={items}
             size={size}
+            tall={tall}
             cursor={cursor}
             handleClick={i => {
               setCursor(i);
@@ -143,6 +150,7 @@ function App() {
         <List
           fileList={items}
           size={size}
+          tall
           cursor={cursor}
           handleClick={i => {
             setCursor(i);

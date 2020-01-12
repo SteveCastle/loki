@@ -1,15 +1,13 @@
-import React, { useRef, useEffect } from "react";
+import React from "react";
 const url = window.require("url");
 const path = window.require("path");
 
 import { SIZE, EXTENSIONS } from "./constants";
 
 function Detail({ fileName, size, handleClick }) {
-  const ref = useRef(null);
-
   return (
     <div className="container" onClick={handleClick} tabIndex="0">
-      {EXTENSIONS.img.includes(path.extname(fileName)) && (
+      {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
         <img
           key={fileName}
           src={url.format({
@@ -19,7 +17,7 @@ function Detail({ fileName, size, handleClick }) {
           className={`${size === SIZE.OVERSCAN ? "overscan" : null}`}
         />
       )}
-      {EXTENSIONS.video.includes(path.extname(fileName)) && (
+      {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
         <video
           className={`${size === SIZE.OVERSCAN ? "overscan" : null}`}
           src={url.format({
@@ -28,6 +26,7 @@ function Detail({ fileName, size, handleClick }) {
           })}
           loop
           autoPlay
+          muted
           controls
         />
       )}
