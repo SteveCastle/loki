@@ -45,6 +45,7 @@ body {
 }
 
 .listImage {
+  cursor: pointer;
   flex-shrink: 0;
   min-height: 100%;
   min-width: 100%;
@@ -69,4 +70,31 @@ body {
   opacity: 0;
   height: 0;
   width: 0;
+}
+
+.hotCorner {
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  position: fixed;
+  width: 100px;
+  height: 100px;
+  bottom: 5px;
+  right: 5px;
+  z-index: 999;
+  opacity: 0;
+  transition: opacity 0.25s ease-in-out;
+}
+
+.hotCorner:hover {
+  opacity: 0.8;
+}
+
+.hotCorner span {
+  background-color: white;
+  border-radius: 4px;
+  width: 40px;
+  height: 40px;
+  margin: 5px;
+  display: block;
 }

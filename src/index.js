@@ -6,6 +6,7 @@ import HotKeyController from "./HotKeyController";
 
 import Detail from "./Detail";
 import List from "./List";
+import HotCorner from "./HotCorner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
 const atob = window.require("atob");
@@ -50,16 +51,6 @@ function App() {
   function handleClick(e) {
     // If click is within 70 pixels of the bottom left hand corner display the list view.
     e.preventDefault();
-    if (window.innerWidth - e.pageX < 70 && window.innerHeight - e.pageY < 70) {
-      setView(VIEW.LIST);
-      return 0;
-    }
-
-    // If click is within 70 pixels of the bottom right hand corner display the list view.
-    if (window.innerWidth - e.pageX > 70 && window.innerHeight - e.pageY < 70) {
-      setView(VIEW.LIST);
-      return 0;
-    }
     //If click is on the left decrease the cursor, if it is on the left increase it.
     e.pageX > window.innerWidth / 2
       ? setCursor(cursor === items.length - 1 ? cursor : cursor + 1)
@@ -112,27 +103,24 @@ function App() {
         tabIndex="0"
         onKeyPress={handleKeyPress}
         className="noItemsContainer"
-      >
-        <h1>NO ITEMS FOUND</h1>
-      </div>
+      ></div>
     );
   }
-  switch (view) {
-    case VIEW.DETAIL:
-      return (
+
+  return (
+    <React.Fragment>
+      <HotKeyController handleKeyPress={handleKeyPress} />
+      {view === VIEW.DETAIL ? (
         <React.Fragment>
-          <HotKeyController handleKeyPress={handleKeyPress} />
+          <HotCorner handleClick={() => setView(VIEW.LIST)} />
           <Detail
             fileName={items[cursor].fileName}
             size={size}
             handleClick={handleClick}
           />
         </React.Fragment>
-      );
-    case VIEW.LIST:
-      return (
+      ) : (
         <React.Fragment>
-          <HotKeyController handleKeyPress={handleKeyPress} />
           <List
             fileList={items}
             size={size}
@@ -144,20 +132,8 @@ function App() {
             }}
           />
         </React.Fragment>
-      );
-    default:
-      return (
-        <List
-          fileList={items}
-          size={size}
-          tall
-          cursor={cursor}
-          handleClick={i => {
-            setCursor(i);
-            setView(VIEW.DETAIL);
-          }}
-        />
-      );
-  }
+      )}
+    </React.Fragment>
+  );
 }
 ReactDOM.render(<App />, document.getElementById("root"));

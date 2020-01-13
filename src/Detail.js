@@ -2,7 +2,7 @@ import React from "react";
 const url = window.require("url");
 const path = window.require("path");
 
-import { SIZE, EXTENSIONS } from "./constants";
+import { SIZE, EXTENSIONS, VIEW } from "./constants";
 
 function Detail({ fileName, size, handleClick }) {
   return (

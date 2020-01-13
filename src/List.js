@@ -2,68 +2,74 @@ import React, { Component } from "react";
 import { FixedSizeGrid as Grid } from "react-window";
 const url = require("url");
 
-const Cell = ({ data, columnIndex, rowIndex, style }) => (
-  <div
-    style={{
-      ...style,
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      overflow: "hidden"
-    }}
-  >
-    {(
-      (data.fileList[rowIndex * data.columns + columnIndex] &&
-        data.fileList[rowIndex * data.columns + columnIndex].fileName) ||
-      ""
-    ).includes(".webm") ||
-    (
-      (data.fileList[rowIndex * data.columns + columnIndex] &&
-        data.fileList[rowIndex * data.columns + columnIndex].fileName) ||
-      ""
-    ).includes(".mp4") ? (
-      //   <video
-      //     className={styles.listVideo}
-      //     src={data.fileList[rowIndex * data.columns + columnIndex].fileName}
-      //     loop
-      //     autoPlay
-      //     muted
-      //   />
-      <video
-        onClick={() => data.handleClick(rowIndex * data.columns + columnIndex)}
-        style={{
-          cursor: "pointer"
-        }}
-        className="listImage"
-        src={
-          data.fileList[rowIndex * data.columns + columnIndex] &&
-          url.format({
-            protocol: "file",
-            pathname:
-              data.fileList[rowIndex * data.columns + columnIndex].fileName
-          })
-        }
-        loop
-        muted
-        autoPlay
-        controls
-      />
-    ) : (
-      <img
-        className="listImage"
-        onClick={() => data.handleClick(rowIndex * data.columns + columnIndex)}
-        src={
-          data.fileList[rowIndex * data.columns + columnIndex] &&
-          url.format({
-            protocol: "file",
-            pathname:
-              data.fileList[rowIndex * data.columns + columnIndex].fileName
-          })
-        }
-      />
-    )}
-  </div>
-);
+const Cell = ({ data, columnIndex, rowIndex, style }) =>
+  data.fileList[rowIndex * data.columns + columnIndex] ? (
+    <div
+      style={{
+        ...style,
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        overflow: "hidden"
+      }}
+    >
+      {(
+        (data.fileList[rowIndex * data.columns + columnIndex] &&
+          data.fileList[rowIndex * data.columns + columnIndex].fileName) ||
+        ""
+      ).includes(".webm") ||
+      (
+        (data.fileList[rowIndex * data.columns + columnIndex] &&
+          data.fileList[rowIndex * data.columns + columnIndex].fileName) ||
+        ""
+      ).includes(".mp4") ? (
+        //   <video
+        //     className={styles.listVideo}
+        //     src={data.fileList[rowIndex * data.columns + columnIndex].fileName}
+        //     loop
+        //     autoPlay
+        //     muted
+        //   />
+        <video
+          onClick={() =>
+            data.handleClick(rowIndex * data.columns + columnIndex)
+          }
+          style={{
+            cursor: "pointer"
+          }}
+          className="listImage"
+          src={
+            data.fileList[rowIndex * data.columns + columnIndex] &&
+            url.format({
+              protocol: "file",
+              pathname:
+                data.fileList[rowIndex * data.columns + columnIndex].fileName
+            })
+          }
+          loop
+          muted
+          autoPlay
+        />
+      ) : (
+        <img
+          className="listImage"
+          onClick={() =>
+            data.handleClick(rowIndex * data.columns + columnIndex)
+          }
+          src={
+            data.fileList[rowIndex * data.columns + columnIndex] &&
+            url.format({
+              protocol: "file",
+              pathname:
+                data.fileList[rowIndex * data.columns + columnIndex].fileName
+            })
+          }
+        />
+      )}
+    </div>
+  ) : (
+    <div></div>
+  );
 
 export default class List extends Component {
   gridRef = null;

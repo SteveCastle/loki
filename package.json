@@ -1,6 +1,7 @@
 {
   "name": "loki",
   "productName": "LowKey Image Viewer",
+  "description": "A minimalist web native image viewer.",
   "version": "1.0.0",
   "main": "src/electron.js",
   "homepage": "./",
@@ -13,7 +14,7 @@
   "scripts": {
     "react-start": "parcel -p 3000 index.html --out-dir build",
     "react-build": "parcel build index.html --out-dir build --public-url ./",
-    "electron-build": "electron-builder -m",
+    "electron-build": "electron-builder -mw",
     "clean-build": "rm -rf build/ .cache dist/",
     "build": "yarn clean-build && yarn react-build && yarn electron-build",
     "start": "concurrently \"cross-env BROWSER=none yarn react-start\" \"wait-on http://localhost:3000 && electron . \""

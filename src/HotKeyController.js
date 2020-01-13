@@ -5,7 +5,7 @@ function Detail({ handleKeyPress }) {
 
   useEffect(() => {
     ref.current.focus();
-  }, []);
+  });
 
   return (
     <FocusLock>
