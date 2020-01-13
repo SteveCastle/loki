@@ -8,24 +8,18 @@ import { SIZE, EXTENSIONS, VIEW } from "./constants";
 
 function Detail({ fileName, size, handleClick, runScroll, controlMode }) {
   const containerRef = useRef(null);
-  const { events } = useScrollOnDrag(containerRef, {
-    runScroll: runScroll && runScroll(containerRef)
-  });
+  const { events } = useScrollOnDrag(containerRef);
   return (
     <div
-      className="container"
-      onClick={controlMode === "MOUSE" ? null : handleClick}
-      onTouchMove={
-        controlMode === "MOUSE"
-          ? e => {
-              e.preventDefault();
-              event.stopPropagation();
-            }
-          : () => {}
-      }
+      className="listContainer"
+      onDoubleClick={handleClick}
+      onScroll={e => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       tabIndex="0"
       {...events}
-      ref={controlMode === "MOUSE" ? containerRef : null}
+      ref={containerRef}
     >
       {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
         <img
@@ -34,12 +28,12 @@ function Detail({ fileName, size, handleClick, runScroll, controlMode }) {
             protocol: "file",
             pathname: fileName
           })}
-          className={`${size === SIZE.OVERSCAN ? "overscan" : null}`}
+          className="listImage"
         />
       )}
       {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
         <video
-          className={`${size === SIZE.OVERSCAN ? "overscan" : null}`}
+          className="listImage"
           src={url.format({
             protocol: "file",
             pathname: fileName
