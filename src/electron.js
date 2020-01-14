@@ -8,7 +8,8 @@ const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
 
 let mainWindow;
-let filePath = "/Users/tracer/Pictures/Ix4oPwv.mp4";
+let filePath =
+  "/Users/tracer/Pictures/lokey-test/sebastian-von-buchwald-hoverboard.jpg";
 
 function createWindow() {
   // Initialize React Dev Tools
@@ -16,7 +17,7 @@ function createWindow() {
     BrowserWindow.addDevToolsExtension(
       path.join(
         os.homedir(),
-        "/Library/Application Support/Google/Chrome/Default/Extensions/fmkadmapgofadopljbjfkapdkoienihi/4.3.0_0"
+        "/Library/Application Support/Google/Chrome/Default/Extensions/fmkadmapgofadopljbjfkapdkoienihi/4.4.0_0"
       )
     );
   if (!settings.has("settings")) {

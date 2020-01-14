@@ -7,9 +7,6 @@ const Cell = ({ data, columnIndex, rowIndex, style }) =>
     <div
       style={{
         ...style,
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
         overflow: "hidden"
       }}
     >
@@ -55,7 +52,7 @@ export default class List extends Component {
           columnWidth={window.innerWidth / 3}
           height={window.innerHeight}
           rowCount={this.rows}
-          rowHeight={600}
+          rowHeight={window.innerWidth / 3}
           width={window.innerWidth}
           itemData={{ fileList, handleClick, columns: this.columns }}
         >
