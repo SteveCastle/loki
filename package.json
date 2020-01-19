@@ -14,9 +14,9 @@
   "scripts": {
     "react-start": "parcel -p 3000 index.html --out-dir build",
     "react-build": "parcel build index.html --out-dir build --public-url ./",
-    "electron-build": "electron-builder -m",
+    "electron-build": "electron-builder",
     "clean-build": "rm -rf build/ .cache dist/",
-    "test-build": "yarn clean-build && yarn react-build && yarn electron-build",
+    "build": "yarn clean-build && yarn react-build && yarn electron-build",
     "start": "concurrently \"cross-env BROWSER=none yarn react-start\" \"wait-on http://localhost:3000 && electron . \""
   },
   "build": {
