@@ -7,6 +7,8 @@ const path = window.require("path");
 import { SIZE, EXTENSIONS, VIEW } from "./constants";
 
 function ListItem({ fileName, handleClick }) {
+  const [isPortrait, setPortrait] = useState(false);
+
   const [loaded, setLoaded] = useState(false);
   const containerRef = useRef(null);
   const imageRef = useRef(null);
@@ -14,6 +16,9 @@ function ListItem({ fileName, handleClick }) {
   const { events } = useScrollOnDrag(containerRef);
   useLayoutEffect(() => {
     if (loaded) {
+      if (imageRef.current.offsetHeight > imageRef.current.offsetWidth) {
+        setPortrait(true);
+      }
       const verticalCenter =
         (imageRef.current.offsetHeight - containerRef.current.offsetHeight) / 2;
       const horizontalCenter =
@@ -39,12 +44,16 @@ function ListItem({ fileName, handleClick }) {
             protocol: "file",
             pathname: fileName
           })}
-          className="listImage"
+          className={`${
+            isPortrait ? "listImagePortrait" : "listImageLandscape"
+          }`}
         />
       )}
       {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
         <video
-          className="listImage"
+          className={`${
+            isPortrait ? "listVideoPortrait" : "listVideoLandscape"
+          }`}
           onLoadStart={() => setLoaded(true)}
           ref={imageRef}
           src={url.format({

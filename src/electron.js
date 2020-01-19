@@ -2,7 +2,8 @@ const electron = require("electron");
 const app = electron.app;
 const path = require("path");
 const os = require("os");
-var btoa = require("btoa");
+const btoa = require("btoa");
+const { autoUpdater } = require("electron-updater");
 const BrowserWindow = electron.BrowserWindow;
 const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
@@ -32,6 +33,8 @@ function createWindow() {
       scaleMode: "OVERSCAN"
     });
   }
+
+  autoUpdater.checkForUpdatesAndNotify();
   // Configure new Window options.
   mainWindow = new BrowserWindow({
     name: "Lowkey Image Viewer",

@@ -122,6 +122,7 @@ function App() {
       ) : (
         <React.Fragment>
           <List
+            filter={filter}
             fileList={items}
             size={size}
             tall={tall}

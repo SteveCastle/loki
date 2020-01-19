@@ -40,8 +40,15 @@ export default class List extends Component {
       rowIndex: Math.floor(this.props.cursor / this.columns)
     });
   }
+  componentDidUpdate() {
+    this.gridRef.scrollToItem({
+      columnIndex: this.props.cursor % this.columns,
+
+      rowIndex: Math.floor(this.props.cursor / this.columns)
+    });
+  }
   render() {
-    const { fileList, handleClick } = this.props;
+    const { fileList, handleClick, filter } = this.props;
     return (
       <div className="container" data-tid="container">
         <Grid
@@ -53,6 +60,7 @@ export default class List extends Component {
           height={window.innerHeight}
           rowCount={this.rows}
           rowHeight={window.innerWidth / 3}
+          overscanRowCount={0}
           width={window.innerWidth}
           itemData={{ fileList, handleClick, columns: this.columns }}
         >
