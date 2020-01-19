@@ -1,32 +1,20 @@
-# name of your github action
 name: Release
-# this will help you specify where to run
-on:
-  push:
-    branches:
-      # this will run on the electron branch
-      - master
-# this is where the magic happens, each job happens in parallel btw
+
+on: push
+
 jobs:
-  build_on_mac:
-    runs-on: macOS-latest
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
     steps:
-      - uses: actions/checkout@master
+      - name: Check out Git repository
+        uses: actions/checkout@v1
+
+      - name: Install Node.js, NPM and Yarn
+        uses: actions/setup-node@v1
         with:
-          ref: electron
-      - uses: actions/setup-node@master
-        with:
-          node-version: 10.16
-      - name: see directory
-        run: ls
-build_on_win:
-  runs-on: windows-2016
-  steps:
-    - uses: actions/checkout@master
-      with:
-        ref: feature/github-actions
-    - uses: actions/setup-node@master
-      with:
-        node-version: 10.16
-    - name: see directory
-      run: ls
+          node-version: 10
+      - name: Run
