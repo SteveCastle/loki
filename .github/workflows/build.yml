@@ -15,5 +15,7 @@ jobs:
         uses: actions/setup-node@v1
         with:
           node-version: 10
+      - name: Install parcel globally
+        run: npm install -g parcel-bundler
       - name: Run electron build
         run: npm run build
