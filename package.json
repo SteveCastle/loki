@@ -2,7 +2,7 @@
   "name": "loki",
   "productName": "LowKey Image Viewer",
   "description": "A minimalist web native image viewer.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "src/electron.js",
   "homepage": "./",
   "license": "MIT",
