@@ -14,7 +14,7 @@ jobs:
       - name: Install Node.js, NPM and Yarn
         uses: actions/setup-node@v1
         with:
-          node-version: 10
+          node-version: 11
       - name: Install parcel globally
         run: npm install -g parcel-bundler
       - name: Run electron build
