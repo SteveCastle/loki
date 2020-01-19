@@ -18,6 +18,10 @@ jobs:
         uses: actions/setup-node@v1
         with:
           node-version: 10
+        - name: Temporarily fix electron-builder
+        run: |
+          sed -i 's/\^\[\\w/\^\[.\\w/g' node_modules/builder-util/out/util.js
+        shell: bash
       - name: Electron Builder Action
         uses: samuelmeuli/action-electron-builder@v1.2.0
         with:
