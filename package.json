@@ -99,6 +99,7 @@
     "react-use-gesture": "^6.0.14",
     "react-window": "^1.8.5",
     "readdir": "^0.1.0",
+    "styled-components": "^5.0.0",
     "video.js": "^7.6.6"
   },
   "devDependencies": {

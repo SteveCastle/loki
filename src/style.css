@@ -115,6 +115,7 @@ body {
   opacity: 0;
   position: fixed;
   transition: opacity 0.25s ease-in-out;
+  user-select: none;
 }
 .statusContainer:hover {
   opacity: 0.8;
