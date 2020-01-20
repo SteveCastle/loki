@@ -3,6 +3,11 @@ export const VIEW = {
   LIST: "LIST"
 };
 
+export const CONTROL_MODE = {
+  MOUSE: "MOUSE",
+  TRACK_PAD: "TRACK_PAD"
+};
+
 export const SIZE = {
   OVERSCAN: "OVERSCAN",
   ACTUAL: "ACTUAL"
@@ -24,3 +29,7 @@ export const EXTENSIONS = {
   img: [".jpg", ".jpeg", ".gif", ".png"],
   video: [".webm", ".avi", ".mpg", ".mpeg", ".mp4"]
 };
+
+export function getNext(obj, currentKey) {
+  Object.keys(obj).reduce((acc, k) => k);
+}

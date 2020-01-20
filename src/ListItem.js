@@ -4,7 +4,7 @@ import useScrollOnDrag from "react-scroll-ondrag";
 const url = window.require("url");
 const path = window.require("path");
 
-import { SIZE, EXTENSIONS, VIEW } from "./constants";
+import { EXTENSIONS } from "./constants";
 
 function ListItem({ fileName, handleClick }) {
   const [isPortrait, setPortrait] = useState(false);
@@ -14,16 +14,17 @@ function ListItem({ fileName, handleClick }) {
   const imageRef = useRef(null);
 
   const { events } = useScrollOnDrag(containerRef);
+
+  // Set scroll position of list item closer to middle top.
   useLayoutEffect(() => {
     if (loaded) {
       if (imageRef.current.offsetHeight > imageRef.current.offsetWidth) {
         setPortrait(true);
       }
       const verticalCenter =
-        (imageRef.current.offsetHeight - containerRef.current.offsetHeight) / 2;
+        (imageRef.current.scrollHeight - containerRef.current.offsetHeight) / 2;
       const horizontalCenter =
-        (imageRef.current.offsetWidth - containerRef.current.offsetWidth) / 2;
-
+        (imageRef.current.scrollWidth - containerRef.current.offsetWidth) / 2;
       containerRef.current.scrollTo(horizontalCenter, verticalCenter);
     }
   }, [loaded]);
@@ -31,7 +32,6 @@ function ListItem({ fileName, handleClick }) {
     <div
       className="listContainer"
       onDoubleClick={handleClick}
-      tabIndex="0"
       {...events}
       ref={containerRef}
     >

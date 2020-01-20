@@ -44,9 +44,6 @@ body {
   height: 100%;
   overflow: hidden;
   flex-wrap: wrap;
-  text-align: center;
-  display: flex;
-  align-items: center;
 }
 
 .listContainer img {
@@ -69,33 +66,25 @@ body {
 .listImagePortrait {
   cursor: pointer;
   flex-shrink: 0;
-  min-height: 100%;
-  min-width: 100%;
-  max-height: 120%;
+  width: 120%;
 }
 
 .listImageLandscape {
   cursor: pointer;
   flex-shrink: 0;
-  min-height: 100%;
-  min-width: 100%;
-  max-width: 120%;
+  height: 120%;
 }
 
 .listVideoPortrait {
   cursor: pointer;
   flex-shrink: 0;
-  min-height: 100%;
-  min-width: 100%;
-  max-height: 120%;
+  width: 120%;
 }
 
 .listVideoLandscape {
   cursor: pointer;
   flex-shrink: 0;
-  min-height: 100%;
-  min-width: 100%;
-  max-width: 120%;
+  height: 120%;
 }
 
 .noItemsContainer {
@@ -117,12 +106,42 @@ body {
   width: 0;
 }
 
+.statusContainer {
+  background-color: black;
+  color: white;
+  top: 30px;
+  left: 30px;
+  z-index: 9999;
+  opacity: 0;
+  position: fixed;
+  transition: opacity 0.25s ease-in-out;
+}
+.statusContainer:hover {
+  opacity: 0.8;
+}
+.statusToast {
+  border-radius: 4px;
+  margin-bottom: 4px;
+  padding: 8px;
+  font-size: 0.6rem;
+}
+.statusLabel {
+  font-weight: 600;
+  margin-right: 2rem;
+  width: 100px;
+  display: inline-block;
+}
+.statusValue {
+}
+
 .hotCorner {
   cursor: pointer;
   display: flex;
   flex-wrap: wrap;
   position: fixed;
   width: 100px;
+  padding: 5px;
+  border-radius: 8px;
   height: 100px;
   bottom: 5px;
   right: 5px;
@@ -130,7 +149,6 @@ body {
   opacity: 0;
   transition: opacity 0.25s ease-in-out;
 }
-
 .hotCorner:hover {
   opacity: 0.8;
 }

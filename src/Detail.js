@@ -6,13 +6,14 @@ const path = window.require("path");
 
 import { SIZE, EXTENSIONS, VIEW } from "./constants";
 
-function Detail({ fileName, size, handleClick, controlMode }) {
+function Detail({ fileName, size, handleClick, handleScroll, controlMode }) {
   const containerRef = useRef(null);
   const { events } = useScrollOnDrag(containerRef);
   return (
     <div
       className="container"
       onClick={controlMode === "MOUSE" ? null : handleClick}
+      onWheel={controlMode === "MOUSE" ? handleScroll : null}
       tabIndex="0"
       {...events}
       ref={controlMode === "MOUSE" ? containerRef : null}
