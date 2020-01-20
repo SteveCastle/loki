@@ -24,6 +24,7 @@
     "appId": "com.callsign.LowKeyImageViewer",
     "files": [
       "src/electron.js",
+      "src/menu.js",
       "src/assets/*",
       "build/**/*"
     ],

@@ -11,14 +11,21 @@ import HotCorner from "./HotCorner";
 const settings = window.require("electron-settings");
 const atob = window.require("atob");
 
-import { SORT, FILTER, SIZE, VIEW } from "./constants";
+import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE } from "./constants";
 import loadImageList from "./loadImageList";
+import Status from "./Status";
 
 function App() {
   const [view, setView] = useState(VIEW.DETAIL);
   const [path, setPath] = useState(atob(window.location.search.substr(1)));
+  const [loading, setLoading] = useState(false);
+
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
+  const [controlMode, setControlMode] = useState(
+    CONTROL_MODE[settings.get("settings.controlMode")]
+  );
+
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(FILTER.ALL);
   const [size, setSize] = useState(SIZE.OVERSCAN);
@@ -35,6 +42,7 @@ function App() {
   // Reload data from image provider if directory, filter, or recursive setting changes
   useEffect(() => {
     async function fetchData() {
+      setLoading(true);
       const data = await loadImageList({
         path,
         filter,
@@ -43,16 +51,24 @@ function App() {
       });
       setItems(data.items);
       setCursor(data.cursor);
+      setLoading(false);
       console.log(data);
     }
     fetchData();
   }, [sort, filter, recursive]);
 
   function handleClick(e) {
-    // If click is within 70 pixels of the bottom left hand corner display the list view.
     e.preventDefault();
-    //If click is on the left decrease the cursor, if it is on the left increase it.
+    // If click is on the left decrease the cursor, if it is on the left increase it.
     e.pageX > window.innerWidth / 2
+      ? setCursor(cursor === items.length - 1 ? cursor : cursor + 1)
+      : setCursor(cursor === 0 ? cursor : cursor - 1);
+  }
+
+  function handleScroll(e) {
+    e.preventDefault();
+    // If delta y is positive increase cursor value, otherwise decrease.
+    e.deltaY > 0
       ? setCursor(cursor === items.length - 1 ? cursor : cursor + 1)
       : setCursor(cursor === 0 ? cursor : cursor - 1);
   }
@@ -66,6 +82,7 @@ function App() {
       case "c":
         e.preventDefault();
         setSize(size === SIZE.ACTUAL ? SIZE.OVERSCAN : SIZE.ACTUAL);
+
         break;
       case "r":
         e.preventDefault();
@@ -87,6 +104,10 @@ function App() {
         e.preventDefault();
         setFilter(FILTER.VIDEO);
         break;
+      case "m":
+        e.preventDefault();
+        setFilter(FILTER.VIDEO);
+        break;
       case "j":
         e.preventDefault();
         setFilter(FILTER.STATIC);
@@ -97,7 +118,7 @@ function App() {
     }
   }
 
-  if (items.length === 0) {
+  if (items.length === 0 || loading) {
     return (
       <div
         tabIndex="0"
@@ -109,7 +130,9 @@ function App() {
 
   return (
     <React.Fragment>
+      <Status status={{ path, sort, filter, size, recursive }} />
       <HotKeyController handleKeyPress={handleKeyPress} />
+
       {view === VIEW.DETAIL ? (
         <React.Fragment>
           <HotCorner handleClick={() => setView(VIEW.LIST)} />
@@ -117,6 +140,8 @@ function App() {
             fileName={items[cursor].fileName}
             size={size}
             handleClick={handleClick}
+            handleScroll={handleScroll}
+            controlMode={controlMode}
           />
         </React.Fragment>
       ) : (
@@ -127,6 +152,7 @@ function App() {
             size={size}
             tall={tall}
             cursor={cursor}
+            controlMode={controlMode}
             handleClick={i => {
               setCursor(i);
               setView(VIEW.DETAIL);

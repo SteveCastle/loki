@@ -7,6 +7,7 @@ const { autoUpdater } = require("electron-updater");
 const BrowserWindow = electron.BrowserWindow;
 const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
+const { MenuBuilder } = require("./menu");
 
 let mainWindow;
 let filePath =
@@ -58,6 +59,8 @@ function createWindow() {
         )}`
   );
   mainWindow.on("closed", () => (mainWindow = null));
+  const menuBuilder = new MenuBuilder(mainWindow);
+  menuBuilder.buildMenu();
 }
 
 app.on("will-finish-launching", info => {
