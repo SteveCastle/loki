@@ -7,6 +7,7 @@ import HotKeyController from "./HotKeyController";
 import Detail from "./Detail";
 import List from "./List";
 import HotCorner from "./HotCorner";
+import Spinner from "./Spinner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
 const atob = window.require("atob");
@@ -124,7 +125,9 @@ function App() {
         tabIndex="0"
         onKeyPress={handleKeyPress}
         className="noItemsContainer"
-      ></div>
+      >
+        <Spinner />
+      </div>
     );
   }
 
