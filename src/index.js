@@ -18,7 +18,7 @@ import Status from "./Status";
 
 function App() {
   const [view, setView] = useState(VIEW.DETAIL);
-  const [path, setPath] = useState(atob(window.location.search.substr(1)));
+  const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
 
   const [items, setItems] = useState([]);
@@ -44,16 +44,17 @@ function App() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
+      console.log("PATH IN EFFECT", filePath)
       const data = await loadImageList({
-        path,
+        filePath,
         filter,
         sortOrder: sort,
         recursive
       });
+      console.log("ITEMS", data.items);
       setItems(data.items);
       setCursor(data.cursor);
       setLoading(false);
-      console.log(data);
     }
     fetchData();
   }, [sort, filter, recursive]);
@@ -85,6 +86,11 @@ function App() {
         setSize(size === SIZE.ACTUAL ? SIZE.OVERSCAN : SIZE.ACTUAL);
 
         break;
+        case "m":
+          e.preventDefault();
+          setControlMode(controlMode === CONTROL_MODE.MOUSE ? CONTROL_MODE.TRACK_PAD : CONTROL_MODE.MOUSE);
+  
+          break;
       case "r":
         e.preventDefault();
         setRecursive(!recursive);
@@ -133,7 +139,7 @@ function App() {
 
   return (
     <React.Fragment>
-      <Status status={{ path, sort, filter, size, recursive }} />
+      <Status status={{ filePath, sort, filter, size, recursive }} />
       <HotKeyController handleKeyPress={handleKeyPress} />
 
       {view === VIEW.DETAIL ? (
