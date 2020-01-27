@@ -13,11 +13,11 @@ let mainWindow;
 let filePath = "";
 
 function createWindow() {
-//   If this is windows get the filePath to use from argv.
-  if(process.argv.length >= 2 && process.argv[1] ) {
+  //   If this is windows get the filePath to use from argv.
+  if (process.argv.length >= 2 && process.argv[1]) {
     filePath = process.argv[1];
     //open, read, handle file
-}
+  }
   if (!settings.has("settings")) {
     settings.set("settings", {
       alwaysOnTop: true,
@@ -31,7 +31,6 @@ function createWindow() {
     });
   }
 
-  
   autoUpdater.checkForUpdatesAndNotify();
   // Configure new Window options.
   mainWindow = new BrowserWindow({

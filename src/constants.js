@@ -19,10 +19,10 @@ export const SORT = {
 };
 
 export const FILTER = {
-  ALL:  /jpg$|jpeg$|png$|webm$|mp4$|mpeg$|gif$/,
-  STATIC:/jpg$|jpeg$|png$/,
+  ALL: /jpg$|jpeg$|png$|webm$|mp4$|mpeg$|gif$/,
+  STATIC: /jpg$|jpeg$|png$/,
   VIDEO: /webm$|mp4$|mpeg$/,
-  GIF: /gif$/,
+  GIF: /gif$/
 };
 
 export const EXTENSIONS = {

@@ -1,5 +1,7 @@
 import React, { Component } from "react";
 import { FixedSizeGrid as Grid } from "react-window";
+import HotKeyController from "./HotKeyController";
+
 import ListItem from "./ListItem";
 const Cell = ({ data, columnIndex, rowIndex, style }) =>
   data.fileList[rowIndex * data.columns + columnIndex] ? (
@@ -70,6 +72,7 @@ export default class List extends Component {
     const { fileList, handleClick, filter } = this.props;
     return (
       <div className="container" data-tid="container">
+        <HotKeyController handleKeyPress={this.props.handleKeyPress} />
         <Grid
           ref={r => {
             this.gridRef = r;

@@ -45,7 +45,7 @@ function App() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
-      console.log("PATH IN EFFECT", filePath)
+      console.log("PATH IN EFFECT", filePath);
       const data = await loadImageList({
         filePath,
         filter,
@@ -59,10 +59,11 @@ function App() {
     }
     if (filePath.length > 1) {
       fetchData();
-    }else{
-      electron.remote.dialog.showOpenDialog(electron.remote.getCurrentWindow(),['openFile']).then(files => setPath(files.filePaths[0]))
+    } else {
+      electron.remote.dialog
+        .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
+        .then(files => setPath(files.filePaths[0]));
     }
-
   }, [filePath, sort, filter, recursive]);
 
   function handleClick(e) {
@@ -92,11 +93,15 @@ function App() {
         setSize(size === SIZE.ACTUAL ? SIZE.OVERSCAN : SIZE.ACTUAL);
 
         break;
-        case "m":
-          e.preventDefault();
-          setControlMode(controlMode === CONTROL_MODE.MOUSE ? CONTROL_MODE.TRACK_PAD : CONTROL_MODE.MOUSE);
-  
-          break;
+      case "m":
+        e.preventDefault();
+        setControlMode(
+          controlMode === CONTROL_MODE.MOUSE
+            ? CONTROL_MODE.TRACK_PAD
+            : CONTROL_MODE.MOUSE
+        );
+
+        break;
       case "r":
         e.preventDefault();
         setRecursive(!recursive);
@@ -146,10 +151,10 @@ function App() {
   return (
     <React.Fragment>
       <Status status={{ filePath, sort, filter, size, recursive }} />
-      <HotKeyController handleKeyPress={handleKeyPress} />
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>
+          <HotKeyController handleKeyPress={handleKeyPress} />
           <HotCorner handleClick={() => setView(VIEW.LIST)} />
           <Detail
             fileName={items[cursor].fileName}
@@ -168,6 +173,7 @@ function App() {
             tall={tall}
             cursor={cursor}
             controlMode={controlMode}
+            handleKeyPress={handleKeyPress}
             handleClick={i => {
               setCursor(i);
               setView(VIEW.DETAIL);
