@@ -5,7 +5,7 @@ function Status({ status = {} }) {
     <div className="statusContainer">
       <div className="statusToast">
         <span className="statusLabel">Path</span>
-        <span className="statusValue">{status.path}</span>
+        <span className="statusValue">{status.filePath}</span>
       </div>
       <div className="statusToast">
         <span className="statusLabel">Sort Order</span>
@@ -17,7 +17,7 @@ function Status({ status = {} }) {
       </div>
       <div className="statusToast">
         <span className="statusLabel">Filter</span>
-        <span className="statusValue">{status.filter}</span>
+        <span className="statusValue">{status.filter.toString()}</span>
       </div>
       <div className="statusToast">
         <span className="statusLabel">Recursive</span>

@@ -16,7 +16,7 @@
     "react-build": "parcel build index.html --out-dir build --public-url ./",
     "electron-build": "electron-builder",
     "clean-build": "rm -rf build/ .cache dist/",
-    "build": "yarn clean-build && yarn react-build && yarn electron-build",
+    "build": "yarn react-build && yarn electron-build",
     "start": "concurrently \"cross-env BROWSER=none yarn react-start\" \"wait-on http://localhost:3000 && electron . \""
   },
   "build": {
@@ -99,6 +99,7 @@
     "react-use-gesture": "^6.0.14",
     "react-window": "^1.8.5",
     "readdir": "^0.1.0",
+    "readdir-enhanced": "^5.1.1",
     "styled-components": "^5.0.0",
     "video.js": "^7.6.6"
   },
