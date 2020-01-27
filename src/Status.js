@@ -1,6 +1,7 @@
 import React from "react";
+import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE, getNext } from "./constants";
 
-function Status({ status = {} }) {
+function Status({ status = {}, controls = {} }) {
   return (
     <div className="statusContainer">
       <div className="statusToast">
@@ -8,20 +9,52 @@ function Status({ status = {} }) {
         <span className="statusValue">{status.filePath}</span>
       </div>
       <div className="statusToast">
-        <span className="statusLabel">Sort Order</span>
-        <span className="statusValue">{status.sort}</span>
+        <span className="statusLabel">
+          Sort Order <strong>(S)</strong>
+        </span>
+        <span
+          className="statusValue"
+          onClick={() => controls.setSort(getNext(SORT, status.sort))}
+        >
+          {status.sort}
+        </span>
       </div>
       <div className="statusToast">
-        <span className="statusLabel">Image Scaling</span>
-        <span className="statusValue">{status.size}</span>
+        <span className="statusLabel">
+          Image Scaling <strong>(C)</strong>
+        </span>
+        <span
+          className="statusValue"
+          onClick={() => controls.setSize(getNext(SIZE, status.size))}
+        >
+          {status.size}
+        </span>
       </div>
       <div className="statusToast">
-        <span className="statusLabel">Filter</span>
+        <span className="statusLabel">
+          Filter <strong>(S, V, G)</strong>
+        </span>
         <span className="statusValue">{status.filter.toString()}</span>
       </div>
       <div className="statusToast">
-        <span className="statusLabel">Recursive</span>
-        <span className="statusValue">
+        <span className="statusLabel">
+          Control Mode <strong>(M)</strong>
+        </span>
+        <span
+          className="statusValue"
+          onClick={() =>
+            controls.setControlMode(getNext(CONTROL_MODE, status.controlMode))
+          }
+        >
+          {status.controlMode}
+        </span>
+      </div>
+      <div className="statusToast">
+        <span className="statusLabel">Recursive (R)</span>
+        <span
+          className="statusValue"
+          onClick={() => controls.setRecursive(!status.recursive)}
+        >
           {status.recursive ? "Recursive" : "Not Recursive"}
         </span>
       </div>

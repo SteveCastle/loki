@@ -133,6 +133,11 @@ body {
   display: inline-block;
 }
 .statusValue {
+  cursor: pointer;
+}
+
+.statusValue:hover {
+  color: rgb(132, 149, 170);
 }
 
 .hotCorner {

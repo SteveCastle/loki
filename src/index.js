@@ -13,7 +13,7 @@ import Spinner from "./Spinner";
 const settings = window.require("electron-settings");
 const atob = window.require("atob");
 
-import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE } from "./constants";
+import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE, getNext } from "./constants";
 import loadImageList from "./loadImageList";
 import Status from "./Status";
 
@@ -45,14 +45,12 @@ function App() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
-      console.log("PATH IN EFFECT", filePath);
       const data = await loadImageList({
         filePath,
         filter,
         sortOrder: sort,
         recursive
       });
-      console.log("ITEMS", data.items);
       setItems(data.items);
       setCursor(data.cursor);
       setLoading(false);
@@ -86,20 +84,16 @@ function App() {
     switch (e.key) {
       case "s":
         e.preventDefault();
-        setSort(sort === SORT.CREATE_DATE ? SORT.ALPHA : SORT.CREATE_DATE);
+        setSort(getNext(SORT, sort));
         break;
       case "c":
         e.preventDefault();
-        setSize(size === SIZE.ACTUAL ? SIZE.OVERSCAN : SIZE.ACTUAL);
+        setSize(getNext(SIZE, size));
 
         break;
       case "m":
         e.preventDefault();
-        setControlMode(
-          controlMode === CONTROL_MODE.MOUSE
-            ? CONTROL_MODE.TRACK_PAD
-            : CONTROL_MODE.MOUSE
-        );
+        setControlMode(getNext(CONTROL_MODE, controlMode));
 
         break;
       case "r":
@@ -150,7 +144,10 @@ function App() {
 
   return (
     <React.Fragment>
-      <Status status={{ filePath, sort, filter, size, recursive }} />
+      <Status
+        status={{ filePath, sort, filter, size, controlMode, recursive }}
+        controls={{ setSort, setFilter, setSize, setControlMode, setRecursive }}
+      />
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>

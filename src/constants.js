@@ -31,5 +31,9 @@ export const EXTENSIONS = {
 };
 
 export function getNext(obj, currentKey) {
-  Object.keys(obj).reduce((acc, k) => k);
+  console.log(obj, currentKey);
+  const keys = Object.keys(obj);
+  const position = keys.findIndex(k => k === currentKey);
+  console.log(keys[position]);
+  return keys[(position + 1) % keys.length];
 }
