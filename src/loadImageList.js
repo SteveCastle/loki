@@ -1,4 +1,3 @@
-import { Promise } from "bluebird";
 const readdir = window.require("readdir-enhanced");
 var path = require('path');
 
@@ -13,7 +12,7 @@ export default async function loadImageList({
   sortOrder,
   recursive = false
 }) {
-  const folderPath =  filePath.substring(0, filePath.lastIndexOf("\\"))
+  const folderPath = filePath.substring(0, filePath.lastIndexOf("\\"))
   console.log("PATH", (path.normalize(folderPath)))
   let items = await readdir.async(folderPath, {filter, deep: recursive, basePath: folderPath, stats: true});
   

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+const electron = window.require("electron");
 import ReactDOM from "react-dom";
 import "babel-polyfill";
 import "./style.css";
@@ -56,8 +57,13 @@ function App() {
       setCursor(data.cursor);
       setLoading(false);
     }
-    fetchData();
-  }, [sort, filter, recursive]);
+    if (filePath.length > 1) {
+      fetchData();
+    }else{
+      electron.remote.dialog.showOpenDialog(electron.remote.getCurrentWindow(),['openFile']).then(files => setPath(files.filePaths[0]))
+    }
+
+  }, [filePath, sort, filter, recursive]);
 
   function handleClick(e) {
     e.preventDefault();

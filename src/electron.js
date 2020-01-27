@@ -10,14 +10,14 @@ const isDev = require("electron-is-dev");
 const { MenuBuilder } = require("./menu");
 
 let mainWindow;
-let filePath = "G:\\My Drive\\Images\\CityScapes\\Paris_Night.jpg";
+let filePath = "";
 
 function createWindow() {
-  // If this is windows get the filePath to use from argv.
-//   if(process.argv.length >= 2) {
-//     filePath = process.argv[1];
-//     //open, read, handle file
-// }
+//   If this is windows get the filePath to use from argv.
+  if(process.argv.length >= 2 && process.argv[1] ) {
+    filePath = process.argv[1];
+    //open, read, handle file
+}
   if (!settings.has("settings")) {
     settings.set("settings", {
       alwaysOnTop: true,
