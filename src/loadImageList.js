@@ -1,5 +1,5 @@
 const readdir = window.require("readdir-enhanced");
-var path = require("path");
+var is = window.require("electron-is");
 
 const sorts = {
   CREATE_DATE: (a, b) => b.modified - a.modified,
@@ -12,7 +12,14 @@ export default async function loadImageList({
   sortOrder,
   recursive = false
 }) {
-  const folderPath = filePath.substring(0, filePath.lastIndexOf("\\"));
+  const matchDirectory = is.windows() ? "\\" : "/";
+  console.log(is.windows());
+
+  const folderPath = filePath.substring(
+    0,
+    filePath.lastIndexOf(matchDirectory)
+  );
+  console.log(filePath, folderPath);
   let items = await readdir.async(folderPath, {
     filter,
     deep: recursive,

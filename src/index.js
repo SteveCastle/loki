@@ -60,7 +60,10 @@ function App() {
     } else {
       electron.remote.dialog
         .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
-        .then(files => setPath(files.filePaths[0]));
+        .then(files => {
+          console.log(files);
+          setPath(files.filePaths[0]);
+        });
     }
   }, [filePath, sort, filter, recursive]);
 
