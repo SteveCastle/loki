@@ -24,6 +24,7 @@ function createWindow() {
     settings.set("settings", {
       alwaysOnTop: true,
       openFullScreen: true,
+      frame: false,
       defaultSort: "ALPHA",
       defaultView: "DETAIL",
       defaultFilter: "ALL",
@@ -42,6 +43,7 @@ function createWindow() {
       webSecurity: false
     },
     fullscreen: settings.get("settings.openFullScreen"),
+    frame: false,
     alwaysOnTop: settings.get("settings.alwaysOnTop"),
     width: 900,
     height: 680
