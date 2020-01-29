@@ -8,6 +8,7 @@ import HotKeyController from "./HotKeyController";
 import Detail from "./Detail";
 import List from "./List";
 import HotCorner from "./HotCorner";
+import SettingsButton from "./SettingsButton";
 import Spinner from "./Spinner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
@@ -21,7 +22,7 @@ function App() {
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
-
+  const [status, setStatus] = useState(false);
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
   const [controlMode, setControlMode] = useState(
@@ -147,11 +148,20 @@ function App() {
 
   return (
     <React.Fragment>
+      <SettingsButton handleClick={() => setStatus(!status)} />
       <div className="dragArea"></div>
-      <Status
-        status={{ filePath, sort, filter, size, controlMode, recursive }}
-        controls={{ setSort, setFilter, setSize, setControlMode, setRecursive }}
-      />
+      {status && (
+        <Status
+          status={{ filePath, sort, filter, size, controlMode, recursive }}
+          controls={{
+            setSort,
+            setFilter,
+            setSize,
+            setControlMode,
+            setRecursive
+          }}
+        />
+      )}
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>
