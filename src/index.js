@@ -147,6 +147,7 @@ function App() {
 
   return (
     <React.Fragment>
+      <div className="dragArea"></div>
       <Status
         status={{ filePath, sort, filter, size, controlMode, recursive }}
         controls={{ setSort, setFilter, setSize, setControlMode, setRecursive }}

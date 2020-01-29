@@ -1,9 +1,25 @@
 import React from "react";
+const electron = window.require("electron");
+
 import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE, getNext } from "./constants";
 
 function Status({ status = {}, controls = {} }) {
   return (
     <div className="statusContainer">
+      <div className="windowControls">
+        <span
+          className="closeControl"
+          onClick={e => electron.remote.getCurrentWindow().close()}
+        />
+        <span
+          className="windowedControl"
+          onClick={e => electron.remote.getCurrentWindow().setFullScreen(false)}
+        />
+        <span
+          className="fullScreenControl"
+          onClick={e => electron.remote.getCurrentWindow().setFullScreen(true)}
+        />
+      </div>
       <div className="statusToast">
         <span className="statusLabel">Path</span>
         <span className="statusValue">{status.filePath}</span>
