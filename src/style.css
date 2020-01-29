@@ -152,6 +152,15 @@ body {
   border-radius: 50%;
   background-color: rgb(211, 3, 72);
 }
+.windowedControl:hover {
+  background-color: rgb(176, 179, 27);
+}
+.fullScreenControl:hover {
+  background-color: rgb(4, 133, 42);
+}
+.closeControl:hover {
+  background-color: rgb(153, 6, 55);
+}
 .statusToast {
   border-radius: 4px;
   margin-bottom: 4px;
@@ -180,7 +189,7 @@ body {
   flex-wrap: wrap;
   position: fixed;
   width: 20px;
-  padding: 45px;
+  padding: 45px 25px 15px 45px;
   height: 20px;
   bottom: 20px;
   right: 20px;
