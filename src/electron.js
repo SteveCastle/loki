@@ -7,6 +7,8 @@ const { autoUpdater } = require("electron-updater");
 const BrowserWindow = electron.BrowserWindow;
 const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
+var is = require("electron-is");
+
 const { MenuBuilder } = require("./menu");
 
 let mainWindow;
@@ -14,7 +16,7 @@ let filePath = "";
 
 function createWindow() {
   //   If this is windows get the filePath to use from argv.
-  if (process.argv.length >= 2 && process.argv[1]) {
+  if (process.argv.length >= 2 && process.argv[1] && is.windows()) {
     filePath = process.argv[1];
     //open, read, handle file
   }

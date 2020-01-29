@@ -13,7 +13,6 @@ export default async function loadImageList({
   recursive = false
 }) {
   const matchDirectory = is.windows() ? "\\" : "/";
-  console.log(is.windows());
 
   const folderPath = filePath.substring(
     0,
