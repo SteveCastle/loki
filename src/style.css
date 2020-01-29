@@ -20,11 +20,17 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: scroll;
   flex-wrap: wrap;
   text-align: center;
   display: flex;
   align-items: center;
+}
+
+::-webkit-scrollbar {
+  width: 0px; /* Remove scrollbar space */
+  height: 0px;
+  background: transparent; /* Optional: just make scrollbar invisible */
 }
 
 .container img {
