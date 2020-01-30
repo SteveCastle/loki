@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 const electron = window.require("electron");
+var shuffle = window.require("shuffle-array");
 import ReactDOM from "react-dom";
 import "babel-polyfill";
 import "./style.css";
@@ -14,7 +15,15 @@ import Spinner from "./Spinner";
 const settings = window.require("electron-settings");
 const atob = window.require("atob");
 
-import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE, getNext } from "./constants";
+import {
+  SORT,
+  FILTER,
+  SIZE,
+  VIEW,
+  CONTROL_MODE,
+  getNext,
+  LIST_SIZE
+} from "./constants";
 import loadImageList from "./loadImageList";
 import Status from "./Status";
 
@@ -22,6 +31,8 @@ function App() {
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
+  const [shuffles, setShuffles] = useState(true);
+
   const [status, setStatus] = useState(false);
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
@@ -32,10 +43,20 @@ function App() {
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(FILTER.ALL);
   const [size, setSize] = useState(SIZE.OVERSCAN);
+  const [listSize, setListSize] = useState(LIST_SIZE.OVERSCAN);
+
   const [tall, setTall] = useState(true);
 
   const [recursive, setRecursive] = useState(false);
 
+  function changePath() {
+    electron.remote.dialog
+      .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
+      .then(files => {
+        console.log(files);
+        setPath(files.filePaths[0]);
+      });
+  }
   // Initialize State from settings.
   useEffect(() => {
     if (settings.has("settings.scaleMode")) {
@@ -48,7 +69,7 @@ function App() {
       setLoading(true);
       const data = await loadImageList({
         filePath,
-        filter,
+        filter: filter.value,
         sortOrder: sort,
         recursive
       });
@@ -59,12 +80,7 @@ function App() {
     if (filePath.length > 1) {
       fetchData();
     } else {
-      electron.remote.dialog
-        .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
-        .then(files => {
-          console.log(files);
-          setPath(files.filePaths[0]);
-        });
+      changePath();
     }
   }, [filePath, sort, filter, recursive]);
 
@@ -92,7 +108,7 @@ function App() {
         break;
       case "c":
         e.preventDefault();
-        setSize(getNext(SIZE, size));
+        setSize(getNext(SIZE, size.key));
 
         break;
       case "m":
@@ -119,6 +135,11 @@ function App() {
       case "v":
         e.preventDefault();
         setFilter(FILTER.VIDEO);
+        break;
+      case "x":
+        e.preventDefault();
+        setItems(shuffle(items));
+        setShuffles(!shuffles);
         break;
       case "m":
         e.preventDefault();
@@ -152,11 +173,22 @@ function App() {
       <div className="dragArea"></div>
       {status && (
         <Status
-          status={{ filePath, sort, filter, size, controlMode, recursive }}
+          status={{
+            filePath,
+            sort,
+            filter,
+            size,
+            listSize,
+            controlMode,
+            recursive,
+            items
+          }}
           controls={{
+            changePath,
             setSort,
             setFilter,
             setSize,
+            setListSize,
             setControlMode,
             setRecursive
           }}
@@ -180,7 +212,8 @@ function App() {
           <List
             filter={filter}
             fileList={items}
-            size={size}
+            shuffles={shuffles}
+            size={listSize}
             tall={tall}
             cursor={cursor}
             controlMode={controlMode}
