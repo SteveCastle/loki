@@ -1,5 +1,6 @@
+import { getFolder } from "./fsTools";
+
 const readdir = window.require("readdir-enhanced");
-var is = window.require("electron-is");
 
 const sorts = {
   CREATE_DATE: (a, b) => b.modified - a.modified,
@@ -12,12 +13,7 @@ export default async function loadImageList({
   sortOrder,
   recursive = false
 }) {
-  const matchDirectory = is.windows() ? "\\" : "/";
-
-  const folderPath = filePath.substring(
-    0,
-    filePath.lastIndexOf(matchDirectory)
-  );
+  const folderPath = getFolder(filePath);
   console.log(filePath, folderPath);
   let items = await readdir.async(folderPath, {
     filter,

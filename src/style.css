@@ -69,28 +69,63 @@ body {
   min-height: 100%;
 }
 
-.listImagePortrait {
+.fill {
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.fit {
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 100%;
+}
+
+.overscanImagePortrait {
   cursor: pointer;
   flex-shrink: 0;
   width: 120%;
 }
 
-.listImageLandscape {
+.overscanImageLandscape {
   cursor: pointer;
   flex-shrink: 0;
   height: 120%;
 }
 
-.listVideoPortrait {
+.overscanVideoPortrait {
   cursor: pointer;
   flex-shrink: 0;
   width: 120%;
 }
 
-.listVideoLandscape {
+.overscanVideoLandscape {
   cursor: pointer;
   flex-shrink: 0;
   height: 120%;
+}
+
+.fitImagePortrait {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-height: 100%;
+}
+
+.fitImageLandscape {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.fitVideoPortrait {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-height: 100%;
+}
+
+.fitVideoLandscape {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .noItemsContainer {
@@ -119,6 +154,7 @@ body {
   bottom: 50px;
   left: 50px;
   z-index: 9999;
+  padding: 8px 16px;
   position: fixed;
   user-select: none;
 }
@@ -188,14 +224,18 @@ body {
   display: flex;
   flex-wrap: wrap;
   position: fixed;
-  width: 20px;
-  padding: 45px 25px 15px 45px;
-  height: 20px;
-  bottom: 20px;
-  right: 20px;
+  width: 40px;
+  padding: 45px 15px 15px 45px;
+  height: 40px;
+  bottom: 0;
+  right: 0;
   z-index: 999;
   opacity: 0;
   transition: opacity 0.25s ease-in-out;
+}
+
+.hotCorner img {
+  width: 100%;
 }
 .hotCorner:hover {
   opacity: 0.8;
@@ -217,15 +257,23 @@ body {
   display: flex;
   flex-wrap: wrap;
   position: fixed;
-  width: 20px;
+  width: 40px;
   padding: 45px 45px 15px 15px;
-  height: 20px;
-  bottom: 20px;
+  height: 40px;
+  bottom: 0;
   left: 0px;
   z-index: 999;
   opacity: 0;
   transition: opacity 0.25s ease-in-out;
 }
+.settingsButton img {
+  width: 100%;
+}
 .settingsButton:hover {
   opacity: 0.8;
+}
+
+.itemCount {
+  color: rgb(204, 149, 221);
+  margin-left: 4px;
 }

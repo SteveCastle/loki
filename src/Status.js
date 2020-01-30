@@ -1,8 +1,16 @@
 import React from "react";
 const electron = window.require("electron");
 
-import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE, getNext } from "./constants";
-
+import {
+  SORT,
+  FILTER,
+  SIZE,
+  VIEW,
+  CONTROL_MODE,
+  getNext,
+  LIST_SIZE
+} from "./constants";
+import { getFolder } from "./fsTools";
 function Status({ status = {}, controls = {} }) {
   return (
     <div className="statusContainer">
@@ -21,8 +29,13 @@ function Status({ status = {}, controls = {} }) {
         />
       </div>
       <div className="statusToast">
-        <span className="statusLabel">Path</span>
-        <span className="statusValue">{status.filePath}</span>
+        <span className="statusLabel">
+          Path<span className="itemCount">({status.items.length} Items)</span>
+        </span>
+
+        <span className="statusValue" onClick={controls.changePath}>
+          {getFolder(status.filePath)}
+        </span>
       </div>
       <div className="statusToast">
         <span className="statusLabel">
@@ -41,16 +54,32 @@ function Status({ status = {}, controls = {} }) {
         </span>
         <span
           className="statusValue"
-          onClick={() => controls.setSize(getNext(SIZE, status.size))}
+          onClick={() => controls.setSize(getNext(SIZE, status.size.key))}
         >
-          {status.size}
+          {status.size.title}
+        </span>
+      </div>
+      <div className="statusToast">
+        <span className="statusLabel">List Image Scaling</span>
+        <span
+          className="statusValue"
+          onClick={() =>
+            controls.setListSize(getNext(LIST_SIZE, status.listSize.key))
+          }
+        >
+          {status.listSize.title}
         </span>
       </div>
       <div className="statusToast">
         <span className="statusLabel">
-          Filter <strong>(S, V, G)</strong>
+          Filter <strong>(A, J, V, G)</strong>
         </span>
-        <span className="statusValue">{status.filter.toString()}</span>
+        <span
+          className="statusValue"
+          onClick={() => controls.setFilter(getNext(FILTER, status.filter.key))}
+        >
+          {status.filter.title}
+        </span>
       </div>
       <div className="statusToast">
         <span className="statusLabel">
