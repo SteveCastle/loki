@@ -54,7 +54,9 @@ function App() {
       .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
       .then(files => {
         console.log(files);
-        setPath(files.filePaths[0]);
+        if (files.filePaths.length > 0) {
+          setPath(files.filePaths[0]);
+        }
       });
   }
   // Initialize State from settings.
