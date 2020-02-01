@@ -6,7 +6,7 @@ const path = window.require("path");
 
 import { EXTENSIONS } from "./constants";
 
-function ListItem({ fileName, handleClick }) {
+function ListItem({ fileName, handleClick, size }) {
   const [isPortrait, setPortrait] = useState(false);
 
   const [loaded, setLoaded] = useState(false);
@@ -45,21 +45,25 @@ function ListItem({ fileName, handleClick }) {
             pathname: fileName
           })}
           className={`${
-            isPortrait ? "listImagePortrait" : "listImageLandscape"
+            isPortrait
+              ? `${size.className}ImagePortrait`
+              : `${size.className}ImageLandscape`
           }`}
         />
       )}
       {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
         <video
           className={`${
-            isPortrait ? "listVideoPortrait" : "listVideoLandscape"
+            isPortrait
+              ? `${size.className}VideoPortrait`
+              : `${size.className}VideoLandscape`
           }`}
           onLoadStart={() => setLoaded(true)}
           ref={imageRef}
-          src={url.format({
+          src={`${url.format({
             protocol: "file",
             pathname: fileName
-          })}
+          })}#t=30,120`}
           loop
           autoPlay
           muted

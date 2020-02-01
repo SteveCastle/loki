@@ -1,12 +1,10 @@
 import React from "react";
+import folder from "./assets/folder.png";
 
 function HotCorner({ handleClick }) {
   return (
     <div className="hotCorner" onClick={handleClick}>
-      <span></span>
-      <span></span>
-      <span></span>
-      <span></span>
+      <img src={folder} />
     </div>
   );
 }

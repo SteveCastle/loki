@@ -7,25 +7,24 @@ const { autoUpdater } = require("electron-updater");
 const BrowserWindow = electron.BrowserWindow;
 const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
+var is = require("electron-is");
+
 const { MenuBuilder } = require("./menu");
 
 let mainWindow;
-let filePath =
-  "/Users/tracer/Pictures/lokey-test/sebastian-von-buchwald-hoverboard.jpg";
+let filePath = "";
 
 function createWindow() {
-  // Initialize React Dev Tools
-  isDev &&
-    BrowserWindow.addDevToolsExtension(
-      path.join(
-        os.homedir(),
-        "/Library/Application Support/Google/Chrome/Default/Extensions/fmkadmapgofadopljbjfkapdkoienihi/4.4.0_0"
-      )
-    );
+  //   If this is windows get the filePath to use from argv.
+  if (process.argv.length >= 2 && process.argv[1] && is.windows()) {
+    filePath = process.argv[1];
+    //open, read, handle file
+  }
   if (!settings.has("settings")) {
     settings.set("settings", {
       alwaysOnTop: true,
       openFullScreen: true,
+      frame: false,
       defaultSort: "ALPHA",
       defaultView: "DETAIL",
       defaultFilter: "ALL",
@@ -44,6 +43,7 @@ function createWindow() {
       webSecurity: false
     },
     fullscreen: settings.get("settings.openFullScreen"),
+    frame: false,
     alwaysOnTop: settings.get("settings.alwaysOnTop"),
     width: 900,
     height: 680
@@ -59,8 +59,6 @@ function createWindow() {
         )}`
   );
   mainWindow.on("closed", () => (mainWindow = null));
-  const menuBuilder = new MenuBuilder(mainWindow);
-  menuBuilder.buildMenu();
 }
 
 app.on("will-finish-launching", info => {

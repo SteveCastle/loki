@@ -9,8 +9,14 @@ export const CONTROL_MODE = {
 };
 
 export const SIZE = {
-  OVERSCAN: "OVERSCAN",
-  ACTUAL: "ACTUAL"
+  OVERSCAN: { title: "Over Scan", className: "overscan", key: "OVERSCAN" },
+  FIT: { title: "Fit Screen", className: "fit", key: "FIT" },
+  ACTUAL: { title: "Actual", className: "actual", key: "ACTUAL" }
+};
+
+export const LIST_SIZE = {
+  OVERSCAN: { title: "Over Scan", className: "overscan", key: "OVERSCAN" },
+  FIT: { title: "Fit Screen", className: "fit", key: "FIT" }
 };
 
 export const SORT = {
@@ -19,10 +25,31 @@ export const SORT = {
 };
 
 export const FILTER = {
-  ALL: ["**.jpg", "**.gif", "**.jpeg", "**.png", "**.webm", "**.mp4"],
-  STATIC: ["**.jpg", "**.jpeg", "**.png"],
-  VIDEO: ["**.webm", "**.mp4", "**.mpeg"],
-  GIF: ["**.gif"]
+  ALL: {
+    title: "All",
+    key: "ALL",
+    value: /jpg$|jpeg$|png$|webm$|mp4$|mpeg$|gif$/
+  },
+  STATIC: {
+    title: "Only Static",
+    key: "STATIC",
+    value: /jpg$|jpeg$|png$/
+  },
+  VIDEO: {
+    title: "Videos",
+    key: "VIDEO",
+    value: /mp4$|mpeg$/
+  },
+  GIF: {
+    title: "Animated Gifs",
+    key: "GIF",
+    value: /gif$/
+  },
+  MOTION: {
+    title: "Motion",
+    key: "MOTION",
+    value: /gif$|mp4$|mpeg$/
+  }
 };
 
 export const EXTENSIONS = {
@@ -31,5 +58,9 @@ export const EXTENSIONS = {
 };
 
 export function getNext(obj, currentKey) {
-  Object.keys(obj).reduce((acc, k) => k);
+  console.log(obj, currentKey);
+  const keys = Object.keys(obj);
+  const position = keys.findIndex(k => k === currentKey);
+  console.log(keys[position]);
+  return obj[keys[(position + 1) % keys.length]];
 }
