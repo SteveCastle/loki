@@ -33,7 +33,6 @@ function ListItem({ fileName, handleClick, size, handleRightClick }) {
         className="listContainer"
         {...events}
         onDoubleClick={handleClick}
-        onContextMenu={() => handleRightClick(fileName)}
         ref={containerRef}
       >
         {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (

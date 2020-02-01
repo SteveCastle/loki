@@ -255,6 +255,7 @@ function App() {
             handleClick={handleClick}
             handleScroll={handleScroll}
             controlMode={controlMode}
+            setPath={setPath}
           />
         </React.Fragment>
       ) : (
