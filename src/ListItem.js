@@ -3,10 +3,9 @@ import useScrollOnDrag from "react-scroll-ondrag";
 
 const url = window.require("url");
 const path = window.require("path");
-
 import { EXTENSIONS } from "./constants";
 
-function ListItem({ fileName, handleClick, size }) {
+function ListItem({ fileName, handleClick, size, handleRightClick }) {
   const [isPortrait, setPortrait] = useState(false);
 
   const [loaded, setLoaded] = useState(false);
@@ -29,47 +28,51 @@ function ListItem({ fileName, handleClick, size }) {
     }
   }, [loaded]);
   return (
-    <div
-      className="listContainer"
-      onDoubleClick={handleClick}
-      {...events}
-      ref={containerRef}
-    >
-      {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
-        <img
-          onLoad={() => setLoaded(true)}
-          key={fileName}
-          ref={imageRef}
-          src={url.format({
-            protocol: "file",
-            pathname: fileName
-          })}
-          className={`${
-            isPortrait
-              ? `${size.className}ImagePortrait`
-              : `${size.className}ImageLandscape`
-          }`}
-        />
-      )}
-      {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
-        <video
-          className={`${
-            isPortrait
-              ? `${size.className}VideoPortrait`
-              : `${size.className}VideoLandscape`
-          }`}
-          onLoadStart={() => setLoaded(true)}
-          ref={imageRef}
-          src={`${url.format({
-            protocol: "file",
-            pathname: fileName
-          })}#t=30,120`}
-          loop
-          autoPlay
-          muted
-        />
-      )}
-    </div>
+    <React.Fragment>
+      <div
+        className="listContainer"
+        {...events}
+        onDoubleClick={handleClick}
+        onContextMenu={() => handleRightClick(fileName)}
+        ref={containerRef}
+      >
+        {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
+          <img
+            onLoad={() => setLoaded(true)}
+            key={fileName}
+            ref={imageRef}
+            src={url.format({
+              protocol: "file",
+              pathname: fileName
+            })}
+            className={`${
+              isPortrait
+                ? `${size.className}ImagePortrait`
+                : `${size.className}ImageLandscape`
+            }`}
+          />
+        )}
+
+        {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
+          <video
+            className={`${
+              isPortrait
+                ? `${size.className}VideoPortrait`
+                : `${size.className}VideoLandscape`
+            }`}
+            onLoadStart={() => setLoaded(true)}
+            ref={imageRef}
+            src={`${url.format({
+              protocol: "file",
+              pathname: fileName
+            })}#t=30,120`}
+            loop
+            autoPlay
+            muted
+          />
+        )}
+      </div>
+    </React.Fragment>
   );
 }
 
