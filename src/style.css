@@ -27,6 +27,12 @@ body {
   align-items: center;
 }
 
+::-webkit-scrollbar {
+  width: 0px; /* Remove scrollbar space */
+  height: 0px;
+  background: transparent; /* Optional: just make scrollbar invisible */
+}
+
 .container img {
   display: block;
   margin: auto;
@@ -63,28 +69,63 @@ body {
   min-height: 100%;
 }
 
-.listImagePortrait {
+.fill {
+  min-width: 100%;
+  min-height: 100%;
+}
+
+.fit {
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 100%;
+}
+
+.overscanImagePortrait {
   cursor: pointer;
   flex-shrink: 0;
   width: 120%;
 }
 
-.listImageLandscape {
+.overscanImageLandscape {
   cursor: pointer;
   flex-shrink: 0;
   height: 120%;
 }
 
-.listVideoPortrait {
+.overscanVideoPortrait {
   cursor: pointer;
   flex-shrink: 0;
   width: 120%;
 }
 
-.listVideoLandscape {
+.overscanVideoLandscape {
   cursor: pointer;
   flex-shrink: 0;
   height: 120%;
+}
+
+.fitImagePortrait {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-height: 100%;
+}
+
+.fitImageLandscape {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
+.fitVideoPortrait {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-height: 100%;
+}
+
+.fitVideoLandscape {
+  cursor: pointer;
+  flex-shrink: 0;
+  max-width: 100%;
 }
 
 .noItemsContainer {
@@ -107,18 +148,54 @@ body {
 }
 
 .statusContainer {
-  background-color: black;
   color: white;
-  top: 30px;
-  left: 30px;
+  background-color: black;
+  border-radius: 4px;
+  bottom: 50px;
+  left: 50px;
   z-index: 9999;
-  opacity: 0;
+  padding: 8px 16px;
   position: fixed;
-  transition: opacity 0.25s ease-in-out;
   user-select: none;
 }
-.statusContainer:hover {
-  opacity: 0.8;
+
+.dragArea {
+  -webkit-app-region: drag;
+  width: 100%;
+  height: 50px;
+}
+.windowedControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(223, 226, 31);
+}
+.fullScreenControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(0, 179, 54);
+}
+.closeControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(211, 3, 72);
+}
+.windowedControl:hover {
+  background-color: rgb(176, 179, 27);
+}
+.fullScreenControl:hover {
+  background-color: rgb(4, 133, 42);
+}
+.closeControl:hover {
+  background-color: rgb(153, 6, 55);
 }
 .statusToast {
   border-radius: 4px;
@@ -133,22 +210,32 @@ body {
   display: inline-block;
 }
 .statusValue {
+  cursor: pointer;
+}
+
+.statusValue:hover {
+  color: rgb(132, 149, 170);
 }
 
 .hotCorner {
+  user-select: none;
   cursor: pointer;
+  font-size: 2rem;
   display: flex;
   flex-wrap: wrap;
   position: fixed;
-  width: 100px;
-  padding: 5px;
-  border-radius: 8px;
-  height: 100px;
-  bottom: 5px;
-  right: 5px;
+  width: 40px;
+  padding: 45px 15px 15px 45px;
+  height: 40px;
+  bottom: 0;
+  right: 0;
   z-index: 999;
   opacity: 0;
   transition: opacity 0.25s ease-in-out;
+}
+
+.hotCorner img {
+  width: 100%;
 }
 .hotCorner:hover {
   opacity: 0.8;
@@ -161,4 +248,32 @@ body {
   height: 40px;
   margin: 5px;
   display: block;
+}
+
+.settingsButton {
+  user-select: none;
+  cursor: pointer;
+  font-size: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  position: fixed;
+  width: 40px;
+  padding: 45px 45px 15px 15px;
+  height: 40px;
+  bottom: 0;
+  left: 0px;
+  z-index: 999;
+  opacity: 0;
+  transition: opacity 0.25s ease-in-out;
+}
+.settingsButton img {
+  width: 100%;
+}
+.settingsButton:hover {
+  opacity: 0.8;
+}
+
+.itemCount {
+  color: rgb(204, 149, 221);
+  margin-left: 4px;
 }

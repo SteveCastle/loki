@@ -1,5 +1,7 @@
 import React, { Component } from "react";
 import { FixedSizeGrid as Grid } from "react-window";
+import HotKeyController from "./HotKeyController";
+
 import ListItem from "./ListItem";
 const Cell = ({ data, columnIndex, rowIndex, style }) =>
   data.fileList[rowIndex * data.columns + columnIndex] ? (
@@ -12,6 +14,7 @@ const Cell = ({ data, columnIndex, rowIndex, style }) =>
     >
       <ListItem
         className="listImage"
+        size={data.size}
         handleClick={() =>
           data.handleClick(rowIndex * data.columns + columnIndex)
         }
@@ -66,10 +69,21 @@ export default class List extends Component {
     window.removeEventListener("resize", this.handleResize.bind(this));
   }
 
+  shouldComponentUpdate(prevProps, prevState) {
+    return (
+      this.props.cursor !== prevProps.cursor ||
+      this.props.items !== prevProps.items ||
+      this.props.size !== prevProps.size ||
+      this.props.shuffle !== prevProps.shuffle ||
+      this.state.width !== prevState.width
+    );
+  }
+
   render() {
     const { fileList, handleClick, filter } = this.props;
     return (
       <div className="container" data-tid="container">
+        <HotKeyController handleKeyPress={this.props.handleKeyPress} />
         <Grid
           ref={r => {
             this.gridRef = r;
@@ -81,7 +95,12 @@ export default class List extends Component {
           rowHeight={this.state.width / 3}
           overscanRowCount={0}
           width={this.state.width}
-          itemData={{ fileList, handleClick, columns: this.columns }}
+          itemData={{
+            fileList,
+            handleClick,
+            columns: this.columns,
+            size: this.props.size
+          }}
         >
           {Cell}
         </Grid>

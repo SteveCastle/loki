@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
+const electron = window.require("electron");
+var shuffle = window.require("shuffle-array");
 import ReactDOM from "react-dom";
 import "babel-polyfill";
 import "./style.css";
@@ -7,20 +9,31 @@ import HotKeyController from "./HotKeyController";
 import Detail from "./Detail";
 import List from "./List";
 import HotCorner from "./HotCorner";
+import SettingsButton from "./SettingsButton";
 import Spinner from "./Spinner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
 const atob = window.require("atob");
 
-import { SORT, FILTER, SIZE, VIEW, CONTROL_MODE } from "./constants";
+import {
+  SORT,
+  FILTER,
+  SIZE,
+  VIEW,
+  CONTROL_MODE,
+  getNext,
+  LIST_SIZE
+} from "./constants";
 import loadImageList from "./loadImageList";
 import Status from "./Status";
 
 function App() {
   const [view, setView] = useState(VIEW.DETAIL);
-  const [path, setPath] = useState(atob(window.location.search.substr(1)));
+  const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
+  const [shuffles, setShuffles] = useState(true);
 
+  const [status, setStatus] = useState(false);
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
   const [controlMode, setControlMode] = useState(
@@ -30,10 +43,22 @@ function App() {
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(FILTER.ALL);
   const [size, setSize] = useState(SIZE.OVERSCAN);
+  const [listSize, setListSize] = useState(LIST_SIZE.OVERSCAN);
+
   const [tall, setTall] = useState(true);
 
   const [recursive, setRecursive] = useState(false);
 
+  function changePath() {
+    electron.remote.dialog
+      .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
+      .then(files => {
+        console.log(files);
+        if (files.filePaths.length > 0) {
+          setPath(files.filePaths[0]);
+        }
+      });
+  }
   // Initialize State from settings.
   useEffect(() => {
     if (settings.has("settings.scaleMode")) {
@@ -45,18 +70,21 @@ function App() {
     async function fetchData() {
       setLoading(true);
       const data = await loadImageList({
-        path,
-        filter,
+        filePath,
+        filter: filter.value,
         sortOrder: sort,
         recursive
       });
       setItems(data.items);
       setCursor(data.cursor);
       setLoading(false);
-      console.log(data);
     }
-    fetchData();
-  }, [sort, filter, recursive]);
+    if (filePath.length > 1) {
+      fetchData();
+    } else {
+      changePath();
+    }
+  }, [filePath, sort, filter, recursive]);
 
   function handleClick(e) {
     e.preventDefault();
@@ -78,11 +106,16 @@ function App() {
     switch (e.key) {
       case "s":
         e.preventDefault();
-        setSort(sort === SORT.CREATE_DATE ? SORT.ALPHA : SORT.CREATE_DATE);
+        setSort(getNext(SORT, sort));
         break;
       case "c":
         e.preventDefault();
-        setSize(size === SIZE.ACTUAL ? SIZE.OVERSCAN : SIZE.ACTUAL);
+        setSize(getNext(SIZE, size.key));
+
+        break;
+      case "m":
+        e.preventDefault();
+        setControlMode(getNext(CONTROL_MODE, controlMode));
 
         break;
       case "r":
@@ -104,6 +137,11 @@ function App() {
       case "v":
         e.preventDefault();
         setFilter(FILTER.VIDEO);
+        break;
+      case "x":
+        e.preventDefault();
+        setItems(shuffle(items));
+        setShuffles(!shuffles);
         break;
       case "m":
         e.preventDefault();
@@ -133,11 +171,35 @@ function App() {
 
   return (
     <React.Fragment>
-      <Status status={{ path, sort, filter, size, recursive }} />
-      <HotKeyController handleKeyPress={handleKeyPress} />
+      <SettingsButton handleClick={() => setStatus(!status)} />
+      <div className="dragArea"></div>
+      {status && (
+        <Status
+          status={{
+            filePath,
+            sort,
+            filter,
+            size,
+            listSize,
+            controlMode,
+            recursive,
+            items
+          }}
+          controls={{
+            changePath,
+            setSort,
+            setFilter,
+            setSize,
+            setListSize,
+            setControlMode,
+            setRecursive
+          }}
+        />
+      )}
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>
+          <HotKeyController handleKeyPress={handleKeyPress} />
           <HotCorner handleClick={() => setView(VIEW.LIST)} />
           <Detail
             fileName={items[cursor].fileName}
@@ -152,10 +214,12 @@ function App() {
           <List
             filter={filter}
             fileList={items}
-            size={size}
+            shuffles={shuffles}
+            size={listSize}
             tall={tall}
             cursor={cursor}
             controlMode={controlMode}
+            handleKeyPress={handleKeyPress}
             handleClick={i => {
               setCursor(i);
               setView(VIEW.DETAIL);
