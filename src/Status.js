@@ -60,17 +60,6 @@ function Status({ status = {}, controls = {} }) {
         </span>
       </div>
       <div className="statusToast">
-        <span className="statusLabel">List Image Scaling</span>
-        <span
-          className="statusValue"
-          onClick={() =>
-            controls.setListSize(getNext(LIST_SIZE, status.listSize.key))
-          }
-        >
-          {status.listSize.title}
-        </span>
-      </div>
-      <div className="statusToast">
         <span className="statusLabel">
           Filter <strong>(A, J, V, G)</strong>
         </span>
