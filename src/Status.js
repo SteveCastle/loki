@@ -1,5 +1,6 @@
 import React from "react";
 const electron = window.require("electron");
+import HotKeyController from "./HotKeyController";
 
 import {
   SORT,
@@ -11,21 +12,30 @@ import {
   LIST_SIZE
 } from "./constants";
 import { getFolder } from "./fsTools";
-function Status({ status = {}, controls = {} }) {
+function Status({ status = {}, controls = {} }, visible) {
   return (
-    <div className="statusContainer">
+    <div
+      className={`statusContainer ${!visible ? "hidden" : ""}`}
+      tabindex="-1"
+    >
       <div className="windowControls">
         <span
           className="closeControl"
           onClick={e => electron.remote.getCurrentWindow().close()}
+          disabled="disabled"
+          tabIndex="-1"
         />
         <span
           className="windowedControl"
           onClick={e => electron.remote.getCurrentWindow().setFullScreen(false)}
+          disabled="disabled"
+          tabIndex="-1"
         />
         <span
           className="fullScreenControl"
           onClick={e => electron.remote.getCurrentWindow().setFullScreen(true)}
+          disabled="disabled"
+          tabIndex="-1"
         />
       </div>
       <div className="statusToast">

@@ -5,6 +5,7 @@ import ReactDOM from "react-dom";
 import "babel-polyfill";
 import "./style.css";
 import HotKeyController from "./HotKeyController";
+import { getFolder } from "./fsTools";
 
 import Detail from "./Detail";
 import List from "./List";
@@ -69,14 +70,20 @@ function App() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
-      const data = await loadImageList({
-        filePath,
-        filter: filter.value,
-        sortOrder: sort,
+      const data = await loadImageList(
+        getFolder(filePath),
+        filter.value,
+        sort,
         recursive
-      });
+      );
       setItems(data.items);
-      setCursor(data.cursor);
+      let cursor = data.items.findIndex(item => {
+        return item.fileName === filePath;
+      });
+      if (cursor < 0) {
+        cursor = 0;
+      }
+      setCursor(cursor);
       setLoading(false);
     }
     if (filePath.length > 1) {
@@ -157,20 +164,62 @@ function App() {
     }
   }
 
-  if (items.length === 0 || loading) {
+  if (loading) {
     return (
       <div
         tabIndex="0"
         onKeyPress={handleKeyPress}
-        className="noItemsContainer"
+        className="loadingContainer"
       >
         <Spinner />
       </div>
     );
   }
 
+  if (items.length === 0) {
+    return (
+      <React.Fragment>
+        <HotKeyController handleKeyPress={handleKeyPress} />
+        <SettingsButton handleClick={() => setStatus(!status)} />
+        <div className="dragArea"></div>
+        {status && (
+          <Status
+            status={{
+              filePath,
+              sort,
+              filter,
+              size,
+              listSize,
+              controlMode,
+              recursive,
+              items
+            }}
+            controls={{
+              changePath,
+              setSort,
+              setFilter,
+              setSize,
+              setListSize,
+              setControlMode,
+              setRecursive
+            }}
+          />
+        )}
+        <div
+          tabIndex="0"
+          onKeyPress={handleKeyPress}
+          className="noItemsContainer"
+        >
+          <span className="noItemsMessage">No Images Found</span>
+        </div>
+      </React.Fragment>
+    );
+  }
+
   return (
     <React.Fragment>
+      <HotKeyController handleKeyPress={handleKeyPress} />
+
       <SettingsButton handleClick={() => setStatus(!status)} />
       <div className="dragArea"></div>
       {status && (
@@ -199,7 +248,6 @@ function App() {
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>
-          <HotKeyController handleKeyPress={handleKeyPress} />
           <HotCorner handleClick={() => setView(VIEW.LIST)} />
           <Detail
             fileName={items[cursor].fileName}
@@ -219,7 +267,7 @@ function App() {
             tall={tall}
             cursor={cursor}
             controlMode={controlMode}
-            handleKeyPress={handleKeyPress}
+            setPath={setPath}
             handleClick={i => {
               setCursor(i);
               setView(VIEW.DETAIL);

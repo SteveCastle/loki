@@ -128,6 +128,17 @@ body {
   max-width: 100%;
 }
 
+.loadingContainer {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loadingContainer h1 {
+  display: block;
+}
 .noItemsContainer {
   height: 100%;
   width: 100%;
@@ -136,10 +147,9 @@ body {
   justify-content: center;
 }
 
-.noItemsContainer h1 {
+.noItemsMessage {
   display: block;
 }
-
 .hotkeyController {
   position: absolute;
   opacity: 0;
@@ -157,6 +167,7 @@ body {
   padding: 8px 16px;
   position: fixed;
   user-select: none;
+  opacity: 0.8;
 }
 
 .dragArea {

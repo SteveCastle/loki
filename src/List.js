@@ -18,6 +18,7 @@ const Cell = ({ data, columnIndex, rowIndex, style }) =>
         handleClick={() =>
           data.handleClick(rowIndex * data.columns + columnIndex)
         }
+        handleRightClick={data.setPath}
         fileName={
           data.fileList[rowIndex * data.columns + columnIndex] &&
           data.fileList[rowIndex * data.columns + columnIndex].fileName
@@ -80,10 +81,9 @@ export default class List extends Component {
   }
 
   render() {
-    const { fileList, handleClick, filter } = this.props;
+    const { fileList, handleClick, setPath } = this.props;
     return (
       <div className="container" data-tid="container">
-        <HotKeyController handleKeyPress={this.props.handleKeyPress} />
         <Grid
           ref={r => {
             this.gridRef = r;
@@ -98,6 +98,7 @@ export default class List extends Component {
           itemData={{
             fileList,
             handleClick,
+            setPath,
             columns: this.columns,
             size: this.props.size
           }}
