@@ -10,7 +10,6 @@ export const CONTROL_MODE = {
 
 export const SIZE = {
   OVERSCAN: { title: "Over Scan", className: "overscan", key: "OVERSCAN" },
-  FILL: { title: "Fill Screen", className: "fill", key: "FILL" },
   FIT: { title: "Fit Screen", className: "fit", key: "FIT" },
   ACTUAL: { title: "Actual", className: "actual", key: "ACTUAL" }
 };
