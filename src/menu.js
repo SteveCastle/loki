@@ -75,6 +75,13 @@ class MenuBuilder {
           click: () => {
             this.mainWindow.setFullScreen(!this.mainWindow.isFullScreen());
           }
+        },
+        {
+          label: "Toggle Always On Top",
+          accelerator: "Ctrl+Command+T",
+          click: () => {
+            this.mainWindow.setAlwaysOnTop(!this.mainWindow.isAlwaysOnTop());
+          }
         }
       ]
     };
@@ -82,13 +89,12 @@ class MenuBuilder {
       label: "Window",
       submenu: [
         {
-          label: "Minimize",
-          accelerator: "Command+M",
-          selector: "performMiniaturize:"
-        },
-        { label: "Close", accelerator: "Command+W", selector: "performClose:" },
-        { type: "separator" },
-        { label: "Bring All to Front", selector: "arrangeInFront:" }
+          label: "Toggle Always On Top",
+          accelerator: "Ctrl+Command+T",
+          click: () => {
+            this.mainWindow.setAlwaysOnTop(!this.mainWindow.isAlwaysOnTop());
+          }
+        }
       ]
     };
     const subMenuHelp = {
@@ -117,7 +123,7 @@ class MenuBuilder {
 
     const subMenuView = subMenuViewDev;
 
-    return [subMenuAbout, subMenuFile, subMenuView, subMenuWindow, subMenuHelp];
+    return [subMenuAbout, subMenuView, subMenuHelp];
   }
 
   buildDefaultTemplate() {
