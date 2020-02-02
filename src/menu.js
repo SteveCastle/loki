@@ -52,10 +52,6 @@ class MenuBuilder {
     const subMenuAbout = {
       label: "Low Key Image Viewer",
       submenu: [
-        {
-          label: "About LowKey Image Viewer",
-          selector: "orderFrontStandardAboutPanel:"
-        },
         { type: "separator" },
         {
           label: "Quit",
@@ -68,60 +64,9 @@ class MenuBuilder {
     };
     const subMenuFile = {
       label: "File",
-      submenu: [
-        {
-          label: "Open",
-          accelerator: "Command+M",
-          click: () => {
-            dialog
-              .showOpenDialog(this.mainWindow, {
-                properties: ["openFile"]
-              })
-              .then(result => {
-                !result.canceled &&
-                  this.mainWindow.loadURL(
-                    isDev
-                      ? `http://localhost:3000?${btoa(result.filePaths[0])}`
-                      : `file://${path.join(
-                          __dirname,
-                          `../build/index.html?${btoa(result.filePaths[0])}`
-                        )}`
-                  );
-              })
-              .catch(err => {
-                console.log(err);
-              });
-          }
-        }
-      ]
+      submenu: []
     };
     const subMenuViewDev = {
-      label: "View",
-      submenu: [
-        {
-          label: "Reload",
-          accelerator: "Command+R",
-          click: () => {
-            this.mainWindow.webContents.reload();
-          }
-        },
-        {
-          label: "Toggle Full Screen",
-          accelerator: "Ctrl+Command+F",
-          click: () => {
-            this.mainWindow.setFullScreen(!this.mainWindow.isFullScreen());
-          }
-        },
-        {
-          label: "Toggle Developer Tools",
-          accelerator: "Alt+Command+I",
-          click: () => {
-            this.mainWindow.toggleDevTools();
-          }
-        }
-      ]
-    };
-    const subMenuViewProd = {
       label: "View",
       submenu: [
         {
@@ -150,25 +95,19 @@ class MenuBuilder {
       label: "Help",
       submenu: [
         {
-          label: "Learn More",
-          click() {
-            shell.openExternal("https://lowkeyviewer.com");
-          }
-        },
-        {
-          label: "Documentation",
+          label: "Help",
           click() {
             shell.openExternal("https://lowkeyviewer.com/docs");
           }
         },
         {
-          label: "Community Discussions",
+          label: "Community Discussion",
           click() {
             shell.openExternal("https://lowkeyviewer.com/community");
           }
         },
         {
-          label: "Search Issues",
+          label: "Report an Issue",
           click() {
             shell.openExternal("https://lowkeyviewer.com/community/issues");
           }

@@ -60,6 +60,10 @@ function createWindow() {
         )}`
   );
   mainWindow.on("closed", () => (mainWindow = null));
+
+  // Register Menu
+  const menuBuilder = new MenuBuilder(mainWindow);
+  menuBuilder.buildMenu();
 }
 
 app.on("will-finish-launching", info => {
