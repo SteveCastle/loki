@@ -27,11 +27,14 @@ import {
 } from "./constants";
 import loadImageList from "./loadImageList";
 import Status from "./Status";
+import About from "./About";
 
 function App() {
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
+  const [about, setAbout] = useState(true);
+
   const [shuffles, setShuffles] = useState(true);
   const [firstLoadCleared, setFirstLoadCleared] = useState(false);
 
@@ -268,6 +271,7 @@ function App() {
           </div>
         </div>
       )}
+      {about && <About setAbout={setAbout} />}
       <SettingsButton handleClick={() => setStatus(!status)} />
       <div className="dragArea"></div>
       {status && (
@@ -291,6 +295,7 @@ function App() {
             setControlMode,
             setRecursive
           }}
+          setAbout={setAbout}
         />
       )}
 

@@ -4,12 +4,12 @@ import HotKeyController from "./HotKeyController";
 
 import { SORT, FILTER, SIZE, CONTROL_MODE, getNext } from "./constants";
 import { getFolder, saveCurrentSettings } from "./fsTools";
-function Status({ status = {}, controls = {} }, visible) {
+function Status({ status = {}, controls = {}, setAbout }) {
   return (
-    <div
-      className={`statusContainer ${!visible ? "hidden" : ""}`}
-      tabIndex="-1"
-    >
+    <div className={`statusContainer`} tabIndex="-1">
+      <div className="about" onClick={() => setAbout(true)}>
+        About
+      </div>
       <div className="windowControls">
         <span
           className="closeControl"
