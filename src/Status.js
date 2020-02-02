@@ -7,9 +7,6 @@ import { getFolder, saveCurrentSettings } from "./fsTools";
 function Status({ status = {}, controls = {}, setAbout }) {
   return (
     <div className={`statusContainer`} tabIndex="-1">
-      <div className="about" onClick={() => setAbout(true)}>
-        About
-      </div>
       <div className="windowControls">
         <span
           className="closeControl"
@@ -106,6 +103,9 @@ function Status({ status = {}, controls = {}, setAbout }) {
         }
       >
         Save Settings
+      </button>
+      <button className="aboutButton" onClick={() => setAbout(true)}>
+        About
       </button>
     </div>
   );
