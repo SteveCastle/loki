@@ -1,4 +1,5 @@
 var is = window.require("electron-is");
+const settings = window.require("electron-settings");
 
 export const getFolder = filePath => {
   const matchDirectory = is.windows() ? "\\" : "/";
@@ -9,3 +10,23 @@ export const getFolder = filePath => {
   );
   return folderPath;
 };
+
+export function saveCurrentSettings({
+  controlMode,
+  defaultSort,
+  scaleMode,
+  defaultFilter
+}) {
+  if (controlMode) {
+    settings.set("settings.controlMode", controlMode);
+  }
+  if (defaultSort) {
+    settings.set("settings.defaultSort", defaultSort);
+  }
+  if (scaleMode) {
+    settings.set("settings.scaleMode", scaleMode);
+  }
+  if (defaultFilter) {
+    settings.set("settings.defaultFilter", defaultFilter);
+  }
+}

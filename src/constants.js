@@ -9,9 +9,8 @@ export const CONTROL_MODE = {
 };
 
 export const SIZE = {
-  OVERSCAN: { title: "Over Scan", className: "overscan", key: "OVERSCAN" },
-  FIT: { title: "Fit Screen", className: "fit", key: "FIT" },
-  ACTUAL: { title: "Actual", className: "actual", key: "ACTUAL" }
+  OVERSCAN: { title: "Over Scan Mode", className: "overscan", key: "OVERSCAN" },
+  ACTUAL: { title: "Actual Size", className: "actual", key: "ACTUAL" }
 };
 
 export const LIST_SIZE = {

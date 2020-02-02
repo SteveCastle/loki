@@ -2,21 +2,13 @@ import React from "react";
 const electron = window.require("electron");
 import HotKeyController from "./HotKeyController";
 
-import {
-  SORT,
-  FILTER,
-  SIZE,
-  VIEW,
-  CONTROL_MODE,
-  getNext,
-  LIST_SIZE
-} from "./constants";
-import { getFolder } from "./fsTools";
+import { SORT, FILTER, SIZE, CONTROL_MODE, getNext } from "./constants";
+import { getFolder, saveCurrentSettings } from "./fsTools";
 function Status({ status = {}, controls = {} }, visible) {
   return (
     <div
       className={`statusContainer ${!visible ? "hidden" : ""}`}
-      tabindex="-1"
+      tabIndex="-1"
     >
       <div className="windowControls">
         <span
@@ -102,6 +94,19 @@ function Status({ status = {}, controls = {} }, visible) {
           {status.recursive ? "Recursive" : "Not Recursive"}
         </span>
       </div>
+      <button
+        className="saveSettingsButton"
+        onClick={() =>
+          saveCurrentSettings({
+            controlMode: status.controlMode,
+            defaultSort: status.sort.key,
+            scaleMode: status.size.key,
+            defaultFilter: status.filter.key
+          })
+        }
+      >
+        Save Settings
+      </button>
     </div>
   );
 }

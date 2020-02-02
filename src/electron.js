@@ -29,11 +29,12 @@ function createWindow() {
       defaultView: "DETAIL",
       defaultFilter: "ALL",
       listScaleMode: "OVERSCAN",
-      controlMode: "TRACKPAD",
-      scaleMode: "OVERSCAN"
+      controlMode: "TRACK_PAD",
+      scaleMode: "OVERSCAN",
+      starts: 0
     });
   }
-
+  settings.set("settings.starts", settings.get("settings.starts") + 1);
   autoUpdater.checkForUpdatesAndNotify();
   // Configure new Window options.
   mainWindow = new BrowserWindow({

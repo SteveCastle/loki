@@ -6,29 +6,26 @@ const sorts = {
   ALPHA: (a, b) => a.fileName.localeCompare(b.fileName)
 };
 
-export default memoize(
-  async function loadImageList(
-    folderPath,
+export default async function loadImageList(
+  folderPath,
+  filter,
+  sortOrder,
+  recursive = false
+) {
+  let items = await readdir.async(folderPath, {
     filter,
-    sortOrder,
-    recursive = false
-  ) {
-    let items = await readdir.async(folderPath, {
-      filter,
-      deep: recursive,
-      basePath: folderPath,
-      stats: true
-    });
+    deep: recursive,
+    basePath: folderPath,
+    stats: true
+  });
 
-    let sortedItems = items
-      .map(item => ({
-        fileName: item.path,
-        modified: item.mtimeMs
-      }))
-      .sort(sorts[sortOrder]);
-    // Get the position of the initial item in the results, unless its not found, then return 0;
+  let sortedItems = items
+    .map(item => ({
+      fileName: item.path,
+      modified: item.mtimeMs
+    }))
+    .sort(sorts[sortOrder]);
+  // Get the position of the initial item in the results, unless its not found, then return 0;
 
-    return { items: sortedItems };
-  },
-  { length: 4 }
-);
+  return { items: sortedItems };
+}
