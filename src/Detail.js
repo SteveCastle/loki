@@ -4,7 +4,7 @@ import useScrollOnDrag from "react-scroll-ondrag";
 const url = window.require("url");
 const path = window.require("path");
 
-import { SIZE, EXTENSIONS, VIEW } from "./constants";
+import { EXTENSIONS } from "./constants";
 
 function Detail({
   fileName,

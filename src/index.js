@@ -5,7 +5,7 @@ import ReactDOM from "react-dom";
 import "babel-polyfill";
 import "./style.css";
 import HotKeyController from "./HotKeyController";
-import { getFolder } from "./fsTools";
+import { getFolder, saveCurrentSettings } from "./fsTools";
 
 import Detail from "./Detail";
 import List from "./List";
@@ -33,6 +33,7 @@ function App() {
   const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
   const [shuffles, setShuffles] = useState(true);
+  const [firstLoadCleared, setFirstLoadCleared] = useState(false);
 
   const [status, setStatus] = useState(false);
   const [items, setItems] = useState([]);
@@ -42,8 +43,10 @@ function App() {
   );
 
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
-  const [filter, setFilter] = useState(FILTER.ALL);
-  const [size, setSize] = useState(SIZE.OVERSCAN);
+  const [filter, setFilter] = useState(
+    FILTER[settings.get("settings.defaultFilter")]
+  );
+  const [size, setSize] = useState(SIZE[settings.get("settings.scaleMode")]);
   const [listSize, setListSize] = useState(LIST_SIZE.OVERSCAN);
 
   const [tall, setTall] = useState(true);
@@ -163,7 +166,6 @@ function App() {
         console.log(`pressed ${e.key}`);
     }
   }
-
   if (loading) {
     return (
       <div
@@ -219,7 +221,53 @@ function App() {
   return (
     <React.Fragment>
       <HotKeyController handleKeyPress={handleKeyPress} />
+      {settings.get("settings.starts") < 4 && !firstLoadCleared && (
+        <div className="firstLoadContainer">
+          <div className="firstLoadMenu">
+            <div
+              className="mouse option"
+              onClick={e => {
+                setControlMode(CONTROL_MODE.MOUSE);
+                saveCurrentSettings({ controlMode: CONTROL_MODE.MOUSE });
+                setFirstLoadCleared(true);
+              }}
+            >
+              <div className="iconContainer">
+                <div className="iconScroll" />
+              </div>
+              <span>
+                I am using a mouse with a scroll wheel. Scroll to change images.
+                Click and drag to pan.
+              </span>
+            </div>
+            <div
+              className="trackpad option"
+              onClick={e => {
+                setControlMode(CONTROL_MODE.TRACK_PAD);
+                saveCurrentSettings({
+                  controlMode: CONTROL_MODE.TRACK_PAD
+                });
 
+                setFirstLoadCleared(true);
+              }}
+            >
+              <div className="iconContainer">
+                <div className="trackPadScroll" />
+              </div>
+              <span>
+                I am using a laptop trackpad or Apple Magic Mouse. Tap left and
+                right side to change images. Move 2 fingers to pan.{" "}
+              </span>
+            </div>
+            <div className="changeLaterContainer">
+              <span className="changeLaterMessage">
+                You Can change this later in the settings by hovering over the
+                bottom left corner of the screen.
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
       <SettingsButton handleClick={() => setStatus(!status)} />
       <div className="dragArea"></div>
       {status && (
