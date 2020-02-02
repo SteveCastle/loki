@@ -173,6 +173,12 @@ body {
 
 .about {
   position: absolute;
+  background-color: white;
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  color: rgb(107, 105, 105);
+  border-radius: 0 4px 0 4px;
+  cursor: pointer;
   top: 0;
   right: 0;
 }
