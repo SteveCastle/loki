@@ -224,7 +224,7 @@ function App() {
   return (
     <React.Fragment>
       <HotKeyController handleKeyPress={handleKeyPress} />
-      {settings.get("settings.starts") < 4 && !firstLoadCleared && (
+      {settings.get("settings.starts") === 1 && !firstLoadCleared && (
         <div className="firstLoadContainer">
           <div className="firstLoadMenu">
             <div
