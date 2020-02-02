@@ -22,8 +22,9 @@
   position: absolute;
   width: 50px;
   height: 50px;
-  top: 0;
-  left: 0;
+  top: 8px;
+  left: 8px;
+  border-radius: 4px;
 }
 
 .aboutMenu .closeButton {
@@ -38,7 +39,7 @@
 }
 
 .aboutMenu h1 {
-  margin: 0 0 0 0;
+  margin: 8px 0 0 0;
   user-select: none;
 }
 
