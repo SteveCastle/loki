@@ -45,7 +45,7 @@ function createWindow() {
       webSecurity: false
     },
     fullscreen: settings.get("settings.openFullScreen"),
-    frame: true,
+    frame: false,
     alwaysOnTop: settings.get("settings.alwaysOnTop"),
     width: 900,
     height: 680
