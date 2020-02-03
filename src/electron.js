@@ -35,6 +35,8 @@ function createWindow() {
     });
   }
   settings.set("settings.starts", settings.get("settings.starts") + 1);
+  settings.set("settings.lastStart", new Date());
+
   autoUpdater.checkForUpdatesAndNotify();
   // Configure new Window options.
   mainWindow = new BrowserWindow({
