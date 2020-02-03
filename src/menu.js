@@ -85,15 +85,19 @@ class MenuBuilder {
         }
       ]
     };
-    const subMenuWindow = {
-      label: "Window",
+    const subMenuEdit = {
+      label: "Edit",
       submenu: [
+        { label: "Undo", accelerator: "CmdOrCtrl+Z", selector: "undo:" },
+        { label: "Redo", accelerator: "Shift+CmdOrCtrl+Z", selector: "redo:" },
+        { type: "separator" },
+        { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
+        { label: "Copy", accelerator: "CmdOrCtrl+C", selector: "copy:" },
+        { label: "Paste", accelerator: "CmdOrCtrl+V", selector: "paste:" },
         {
-          label: "Toggle Always On Top",
-          accelerator: "Ctrl+Command+T",
-          click: () => {
-            this.mainWindow.setAlwaysOnTop(!this.mainWindow.isAlwaysOnTop());
-          }
+          label: "Select All",
+          accelerator: "CmdOrCtrl+A",
+          selector: "selectAll:"
         }
       ]
     };
@@ -123,7 +127,7 @@ class MenuBuilder {
 
     const subMenuView = subMenuViewDev;
 
-    return [subMenuAbout, subMenuView, subMenuHelp];
+    return [subMenuAbout, subMenuView, subMenuEdit, subMenuHelp];
   }
 
   buildDefaultTemplate() {
@@ -184,6 +188,26 @@ class MenuBuilder {
                   }
                 }
               ]
+      },
+      {
+        label: "Edit",
+        submenu: [
+          { label: "Undo", accelerator: "CmdOrCtrl+Z", selector: "undo:" },
+          {
+            label: "Redo",
+            accelerator: "Shift+CmdOrCtrl+Z",
+            selector: "redo:"
+          },
+          { type: "separator" },
+          { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
+          { label: "Copy", accelerator: "CmdOrCtrl+C", selector: "copy:" },
+          { label: "Paste", accelerator: "CmdOrCtrl+V", selector: "paste:" },
+          {
+            label: "Select All",
+            accelerator: "CmdOrCtrl+A",
+            selector: "selectAll:"
+          }
+        ]
       },
       {
         label: "Help",
