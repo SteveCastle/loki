@@ -11,7 +11,8 @@
   z-index: 99999;
   padding: 8px;
   position: relative;
-  width: 600px;
+  max-width: 600px;
+  min-width: 600px;
   background: black;
   border-radius: 8px;
   opacity: 0.8;
@@ -78,6 +79,7 @@
   background-color: white;
   border-radius: 8;
   padding: 8px 16px;
+  text-transform: uppercase;
 }
 
 .aboutMenu button {
@@ -104,4 +106,10 @@
 .aboutMenu .registrationStatus {
   display: block;
   user-select: none;
+}
+
+.aboutMenu .message {
+  display: block;
+  width: 600px;
+  margin: 10px 0 0 0;
 }
