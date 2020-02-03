@@ -24,14 +24,14 @@ function createWindow() {
     settings.set("settings", {
       alwaysOnTop: true,
       openFullScreen: true,
-      frame: false,
       defaultSort: "ALPHA",
       defaultView: "DETAIL",
       defaultFilter: "ALL",
       listScaleMode: "OVERSCAN",
       controlMode: "TRACK_PAD",
       scaleMode: "OVERSCAN",
-      starts: 0
+      starts: 0,
+      registration: true
     });
   }
   settings.set("settings.starts", settings.get("settings.starts") + 1);

@@ -33,7 +33,7 @@ function App() {
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
-  const [about, setAbout] = useState(true);
+  const [about, setAbout] = useState(!settings.get("settings.registration"));
 
   const [shuffles, setShuffles] = useState(true);
   const [firstLoadCleared, setFirstLoadCleared] = useState(false);
@@ -184,7 +184,7 @@ function App() {
   if (items.length === 0) {
     return (
       <React.Fragment>
-        <HotKeyController handleKeyPress={handleKeyPress} />
+        {!about && <HotKeyController handleKeyPress={handleKeyPress} />}
         <SettingsButton handleClick={() => setStatus(!status)} />
         <div className="dragArea"></div>
         {status && (
@@ -223,7 +223,7 @@ function App() {
 
   return (
     <React.Fragment>
-      <HotKeyController handleKeyPress={handleKeyPress} />
+      {!about && <HotKeyController handleKeyPress={handleKeyPress} />}
       {settings.get("settings.starts") === 1 && !firstLoadCleared && (
         <div className="firstLoadContainer">
           <div className="firstLoadMenu">
@@ -258,8 +258,8 @@ function App() {
                 <div className="trackPadScroll" />
               </div>
               <span>
-                I am using a laptop trackpad or Apple Magic Mouse. Tap left and
-                right side to change images. Move 2 fingers to pan.{" "}
+                I am using a laptop trackpad or Apple Magic Mouse. Tap left or
+                right side to flip images. Drag 2 fingers to pan.{" "}
               </span>
             </div>
             <div className="changeLaterContainer">
