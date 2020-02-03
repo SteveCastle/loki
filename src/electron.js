@@ -30,8 +30,7 @@ function createWindow() {
       listScaleMode: "OVERSCAN",
       controlMode: "TRACK_PAD",
       scaleMode: "OVERSCAN",
-      starts: 0,
-      registration: true
+      starts: 0
     });
   }
   settings.set("settings.starts", settings.get("settings.starts") + 1);
@@ -46,7 +45,7 @@ function createWindow() {
       webSecurity: false
     },
     fullscreen: settings.get("settings.openFullScreen"),
-    frame: false,
+    frame: true,
     alwaysOnTop: settings.get("settings.alwaysOnTop"),
     width: 900,
     height: 680

@@ -33,7 +33,7 @@ function App() {
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
-  const [about, setAbout] = useState(!settings.get("settings.registration"));
+  const [about, setAbout] = useState(!settings.get("licenseKey"));
 
   const [shuffles, setShuffles] = useState(true);
   const [firstLoadCleared, setFirstLoadCleared] = useState(false);
