@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import FocusLock from "react-focus-lock";
+
 import "./About.css";
 var shell = window.require("electron").shell;
 const settings = window.require("electron-settings");
@@ -84,20 +86,22 @@ function About({ setAbout }) {
         </div>
         {!registration && (
           <React.Fragment>
-            <input
-              type="text"
-              placeholder="REGISTRATION KEY"
-              onChange={e => setKeyInput(e.target.value)}
-              value={keyInput}
-            />
-            <span className="message">{message}</span>
-            <button
-              onClick={() => {
-                setKey(keyInput);
-              }}
-            >
-              Register
-            </button>
+            <FocusLock>
+              <input
+                type="text"
+                placeholder="REGISTRATION KEY"
+                onChange={e => setKeyInput(e.target.value)}
+                value={keyInput}
+              />
+              <span className="message">{message}</span>
+              <button
+                onClick={() => {
+                  setKey(keyInput);
+                }}
+              >
+                Register
+              </button>
+            </FocusLock>
           </React.Fragment>
         )}
       </div>

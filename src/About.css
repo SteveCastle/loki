@@ -3,8 +3,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  top: 50px;
   height: 100%;
   width: 100%;
+  position: fixed;
+  pointer-events: none;
 }
 
 .aboutMenu {
@@ -17,6 +20,7 @@
   border-radius: 8px;
   opacity: 0.8;
   text-align: center;
+  pointer-events: all;
 }
 
 .aboutMenu img {
