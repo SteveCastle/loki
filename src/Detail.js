@@ -18,7 +18,9 @@ function Detail({
   const { events } = useScrollOnDrag(containerRef);
   return (
     <div
-      className="container"
+      className={
+        controlMode === "MOUSE" ? "container lock-scroll" : "container"
+      }
       onClick={controlMode === "MOUSE" ? null : handleClick}
       onContextMenu={() => setPath(fileName)}
       onWheel={controlMode === "MOUSE" ? handleScroll : null}

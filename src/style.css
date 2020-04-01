@@ -27,6 +27,10 @@ body {
   align-items: center;
 }
 
+.lock-scroll {
+  overflow: hidden;
+}
+
 ::-webkit-scrollbar {
   width: 0px; /* Remove scrollbar space */
   height: 0px;

@@ -109,6 +109,7 @@ function App() {
 
   function handleScroll(e) {
     e.preventDefault();
+    e.stopPropagation();
     // If delta y is positive increase cursor value, otherwise decrease.
     e.deltaY > 0
       ? setCursor(cursor === items.length - 1 ? cursor : cursor + 1)
