@@ -1,5 +1,6 @@
 var memoize = window.require("memoizee");
 const readdir = window.require("readdir-enhanced");
+const path = window.require("path");
 
 const sorts = {
   CREATE_DATE: (a, b) => b.modified - a.modified,
@@ -20,6 +21,7 @@ export default async function loadImageList(
   });
 
   let sortedItems = items
+    .filter(item => path.basename(item.path)[0] !== ".")
     .map(item => ({
       fileName: item.path,
       modified: item.mtimeMs
