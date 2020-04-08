@@ -63,10 +63,7 @@ function About({ setAbout }) {
           </span>
           <h1>LowKey Image Viewer</h1>
         </div>
-        <span className="version">
-          Version: 1.0.5
-          <span className="updateCheck">(Check for Updates)</span>
-        </span>
+        <span className="version">Version: 1.0.5</span>
         <div className="registrationStatusContainer">
           <span className="registrationStatus">
             {`Registration Status: ${

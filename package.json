@@ -30,9 +30,9 @@
     ],
     "publish": [
       {
-        "provider": "github",
-        "owner": "stephencastle",
-        "repo": "loki"
+        "provider": "s3",
+        "endpoint": "http://127.0.0.1:9000",
+        "bucket": "test-update"
       }
     ],
     "fileAssociations": [
@@ -89,6 +89,7 @@
     "btoa": "^1.2.1",
     "electron-is": "^3.0.0",
     "electron-is-dev": "^1.1.0",
+    "electron-log": "^4.0.6",
     "electron-settings": "^3.2.0",
     "electron-updater": "^4.2.0",
     "memoizee": "^0.4.14",
