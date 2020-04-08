@@ -23,7 +23,7 @@ import {
   VIEW,
   CONTROL_MODE,
   getNext,
-  LIST_SIZE
+  LIST_SIZE,
 } from "./constants";
 import loadImageList from "./loadImageList";
 import Status from "./Status";
@@ -33,7 +33,7 @@ function App() {
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
   const [loading, setLoading] = useState(false);
-  const [about, setAbout] = useState(!settings.get("licenseKey"));
+  const [about, setAbout] = useState(settings.get("settings.starts") % 5 === 0);
 
   const [shuffles, setShuffles] = useState(true);
   const [firstLoadCleared, setFirstLoadCleared] = useState(false);
@@ -59,7 +59,7 @@ function App() {
   function changePath() {
     electron.remote.dialog
       .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
-      .then(files => {
+      .then((files) => {
         console.log(files);
         if (files.filePaths.length > 0) {
           setPath(files.filePaths[0]);
@@ -83,7 +83,7 @@ function App() {
         recursive
       );
       setItems(data.items);
-      let cursor = data.items.findIndex(item => {
+      let cursor = data.items.findIndex((item) => {
         return item.fileName === filePath;
       });
       if (cursor < 0) {
@@ -198,7 +198,7 @@ function App() {
               listSize,
               controlMode,
               recursive,
-              items
+              items,
             }}
             controls={{
               changePath,
@@ -207,7 +207,7 @@ function App() {
               setSize,
               setListSize,
               setControlMode,
-              setRecursive
+              setRecursive,
             }}
           />
         )}
@@ -230,7 +230,7 @@ function App() {
           <div className="firstLoadMenu">
             <div
               className="mouse option"
-              onClick={e => {
+              onClick={(e) => {
                 setControlMode(CONTROL_MODE.MOUSE);
                 saveCurrentSettings({ controlMode: CONTROL_MODE.MOUSE });
                 setFirstLoadCleared(true);
@@ -246,10 +246,10 @@ function App() {
             </div>
             <div
               className="trackpad option"
-              onClick={e => {
+              onClick={(e) => {
                 setControlMode(CONTROL_MODE.TRACK_PAD);
                 saveCurrentSettings({
-                  controlMode: CONTROL_MODE.TRACK_PAD
+                  controlMode: CONTROL_MODE.TRACK_PAD,
                 });
 
                 setFirstLoadCleared(true);
@@ -285,7 +285,7 @@ function App() {
             listSize,
             controlMode,
             recursive,
-            items
+            items,
           }}
           controls={{
             changePath,
@@ -294,7 +294,7 @@ function App() {
             setSize,
             setListSize,
             setControlMode,
-            setRecursive
+            setRecursive,
           }}
           setAbout={setAbout}
         />
@@ -323,7 +323,7 @@ function App() {
             cursor={cursor}
             controlMode={controlMode}
             setPath={setPath}
-            handleClick={i => {
+            handleClick={(i) => {
               setCursor(i);
               setView(VIEW.DETAIL);
             }}
