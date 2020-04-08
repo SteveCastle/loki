@@ -107,19 +107,13 @@ class MenuBuilder {
         {
           label: "Help",
           click() {
-            shell.openExternal("https://lowkeyviewer.com/docs");
+            shell.openExternal("https://lowkeyviewer.com/#features");
           }
         },
         {
-          label: "Community Discussion",
+          label: "Support",
           click() {
-            shell.openExternal("https://lowkeyviewer.com/community");
-          }
-        },
-        {
-          label: "Report an Issue",
-          click() {
-            shell.openExternal("https://lowkeyviewer.com/community/issues");
+            shell.openExternal("https://lowkeyviewer.com/#support");
           }
         }
       ]

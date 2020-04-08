@@ -3,7 +3,6 @@ const app = electron.app;
 const path = require("path");
 const os = require("os");
 const btoa = require("btoa");
-const { autoUpdater } = require("electron-updater");
 const BrowserWindow = electron.BrowserWindow;
 const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
@@ -36,7 +35,6 @@ function createWindow() {
   settings.set("settings.starts", settings.get("settings.starts") + 1);
   settings.set("settings.lastStart", new Date());
 
-  autoUpdater.checkForUpdatesAndNotify();
   // Configure new Window options.
   mainWindow = new BrowserWindow({
     name: "Lowkey Image Viewer",
@@ -63,8 +61,8 @@ function createWindow() {
   mainWindow.on("closed", () => (mainWindow = null));
 
   // Register Menu
-  // const menuBuilder = new MenuBuilder(mainWindow);
-  // menuBuilder.buildMenu();
+  const menuBuilder = new MenuBuilder(mainWindow);
+  menuBuilder.buildMenu();
 }
 
 app.on("will-finish-launching", info => {
