@@ -1,7 +1,7 @@
 var is = window.require("electron-is");
 const settings = window.require("electron-settings");
 
-export const getFolder = filePath => {
+export const getFolder = (filePath) => {
   const matchDirectory = is.windows() ? "\\" : "/";
 
   const folderPath = filePath.substring(
@@ -15,7 +15,9 @@ export function saveCurrentSettings({
   controlMode,
   defaultSort,
   scaleMode,
-  defaultFilter
+  defaultFilter,
+  isAlwaysOnTop,
+  isFullScreen,
 }) {
   if (controlMode) {
     settings.set("settings.controlMode", controlMode);
@@ -29,4 +31,7 @@ export function saveCurrentSettings({
   if (defaultFilter) {
     settings.set("settings.defaultFilter", defaultFilter);
   }
+  settings.set("settings.alwaysOnTop", isAlwaysOnTop);
+
+  settings.set("settings.openFullScreen", isFullScreen);
 }

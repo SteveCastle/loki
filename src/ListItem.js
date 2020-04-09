@@ -42,7 +42,7 @@ function ListItem({ fileName, handleClick, size, handleRightClick }) {
             ref={imageRef}
             src={url.format({
               protocol: "file",
-              pathname: fileName
+              pathname: fileName,
             })}
             className={`${
               isPortrait
@@ -59,11 +59,11 @@ function ListItem({ fileName, handleClick, size, handleRightClick }) {
                 ? `${size.className}VideoPortrait`
                 : `${size.className}VideoLandscape`
             }`}
-            onLoadStart={() => setLoaded(true)}
+            onPlaying={() => setLoaded(true)}
             ref={imageRef}
             src={`${url.format({
               protocol: "file",
-              pathname: fileName
+              pathname: fileName,
             })}#t=30,120`}
             loop
             autoPlay
