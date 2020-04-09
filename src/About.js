@@ -23,8 +23,8 @@ function About({ setAbout }) {
         </div>
         <span className="version">Version: 1.0.5</span>
         <span className="registrationStatus">
-          Thank you for using Lowkey Image Viewer. If you can support the
-          development of this project you can donate on Patreon.
+          Thank you for using Lowkey Image Viewer. If you can please support
+          development of this project by becoming a Patron on Patreon.
         </span>
         <button
           onClick={() => {

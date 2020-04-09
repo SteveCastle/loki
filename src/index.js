@@ -68,6 +68,7 @@ function App() {
   }
   // Initialize State from settings.
   useEffect(() => {
+    electron.remote.getCurrentWindow().webContents.openDevTools();
     if (settings.has("settings.scaleMode")) {
       setSize(SIZE[settings.get("settings.scaleMode")]);
     }
@@ -115,7 +116,7 @@ function App() {
       ? setCursor(cursor === items.length - 1 ? cursor : cursor + 1)
       : setCursor(cursor === 0 ? cursor : cursor - 1);
   }
-
+  // TODO: Clean this up.
   function handleKeyPress(e) {
     switch (e.key) {
       case "s":
@@ -313,22 +314,20 @@ function App() {
           />
         </React.Fragment>
       ) : (
-        <React.Fragment>
-          <List
-            filter={filter}
-            fileList={items}
-            shuffles={shuffles}
-            size={listSize}
-            tall={tall}
-            cursor={cursor}
-            controlMode={controlMode}
-            setPath={setPath}
-            handleClick={(i) => {
-              setCursor(i);
-              setView(VIEW.DETAIL);
-            }}
-          />
-        </React.Fragment>
+        <List
+          filter={filter}
+          fileList={items}
+          shuffles={shuffles}
+          size={listSize}
+          tall={tall}
+          cursor={cursor}
+          controlMode={controlMode}
+          setPath={setPath}
+          handleClick={(i) => {
+            setCursor(i);
+            setView(VIEW.DETAIL);
+          }}
+        />
       )}
     </React.Fragment>
   );
