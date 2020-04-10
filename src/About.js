@@ -22,7 +22,18 @@ function About({ setAbout }) {
           <h1>LowKey Image Viewer</h1>
         </div>
         <span className="version">Version: 1.0.5</span>
-        <span className="registrationStatus">
+        <span>
+          <a
+            href=""
+            className="homePageLink"
+            onClick={() => {
+              shell.openExternal("https://lowkeyviewer.com");
+            }}
+          >
+            Get Updates and Help
+          </a>
+        </span>
+        <span className="donationReqeust">
           Thank you for using Lowkey Image Viewer. If you can please support
           development of this project by becoming a Patron on Patreon.
         </span>
