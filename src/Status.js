@@ -14,12 +14,20 @@ function Status({ status = {}, controls = {}, setAbout }) {
   );
   // Sync window always on top value with state.
   useEffect(() => {
-    electron.remote.getCurrentWindow().setAlwaysOnTop(isAlwaysOnTop);
+    console.log("is always on top:", isAlwaysOnTop);
+    if (electron.remote.getCurrentWindow().isAlwaysOnTop() !== isAlwaysOnTop) {
+      electron.remote.getCurrentWindow().setAlwaysOnTop(isAlwaysOnTop);
+      electron.remote.getCurrentWindow().focus();
+    }
   }, [isAlwaysOnTop]);
 
   // Sync isFullScreen with state.
   useEffect(() => {
-    electron.remote.getCurrentWindow().setFullScreen(isFullScreen);
+    console.log("is fullscreen:", isFullScreen);
+    if (electron.remote.getCurrentWindow().isFullScreen() !== isFullScreen) {
+      electron.remote.getCurrentWindow().setFullScreen(isFullScreen);
+      electron.remote.getCurrentWindow().focus();
+    }
   }, [isFullScreen]);
 
   return (
