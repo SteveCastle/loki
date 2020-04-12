@@ -1,28 +1,53 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 const electron = window.require("electron");
-import HotKeyController from "./HotKeyController";
+const settings = window.require("electron-settings");
 
 import { SORT, FILTER, SIZE, CONTROL_MODE, getNext } from "./constants";
 import { getFolder, saveCurrentSettings } from "./fsTools";
 function Status({ status = {}, controls = {}, setAbout }) {
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(
+    electron.remote.getCurrentWindow().isAlwaysOnTop()
+  );
+
+  const [isFullScreen, setIsFullScreen] = useState(
+    electron.remote.getCurrentWindow().isFullScreen()
+  );
+  // Sync window always on top value with state.
+  useEffect(() => {
+    console.log("is always on top:", isAlwaysOnTop);
+    if (electron.remote.getCurrentWindow().isAlwaysOnTop() !== isAlwaysOnTop) {
+      electron.remote.getCurrentWindow().setAlwaysOnTop(isAlwaysOnTop);
+      electron.remote.getCurrentWindow().focus();
+    }
+  }, [isAlwaysOnTop]);
+
+  // Sync isFullScreen with state.
+  useEffect(() => {
+    console.log("is fullscreen:", isFullScreen);
+    if (electron.remote.getCurrentWindow().isFullScreen() !== isFullScreen) {
+      electron.remote.getCurrentWindow().setFullScreen(isFullScreen);
+      electron.remote.getCurrentWindow().focus();
+    }
+  }, [isFullScreen]);
+
   return (
     <div className={`statusContainer`} tabIndex="-1">
       <div className="windowControls">
         <span
           className="closeControl"
-          onClick={e => electron.remote.getCurrentWindow().close()}
+          onClick={(e) => electron.remote.getCurrentWindow().close()}
           disabled="disabled"
           tabIndex="-1"
         />
         <span
           className="windowedControl"
-          onClick={e => electron.remote.getCurrentWindow().setFullScreen(false)}
+          onClick={(e) => setIsFullScreen(false)}
           disabled="disabled"
           tabIndex="-1"
         />
         <span
           className="fullScreenControl"
-          onClick={e => electron.remote.getCurrentWindow().setFullScreen(true)}
+          onClick={(e) => setIsFullScreen(true)}
           disabled="disabled"
           tabIndex="-1"
         />
@@ -91,6 +116,15 @@ function Status({ status = {}, controls = {}, setAbout }) {
           {status.recursive ? "Recursive" : "Not Recursive"}
         </span>
       </div>
+      <div className="statusToast">
+        <span className="statusLabel">Always on Top</span>
+        <span
+          className="statusValue"
+          onClick={(e) => setIsAlwaysOnTop(!isAlwaysOnTop)}
+        >
+          {isAlwaysOnTop ? "Yes" : "No"}
+        </span>
+      </div>
       <button
         className="saveSettingsButton"
         onClick={() =>
@@ -98,7 +132,9 @@ function Status({ status = {}, controls = {}, setAbout }) {
             controlMode: status.controlMode,
             defaultSort: status.sort.key,
             scaleMode: status.size.key,
-            defaultFilter: status.filter.key
+            defaultFilter: status.filter.key,
+            isAlwaysOnTop,
+            isFullScreen,
           })
         }
       >

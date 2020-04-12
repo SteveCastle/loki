@@ -48,7 +48,7 @@
   user-select: none;
 }
 
-.aboutMenu .updateCheck {
+.aboutMenu .homePageLink {
   user-select: none;
 
   font-size: 1rem;
@@ -58,24 +58,11 @@
   cursor: pointer;
 }
 
-.aboutMenu .updateCheck:hover {
-  color: rgb(179, 70, 62);
-}
-.aboutMenu .purchaseLink {
-  user-select: none;
-
-  font-size: 1rem;
-  color: rgb(243, 94, 83);
-  padding: 16px 0;
-  user-select: none;
-  cursor: pointer;
-}
-
-.aboutMenu .purchaseLink:hover {
+.aboutMenu .homePageLink:hover {
   color: rgb(179, 70, 62);
 }
 
-.aboutMenu input {
+.aboutMenu .aboutMenu input {
   width: 100%;
   height: 40px;
   border: none;
@@ -107,9 +94,10 @@
   display: block;
   user-select: none;
 }
-.aboutMenu .registrationStatus {
+.aboutMenu .donationReqeust {
   display: block;
   user-select: none;
+  margin-top: 10px;
 }
 
 .aboutMenu .message {

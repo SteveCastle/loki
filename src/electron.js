@@ -29,7 +29,7 @@ function createWindow() {
       listScaleMode: "OVERSCAN",
       controlMode: "TRACK_PAD",
       scaleMode: "OVERSCAN",
-      starts: 0
+      starts: 0,
     });
   }
   settings.set("settings.starts", settings.get("settings.starts") + 1);
@@ -40,13 +40,13 @@ function createWindow() {
     name: "Lowkey Image Viewer",
     webPreferences: {
       nodeIntegration: true,
-      webSecurity: false
+      webSecurity: false,
     },
     fullscreen: settings.get("settings.openFullScreen"),
     frame: false,
     alwaysOnTop: settings.get("settings.alwaysOnTop"),
     width: 900,
-    height: 680
+    height: 680,
   });
 
   // Load the react app html in the window.
@@ -65,7 +65,7 @@ function createWindow() {
   menuBuilder.buildMenu();
 }
 
-app.on("will-finish-launching", info => {
+app.on("will-finish-launching", (info) => {
   console.log("will finish launching");
 
   // Handle file open event from OS.
