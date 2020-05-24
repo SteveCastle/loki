@@ -84,6 +84,11 @@ body {
   min-height: 100%;
 }
 
+.fit-width {
+  max-width: 100%;
+  min-width: 100%;
+}
+
 .overscanImagePortrait {
   cursor: pointer;
   flex-shrink: 0;
