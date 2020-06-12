@@ -130,7 +130,7 @@ function Status({ status = {}, controls = {}, setAbout }) {
         onClick={() =>
           saveCurrentSettings({
             controlMode: status.controlMode,
-            defaultSort: status.sort.key,
+            defaultSort: status.sort,
             scaleMode: status.size.key,
             defaultFilter: status.filter.key,
             isAlwaysOnTop,
