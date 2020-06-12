@@ -6,8 +6,8 @@ Visit https://lowkeyviewer.com to download a prebuilt binary for Mac or Windows 
 ## Building from Source
 
 > ### Requirements
-> Node 14
-> Yarn
+> * Node 14
+> * Yarn
 
 To build a binary for your current operating system simply clone this repository and from the project root run yarn
 to install dependencies, and yarn build to build the binary.
