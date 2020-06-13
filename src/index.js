@@ -167,6 +167,14 @@ function App() {
         e.preventDefault();
         setFilter(FILTER.STATIC);
         break;
+      case " ":
+        e.preventDefault();
+        electron.remote.getCurrentWindow().minimize();
+        break;
+      case "p":
+        e.preventDefault();
+        electron.remote.getCurrentWindow().webContents.openDevTools();
+        break;
       default:
         e.preventDefault();
         console.log(`pressed ${e.key}`);
