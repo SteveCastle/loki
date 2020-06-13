@@ -60,7 +60,6 @@ function App() {
     electron.remote.dialog
       .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
       .then((files) => {
-        console.log(files);
         if (files.filePaths.length > 0) {
           setPath(files.filePaths[0]);
         }
@@ -110,7 +109,6 @@ function App() {
   }
 
   function handleScroll(e) {
-    e.preventDefault();
     e.stopPropagation();
     // If delta y is positive increase cursor value, otherwise decrease.
     e.deltaY > 0
@@ -119,6 +117,7 @@ function App() {
   }
   // TODO: Clean this up.
   function handleKeyPress(e) {
+    const windowRef = electron.remote.getCurrentWindow();
     switch (e.key) {
       case "s":
         e.preventDefault();
@@ -169,15 +168,22 @@ function App() {
         break;
       case " ":
         e.preventDefault();
-        electron.remote.getCurrentWindow().minimize();
+        windowRef.minimize();
         break;
       case "p":
         e.preventDefault();
-        electron.remote.getCurrentWindow().webContents.openDevTools();
+        windowRef.webContents.openDevTools();
+        break;
+      case "f":
+        e.preventDefault();
+        windowRef.setFullScreen(!windowRef.isFullScreen());
+        break;
+      case "o":
+        e.preventDefault();
+        windowRef.setAlwaysOnTop(!windowRef.isAlwaysOnTop());
         break;
       default:
         e.preventDefault();
-        console.log(`pressed ${e.key}`);
     }
   }
   if (loading) {
