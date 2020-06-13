@@ -12,6 +12,7 @@ function Status({ status = {}, controls = {}, setAbout }) {
   const [isFullScreen, setIsFullScreen] = useState(
     electron.remote.getCurrentWindow().isFullScreen()
   );
+
   // Sync window always on top value with state.
   useEffect(() => {
     console.log("is always on top:", isAlwaysOnTop);
@@ -41,13 +42,13 @@ function Status({ status = {}, controls = {}, setAbout }) {
         />
         <span
           className="windowedControl"
-          onClick={(e) => setIsFullScreen(false)}
+          onClick={(e) => electron.remote.getCurrentWindow().minimize()}
           disabled="disabled"
           tabIndex="-1"
         />
         <span
           className="fullScreenControl"
-          onClick={(e) => setIsFullScreen(true)}
+          onClick={(e) => setIsFullScreen(!isFullScreen)}
           disabled="disabled"
           tabIndex="-1"
         />

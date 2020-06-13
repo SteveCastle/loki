@@ -1,6 +1,6 @@
 import React from "react";
 import FocusLock from "react-focus-lock";
-function Detail({ handleKeyPress }) {
+function HotKeyController({ handleKeyPress }) {
   return (
     <FocusLock>
       <div
@@ -12,4 +12,4 @@ function Detail({ handleKeyPress }) {
   );
 }
 
-export default Detail;
+export default HotKeyController;
