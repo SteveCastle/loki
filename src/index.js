@@ -276,7 +276,7 @@ function App() {
               </div>
               <span>
                 I am using a laptop trackpad or Apple Magic Mouse. Tap left or
-                right side to flip images. Drag 2 fingers to pan.{" "}
+                right side to flip images. Drag 2 fingers to pan.
               </span>
             </div>
             <div className="changeLaterContainer">
