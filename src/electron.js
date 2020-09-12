@@ -1,7 +1,6 @@
 const electron = require("electron");
 const app = electron.app;
 const path = require("path");
-const os = require("os");
 const btoa = require("btoa");
 const BrowserWindow = electron.BrowserWindow;
 const settings = require("electron-settings");
@@ -40,6 +39,7 @@ function createWindow() {
     name: "Lowkey Image Viewer",
     webPreferences: {
       nodeIntegration: true,
+      enableRemoteModule: true,
       webSecurity: false,
     },
     fullscreen: settings.get("settings.openFullScreen"),

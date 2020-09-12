@@ -42,8 +42,8 @@ class MenuBuilder {
           label: "Inspect element",
           click: () => {
             this.mainWindow.inspectElement(x, y);
-          }
-        }
+          },
+        },
       ]).popup(this.mainWindow);
     });
   }
@@ -58,13 +58,13 @@ class MenuBuilder {
           accelerator: "Command+Q",
           click: () => {
             app.quit();
-          }
-        }
-      ]
+          },
+        },
+      ],
     };
     const subMenuFile = {
       label: "File",
-      submenu: []
+      submenu: [],
     };
     const subMenuViewDev = {
       label: "View",
@@ -74,16 +74,23 @@ class MenuBuilder {
           accelerator: "Ctrl+Command+F",
           click: () => {
             this.mainWindow.setFullScreen(!this.mainWindow.isFullScreen());
-          }
+          },
+        },
+        {
+          label: "Open Dev Tools",
+          accelerator: "Ctrl+Command+I",
+          click: () => {
+            this.mainWindow.openDevTools();
+          },
         },
         {
           label: "Toggle Always On Top",
           accelerator: "Ctrl+Command+T",
           click: () => {
             this.mainWindow.setAlwaysOnTop(!this.mainWindow.isAlwaysOnTop());
-          }
-        }
-      ]
+          },
+        },
+      ],
     };
     const subMenuEdit = {
       label: "Edit",
@@ -97,9 +104,9 @@ class MenuBuilder {
         {
           label: "Select All",
           accelerator: "CmdOrCtrl+A",
-          selector: "selectAll:"
-        }
-      ]
+          selector: "selectAll:",
+        },
+      ],
     };
     const subMenuHelp = {
       label: "Help",
@@ -108,15 +115,15 @@ class MenuBuilder {
           label: "Help",
           click() {
             shell.openExternal("https://lowkeyviewer.com/#features");
-          }
+          },
         },
         {
           label: "Support",
           click() {
             shell.openExternal("https://lowkeyviewer.com/#support");
-          }
-        }
-      ]
+          },
+        },
+      ],
     };
 
     const subMenuView = subMenuViewDev;
@@ -131,16 +138,16 @@ class MenuBuilder {
         submenu: [
           {
             label: "&Open",
-            accelerator: "Ctrl+O"
+            accelerator: "Ctrl+O",
           },
           {
             label: "&Close",
             accelerator: "Ctrl+W",
             click: () => {
               this.mainWindow.close();
-            }
-          }
-        ]
+            },
+          },
+        ],
       },
       {
         label: "&View",
@@ -152,7 +159,7 @@ class MenuBuilder {
                   accelerator: "Ctrl+R",
                   click: () => {
                     this.mainWindow.webContents.reload();
-                  }
+                  },
                 },
                 {
                   label: "Toggle &Full Screen",
@@ -161,15 +168,15 @@ class MenuBuilder {
                     this.mainWindow.setFullScreen(
                       !this.mainWindow.isFullScreen()
                     );
-                  }
+                  },
                 },
                 {
                   label: "Toggle &Developer Tools",
                   accelerator: "Alt+Ctrl+I",
                   click: () => {
                     this.mainWindow.toggleDevTools();
-                  }
-                }
+                  },
+                },
               ]
             : [
                 {
@@ -179,9 +186,9 @@ class MenuBuilder {
                     this.mainWindow.setFullScreen(
                       !this.mainWindow.isFullScreen()
                     );
-                  }
-                }
-              ]
+                  },
+                },
+              ],
       },
       {
         label: "Edit",
@@ -190,7 +197,7 @@ class MenuBuilder {
           {
             label: "Redo",
             accelerator: "Shift+CmdOrCtrl+Z",
-            selector: "redo:"
+            selector: "redo:",
           },
           { type: "separator" },
           { label: "Cut", accelerator: "CmdOrCtrl+X", selector: "cut:" },
@@ -199,9 +206,9 @@ class MenuBuilder {
           {
             label: "Select All",
             accelerator: "CmdOrCtrl+A",
-            selector: "selectAll:"
-          }
-        ]
+            selector: "selectAll:",
+          },
+        ],
       },
       {
         label: "Help",
@@ -210,7 +217,7 @@ class MenuBuilder {
             label: "Learn More",
             click() {
               shell.openExternal("http://electron.atom.io");
-            }
+            },
           },
           {
             label: "Documentation",
@@ -218,22 +225,22 @@ class MenuBuilder {
               shell.openExternal(
                 "https://github.com/atom/electron/tree/master/docs#readme"
               );
-            }
+            },
           },
           {
             label: "Community Discussions",
             click() {
               shell.openExternal("https://discuss.atom.io/c/electron");
-            }
+            },
           },
           {
             label: "Search Issues",
             click() {
               shell.openExternal("https://github.com/atom/electron/issues");
-            }
-          }
-        ]
-      }
+            },
+          },
+        ],
+      },
     ];
 
     return templateDefault;
