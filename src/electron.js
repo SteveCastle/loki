@@ -1,7 +1,7 @@
 const electron = require("electron");
 const app = electron.app;
 const path = require("path");
-const btoa = require("btoa");
+const { encode } = require("js-base64");
 const BrowserWindow = electron.BrowserWindow;
 const settings = require("electron-settings");
 const isDev = require("electron-is-dev");
@@ -56,10 +56,10 @@ function createWindow() {
   // Load the react app html in the window.
   mainWindow.loadURL(
     isDev
-      ? `http://localhost:3000?${btoa(filePath)}`
+      ? `http://localhost:3000?${encode(filePath)}`
       : `file://${path.join(
           __dirname,
-          `../build/index.html?${btoa(filePath)}`
+          `../build/index.html?${encode(filePath)}`
         )}`
   );
   mainWindow.on("closed", () => (mainWindow = null));
@@ -81,7 +81,7 @@ app.on("will-finish-launching", (info) => {
       mainWindow.loadURL(
         `file://${path.join(
           __dirname,
-          `../build/index.html?${btoa(filePath)}`
+          `../build/index.html?${encode(filePath)}`
         )}`
       );
   });

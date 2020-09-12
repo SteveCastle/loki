@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from "react";
 const electron = window.require("electron");
 var shuffle = window.require("shuffle-array");
 import ReactDOM from "react-dom";
-import "babel-polyfill";
 import "./style.css";
 import HotKeyController from "./HotKeyController";
 import { getFolder, saveCurrentSettings } from "./fsTools";
@@ -14,7 +13,7 @@ import SettingsButton from "./SettingsButton";
 import Spinner from "./Spinner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
-const atob = window.require("atob");
+const { decode } = window.require("js-base64");
 
 import {
   SORT,
@@ -31,7 +30,9 @@ import About from "./About";
 
 function App() {
   const [view, setView] = useState(VIEW.DETAIL);
-  const [filePath, setPath] = useState(atob(window.location.search.substr(1)));
+  const [filePath, setPath] = useState(
+    decode(window.location.search.substr(1))
+  );
   const [loading, setLoading] = useState(false);
   const [about, setAbout] = useState(settings.get("settings.starts") % 5 === 0);
 
