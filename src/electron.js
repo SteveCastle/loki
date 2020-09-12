@@ -35,19 +35,23 @@ function createWindow() {
   settings.set("settings.lastStart", new Date());
 
   // Configure new Window options.
-  mainWindow = new BrowserWindow({
+  const options = {
     name: "Lowkey Image Viewer",
     webPreferences: {
       nodeIntegration: true,
       enableRemoteModule: true,
       webSecurity: false,
     },
-    fullscreen: settings.get("settings.openFullScreen"),
     frame: false,
     alwaysOnTop: settings.get("settings.alwaysOnTop"),
     width: 900,
     height: 680,
-  });
+  };
+
+  if (settings.get("settings.openFullScreen")) {
+    options.fullscreen = true;
+  }
+  mainWindow = new BrowserWindow(options);
 
   // Load the react app html in the window.
   mainWindow.loadURL(
