@@ -59,7 +59,7 @@ function Status({ status = {}, controls = {}, setAbout }) {
         </span>
 
         <span className="statusValue" onClick={controls.changePath}>
-          {getFolder(status.filePath)}
+          {getFolder(status.filePath) || "None"}
         </span>
       </div>
       <div className="statusToast">

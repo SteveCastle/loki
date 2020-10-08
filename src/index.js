@@ -10,6 +10,8 @@ import Detail from "./Detail";
 import List from "./List";
 import HotCorner from "./HotCorner";
 import SettingsButton from "./SettingsButton";
+import Tags from "./Tags";
+
 import Spinner from "./Spinner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
@@ -40,6 +42,8 @@ function App() {
   const [firstLoadCleared, setFirstLoadCleared] = useState(false);
 
   const [status, setStatus] = useState(false);
+  const [tagView, setTagView] = useState(false);
+
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
   const [controlMode, setControlMode] = useState(
@@ -138,10 +142,6 @@ function App() {
         e.preventDefault();
         setRecursive(!recursive);
         break;
-      case "t":
-        e.preventDefault();
-        setTall(!tall);
-        break;
       case "g":
         e.preventDefault();
         setFilter(FILTER.GIF);
@@ -178,6 +178,10 @@ function App() {
       case "f":
         e.preventDefault();
         windowRef.setFullScreen(!windowRef.isFullScreen());
+        break;
+      case "t":
+        e.preventDefault();
+        setTagView(!tagView);
         break;
       case "o":
         e.preventDefault();
@@ -316,10 +320,10 @@ function App() {
           setAbout={setAbout}
         />
       )}
-
       {view === VIEW.DETAIL ? (
         <React.Fragment>
           <HotCorner handleClick={() => setView(VIEW.LIST)} />
+          {tagView && <Tags onHide={() => setTagView(false)} />}
           <Detail
             fileName={items[cursor].fileName}
             size={size}
