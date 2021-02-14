@@ -10,6 +10,10 @@ function Detail({
   fileName,
   size,
   audio,
+  volume,
+  videoControls,
+  setAudio,
+  setVolume,
   handleClick,
   handleScroll,
   controlMode,
@@ -48,8 +52,14 @@ function Detail({
           })}
           loop
           autoPlay
-          controls
+          controls={videoControls}
+          controlsList="nofullscreen nodownload noremoteplayback"
           muted={!audio}
+          onLoadStart={(e) => (e.target.volume = volume)}
+          onVolumeChange={(e) => {
+            setVolume(e.target.volume);
+            setAudio(!e.target.muted);
+          }}
         />
       )}
     </div>

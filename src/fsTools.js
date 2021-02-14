@@ -17,6 +17,7 @@ export function saveCurrentSettings({
   scaleMode,
   defaultFilter,
   audio,
+  videoControls,
   isAlwaysOnTop,
   isFullScreen,
 }) {
@@ -30,8 +31,10 @@ export function saveCurrentSettings({
     settings.set("settings.scaleMode", scaleMode);
   }
   if (audio != null) {
-    console.log("Setting Audio", audio);
     settings.set("settings.audio", audio);
+  }
+  if (videoControls != null) {
+    settings.set("settings.videoControls", videoControls);
   }
   if (defaultFilter) {
     settings.set("settings.defaultFilter", defaultFilter);
