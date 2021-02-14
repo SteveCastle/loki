@@ -46,6 +46,11 @@ function App() {
     CONTROL_MODE[settings.get("settings.controlMode")]
   );
   const [audio, setAudio] = useState(settings.get("settings.audio"));
+  const [videoControls, setVideoControls] = useState(
+    settings.get("settings.videoControls")
+  );
+
+  const [volume, setVolume] = useState(1);
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(
     FILTER[settings.get("settings.defaultFilter")]
@@ -227,6 +232,7 @@ function App() {
               filePath,
               sort,
               audio,
+              videoControls,
               filter,
               size,
               listSize,
@@ -239,6 +245,7 @@ function App() {
               setSort,
               setFilter,
               setAudio,
+              setVideoControls,
               setSize,
               setListSize,
               setControlMode,
@@ -319,6 +326,7 @@ function App() {
             size,
             listSize,
             audio,
+            videoControls,
             controlMode,
             recursive,
             items,
@@ -326,6 +334,7 @@ function App() {
           controls={{
             changePath,
             setAudio,
+            setVideoControls,
             setSort,
             setFilter,
             setSize,
@@ -344,6 +353,11 @@ function App() {
             fileName={items[cursor].fileName}
             size={size}
             audio={audio}
+            volume={volume}
+            videoControls={videoControls}
+            setVideoControls={setVideoControls}
+            setAudio={setAudio}
+            setVolume={setVolume}
             handleClick={handleClick}
             handleScroll={handleScroll}
             controlMode={controlMode}

@@ -107,14 +107,21 @@ function Status({ status = {}, controls = {}, setAbout }) {
         </span>
       </div>
       <div className="statusToast">
-        <span className="statusLabel">
-          Video Sound <strong>(V)</strong>
-        </span>
+        <span className="statusLabel">Video Sound</span>
         <span
           className="statusValue"
           onClick={() => controls.setAudio(!status.audio)}
         >
           {status.audio ? "Sound On" : "Sound Off"}
+        </span>
+      </div>
+      <div className="statusToast">
+        <span className="statusLabel">Video Controls</span>
+        <span
+          className="statusValue"
+          onClick={() => controls.setVideoControls(!status.videoControls)}
+        >
+          {status.videoControls ? "Controls On" : "Controls Off"}
         </span>
       </div>
       <div className="statusToast">
@@ -144,6 +151,7 @@ function Status({ status = {}, controls = {}, setAbout }) {
             scaleMode: status.size.key,
             defaultFilter: status.filter.key,
             audio: status.audio,
+            videoControls: status.videoControls,
             isAlwaysOnTop,
             isFullScreen,
           })
