@@ -9,10 +9,11 @@ import { EXTENSIONS } from "./constants";
 function Detail({
   fileName,
   size,
+  audio,
   handleClick,
   handleScroll,
   controlMode,
-  setPath
+  setPath,
 }) {
   const containerRef = useRef(null);
   const { events } = useScrollOnDrag(containerRef);
@@ -33,7 +34,7 @@ function Detail({
           key={fileName}
           src={url.format({
             protocol: "file",
-            pathname: fileName
+            pathname: fileName,
           })}
           className={size.className}
         />
@@ -43,12 +44,11 @@ function Detail({
           className={size.className}
           src={url.format({
             protocol: "file",
-            pathname: fileName
+            pathname: fileName,
           })}
           loop
           autoPlay
-          muted
-          controls
+          muted={!audio}
         />
       )}
     </div>

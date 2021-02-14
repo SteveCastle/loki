@@ -70,12 +70,9 @@ function createWindow() {
 }
 
 app.on("will-finish-launching", (info) => {
-  console.log("will finish launching");
-
   // Handle file open event from OS.
   app.on("open-file", (event, newFilePath) => {
     event.preventDefault();
-    console.log("on file open fired", newFilePath);
     filePath = newFilePath;
     mainWindow &&
       mainWindow.loadURL(

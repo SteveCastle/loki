@@ -15,7 +15,6 @@ function Status({ status = {}, controls = {}, setAbout }) {
 
   // Sync window always on top value with state.
   useEffect(() => {
-    console.log("is always on top:", isAlwaysOnTop);
     if (electron.remote.getCurrentWindow().isAlwaysOnTop() !== isAlwaysOnTop) {
       electron.remote.getCurrentWindow().setAlwaysOnTop(isAlwaysOnTop);
       electron.remote.getCurrentWindow().focus();
@@ -24,7 +23,6 @@ function Status({ status = {}, controls = {}, setAbout }) {
 
   // Sync isFullScreen with state.
   useEffect(() => {
-    console.log("is fullscreen:", isFullScreen);
     if (electron.remote.getCurrentWindow().isFullScreen() !== isFullScreen) {
       electron.remote.getCurrentWindow().setFullScreen(isFullScreen);
       electron.remote.getCurrentWindow().focus();
@@ -109,6 +107,17 @@ function Status({ status = {}, controls = {}, setAbout }) {
         </span>
       </div>
       <div className="statusToast">
+        <span className="statusLabel">
+          Video Sound <strong>(V)</strong>
+        </span>
+        <span
+          className="statusValue"
+          onClick={() => controls.setAudio(!status.audio)}
+        >
+          {status.audio ? "Sound On" : "Sound Off"}
+        </span>
+      </div>
+      <div className="statusToast">
         <span className="statusLabel">Recursive (R)</span>
         <span
           className="statusValue"
@@ -134,6 +143,7 @@ function Status({ status = {}, controls = {}, setAbout }) {
             defaultSort: status.sort,
             scaleMode: status.size.key,
             defaultFilter: status.filter.key,
+            audio: status.audio,
             isAlwaysOnTop,
             isFullScreen,
           })

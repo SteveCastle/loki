@@ -9,7 +9,7 @@ const Cell = ({ data, columnIndex, rowIndex, style }) =>
       tabIndex="0"
       style={{
         ...style,
-        overflow: "hidden"
+        overflow: "hidden",
       }}
     >
       <ListItem
@@ -34,7 +34,7 @@ export default class List extends Component {
     super(props);
     this.state = {
       width: window.innerWidth,
-      height: window.innerHeight
+      height: window.innerHeight,
     };
   }
 
@@ -47,14 +47,13 @@ export default class List extends Component {
     : Math.ceil(Math.sqrt(this.props.fileList.length));
 
   handleResize() {
-    console.log("resizing to:", window.innerWidth);
     this.setState({ width: window.innerWidth, height: window.innerHeight });
   }
   componentDidMount() {
     this.gridRef.scrollToItem({
       columnIndex: this.props.cursor % this.columns,
 
-      rowIndex: Math.floor(this.props.cursor / this.columns)
+      rowIndex: Math.floor(this.props.cursor / this.columns),
     });
     window.addEventListener("resize", this.handleResize.bind(this));
   }
@@ -62,7 +61,7 @@ export default class List extends Component {
     this.gridRef.scrollToItem({
       columnIndex: this.props.cursor % this.columns,
 
-      rowIndex: Math.floor(this.props.cursor / this.columns)
+      rowIndex: Math.floor(this.props.cursor / this.columns),
     });
   }
 
@@ -85,7 +84,7 @@ export default class List extends Component {
     return (
       <div className="container" data-tid="container">
         <Grid
-          ref={r => {
+          ref={(r) => {
             this.gridRef = r;
           }}
           columnCount={this.columns}
@@ -100,7 +99,7 @@ export default class List extends Component {
             handleClick,
             setPath,
             columns: this.columns,
-            size: this.props.size
+            size: this.props.size,
           }}
         >
           {Cell}
