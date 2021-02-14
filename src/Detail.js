@@ -48,6 +48,7 @@ function Detail({
           })}
           loop
           autoPlay
+          controls
           muted={!audio}
         />
       )}
