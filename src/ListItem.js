@@ -1,4 +1,4 @@
-import React, { useRef, useLayoutEffect, useState } from "react";
+import React, { useRef, useEffect, useState } from "react";
 import useScrollOnDrag from "react-scroll-ondrag";
 
 const url = window.require("url");
@@ -15,10 +15,13 @@ function ListItem({ fileName, handleClick, size, handleRightClick }) {
   const { events } = useScrollOnDrag(containerRef);
 
   // Set scroll position of list item closer to middle top.
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (loaded) {
       if (imageRef.current.offsetHeight > imageRef.current.offsetWidth) {
         setPortrait(true);
+        setLoaded(false);
+      } else {
+        setPortrait(false);
       }
       const verticalCenter =
         (imageRef.current.scrollHeight - containerRef.current.offsetHeight) / 2;
@@ -26,7 +29,7 @@ function ListItem({ fileName, handleClick, size, handleRightClick }) {
         (imageRef.current.scrollWidth - containerRef.current.offsetWidth) / 2;
       containerRef.current.scrollTo(horizontalCenter, verticalCenter);
     }
-  }, [loaded]);
+  });
   return (
     <React.Fragment>
       <div
@@ -37,7 +40,9 @@ function ListItem({ fileName, handleClick, size, handleRightClick }) {
       >
         {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
           <img
-            onLoad={() => setLoaded(true)}
+            onLoad={() => {
+              setLoaded(true);
+            }}
             key={fileName}
             ref={imageRef}
             src={url.format({

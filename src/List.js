@@ -74,7 +74,7 @@ export default class List extends Component {
       this.props.cursor !== prevProps.cursor ||
       this.props.items !== prevProps.items ||
       this.props.size !== prevProps.size ||
-      this.props.shuffle !== prevProps.shuffle ||
+      this.props.shuffles !== prevProps.shuffles ||
       this.state.width !== prevState.width
     );
   }
