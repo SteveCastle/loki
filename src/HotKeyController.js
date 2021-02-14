@@ -6,7 +6,7 @@ function HotKeyController({ handleKeyPress }) {
       <div
         className="hotkeyController"
         tabIndex="0"
-        onKeyPress={handleKeyPress}
+        onKeyDown={handleKeyPress}
       />
     </FocusLock>
   );

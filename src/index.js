@@ -45,7 +45,7 @@ function App() {
   const [controlMode, setControlMode] = useState(
     CONTROL_MODE[settings.get("settings.controlMode")]
   );
-
+  const [audio, setAudio] = useState(settings.get("settings.audio"));
   const [sort, setSort] = useState(SORT[settings.get("settings.defaultSort")]);
   const [filter, setFilter] = useState(
     FILTER[settings.get("settings.defaultFilter")]
@@ -183,6 +183,22 @@ function App() {
         e.preventDefault();
         windowRef.setAlwaysOnTop(!windowRef.isAlwaysOnTop());
         break;
+      case "ArrowRight":
+        e.preventDefault();
+        setCursor(cursor === items.length - 1 ? cursor : cursor + 1);
+        break;
+      case "ArrowLeft":
+        e.preventDefault();
+        setCursor(cursor === 0 ? cursor : cursor - 1);
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setCursor(cursor === items.length - 1 ? cursor : cursor + 1);
+        break;
+      case "ArrowDown":
+        e.preventDefault();
+        setCursor(cursor === 0 ? cursor : cursor - 1);
+        break;
       default:
         e.preventDefault();
     }
@@ -210,6 +226,7 @@ function App() {
             status={{
               filePath,
               sort,
+              audio,
               filter,
               size,
               listSize,
@@ -221,6 +238,7 @@ function App() {
               changePath,
               setSort,
               setFilter,
+              setAudio,
               setSize,
               setListSize,
               setControlMode,
@@ -300,12 +318,14 @@ function App() {
             filter,
             size,
             listSize,
+            audio,
             controlMode,
             recursive,
             items,
           }}
           controls={{
             changePath,
+            setAudio,
             setSort,
             setFilter,
             setSize,
@@ -323,6 +343,7 @@ function App() {
           <Detail
             fileName={items[cursor].fileName}
             size={size}
+            audio={audio}
             handleClick={handleClick}
             handleScroll={handleScroll}
             controlMode={controlMode}
