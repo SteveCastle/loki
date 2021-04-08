@@ -9,7 +9,6 @@ import { getFolder, saveCurrentSettings } from "./fsTools";
 import Detail from "./Detail";
 import List from "./List";
 import HotCorner from "./HotCorner";
-import SettingsButton from "./SettingsButton";
 import Spinner from "./Spinner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
@@ -25,7 +24,7 @@ import {
   LIST_SIZE,
 } from "./constants";
 import loadImageList from "./loadImageList";
-import Status from "./Status";
+import CommandPalette from "./CommandPalette";
 import About from "./About";
 
 function App() {
@@ -39,7 +38,7 @@ function App() {
   const [shuffles, setShuffles] = useState(true);
   const [firstLoadCleared, setFirstLoadCleared] = useState(false);
 
-  const [status, setStatus] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
   const [controlMode, setControlMode] = useState(
@@ -127,7 +126,7 @@ function App() {
     switch (e.key) {
       case "s":
         e.preventDefault();
-        setSort(getNext(SORT, sort));
+        setSort(getNext(SORT, sort.key));
         break;
       case "c":
         e.preventDefault();
@@ -136,7 +135,7 @@ function App() {
         break;
       case "m":
         e.preventDefault();
-        setControlMode(getNext(CONTROL_MODE, controlMode));
+        setControlMode(getNext(CONTROL_MODE, controlMode.key));
 
         break;
       case "r":
@@ -224,10 +223,9 @@ function App() {
     return (
       <React.Fragment>
         {!about && <HotKeyController handleKeyPress={handleKeyPress} />}
-        <SettingsButton handleClick={() => setStatus(!status)} />
         <div className="dragArea"></div>
-        {status && (
-          <Status
+        {commandPaletteOpen && (
+          <CommandPalette
             status={{
               filePath,
               sort,
@@ -251,12 +249,18 @@ function App() {
               setControlMode,
               setRecursive,
             }}
+            setCommandPaletteOpen={setCommandPaletteOpen}
+            position={commandPaletteOpen}
           />
         )}
         <div
           tabIndex="0"
           onKeyPress={handleKeyPress}
           className="noItemsContainer"
+          onContextMenu={(e) => {
+            setCommandPaletteOpen({ x: screenX, y: screenY });
+            console.log(e);
+          }}
         >
           <span className="noItemsMessage">No Images Found</span>
         </div>
@@ -315,11 +319,11 @@ function App() {
         </div>
       )}
       {about && <About setAbout={setAbout} />}
-      <SettingsButton handleClick={() => setStatus(!status)} />
       <div className="dragArea"></div>
-      {status && (
-        <Status
+      {commandPaletteOpen && (
+        <CommandPalette
           status={{
+            fileName: items[cursor].fileName,
             filePath,
             sort,
             filter,
@@ -343,6 +347,8 @@ function App() {
             setRecursive,
           }}
           setAbout={setAbout}
+          position={commandPaletteOpen}
+          setCommandPaletteOpen={setCommandPaletteOpen}
         />
       )}
 
@@ -361,7 +367,10 @@ function App() {
             handleClick={handleClick}
             handleScroll={handleScroll}
             controlMode={controlMode}
-            setPath={setPath}
+            handleRightClick={(e) => {
+              setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
+              console.log(e);
+            }}
           />
         </React.Fragment>
       ) : (
@@ -374,9 +383,13 @@ function App() {
           cursor={cursor}
           controlMode={controlMode}
           setPath={setPath}
-          handleClick={(i) => {
+          handleSelection={(i) => {
             setCursor(i);
             setView(VIEW.DETAIL);
+          }}
+          handleRightClick={(e) => {
+            setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
+            console.log("set command palette open to:", e);
           }}
         />
       )}

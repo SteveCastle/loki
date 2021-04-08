@@ -15,10 +15,9 @@ const Cell = ({ data, columnIndex, rowIndex, style }) =>
       <ListItem
         className="listImage"
         size={data.size}
-        handleClick={() =>
-          data.handleClick(rowIndex * data.columns + columnIndex)
+        handleSelection={() =>
+          data.handleSelection(rowIndex * data.columns + columnIndex)
         }
-        handleRightClick={data.setPath}
         fileName={
           data.fileList[rowIndex * data.columns + columnIndex] &&
           data.fileList[rowIndex * data.columns + columnIndex].fileName
@@ -80,9 +79,13 @@ export default class List extends Component {
   }
 
   render() {
-    const { fileList, handleClick, setPath } = this.props;
+    const { fileList, handleSelection, handleRightClick } = this.props;
     return (
-      <div className="container" data-tid="container">
+      <div
+        className="container"
+        data-tid="container"
+        onContextMenu={handleRightClick}
+      >
         <Grid
           ref={(r) => {
             this.gridRef = r;
@@ -96,8 +99,7 @@ export default class List extends Component {
           width={this.state.width}
           itemData={{
             fileList,
-            handleClick,
-            setPath,
+            handleSelection,
             columns: this.columns,
             size: this.props.size,
           }}

@@ -1,0 +1,134 @@
+.CommandPalette {
+  color: white;
+  background-color: black;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  z-index: 9999;
+  padding: 8px 16px;
+  position: fixed;
+  user-select: none;
+  opacity: 0.8;
+  width: 300px;
+}
+
+.CommandPalette .windowedControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(223, 226, 31);
+}
+.CommandPalette .fullScreenControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(0, 179, 54);
+}
+.CommandPalette .closeControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(211, 3, 72);
+}
+.CommandPalette .windowedControl:hover {
+  background-color: rgb(176, 179, 27);
+}
+.CommandPalette .fullScreenControl:hover {
+  background-color: rgb(4, 133, 42);
+}
+.CommandPalette .closeControl:hover {
+  background-color: rgb(153, 6, 55);
+}
+
+.CommandPalette .menuBar {
+  display: flex;
+  flex-align: space-between;
+  margin-bottom: 4px;
+}
+.CommandPalette .menuBar .menuBarRight {
+  margin-left: auto;
+}
+.CommandPalette .menuBar .menuBarRight > button {
+  background: none;
+  border: none;
+  height: 16px;
+  width: 16px;
+  margin: 6px 0 8px 8px;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.CommandPalette .menuBar .menuBarRight > button:hover {
+  opacity: 1;
+}
+
+.CommandPalette .menuBar .menuBarRight > button img {
+  height: 16px;
+  width: 16px;
+}
+.CommandPalette .paletteBody {
+  display: flex;
+}
+.CommandPalette .options {
+  display: flex;
+  flex-direction: column;
+  margin-right: 2rem;
+  flex: 3 3 100%;
+}
+.CommandPalette .optionSection {
+  display: flex;
+  flex-direction: column;
+  flex: 3 3 100%;
+  justify-content: space-between;
+}
+
+.CommandPalette .optionSection .optionSet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.CommandPalette .optionSection label {
+  color: white;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 1rem 0 0.5rem 0;
+  text-align: left;
+}
+.CommandPalette .optionSection .optionSet .optionButton {
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.4rem;
+  text-align: left;
+  background: #181826;
+  margin: 0.2rem;
+  width: 100%;
+}
+
+.CommandPalette .optionSection .optionSet .optionButton.active {
+  background: #2f4072;
+}
+
+.CommandPalette .tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  margin-left: auto;
+}
+.CommandPalette .tabs button {
+  background: none;
+  border: none;
+  width: 20px;
+  opacity: 0.8;
+}
+
+.CommandPalette button:hover {
+  cursor: pointer;
+  opacity: 1;
+}
