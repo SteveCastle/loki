@@ -17,21 +17,21 @@ function Detail({
   handleClick,
   handleScroll,
   controlMode,
-  setPath,
+  handleRightClick,
 }) {
   const containerRef = useRef(null);
   const { events } = useScrollOnDrag(containerRef);
   return (
     <div
       className={
-        controlMode === "MOUSE" ? "container lock-scroll" : "container"
+        controlMode.key === "MOUSE" ? "container lock-scroll" : "container"
       }
-      onClick={controlMode === "MOUSE" ? null : handleClick}
-      onContextMenu={() => setPath(fileName)}
-      onWheel={controlMode === "MOUSE" ? handleScroll : null}
+      onClick={controlMode.key === "MOUSE" ? null : handleClick}
+      onContextMenu={handleRightClick}
+      onWheel={controlMode.key === "MOUSE" ? handleScroll : null}
       tabIndex="0"
       {...events}
-      ref={controlMode === "MOUSE" ? containerRef : null}
+      ref={controlMode.key === "MOUSE" ? containerRef : null}
     >
       {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
         <img

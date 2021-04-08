@@ -4,15 +4,15 @@ export const VIEW = {
 };
 
 export const CONTROL_MODE = {
-  MOUSE: "MOUSE",
-  TRACK_PAD: "TRACK_PAD",
+  MOUSE: { title: "Mouse and Scroll Wheel", key: "MOUSE" },
+  TRACK_PAD: { title: "Track Pad or Magic Mouse", key: "TRACK_PAD" },
 };
 
 export const SIZE = {
   OVERSCAN: { title: "Over Scan Mode", className: "overscan", key: "OVERSCAN" },
   ACTUAL: { title: "Actual Size", className: "actual", key: "ACTUAL" },
   FIT: { title: "Fit", className: "fit", key: "FIT" },
-  FIT_WIDTH: { title: "Fit Width", className: "fit-width", key: "WIDTH" },
+  FIT_WIDTH: { title: "Fit Width", className: "fit-width", key: "FIT_WIDTH" },
 };
 
 export const LIST_SIZE = {
@@ -21,8 +21,8 @@ export const LIST_SIZE = {
 };
 
 export const SORT = {
-  ALPHA: "ALPHA",
-  CREATE_DATE: "CREATE_DATE",
+  ALPHA: { title: "Alphabetical", key: "ALPHA" },
+  CREATE_DATE: { title: "Create Date", key: "CREATE_DATE" },
 };
 
 export const FILTER = {

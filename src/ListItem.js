@@ -5,7 +5,7 @@ const url = window.require("url");
 const path = window.require("path");
 import { EXTENSIONS } from "./constants";
 
-function ListItem({ fileName, handleClick, size, handleRightClick }) {
+function ListItem({ fileName, handleSelection, size }) {
   const [isPortrait, setPortrait] = useState(false);
 
   const [loaded, setLoaded] = useState(false);
@@ -35,7 +35,7 @@ function ListItem({ fileName, handleClick, size, handleRightClick }) {
       <div
         className="listContainer"
         {...events}
-        onDoubleClick={handleClick}
+        onDoubleClick={handleSelection}
         ref={containerRef}
       >
         {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
