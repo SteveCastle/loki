@@ -231,31 +231,37 @@ function App() {
         {commandPaletteOpen && (
           <CommandPalette
             status={{
+              fileName: items[cursor] ? items[cursor].fileName : filePath,
+              cursor,
+              tab,
               filePath,
               sort,
-              audio,
-              videoControls,
               filter,
               size,
               listSize,
+              audio,
+              videoControls,
               controlMode,
               recursive,
               items,
             }}
             controls={{
               changePath,
-              setSort,
-              setFilter,
+              setPath,
               setAudio,
               setVideoControls,
+              setSort,
+              setTab,
+              setFilter,
               setSize,
               setListSize,
               setControlMode,
               setRecursive,
               setCursor,
             }}
-            setCommandPaletteOpen={setCommandPaletteOpen}
+            setAbout={setAbout}
             position={commandPaletteOpen}
+            setCommandPaletteOpen={setCommandPaletteOpen}
           />
         )}
         <div
@@ -263,7 +269,7 @@ function App() {
           onKeyPress={handleKeyPress}
           className="noItemsContainer"
           onContextMenu={(e) => {
-            setCommandPaletteOpen({ x: screenX, y: screenY });
+            setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
             console.log(e);
           }}
         >
