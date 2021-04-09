@@ -8,7 +8,6 @@ import { getFolder, saveCurrentSettings } from "./fsTools";
 
 import Detail from "./Detail";
 import List from "./List";
-import HotCorner from "./HotCorner";
 import Spinner from "./Spinner";
 // NODE IMPORTS
 const settings = window.require("electron-settings");
@@ -354,7 +353,6 @@ function App() {
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>
-          <HotCorner handleClick={() => setView(VIEW.LIST)} />
           <Detail
             fileName={items[cursor].fileName}
             size={size}
@@ -367,6 +365,9 @@ function App() {
             handleClick={handleClick}
             handleScroll={handleScroll}
             controlMode={controlMode}
+            handleDoubleClick={() => {
+              setView(VIEW.LIST);
+            }}
             handleRightClick={(e) => {
               setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
               console.log(e);
