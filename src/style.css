@@ -84,9 +84,10 @@ body {
   object-fit: contain;
 }
 
-.fit-width {
+.cover {
   max-width: 100%;
   min-width: 100%;
+  object-fit: cover;
 }
 
 .overscanImagePortrait {

@@ -28,6 +28,7 @@ import About from "./About";
 
 function App() {
   const [dragging, setDragging] = useState(false);
+  const [tab, setTab] = useState("fileOptions");
 
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(
@@ -251,6 +252,7 @@ function App() {
               setListSize,
               setControlMode,
               setRecursive,
+              setCursor,
             }}
             setCommandPaletteOpen={setCommandPaletteOpen}
             position={commandPaletteOpen}
@@ -334,6 +336,7 @@ function App() {
           status={{
             fileName: items[cursor].fileName,
             cursor,
+            tab,
             filePath,
             sort,
             filter,
@@ -347,14 +350,17 @@ function App() {
           }}
           controls={{
             changePath,
+            setPath,
             setAudio,
             setVideoControls,
             setSort,
+            setTab,
             setFilter,
             setSize,
             setListSize,
             setControlMode,
             setRecursive,
+            setCursor,
           }}
           setAbout={setAbout}
           position={commandPaletteOpen}

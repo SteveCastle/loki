@@ -13,6 +13,7 @@ export default async function loadImageList(
   sortOrder,
   recursive = false
 ) {
+  console.log(folderPath);
   // Use readdir-enhanced to get a list of files at a path given the settings passed in.
   let items = await readdir.async(folderPath, {
     filter,
