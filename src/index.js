@@ -27,6 +27,8 @@ import CommandPalette from "./CommandPalette";
 import About from "./About";
 
 function App() {
+  const [dragging, setDragging] = useState(false);
+
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(
     decode(window.location.search.substr(1))
@@ -223,6 +225,8 @@ function App() {
       <React.Fragment>
         {!about && <HotKeyController handleKeyPress={handleKeyPress} />}
         <div className="dragArea"></div>
+        <div className="dragAreaHover"></div>
+
         {commandPaletteOpen && (
           <CommandPalette
             status={{
@@ -319,10 +323,17 @@ function App() {
       )}
       {about && <About setAbout={setAbout} />}
       <div className="dragArea"></div>
+      <div
+        className="dragAreaHover"
+        onMouseEnter={() => setDragging(true)}
+        onMouseLeave={() => setDragging(false)}
+        style={dragging ? { opacity: 1 } : { opacity: 0 }}
+      ></div>
       {commandPaletteOpen && (
         <CommandPalette
           status={{
             fileName: items[cursor].fileName,
+            cursor,
             filePath,
             sort,
             filter,

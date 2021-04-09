@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef } from "react";
 const electron = window.require("electron");
 const settings = window.require("electron-settings");
-import options from "./assets/file-list-2-fill.svg";
+import file from "./assets/file.svg";
+import list from "./assets/file-list-2-fill.svg";
 import image from "./assets/image-2-fill.svg";
 import gear from "./assets/settings-3.svg";
 import database from "./assets/database.svg";
 import save from "./assets/save-3-line.svg";
 import question from "./assets/question-fill.svg";
-
+import ProgressBar from "./ProgressBar";
 import { SORT, FILTER, SIZE, CONTROL_MODE, getNext } from "./constants";
-import { getFolder, saveCurrentSettings } from "./fsTools";
+import { getFolder, getFile, saveCurrentSettings } from "./fsTools";
 import "./CommandPalette.css";
 
 function useOnClickOutside(ref, handler) {
@@ -136,7 +137,33 @@ function CommandPallete({
       <div className="paletteBody">
         <div className="options">
           {tab === "fileOptions" && (
-            <div className="fileOptions">
+            <div className="listOptions">
+              <div className="optionSection">
+                <div className="optionSet">
+                  <label>Directory({status.items.length} Items)</label>
+                  <div className="optionButton" onClick={controls.changePath}>
+                    {getFolder(status.filePath)}
+                    <span className="itemCount"></span>
+                  </div>
+                </div>
+                <div className="optionSet">
+                  <label>
+                    Open File {status.cursor + 1} of {status.items.length}
+                  </label>
+                  <ProgressBar
+                    value={status.cursor + 1}
+                    total={status.items.length}
+                  />
+                  <div className="optionData" onClick={controls.changePath}>
+                    {getFile(status.fileName)}
+                    <span className="itemCount"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {tab === "listOptions" && (
+            <div className="listOptions">
               <div className="optionSection">
                 <div className="optionSet">
                   <label>Sort Order</label>
@@ -304,6 +331,27 @@ function CommandPallete({
                     Off
                   </div>
                 </div>
+                <div className="optionSet">
+                  <label>Fullscreen</label>
+                  <div
+                    className={[
+                      "optionButton",
+                      isFullScreen ? "active" : null,
+                    ].join(" ")}
+                    onClick={() => setIsFullScreen(true)}
+                  >
+                    On
+                  </div>
+                  <div
+                    className={[
+                      "optionButton",
+                      !isFullScreen ? "active" : null,
+                    ].join(" ")}
+                    onClick={() => setIsFullScreen(false)}
+                  >
+                    Off
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -323,7 +371,13 @@ function CommandPallete({
             className={tab === "fileOptions" ? "active" : null}
             onClick={() => setTab("fileOptions")}
           >
-            <img src={options} />
+            <img src={file} />
+          </button>
+          <button
+            className={tab === "listOptions" ? "active" : null}
+            onClick={() => setTab("listOptions")}
+          >
+            <img src={list} />
           </button>
           <button
             className={tab === "imageOptions" ? "active" : null}
