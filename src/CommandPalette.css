@@ -102,7 +102,22 @@
   font-weight: 600;
   margin: 1rem 0 0.5rem 0;
   text-align: left;
+  display: flex;
+  align-items: center;
 }
+
+.CommandPalette .optionSection label button {
+  background: none;
+  border: none;
+  height: 16px;
+  width: 16px;
+}
+
+.CommandPalette .optionSection label button img {
+  height: 16px;
+  width: 16px;
+}
+
 .CommandPalette .optionSection .optionSet .optionButton {
   border-radius: 4px;
   cursor: pointer;
@@ -112,6 +127,27 @@
   background: #181826;
   margin: 0.2rem;
   width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.CommandPalette .optionSection .optionSet .optionButton .primary {
+  flex: 1 1 0;
+}
+.CommandPalette .optionSection .optionSet .optionButton .actions {
+  margin-left: auto;
+}
+.CommandPalette .optionSection .optionSet .optionButton .action {
+  border: none;
+  background: none;
+  height: 20px;
+}
+
+.CommandPalette .optionSection .optionSet .optionButton .action img {
+  height: 16px;
+  width: 16px;
+  opacity: 0.6;
 }
 
 .CommandPalette .optionSection .optionSet .optionButton:hover {

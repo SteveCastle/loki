@@ -5,21 +5,29 @@ import file from "./assets/file.svg";
 import list from "./assets/file-list-2-fill.svg";
 import image from "./assets/image-2-fill.svg";
 import gear from "./assets/settings-3.svg";
+import lock from "./assets/lock-fill.svg";
 import database from "./assets/database.svg";
+import recursive from "./assets/recursive.svg";
 import save from "./assets/save-3-line.svg";
+import parentDirectory from "./assets/folder-upload-fill.svg";
+import keyboard from "./assets/keyboard.svg";
+
+var path = window.require("path");
+
 import question from "./assets/question-fill.svg";
 import ProgressBar from "./ProgressBar";
 import { SORT, FILTER, SIZE, CONTROL_MODE, getNext } from "./constants";
 import { getFolder, getFile, saveCurrentSettings } from "./fsTools";
 import "./CommandPalette.css";
 
-function useOnClickOutside(ref, handler) {
+function useOnClickOutside(ref, handler, isLocked) {
   useEffect(
     () => {
       const listener = (event) => {
         // Do nothing if clicking ref's element or descendent elements
         console.log(event);
         if (
+          isLocked ||
           !ref.current ||
           ref.current.contains(event.target) ||
           event.button === 2
@@ -52,7 +60,7 @@ function CommandPallete({
   setCommandPaletteOpen,
   position,
 }) {
-  const [tab, setTab] = useState("fileOptions");
+  const [isLocked, setIsLocked] = useState(false);
 
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(
     electron.remote.getCurrentWindow().isAlwaysOnTop()
@@ -65,7 +73,7 @@ function CommandPallete({
   const ref = useRef();
   // State for our modal
   // Call hook passing in the ref and a function to call on outside click
-  useOnClickOutside(ref, () => setCommandPaletteOpen(false));
+  useOnClickOutside(ref, () => setCommandPaletteOpen(false), isLocked);
 
   // Sync window always on top value with state.
   useEffect(() => {
@@ -114,6 +122,13 @@ function CommandPallete({
         <div className="menuBarRight">
           <button
             className="saveSettingsButton"
+            onClick={() => setIsLocked(!isLocked)}
+            style={{ opacity: isLocked ? 1 : 0.6 }}
+          >
+            <img src={lock} />
+          </button>
+          <button
+            className="saveSettingsButton"
             onClick={() =>
               saveCurrentSettings({
                 controlMode: status.controlMode.key,
@@ -136,14 +151,37 @@ function CommandPallete({
       </div>
       <div className="paletteBody">
         <div className="options">
-          {tab === "fileOptions" && (
+          {status.tab === "fileOptions" && (
             <div className="listOptions">
               <div className="optionSection">
                 <div className="optionSet">
-                  <label>Directory({status.items.length} Items)</label>
+                  <label>
+                    Directory ({status.items.length} Items)
+                    <button
+                      onClick={() => setAbout(true)}
+                      onClick={() => controls.setRecursive(!status.recursive)}
+                      style={{ opacity: status.recursive ? 1 : 0.5 }}
+                    >
+                      <img src={recursive} />
+                    </button>
+                  </label>
                   <div className="optionButton" onClick={controls.changePath}>
-                    {getFolder(status.filePath)}
-                    <span className="itemCount"></span>
+                    <div className="primary">{getFolder(status.filePath)}</div>
+                    <div className="actions">
+                      <button
+                        className="action"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          controls.setPath(path.dirname(status.filePath));
+                        }}
+                      >
+                        <img src={parentDirectory} />
+                      </button>
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div className="optionSet">
@@ -153,16 +191,24 @@ function CommandPallete({
                   <ProgressBar
                     value={status.cursor + 1}
                     total={status.items.length}
+                    setCursor={controls.setCursor}
                   />
+                  <div
+                    className="optionData"
+                    onClick={() => controls.setPath(status.fileName)}
+                  >
+                    {getFolder(status.fileName).substring(
+                      getFolder(status.filePath).length
+                    ) || "\\"}
+                  </div>
                   <div className="optionData" onClick={controls.changePath}>
                     {getFile(status.fileName)}
-                    <span className="itemCount"></span>
                   </div>
                 </div>
               </div>
             </div>
           )}
-          {tab === "listOptions" && (
+          {status.tab === "listOptions" && (
             <div className="listOptions">
               <div className="optionSection">
                 <div className="optionSet">
@@ -177,7 +223,12 @@ function CommandPallete({
                         ].join(" ")}
                         onClick={() => controls.setSort(value)}
                       >
-                        {value.title}
+                        <div className="primary">{value.title}</div>
+                        <div className="actions">
+                          <button className="action">
+                            <img src={keyboard} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -196,7 +247,12 @@ function CommandPallete({
                         ].join(" ")}
                         onClick={() => controls.setFilter(value)}
                       >
-                        {value.title}
+                        <div className="primary">{value.title}</div>
+                        <div className="actions">
+                          <button className="action">
+                            <img src={keyboard} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -210,7 +266,12 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => controls.setRecursive(true)}
                   >
-                    On
+                    <div className="primary">On</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                   <div
                     className={[
@@ -219,13 +280,18 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => controls.setRecursive(false)}
                   >
-                    Off
+                    <div className="primary">Off</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           )}
-          {tab === "imageOptions" && (
+          {status.tab === "imageOptions" && (
             <div className="imageOptions">
               <div className="optionSection">
                 <div className="optionSet">
@@ -240,7 +306,12 @@ function CommandPallete({
                         ].join(" ")}
                         onClick={() => controls.setSize(value)}
                       >
-                        {value.title}
+                        <div className="primary">{value.title}</div>
+                        <div className="actions">
+                          <button className="action">
+                            <img src={keyboard} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -254,7 +325,12 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => controls.setAudio(true)}
                   >
-                    On
+                    <div className="primary">On</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                   <div
                     className={[
@@ -263,7 +339,12 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => controls.setAudio(false)}
                   >
-                    Off
+                    <div className="primary">Off</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div className="optionSet">
@@ -275,7 +356,12 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => controls.setVideoControls(true)}
                   >
-                    On
+                    <div className="primary">On</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                   <div
                     className={[
@@ -284,13 +370,18 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => controls.setVideoControls(false)}
                   >
-                    Off
+                    <div className="primary">Off</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           )}
-          {tab === "controlOptions" && (
+          {status.tab === "controlOptions" && (
             <div className="controlOptions">
               <div className="optionSection">
                 <div className="optionSet">
@@ -305,7 +396,12 @@ function CommandPallete({
                         ].join(" ")}
                         onClick={() => controls.setControlMode(value)}
                       >
-                        {value.title}
+                        <div className="primary">{value.title}</div>
+                        <div className="actions">
+                          <button className="action">
+                            <img src={keyboard} />
+                          </button>
+                        </div>
                       </div>
                     );
                   })}
@@ -319,7 +415,12 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => setIsAlwaysOnTop(true)}
                   >
-                    On
+                    <div className="primary">On</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                   <div
                     className={[
@@ -328,7 +429,12 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => setIsAlwaysOnTop(false)}
                   >
-                    Off
+                    <div className="primary">Off</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 <div className="optionSet">
@@ -340,7 +446,12 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => setIsFullScreen(true)}
                   >
-                    On
+                    <div className="primary">On</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                   <div
                     className={[
@@ -349,13 +460,18 @@ function CommandPallete({
                     ].join(" ")}
                     onClick={() => setIsFullScreen(false)}
                   >
-                    Off
+                    <div className="primary">Off</div>
+                    <div className="actions">
+                      <button className="action">
+                        <img src={keyboard} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           )}
-          {tab === "databaseOptions" && (
+          {status.tab === "databaseOptions" && (
             <div className="controlOptions">
               <div className="optionSection">
                 <div className="optionSet">
@@ -368,32 +484,32 @@ function CommandPallete({
         </div>
         <div className="tabs">
           <button
-            className={tab === "fileOptions" ? "active" : null}
-            onClick={() => setTab("fileOptions")}
+            className={status.tab === "fileOptions" ? "active" : null}
+            onClick={() => controls.setTab("fileOptions")}
           >
             <img src={file} />
           </button>
           <button
-            className={tab === "listOptions" ? "active" : null}
-            onClick={() => setTab("listOptions")}
+            className={status.tab === "listOptions" ? "active" : null}
+            onClick={() => controls.setTab("listOptions")}
           >
             <img src={list} />
           </button>
           <button
-            className={tab === "imageOptions" ? "active" : null}
-            onClick={() => setTab("imageOptions")}
+            className={status.tab === "imageOptions" ? "active" : null}
+            onClick={() => controls.setTab("imageOptions")}
           >
             <img src={image} />
           </button>
           <button
-            className={tab === "controlOptions" ? "active" : null}
-            onClick={() => setTab("controlOptions")}
+            className={status.tab === "controlOptions" ? "active" : null}
+            onClick={() => controls.setTab("controlOptions")}
           >
             <img src={gear} />
           </button>
           <button
-            className={tab === "databaseOptions" ? "active" : null}
-            onClick={() => setTab("databaseOptions")}
+            className={status.tab === "databaseOptions" ? "active" : null}
+            onClick={() => controls.setTab("databaseOptions")}
           >
             <img src={database} />
           </button>

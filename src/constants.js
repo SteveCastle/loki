@@ -12,7 +12,7 @@ export const SIZE = {
   OVERSCAN: { title: "Over Scan Mode", className: "overscan", key: "OVERSCAN" },
   ACTUAL: { title: "Actual Size", className: "actual", key: "ACTUAL" },
   FIT: { title: "Fit", className: "fit", key: "FIT" },
-  FIT_WIDTH: { title: "Fit Width", className: "fit-width", key: "FIT_WIDTH" },
+  COVER: { title: "Cover", className: "cover", key: "COVER" },
 };
 
 export const LIST_SIZE = {
