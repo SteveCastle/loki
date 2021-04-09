@@ -11,6 +11,15 @@ export const getFolder = (filePath) => {
   return folderPath;
 };
 
+export const getFile = (filePath) => {
+  const matchDirectory = is.windows() ? "\\" : "/";
+
+  const folderPath = filePath.substring(
+    filePath.lastIndexOf(matchDirectory) + 1
+  );
+  return folderPath;
+};
+
 export function saveCurrentSettings({
   controlMode,
   defaultSort,
