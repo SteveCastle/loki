@@ -5,7 +5,7 @@ import ReactDOM from "react-dom";
 import "./style.css";
 import HotKeyController from "./HotKeyController";
 import { getFolder, saveCurrentSettings } from "./fsTools";
-
+import HotCorner from "./HotCorner";
 import Detail from "./Detail";
 import List from "./List";
 import Spinner from "./Spinner";
@@ -364,6 +364,9 @@ function App() {
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>
+          {controlMode.key === CONTROL_MODE.TRACK_PAD.key && (
+            <HotCorner handleClick={() => setView(VIEW.LIST)} />
+          )}
           <Detail
             fileName={items[cursor].fileName}
             size={size}
@@ -377,7 +380,9 @@ function App() {
             handleScroll={handleScroll}
             controlMode={controlMode}
             handleDoubleClick={() => {
-              setView(VIEW.LIST);
+              if (controlMode.key === CONTROL_MODE.MOUSE.key) {
+                setView(VIEW.LIST);
+              }
             }}
             handleRightClick={(e) => {
               setCommandPaletteOpen({ x: e.clientX, y: e.clientY });

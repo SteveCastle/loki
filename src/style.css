@@ -167,6 +167,39 @@ body {
   width: 0;
 }
 
+.hotCorner {
+  user-select: none;
+  cursor: pointer;
+  font-size: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  position: fixed;
+  width: 40px;
+  padding: 45px 15px 15px 45px;
+  height: 40px;
+  bottom: 0;
+  right: 0;
+  z-index: 999;
+  opacity: 0;
+  transition: opacity 0.25s ease-in-out;
+}
+
+.hotCorner img {
+  width: 100%;
+}
+.hotCorner:hover {
+  opacity: 0.8;
+}
+
+.hotCorner span {
+  background-color: white;
+  border-radius: 4px;
+  width: 40px;
+  height: 40px;
+  margin: 5px;
+  display: block;
+}
+
 .dragArea {
   -webkit-app-region: drag;
   width: 100%;
