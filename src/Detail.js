@@ -17,6 +17,7 @@ function Detail({
   handleClick,
   handleScroll,
   controlMode,
+  handleDoubleClick,
   handleRightClick,
 }) {
   const containerRef = useRef(null);
@@ -28,6 +29,7 @@ function Detail({
       }
       onClick={controlMode.key === "MOUSE" ? null : handleClick}
       onContextMenu={handleRightClick}
+      onDoubleClick={handleDoubleClick}
       onWheel={controlMode.key === "MOUSE" ? handleScroll : null}
       tabIndex="0"
       {...events}
