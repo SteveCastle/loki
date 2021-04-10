@@ -59,8 +59,6 @@ function App() {
   const [size, setSize] = useState(SIZE[settings.get("settings.scaleMode")]);
   const [listSize, setListSize] = useState(LIST_SIZE.OVERSCAN);
 
-  const [tall, setTall] = useState(true);
-
   const [recursive, setRecursive] = useState(false);
 
   function changePath() {
@@ -143,10 +141,6 @@ function App() {
       case "r":
         e.preventDefault();
         setRecursive(!recursive);
-        break;
-      case "t":
-        e.preventDefault();
-        setTall(!tall);
         break;
       case "g":
         e.preventDefault();
@@ -408,9 +402,9 @@ function App() {
           fileList={items}
           shuffles={shuffles}
           size={listSize}
-          tall={tall}
           cursor={cursor}
           controlMode={controlMode}
+          columns={3}
           setPath={setPath}
           handleSelection={(i) => {
             setCursor(i);

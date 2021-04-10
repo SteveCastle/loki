@@ -165,6 +165,15 @@
   overflow: hidden;
   white-space: nowrap;
   position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.CommandPalette .optionSection .optionSet .icon {
+  height: 16px;
+  width: 16px;
+  opacity: 0.5;
+  margin-right: 10px;
 }
 
 .CommandPalette .optionSection .optionSet .optionData::after {

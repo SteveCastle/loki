@@ -38,12 +38,8 @@ export default class List extends Component {
   }
 
   gridRef = null;
-  rows = this.props.tall
-    ? Math.ceil(this.props.fileList.length / 3)
-    : Math.ceil(Math.sqrt(this.props.fileList.length));
-  columns = this.props.tall
-    ? 3
-    : Math.ceil(Math.sqrt(this.props.fileList.length));
+  rows = Math.ceil(this.props.fileList.length / this.props.columns);
+  columns = this.props.columns;
 
   handleResize() {
     this.setState({ width: window.innerWidth, height: window.innerHeight });
@@ -91,10 +87,10 @@ export default class List extends Component {
             this.gridRef = r;
           }}
           columnCount={this.columns}
-          columnWidth={this.state.width / 3}
+          columnWidth={this.state.width / this.props.columns}
           height={window.innerHeight}
           rowCount={this.rows}
-          rowHeight={this.state.width / 3}
+          rowHeight={this.state.width / this.props.columns}
           overscanRowCount={0}
           width={this.state.width}
           itemData={{
