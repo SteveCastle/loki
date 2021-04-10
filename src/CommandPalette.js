@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 const electron = window.require("electron");
 const settings = window.require("electron-settings");
+import currentFolder from "./assets/folder-5-fill.svg";
+import currentFile from "./assets/file-fill.svg";
 import file from "./assets/file.svg";
 import list from "./assets/file-list-2-fill.svg";
 import image from "./assets/image-2-fill.svg";
@@ -197,11 +199,14 @@ function CommandPallete({
                     className="optionData"
                     onClick={() => controls.setPath(status.fileName)}
                   >
+                    <img src={currentFolder} className="icon" />
                     {getFolder(status.fileName).substring(
                       getFolder(status.filePath).length
                     ) || "\\"}
                   </div>
                   <div className="optionData" onClick={controls.changePath}>
+                    <img src={currentFile} className="icon" />
+
                     {getFile(status.fileName)}
                   </div>
                 </div>
