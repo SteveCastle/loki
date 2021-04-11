@@ -64,35 +64,16 @@ function CommandPallete({
 }) {
   const [isLocked, setIsLocked] = useState(false);
 
-  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(
-    electron.remote.getCurrentWindow().isAlwaysOnTop()
-  );
-
-  const [isFullScreen, setIsFullScreen] = useState(
-    electron.remote.getCurrentWindow().isFullScreen()
-  );
-
   const ref = useRef();
   // State for our modal
   // Call hook passing in the ref and a function to call on outside click
   useOnClickOutside(ref, () => setCommandPaletteOpen(false), isLocked);
 
-  // Sync window always on top value with state.
-  useEffect(() => {
-    if (electron.remote.getCurrentWindow().isAlwaysOnTop() !== isAlwaysOnTop) {
-      electron.remote.getCurrentWindow().setAlwaysOnTop(isAlwaysOnTop);
-      electron.remote.getCurrentWindow().focus();
-    }
-  }, [isAlwaysOnTop]);
-
-  // Sync isFullScreen with state.
-  useEffect(() => {
-    if (electron.remote.getCurrentWindow().isFullScreen() !== isFullScreen) {
-      electron.remote.getCurrentWindow().setFullScreen(isFullScreen);
-      electron.remote.getCurrentWindow().focus();
-    }
-  }, [isFullScreen]);
-
+  const { hotKeys } = status;
+  const hotKeysByAction = Object.entries(hotKeys).reduce(
+    (acc, [index, value]) => ({ ...acc, [value]: index }),
+    {}
+  );
   return (
     <div
       className="CommandPalette"
@@ -139,8 +120,8 @@ function CommandPallete({
                 defaultFilter: status.filter.key,
                 audio: status.audio,
                 videoControls: status.videoControls,
-                isAlwaysOnTop,
-                isFullScreen,
+                isAlwaysOnTop: status.isAlwaysOnTop,
+                isFullScreen: status.isFullScreen,
               })
             }
           >
@@ -154,7 +135,7 @@ function CommandPallete({
       <div className="paletteBody">
         <div className="options">
           {status.tab === "fileOptions" && (
-            <div className="listOptions">
+            <div className="fileOptions">
               <div className="optionSection">
                 <div className="optionSet">
                   <label>
@@ -180,8 +161,17 @@ function CommandPallete({
                       >
                         <img src={parentDirectory} />
                       </button>
-                      <button className="action">
+                      <button
+                        className="action"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          controls.setSettingHotKey("fileOptions.changeFile");
+                        }}
+                      >
                         <img src={keyboard} />
+                        <span className="currentHotKey">
+                          {hotKeysByAction["fileOptions.changeFile"]}
+                        </span>
                       </button>
                     </div>
                   </div>
@@ -217,7 +207,23 @@ function CommandPallete({
             <div className="listOptions">
               <div className="optionSection">
                 <div className="optionSet">
-                  <label>Sort Order</label>
+                  <label>
+                    Sort Order
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(
+                          "listOptions.toggleSortOrder"
+                        );
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction["listOptions.toggleSortOrder"]}
+                      </span>
+                    </button>
+                  </label>
                   {Object.entries(SORT).map(([key, value]) => {
                     return (
                       <div
@@ -229,11 +235,7 @@ function CommandPallete({
                         onClick={() => controls.setSort(value)}
                       >
                         <div className="primary">{value.title}</div>
-                        <div className="actions">
-                          <button className="action">
-                            <img src={keyboard} />
-                          </button>
-                        </div>
+                        <div className="actions"></div>
                       </div>
                     );
                   })}
@@ -254,8 +256,19 @@ function CommandPallete({
                       >
                         <div className="primary">{value.title}</div>
                         <div className="actions">
-                          <button className="action">
+                          <button
+                            className="action"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              controls.setSettingHotKey(
+                                `listOptions.show${value.key}`
+                              );
+                            }}
+                          >
                             <img src={keyboard} />
+                            <span className="currentHotKey">
+                              {hotKeysByAction[`listOptions.show${value.key}`]}
+                            </span>
                           </button>
                         </div>
                       </div>
@@ -263,7 +276,23 @@ function CommandPallete({
                   })}
                 </div>
                 <div className="optionSet">
-                  <label>Recursive</label>
+                  <label>
+                    Recursive
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(
+                          `fileOptions.toggleRecursion`
+                        );
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction[`fileOptions.toggleRecursion`]}
+                      </span>
+                    </button>
+                  </label>
                   <div
                     className={[
                       "optionButton",
@@ -272,11 +301,7 @@ function CommandPallete({
                     onClick={() => controls.setRecursive(true)}
                   >
                     <div className="primary">On</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                   <div
                     className={[
@@ -286,11 +311,7 @@ function CommandPallete({
                     onClick={() => controls.setRecursive(false)}
                   >
                     <div className="primary">Off</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                 </div>
               </div>
@@ -300,7 +321,21 @@ function CommandPallete({
             <div className="imageOptions">
               <div className="optionSection">
                 <div className="optionSet">
-                  <label>Image Scaling</label>
+                  <label>
+                    Image Scaling
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(`imageOptions.toggleSizing`);
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction[`imageOptions.toggleSizing`]}
+                      </span>
+                    </button>
+                  </label>
                   {Object.entries(SIZE).map(([key, value]) => {
                     return (
                       <div
@@ -313,8 +348,19 @@ function CommandPallete({
                       >
                         <div className="primary">{value.title}</div>
                         <div className="actions">
-                          <button className="action">
+                          <button
+                            className="action"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              controls.setSettingHotKey(
+                                `imageOptions.size${value.key}`
+                              );
+                            }}
+                          >
                             <img src={keyboard} />
+                            <span className="currentHotKey">
+                              {hotKeysByAction[`imageOptions.size${value.key}`]}
+                            </span>
                           </button>
                         </div>
                       </div>
@@ -322,7 +368,21 @@ function CommandPallete({
                   })}
                 </div>
                 <div className="optionSet">
-                  <label>Video Audio</label>
+                  <label>
+                    Video Audio
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(`imageOptions.toggleAudio`);
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction[`imageOptions.toggleAudio`]}
+                      </span>
+                    </button>
+                  </label>
                   <div
                     className={[
                       "optionButton",
@@ -331,11 +391,7 @@ function CommandPallete({
                     onClick={() => controls.setAudio(true)}
                   >
                     <div className="primary">On</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                   <div
                     className={[
@@ -345,15 +401,27 @@ function CommandPallete({
                     onClick={() => controls.setAudio(false)}
                   >
                     <div className="primary">Off</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                 </div>
                 <div className="optionSet">
-                  <label>Video Controls</label>
+                  <label>
+                    Video Controls
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(
+                          `imageOptions.toggleVideoControls`
+                        );
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction[`imageOptions.toggleVideoControls`]}
+                      </span>
+                    </button>
+                  </label>
                   <div
                     className={[
                       "optionButton",
@@ -362,11 +430,7 @@ function CommandPallete({
                     onClick={() => controls.setVideoControls(true)}
                   >
                     <div className="primary">On</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                   <div
                     className={[
@@ -376,11 +440,7 @@ function CommandPallete({
                     onClick={() => controls.setVideoControls(false)}
                   >
                     <div className="primary">Off</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                 </div>
               </div>
@@ -390,7 +450,23 @@ function CommandPallete({
             <div className="controlOptions">
               <div className="optionSection">
                 <div className="optionSet">
-                  <label>Control Mode</label>
+                  <label>
+                    Control Mode
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(
+                          `controlOptions.toggleControls`
+                        );
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction[`controlOptions.toggleControls`]}
+                      </span>
+                    </button>
+                  </label>
                   {Object.entries(CONTROL_MODE).map(([key, value]) => {
                     return (
                       <div
@@ -402,75 +478,87 @@ function CommandPallete({
                         onClick={() => controls.setControlMode(value)}
                       >
                         <div className="primary">{value.title}</div>
-                        <div className="actions">
-                          <button className="action">
-                            <img src={keyboard} />
-                          </button>
-                        </div>
+                        <div className="actions"></div>
                       </div>
                     );
                   })}
                 </div>
                 <div className="optionSet">
-                  <label>Always on Top</label>
+                  <label>
+                    Always on Top
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(
+                          `windowOptions.toggleAlwaysOnTop`
+                        );
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction[`windowOptions.toggleAlwaysOnTop`]}
+                      </span>
+                    </button>
+                  </label>
                   <div
                     className={[
                       "optionButton",
-                      isAlwaysOnTop ? "active" : null,
+                      status.isAlwaysOnTop ? "active" : null,
                     ].join(" ")}
-                    onClick={() => setIsAlwaysOnTop(true)}
+                    onClick={() => controls.setIsAlwaysOnTop(true)}
                   >
                     <div className="primary">On</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                   <div
                     className={[
                       "optionButton",
-                      !isAlwaysOnTop ? "active" : null,
+                      !status.isAlwaysOnTop ? "active" : null,
                     ].join(" ")}
-                    onClick={() => setIsAlwaysOnTop(false)}
+                    onClick={() => controls.setIsAlwaysOnTop(false)}
                   >
                     <div className="primary">Off</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                 </div>
                 <div className="optionSet">
-                  <label>Fullscreen</label>
+                  <label>
+                    Fullscreen
+                    <button
+                      className="action"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        controls.setSettingHotKey(
+                          `windowOptions.toggleFullscreen`
+                        );
+                      }}
+                    >
+                      <img src={keyboard} />
+                      <span className="currentHotKey">
+                        {hotKeysByAction[`windowOptions.toggleFullscreen`]}
+                      </span>
+                    </button>
+                  </label>
                   <div
                     className={[
                       "optionButton",
-                      isFullScreen ? "active" : null,
+                      status.isFullScreen ? "active" : null,
                     ].join(" ")}
-                    onClick={() => setIsFullScreen(true)}
+                    onClick={() => controls.setIsFullScreen(true)}
                   >
                     <div className="primary">On</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                   <div
                     className={[
                       "optionButton",
-                      !isFullScreen ? "active" : null,
+                      !status.isFullScreen ? "active" : null,
                     ].join(" ")}
-                    onClick={() => setIsFullScreen(false)}
+                    onClick={() => controls.setIsFullScreen(false)}
                   >
                     <div className="primary">Off</div>
-                    <div className="actions">
-                      <button className="action">
-                        <img src={keyboard} />
-                      </button>
-                    </div>
+                    <div className="actions"></div>
                   </div>
                 </div>
               </div>

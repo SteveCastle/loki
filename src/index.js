@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useRef } from "react";
-const electron = window.require("electron");
-var shuffle = window.require("shuffle-array");
+import * as R from "ramda";
+
 import ReactDOM from "react-dom";
 import "./style.css";
 import HotKeyController from "./HotKeyController";
 import { getFolder, saveCurrentSettings } from "./fsTools";
+import { HotKeySetter } from "./HotKeySetter";
 import HotCorner from "./HotCorner";
 import Detail from "./Detail";
 import List from "./List";
 import Spinner from "./Spinner";
 // NODE IMPORTS
+const electron = window.require("electron");
+var shuffle = window.require("shuffle-array");
 const settings = window.require("electron-settings");
 const { decode } = window.require("js-base64");
 
@@ -19,6 +22,7 @@ import {
   SIZE,
   VIEW,
   CONTROL_MODE,
+  HOT_KEY_DEFAULTS,
   getNext,
   LIST_SIZE,
 } from "./constants";
@@ -29,7 +33,7 @@ import About from "./About";
 function App() {
   const [dragging, setDragging] = useState(false);
   const [tab, setTab] = useState("fileOptions");
-
+  const [settingHotKey, setSettingHotKey] = useState(false);
   const [view, setView] = useState(VIEW.DETAIL);
   const [filePath, setPath] = useState(
     decode(window.location.search.substr(1))
@@ -61,6 +65,30 @@ function App() {
 
   const [recursive, setRecursive] = useState(false);
 
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(
+    electron.remote.getCurrentWindow().isAlwaysOnTop()
+  );
+
+  const [isFullScreen, setIsFullScreen] = useState(
+    electron.remote.getCurrentWindow().isFullScreen()
+  );
+
+  // Sync window always on top value with state.
+  useEffect(() => {
+    if (electron.remote.getCurrentWindow().isAlwaysOnTop() !== isAlwaysOnTop) {
+      electron.remote.getCurrentWindow().setAlwaysOnTop(isAlwaysOnTop);
+      electron.remote.getCurrentWindow().focus();
+    }
+  }, [isAlwaysOnTop]);
+
+  // Sync isFullScreen with state.
+  useEffect(() => {
+    if (electron.remote.getCurrentWindow().isFullScreen() !== isFullScreen) {
+      electron.remote.getCurrentWindow().setFullScreen(isFullScreen);
+      electron.remote.getCurrentWindow().focus();
+    }
+  }, [isFullScreen]);
+
   function changePath() {
     electron.remote.dialog
       .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
@@ -73,7 +101,7 @@ function App() {
   // Initialize State from settings.
   useEffect(() => {
     // Uncomment to open dev tools on load.
-    // electron.remote.getCurrentWindow().webContents.openDevTools();
+    electron.remote.getCurrentWindow().webContents.openDevTools();
     if (settings.has("settings.scaleMode")) {
       setSize(SIZE[settings.get("settings.scaleMode")]);
     }
@@ -105,104 +133,170 @@ function App() {
     }
   }, [filePath, sort, filter, recursive]);
 
+  function nextImage() {
+    setCursor(cursor === items.length - 1 ? cursor : cursor + 1);
+  }
+
+  function previousImage() {
+    setCursor(cursor === 0 ? cursor : cursor - 1);
+  }
   function handleClick(e) {
     e.preventDefault();
     // If click is on the left decrease the cursor, if it is on the left increase it.
-    e.pageX > window.innerWidth / 2
-      ? setCursor(cursor === items.length - 1 ? cursor : cursor + 1)
-      : setCursor(cursor === 0 ? cursor : cursor - 1);
+    e.pageX > window.innerWidth / 2 ? nextImage() : previousImage();
   }
 
   function handleScroll(e) {
     e.stopPropagation();
     // If delta y is positive increase cursor value, otherwise decrease.
-    e.deltaY > 0
-      ? setCursor(cursor === items.length - 1 ? cursor : cursor + 1)
-      : setCursor(cursor === 0 ? cursor : cursor - 1);
+    e.deltaY > 0 ? nextImage() : previousImage();
   }
-  // TODO: Clean this up.
-  function handleKeyPress(e) {
-    const windowRef = electron.remote.getCurrentWindow();
-    switch (e.key) {
-      case "s":
-        e.preventDefault();
-        setSort(getNext(SORT, sort.key));
-        break;
-      case "c":
-        e.preventDefault();
-        setSize(getNext(SIZE, size.key));
-
-        break;
-      case "m":
-        e.preventDefault();
-        setControlMode(getNext(CONTROL_MODE, controlMode.key));
-
-        break;
-      case "r":
-        e.preventDefault();
-        setRecursive(!recursive);
-        break;
-      case "g":
-        e.preventDefault();
-        setFilter(FILTER.GIF);
-        break;
-      case "a":
-        e.preventDefault();
-        setFilter(FILTER.ALL);
-        break;
-      case "v":
-        e.preventDefault();
-        setFilter(FILTER.VIDEO);
-        break;
-      case "x":
-        e.preventDefault();
-        setItems(shuffle(items));
-        setShuffles(!shuffles);
-        break;
-      case "m":
-        e.preventDefault();
-        setFilter(FILTER.VIDEO);
-        break;
-      case "j":
-        e.preventDefault();
-        setFilter(FILTER.STATIC);
-        break;
-      case " ":
-        e.preventDefault();
-        windowRef.minimize();
-        break;
-      case "p":
-        e.preventDefault();
-        windowRef.webContents.openDevTools();
-        break;
-      case "f":
-        e.preventDefault();
-        windowRef.setFullScreen(!windowRef.isFullScreen());
-        break;
-      case "o":
-        e.preventDefault();
-        windowRef.setAlwaysOnTop(!windowRef.isAlwaysOnTop());
-        break;
-      case "ArrowRight":
-        e.preventDefault();
-        setCursor(cursor === items.length - 1 ? cursor : cursor + 1);
-        break;
-      case "ArrowLeft":
-        e.preventDefault();
-        setCursor(cursor === 0 ? cursor : cursor - 1);
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setCursor(cursor === items.length - 1 ? cursor : cursor + 1);
-        break;
-      case "ArrowDown":
-        e.preventDefault();
-        setCursor(cursor === 0 ? cursor : cursor - 1);
-        break;
-      default:
-        e.preventDefault();
+  const windowRef = electron.remote.getCurrentWindow();
+  const commands = {
+    fileOptions: {
+      changeFile: {
+        action: () => {
+          changePath();
+        },
+      },
+      toggleRecursion: {
+        action: () => {
+          setRecursive(!recursive);
+        },
+      },
+      nextImage: {
+        action: () => {
+          nextImage();
+        },
+      },
+      previousImage: {
+        action: () => {
+          previousImage();
+        },
+      },
+      shuffle: {
+        action: () => {
+          setItems(shuffle(items));
+          setShuffles(!shuffles);
+        },
+      },
+    },
+    listOptions: {
+      toggleSortOrder: {
+        action: () => {
+          setSort(getNext(SORT, sort.key));
+        },
+      },
+      showALL: {
+        action: () => {
+          setFilter(FILTER.ALL);
+        },
+      },
+      showSTATIC: {
+        action: () => {
+          setFilter(FILTER.STATIC);
+        },
+      },
+      showVIDEO: {
+        action: () => {
+          setFilter(FILTER.VIDEO);
+        },
+      },
+      showGIF: {
+        action: () => {
+          setFilter(FILTER.GIF);
+        },
+      },
+      showMOTION: {
+        action: () => {
+          setFilter(FILTER.MOTION);
+        },
+      },
+    },
+    imageOptions: {
+      toggleSizing: {
+        action: () => {
+          setSize(getNext(SIZE, size.key));
+        },
+      },
+      sizeOVERSCAN: {
+        action: () => {
+          setSize(SIZE.OVERSCAN);
+        },
+      },
+      sizeACTUAL: {
+        action: () => {
+          setSize(SIZE.ACTUAL);
+        },
+      },
+      sizeFIT: {
+        action: () => {
+          setSize(SIZE.FIT);
+        },
+      },
+      sizeCOVER: {
+        action: () => {
+          setSize(SIZE.COVER);
+        },
+      },
+      toggleAudio: {
+        action: () => {
+          setAudio(!audio);
+        },
+      },
+      toggleVideoControls: {
+        action: () => {
+          setVideoControls(!videoControls);
+        },
+      },
+    },
+    controlOptions: {
+      toggleControls: {
+        action: () => {
+          setControlMode(getNext(CONTROL_MODE, controlMode.key));
+        },
+      },
+    },
+    windowOptions: {
+      minimize: {
+        action: () => {
+          windowRef.minimize();
+        },
+      },
+      toggleFullscreen: {
+        action: () => {
+          setIsFullScreen(!isFullScreen);
+        },
+      },
+      toggleAlwaysOnTop: {
+        action: () => {
+          setIsAlwaysOnTop(!isAlwaysOnTop);
+        },
+      },
+      openDevTools: {
+        action: () => {
+          windowRef.webContents.openDevTools();
+        },
+      },
+    },
+  };
+  const [hotKeys, setHotKeys] = useState(settings.get("settings.hotKeys"));
+  useEffect(() => {
+    if (!settings.has("settings.hotKeys")) {
+      settings.set("settings.hotKeys", HOT_KEY_DEFAULTS);
     }
+  }, []);
+
+  function handleKeyPress(e) {
+    console.log("KEY PRESSED:", e.key);
+    if (!hotKeys[e.key]) {
+      return;
+    }
+    e.preventDefault();
+    const command = R.path(hotKeys[e.key].split("."))(commands);
+    command.action();
   }
+
   if (loading) {
     return (
       <div
@@ -225,8 +319,9 @@ function App() {
         {commandPaletteOpen && (
           <CommandPalette
             status={{
-              fileName: items[cursor] ? items[cursor].fileName : filePath,
+              fileName: items[cursor].fileName,
               cursor,
+              hotKeys,
               tab,
               filePath,
               sort,
@@ -238,10 +333,14 @@ function App() {
               controlMode,
               recursive,
               items,
+              isAlwaysOnTop,
+              isFullScreen,
             }}
             controls={{
+              setSettingHotKey,
               changePath,
               setPath,
+              setHotKeys,
               setAudio,
               setVideoControls,
               setSort,
@@ -252,6 +351,8 @@ function App() {
               setControlMode,
               setRecursive,
               setCursor,
+              setIsAlwaysOnTop,
+              setIsFullScreen,
             }}
             setAbout={setAbout}
             position={commandPaletteOpen}
@@ -272,7 +373,15 @@ function App() {
       </React.Fragment>
     );
   }
-
+  if (settingHotKey) {
+    return (
+      <HotKeySetter
+        action={settingHotKey}
+        setHotKeys={setHotKeys}
+        handleComplete={() => setSettingHotKey(false)}
+      />
+    );
+  }
   return (
     <React.Fragment>
       {!false && <HotKeyController handleKeyPress={handleKeyPress} />}
@@ -336,6 +445,7 @@ function App() {
           status={{
             fileName: items[cursor].fileName,
             cursor,
+            hotKeys,
             tab,
             filePath,
             sort,
@@ -347,10 +457,14 @@ function App() {
             controlMode,
             recursive,
             items,
+            isAlwaysOnTop,
+            isFullScreen,
           }}
           controls={{
+            setSettingHotKey,
             changePath,
             setPath,
+            setHotKeys,
             setAudio,
             setVideoControls,
             setSort,
@@ -361,6 +475,8 @@ function App() {
             setControlMode,
             setRecursive,
             setCursor,
+            setIsAlwaysOnTop,
+            setIsFullScreen,
           }}
           setAbout={setAbout}
           position={commandPaletteOpen}
