@@ -90,8 +90,12 @@ function App() {
   }, [isFullScreen]);
 
   function changePath() {
+    console.log("Changing from current path of:", filePath);
     electron.remote.dialog
-      .showOpenDialog(electron.remote.getCurrentWindow(), ["openFile"])
+      .showOpenDialog(electron.remote.getCurrentWindow(), {
+        properties: ["openFile"],
+        defaultPath: getFolder(filePath),
+      })
       .then((files) => {
         if (files.filePaths.length > 0) {
           setPath(files.filePaths[0]);
@@ -485,7 +489,7 @@ function App() {
       <div className="dragArea"></div>
       <div
         className="dragAreaHover"
-        onMouseEnter={() => setDragging(true)}
+        onMouseEnter={() => console.log("entered drag area")}
         onMouseLeave={() => setDragging(false)}
         style={dragging ? { opacity: 1 } : { opacity: 0 }}
       ></div>
