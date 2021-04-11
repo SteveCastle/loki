@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 const electron = window.require("electron");
 const settings = window.require("electron-settings");
+import useComponentSize from "@rehooks/component-size";
 import currentFolder from "./assets/folder-5-fill.svg";
 import currentFile from "./assets/file-fill.svg";
 import file from "./assets/file.svg";
@@ -73,30 +74,44 @@ function CommandPallete({
     (acc, [index, value]) => ({ ...acc, [value]: index }),
     {}
   );
+
+  let { width, height } = useComponentSize(ref);
+  const windowWidth = window.innerWidth;
+  const windowHeight = window.innerHeight;
+
+  const getMenuPosition = (x, y) => {
+    const xOverlap = x + width - windowWidth;
+    const yOverlap = y + height - windowHeight;
+    return {
+      left: xOverlap > 0 ? x - xOverlap : x,
+      top: yOverlap > 0 ? y - yOverlap : y,
+    };
+  };
+
   return (
     <div
       className="CommandPalette"
       tabIndex="-1"
       ref={ref}
-      style={{ top: position.y, left: position.x }}
+      style={getMenuPosition(position.x, position.y)}
     >
       <div className="menuBar">
         <div className="windowControls">
           <span
             className="closeControl"
-            onClick={(e) => electron.remote.getCurrentWindow().close()}
+            onClick={() => electron.remote.getCurrentWindow().close()}
             disabled="disabled"
             tabIndex="-1"
           />
           <span
             className="windowedControl"
-            onClick={(e) => electron.remote.getCurrentWindow().minimize()}
+            onClick={() => electron.remote.getCurrentWindow().minimize()}
             disabled="disabled"
             tabIndex="-1"
           />
           <span
             className="fullScreenControl"
-            onClick={(e) => setIsFullScreen(!isFullScreen)}
+            onClick={() => controls.setIsFullScreen(!status.isFullScreen)}
             disabled="disabled"
             tabIndex="-1"
           />
