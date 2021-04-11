@@ -84,10 +84,12 @@ body {
   object-fit: contain;
 }
 
-.cover {
-  max-width: 100%;
-  min-width: 100%;
-  object-fit: cover;
+.cover.portrait {
+  height: 100%;
+}
+
+.cover.landscape {
+  width: 100%;
 }
 
 .overscanImagePortrait {

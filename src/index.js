@@ -105,7 +105,7 @@ function App() {
   // Initialize State from settings.
   useEffect(() => {
     // Uncomment to open dev tools on load.
-    // electron.remote.getCurrentWindow().webContents.openDevTools();
+    electron.remote.getCurrentWindow().webContents.openDevTools();
     if (settings.has("settings.scaleMode")) {
       setSize(SIZE[settings.get("settings.scaleMode")]);
     }
@@ -285,11 +285,6 @@ function App() {
     },
   };
   const [hotKeys, setHotKeys] = useState(settings.get("settings.hotKeys"));
-  useEffect(() => {
-    if (!settings.has("settings.hotKeys")) {
-      settings.set("settings.hotKeys", HOT_KEY_DEFAULTS);
-    }
-  }, []);
 
   function handleKeyPress(e) {
     console.log("KEY PRESSED:", e.key);
@@ -445,7 +440,7 @@ function App() {
               className="mouse option"
               onClick={(e) => {
                 setControlMode(CONTROL_MODE.MOUSE);
-                saveCurrentSettings({ controlMode: CONTROL_MODE.MOUSE });
+                saveCurrentSettings({ controlMode: CONTROL_MODE.MOUSE.key });
                 setFirstLoadCleared(true);
               }}
             >
@@ -462,7 +457,7 @@ function App() {
               onClick={(e) => {
                 setControlMode(CONTROL_MODE.TRACK_PAD);
                 saveCurrentSettings({
-                  controlMode: CONTROL_MODE.TRACK_PAD,
+                  controlMode: CONTROL_MODE.TRACK_PAD.key,
                 });
 
                 setFirstLoadCleared(true);

@@ -143,9 +143,13 @@
   border: none;
   background: none;
   height: 20px;
-  opacity: 0.6;
+  opacity: 0.8;
   display: flex;
   align-items: center;
+}
+
+.CommandPalette .optionSection .optionSet .optionButton .action:hover {
+  opacity: 1;
 }
 
 .CommandPalette .optionSection .optionSet .optionButton .action img {
@@ -155,12 +159,18 @@
 
 .currentHotKey {
   display: inline-block;
-  background-color: white;
+  background-color: rgb(229, 228, 252);
+  border-radius: 2px;
   color: black;
   font-weight: 600;
   font-size: 12px;
   height: 12px;
   min-width: 12px;
+  padding: 0 4px;
+  display: flex;
+  margin-left: 2px;
+  align-items: center;
+  justify-content: center;
 }
 
 .CommandPalette .optionSection .optionSet .optionButton:hover {

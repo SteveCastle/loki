@@ -9,6 +9,32 @@ var is = require("electron-is");
 
 const { MenuBuilder } = require("./menu");
 
+const HOT_KEY_DEFAULTS = {
+  f: "fileOptions.changeFile",
+  z: "fileOptions.toggleRecursion",
+  x: "fileOptions.shuffle",
+  ArrowUp: "fileOptions.nextImage",
+  ArrowDown: "fileOptions.previousImage",
+  " ": "windowOptions.minimize",
+  "]": "windowOptions.openDevTools",
+  c: "windowOptions.toggleFullscreen",
+  v: "windowOptions.toggleAlwaysOnTop",
+  1: "listOptions.toggleSortOrder",
+  2: "listOptions.showALL",
+  3: "listOptions.showSTATIC",
+  4: "listOptions.showVIDEO",
+  5: "listOptions.showGIF",
+  6: "listOptions.showMOTION",
+  q: "imageOptions.toggleSizing",
+  w: "imageOptions.sizeOVERSCAN",
+  e: "imageOptions.sizeACTUAL",
+  r: "imageOptions.sizeFIT",
+  t: "imageOptions.sizeCOVER",
+  a: "imageOptions.toggleAudio",
+  s: "imageOptions.toggleVideoControls",
+  "/": "controlOptions.toggleControls",
+};
+
 let mainWindow;
 let filePath = "";
 
@@ -31,6 +57,11 @@ function createWindow() {
       starts: 0,
     });
   }
+
+  if (!settings.has("settings.hotKeys")) {
+    settings.set("settings.hotKeys", HOT_KEY_DEFAULTS);
+  }
+
   settings.set("settings.starts", settings.get("settings.starts") + 1);
   settings.set("settings.lastStart", new Date());
 

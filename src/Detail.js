@@ -1,10 +1,29 @@
-import React, { useRef } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import useScrollOnDrag from "react-scroll-ondrag";
 
 const url = window.require("url");
 const path = window.require("path");
 
 import { EXTENSIONS } from "./constants";
+
+function useWindowSize() {
+  const [windowSize, setWindowSize] = useState({
+    width: undefined,
+    height: undefined,
+  });
+  useEffect(() => {
+    function handleResize() {
+      setWindowSize({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    }
+    window.addEventListener("resize", handleResize);
+    handleResize();
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+  return windowSize;
+}
 
 function Detail({
   fileName,
@@ -21,7 +40,24 @@ function Detail({
   handleRightClick,
 }) {
   const containerRef = useRef(null);
+  const imageRef = useRef(null);
   const { events } = useScrollOnDrag(containerRef);
+  const { width, height } = useWindowSize();
+
+  const [isPortrait, setPortrait] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (
+      imageRef.current.offsetWidth / imageRef.current.offsetHeight >
+      width / height
+    ) {
+      setPortrait(true);
+    } else {
+      setPortrait(false);
+    }
+    setLoaded(false);
+  }, [loaded, size, fileName, width, height]);
+
   return (
     <div
       className={
@@ -37,21 +73,33 @@ function Detail({
     >
       {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
         <img
+          ref={imageRef}
           key={fileName}
+          onLoad={() => {
+            setLoaded(true);
+          }}
           src={url.format({
             protocol: "file",
             pathname: fileName,
           })}
-          className={size.className}
+          className={[
+            size.className,
+            isPortrait ? "portrait" : "landscape",
+          ].join(" ")}
         />
       )}
       {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
         <video
-          className={size.className}
+          ref={imageRef}
+          className={[
+            size.className,
+            isPortrait ? "portrait" : "landscape",
+          ].join(" ")}
           src={url.format({
             protocol: "file",
             pathname: fileName,
           })}
+          onPlaying={() => setLoaded(true)}
           loop
           autoPlay
           controls={videoControls}
