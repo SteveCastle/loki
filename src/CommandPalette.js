@@ -177,7 +177,9 @@ function CommandPallete({
                 </div>
                 <div className="optionSet">
                   <label>
-                    Open File {status.cursor + 1} of {status.items.length}
+                    Open File{" "}
+                    {status.cursor + (status.fileName.length > 0 ? 1 : 0)} of{" "}
+                    {status.items.length}
                   </label>
                   <ProgressBar
                     value={status.cursor + 1}
@@ -276,7 +278,7 @@ function CommandPallete({
                 </div>
                 <div className="optionSet">
                   <label>
-                    Recursive
+                    Recursive Mode (Scan SubDirectories)
                     <button
                       className="action"
                       onClick={(e) => {
@@ -560,10 +562,83 @@ function CommandPallete({
                     <div className="actions"></div>
                   </div>
                 </div>
+                <div className="optionSet">
+                  <label>Action HotKeys</label>
+                  <div className="optionButton">
+                    <div className="primary">Minimize Window</div>
+                    <div className="actions">
+                      <button
+                        className="action"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          controls.setSettingHotKey(`windowOptions.minimize`);
+                        }}
+                      >
+                        <img src={keyboard} />
+                        <span className="currentHotKey">
+                          {hotKeysByAction[`windowOptions.minimize`]}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="optionButton">
+                    <div className="primary">Next Image</div>
+                    <div className="actions">
+                      <button
+                        className="action"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          controls.setSettingHotKey(`fileOptions.nextImage`);
+                        }}
+                      >
+                        <img src={keyboard} />
+                        <span className="currentHotKey">
+                          {hotKeysByAction[`fileOptions.nextImage`]}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="optionButton">
+                    <div className="primary">Previous Image</div>
+                    <div className="actions">
+                      <button
+                        className="action"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          controls.setSettingHotKey(
+                            `fileOptions.previousImage`
+                          );
+                        }}
+                      >
+                        <img src={keyboard} />
+                        <span className="currentHotKey">
+                          {hotKeysByAction[`fileOptions.previousImage`]}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="optionButton">
+                    <div className="primary">Shuffle Images</div>
+                    <div className="actions">
+                      <button
+                        className="action"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          controls.setSettingHotKey(`fileOptions.shuffle`);
+                        }}
+                      >
+                        <img src={keyboard} />
+                        <span className="currentHotKey">
+                          {hotKeysByAction[`fileOptions.shuffle`]}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
-          {status.tab === "databaseOptions" && (
+          {/* {status.tab === "databaseOptions" && (
             <div className="controlOptions">
               <div className="optionSection">
                 <div className="optionSet">
@@ -572,7 +647,7 @@ function CommandPallete({
                 </div>
               </div>
             </div>
-          )}
+          )} */}
         </div>
         <div className="tabs">
           <button
@@ -599,12 +674,12 @@ function CommandPallete({
           >
             <img src={gear} />
           </button>
-          <button
+          {/* <button
             className={status.tab === "databaseOptions" ? "active" : null}
             onClick={() => controls.setTab("databaseOptions")}
           >
             <img src={database} />
-          </button>
+          </button> */}
         </div>
       </div>
     </div>
