@@ -297,6 +297,16 @@ function App() {
     command.action();
   }
 
+  if (settingHotKey) {
+    return (
+      <HotKeySetter
+        action={settingHotKey}
+        setHotKeys={setHotKeys}
+        handleComplete={() => setSettingHotKey(false)}
+      />
+    );
+  }
+
   if (loading) {
     return (
       <React.Fragment>
@@ -420,15 +430,7 @@ function App() {
       </React.Fragment>
     );
   }
-  if (settingHotKey) {
-    return (
-      <HotKeySetter
-        action={settingHotKey}
-        setHotKeys={setHotKeys}
-        handleComplete={() => setSettingHotKey(false)}
-      />
-    );
-  }
+
   return (
     <React.Fragment>
       {!false && <HotKeyController handleKeyPress={handleKeyPress} />}
