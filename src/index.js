@@ -101,7 +101,7 @@ function App() {
   // Initialize State from settings.
   useEffect(() => {
     // Uncomment to open dev tools on load.
-    electron.remote.getCurrentWindow().webContents.openDevTools();
+    // electron.remote.getCurrentWindow().webContents.openDevTools();
     if (settings.has("settings.scaleMode")) {
       setSize(SIZE[settings.get("settings.scaleMode")]);
     }
