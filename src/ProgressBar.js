@@ -8,9 +8,10 @@ function mapRange(value, in_min, in_max, out_min, out_max) {
 export default function ProgressBar({ total, value, setCursor }) {
   const ref = useRef();
   function handleClick(e) {
-    setCursor(
-      Math.floor(mapRange(e.nativeEvent.offsetX, 0, 350, 0, total - 1))
+    const newCursor = Math.round(
+      mapRange(e.nativeEvent.offsetX, 0, 350, 0, total - 1)
     );
+    setCursor(newCursor);
   }
   return (
     <div className="ProgressBar" onClick={handleClick} ref={ref}>
