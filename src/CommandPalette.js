@@ -27,7 +27,6 @@ function useOnClickOutside(ref, handler, isLocked) {
     () => {
       const listener = (event) => {
         // Do nothing if clicking ref's element or descendent elements
-        console.log(event);
         if (
           isLocked ||
           !ref.current ||
