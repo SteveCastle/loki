@@ -109,8 +109,8 @@
 .CommandPalette .optionSection label button {
   background: none;
   border: none;
-  height: 16px;
-  width: 16px;
+  display: flex;
+  align-items: center;
 }
 
 .CommandPalette .optionSection label button img {
@@ -137,17 +137,30 @@
 }
 .CommandPalette .optionSection .optionSet .optionButton .actions {
   margin-left: auto;
+  display: flex;
 }
 .CommandPalette .optionSection .optionSet .optionButton .action {
   border: none;
   background: none;
   height: 20px;
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
 }
 
 .CommandPalette .optionSection .optionSet .optionButton .action img {
   height: 16px;
   width: 16px;
-  opacity: 0.6;
+}
+
+.currentHotKey {
+  display: inline-block;
+  background-color: white;
+  color: black;
+  font-weight: 600;
+  font-size: 12px;
+  height: 12px;
+  min-width: 12px;
 }
 
 .CommandPalette .optionSection .optionSet .optionButton:hover {
