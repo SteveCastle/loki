@@ -4,8 +4,6 @@ export const HOT_KEY_DEFAULTS = {
   x: "fileOptions.shuffle",
   ArrowUp: "fileOptions.nextImage",
   ArrowDown: "fileOptions.previousImage",
-  ArrowLeft: "fileOptions.nextImage",
-  ArrowRight: "fileOptions.previousImage",
   " ": "windowOptions.minimize",
   "]": "windowOptions.openDevTools",
   c: "windowOptions.toggleFullscreen",

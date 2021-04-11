@@ -299,13 +299,61 @@ function App() {
 
   if (loading) {
     return (
-      <div
-        tabIndex="0"
-        onKeyPress={handleKeyPress}
-        className="loadingContainer"
-      >
-        <Spinner />
-      </div>
+      <React.Fragment>
+        {commandPaletteOpen && (
+          <CommandPalette
+            status={{
+              fileName: "",
+              cursor,
+              hotKeys,
+              tab,
+              filePath,
+              sort,
+              filter,
+              size,
+              listSize,
+              audio,
+              videoControls,
+              controlMode,
+              recursive,
+              items,
+              isAlwaysOnTop,
+              isFullScreen,
+            }}
+            controls={{
+              setSettingHotKey,
+              changePath,
+              setPath,
+              setHotKeys,
+              setAudio,
+              setVideoControls,
+              setSort,
+              setTab,
+              setFilter,
+              setSize,
+              setListSize,
+              setControlMode,
+              setRecursive,
+              setCursor,
+              setIsAlwaysOnTop,
+              setIsFullScreen,
+            }}
+            setAbout={setAbout}
+            position={commandPaletteOpen}
+            setCommandPaletteOpen={setCommandPaletteOpen}
+          />
+        )}
+        <div
+          tabIndex="0"
+          onKeyPress={handleKeyPress}
+          className="loadingContainer"
+          onContextMenu={(e) => {
+            setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
+          }}
+        >
+          <Spinner />
+        </div>
+      </React.Fragment>
     );
   }
 
@@ -319,7 +367,7 @@ function App() {
         {commandPaletteOpen && (
           <CommandPalette
             status={{
-              fileName: items[cursor].fileName,
+              fileName: "",
               cursor,
               hotKeys,
               tab,
@@ -365,7 +413,6 @@ function App() {
           className="noItemsContainer"
           onContextMenu={(e) => {
             setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
-            console.log(e);
           }}
         >
           <span className="noItemsMessage">No Images Found</span>
@@ -508,7 +555,6 @@ function App() {
             }}
             handleRightClick={(e) => {
               setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
-              console.log(e);
             }}
           />
         </React.Fragment>
@@ -528,7 +574,6 @@ function App() {
           }}
           handleRightClick={(e) => {
             setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
-            console.log("set command palette open to:", e);
           }}
         />
       )}
