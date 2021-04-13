@@ -32,7 +32,7 @@ export default async function loadImageList(
         fileName: item.path,
         modified: item.mtimeMs,
       }))
-      .sort(sorts[sortOrder]);
+      .sort(sorts[sortOrder.key]);
   } catch (err) {
     items = await readdir.async(folderPath, {
       filter,
@@ -47,8 +47,7 @@ export default async function loadImageList(
         fileName: item,
         modified: fs.statSync(item).mtimeMs,
       }))
-      .sort(sorts[sortOrder]);
+      .sort(sorts[sortOrder.key]);
   }
-
   return { items: sortedItems };
 }
