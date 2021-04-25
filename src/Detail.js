@@ -27,6 +27,7 @@ function useWindowSize() {
 
 function Detail({
   fileName,
+  useBucket,
   size,
   audio,
   volume,
@@ -78,10 +79,14 @@ function Detail({
           onLoad={() => {
             setLoaded(true);
           }}
-          src={url.format({
-            protocol: "file",
-            pathname: fileName,
-          })}
+          src={
+            useBucket
+              ? fileName
+              : url.format({
+                  protocol: "file",
+                  pathname: fileName,
+                })
+          }
           className={[
             size.className,
             isPortrait ? "portrait" : "landscape",
@@ -95,10 +100,14 @@ function Detail({
             size.className,
             isPortrait ? "portrait" : "landscape",
           ].join(" ")}
-          src={url.format({
-            protocol: "file",
-            pathname: fileName,
-          })}
+          src={
+            useBucket
+              ? fileName
+              : url.format({
+                  protocol: "file",
+                  pathname: fileName,
+                })
+          }
           onPlaying={() => setLoaded(true)}
           loop
           autoPlay

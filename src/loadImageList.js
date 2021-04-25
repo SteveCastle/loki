@@ -12,8 +12,23 @@ export default async function loadImageList(
   folderPath,
   filter,
   sortOrder,
-  recursive = false
+  recursive = false,
+  bucket
 ) {
+  if (bucket) {
+    const response = await fetch(bucket);
+    const images = await response.json();
+    console.log("BUCKET IMAGES", images);
+    const bucketItems = images
+      .filter((item) => path.basename(item.Path)[0] !== ".")
+      .map((item) => ({
+        fileName: item.Path,
+        modified: item.Modified,
+      }))
+      .sort(sorts[sortOrder.key]);
+    return { items: bucketItems };
+  }
+
   console.log("Loading Images from:", folderPath);
   let items, sortedItems;
   // Use readdir-enhanced to get a list of files at a path given the settings passed in.

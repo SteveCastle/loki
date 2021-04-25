@@ -5,7 +5,7 @@ const url = window.require("url");
 const path = window.require("path");
 import { EXTENSIONS } from "./constants";
 
-function ListItem({ fileName, handleSelection, size }) {
+function ListItem({ fileName, useBucket, handleSelection, size }) {
   const [isPortrait, setPortrait] = useState(false);
 
   const [loaded, setLoaded] = useState(false);
@@ -45,10 +45,14 @@ function ListItem({ fileName, handleSelection, size }) {
             }}
             key={fileName}
             ref={imageRef}
-            src={url.format({
-              protocol: "file",
-              pathname: fileName,
-            })}
+            src={
+              useBucket
+                ? fileName
+                : url.format({
+                    protocol: "file",
+                    pathname: fileName,
+                  })
+            }
             className={`${
               isPortrait
                 ? `${size.className}ImagePortrait`
@@ -66,10 +70,14 @@ function ListItem({ fileName, handleSelection, size }) {
             }`}
             onPlaying={() => setLoaded(true)}
             ref={imageRef}
-            src={`${url.format({
-              protocol: "file",
-              pathname: fileName,
-            })}#t=30,120`}
+            src={`${
+              useBucket
+                ? fileName
+                : url.format({
+                    protocol: "file",
+                    pathname: fileName,
+                  })
+            }#t=30,120`}
             loop
             autoPlay
             muted

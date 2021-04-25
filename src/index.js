@@ -47,6 +47,8 @@ function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [cursor, setCursor] = useState(0);
+  const [useBucket, setUseBucket] = useState(false);
+
   const [controlMode, setControlMode] = useState(
     CONTROL_MODE[settings.get("settings.controlMode")]
   );
@@ -118,7 +120,8 @@ function App() {
         getFolder(filePath),
         filter.value,
         sort,
-        recursive
+        recursive,
+        useBucket
       );
       setItems(data.items);
       let cursor = data.items.findIndex((item) => {
@@ -135,7 +138,7 @@ function App() {
     } else {
       changePath();
     }
-  }, [filePath, sort, filter, recursive]);
+  }, [filePath, useBucket, sort, filter, recursive]);
 
   function nextImage() {
     setCursor(cursor === items.length - 1 ? cursor : cursor + 1);
@@ -328,6 +331,7 @@ function App() {
               items,
               isAlwaysOnTop,
               isFullScreen,
+              useBucket
             }}
             controls={{
               setSettingHotKey,
@@ -346,6 +350,7 @@ function App() {
               setCursor,
               setIsAlwaysOnTop,
               setIsFullScreen,
+              setUseBucket
             }}
             setAbout={setAbout}
             position={commandPaletteOpen}
@@ -392,6 +397,7 @@ function App() {
               items,
               isAlwaysOnTop,
               isFullScreen,
+              useBucket
             }}
             controls={{
               setSettingHotKey,
@@ -410,6 +416,7 @@ function App() {
               setCursor,
               setIsAlwaysOnTop,
               setIsFullScreen,
+              setUseBucket
             }}
             setAbout={setAbout}
             position={commandPaletteOpen}
@@ -507,6 +514,7 @@ function App() {
             items,
             isAlwaysOnTop,
             isFullScreen,
+            useBucket
           }}
           controls={{
             setSettingHotKey,
@@ -525,6 +533,7 @@ function App() {
             setCursor,
             setIsAlwaysOnTop,
             setIsFullScreen,
+            setUseBucket
           }}
           setAbout={setAbout}
           position={commandPaletteOpen}
@@ -549,6 +558,7 @@ function App() {
             handleClick={handleClick}
             handleScroll={handleScroll}
             controlMode={controlMode}
+            useBucket={useBucket}
             handleDoubleClick={() => {
               if (controlMode.key === CONTROL_MODE.MOUSE.key) {
                 setView(VIEW.LIST);
@@ -566,6 +576,7 @@ function App() {
           shuffles={shuffles}
           size={listSize}
           cursor={cursor}
+          useBucket={useBucket}
           controlMode={controlMode}
           columns={3}
           setPath={setPath}

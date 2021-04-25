@@ -15,6 +15,7 @@ const Cell = ({ data, columnIndex, rowIndex, style }) =>
       <ListItem
         className="listImage"
         size={data.size}
+        useBucket={data.useBucket}
         handleSelection={() =>
           data.handleSelection(rowIndex * data.columns + columnIndex)
         }
@@ -75,7 +76,7 @@ export default class List extends Component {
   }
 
   render() {
-    const { fileList, handleSelection, handleRightClick } = this.props;
+    const { fileList, useBucket, handleSelection, handleRightClick } = this.props;
     return (
       <div
         className="container"
@@ -95,6 +96,7 @@ export default class List extends Component {
           width={this.state.width}
           itemData={{
             fileList,
+            useBucket,
             handleSelection,
             columns: this.columns,
             size: this.props.size,

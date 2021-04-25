@@ -63,6 +63,7 @@ function CommandPallete({
   position,
 }) {
   const [isLocked, setIsLocked] = useState(false);
+  const [newBucket, setNewBucket] = useState('');
 
   const ref = useRef();
   // State for our modal
@@ -214,6 +215,20 @@ function CommandPallete({
                     <img src={currentFile} className="icon" />
 
                     {getFile(status.fileName)}
+                  </div>
+                  <div
+                    className="optionData"
+                  >
+                    <img src={currentFolder} className="icon" />
+                    {status.useBucket ? (
+                      <button onClick={() => controls.setUseBucket(false)}>
+                        Clear Bucket
+                      </button>
+                    ) : (
+                      <button onClick={() => controls.setUseBucket("")}>
+                        Set Bucket
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
