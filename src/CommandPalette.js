@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
 const electron = window.require("electron");
-const settings = window.require("electron-settings");
 import useComponentSize from "@rehooks/component-size";
 import currentFolder from "./assets/folder-5-fill.svg";
 import currentFile from "./assets/file-fill.svg";
