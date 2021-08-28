@@ -2,7 +2,6 @@ import React from "react";
 var shell = window.require("electron").shell;
 import "./About.css";
 var shell = window.require("electron").shell;
-const settings = window.require("electron-settings");
 import logo from "./assets/logo.png";
 
 function About({ setAbout }) {
@@ -21,7 +20,7 @@ function About({ setAbout }) {
           </span>
           <h1>LowKey Image Viewer</h1>
         </div>
-        <span className="version">Version: 1.1.1</span>
+        <span className="version">Version: 1.1.2</span>
         <span>
           <a
             href=""

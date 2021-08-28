@@ -1,11 +1,11 @@
-var memoize = window.require("memoizee");
+const naturalCompare = window.require("natural-compare-lite");
 const readdir = window.require("readdir-enhanced");
 const path = window.require("path");
 const fs = window.require("fs");
-
 const sorts = {
   CREATE_DATE: (a, b) => b.modified - a.modified,
-  ALPHA: (a, b) => a.fileName.localeCompare(b.fileName),
+  ALPHA: (a, b) =>
+    naturalCompare(a.fileName.toLowerCase(), b.fileName.toLowerCase()),
 };
 
 export default async function loadImageList(
