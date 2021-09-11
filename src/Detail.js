@@ -26,7 +26,8 @@ function useWindowSize() {
 }
 
 function Detail({
-  fileName,
+  items,
+  cursor,
   size,
   audio,
   volume,
@@ -43,6 +44,9 @@ function Detail({
   const imageRef = useRef(null);
   const { events } = useScrollOnDrag(containerRef);
   const { width, height } = useWindowSize();
+  const previousFileName = items[cursor - 1]?.fileName;
+  const fileName = items[cursor].fileName;
+  const nextFileName = items[cursor + 1]?.fileName;
 
   const [isPortrait, setPortrait] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -72,21 +76,43 @@ function Detail({
       ref={controlMode.key === "MOUSE" ? containerRef : null}
     >
       {EXTENSIONS.img.includes(path.extname(fileName).toLowerCase()) && (
-        <img
-          ref={imageRef}
-          key={fileName}
-          onLoad={() => {
-            setLoaded(true);
-          }}
-          src={url.format({
-            protocol: "file",
-            pathname: fileName,
-          })}
-          className={[
-            size.className,
-            isPortrait ? "portrait" : "landscape",
-          ].join(" ")}
-        />
+        <>
+          {previousFileName && (
+            <img
+              key={previousFileName}
+              src={url.format({
+                protocol: "file",
+                pathname: previousFileName,
+              })}
+              className="previous"
+            />
+          )}
+          <img
+            ref={imageRef}
+            key={fileName}
+            onLoad={() => {
+              setLoaded(true);
+            }}
+            src={url.format({
+              protocol: "file",
+              pathname: fileName,
+            })}
+            className={[
+              size.className,
+              isPortrait ? "portrait" : "landscape",
+            ].join(" ")}
+          />
+          {nextFileName && (
+            <img
+              key={nextFileName}
+              src={url.format({
+                protocol: "file",
+                pathname: nextFileName,
+              })}
+              className="next"
+            />
+          )}
+        </>
       )}
       {EXTENSIONS.video.includes(path.extname(fileName).toLowerCase()) && (
         <video

@@ -353,3 +353,12 @@ body {
     opacity: 0;
   }
 }
+
+.previous {
+  position: fixed;
+  left: -9999px;
+}
+.next {
+  position: fixed;
+  right: -9999px;
+}

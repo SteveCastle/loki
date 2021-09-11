@@ -538,7 +538,8 @@ function App() {
             <HotCorner handleClick={() => setView(VIEW.LIST)} />
           )}
           <Detail
-            fileName={items[cursor].fileName}
+            items={items}
+            cursor={cursor}
             size={size}
             audio={audio}
             volume={volume}
