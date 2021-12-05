@@ -22,6 +22,7 @@ export const HOT_KEY_DEFAULTS = {
   a: "imageOptions.toggleAudio",
   s: "imageOptions.toggleVideoControls",
   "/": "controlOptions.toggleControls",
+  m: "controlOptions.toggleTags",
 };
 
 export const VIEW = {

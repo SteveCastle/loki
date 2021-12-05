@@ -1,7 +1,7 @@
 import React from "react";
 import FocusLock from "react-focus-lock";
-function HotKeyController({ handleKeyPress }) {
-  return (
+function HotKeyController({ handleKeyPress, showingTags }) {
+  return !showingTags ? (
     <FocusLock>
       <div
         className="hotkeyController"
@@ -9,7 +9,7 @@ function HotKeyController({ handleKeyPress }) {
         onKeyDown={handleKeyPress}
       />
     </FocusLock>
-  );
+  ) : null;
 }
 
 export default HotKeyController;

@@ -1,0 +1,51 @@
+.TagFilters {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 50px 20px;
+  z-index: 9999;
+}
+
+.TagSearch {
+  display: flex;
+}
+
+.TagSearch input {
+  padding: 1rem;
+  border: none;
+  border-radius: 6px 0 0 6px;
+}
+
+.TagSearch button {
+  padding: 1rem;
+  border: none;
+  background-color: none;
+  border-radius: 0 6px 6px 0;
+  cursor: pointer;
+}
+
+.TagFilters .tagList {
+  display: flex;
+}
+
+.TagFilters .tagList ul {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  flex-direction: column;
+  padding: 0.2rem;
+  height: 90vh;
+}
+
+.TagFilters .tagList li {
+  padding: 0.2rem;
+  background: black;
+  opacity: 0.8;
+  margin: 0.1rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.TagFilters .tagList .currentTags {
+  color: palevioletred;
+}

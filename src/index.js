@@ -22,15 +22,18 @@ import {
   SIZE,
   VIEW,
   CONTROL_MODE,
-  HOT_KEY_DEFAULTS,
   getNext,
   LIST_SIZE,
 } from "./constants";
 import loadImageList from "./loadImageList";
 import CommandPalette from "./CommandPalette";
 import About from "./About";
+import TagFilters from "./TagFilters";
 
 function App() {
+  const [showTags, setShowTags] = useState(true);
+  const [tagFilters, setTagFilters] = useState("");
+  const debouncedTagFilters = useDebounce(tagFilters, 800)
   const [dragging, setDragging] = useState(false);
   const [tab, setTab] = useState("fileOptions");
   const [settingHotKey, setSettingHotKey] = useState(false);
@@ -114,12 +117,7 @@ function App() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
-      const data = await loadImageList(
-        getFolder(filePath),
-        filter.value,
-        sort,
-        recursive
-      );
+      const data = await loadImageList(debouncedTagFilters.trim().split(" "));
       setItems(data.items);
       let cursor = data.items.findIndex((item) => {
         return item.fileName === filePath;
@@ -135,7 +133,7 @@ function App() {
     } else {
       changePath();
     }
-  }, [filePath, sort, filter, recursive]);
+  }, [filePath, sort, filter, recursive, debouncedTagFilters]);
 
   function nextImage() {
     setCursor(cursor === items.length - 1 ? cursor : cursor + 1);
@@ -260,6 +258,11 @@ function App() {
           setControlMode(getNext(CONTROL_MODE, controlMode.key));
         },
       },
+      toggleTags: {
+        action: () => {
+          setShowTags(!showTags);
+        },
+      },
     },
     windowOptions: {
       minimize: {
@@ -369,10 +372,12 @@ function App() {
   if (items.length === 0) {
     return (
       <React.Fragment>
-        {!about && <HotKeyController handleKeyPress={handleKeyPress} />}
+        {!about && <HotKeyController showingTags={showTags} handleKeyPress={handleKeyPress} />}
         <div className="dragArea"></div>
         <div className="dragAreaHover"></div>
-
+        {showTags && (
+          <TagFilters value={tagFilters} handleChange={setTagFilters} hide={() => setShowTags(false)}/>
+        )}
         {commandPaletteOpen && (
           <CommandPalette
             status={{
@@ -432,7 +437,7 @@ function App() {
 
   return (
     <React.Fragment>
-      {!false && <HotKeyController handleKeyPress={handleKeyPress} />}
+      {!false && <HotKeyController showingTags={showTags} handleKeyPress={handleKeyPress} />}
       {settings.get("settings.starts") === 1 && !firstLoadCleared && (
         <div className="firstLoadContainer">
           <div className="firstLoadMenu">
@@ -537,6 +542,9 @@ function App() {
           {controlMode.key === CONTROL_MODE.TRACK_PAD.key && (
             <HotCorner handleClick={() => setView(VIEW.LIST)} />
           )}
+          {showTags && (
+            <TagFilters value={tagFilters} handleChange={setTagFilters}  hide={() => setShowTags(false)} path={items[cursor].fileName}/>
+          )}
           <Detail
             items={items}
             cursor={cursor}
@@ -561,25 +569,53 @@ function App() {
           />
         </React.Fragment>
       ) : (
-        <List
-          filter={filter}
-          fileList={items}
-          shuffles={shuffles}
-          size={listSize}
-          cursor={cursor}
-          controlMode={controlMode}
-          columns={3}
-          setPath={setPath}
-          handleSelection={(i) => {
-            setCursor(i);
-            setView(VIEW.DETAIL);
-          }}
-          handleRightClick={(e) => {
-            setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
-          }}
-        />
+        <React.Fragment>
+          {showTags && (
+            <TagFilters value={tagFilters} handleChange={setTagFilters} hide={() => setShowTags(false)}/>
+          )}
+          <List
+            filter={filter}
+            fileList={items}
+            shuffles={shuffles}
+            size={listSize}
+            cursor={cursor}
+            controlMode={controlMode}
+            columns={3}
+            setPath={setPath}
+            handleSelection={(i) => {
+              setCursor(i);
+              setView(VIEW.DETAIL);
+            }}
+            handleRightClick={(e) => {
+              setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
+            }}
+          />
+        </React.Fragment>
       )}
     </React.Fragment>
   );
 }
+
+
+function useDebounce(value, delay) {
+  // State and setters for debounced value
+  const [debouncedValue, setDebouncedValue] = useState(value);
+  useEffect(
+      () => {
+          // Update debounced value after delay
+          const handler = setTimeout(() => {
+              setDebouncedValue(value);
+          }, delay);
+          // Cancel the timeout if value changes (also on delay change or unmount)
+          // This is how we prevent debounced value from updating if value is changed ...
+          // .. within the delay period. Timeout gets cleared and restarted.
+          return () => {
+              clearTimeout(handler);
+          };
+      },
+      [value, delay], // Only re-call effect if value or delay changes
+  );
+  return debouncedValue;
+}
+
 ReactDOM.render(<App />, document.getElementById("root"));

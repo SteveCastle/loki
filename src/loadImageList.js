@@ -9,7 +9,16 @@ const knex = window.require("knex")({
   },
 });
 
-export default async function loadImageList() {
-  const items = await knex().select("*").from("things")
+export default async function loadImageList(filters) {
+
+  const items = await knex("things_concepts")
+    .join("things", "things_concepts.things_id", "things.id")
+    .join("labels", "labels.concepts_id", "things_concepts.concepts_id")
+    .select("things.*")
+    .whereRaw(
+      `things_concepts.concepts_id = labels.concepts_id AND (labels.literal IN (${filters.map(_ => '?').join(',')})) AND things.id = things_concepts.things_id`
+    , filters)
+    .groupBy("things.id")
+    .havingRaw("COUNT(things.id)=?", filters.length).debug();
   return { items: items.map((item) => ({ fileName: item.uri, modified: 0 })) };
 }
