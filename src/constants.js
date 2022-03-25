@@ -55,12 +55,12 @@ export const FILTER = {
   ALL: {
     title: "All",
     key: "ALL",
-    value: /jpg$|jpeg$|png$|webm$|mp4$|mpeg$|gif$/i,
+    value: /jpg$|jpeg$|jfif$|png$|webm$|mp4$|mpeg$|gif$/i,
   },
   STATIC: {
     title: "Static",
     key: "STATIC",
-    value: /jpg$|jpeg$|png$/i,
+    value: /jpg$|jpeg$|jfif$|png$/i,
   },
   VIDEO: {
     title: "Videos",
