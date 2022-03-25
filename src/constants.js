@@ -80,7 +80,7 @@ export const FILTER = {
 };
 
 export const EXTENSIONS = {
-  img: [".jpg", ".jpeg", ".gif", ".png"],
+  img: [".jpg", ".jpeg", ".jfif", ".gif", ".png"],
   video: [".webm", ".avi", ".mpg", ".mpeg", ".mp4"],
 };
 
