@@ -49,6 +49,11 @@
         "role": "Viewer"
       },
       {
+        "ext": "webp",
+        "name": "WebP Image File",
+        "role": "Viewer"
+      },
+      {
         "ext": "png",
         "name": "PNG Image File",
         "role": "Viewer"
