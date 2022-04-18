@@ -33,16 +33,8 @@ function About({ setAbout }) {
           </a>
         </span>
         <span className="donationReqeust">
-          Thank you for using Lowkey Image Viewer. If you can please support
-          development of this project by becoming a Patron on Patreon.
+          Thank you for becoming a patron of Lowkey Image Viewer. 🎉
         </span>
-        <button
-          onClick={() => {
-            shell.openExternal("https://patreon.com/lowkeyviewer");
-          }}
-        >
-          Support on Patreon
-        </button>
       </div>
     </div>
   );
