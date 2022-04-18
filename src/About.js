@@ -20,7 +20,7 @@ function About({ setAbout }) {
           </span>
           <h1>LowKey Image Viewer</h1>
         </div>
-        <span className="version">Version: 1.1.3</span>
+        <span className="version">Version: 1.1.4-patron</span>
         <span>
           <a
             href=""
