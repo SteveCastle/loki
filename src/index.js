@@ -39,7 +39,7 @@ function App() {
     decode(window.location.search.substr(1))
   );
   const [loading, setLoading] = useState(false);
-  const [about, setAbout] = useState(settings.get("settings.starts") % 5 === 0);
+  const [about, setAbout] = useState(false);
 
   const [shuffles, setShuffles] = useState(true);
   const [firstLoadCleared, setFirstLoadCleared] = useState(false);
