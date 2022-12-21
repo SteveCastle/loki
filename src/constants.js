@@ -21,6 +21,7 @@ export const HOT_KEY_DEFAULTS = {
   t: "imageOptions.sizeCOVER",
   a: "imageOptions.toggleAudio",
   s: "imageOptions.toggleVideoControls",
+  m: "tagActions.addTag",
   "/": "controlOptions.toggleControls",
 };
 

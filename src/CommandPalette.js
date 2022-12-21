@@ -154,7 +154,6 @@ function CommandPallete({
                   <label>
                     Directory ({status.items.length} Items)
                     <button
-                      onClick={() => setAbout(true)}
                       onClick={() => controls.setRecursive(!status.recursive)}
                       style={{ opacity: status.recursive ? 1 : 0.5 }}
                     >
@@ -652,16 +651,32 @@ function CommandPallete({
               </div>
             </div>
           )}
-          {/* {status.tab === "databaseOptions" && (
+          {status.tab === "tagOptions" && (
             <div className="controlOptions">
               <div className="optionSection">
                 <div className="optionSet">
-                  <label>Database Mode</label>
-                  <div className="optionButton">Activate</div>
+                  <label>Tagging</label>
+                  <div className="optionButton">
+                    <div className="primary">Quick Tag</div>
+                    <div className="actions">
+                      <button
+                        className="action"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          controls.setSettingHotKey(`tagActions.addTag`);
+                        }}
+                      >
+                        <img src={keyboard} />
+                        <span className="currentHotKey">
+                          {hotKeysByAction[`tagActions.addTag`]}
+                        </span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          )} */}
+          )}
         </div>
         <div className="tabs">
           <button
@@ -688,12 +703,12 @@ function CommandPallete({
           >
             <img src={gear} />
           </button>
-          {/* <button
-            className={status.tab === "databaseOptions" ? "active" : null}
-            onClick={() => controls.setTab("databaseOptions")}
+          <button
+            className={status.tab === "tagOptions" ? "active" : null}
+            onClick={() => controls.setTab("tagOptions")}
           >
             <img src={database} />
-          </button> */}
+          </button>
         </div>
       </div>
     </div>

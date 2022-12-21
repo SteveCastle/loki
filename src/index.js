@@ -29,6 +29,7 @@ import {
 import loadImageList from "./loadImageList";
 import CommandPalette from "./CommandPalette";
 import About from "./About";
+import createTag from "./createTag";
 
 function App() {
   const [dragging, setDragging] = useState(false);
@@ -105,13 +106,16 @@ function App() {
   // Initialize State from settings.
   useEffect(() => {
     // Uncomment to open dev tools on load.
-    // electron.remote.getCurrentWindow().webContents.openDevTools();
+    electron.remote.getCurrentWindow().webContents.openDevTools();
     if (settings.has("settings.scaleMode")) {
       setSize(SIZE[settings.get("settings.scaleMode")]);
     }
   }, []);
   // Reload data from image provider if directory, filter, or recursive setting changes
   useEffect(() => {
+    if (filePath && filePath.length > 1) {
+      setItems([{ fileName: filePath, modified: 0 }]);
+    }
     async function fetchData() {
       setLoading(true);
       const data = await loadImageList(
@@ -261,6 +265,13 @@ function App() {
         },
       },
     },
+    tagActions: {
+      addTag: {
+        action: () => {
+          createTag("tier", "S", items[cursor].fileName);
+        },
+      },
+    },
     windowOptions: {
       minimize: {
         action: () => {
@@ -303,66 +314,6 @@ function App() {
         setHotKeys={setHotKeys}
         handleComplete={() => setSettingHotKey(false)}
       />
-    );
-  }
-
-  if (loading) {
-    return (
-      <React.Fragment>
-        {commandPaletteOpen && (
-          <CommandPalette
-            status={{
-              fileName: "",
-              cursor,
-              hotKeys,
-              tab,
-              filePath,
-              sort,
-              filter,
-              size,
-              listSize,
-              audio,
-              videoControls,
-              controlMode,
-              recursive,
-              items,
-              isAlwaysOnTop,
-              isFullScreen,
-            }}
-            controls={{
-              setSettingHotKey,
-              changePath,
-              setPath,
-              setHotKeys,
-              setAudio,
-              setVideoControls,
-              setSort,
-              setTab,
-              setFilter,
-              setSize,
-              setListSize,
-              setControlMode,
-              setRecursive,
-              setCursor,
-              setIsAlwaysOnTop,
-              setIsFullScreen,
-            }}
-            setAbout={setAbout}
-            position={commandPaletteOpen}
-            setCommandPaletteOpen={setCommandPaletteOpen}
-          />
-        )}
-        <div
-          tabIndex="0"
-          onKeyPress={handleKeyPress}
-          className="loadingContainer"
-          onContextMenu={(e) => {
-            setCommandPaletteOpen({ x: e.clientX, y: e.clientY });
-          }}
-        >
-          <Spinner />
-        </div>
-      </React.Fragment>
     );
   }
 
