@@ -29,6 +29,7 @@ export function saveCurrentSettings({
   videoControls,
   isAlwaysOnTop,
   isFullScreen,
+  activeTag,
 }) {
   if (controlMode) {
     settings.set("settings.controlMode", controlMode);
@@ -47,6 +48,9 @@ export function saveCurrentSettings({
   }
   if (defaultFilter) {
     settings.set("settings.defaultFilter", defaultFilter);
+  }
+  if (activeTag) {
+    settings.set("settings.activeTag", activeTag);
   }
   settings.set("settings.alwaysOnTop", isAlwaysOnTop);
 

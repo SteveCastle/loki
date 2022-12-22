@@ -138,6 +138,7 @@
 .CommandPalette .optionSection .optionSet .optionButton .actions {
   margin-left: auto;
   display: flex;
+  align-items: center;
 }
 .CommandPalette .optionSection .optionSet .optionButton .action {
   border: none;

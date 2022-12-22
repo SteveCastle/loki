@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import * as R from "ramda";
 
 import ReactDOM from "react-dom";
@@ -6,10 +6,10 @@ import "./style.css";
 import HotKeyController from "./HotKeyController";
 import { getFolder, saveCurrentSettings } from "./fsTools";
 import { HotKeySetter } from "./HotKeySetter";
+import Spinner from "./Spinner";
 import HotCorner from "./HotCorner";
 import Detail from "./Detail";
 import List from "./List";
-import Spinner from "./Spinner";
 // NODE IMPORTS
 const electron = window.require("electron");
 var shuffle = window.require("shuffle-array");
@@ -22,7 +22,6 @@ import {
   SIZE,
   VIEW,
   CONTROL_MODE,
-  HOT_KEY_DEFAULTS,
   getNext,
   LIST_SIZE,
 } from "./constants";
@@ -51,6 +50,10 @@ function App() {
   const [controlMode, setControlMode] = useState(
     CONTROL_MODE[settings.get("settings.controlMode")]
   );
+  const [activeTag, setActiveTag] = useState(
+    settings.get("settings.activeTag")
+  );
+
   const [audio, setAudio] = useState(settings.get("settings.audio"));
   const [videoControls, setVideoControls] = useState(
     settings.get("settings.videoControls")
@@ -114,6 +117,7 @@ function App() {
   // Reload data from image provider if directory, filter, or recursive setting changes
   useEffect(() => {
     if (filePath && filePath.length > 1) {
+      setCursor(0);
       setItems([{ fileName: filePath, modified: 0 }]);
     }
     async function fetchData() {
@@ -268,7 +272,7 @@ function App() {
     tagActions: {
       addTag: {
         action: () => {
-          createTag("tier", "S", items[cursor].fileName);
+          createTag(activeTag.category, activeTag.tag, items[cursor].fileName);
         },
       },
     },
@@ -343,6 +347,7 @@ function App() {
               items,
               isAlwaysOnTop,
               isFullScreen,
+              activeTag,
             }}
             controls={{
               setSettingHotKey,
@@ -361,6 +366,7 @@ function App() {
               setCursor,
               setIsAlwaysOnTop,
               setIsFullScreen,
+              setActiveTag,
             }}
             setAbout={setAbout}
             position={commandPaletteOpen}
@@ -458,6 +464,7 @@ function App() {
             items,
             isAlwaysOnTop,
             isFullScreen,
+            activeTag,
           }}
           controls={{
             setSettingHotKey,
@@ -476,6 +483,7 @@ function App() {
             setCursor,
             setIsAlwaysOnTop,
             setIsFullScreen,
+            setActiveTag,
           }}
           setAbout={setAbout}
           position={commandPaletteOpen}
@@ -485,6 +493,7 @@ function App() {
 
       {view === VIEW.DETAIL ? (
         <React.Fragment>
+          {loading && <Spinner />}
           {controlMode.key === CONTROL_MODE.TRACK_PAD.key && (
             <HotCorner handleClick={() => setView(VIEW.LIST)} />
           )}

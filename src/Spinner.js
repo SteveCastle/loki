@@ -3,11 +3,10 @@ import styled from "styled-components";
 import React from "react";
 
 const StyledSpinner = styled.div`
-  background-color: rgba(255, 255, 255);
   width: 100%;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-end;
+  justify-content: flex-end;
   position: relative;
   height: 100%;
   top: 0;
@@ -18,17 +17,17 @@ const StyledSpinner = styled.div`
   & .spinner,
   & .spinner:after {
     border-radius: 50%;
-    width: 10em;
-    height: 10em;
+    width: 2em;
+    height: 2em;
   }
   & .spinner {
     font-size: 10px;
     position: relative;
     text-indent: -9999em;
-    border-top: 1.1em solid rgba(0, 0, 0, 0.2);
-    border-right: 1.1em solid rgba(0, 0, 0, 0.2);
-    border-bottom: 1.1em solid rgba(0, 0, 0, 0.2);
-    border-left: 1.1em solid #000;
+    border-top: 1.1em solid rgba(1, 1, 1, 0.2);
+    border-right: 1.1em solid rgba(1, 1, 1, 0.2);
+    border-bottom: 1.1em solid rgba(1, 0, 1, 0.2);
+    border-left: 1.1em solid #fff;
     -webkit-transform: translateZ(0);
     -ms-transform: translateZ(0);
     transform: translateZ(0);

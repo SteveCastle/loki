@@ -47,6 +47,10 @@ function createWindow() {
   if (!settings.has("settings")) {
     settings.set("settings", {
       alwaysOnTop: true,
+      activeTag: {
+        category: "tier",
+        tag: "S",
+      },
       openFullScreen: true,
       defaultSort: "ALPHA",
       defaultView: "DETAIL",

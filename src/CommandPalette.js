@@ -18,9 +18,10 @@ var path = window.require("path");
 
 import question from "./assets/question-fill.svg";
 import ProgressBar from "./ProgressBar";
-import { SORT, FILTER, SIZE, CONTROL_MODE, getNext } from "./constants";
+import { SORT, FILTER, SIZE, CONTROL_MODE } from "./constants";
 import { getFolder, getFile, saveCurrentSettings } from "./fsTools";
 import "./CommandPalette.css";
+import UnlockableTagInput from "./UnlockableTagInput";
 
 function useOnClickOutside(ref, handler, isLocked) {
   useEffect(
@@ -135,6 +136,7 @@ function CommandPallete({
                 videoControls: status.videoControls,
                 isAlwaysOnTop: status.isAlwaysOnTop,
                 isFullScreen: status.isFullScreen,
+                activeTag: status.activeTag,
               })
             }
           >
@@ -657,7 +659,7 @@ function CommandPallete({
                 <div className="optionSet">
                   <label>Tagging</label>
                   <div className="optionButton">
-                    <div className="primary">Quick Tag</div>
+                    <div className="primary">Quick Tag 1</div>
                     <div className="actions">
                       <button
                         className="action"
@@ -671,6 +673,10 @@ function CommandPallete({
                           {hotKeysByAction[`tagActions.addTag`]}
                         </span>
                       </button>
+                      <UnlockableTagInput
+                        activeTag={status.activeTag}
+                        setActiveTag={controls.setActiveTag}
+                      />
                     </div>
                   </div>
                 </div>

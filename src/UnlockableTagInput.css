@@ -1,0 +1,38 @@
+.UnlockableTagInput {
+  display: flex;
+}
+
+.UnlockableTagInput .inputGroup {
+  display: flex;
+}
+
+.UnlockableTagInput input {
+  flex: 1 1 auto;
+  width: 100%;
+  border: none;
+  max-width: 100px;
+  margin: 0.2rem;
+  border-radius: 4px;
+  padding: 5px;
+  font-size: 16px;
+  box-sizing: border-box;
+}
+
+.UnlockableTagInput > button {
+  background: none;
+  border: none;
+  height: 16px;
+  width: 16px;
+  margin: 6px 6px 8px 8px;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.UnlockableTagInput > button:hover {
+  opacity: 1;
+}
+
+.UnlockableTagInput > button img {
+  height: 16px;
+  width: 16px;
+}
