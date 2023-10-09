@@ -1,5 +1,8 @@
 # Loki: An Electron Image and Video Viewer
 
+https://github.com/SteveCastle/loki/assets/1828509/f61d4aad-01b1-4bde-802a-876fd71f55ce
+
+
 A minimalist web native image viewer project built with Electron and powering Lowkey Media Viewer.
 
 Visit https://lowkeyviewer.com to download a prebuilt binary for Mac or Windows if you do not want to build it from source your self.
