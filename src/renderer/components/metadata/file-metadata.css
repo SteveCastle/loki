@@ -1,0 +1,71 @@
+.FileMetadata {
+  flex-direction: column;
+  overflow: scroll;
+  height: 100vh;
+  border-left: 1px solid var(--border-color);
+  font-size: 0.7rem;
+}
+
+.FileMetadata .section {
+  position: relative;
+  border-radius: 2px;
+  background-color: rgb(34, 34, 39);
+  padding: 2rem 1rem 1rem 1rem;
+  margin: 0.2rem 1rem;
+  flex: 1 1 100%;
+  min-width: 300px;
+  opacity: 0.8;
+}
+
+.FileMetadata .placeholder {
+  position: relative;
+  border-radius: 2px;
+  padding: 2rem 1rem 1rem 1rem;
+  margin: 0.2rem 1rem;
+  flex: 1 1 100%;
+  min-width: 300px;
+}
+
+.FileMetadata .general {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.FileMetadata .section h2 {
+  font-size: 0.6rem;
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  padding: 0.2rem 0.5rem;
+  background-color: var(--green-static);
+  border-radius: 2px 0 4px 0;
+  display: flex;
+}
+
+.FileMetadata .general pre {
+  font-size: 1rem;
+  display: block;
+}
+
+.FileMetadata .tag-list {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin: 0.5rem 0;
+}
+
+.FileMetadata .tag-list .tag {
+  background-color: rgb(27, 94, 87);
+  padding: 0.1rem 0.1rem;
+  margin: 0.2rem;
+  border-radius: 2px;
+  color: #fff;
+  font-size: 0.5rem;
+  cursor: pointer;
+}
+
+.FileMetadata .tag-list .tag:hover {
+  background-color: rgb(44, 146, 136);
+}

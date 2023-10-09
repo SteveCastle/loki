@@ -1,0 +1,23 @@
+.GenerateTranscript {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.GenerateTranscript button {
+  background-color: rgb(56, 56, 78);
+  color: white;
+  border: none;
+  outline: none;
+  padding: 10px 20px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.GenerateTranscript button:hover {
+  background-color: rgb(74, 74, 105);
+}

@@ -1,0 +1,69 @@
+.DropZone {
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+.DropZone.comicMode {
+  width: 50%;
+}
+
+.Detail {
+  height: 100%;
+  width: 100%;
+  overflow: scroll;
+  cursor: grab;
+  display: grid;
+  grid-template-rows: 100%;
+  grid-template-columns: 100%;
+  position: relative;
+}
+
+.DropZone .controls {
+  position: absolute;
+  bottom: 20px;
+  right: 0;
+  z-index: 999;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.DropZone .item-info {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 100%;
+  height: 20px;
+  background-color: rgba(0, 0, 0, 0.5);
+  color: white;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.DropZone .item-info .file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.Detail .scroll-container {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.Detail .scroll-container:active {
+  cursor: grabbing;
+}
+
+::-webkit-scrollbar {
+  width: 0px; /* Remove scrollbar space */
+  height: 0px;
+  background: transparent; /* Optional: just make scrollbar invisible */
+}

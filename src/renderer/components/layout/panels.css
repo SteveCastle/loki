@@ -1,0 +1,48 @@
+.Panels {
+  height: 100%;
+  width: 100%;
+}
+
+.panel {
+  display: flex;
+  background-color: rgb(3, 3, 3);
+  width: 100%;
+}
+
+.panel-content {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+
+.handle {
+  cursor: col-resize;
+  background-color: rgb(12, 12, 12);
+  transition: background-color 0.2s ease-in-out;
+  border-radius: 2px;
+}
+
+.handle:hover {
+  background-color: rgb(173, 173, 173);
+}
+
+.vertical {
+  width: 8px;
+  margin: 0.5rem 0;
+}
+
+.horizontal {
+  height: 8px;
+  margin: 0 0.5rem;
+}
+
+.drag-handle {
+  -webkit-user-select: none;
+  -webkit-app-region: drag;
+  position: fixed;
+  width: 100%;
+  height: 30px;
+  z-index: 100;
+}

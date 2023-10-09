@@ -1,0 +1,43 @@
+.ConfirmDeleteCategory {
+  left: 0;
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  z-index: 999;
+  background-color: rgba(0, 0, 0, 0.8);
+}
+
+.ConfirmDeleteCategory .buttons {
+  display: flex;
+  flex-direction: row;
+  gap: 0.5rem;
+}
+
+.ConfirmDeleteCategory button {
+  padding: 0.1rem 0.2rem;
+  border: none;
+  border-radius: 3px;
+  color: white;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s ease-in-out;
+}
+
+.ConfirmDeleteCategory button.confirm {
+  background-color: rgb(193, 58, 58);
+}
+
+.ConfirmDeleteCategory button.confirm:hover {
+  background-color: rgb(213, 66, 66);
+}
+
+.ConfirmDeleteCategory button.cancel {
+  background-color: rgb(189, 189, 189);
+}
+
+.ConfirmDeleteCategory button.cancel:hover {
+  background-color: rgb(209, 209, 209);
+}

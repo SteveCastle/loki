@@ -1,0 +1,73 @@
+.Setting {
+  background-color: #1d131a;
+  gap: 0.2rem;
+  width: 100%;
+}
+
+.Setting .menuLabel {
+  background-color: #281c25;
+  margin: 0 0 0.3rem 0.6rem;
+  padding: 0.2rem;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  border-radius: 2px;
+  transition: linear 0.2s;
+}
+.Setting:hover .menuLabel {
+  background-color: #362531;
+}
+
+.Setting .menuSection {
+  display: flex;
+  flex-direction: row;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.Setting .menuButton {
+  color: white;
+  background: #2f2f2f;
+  border-radius: 2px;
+  border: none;
+  flex: 1;
+  margin: 0 2px;
+  opacity: 0.9;
+  cursor: pointer;
+  transition: cubic-bezier(1, 0, 0, 1) 0.2s;
+}
+
+.Setting .menuButton .numericControls {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.Setting .menuButton .numericControls .incrementButton {
+  border: none;
+  background: none;
+  color: white;
+  opacity: 0.7;
+  font-weight: bolder;
+  cursor: pointer;
+  margin: 0;
+  padding: 0 0.3rem;
+  transition: opacity 0.2s;
+}
+
+.Setting .menuButton .numericControls .incrementButton:hover {
+  opacity: 1;
+}
+
+.Setting .menuSection .menuButton.selected {
+  background-color: var(--settings-button-color);
+}
+
+.Setting .menuSection .menuButton:hover:not(.selected) {
+  opacity: 1;
+  background-color: #434343;
+}
+
+.Setting .menuSection .menuButton:active {
+  background-color: var(--settings-button-color-active);
+}

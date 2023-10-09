@@ -1,0 +1,304 @@
+.Taxonomy {
+  display: flex;
+  flex-wrap: wrap;
+  margin: 0.3rem 0.2rem;
+  width: 100%;
+  height: 100%;
+}
+
+.Placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.Placeholder .inner {
+  width: 400px;
+}
+
+.Taxonomy .search {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: row;
+  margin-bottom: 8px;
+}
+
+.Taxonomy .search .textSearch {
+  display: flex;
+  flex: 1 1 0;
+  position: relative;
+}
+
+.Taxonomy .search .textSearch button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  position: absolute;
+  right: 15px;
+  top: 15px;
+  opacity: 0.8;
+}
+
+.Taxonomy .search .textSearch button:hover {
+  opacity: 1;
+}
+
+.Taxonomy .search input {
+  flex: 1 1 0;
+  height: 30px;
+  background: #2d2d31;
+  border: none;
+  margin: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 2px;
+  color: #fff;
+}
+
+.Taxonomy .categories-column {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 150px;
+  flex-direction: column;
+  height: 100%;
+}
+
+.Taxonomy .categories {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: scroll;
+  padding: 0.5rem;
+  padding-bottom: 66px;
+}
+
+.Taxonomy .category {
+  display: flex;
+  position: relative;
+  align-items: center;
+  justify-content: space-between;
+  text-align: center;
+  padding: 0.25rem;
+  font-size: 0.8rem;
+  background-color: #1e1a1f;
+  border-radius: 2px;
+  cursor: pointer;
+  margin-bottom: 0.15rem;
+  transition: ease-in-out 0.2s;
+}
+
+.Taxonomy .category.active {
+  background-color: #584a5b;
+}
+
+.Taxonomy .category.hovered {
+  background-color: #766979;
+}
+
+.Taxonomy .category:hover {
+  background-color: #382f3a;
+}
+
+.Taxonomy .category .actions {
+  display: flex;
+  flex-direction: row;
+  bottom: 0;
+  gap: 0.3rem;
+}
+
+.Taxonomy .category .actions button {
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  height: 16px;
+  width: 16px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.Taxonomy .category .actions button img {
+  height: 16px;
+  width: 16px;
+}
+
+.Taxonomy .category .actions button:hover {
+  opacity: 1;
+}
+
+.new-category {
+  margin: 0.2rem 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background-color: rgb(27, 94, 87);
+  border-radius: 2px;
+  cursor: pointer;
+  height: 20px;
+}
+
+.new-category:hover {
+  background-color: rgb(38, 115, 107);
+}
+
+.Taxonomy .tags {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  grid-template-rows: none;
+  grid-gap: 0.5rem;
+  flex: 8 1 0;
+  overflow: auto;
+  padding-bottom: 66px;
+  height: 100%;
+}
+
+.Taxonomy .tag {
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  font-size: 0.8rem;
+  justify-content: center;
+  background-color: #1a181a;
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.2s ease-in-out;
+  text-shadow: 0 0 2px #000;
+}
+
+.Taxonomy .tag.hovered img {
+  transform: scale3d(0.6, 0.6, 0.6);
+  border-radius: 2px;
+}
+
+.Taxonomy .tag.hovered.left img {
+  transform: translateX(10px);
+  opacity: 0.9;
+}
+
+.Taxonomy .tag.hovered.right img {
+  transform: translateX(-10px);
+  opacity: 0.9;
+}
+
+.Taxonomy .tag img {
+  width: 100%;
+  height: 100%;
+  transition: all 0.1s ease-in-out;
+  position: absolute;
+  object-fit: cover;
+}
+
+.Taxonomy .tag label {
+  z-index: 1;
+}
+
+.Taxonomy .tag .drop-target {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.Taxonomy .tag .actions {
+  display: flex;
+  flex-direction: row;
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  margin: 6px;
+}
+
+.Taxonomy .tag .actions button {
+  display: flex;
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 0;
+  margin: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.Taxonomy .tag .actions button:hover {
+  opacity: 1;
+}
+
+.Taxonomy .tag .actions button img {
+  width: 16px;
+  height: 16px;
+}
+
+.Taxonomy .tag .check {
+  display: absolute;
+  top: 0;
+  left: 0;
+  margin: 4px 5px;
+  width: 16px;
+  height: 16px;
+}
+
+.Taxonomy .tag .check img {
+  width: 100%;
+}
+
+.Taxonomy .tag:hover img {
+  filter: brightness(80%);
+}
+
+.Taxonomy .tag:active {
+  filter: brightness(60%);
+}
+
+.new-tag {
+  display: flex;
+  width: 20px;
+  margin-right: 10px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  background-color: rgb(56, 56, 78);
+  border-radius: 2px;
+  cursor: pointer;
+  margin-bottom: 66px;
+}
+
+.Taxonomy .new-tag:hover {
+  background-color: rgb(82, 82, 108);
+}
+
+.Taxonomy .controls {
+  display: flex;
+  flex-direction: column;
+}
+
+.Taxonomy > .controls button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 4px;
+  margin: 4px;
+  width: 20px;
+}
+
+.Taxonomy .controls button.active {
+  opacity: 1;
+  filter: grayscale(100%) brightness(40%) sepia(100%) hue-rotate(120deg)
+    saturate(600%) contrast(0.8);
+}
+
+.Taxonomy .controls button:hover {
+  opacity: 1;
+}
+
+.Taxonomy .controls button img {
+  width: 100%;
+}

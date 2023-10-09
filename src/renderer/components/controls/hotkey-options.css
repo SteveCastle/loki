@@ -1,0 +1,32 @@
+.HotKeyOptions {
+  display: flex;
+  flex-direction: column;
+  text-align: center;
+  font-size: 0.6rem;
+}
+
+.HotKeyOptions .HotKeyOption {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.HotKeyOptions .HotKeyOptionKey {
+  flex: 1 1 0;
+  text-transform: capitalize;
+  font-weight: 800;
+}
+
+.HotKeyOptions .HotKeyOptionValue {
+  flex: 1 1 0;
+  font-weight: bold;
+  color: #cea4d8;
+  transition: color 0.2s ease-in-out;
+  cursor: pointer;
+}
+
+.HotKeyOptions .HotKeyOptionValue:hover {
+  color: rgb(250, 237, 253);
+}

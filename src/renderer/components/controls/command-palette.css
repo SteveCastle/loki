@@ -1,0 +1,181 @@
+.CommandPalette {
+  color: white;
+  background-color: var(--controls-background-color);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  z-index: 9999;
+  padding: 8px 16px;
+  position: fixed;
+  user-select: none;
+  opacity: 0.9;
+  min-width: 400px;
+}
+
+.CommandPalette .windowedControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(223, 226, 31);
+  cursor: pointer;
+}
+.CommandPalette .fullScreenControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(0, 179, 54);
+  cursor: pointer;
+}
+.CommandPalette .closeControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(211, 3, 72);
+  cursor: pointer;
+}
+.CommandPalette .windowedControl:hover {
+  background-color: rgb(176, 179, 27);
+}
+.CommandPalette .fullScreenControl:hover {
+  background-color: rgb(4, 133, 42);
+}
+.CommandPalette .closeControl:hover {
+  background-color: rgb(153, 6, 55);
+}
+
+.CommandPalette .menuBar {
+  display: flex;
+  margin-bottom: 4px;
+}
+.CommandPalette .menuBar .menuBarRight {
+  margin-left: auto;
+}
+
+.CommandPalette .menuBar .menuBarRight .selected {
+  opacity: 1;
+}
+.CommandPalette .menuBar .menuBarRight > button {
+  background: none;
+  border: none;
+  height: 16px;
+  width: 16px;
+  margin: 6px 0 8px 8px;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.CommandPalette .menuBar .menuBarRight > button:hover {
+  opacity: 1;
+}
+
+.CommandPalette .menuBar .menuBarRight > button img {
+  height: 16px;
+  width: 16px;
+}
+
+.CommandPalette .menuArea {
+  display: flex;
+}
+
+.CommandPalette .menuArea .menuContent {
+  display: flex;
+  flex-direction: column;
+  flex: 1 4 0;
+}
+
+.CommandPalette .menuArea .tabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.CommandPalette .menuArea .tabs button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.8;
+  width: 15px;
+}
+
+.CommandPalette .menuArea .tabs button img {
+  width: 20px;
+  width: 20px;
+}
+
+.CommandPalette .menuArea .tabs button.active {
+  opacity: 1;
+  filter: grayscale(100%) brightness(40%) sepia(100%) hue-rotate(120deg)
+    saturate(600%) contrast(0.8);
+}
+
+.CommandPalette .menuArea .tabs button:hover {
+  opacity: 0.9;
+}
+
+.CommandPalette .listContext {
+  font-size: 0.6rem;
+  opacity: 0.5;
+  text-align: center;
+  width: 100%;
+}
+
+.CommandPalette h1 {
+  color: rgb(255, 255, 255);
+  font-size: 1.2rem;
+  text-align: center;
+}
+
+.CommandPalette .donateButton {
+  background: rgb(23, 73, 59);
+  border-radius: 0 2px 2px 0;
+  border: none;
+  color: rgb(255, 255, 255);
+  margin: 0;
+  padding: 0.1rem 1rem;
+  margin: 0.5rem;
+  cursor: pointer;
+  width: 60px;
+  font-size: 0.6rem;
+  font-weight: bold;
+  position: absolute;
+  top: 6px;
+  right: 140px;
+}
+
+.CommandPalette .patreonButton {
+  background: rgb(59, 52, 66);
+  border-radius: 2px 0 0 2px;
+  border: none;
+  color: rgb(255, 255, 255);
+  margin: 0;
+  padding: 0.1rem 1rem;
+  margin: 0.5rem;
+  width: 60px;
+  cursor: pointer;
+  font-size: 0.6rem;
+  font-weight: bold;
+  position: absolute;
+  top: 6px;
+  right: 200px;
+}
+
+.CommandPalette .patreonButton:hover {
+  background: rgb(93, 83, 103);
+}
+
+.CommandPalette .donateButton:hover {
+  background: rgb(22, 114, 88);
+}
+
+.CommandPalette .tabContent {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  height: 100%;
+}

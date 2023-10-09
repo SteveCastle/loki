@@ -1,0 +1,25 @@
+/*CSS Class to display a 4 column wide grid of images */
+.List {
+  width: 100%;
+  overflow: auto;
+}
+
+.List::-webkit-scrollbar {
+  display: none; /* Safari and Chrome */
+}
+
+.ListContainer {
+  display: grid;
+}
+
+.ListRow {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  color: white;
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
