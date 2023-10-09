@@ -88,12 +88,7 @@ export async function initDB(db: Database) {
   await db.run(`CREATE TABLE IF NOT EXISTS media (
   path TEXT PRIMARY KEY,
   description TEXT,
-  transcript TEXT,
-  thumbnail_path_100 TEXT,
-  thumbnail_path_300 TEXT,
-  thumbnail_path_600 TEXT,
-  thumbnail_path_1200 TEXT,
-  thumbnail_path_1800 TEXT
+  transcript TEXT
 )`);
   0;
   await db.run(`CREATE TABLE IF NOT EXISTS category (
@@ -118,7 +113,8 @@ export async function initDB(db: Database) {
   category_label TEXT,
   weight REAL,
   job_id INTEGER,
-  PRIMARY KEY (media_path, tag_label, category_label),
+  time_stamp REAL,
+  PRIMARY KEY (media_path, tag_label, category_label, time_stamp),
   FOREIGN KEY (media_path) REFERENCES media (path),
   FOREIGN KEY (tag_label) REFERENCES tag (label),
   FOREIGN KEY (category_label) REFERENCES category (label)
