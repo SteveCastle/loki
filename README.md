@@ -13,6 +13,7 @@ Visit https://lowkeyviewer.com to download a prebuilt binary for Mac or Windows 
 
 You will also need to download exiftool, ffmpeg, ffplay, and ffprobe, and place them in `src/main/resources/bin`.
 
+
 ## Running in Development Mode
 
 ```

@@ -86,7 +86,7 @@ const createAssignment =
     for (const mediaPath of mediaPaths) {
       try {
         newWeight = newWeight + 1;
-        if (getFileType(mediaPath) === 'image') {
+        if (getFileType(mediaPath) === 'image' || !timeStamp) {
           timeStamp = 0;
         }
         await insertStatement.run(
