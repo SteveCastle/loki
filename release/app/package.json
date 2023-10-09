@@ -1,0 +1,25 @@
+{
+  "name": "loki",
+  "productName": "Lowkey Media Viewer",
+  "version": "2.0.0",
+  "description": "A Media library for quick curation.",
+  "license": "UNLICENSED",
+  "author": {
+    "name": "Callsign Media LLC",
+    "email": "dream@lowkeyviewer.com",
+    "url": "https://lowkeyviewer.com/dream"
+  },
+  "main": "./dist/main/main.js",
+  "scripts": {
+    "rebuild": "node -r ts-node/register ../../.erb/scripts/electron-rebuild.js",
+    "postinstall": "npm run rebuild && npm run link-modules",
+    "link-modules": "node -r ts-node/register ../../.erb/scripts/link-modules.ts"
+  },
+  "dependencies": {
+    "@types/sharp": "^0.32.0",
+    "@types/sqlite3": "^3.1.8",
+    "electron-clipboard-ex": "^1.3.3",
+    "sharp": "^0.32.1",
+    "sqlite3": "^5.1.6"
+  }
+}

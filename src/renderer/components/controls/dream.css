@@ -1,0 +1,26 @@
+/* CSS */
+.container {
+  position: relative; /* so we can position emoji within it */
+  height: 50px; /* adjust as needed */
+  overflow: hidden; /* so emoji doesn't show outside container */
+  padding: 1rem;
+  margin-bottom: 1rem;
+  width: 100%;
+}
+
+.cloud-emoji {
+  position: absolute; /* so we can animate it */
+  right: -50px; /* start position outside of the div */
+  top: -10px; /* middle of the div, adjust as needed */
+  font-size: 50px; /* size of the cloud emoji, adjust as needed */
+  animation: moveCloud 5s linear infinite; /* apply animation */
+}
+
+@keyframes moveCloud {
+  0% {
+    right: -50px;
+  } /* start from outside of the div on the right */
+  100% {
+    right: 100%;
+  } /* end outside of the div on the left */
+}

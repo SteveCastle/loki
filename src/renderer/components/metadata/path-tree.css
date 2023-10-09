@@ -1,0 +1,31 @@
+.PathTree {
+  font-size: 1em;
+  font-family: monospace;
+  overflow: auto;
+  height: 100%;
+}
+
+.PathTree ul {
+  list-style: none;
+  padding-left: 0.5em;
+  border-radius: 2px;
+  margin: 0.2em 0;
+  padding: 0 0.5em;
+}
+
+.PathTree li {
+  position: relative;
+  padding: 0.1em;
+  word-wrap: break-word;
+}
+
+.PathTree li.pathLink {
+  font-weight: bold;
+  cursor: pointer;
+  color: rgb(107, 163, 145);
+  transition: color 0.2s ease-in-out;
+}
+
+.PathTree li.pathLink:hover {
+  color: rgb(160, 219, 200);
+}

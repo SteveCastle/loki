@@ -1,0 +1,80 @@
+.SetupWizard {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: rgb(39, 39, 42);
+}
+
+.SetupWizard .windowedControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(223, 226, 31);
+}
+.SetupWizard .fullScreenControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(0, 179, 54);
+}
+.SetupWizard .closeControl {
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 8px 0 8px 8px;
+  border-radius: 50%;
+  background-color: rgb(211, 3, 72);
+}
+.SetupWizard .windowedControl:hover {
+  background-color: rgb(176, 179, 27);
+}
+.SetupWizard .fullScreenControl:hover {
+  background-color: rgb(4, 133, 42);
+}
+.SetupWizard .closeControl:hover {
+  background-color: rgb(153, 6, 55);
+}
+
+.SetupWizard .menuBar {
+  display: flex;
+  margin-bottom: 4px;
+}
+
+.SetupWizard p {
+  font-size: 0.6rem;
+  text-align: center;
+  margin: 0;
+}
+
+.SetupWizard .innerContainer {
+  display: flex;
+  flex-direction: column;
+  background-color: rgb(3, 3, 3);
+  padding: 1rem;
+  border-radius: 2px;
+}
+
+.SetupWizard .innerContainer button {
+  border: none;
+  margin: 0.5rem;
+  padding: 0.5rem;
+  border-radius: 2px;
+  background-color: #23222b;
+  color: #fff;
+  cursor: pointer;
+}
+
+.SetupWizard .innerContainer button:hover {
+  background-color: #3e3c4d;
+}
+
+.SetupWizard .innerContainer button:active {
+  background-color: #535065;
+}

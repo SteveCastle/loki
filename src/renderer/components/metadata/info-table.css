@@ -1,0 +1,33 @@
+.InfoTable table {
+  width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin-bottom: 1em;
+}
+
+.InfoTable table th,
+.InfoTable table td {
+  padding: 0.5em 0.5em;
+  border-bottom: 1px solid var(--border-color);
+  text-align: left;
+  vertical-align: top;
+  border-spacing: 4px;
+}
+.InfoTable .value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.InfoTable .value .copy-button {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  margin-left: auto;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.InfoTable .value .copy-button:hover {
+  opacity: 1;
+}

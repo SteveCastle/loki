@@ -1,0 +1,80 @@
+.Transcript {
+  height: 100%;
+  overflow-y: scroll;
+  position: relative;
+}
+
+.Transcript ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.Transcript li {
+  margin: 0;
+  padding: 0;
+}
+
+.cue {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  margin: 0.2rem;
+  padding: 0.5rem;
+  background-color: #1e1b1c;
+  border-radius: 2px;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.cue.active {
+  opacity: 1;
+}
+
+.cue:hover {
+  opacity: 1;
+}
+
+.cue .row {
+  display: flex;
+  flex-direction: row;
+  margin: 0;
+  padding: 0;
+}
+
+.cue .speaker {
+  font-weight: bold;
+  margin-right: 0.5em;
+}
+
+.cue .start {
+  font-size: 0.8em;
+  color: #999;
+}
+
+.cue .end {
+  font-size: 0.8em;
+  margin-left: 0.5em;
+  color: #999;
+}
+
+.cue .text {
+  margin-top: 0.5em;
+  font-size: 0.9em;
+  flex-grow: 1;
+}
+
+.transcript-loader {
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+
+.transcript-loader-inner {
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+  width: 100%;
+}

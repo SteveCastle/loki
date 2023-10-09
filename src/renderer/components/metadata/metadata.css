@@ -1,0 +1,63 @@
+.Metadata {
+  width: 100%;
+  height: 100%;
+  margin-top: 30px;
+}
+
+.Metadata .tabs {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 1px;
+  margin: 0 10px 10px 10px;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.Metadata .tabs .tab {
+  width: 100%;
+  flex: 1 1 0;
+  cursor: pointer;
+  padding: 5px 0;
+  font-size: 14px;
+  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 0.6rem;
+  font-weight: 800;
+}
+
+.Metadata .tabs .tab:hover {
+  background-color: rgb(67, 67, 72);
+}
+
+.Metadata .tabs .tab.active {
+  background-color: rgb(43 43 48);
+}
+.Metadata .tab-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  height: 100%;
+}
+
+.follow {
+  border: none;
+  background-color: transparent;
+  cursor: pointer;
+  height: 18px;
+  opacity: 0.8;
+}
+
+.follow:hover {
+  opacity: 1;
+}
+
+.follow img {
+  width: 18px;
+  height: 18px;
+}

@@ -1,0 +1,75 @@
+.VideoControls {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.VideoControls .progressBar {
+  height: 12px;
+  background-color: #b8b8b8;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  margin: 4px;
+  position: relative;
+}
+
+.VideoControls .progress {
+  height: 100%;
+  background-color: #fff;
+  border-radius: 8px;
+}
+
+.VideoControls .label {
+  color: black;
+  position: absolute;
+  text-align: center;
+  font-weight: bold;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.VideoControls .label .value {
+  opacity: 0.5;
+  font-size: 12px;
+}
+
+.VideoControls .loopButtons {
+  display: flex;
+  align-items: center;
+  margin: 4px;
+}
+
+.VideoControls .loopButtons .icon {
+  padding-right: 1rem;
+}
+
+.VideoControls button {
+  color: white;
+  background: #2f2f2f;
+  border-radius: 2px;
+  border: none;
+  flex: 1;
+  margin: 0 2px;
+  opacity: 0.9;
+  cursor: pointer;
+  transition: cubic-bezier(1, 0, 0, 1) 0.2s;
+  width: 100%;
+}
+
+.VideoControls button:hover {
+  background: #4f4d4d;
+}
+
+.VideoControls .loopButtons button.selected {
+  background-color: var(--settings-button-color);
+}
+
+.VideoControls .loopButtons button .units {
+  font-size: 0.6rem;
+  padding-left: 0.2rem;
+}

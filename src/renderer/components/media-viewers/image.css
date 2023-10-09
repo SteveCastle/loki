@@ -1,0 +1,19 @@
+.Image {
+  user-select: none;
+  pointer-events: none;
+  display: block;
+  margin: auto;
+}
+
+.ThumnailLoader {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ThumnailLoader .loading-bar {
+  width: 90px;
+  height: 40px;
+}

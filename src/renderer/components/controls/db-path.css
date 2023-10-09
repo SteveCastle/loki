@@ -1,0 +1,29 @@
+.DbPathWidget {
+  display: flex;
+  width: 100%;
+}
+
+.DbPathWidget input {
+  font-size: 0.6rem;
+  flex: 1 1 0;
+  color: white;
+  background-color: #2e262f;
+  border: none;
+  opacity: 0.9;
+}
+
+.DbPathWidget button {
+  font-size: 0.6rem;
+  border: none;
+  cursor: pointer;
+  color: white;
+  line-height: 10px;
+  opacity: 0.8;
+  margin: auto;
+  padding: 8px;
+  background: #4d3f4e;
+}
+
+.DbPathWidget button:hover {
+  opacity: 1;
+}
