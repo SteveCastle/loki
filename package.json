@@ -12,7 +12,7 @@
     "type": "git",
     "url": "git+https://github.com/stevecastle/loki.git"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "author": {
     "name": "Callsign Media LLC",
     "email": "dream@lowkeyviewer.com",
