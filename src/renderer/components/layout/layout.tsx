@@ -75,6 +75,12 @@ const Layout = () => {
     (state) => state.context.settings.comicMode
   );
 
+  const controlMode = useSelector(
+    libraryService,
+    (state) => state.context.settings.controlMode,
+    (a, b) => a === b
+  );
+
   const electronStorage = useMemo(
     () => ({
       getItem(name: string) {
@@ -154,7 +160,12 @@ const Layout = () => {
             panelRef={detailRef}
             renderId={renderID}
           >
-            <div className="panel" onDoubleClick={handleDetailClick}>
+            <div
+              className="panel"
+              onDoubleClick={
+                controlMode === 'mouse' ? handleDetailClick : undefined
+              }
+            >
               <Detail />
               {comicMode ? <Detail offset={1} /> : null}
             </div>

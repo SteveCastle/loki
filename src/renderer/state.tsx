@@ -184,6 +184,7 @@ const libraryMachine = createMachine(
           'thumbnail_path_600'
         ),
         detailImageCache: window.electron.store.get('detailImageCache', false),
+        controlMode: window.electron.store.get('controlMode', 'mouse'),
       },
       hotKeys: {
         incrementCursor: window.electron.store.get(
