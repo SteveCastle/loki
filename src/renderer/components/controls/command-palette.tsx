@@ -5,11 +5,10 @@ import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
 import filter from '../../filter';
 import ProgressBar from './progress-bar';
-import Dream from './dream';
 import HotKeyOptions from './hotkey-options';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import sound from '../../../../assets/sound-high.svg';
-import question from '../../../../assets/question-fill.svg';
+import gear from '../../../../assets/settings-3.svg';
 import shuffle from '../../../../assets/shuffle.svg';
 import db from '../../../../assets/database.svg';
 import keyboard from '../../../../assets/keyboard.svg';
@@ -220,7 +219,7 @@ export default function CommandPalette() {
           {tab === 'imageOptions' && (
             <div className="tabContent">
               {Object.keys(SETTINGS)
-                .filter((k) => SETTINGS[k as SettingKey].display)
+                .filter((k) => SETTINGS[k as SettingKey].display === 'image')
                 .map((settingKey) => (
                   <Setting
                     settingKey={settingKey as SettingKey}
@@ -246,7 +245,17 @@ export default function CommandPalette() {
           {tab === 'hotKeyOptions' && <HotKeyOptions />}
           {tab === 'generalOptions' && (
             <div className="tabContent">
-              <h1 className="appVersion">Lowkey Media Viewer 2.0</h1> <Dream />
+              {Object.keys(SETTINGS)
+                .filter((k) => SETTINGS[k as SettingKey].display === 'general')
+                .map((settingKey) => (
+                  <Setting
+                    settingKey={settingKey as SettingKey}
+                    key={settingKey}
+                    reload={SETTINGS[settingKey as SettingKey].reload}
+                    resetCursor={SETTINGS[settingKey as SettingKey].resetCursor}
+                    currentItem={item}
+                  />
+                ))}
             </div>
           )}
           <button
@@ -311,7 +320,7 @@ export default function CommandPalette() {
             className={tab === 'generalOptions' ? 'active' : ''}
             onClick={() => setTab('generalOptions')}
           >
-            <img src={question} />
+            <img src={gear} />
           </button>
         </div>
       </div>

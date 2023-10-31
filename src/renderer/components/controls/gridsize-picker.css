@@ -1,7 +1,5 @@
 .GridSizePicker {
   display: grid;
-  grid-template-columns: repeat(16, 10px);
-  grid-template-rows: repeat(16, 10px);
   cursor: pointer;
 }
 
