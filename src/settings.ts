@@ -60,7 +60,7 @@ export type Settings = {
 export const SCALE_MODES = {
   title: 'Scale Mode',
   reload: false,
-  display: true,
+  display: 'image',
   key: 'scaleMode',
   options: {
     cover: {
@@ -85,7 +85,7 @@ export const SCALE_MODES = {
 export const ORDERING = {
   title: 'Ordering',
   reload: false,
-  display: true,
+  display: 'image',
   options: {
     asc: {
       label: 'Ascending',
@@ -101,7 +101,7 @@ export const ORDERING = {
 export const SORT_BY = {
   title: 'Sort By',
   reload: false,
-  display: true,
+  display: 'image',
   resetCursor: true,
   options: {
     name: {
@@ -125,7 +125,7 @@ export const SORT_BY = {
 
 export const FILTERS = {
   title: 'Media Types',
-  display: true,
+  display: 'image',
   reload: false,
   resetCursor: true,
   options: {
@@ -147,7 +147,7 @@ export const FILTERS = {
 type SettingsObject = {
   [key in SettingKey]: {
     title: string;
-    display: boolean;
+    display: string;
     reload: boolean;
     resetCursor?: boolean;
     options: {
@@ -162,7 +162,7 @@ type SettingsObject = {
 export const PLAY_SOUND = {
   title: 'Play Sound',
   reload: false,
-  display: false,
+  display: 'none',
   options: {
     name: {
       label: 'Yes',
@@ -178,7 +178,7 @@ export const PLAY_SOUND = {
 export const COMIC_MODE = {
   title: 'Comic Mode',
   reload: false,
-  display: true,
+  display: 'image',
   options: {
     name: {
       label: 'Yes',
@@ -194,7 +194,7 @@ export const COMIC_MODE = {
 export const SHOW_TAGS = {
   title: 'Show Tags',
   reload: false,
-  display: true,
+  display: 'general',
   options: {
     all: {
       label: 'All',
@@ -218,7 +218,7 @@ export const SHOW_TAGS = {
 export const SHOW_FILE_INFO = {
   title: 'Show File Info',
   reload: false,
-  display: true,
+  display: 'general',
   options: {
     all: {
       label: 'All',
@@ -242,7 +242,7 @@ export const SHOW_FILE_INFO = {
 export const SHOW_CONTROLS = {
   title: 'Show Controls',
   reload: false,
-  display: false,
+  display: 'none',
   options: {
     name: {
       label: 'Yes',
@@ -258,7 +258,7 @@ export const SHOW_CONTROLS = {
 export const FOLLOW_TRANSCRIPT = {
   title: 'Follow Transcript',
   reload: false,
-  display: false,
+  display: 'none',
   options: {
     name: {
       label: 'Yes',
@@ -274,7 +274,7 @@ export const FOLLOW_TRANSCRIPT = {
 export const RECURSIVE = {
   title: 'Recursive',
   reload: true,
-  display: false,
+  display: 'none',
   options: {
     name: {
       label: 'Yes',
@@ -290,7 +290,7 @@ export const RECURSIVE = {
 export const CONTROL_MODE = {
   title: 'Control Mode',
   reload: false,
-  display: true,
+  display: 'general',
   options: {
     name: {
       label: 'Mouse',
