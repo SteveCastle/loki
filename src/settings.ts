@@ -12,6 +12,8 @@ export type ShowTagOptions = 'all' | 'list' | 'detail' | 'none';
 
 export type ShowFileInfoOptions = 'all' | 'list' | 'detail' | 'none';
 
+export type ControlMode = 'mouse' | 'touchpad';
+
 export type ListImageCache =
   | 'thumbnail_path_1200'
   | 'thumbnail_path_600'
@@ -31,7 +33,8 @@ export type SettingKey =
   | 'showTags'
   | 'showFileInfo'
   | 'showControls'
-  | 'recursive';
+  | 'recursive'
+  | 'controlMode';
 
 export type Settings = {
   scaleMode: ScaleModeOption;
@@ -50,6 +53,7 @@ export type Settings = {
   filteringMode: FilterModeOption;
   listImageCache: ListImageCache;
   detailImageCache: DetailImageCache;
+  controlMode: ControlMode;
   gridSize: [number, number];
 };
 
@@ -283,6 +287,22 @@ export const RECURSIVE = {
   },
 };
 
+export const CONTROL_MODE = {
+  title: 'Control Mode',
+  reload: false,
+  display: true,
+  options: {
+    name: {
+      label: 'Mouse',
+      value: 'mouse',
+    },
+    date: {
+      label: 'TouchPad',
+      value: 'touchpad',
+    },
+  },
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -309,4 +329,5 @@ export const SETTINGS: SettingsObject = {
   showFileInfo: SHOW_FILE_INFO,
   showControls: SHOW_CONTROLS,
   recursive: RECURSIVE,
+  controlMode: CONTROL_MODE,
 };

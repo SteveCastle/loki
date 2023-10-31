@@ -123,7 +123,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   };
 
   useEffect(() => {
-    if (containerRef.current === null) {
+    if (containerRef.current === null || settings.controlMode !== 'mouse') {
       return;
     }
     const container = containerRef.current;
@@ -137,6 +137,14 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       }
     };
   }, [containerRef.current]);
+
+  function handleClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
+    if (e.clientX < containerRef.current!.clientWidth / 2) {
+      libraryService.send('DECREMENT_CURSOR');
+    } else {
+      libraryService.send('INCREMENT_CURSOR');
+    }
+  }
 
   const { orientation } = useMediaDimensions(mediaRef);
   const [coverSize, setCoverSize] = useState({ width: 0, height: 0 });
@@ -231,6 +239,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
             position: { x: e.clientX, y: e.clientY },
           });
         }}
+        onClick={settings.controlMode === 'touchpad' ? handleClick : undefined}
         ref={containerRef}
         {...events}
       >

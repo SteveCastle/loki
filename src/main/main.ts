@@ -89,15 +89,15 @@ ipcMain.handle('get-user-data-path', async (event) => {
 
 // Initialize a new DB
 ipcMain.handle('load-db', async (event, args) => {
-  const path = args[0];
+  const dbPath = args[0];
   console.log('LOADING DB:', path);
   //create path if it doesn't exist
 
-  const dir = path.split('\\').slice(0, -1).join('\\');
+  const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  db = new Database(path);
+  db = new Database(dbPath);
   await initDB(db);
   ipcMain.removeHandler('load-media-by-tags');
   ipcMain.removeHandler('load-tags-by-media-path');

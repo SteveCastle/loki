@@ -5,8 +5,8 @@ const { exec } = require('child_process');
 const crypto = require('crypto');
 const workerpool = require('workerpool');
 const ffmpeg = require('fluent-ffmpeg');
-const isDev = require('electron-is-dev');
 
+const isDev = process.env.NODE_ENV === 'development';
 const ffmpegPath = isDev
   ? path.join(__dirname, 'resources/bin/ffmpeg')
   : path.join(__dirname, '../../../bin/ffmpeg');
