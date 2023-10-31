@@ -357,8 +357,10 @@ const libraryMachine = createMachine(
                   context.settings.sortBy
                 ).findIndex(
                   (item: Item) =>
+                    item?.path &&
+                    event.currentItem?.path &&
                     path.normalize(item?.path) ===
-                    path.normalize(event.currentItem?.path)
+                      path.normalize(event.currentItem?.path)
                 );
                 console.log('index of current item', event.currentItem, cursor);
                 return cursor > -1 ? cursor : 0;
@@ -545,7 +547,7 @@ const libraryMachine = createMachine(
           switchingTag: {
             invoke: {
               src: (context, event) => {
-                console.log('loading from DB', context, event);
+                console.log('switchingTag', context, event);
                 return window.electron.loadMediaFromDB(
                   context.dbQuery.tags,
                   context.settings.filteringMode
@@ -571,17 +573,6 @@ const libraryMachine = createMachine(
           loadedFromFS: {
             initial: 'idle',
             entry: assign<LibraryState, AnyEventObject>({
-              cursor: (context) => {
-                console.log('loadedFromFS', context);
-                const cursor = filter(
-                  context.libraryLoadId,
-                  context.textFilter,
-                  context.library,
-                  context.settings.filters,
-                  context.settings.sortBy
-                ).findIndex((item: Item) => item?.path === context.initialFile);
-                return cursor > -1 ? cursor : 0;
-              },
               dbQuery: () => ({ tags: [] }),
             }),
             on: {

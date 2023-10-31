@@ -89,13 +89,6 @@ export default function Tag({ tag, tags, active, handleEditAction }: Props) {
           const newWeight = isLeft
             ? (previousItemWeight + targetWeight) / 2
             : (nextItemWeight + targetWeight) / 2;
-          console.log({
-            isLeft,
-            targetWeight,
-            previousItemWeight,
-            nextItemWeight,
-            newWeight,
-          });
           await window.electron.ipcRenderer.invoke('update-tag-weight', [
             droppedTag.label,
             newWeight,
