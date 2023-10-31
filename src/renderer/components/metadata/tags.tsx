@@ -82,8 +82,6 @@ function Tags({ item }: Props) {
               tag.tag_label !== item.tagLabel
           )
           .map((tag, idx) => {
-            console.log('tag', tag);
-
             return (
               <li
                 key={`${tag.tag_label}-${idx}`}

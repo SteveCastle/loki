@@ -64,6 +64,9 @@ export function ListItem({ item, idx, height }: Props) {
   const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
   const { libraryService } = useContext(GlobalStateContext);
   const cursor = useSelector(libraryService, (state) => state.context.cursor);
+  const { sortBy } = useSelector(libraryService, (state) => {
+    return state.context.settings;
+  });
   const state = useSelector(
     libraryService,
     (state) => state,
@@ -71,7 +74,8 @@ export function ListItem({ item, idx, height }: Props) {
       return a.matches(b);
     }
   );
-  const canDrag = state.matches({ library: 'loadedFromDB' });
+  const canDrag =
+    state.matches({ library: 'loadedFromDB' }) && sortBy === 'weight';
   const { showTags, showFileInfo } = useSelector(
     libraryService,
     (state) => state.context.settings

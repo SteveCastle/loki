@@ -21,7 +21,7 @@ function getIsLeft(
 export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
-  const { applyTagPreview, applyTagToAll } = useSelector(
+  const { applyTagPreview, applyTagToAll, sortBy } = useSelector(
     libraryService,
     (state) => {
       return state.context.settings;
