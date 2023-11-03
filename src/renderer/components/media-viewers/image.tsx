@@ -45,7 +45,6 @@ export function Image({
   useEffect(() => {
     setError(false);
   }, [path]);
-  console.log('error', error);
   if (error) {
     return <MediaErrorMsg path={path} />;
   }
