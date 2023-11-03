@@ -41,8 +41,13 @@ export function Image({
     fetchMediaPreview(path, cache)
   );
 
+  // Reset error state if path changes.
+  useEffect(() => {
+    setError(false);
+  }, [path]);
+  console.log('error', error);
   if (error) {
-    <MediaErrorMsg />;
+    return <MediaErrorMsg path={path} />;
   }
 
   return data || !cache ? (
@@ -57,8 +62,13 @@ export function Image({
           : {}
       }
       ref={mediaRef}
-      onLoad={handleLoad}
-      onError={() => setError(true)}
+      onLoad={(e) => {
+        handleLoad && handleLoad(e);
+      }}
+      onError={() => {
+        setError(true);
+        console.log('failed to load image');
+      }}
       src={
         cache
           ? window.electron.url.format({ protocol: 'gsm', pathname: data })

@@ -84,6 +84,19 @@ const setPath = assign<LibraryState, AnyEventObject>({
   },
 });
 
+const updateFilePath = assign<LibraryState, AnyEventObject>({
+  library: (context, event) => {
+    console.log('updateFilePath', event, context);
+    const { data } = event;
+    const library = [...context.library];
+    const item = library.find((item) => item.path === data.path);
+    if (item) {
+      item.path = data.newPath;
+    }
+    return library;
+  },
+});
+
 const createJob = assign<LibraryState, AnyEventObject>({
   jobs: (context, event) => {
     console.log('createJob', event);
@@ -383,7 +396,7 @@ const libraryMachine = createMachine(
                 ) {
                   return context.cursor + 1;
                 }
-                return context.cursor;
+                return 0;
               },
             }),
           },
@@ -393,7 +406,15 @@ const libraryMachine = createMachine(
                 if (context.cursor > 0) {
                   return context.cursor - 1;
                 }
-                return context.cursor;
+                return (
+                  filter(
+                    context.libraryLoadId,
+                    context.textFilter,
+                    context.library,
+                    context.settings.filters,
+                    context.settings.sortBy
+                  ).length - 1
+                );
               },
             }),
           },
@@ -749,6 +770,9 @@ const libraryMachine = createMachine(
               CHANGE_DB_PATH: {
                 target: 'selectingDB',
               },
+              UPDATE_FILE_PATH: {
+                target: 'selectingFilePath',
+              },
               CLEAR_QUERY_TAG: {
                 target: 'loadingFromFS',
                 actions: assign<LibraryState, AnyEventObject>({
@@ -907,6 +931,23 @@ const libraryMachine = createMachine(
               },
             },
           },
+          selectingFilePath: {
+            invoke: {
+              src: (context, event) => {
+                console.log('selectingFilePath', context, event);
+                return window.electron.ipcRenderer.invoke('select-new-path', [
+                  event.path,
+                ]);
+              },
+              onDone: {
+                target: 'loadedFromDB',
+                actions: ['updateFilePath'],
+              },
+              onError: {
+                target: 'loadedFromDB',
+              },
+            },
+          },
           loadingError: {
             entry: (context, event) =>
               console.log('error loading library', context, event),
@@ -922,6 +963,7 @@ const libraryMachine = createMachine(
       setPath,
       setDB,
       createJob,
+      updateFilePath,
     },
   }
 );

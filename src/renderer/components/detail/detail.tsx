@@ -226,6 +226,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   if (!item) {
     return null;
   }
+
+  // Use effect that registers a counter that fires a empty function every 1 second.
+
   return (
     <div
       ref={drop}

@@ -31,6 +31,7 @@ import {
   moveTag,
   deleteTag,
   loadTagsByMediaPath,
+  selectNewPath,
 } from './taxonomy';
 
 import { loadFileMetaData } from './metadata';
@@ -113,6 +114,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('fetch-media-preview');
   ipcMain.removeHandler('add-media');
 
+  ipcMain.removeHandler('select-new-path');
   ipcMain.removeHandler('rename-category');
   ipcMain.removeHandler('delete-category');
   ipcMain.removeHandler('rename-tag');
@@ -139,6 +141,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('fetch-tag-preview', fetchTagPreview(db));
   ipcMain.handle('fetch-media-preview', fetchMediaPreview(store));
 
+  ipcMain.handle('select-new-path', selectNewPath(db, mainWindow));
   ipcMain.handle('rename-category', renameCategory(db));
   ipcMain.handle('delete-category', deleteCategory(db));
   ipcMain.handle('rename-tag', renameTag(db));
