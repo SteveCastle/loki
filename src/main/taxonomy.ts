@@ -1,6 +1,7 @@
 import path from 'path';
 import { Database } from './database';
 import type Store from 'electron-store';
+import { dialog } from 'electron';
 
 import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
@@ -285,6 +286,69 @@ const loadTagsByMediaPath =
     }
   };
 
+type SelectNewPathInput = [string];
+const selectNewPath =
+  (db: Database, mainWindow: Electron.BrowserWindow | null) =>
+  async (_: Event, args: SelectNewPathInput) => {
+    if (!mainWindow) {
+      return null;
+    }
+    const path = args[0];
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'Media',
+          extensions: [
+            'jpg',
+            'jpeg',
+            'png',
+            'gif',
+            'bmp',
+            'svg',
+            'jfif',
+            'pjpeg',
+            'pjp',
+            'webp',
+            'mp4',
+            'mkv',
+            'webm',
+          ],
+        },
+
+        {
+          name: 'Images',
+          extensions: [
+            'jpg',
+            'jpeg',
+            'png',
+            'gif',
+            'bmp',
+            'svg',
+            'jfif',
+            'pjpeg',
+            'pjp',
+            'webp',
+          ],
+        },
+        { name: 'Movies', extensions: ['mp4', 'mkv', 'webm'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (!result.canceled) {
+      // Update the media_tag_by_category table with the new path.
+      const newPath = result.filePaths[0];
+      await db.run(
+        `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
+        [newPath, path]
+      );
+      return { newPath, path };
+    } else {
+      return null;
+    }
+  };
+
 export {
   loadTaxonomy,
   createTag,
@@ -300,4 +364,5 @@ export {
   moveTag,
   deleteTag,
   loadTagsByMediaPath,
+  selectNewPath,
 };

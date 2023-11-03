@@ -2,5 +2,18 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-direction: column;
   height: 100%;
+}
+
+.MediaError button {
+  background: none;
+  border: none;
+  color: rgb(92, 252, 161);
+  cursor: pointer;
+}
+
+.MediaError button:hover {
+  text-decoration: underline;
+  color: rgb(136, 253, 204);
 }

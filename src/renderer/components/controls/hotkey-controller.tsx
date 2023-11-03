@@ -43,6 +43,12 @@ export default function HotKeyController() {
 
   const filteredLibrary = filter(libraryLoadId, textFilter, library);
 
+  // useEffect(() => {
+  //   const interval = setInterval(() => {
+  //     libraryService.send('INCREMENT_CURSOR');
+  //   }, 500);
+  //   return () => clearInterval(interval);
+  // }, []);
   const item = filteredLibrary[cursor];
   const [keyState, setKeyState] = useState<KeyState>({});
   const previousKeyState = usePrevious<KeyState>(keyState);

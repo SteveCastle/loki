@@ -29,16 +29,12 @@ function useElementSize<T extends HTMLElement = HTMLDivElement>(): [
   (node: T | null) => void,
   Size
 ] {
-  // Mutable values like 'ref.current' aren't valid dependencies
-  // because mutating them doesn't re-render the component.
-  // Instead, we use a state as a ref to be reactive.
   const [ref, setRef] = useState<T | null>(null);
   const [size, setSize] = useState<Size>({
     width: 0,
     height: 0,
   });
 
-  // Prevent too many rendering using useCallback
   const handleSize = useCallback(() => {
     setSize({
       width: ref?.offsetWidth || 0,
@@ -65,7 +61,6 @@ export default function ProgressBar({
   setCursor,
   isLoading,
 }: Props) {
-  //height of element ref in pixels
   const [setRef, { width }] = useElementSize<HTMLDivElement>();
   const [isDragging, setIsDragging] = useState(false);
 
