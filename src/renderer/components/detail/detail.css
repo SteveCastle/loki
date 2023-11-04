@@ -1,10 +1,10 @@
-.DropZone {
+.DetailContainer {
   height: 100%;
   width: 100%;
   position: relative;
 }
 
-.DropZone.comicMode {
+.DetailContainer.comicMode {
   width: 50%;
 }
 
@@ -19,7 +19,7 @@
   position: relative;
 }
 
-.DropZone .controls {
+.DetailContainer .controls {
   position: absolute;
   bottom: 20px;
   right: 0;
@@ -29,7 +29,7 @@
   flex-wrap: wrap;
 }
 
-.DropZone .item-info {
+.DetailContainer .item-info {
   position: absolute;
   bottom: 0;
   right: 0;
@@ -44,7 +44,7 @@
   pointer-events: none;
 }
 
-.DropZone .item-info .file-path {
+.DetailContainer .item-info .file-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -60,6 +60,11 @@
 
 .Detail .scroll-container:active {
   cursor: grabbing;
+}
+
+.preload {
+  position: fixed;
+  right: -10000px;
 }
 
 ::-webkit-scrollbar {

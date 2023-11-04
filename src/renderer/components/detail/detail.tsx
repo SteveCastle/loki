@@ -86,7 +86,8 @@ function getPlayer(
 export function Detail({ offset = 0 }: { offset?: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
-  const { events } = useScrollOnDrag(containerRef);
+  let { events } = useScrollOnDrag(containerRef);
+
   const { libraryService } = useContext(GlobalStateContext);
 
   const settings = useSelector(libraryService, (state) => {
@@ -105,6 +106,10 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       )[state.context.cursor + offset],
     (a, b) => a?.path === b?.path && a?.timeStamp === b?.timeStamp
   );
+
+  if (settings.controlMode === 'touchpad') {
+    events = {};
+  }
 
   const { drop } = useTagDrop(item, 'DETAIL');
 
@@ -136,7 +141,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         container.removeEventListener('wheel', handleScroll);
       }
     };
-  }, [containerRef.current]);
+  }, [containerRef.current, settings.controlMode]);
 
   function handleClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
     if (e.clientX < containerRef.current!.clientWidth / 2) {
@@ -232,7 +237,10 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   return (
     <div
       ref={drop}
-      className={['DropZone', settings.comicMode ? 'comicMode' : ''].join(' ')}
+      className={[
+        'DetailContainer',
+        settings.comicMode ? 'comicMode' : '',
+      ].join(' ')}
     >
       <div
         className="Detail"
