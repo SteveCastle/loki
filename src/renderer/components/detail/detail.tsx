@@ -240,6 +240,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       className={[
         'DetailContainer',
         settings.comicMode ? 'comicMode' : '',
+        settings.controlMode === 'mouse' ? 'grabbable' : '',
       ].join(' ')}
     >
       <div

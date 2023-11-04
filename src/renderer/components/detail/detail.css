@@ -2,6 +2,11 @@
   height: 100%;
   width: 100%;
   position: relative;
+  cursor: pointer;
+}
+
+.DetailContainer.grabbable {
+  cursor: grab;
 }
 
 .DetailContainer.comicMode {
@@ -12,7 +17,6 @@
   height: 100%;
   width: 100%;
   overflow: scroll;
-  cursor: grab;
   display: grid;
   grid-template-rows: 100%;
   grid-template-columns: 100%;
@@ -55,7 +59,6 @@
   height: 100%;
   width: 100%;
   overflow: hidden;
-  cursor: grab;
 }
 
 .Detail .scroll-container:active {
