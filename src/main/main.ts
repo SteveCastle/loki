@@ -91,7 +91,7 @@ ipcMain.handle('get-user-data-path', async (event) => {
 // Initialize a new DB
 ipcMain.handle('load-db', async (event, args) => {
   const dbPath = args[0];
-  console.log('LOADING DB:', path);
+  console.log('LOADING DB:', dbPath);
   //create path if it doesn't exist
 
   const dir = path.dirname(dbPath);
