@@ -57,7 +57,9 @@ export default function Metadata() {
       filter(
         state.context.libraryLoadId,
         state.context.textFilter,
-        state.context.library
+        state.context.library,
+        state.context.settings.filters,
+        state.context.settings.sortBy
       )[state.context.cursor],
     (a, b) => a?.path === b?.path
   );
