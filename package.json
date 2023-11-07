@@ -240,6 +240,7 @@
       "hardenedRuntime": true,
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist",
+      "icon": "assets/icon.png",
       "gatekeeperAssess": false
     },
     "fileAssociations": [
@@ -307,7 +308,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/icons/logo.png"
+      "icon": "assets/icon.png"
     },
     "linux": {
       "target": [
