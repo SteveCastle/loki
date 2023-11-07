@@ -6067,16 +6067,16 @@ __metadata:
   languageName: node
   linkType: hard
 
-"electron@npm:23.2.0":
-  version: 23.2.0
-  resolution: "electron@npm:23.2.0"
+"electron@npm:23.3.13":
+  version: 23.3.13
+  resolution: "electron@npm:23.3.13"
   dependencies:
     "@electron/get": ^2.0.0
     "@types/node": ^16.11.26
     extract-zip: ^2.0.1
   bin:
     electron: cli.js
-  checksum: 175326a42946dd5fa55d4a4e550328109abcf868bda6d34e9f49caaa4a672ddf65624e76260cf767ba37e0278f96cf1b21b7204c8528476f3f516fcc4b4e097f
+  checksum: ada215540c2482471aa30293fe415da104e090a28d1fde6e720584bc28a6855a864d7cb977c60d560d0dc26d93c9f52febe33501b764bac21cf4725a299fa886
   languageName: node
   linkType: hard
 
@@ -9734,7 +9734,7 @@ __metadata:
     css-loader: ^6.7.1
     css-minimizer-webpack-plugin: ^4.0.0
     detect-port: ^1.3.0
-    electron: 23.2.0
+    electron: 23.3.13
     electron-builder: ^23.3.3
     electron-debug: ^3.2.0
     electron-devtools-installer: ^3.2.0
@@ -13696,11 +13696,11 @@ __metadata:
 
 "typescript@patch:typescript@5.0.2#~builtin<compat/typescript>":
   version: 5.0.2
-  resolution: "typescript@patch:typescript@npm%3A5.0.2#~builtin<compat/typescript>::version=5.0.2&hash=ad5954"
+  resolution: "typescript@patch:typescript@npm%3A5.0.2#~builtin<compat/typescript>::version=5.0.2&hash=b5f058"
   bin:
     tsc: bin/tsc
     tsserver: bin/tsserver
-  checksum: bdbf3d0aac0d6cf010fbe0536753dc19f278eb4aba88140dcd25487dfe1c56ca8b33abc0dcd42078790a939b08ebc4046f3e9bb961d77d3d2c3cfa9829da4d53
+  checksum: 0411be9e19bf6a547d574b3261fa8598f55a5243123f2a50a79b0dc15a017abbf541f15b8b43331294e409cc978e548ac5ae4e0c5b98ba5ae98029304de047be
   languageName: node
   linkType: hard
 
