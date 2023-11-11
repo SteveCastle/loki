@@ -1,6 +1,6 @@
 {
   "name": "loki",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "productName": "Lowkey Media Viewer",
   "description": "A Media library for quick curation.",
   "keywords": [],
@@ -115,7 +115,6 @@
     "electron-log": "^4.4.8",
     "electron-store": "^8.1.0",
     "electron-updater": "^5.2.3",
-    "fluent-ffmpeg": "^2.1.2",
     "js-base64": "^3.7.5",
     "lodash": "^4.17.21",
     "lodash.memoize": "^4.1.2",

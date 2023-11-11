@@ -246,6 +246,10 @@ const moveTag = (db: Database) => async (_: Event, args: MoveTagInput) => {
     categoryLabel,
     tagLabel,
   ]);
+  await db.run(
+    'UPDATE media_tag_by_category SET category_label = $1 WHERE tag_label = $2',
+    [categoryLabel, tagLabel]
+  );
 };
 
 type DeleteTagInput = [string];
