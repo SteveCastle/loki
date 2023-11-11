@@ -4,7 +4,6 @@ const path = require('path');
 const { exec } = require('child_process');
 const crypto = require('crypto');
 const workerpool = require('workerpool');
-const ffmpeg = require('fluent-ffmpeg');
 
 const isDev = process.env.NODE_ENV === 'development';
 const ffmpegPath = isDev
@@ -100,12 +99,16 @@ async function createThumbnail(filePath, basePath, cache, timeStamp) {
 
 const getVideoMetadata = (videoFilePath) => {
   return new Promise((resolve, reject) => {
-    ffmpeg.setFfprobePath(ffProbePath);
-    ffmpeg.setFfmpegPath(ffmpegPath);
-    ffmpeg.ffprobe(videoFilePath, (err, metadata) => {
-      if (err) reject(err);
-      else resolve(metadata);
-    });
+    exec(
+      `${ffProbePath} -v quiet -print_format json -show_format -show_streams "${videoFilePath}"`,
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(JSON.parse(stdout));
+        }
+      }
+    );
   });
 };
 
