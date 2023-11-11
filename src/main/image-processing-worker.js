@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const sharp = require('sharp');
 const path = require('path');
 const { exec } = require('child_process');
@@ -6,10 +7,15 @@ const crypto = require('crypto');
 const workerpool = require('workerpool');
 
 const isDev = process.env.NODE_ENV === 'development';
-const ffmpegPath = isDev
+const isMac = os.platform() === 'darwin';
+const ffmpegPath = isMac
+  ? 'ffmpeg'
+  : isDev
   ? path.join(__dirname, 'resources/bin/ffmpeg')
   : path.join(__dirname, '../../../bin/ffmpeg');
-const ffProbePath = isDev
+const ffProbePath = isMac
+  ? 'ffprobe'
+  : isDev
   ? path.join(__dirname, 'resources/bin/ffprobe')
   : path.join(__dirname, '../../../bin/ffprobe');
 
@@ -144,7 +150,9 @@ const generateVideoThumbnail = (
           }
           resolve();
         })
-        .on('error', reject);
+        .on('error', (err) => {
+          reject(err);
+        });
     } else {
       exec(
         `${ffmpegPath} -y -i "${videoFilePath}" -vf "scale=600:-1" -loop 0 -an ${thumbnailFullPath}
