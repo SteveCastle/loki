@@ -142,7 +142,18 @@ const generateVideoThumbnail = (
     if (useMiddle) {
       exec(
         `${ffmpegPath} -y -ss ${thumbnailTime} -i "${videoFilePath}" -vf "scale=600:-1" -loop 0 -t 2 -an ${thumbnailFullPath}
-      `
+      `,
+        (err, stdout, stderr) => {
+          if (err) {
+            console.log(err);
+          }
+          if (stderr) {
+            console.log(stderr);
+          }
+          if (stdout) {
+            console.log(stdout);
+          }
+        }
       )
         .on('exit', (code) => {
           if (code !== 0) {
@@ -156,7 +167,18 @@ const generateVideoThumbnail = (
     } else {
       exec(
         `${ffmpegPath} -y -i "${videoFilePath}" -vf "scale=600:-1" -loop 0 -an ${thumbnailFullPath}
-        `
+        `,
+        (err, stdout, stderr) => {
+          if (err) {
+            console.log(err);
+          }
+          if (stderr) {
+            console.log(stderr);
+          }
+          if (stdout) {
+            console.log(stdout);
+          }
+        }
       )
         .on('exit', (code) => {
           if (code !== 0) {
