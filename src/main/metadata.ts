@@ -1,10 +1,13 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { exec } from 'child_process';
 const isDev = require('electron-is-dev');
 import { promisify } from 'util';
-
-const exifToolPath = isDev
+const isMac = os.platform() === 'darwin';
+const exifToolPath = isMac
+  ? 'exiftool'
+  : isDev
   ? path.join(__dirname, 'resources/bin/exiftool')
   : path.join(__dirname, '../../../bin/exiftool');
 
