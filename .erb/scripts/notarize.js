@@ -7,10 +7,10 @@ exports.default = async function notarizeMacos(context) {
     return;
   }
 
-  if (process.env.CI !== 'true') {
-    console.warn('Skipping notarizing step. Packaging is not running in CI');
-    return;
-  }
+  // if (process.env.CI !== 'true') {
+  //   console.warn('Skipping notarizing step. Packaging is not running in CI');
+  //   return;
+  // }
 
   if (!('APPLE_ID' in process.env && 'APPLE_ID_PASS' in process.env)) {
     console.warn(
@@ -25,6 +25,8 @@ exports.default = async function notarizeMacos(context) {
     appBundleId: build.appId,
     appPath: `${appOutDir}/${appName}.app`,
     appleId: process.env.APPLE_ID,
+    teamId: process.env.APPLE_TEAM_ID,
     appleIdPassword: process.env.APPLE_ID_PASS,
+    tool: 'notarytool',
   });
 };

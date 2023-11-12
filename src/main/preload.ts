@@ -111,9 +111,10 @@ contextBridge.exposeInMainWorld('electron', {
 async function loadMainArgs() {
   const mainProcessArgs = await ipcRenderer.invoke('get-main-args');
   const appUserData = await ipcRenderer.invoke('get-user-data-path');
+  const macPath = await ipcRenderer.invoke('get-mac-path');
   const filePath = isValidFilePath(mainProcessArgs[1])
     ? mainProcessArgs[1]
-    : null;
+    : macPath;
   contextBridge.exposeInMainWorld('appArgs', {
     filePath,
     appUserData,

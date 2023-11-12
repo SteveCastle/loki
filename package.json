@@ -239,6 +239,10 @@
       "hardenedRuntime": true,
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist",
+      "binaries": [
+        "src/main/resources/bin/ffmpeg",
+        "src/main/resources/bin/ffprobe"
+      ],
       "icon": "assets/icon.png",
       "gatekeeperAssess": false
     },
