@@ -27,7 +27,7 @@ function getMediaCachePath(
   const thumbnailFullPath = thumbnailBasePath + '/' + thumbnailFileName;
   const isVideo = getFileType(mediaPath, true) === 'video';
   if (isVideo) {
-    return thumbnailFullPath + '.webp';
+    return thumbnailFullPath + '.mp4';
   }
   return thumbnailFullPath;
 }
