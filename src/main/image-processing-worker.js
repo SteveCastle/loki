@@ -141,7 +141,7 @@ const generateVideoThumbnail = (
   return new Promise((resolve, reject) => {
     if (useMiddle) {
       exec(
-        `${ffmpegPath} -y -ss ${thumbnailTime} -i "${videoFilePath}" -vf "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2" -loop 0 -tune fastdecode -t 2 -an ${thumbnailFullPath}
+        `${ffmpegPath} -y -ss ${thumbnailTime} -i "${videoFilePath}" -vf "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2" -t 2 -an "${thumbnailFullPath}"
       `,
         (err, stdout, stderr) => {
           if (err) {
@@ -166,7 +166,7 @@ const generateVideoThumbnail = (
         });
     } else {
       exec(
-        `${ffmpegPath} -y -i "${videoFilePath}" -vf "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2" -loop 0 -tune fastdecode -an ${thumbnailFullPath}
+        `${ffmpegPath} -y -i "${videoFilePath}" -vf "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2" -an "${thumbnailFullPath}"
         `,
         (err, stdout, stderr) => {
           if (err) {
