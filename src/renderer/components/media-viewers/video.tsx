@@ -199,18 +199,28 @@ export function Video({
   }
 
   return (
-    <img
-      className={`Image ${scaleMode} ${orientation}`}
-      loading="lazy"
+    <video
       style={
         scaleMode === 'cover' && coverSize.height && coverSize.width
           ? { height: coverSize.height, width: coverSize.width }
+          : typeof scaleMode === 'number'
+          ? { height: `${scaleMode}%` }
           : {}
       }
-      onLoad={handleLoad}
-      onError={() => setError(true)}
+      ref={mediaRef}
+      className={`Video ${scaleMode} ${orientation}`}
+      onError={() => {
+        setError(true);
+      }}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+      }}
+      muted
       src={window.electron.url.format({ protocol: 'gsm', pathname: data })}
-      alt="detail"
+      controls={false}
+      controlsList={'nodownload nofullscreen'}
+      autoPlay
+      loop
     />
   );
 }

@@ -8,6 +8,7 @@ import { GlobalStateContext } from '../../state';
 import { useDrag, useDrop, DropTargetMonitor } from 'react-dnd';
 import ConfirmDeleteTag from './confirm-delete-tag';
 import './taxonomy.css';
+import { getFileType } from 'file-types';
 
 type Concept = {
   label: string;
@@ -119,12 +120,22 @@ export default function Tag({ tag, tags, active, handleEditAction }: Props) {
         });
       }}
     >
-      {previewImage && (
+      {previewImage && getFileType(previewImage) !== 'video' ? (
         <img
           src={window.electron.url.format({
             protocol: 'gsm',
             pathname: previewImage,
           })}
+        />
+      ) : (
+        <video
+          src={window.electron.url.format({
+            protocol: 'gsm',
+            pathname: previewImage,
+          })}
+          controls={false}
+          autoPlay
+          loop
         />
       )}
       <div className="label">{tag.label}</div>

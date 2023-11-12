@@ -33,7 +33,7 @@ function getPlayer(
   imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
   startTime = 0
 ) {
-  if (getFileType(path) === FileTypes.Video) {
+  if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
     return (
       <Video
         path={path}
