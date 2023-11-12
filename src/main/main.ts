@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { app, BrowserWindow, shell, ipcMain, protocol, dialog } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
@@ -37,7 +38,11 @@ import {
 import { loadFileMetaData } from './metadata';
 import { createJob } from './jobs';
 
+// app.commandLine.appendSwitch('remote-debugging-port', '8315');
+app.commandLine.appendSwitch('inspect');
+
 let db: Database | null = null;
+let macPath = '';
 
 class AppUpdater {
   constructor() {
@@ -54,6 +59,10 @@ ipcMain.handle('get-main-args', () => {
   return process.argv;
 });
 
+ipcMain.handle('get-mac-path', () => {
+  return macPath;
+});
+
 // Window Controls
 ipcMain.on('shutdown', async () => {
   // Shutdown the app.
@@ -61,8 +70,16 @@ ipcMain.on('shutdown', async () => {
 });
 
 ipcMain.on('minimize', async () => {
-  // Shutdown the app.
-  mainWindow?.minimize();
+  if (os.platform() === 'darwin') {
+    if (mainWindow?.isFullScreen()) {
+      mainWindow.once('leave-full-screen', function () {
+        mainWindow?.minimize();
+      });
+      mainWindow?.setFullScreen(false);
+    } else {
+      mainWindow?.minimize();
+    }
+  }
 });
 
 ipcMain.on('open-external', async (event, args) => {
@@ -310,6 +327,12 @@ const createWindow = async () => {
 /**
  * Add event listeners...
  */
+app.on('open-file', (event, path) => {
+  event.preventDefault();
+  console.log('OPEN FILE:', path);
+  macPath = path;
+});
+
 app.on('ready', async () => {
   protocol.registerFileProtocol('gsm', (request, callback) => {
     const url = request.url.replace('gsm:', '');

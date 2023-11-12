@@ -120,9 +120,9 @@ export default function CommandPalette() {
           />
           <span
             className="windowedControl"
-            onClick={() =>
-              window.electron.ipcRenderer.sendMessage('minimize', [])
-            }
+            onClick={() => {
+              window.electron.ipcRenderer.sendMessage('minimize', []);
+            }}
           />
           <span
             className="fullScreenControl"
@@ -245,6 +245,7 @@ export default function CommandPalette() {
           {tab === 'hotKeyOptions' && <HotKeyOptions />}
           {tab === 'generalOptions' && (
             <div className="tabContent">
+              <p>v2.0.3</p>
               {Object.keys(SETTINGS)
                 .filter((k) => SETTINGS[k as SettingKey].display === 'general')
                 .map((settingKey) => (
