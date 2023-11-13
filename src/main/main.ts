@@ -79,6 +79,8 @@ ipcMain.on('minimize', async () => {
     } else {
       mainWindow?.minimize();
     }
+  } else {
+    mainWindow?.minimize();
   }
 });
 
