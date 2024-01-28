@@ -88,6 +88,9 @@ const updateFilePath = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
     console.log('updateFilePath', event, context);
     const { data } = event;
+    if (!data) {
+      return context.library;
+    }
     const library = [...context.library];
     const item = library.find((item) => item.path === data.path);
     if (item) {
@@ -456,7 +459,10 @@ const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 console.log('selecting DB', context, event);
-                return window.electron.ipcRenderer.invoke('select-db', []);
+                const currentDB = context.dbPath;
+                return window.electron.ipcRenderer.invoke('select-db', [
+                  currentDB,
+                ]);
               },
               onDone: {
                 target: 'loadingDB',
@@ -495,8 +501,11 @@ const libraryMachine = createMachine(
           selecting: {
             invoke: {
               src: (context, event) => {
+                const currentFile = context.initialFile;
                 console.log('selecting', context, event);
-                return window.electron.ipcRenderer.invoke('select-file', []);
+                return window.electron.ipcRenderer.invoke('select-file', [
+                  currentFile,
+                ]);
               },
               onDone: {
                 target: 'loadingFromFS',

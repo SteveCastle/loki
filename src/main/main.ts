@@ -170,10 +170,13 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('create-job', createJob(db, mainWindow.webContents));
 });
 
-ipcMain.handle('select-db', async () => {
+type SelectDBInput = [string | undefined];
+ipcMain.handle('select-db', async (_: Event, args: SelectDBInput) => {
   invariant(mainWindow, 'mainWindow is not defined');
+  const defaultPath = args[0];
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile', 'promptToCreate', 'dontAddToRecent'],
+    defaultPath,
     filters: [{ name: 'Lowkey Media Database', extensions: ['sqlite'] }],
   });
 
@@ -186,10 +189,13 @@ ipcMain.handle('select-db', async () => {
 });
 
 // Handle file selection event from renderer process
-ipcMain.handle('select-file', async () => {
+type SelectFileInput = [string | undefined];
+ipcMain.handle('select-file', async (_: Event, args: SelectFileInput) => {
   invariant(mainWindow, 'mainWindow is not defined');
+  const defaultPath = args[0];
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
+    defaultPath,
     filters: [
       {
         name: 'Media',

@@ -169,10 +169,10 @@ const generateVideoThumbnail = (
             console.log(err);
           }
           if (stderr) {
-            console.log(stderr);
+            // console.log(stderr);
           }
           if (stdout) {
-            console.log(stdout);
+            // console.log(stdout);
           }
         }
       )
