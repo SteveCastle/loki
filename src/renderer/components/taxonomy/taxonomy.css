@@ -203,8 +203,8 @@
   pointer-events: none;
 }
 
-.Taxonomy .tag label {
-  z-index: 1;
+.Taxonomy .tag .label {
+  z-index: 999;
 }
 
 .Taxonomy .tag .drop-target {

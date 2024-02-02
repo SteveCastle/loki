@@ -25,9 +25,9 @@
 
 .DetailContainer .controls {
   position: absolute;
-  bottom: 20px;
+  top: 20px;
   right: 0;
-  z-index: 999;
+  z-index: 998;
   display: flex;
   justify-content: flex-end;
   flex-wrap: wrap;

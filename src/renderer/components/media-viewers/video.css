@@ -4,6 +4,19 @@
   margin: auto;
 }
 
+.videoControls {
+  position: absolute;
+  bottom: 10px;
+  width: 100%;
+  z-index: 999;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.videoControls:hover {
+  opacity: 1;
+}
+
 .ThumnailLoader {
   width: 100%;
   height: 100%;

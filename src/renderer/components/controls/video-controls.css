@@ -1,7 +1,8 @@
 .VideoControls {
   width: 100%;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: center;
 }
 
 .VideoControls .progressBar {
@@ -12,12 +13,14 @@
   overflow: hidden;
   margin: 4px;
   position: relative;
+  flex: 9 9 90%;
 }
 
 .VideoControls .progress {
   height: 100%;
   background-color: #fff;
   border-radius: 8px;
+  flex: 1 1 10%;
 }
 
 .VideoControls .label {
@@ -45,12 +48,18 @@
 }
 
 .VideoControls .loopButtons .icon {
-  padding-right: 1rem;
+  padding-left: 1rem;
+  margin: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
 }
 
 .VideoControls button {
   color: white;
-  background: #2f2f2f;
+  padding: 4px;
+  background: #131313;
   border-radius: 2px;
   border: none;
   flex: 1;
@@ -59,10 +68,13 @@
   cursor: pointer;
   transition: cubic-bezier(1, 0, 0, 1) 0.2s;
   width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .VideoControls button:hover {
-  background: #4f4d4d;
+  background: #3a3a3a;
 }
 
 .VideoControls .loopButtons button.selected {

@@ -1,5 +1,5 @@
 .ProgressBar {
-  height: 18px;
+  min-height: 16px;
   background-color: rgb(13, 79, 45);
   border-radius: 8px;
   cursor: pointer;
