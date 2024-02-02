@@ -14,12 +14,9 @@ import db from '../../../../assets/database.svg';
 import keyboard from '../../../../assets/keyboard.svg';
 import grid from '../../../../assets/view-grid.svg';
 import image from '../../../../assets/image-2-fill.svg';
-import video from '../../../../assets/video-line.svg';
 import noSound from '../../../../assets/sound-off.svg';
 import recursiveIcon from '../../../../assets/recursive.svg';
 import folder from '../../../../assets/folder-open-fill.svg';
-import videoControls from '../../../../assets/video-camera.svg';
-import noVideoControls from '../../../../assets/video-camera-off.svg';
 
 import Setting from './setting';
 import { SETTINGS, SettingKey } from 'settings';
@@ -28,7 +25,6 @@ import './command-palette.css';
 import DbPathWidget from './db-path';
 import GridSizePicker from './gridsize-picker';
 import CacheSetting from './cache-setting';
-import VideoControls from './video-controls';
 import { getFileType } from 'file-types';
 
 function getDirectory(path: string): string {
@@ -173,49 +169,23 @@ export default function CommandPalette() {
           >
             <img src={playSound ? sound : noSound} />
           </button>
-          <button
-            data-tooltip-id="video-controls"
-            data-tooltip-delay-show={500}
-            data-tooltip-offset={20}
-            className="menuIconButton"
-            onClick={() =>
-              libraryService.send('CHANGE_SETTING', {
-                data: { showControls: !showControls },
-              })
-            }
-          >
-            <img src={showControls ? videoControls : noVideoControls} />
-          </button>
         </div>
       </div>
       <div className="menuArea">
         <div className="menuContent">
-          {tab !== 'videoOptions' && (
-            <>
-              <span className="listContext">
-                {Array.isArray(tags) && tags.length > 0
-                  ? tags.join(', ')
-                  : `${getDirectory(activeDirectory)}`}
-              </span>
-              <ProgressBar
-                value={cursor}
-                total={library.length}
-                isLoading={isLoading}
-                setCursor={(c) => {
-                  libraryService.send('SET_CURSOR', { idx: c });
-                }}
-              />
-            </>
-          )}
-          {tab === 'videoOptions' && (
-            <div className="tabContent">
-              {fileType === 'video' ? (
-                <VideoControls />
-              ) : (
-                <span>No video playing.</span>
-              )}
-            </div>
-          )}
+          <span className="listContext">
+            {Array.isArray(tags) && tags.length > 0
+              ? tags.join(', ')
+              : `${getDirectory(activeDirectory)}`}
+          </span>
+          <ProgressBar
+            value={cursor}
+            total={library.length}
+            isLoading={isLoading}
+            setCursor={(c) => {
+              libraryService.send('SET_CURSOR', { idx: c });
+            }}
+          />
           {tab === 'imageOptions' && (
             <div className="tabContent">
               {Object.keys(SETTINGS)
@@ -245,7 +215,7 @@ export default function CommandPalette() {
           {tab === 'hotKeyOptions' && <HotKeyOptions />}
           {tab === 'generalOptions' && (
             <div className="tabContent">
-              <p>v2.0.3</p>
+              <p>v2.0.4</p>
               {Object.keys(SETTINGS)
                 .filter((k) => SETTINGS[k as SettingKey].display === 'general')
                 .map((settingKey) => (
@@ -294,12 +264,6 @@ export default function CommandPalette() {
             <img src={image} />
           </button>
           <button
-            className={tab === 'videoOptions' ? 'active' : ''}
-            onClick={() => setTab('videoOptions')}
-          >
-            <img src={video} />
-          </button>
-          <button
             className={tab === 'listViewOptions' ? 'active' : ''}
             onClick={() => setTab('listViewOptions')}
           >
@@ -336,11 +300,6 @@ export default function CommandPalette() {
         place="top"
       />
       <Tooltip id="sound" content={`Play video audio.`} place="top" />
-      <Tooltip
-        id="video-controls"
-        content={`Show video player controls.`}
-        place="top"
-      />
       <Tooltip
         id="donate-buttons"
         content={`Your donations make Lowkey Media Viewer possible!`}

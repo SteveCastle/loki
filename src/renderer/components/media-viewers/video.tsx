@@ -9,6 +9,7 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 import './video.css';
 import './sizing.css';
+import VideoControls from '../controls/video-controls';
 
 type Props = {
   path: string;
@@ -145,44 +146,54 @@ export function Video({
   }, [onTimestampChange]);
 
   if (error) {
-    return <MediaErrorMsg />;
+    return <MediaErrorMsg path={path} />;
   }
 
   if (!cache) {
     return (
-      <video
-        style={
-          scaleMode === 'cover' && coverSize.height && coverSize.width
-            ? { height: coverSize.height, width: coverSize.width }
-            : typeof scaleMode === 'number'
-            ? { height: `${scaleMode}%` }
-            : {}
-        }
-        ref={mediaRef}
-        className={`Video ${scaleMode} ${orientation}`}
-        onLoadedData={(e) => {
-          if (mediaRef && mediaRef.current && initialTimestamp && !startTime) {
-            mediaRef.current.currentTime =
-              e.currentTarget.duration * initialTimestamp;
+      <>
+        <video
+          style={
+            scaleMode === 'cover' && coverSize.height && coverSize.width
+              ? { height: coverSize.height, width: coverSize.width }
+              : typeof scaleMode === 'number'
+              ? { height: `${scaleMode}%` }
+              : {}
           }
-          if (mediaRef && mediaRef.current && startTime) {
-            mediaRef.current.currentTime = startTime;
-          }
-          handleLoad && handleLoad(e);
-        }}
-        onError={() => {
-          setError(true);
-        }}
-        onDoubleClick={(e) => {
-          e.preventDefault();
-        }}
-        muted={!playSound}
-        src={window.electron.url.format({ protocol: 'gsm', pathname: path })}
-        controls={showControls}
-        controlsList={'nodownload nofullscreen'}
-        autoPlay
-        loop
-      />
+          ref={mediaRef}
+          className={`Video ${scaleMode} ${orientation}`}
+          onLoadedData={(e) => {
+            if (
+              mediaRef &&
+              mediaRef.current &&
+              initialTimestamp &&
+              !startTime
+            ) {
+              mediaRef.current.currentTime =
+                e.currentTarget.duration * initialTimestamp;
+            }
+            if (mediaRef && mediaRef.current && startTime) {
+              mediaRef.current.currentTime = startTime;
+            }
+            handleLoad && handleLoad(e);
+          }}
+          onError={() => {
+            setError(true);
+          }}
+          onDoubleClick={(e) => {
+            e.preventDefault();
+          }}
+          muted={!playSound}
+          src={window.electron.url.format({ protocol: 'gsm', pathname: path })}
+          controls={showControls}
+          controlsList={'nodownload nofullscreen'}
+          autoPlay
+          loop
+        />
+        <div className="videoControls">
+          <VideoControls />
+        </div>
+      </>
     );
   }
 

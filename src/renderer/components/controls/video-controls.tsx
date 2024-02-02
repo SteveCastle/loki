@@ -1,10 +1,11 @@
-import React, { useContext, useCallback, useState, useEffect } from 'react';
+import React, { useContext, useCallback, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useEventListener, useIsomorphicLayoutEffect } from 'usehooks-ts';
 import repeat from '../../../../assets/repeat.svg';
-
+import play from '../../../../assets/play.svg';
+import pause from '../../../../assets/pause.svg';
 import { uniqueId } from 'xstate/lib/utils';
-import { GlobalStateContext, Item } from '../../state';
+import { GlobalStateContext } from '../../state';
 import './video-controls.css';
 
 function mapRange(
@@ -139,7 +140,7 @@ export default function VideoControls() {
             });
           }}
         >
-          {playing ? 'Pause' : 'Play'}
+          {playing ? <img src={pause} /> : <img src={play} />}
         </button>
       </div>
       <div className="loopButtons">
