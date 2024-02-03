@@ -42,6 +42,12 @@ const fetchMediaPreview =
     return path;
   };
 
+// return true if the input is a valid value for currentTime
+function validateCurrentTime(currentTime: number) {
+  console.log('currentTime', currentTime);
+  return !isNaN(currentTime) && currentTime >= 0 && currentTime !== Infinity;
+}
+
 export function Video({
   path,
   settable = false,
@@ -169,8 +175,11 @@ export function Video({
               initialTimestamp &&
               !startTime
             ) {
-              mediaRef.current.currentTime =
-                e.currentTarget.duration * initialTimestamp;
+              mediaRef.current.currentTime = validateCurrentTime(
+                e.currentTarget.duration * initialTimestamp
+              )
+                ? e.currentTarget.duration * initialTimestamp
+                : 0;
             }
             if (mediaRef && mediaRef.current && startTime) {
               mediaRef.current.currentTime = startTime;
