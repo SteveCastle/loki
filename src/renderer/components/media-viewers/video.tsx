@@ -44,7 +44,6 @@ const fetchMediaPreview =
 
 // return true if the input is a valid value for currentTime
 function validateCurrentTime(currentTime: number) {
-  console.log('currentTime', currentTime);
   return !isNaN(currentTime) && currentTime >= 0 && currentTime !== Infinity;
 }
 
