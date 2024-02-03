@@ -190,9 +190,11 @@ export function Video({
           autoPlay
           loop
         />
-        <div className="videoControls">
-          <VideoControls />
-        </div>
+        {settable && (
+          <div className="videoControls">
+            <VideoControls />
+          </div>
+        )}
       </>
     );
   }

@@ -127,7 +127,7 @@ export default function VideoControls() {
         </div>
         <div
           style={{
-            width: `${Math.floor((actualVideoTime / videoLength) * 100)}%`,
+            width: `${mapRange(actualVideoTime, 0, videoLength, 0, width)}px`,
           }}
           className="progress"
         ></div>
