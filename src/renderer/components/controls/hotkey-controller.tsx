@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 import { useEffect, useState, useContext } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
 import filter from '../../filter';
 import { GlobalStateContext, Item } from '../../state';
@@ -20,7 +21,7 @@ type ActionMap = {
 
 export default function HotKeyController() {
   const { libraryService } = useContext(GlobalStateContext);
-
+  const queryClient = useQueryClient();
   const { library, libraryLoadId, textFilter, activeTag, hotKeys } =
     useSelector(
       libraryService,
@@ -29,11 +30,39 @@ export default function HotKeyController() {
         libraryLoadId: state.context.libraryLoadId,
         textFilter: state.context.textFilter,
         activeTag: state.context.dbQuery.tags[0],
-        settings: state.context.settings,
         hotKeys: state.context.hotKeys,
       }),
       (a, b) => a.libraryLoadId === b.libraryLoadId
     );
+
+  const settings = useSelector(
+    libraryService,
+    (state) => state.context.settings
+  );
+
+  const activeCategory = useSelector(
+    libraryService,
+    (state) => state.context.activeCategory,
+    (a, b) => a === b
+  );
+
+  const storedCategories = useSelector(
+    libraryService,
+    (state) => state.context.storedCategories,
+    (a, b) => a === b
+  );
+
+  const mostRecentTag = useSelector(
+    libraryService,
+    (state) => state.context.mostRecentTag,
+    (a, b) => a === b
+  );
+
+  const mostRecentCategory = useSelector(
+    libraryService,
+    (state) => state.context.mostRecentCategory,
+    (a, b) => a === b
+  );
 
   const cursor = useSelector(
     libraryService,
@@ -41,14 +70,14 @@ export default function HotKeyController() {
     (a, b) => a === b
   );
 
-  const filteredLibrary = filter(libraryLoadId, textFilter, library);
+  const filteredLibrary = filter(
+    libraryLoadId,
+    textFilter,
+    library,
+    settings.filters,
+    settings.sortBy
+  );
 
-  // useEffect(() => {
-  //   const interval = setInterval(() => {
-  //     libraryService.send('INCREMENT_CURSOR');
-  //   }, 500);
-  //   return () => clearInterval(interval);
-  // }, []);
   const item = filteredLibrary[cursor];
   const [keyState, setKeyState] = useState<KeyState>({});
   const previousKeyState = usePrevious<KeyState>(keyState);
@@ -84,6 +113,180 @@ export default function HotKeyController() {
     },
     decrementCursor: {
       down: () => libraryService.send({ type: 'DECREMENT_CURSOR', data: {} }),
+      up: () => {},
+    },
+    applyMostRecentTag: {
+      down: () => {
+        async function createAssignment() {
+          console.log('creating assignment', item.path, mostRecentTag);
+          await window.electron.ipcRenderer.invoke('create-assignment', [
+            [item.path],
+            mostRecentTag,
+            mostRecentCategory,
+            null,
+            false,
+          ]);
+          queryClient.invalidateQueries({ queryKey: ['metadata'] });
+          queryClient.invalidateQueries({
+            queryKey: ['taxonomy', 'tag', mostRecentTag],
+          });
+          console.log('invalidated tag', mostRecentTag);
+        }
+        createAssignment();
+      },
+      up: () => {},
+    },
+    storeCategory1: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '1' },
+        }),
+      up: () => {},
+    },
+    tagCategory1: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['1'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory2: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '2' },
+        }),
+      up: () => {},
+    },
+    tagCategory2: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['2'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory3: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '3' },
+        }),
+      up: () => {},
+    },
+    tagCategory3: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['3'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory4: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '4' },
+        }),
+      up: () => {},
+    },
+    tagCategory4: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['4'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory5: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '5' },
+        }),
+      up: () => {},
+    },
+    tagCategory5: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['5'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory6: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '6' },
+        }),
+      up: () => {},
+    },
+    tagCategory6: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['6'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory7: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '7' },
+        }),
+      up: () => {},
+    },
+    tagCategory7: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['7'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory8: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '8' },
+        }),
+      up: () => {},
+    },
+    tagCategory8: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['8'] },
+        });
+      },
+      up: () => {},
+    },
+    storeCategory9: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_CATEGORY',
+          data: { category: activeCategory, position: '9' },
+        }),
+      up: () => {},
+    },
+    tagCategory9: {
+      down: () => {
+        libraryService.send({
+          type: 'SET_ACTIVE_CATEGORY',
+          data: { category: storedCategories['9'] },
+        });
+      },
       up: () => {},
     },
     toggleSound: {
@@ -218,7 +421,14 @@ export default function HotKeyController() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [keyState, cursor, activeTag]);
+  }, [
+    keyState,
+    cursor,
+    activeTag,
+    activeCategory,
+    storedCategories,
+    libraryLoadId,
+  ]);
 
   useEffect(() => {
     window.addEventListener('blur', handleBlur);
@@ -230,6 +440,14 @@ export default function HotKeyController() {
 
   useEffect(() => {
     // Construct a string of all active keys joined by a plus sign.
+    if (
+      !keyState ||
+      !previousKeyState ||
+      isEquivalent(keyState, previousKeyState)
+    )
+      return;
+    console.log('keyState', keyState);
+
     const activeKeys = Object.entries(keyState)
       .filter(([key, value]) => value === true)
       .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
@@ -257,4 +475,24 @@ export default function HotKeyController() {
   }, [keyState, previousKeyState]);
 
   return null;
+}
+
+// check if an object has the same keys and values in any order
+function isEquivalent(a: any, b: any) {
+  const aProps = Object.getOwnPropertyNames(a);
+  const bProps = Object.getOwnPropertyNames(b);
+
+  if (aProps.length !== bProps.length) {
+    return false;
+  }
+
+  for (let i = 0; i < aProps.length; i++) {
+    const propName = aProps[i];
+
+    if (a[propName] !== b[propName]) {
+      return false;
+    }
+  }
+
+  return true;
 }

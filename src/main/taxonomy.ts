@@ -1,7 +1,7 @@
 import path from 'path';
 import { Database } from './database';
 import type Store from 'electron-store';
-import { dialog } from 'electron';
+import { IpcMainInvokeEvent, dialog } from 'electron';
 
 import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
@@ -43,19 +43,20 @@ const loadTaxonomy = (db: Database) => async () => {
 
 type TagInput = [string, string];
 
-const createTag = (db: Database) => async (_: Event, args: TagInput) => {
-  const [label, categoryLabel] = args;
-  const results = await db.get(`SELECT COUNT(*) AS count FROM tag`);
-  const newWeight = results.count + 1;
-  await db.run(
-    `INSERT INTO tag (label, category_label, weight) VALUES ($1, $2, $3) ON CONFLICT(label) DO NOTHING`,
-    [label, categoryLabel, newWeight]
-  );
-};
+const createTag =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: TagInput) => {
+    const [label, categoryLabel] = args;
+    const results = await db.get(`SELECT COUNT(*) AS count FROM tag`);
+    const newWeight = results.count + 1;
+    await db.run(
+      `INSERT INTO tag (label, category_label, weight) VALUES ($1, $2, $3) ON CONFLICT(label) DO NOTHING`,
+      [label, categoryLabel, newWeight]
+    );
+  };
 
 type CategoryInput = [string, number];
 const createCategory =
-  (db: Database) => async (_: Event, args: CategoryInput) => {
+  (db: Database) => async (_: IpcMainInvokeEvent, args: CategoryInput) => {
     const [label, weight] = args;
     await db.run(
       `INSERT INTO category (label, weight) VALUES ($1, $2) ON CONFLICT(label) DO NOTHING`,
@@ -65,7 +66,8 @@ const createCategory =
 
 type AssignmentInput = [string[], string, string, number, boolean];
 const createAssignment =
-  (db: Database, store: Store) => async (_: Event, args: AssignmentInput) => {
+  (db: Database, store: Store) =>
+  async (_: IpcMainInvokeEvent, args: AssignmentInput) => {
     // eslint-disable-next-line prefer-const
     let [mediaPaths, tagLabel, categoryLabel, timeStamp, applyTagPreview] =
       args;
@@ -140,7 +142,8 @@ type Tag = {
 
 type DeleteAssignmentInput = [string, Tag];
 const deleteAssignment =
-  (db: Database) => async (_: Event, args: DeleteAssignmentInput) => {
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: DeleteAssignmentInput) => {
     const [mediaPath, tag] = args;
     const { tag_label: tagLabel, time_stamp: timeStamp } = tag;
     if (timeStamp) {
@@ -158,7 +161,8 @@ const deleteAssignment =
 
 type UpdateAssignmentWeightInput = [string, string, number, number];
 const updateAssignmentWeight =
-  (db: Database) => async (_: Event, args: UpdateAssignmentWeightInput) => {
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateAssignmentWeightInput) => {
     const [mediaPath, tagLabel, weight, mediaTimeStamp] = args;
     const normalizedMediaPath = path.normalize(mediaPath);
     if (mediaTimeStamp) {
@@ -177,7 +181,8 @@ const updateAssignmentWeight =
 
 type UpdateTagWeightInput = [string, number];
 const updateTagWeight =
-  (db: Database) => async (_: Event, args: UpdateTagWeightInput) => {
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateTagWeightInput) => {
     const [tagLabel, weight] = args;
     const results = await db.run(
       `UPDATE tag SET weight = $1 WHERE label = $2`,
@@ -188,7 +193,8 @@ const updateTagWeight =
 
 type FetchTagPreviewInput = [string];
 const fetchTagPreview =
-  (db: Database) => async (_: Event, args: FetchTagPreviewInput) => {
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: FetchTagPreviewInput) => {
     const [tagLabel] = args;
     const results = await db.get(
       `SELECT thumbnail_path_600 FROM tag WHERE label = $1`,
@@ -199,7 +205,8 @@ const fetchTagPreview =
 
 type RenameCategoryInput = [string, string];
 const renameCategory =
-  (db: Database) => async (_: Event, args: RenameCategoryInput) => {
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: RenameCategoryInput) => {
     const [oldCategoryLabel, newCategoryLabel] = args;
     await db.run(`UPDATE category SET label = $1 WHERE label = $2`, [
       newCategoryLabel,
@@ -216,7 +223,8 @@ const renameCategory =
   };
 type DeleteCategoryInput = [string];
 const deleteCategory =
-  (db: Database) => async (_: Event, args: DeleteCategoryInput) => {
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: DeleteCategoryInput) => {
     const [categoryLabel] = args;
     await db.run(`DELETE FROM category WHERE label = $1`, [categoryLabel]);
     await db.run(
@@ -227,39 +235,42 @@ const deleteCategory =
   };
 
 type RenameTagInput = [string, string];
-const renameTag = (db: Database) => async (_: Event, args: RenameTagInput) => {
-  const [oldTagLabel, newTagLabel] = args;
-  await db.run(`UPDATE tag SET label = $1 WHERE label = $2`, [
-    newTagLabel,
-    oldTagLabel,
-  ]);
-  await db.run(
-    'UPDATE media_tag_by_category SET tag_label = $1 WHERE tag_label = $2',
-    [newTagLabel, oldTagLabel]
-  );
-};
+const renameTag =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: RenameTagInput) => {
+    const [oldTagLabel, newTagLabel] = args;
+    await db.run(`UPDATE tag SET label = $1 WHERE label = $2`, [
+      newTagLabel,
+      oldTagLabel,
+    ]);
+    await db.run(
+      'UPDATE media_tag_by_category SET tag_label = $1 WHERE tag_label = $2',
+      [newTagLabel, oldTagLabel]
+    );
+  };
 
 type MoveTagInput = [string, string];
-const moveTag = (db: Database) => async (_: Event, args: MoveTagInput) => {
-  const [tagLabel, categoryLabel] = args;
-  await db.run(`UPDATE tag SET category_label = $1 WHERE label = $2`, [
-    categoryLabel,
-    tagLabel,
-  ]);
-  await db.run(
-    'UPDATE media_tag_by_category SET category_label = $1 WHERE tag_label = $2',
-    [categoryLabel, tagLabel]
-  );
-};
+const moveTag =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: MoveTagInput) => {
+    const [tagLabel, categoryLabel] = args;
+    await db.run(`UPDATE tag SET category_label = $1 WHERE label = $2`, [
+      categoryLabel,
+      tagLabel,
+    ]);
+    await db.run(
+      'UPDATE media_tag_by_category SET category_label = $1 WHERE tag_label = $2',
+      [categoryLabel, tagLabel]
+    );
+  };
 
 type DeleteTagInput = [string];
-const deleteTag = (db: Database) => async (_: Event, args: DeleteTagInput) => {
-  const [tagLabel] = args;
-  await db.run(`DELETE FROM tag WHERE label = $1`, [tagLabel]);
-  await db.run('DELETE FROM media_tag_by_category WHERE tag_label = $1', [
-    tagLabel,
-  ]);
-};
+const deleteTag =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: DeleteTagInput) => {
+    const [tagLabel] = args;
+    await db.run(`DELETE FROM tag WHERE label = $1`, [tagLabel]);
+    await db.run('DELETE FROM media_tag_by_category WHERE tag_label = $1', [
+      tagLabel,
+    ]);
+  };
 
 type Media = {
   path: string;
@@ -267,7 +278,8 @@ type Media = {
 };
 type LoadTagsByMediaPath = [Media];
 const loadTagsByMediaPath =
-  (db: Database) => async (_: Event, args: LoadTagsByMediaPath) => {
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: LoadTagsByMediaPath) => {
     let tags = [];
     try {
       const [media] = args;
@@ -293,7 +305,7 @@ const loadTagsByMediaPath =
 type SelectNewPathInput = [string];
 const selectNewPath =
   (db: Database, mainWindow: Electron.BrowserWindow | null) =>
-  async (_: Event, args: SelectNewPathInput) => {
+  async (_: IpcMainInvokeEvent, args: SelectNewPathInput) => {
     if (!mainWindow) {
       return null;
     }

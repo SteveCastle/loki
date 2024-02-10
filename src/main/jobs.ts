@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { Database } from './database';
 import { generateTranscript } from './transcript';
 import path from 'path';
+import { IpcMainInvokeEvent } from 'electron';
 
 export type Job = {
   id: string;
@@ -75,7 +76,7 @@ const asyncJobWorker = async (
 type CreateJobInput = [string[], string, string[][]];
 const createJob =
   (db: Database, invokingWindow: Electron.WebContents) =>
-  async (_: Event, args: CreateJobInput) => {
+  async (_: IpcMainInvokeEvent, args: CreateJobInput) => {
     const [mediaPaths, jobType, invalidations] = args;
     const jobId = randomUUID();
     const newJob: Job = {

@@ -88,7 +88,8 @@ export async function initDB(db: Database) {
   await db.run(`CREATE TABLE IF NOT EXISTS media (
   path TEXT PRIMARY KEY,
   description TEXT,
-  transcript TEXT
+  transcript TEXT,
+  elo REAL
 )`);
   0;
   await db.run(`CREATE TABLE IF NOT EXISTS category (

@@ -1,7 +1,15 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { app, BrowserWindow, shell, ipcMain, protocol, dialog } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  shell,
+  ipcMain,
+  protocol,
+  dialog,
+  IpcMainInvokeEvent,
+} from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import invariant from 'tiny-invariant';
@@ -13,7 +21,6 @@ import { Database, initDB } from './database';
 
 import {
   loadMediaByTags,
-  addMedia,
   copyFileIntoClipboard,
   fetchMediaPreview,
 } from './media';
@@ -142,7 +149,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('create-job');
 
   // Register Media Events
-  ipcMain.handle('add-media', addMedia(db));
   ipcMain.handle('load-media-by-tags', loadMediaByTags(db));
   ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
 
@@ -171,77 +177,83 @@ ipcMain.handle('load-db', async (event, args) => {
 });
 
 type SelectDBInput = [string | undefined];
-ipcMain.handle('select-db', async (_: Event, args: SelectDBInput) => {
-  invariant(mainWindow, 'mainWindow is not defined');
-  const defaultPath = args[0];
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile', 'promptToCreate', 'dontAddToRecent'],
-    defaultPath,
-    filters: [{ name: 'Lowkey Media Database', extensions: ['sqlite'] }],
-  });
+ipcMain.handle(
+  'select-db',
+  async (_: IpcMainInvokeEvent, args: SelectDBInput) => {
+    invariant(mainWindow, 'mainWindow is not defined');
+    const defaultPath = args[0];
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'promptToCreate', 'dontAddToRecent'],
+      defaultPath,
+      filters: [{ name: 'Lowkey Media Database', extensions: ['sqlite'] }],
+    });
 
-  if (!result.canceled) {
-    console.log('SELECTED FILE PATH:', result);
-    return result.filePaths[0];
-  } else {
-    return null;
+    if (!result.canceled) {
+      console.log('SELECTED FILE PATH:', result);
+      return result.filePaths[0];
+    } else {
+      return null;
+    }
   }
-});
+);
 
 // Handle file selection event from renderer process
 type SelectFileInput = [string | undefined];
-ipcMain.handle('select-file', async (_: Event, args: SelectFileInput) => {
-  invariant(mainWindow, 'mainWindow is not defined');
-  const defaultPath = args[0];
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openFile'],
-    defaultPath,
-    filters: [
-      {
-        name: 'Media',
-        extensions: [
-          'jpg',
-          'jpeg',
-          'png',
-          'gif',
-          'bmp',
-          'svg',
-          'jfif',
-          'pjpeg',
-          'pjp',
-          'webp',
-          'mp4',
-          'mkv',
-          'webm',
-        ],
-      },
+ipcMain.handle(
+  'select-file',
+  async (_: IpcMainInvokeEvent, args: SelectFileInput) => {
+    invariant(mainWindow, 'mainWindow is not defined');
+    const defaultPath = args[0];
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      defaultPath,
+      filters: [
+        {
+          name: 'Media',
+          extensions: [
+            'jpg',
+            'jpeg',
+            'png',
+            'gif',
+            'bmp',
+            'svg',
+            'jfif',
+            'pjpeg',
+            'pjp',
+            'webp',
+            'mp4',
+            'mkv',
+            'webm',
+          ],
+        },
 
-      {
-        name: 'Images',
-        extensions: [
-          'jpg',
-          'jpeg',
-          'png',
-          'gif',
-          'bmp',
-          'svg',
-          'jfif',
-          'pjpeg',
-          'pjp',
-          'webp',
-        ],
-      },
-      { name: 'Movies', extensions: ['mp4', 'mkv', 'webm'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-  });
+        {
+          name: 'Images',
+          extensions: [
+            'jpg',
+            'jpeg',
+            'png',
+            'gif',
+            'bmp',
+            'svg',
+            'jfif',
+            'pjpeg',
+            'pjp',
+            'webp',
+          ],
+        },
+        { name: 'Movies', extensions: ['mp4', 'mkv', 'webm'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
 
-  if (!result.canceled) {
-    return result.filePaths[0];
-  } else {
-    return null;
+    if (!result.canceled) {
+      return result.filePaths[0];
+    } else {
+      return null;
+    }
   }
-});
+);
 
 ipcMain.handle('load-file-metadata', loadFileMetaData);
 

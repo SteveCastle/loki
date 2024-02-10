@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import { useDrop } from 'react-dnd';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import ConfirmDeleteCategory from './confirm-delete-category';
@@ -21,11 +21,6 @@ type Props = {
   activeCategory: string | null;
   setActiveCategory: (category: string) => void;
   handleEditAction: (category: string) => void;
-};
-
-const deleteCategory = async ({ category }: { category: string }) => {
-  console.log('delete', category);
-  await window.electron.ipcRenderer.invoke('delete-category', [category]);
 };
 
 const moveTag = async ({
@@ -71,6 +66,7 @@ export default function Category({
     }),
     [category]
   );
+
   drop(ref);
   return (
     <div
