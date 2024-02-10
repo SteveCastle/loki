@@ -5,6 +5,7 @@ const clipboardEx = require('electron-clipboard-ex');
 import type Store from 'electron-store';
 import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
+import { IpcMainInvokeEvent } from 'electron';
 type LoadMediaInput = [string[], string];
 
 function createHash(input: string) {
@@ -37,7 +38,7 @@ function checkIfMediaCacheExists(cachePath: string) {
 }
 
 const loadMediaByTags =
-  (db: Database) => async (_: Event, args: LoadMediaInput) => {
+  (db: Database) => async (_: IpcMainInvokeEvent, args: LoadMediaInput) => {
     const tableName = 'media_tag_by_category';
     let sql = `SELECT * FROM ${tableName}`;
     const tags = args[0];
@@ -89,29 +90,10 @@ const loadMediaByTags =
     }
   };
 
-type AddMediaInput = [string, string?, boolean?];
-const addMedia = (db: Database) => async (_: Event, args: AddMediaInput) => {
-  const mediaPath = args[0];
-  const cache = args[1] || 'thumbnail_path_600';
-  const media = await db.get(`SELECT path, $1 FROM media WHERE path = $2`, [
-    cache,
-    mediaPath,
-  ]);
-  if (!media?.[cache]) {
-    try {
-      // thumbnailPath = await asyncCreateThumbnail(mediaPath, cache);
-    } catch (e) {
-      console.log('Error creating thumbnail.', e);
-      return;
-    }
-  } else {
-    console.log('media cache already exists for ' + mediaPath);
-  }
-};
-
 type FetchMediaPreviewInput = [string, string?, timeStamp?: number];
 const fetchMediaPreview =
-  (store: Store) => async (_: Event, args: FetchMediaPreviewInput) => {
+  (store: Store) =>
+  async (_: IpcMainInvokeEvent, args: FetchMediaPreviewInput) => {
     const filePath = args[0];
     const cache = args[1] || 'thumbnail_path_600';
     const timeStamp = args[2] || 0;
@@ -136,7 +118,7 @@ const fetchMediaPreview =
 
 type CopyFileIntoClipboardInput = [string];
 const copyFileIntoClipboard =
-  () => async (_: Event, args: CopyFileIntoClipboardInput) => {
+  () => async (_: IpcMainInvokeEvent, args: CopyFileIntoClipboardInput) => {
     const filePaths = args[0];
     console.log('copying file into clipboard', filePaths);
     // Copies the file into the clipboard
@@ -144,4 +126,4 @@ const copyFileIntoClipboard =
     console.log('copied file into clipboard');
   };
 
-export { loadMediaByTags, addMedia, fetchMediaPreview, copyFileIntoClipboard };
+export { loadMediaByTags, fetchMediaPreview, copyFileIntoClipboard };

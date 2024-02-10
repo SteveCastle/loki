@@ -89,6 +89,10 @@ export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
             location === 'DETAIL' ? actualVideoTime : null,
             applyTagPreview,
           ]);
+          libraryService.send('SET_MOST_RECENT_TAG', {
+            tag: droppedItem.label,
+            category: droppedItem.category,
+          });
           queryClient.invalidateQueries({ queryKey: ['metadata'] });
           queryClient.invalidateQueries({
             queryKey: ['taxonomy', 'tag', droppedItem.label],

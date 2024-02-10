@@ -1,4 +1,4 @@
-import { useState, useContext } from 'react';
+import { useState, useContext, useRef } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { Tooltip } from 'react-tooltip';
@@ -54,6 +54,7 @@ const filteringModeIcons: FilterModeIconMap = {
 };
 
 export default function Taxonomy() {
+  const categoryListRef = useRef<HTMLDivElement>(null);
   const { libraryService } = useContext(GlobalStateContext);
   const selectedTags = useSelector(libraryService, (state) => {
     return state.context.dbQuery.tags;
@@ -109,6 +110,21 @@ export default function Taxonomy() {
     ['taxonomy', initSessionId],
     loadTaxonomy
   );
+
+  // Given every Category is 20 pixels tall, this will scroll to the active category
+  // when it is not visible in the list by setting the scrollTop of the categoryListRef
+
+  if (categoryListRef.current && activeCategory) {
+    const activeCategoryIndex = Object.values(taxonomy || {}).findIndex(
+      (category) => category.label === activeCategory
+    );
+    if (activeCategoryIndex > -1) {
+      const activeCategoryTop =
+        activeCategoryIndex * 25.5 - categoryListRef.current.clientHeight / 2;
+      categoryListRef.current.scrollTop = activeCategoryTop;
+    }
+  }
+
   if (!taxonomy || state.matches('loadingDB') || state.matches('selectingDB')) {
     return (
       <div className={`Placeholder`}>
@@ -233,7 +249,7 @@ export default function Taxonomy() {
           >
             <div className="category-label">+</div>
           </div>
-          <div className={`categories`}>
+          <div className={`categories`} ref={categoryListRef}>
             {(Object.values(taxonomy) || []).map((category) => {
               return (
                 <Category

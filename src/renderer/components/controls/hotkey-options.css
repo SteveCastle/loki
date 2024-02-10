@@ -3,6 +3,8 @@
   flex-direction: column;
   text-align: center;
   font-size: 0.6rem;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .HotKeyOptions .HotKeyOption {

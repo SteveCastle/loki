@@ -28,6 +28,11 @@ type LibraryState = {
   cursor: number;
   textFilter: string;
   activeCategory: string;
+  storedCategories: {
+    [key: string]: string;
+  };
+  mostRecentTag: string;
+  mostRecentCategory: string;
   previousCursor: number;
   settings: Settings;
   hotKeys: {
@@ -164,6 +169,9 @@ const libraryMachine = createMachine(
       initSessionId: '',
       textFilter: '',
       activeCategory: window.electron.store.get('activeCategory', ''),
+      storedCategories: window.electron.store.get('storedCategories', {}),
+      mostRecentTag: '',
+      mostRecentCategory: '',
       cursor: 0,
       previousLibrary: [],
       previousCursor: 0,
@@ -225,6 +233,28 @@ const libraryMachine = createMachine(
           'copyAllSelectedFiles',
           'c+control+shift'
         ),
+        applyMostRecentTag: window.electron.store.get(
+          'applyMostRecentTag',
+          'tab'
+        ),
+        storeCategory1: window.electron.store.get('storeCategory1', '1+alt'),
+        storeCategory2: window.electron.store.get('storeCategory2', '2+alt'),
+        storeCategory3: window.electron.store.get('storeCategory3', '3+alt'),
+        storeCategory4: window.electron.store.get('storeCategory4', '4+alt'),
+        storeCategory5: window.electron.store.get('storeCategory5', '5+alt'),
+        storeCategory6: window.electron.store.get('storeCategory6', '6+alt'),
+        storeCategory7: window.electron.store.get('storeCategory7', '7+alt'),
+        storeCategory8: window.electron.store.get('storeCategory8', '8+alt'),
+        storeCategory9: window.electron.store.get('storeCategory9', '9+alt'),
+        tagCategory1: window.electron.store.get('tagCategory1', '1'),
+        tagCategory2: window.electron.store.get('tagCategory2', '2'),
+        tagCategory3: window.electron.store.get('tagCategory3', '3'),
+        tagCategory4: window.electron.store.get('tagCategory4', '4'),
+        tagCategory5: window.electron.store.get('tagCategory5', '5'),
+        tagCategory6: window.electron.store.get('tagCategory6', '6'),
+        tagCategory7: window.electron.store.get('tagCategory7', '7'),
+        tagCategory8: window.electron.store.get('tagCategory8', '8'),
+        tagCategory9: window.electron.store.get('tagCategory9', '9'),
       },
       dbQuery: {
         tags: [],
@@ -325,6 +355,34 @@ const libraryMachine = createMachine(
                   ...context.hotKeys,
                   ...event.data,
                 };
+              },
+            }),
+          },
+          STORE_CATEGORY: {
+            actions: assign<LibraryState, AnyEventObject>({
+              storedCategories: (context, event) => {
+                console.log('STORE_CATEGORY', context, event);
+                const { category, position } = event.data;
+                window.electron.store.set(`storedCategories`, {
+                  ...context.storedCategories,
+                  [position]: category,
+                });
+                return {
+                  ...context.storedCategories,
+                  [position]: category,
+                };
+              },
+            }),
+          },
+          SET_MOST_RECENT_TAG: {
+            actions: assign<LibraryState, AnyEventObject>({
+              mostRecentTag: (context, event) => {
+                console.log('SET_MOST_RECENT_TAG', context, event);
+                return event.tag;
+              },
+              mostRecentCategory: (context, event) => {
+                console.log('SET_MOST_RECENT_CATEGORY', context, event);
+                return event.category;
               },
             }),
           },

@@ -4,6 +4,7 @@ import os from 'os';
 import { exec } from 'child_process';
 const isDev = require('electron-is-dev');
 import { promisify } from 'util';
+import { IpcMainInvokeEvent } from 'electron';
 const isMac = os.platform() === 'darwin';
 const exifToolPath = isMac
   ? 'exiftool'
@@ -154,7 +155,7 @@ function getExtendedMetadata(jsonPath: string): ExtendedMetadata {
 }
 
 async function loadFileMetaData(
-  _: Event,
+  _: IpcMainInvokeEvent,
   args: FileMetadataInput
 ): Promise<Metadata> {
   const [filePath] = args;
