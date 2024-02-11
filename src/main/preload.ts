@@ -28,6 +28,7 @@ export type Channels =
   | 'delete-category'
   | 'rename-tag'
   | 'move-tag'
+  | 'order-tags'
   | 'create-assignment'
   | 'fetch-tag-preview'
   | 'fetch-media-preview'

@@ -47,6 +47,16 @@ export default function NewCategoryModal({
     submit();
   }
 
+  function handleResetOrdering() {
+    async function resetOrdering() {
+      await window.electron.ipcRenderer.invoke('order-tags', [currentValue]);
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      handleClose();
+    }
+    resetOrdering();
+  }
+
   return (
     <div className="input-modal">
       <div className="input-modal-content" ref={ref}>
@@ -77,6 +87,9 @@ export default function NewCategoryModal({
             }}
             value={newLabel}
           />
+          {currentValue ? (
+            <button onClick={handleResetOrdering}>Reset Tag Order</button>
+          ) : null}
           <button onClick={handleSubmit}>
             {currentValue ? 'Save' : 'Create'}
           </button>

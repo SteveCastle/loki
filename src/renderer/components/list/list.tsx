@@ -136,7 +136,6 @@ export function List() {
 
     return () => cancelAnimationFrame(animationFrameId);
   }, [isDragging, offset]); // Dependency array means this effect runs whenever isDragging or offset changes
-  console.log(items);
   return (
     <div
       className="List"
