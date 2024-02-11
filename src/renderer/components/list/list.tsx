@@ -136,7 +136,7 @@ export function List() {
 
     return () => cancelAnimationFrame(animationFrameId);
   }, [isDragging, offset]); // Dependency array means this effect runs whenever isDragging or offset changes
-
+  console.log(items);
   return (
     <div
       className="List"
@@ -174,7 +174,11 @@ export function List() {
                   height={height}
                   key={
                     item?.path +
-                    (item?.timeStamp ? item?.timeStamp.toString() : '')
+                    (item?.timeStamp
+                      ? item?.timeStamp.toString()
+                      : isNaN(item?.timeStamp)
+                      ? 'null'
+                      : item?.timeStamp)
                   }
                   item={item}
                   idx={columns * virtualItem.index + i}

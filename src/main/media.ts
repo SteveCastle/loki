@@ -74,6 +74,7 @@ const loadMediaByTags =
       mode === 'AND' ? conditions.length : 1
     }`;
     sql += ` ORDER BY weight;`;
+    console.log('SQL', sql, params);
     try {
       const media = await db.all(sql, params);
 

@@ -82,7 +82,7 @@ const createAssignment =
     );
     let newWeight = results.count;
 
-    if (mediaPaths.length > 1) {
+    if (mediaPaths.length > 1 || !timeStamp) {
       timeStamp = 0;
     }
 

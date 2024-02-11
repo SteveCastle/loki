@@ -136,7 +136,6 @@ export default function Taxonomy() {
       </div>
     );
   }
-  console.log(taxonomy);
   const tags = Object.values(taxonomy)
     .reduce((acc, category) => {
       return [...acc, ...category.tags];
