@@ -37,6 +37,7 @@ import {
   deleteCategory,
   renameTag,
   moveTag,
+  orderTags,
   deleteTag,
   loadTagsByMediaPath,
   selectNewPath,
@@ -145,6 +146,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('delete-category');
   ipcMain.removeHandler('rename-tag');
   ipcMain.removeHandler('move-tag');
+  ipcMain.removeHandler('order-tags');
   ipcMain.removeHandler('delete-tag');
   ipcMain.removeHandler('create-job');
 
@@ -171,6 +173,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('delete-category', deleteCategory(db));
   ipcMain.handle('rename-tag', renameTag(db));
   ipcMain.handle('move-tag', moveTag(db));
+  ipcMain.handle('order-tags', orderTags(db));
   ipcMain.handle('delete-tag', deleteTag(db));
   if (!mainWindow) return;
   ipcMain.handle('create-job', createJob(db, mainWindow.webContents));

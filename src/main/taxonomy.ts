@@ -365,6 +365,32 @@ const selectNewPath =
     }
   };
 
+type OrderTagInput = [string];
+const orderTags =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: OrderTagInput) => {
+    const [categoryLabel] = args;
+    const tags = await db.all(
+      `WITH RankedLabels AS (
+          SELECT
+            label,
+            ROW_NUMBER() OVER (ORDER BY label ASC) AS rank
+          FROM
+            tag
+          WHERE
+            category_label = $1
+        )
+
+        UPDATE tag
+        SET weight = (SELECT rank FROM RankedLabels WHERE tag.label = RankedLabels.label)
+        WHERE
+          category_label = $1
+          AND EXISTS (SELECT 1 FROM RankedLabels WHERE tag.label = RankedLabels.label);
+        `,
+      [categoryLabel]
+    );
+    return tags;
+  };
+
 export {
   loadTaxonomy,
   createTag,
@@ -378,6 +404,7 @@ export {
   deleteCategory,
   renameTag,
   moveTag,
+  orderTags,
   deleteTag,
   loadTagsByMediaPath,
   selectNewPath,
