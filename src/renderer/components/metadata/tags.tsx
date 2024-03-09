@@ -7,7 +7,7 @@ import './tags.css';
 
 type Media = {
   path: string;
-  timeStamp: number;
+  timeStamp?: number;
   tagLabel: string;
 };
 

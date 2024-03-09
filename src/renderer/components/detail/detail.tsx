@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import useScrollOnDrag from 'react-scroll-ondrag';
 import { useSelector } from '@xstate/react';
-import { GlobalStateContext } from '../../state';
+import { GlobalStateContext, Item } from '../../state';
 import filter from 'renderer/filter';
 import { Image } from '../media-viewers/image';
 import { Video } from '../media-viewers/video';
@@ -11,6 +11,7 @@ import useMediaDimensions from 'renderer/hooks/useMediaDimensions';
 import './detail.css';
 import useTagDrop from 'renderer/hooks/useTagDrop';
 import Tags from '../metadata/tags';
+import BattleMode from '../elo/BattleMode';
 
 function resizeToCover(
   parentWidth: number,
@@ -87,9 +88,15 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
   let { events } = useScrollOnDrag(containerRef);
-
   const { libraryService } = useContext(GlobalStateContext);
-
+  const state = useSelector(
+    libraryService,
+    (state) => state,
+    (a, b) => {
+      return a.matches(b);
+    }
+  );
+  const loadedFromDB = state.matches({ library: 'loadedFromDB' });
   const settings = useSelector(libraryService, (state) => {
     return state.context.settings;
   });
@@ -105,7 +112,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         state.context.settings.sortBy
       )[state.context.cursor + offset],
     (a, b) => a?.path === b?.path && a?.timeStamp === b?.timeStamp
-  );
+  ) as Item;
 
   if (settings.controlMode === 'touchpad') {
     events = {};
@@ -243,6 +250,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         settings.controlMode === 'mouse' ? 'grabbable' : '',
       ].join(' ')}
     >
+      {settings.comicMode && loadedFromDB ? (
+        <BattleMode item={item} offset={offset} />
+      ) : null}
       <div
         className="Detail"
         onContextMenu={(e) => {
@@ -274,7 +284,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       ) : null}
       {settings.showFileInfo === 'all' || settings.showFileInfo === 'detail' ? (
         <div className="item-info">
-          <span className="file-path">{item.path}</span>
+          <span className="file-path">
+            {settings.battleMode ? item.elo?.toFixed(2) : item.path}
+          </span>
         </div>
       ) : null}
     </div>

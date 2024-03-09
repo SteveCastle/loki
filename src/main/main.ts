@@ -22,6 +22,7 @@ import { Database, initDB } from './database';
 import {
   loadMediaByTags,
   copyFileIntoClipboard,
+  updateElo,
   fetchMediaPreview,
 } from './media';
 import {
@@ -140,7 +141,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('fetch-tag-preview');
   ipcMain.removeHandler('fetch-media-preview');
   ipcMain.removeHandler('add-media');
-
+  ipcMain.removeHandler('update-elo');
   ipcMain.removeHandler('select-new-path');
   ipcMain.removeHandler('rename-category');
   ipcMain.removeHandler('delete-category');
@@ -152,6 +153,7 @@ ipcMain.handle('load-db', async (event, args) => {
 
   // Register Media Events
   ipcMain.handle('load-media-by-tags', loadMediaByTags(db));
+  ipcMain.handle('update-elo', updateElo(db));
   ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
 
   // Register Metaata Events

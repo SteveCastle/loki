@@ -2,7 +2,7 @@ export type ScaleModeOption = 'cover' | 'fit' | 'actual' | number;
 
 export type OrderingOption = 'asc' | 'desc';
 
-export type SortByOption = 'name' | 'date' | 'weight' | 'shuffle';
+export type SortByOption = 'name' | 'date' | 'weight' | 'shuffle' | 'elo';
 
 export type FilterOption = 'all' | 'static' | 'video';
 
@@ -13,6 +13,8 @@ export type ShowTagOptions = 'all' | 'list' | 'detail' | 'none';
 export type ShowFileInfoOptions = 'all' | 'list' | 'detail' | 'none';
 
 export type ControlMode = 'mouse' | 'touchpad';
+
+export type LibraryLayout = 'left' | 'bottom';
 
 export type ListImageCache =
   | 'thumbnail_path_1200'
@@ -29,6 +31,8 @@ export type SettingKey =
   | 'filters'
   | 'playSound'
   | 'comicMode'
+  | 'libraryLayout'
+  | 'battleMode'
   | 'followTranscript'
   | 'showTags'
   | 'showFileInfo'
@@ -43,6 +47,8 @@ export type Settings = {
   filters: FilterOption;
   playSound: boolean;
   comicMode: boolean;
+  libraryLayout: LibraryLayout;
+  battleMode: boolean;
   showTags: ShowTagOptions;
   showFileInfo: ShowFileInfoOptions;
   showControls: boolean;
@@ -116,6 +122,10 @@ export const SORT_BY = {
       label: 'Weight',
       value: 'weight',
     },
+    elo: {
+      label: 'Elo',
+      value: 'elo',
+    },
     shuffle: {
       label: 'Shuffle',
       value: 'shuffle',
@@ -179,6 +189,22 @@ export const COMIC_MODE = {
   title: 'Comic Mode',
   reload: false,
   display: 'image',
+  options: {
+    name: {
+      label: 'Yes',
+      value: true,
+    },
+    date: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
+export const BATTLE_MODE = {
+  title: 'Battle Mode',
+  reload: false,
+  display: 'general',
   options: {
     name: {
       label: 'Yes',
@@ -303,6 +329,22 @@ export const CONTROL_MODE = {
   },
 };
 
+export const LIBRARY_LAYOUT = {
+  title: 'Library Position',
+  reload: false,
+  display: 'general',
+  options: {
+    name: {
+      label: 'Left',
+      value: 'left',
+    },
+    date: {
+      label: 'Bottom',
+      value: 'bottom',
+    },
+  },
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -324,6 +366,8 @@ export const SETTINGS: SettingsObject = {
   filters: FILTERS,
   playSound: PLAY_SOUND,
   comicMode: COMIC_MODE,
+  battleMode: BATTLE_MODE,
+  libraryLayout: LIBRARY_LAYOUT,
   followTranscript: FOLLOW_TRANSCRIPT,
   showTags: SHOW_TAGS,
   showFileInfo: SHOW_FILE_INFO,

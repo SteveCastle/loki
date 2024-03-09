@@ -1,0 +1,37 @@
+.BattleMode {
+  z-index: 999;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+}
+
+.BattleMode.right {
+  justify-content: flex-end;
+}
+
+.BattleMode.left {
+  justify-content: flex-start;
+}
+
+.BattleMode button {
+  pointer-events: auto;
+  color: white;
+  background: #ba3c7d;
+  border-radius: 2px;
+  padding: 1rem;
+  border: none;
+  margin: 0 2px;
+  font-weight: 800;
+  opacity: 0.6;
+  cursor: pointer;
+  transition: cubic-bezier(1, 0, 0, 1) 0.2s;
+}
+
+.BattleMode button:hover {
+  opacity: 1;
+}

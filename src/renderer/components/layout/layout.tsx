@@ -81,6 +81,11 @@ const Layout = () => {
     (a, b) => a === b
   );
 
+  const libraryLayout = useSelector(
+    libraryService,
+    (state) => state.context.settings.libraryLayout
+  );
+
   const electronStorage = useMemo(
     () => ({
       getItem(name: string) {
@@ -142,10 +147,23 @@ const Layout = () => {
           autoSaveId="nestedPanels"
           storage={electronStorage}
         >
+          {libraryLayout === 'left' ? (
+            <>
+              <CollapsiblePanel
+                defaultSize={20}
+                order={0}
+                panelRef={taxonomyRef}
+                renderId={renderID}
+              >
+                <Taxonomy />
+              </CollapsiblePanel>
+              <VerticalHandle />
+            </>
+          ) : null}
           <CollapsiblePanel
             className="panel"
             defaultSize={50}
-            order={0}
+            order={1}
             panelRef={listRef}
             renderId={renderID}
           >
@@ -156,7 +174,7 @@ const Layout = () => {
           <VerticalHandle />
           <CollapsiblePanel
             className="panel"
-            order={1}
+            order={2}
             panelRef={detailRef}
             renderId={renderID}
           >
@@ -172,7 +190,7 @@ const Layout = () => {
           </CollapsiblePanel>
           <VerticalHandle />
           <CollapsiblePanel
-            order={2}
+            order={3}
             panelRef={metaDataRef}
             renderId={renderID}
           >
@@ -180,15 +198,19 @@ const Layout = () => {
           </CollapsiblePanel>
         </PanelGroup>
       </Panel>
-      <HorizontalHandle />
-      <CollapsiblePanel
-        defaultSize={20}
-        order={1}
-        panelRef={taxonomyRef}
-        renderId={renderID}
-      >
-        <Taxonomy />
-      </CollapsiblePanel>
+      {libraryLayout === 'bottom' ? (
+        <>
+          <HorizontalHandle />
+          <CollapsiblePanel
+            defaultSize={20}
+            order={1}
+            panelRef={taxonomyRef}
+            renderId={renderID}
+          >
+            <Taxonomy />
+          </CollapsiblePanel>
+        </>
+      ) : null}
     </PanelGroup>
   );
 };

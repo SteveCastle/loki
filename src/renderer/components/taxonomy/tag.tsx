@@ -118,11 +118,6 @@ export default function Tag({ tag, tags, active, handleEditAction }: Props) {
           type: 'SET_QUERY_TAG',
           data: { tag: tag.label },
         });
-        // Set the sortBy setting to 'weight' when a tag is clicked
-        libraryService.send({
-          type: 'CHANGE_SETTING',
-          data: { sortBy: 'weight' },
-        });
       }}
     >
       {previewImage && getFileType(previewImage) !== 'video' ? (

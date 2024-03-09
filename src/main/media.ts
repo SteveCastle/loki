@@ -40,7 +40,7 @@ function checkIfMediaCacheExists(cachePath: string) {
 const loadMediaByTags =
   (db: Database) => async (_: IpcMainInvokeEvent, args: LoadMediaInput) => {
     const tableName = 'media_tag_by_category';
-    let sql = `SELECT * FROM ${tableName}`;
+    let sql = `SELECT * FROM ${tableName} mtc left join media m on m.path = mtc.media_path`;
     const tags = args[0];
     const mode = args[1];
     const params: string[] = [];
@@ -83,6 +83,7 @@ const loadMediaByTags =
         weight: media.weight,
         mtimeMs: 0,
         timeStamp: media.time_stamp,
+        elo: media.elo,
         tagLabel: media.tag_label,
       }));
       return { library, cursor: 0 };
@@ -127,4 +128,17 @@ const copyFileIntoClipboard =
     console.log('copied file into clipboard');
   };
 
-export { loadMediaByTags, fetchMediaPreview, copyFileIntoClipboard };
+type UpdateEloInput = [string, number, string, number];
+const updateElo =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: UpdateEloInput) => {
+    const winningPath = args[0];
+    const newWinnerElo = args[1];
+    const losingPath = args[2];
+    const newLoserElo = args[3];
+    // Update the elo in the database if the path isn't already there create it.
+    const updateElo = `INSERT INTO media (path, elo) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET elo = ?`;
+    await db.run(updateElo, [winningPath, newWinnerElo, newWinnerElo]);
+    await db.run(updateElo, [losingPath, newLoserElo, newLoserElo]);
+  };
+
+export { loadMediaByTags, fetchMediaPreview, copyFileIntoClipboard, updateElo };
