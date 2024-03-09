@@ -9,9 +9,11 @@ import { Job, JobQueue } from '../main/jobs';
 
 export type Item = {
   path: string;
+  tagLabel?: string;
   mtimeMs: number;
   weight?: number;
   timeStamp?: number;
+  elo?: number | null;
 };
 
 type Props = {
@@ -193,6 +195,8 @@ const libraryMachine = createMachine(
         recursive: false,
         scale: 1,
         comicMode: window.electron.store.get('comicMode', false),
+        battleMode: window.electron.store.get('battleMode', false),
+        libraryLayout: window.electron.store.get('libraryLayout', 'bottom'),
         applyTagPreview: window.electron.store.get('applyTagPreview', true),
         filteringMode: window.electron.store.get('filteringMode', 'EXCLUSIVE'),
         applyTagToAll: window.electron.store.get('applyTagToAll', false),
@@ -870,6 +874,21 @@ const libraryMachine = createMachine(
                       sortBy: 'shuffle',
                     };
                   },
+                }),
+              },
+              UPDATE_MEDIA_ELO: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    console.log('UPDATE_MEDIA_ELO', context, event);
+                    const { path, elo } = event;
+                    const library = [...context.library];
+                    const item = library.find((item) => item.path === path);
+                    if (item) {
+                      item.elo = elo;
+                    }
+                    return library;
+                  },
+                  libraryLoadId: () => uniqueId(),
                 }),
               },
               SET_QUERY_TAG: [

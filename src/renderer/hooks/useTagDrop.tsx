@@ -1,7 +1,7 @@
 import { useContext, useMemo, useRef } from 'react';
 import { GlobalStateContext, Item } from '../state';
 import filter from '../filter';
-import { useQueryClient, useMutation } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
 
 import { DropTargetMonitor, useDrop } from 'react-dnd';

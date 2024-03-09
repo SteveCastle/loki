@@ -91,7 +91,21 @@ export async function initDB(db: Database) {
   transcript TEXT,
   elo REAL
 )`);
-  0;
+
+  // If media table exists but does not have elo column create it
+  const mediaTable = await db.get(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='media'`
+  );
+  if (mediaTable) {
+    const tableInfo = await db.all(`PRAGMA table_info(media)`);
+    console.log(tableInfo);
+    const columnExists = tableInfo.some((column: any) => column.name === 'elo');
+
+    if (!columnExists) {
+      await db.run(`ALTER TABLE media ADD COLUMN elo REAL`);
+    }
+  }
+
   await db.run(`CREATE TABLE IF NOT EXISTS category (
   label TEXT PRIMARY KEY,
   weight REAL
