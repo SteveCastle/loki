@@ -198,7 +198,7 @@ export function Video({
           autoPlay
           loop
         />
-        {settable && (
+        {settable && !showControls && (
           <div className="videoControls">
             <VideoControls />
           </div>
