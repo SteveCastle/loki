@@ -8,6 +8,8 @@ import ProgressBar from './progress-bar';
 import HotKeyOptions from './hotkey-options';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import sound from '../../../../assets/sound-high.svg';
+import videoControls from '../../../../assets/video-camera.svg';
+import noVideoControls from '../../../../assets/video-camera-off.svg';
 import gear from '../../../../assets/settings-3.svg';
 import shuffle from '../../../../assets/shuffle.svg';
 import db from '../../../../assets/database.svg';
@@ -168,6 +170,19 @@ export default function CommandPalette() {
             }
           >
             <img src={playSound ? sound : noSound} />
+          </button>
+          <button
+            data-tooltip-id="video-controls"
+            data-tooltip-delay-show={500}
+            data-tooltip-offset={20}
+            className="menuIconButton"
+            onClick={() =>
+              libraryService.send('CHANGE_SETTING', {
+                data: { showControls: !showControls },
+              })
+            }
+          >
+            <img src={showControls ? videoControls : noVideoControls} />
           </button>
         </div>
       </div>
