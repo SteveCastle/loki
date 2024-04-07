@@ -11,6 +11,13 @@ export default function MediaError({ path }: { path: string }) {
       <button onClick={() => libraryService.send('UPDATE_FILE_PATH', { path })}>
         Find Media
       </button>
+      {/* <button
+        onClick={() =>
+          libraryService.send('UPDATE_FILE_PATH', { path, updateAll: true })
+        }
+      >
+        Find All With Same Base Path
+      </button> */}
     </div>
   );
 }

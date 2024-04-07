@@ -98,7 +98,6 @@ export async function initDB(db: Database) {
   );
   if (mediaTable) {
     const tableInfo = await db.all(`PRAGMA table_info(media)`);
-    console.log(tableInfo);
     const columnExists = tableInfo.some((column: any) => column.name === 'elo');
 
     if (!columnExists) {

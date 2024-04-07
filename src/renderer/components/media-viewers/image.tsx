@@ -6,6 +6,7 @@ import type { ScaleModeOption } from '../../../settings';
 import './image.css';
 import './sizing.css';
 import MediaErrorMsg from './media-error';
+import { over } from 'lodash';
 
 type Props = {
   path: string;
@@ -16,6 +17,7 @@ type Props = {
   handleLoad?: React.ReactEventHandler<HTMLImageElement>;
   orientation: 'portrait' | 'landscape' | 'unknown';
   cache?: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
+  overRideCache?: boolean;
 };
 
 const fetchMediaPreview =
@@ -33,10 +35,10 @@ export function Image({
   handleLoad,
   cache = false,
   orientation = 'unknown',
+  overRideCache = false,
 }: Props) {
   const [error, setError] = useState<boolean>(false);
-
-  const { data, isError, isLoading } = useQuery<string, Error>(
+  const { data } = useQuery<string, Error>(
     ['media', 'preview', path, cache],
     fetchMediaPreview(path, cache)
   );
@@ -69,7 +71,7 @@ export function Image({
         console.log('failed to load image');
       }}
       src={
-        cache
+        cache && !overRideCache
           ? window.electron.url.format({ protocol: 'gsm', pathname: data })
           : window.electron.url.format({ protocol: 'gsm', pathname: path })
       }

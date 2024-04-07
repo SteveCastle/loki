@@ -89,8 +89,8 @@ export default function CommandPalette() {
   );
 
   const getMenuPosition = (x: number, y: number) => {
-    const xOverlap = x + width - windowWidth;
-    const yOverlap = y + height - windowHeight;
+    const xOverlap = x + Math.max(width, 400) - windowWidth;
+    const yOverlap = y + Math.max(height, 200) - windowHeight;
     return {
       left: xOverlap > 0 ? x - xOverlap : x,
       top: yOverlap > 0 ? y - yOverlap : y,
@@ -230,7 +230,7 @@ export default function CommandPalette() {
           {tab === 'hotKeyOptions' && <HotKeyOptions />}
           {tab === 'generalOptions' && (
             <div className="tabContent">
-              <p>v2.1.0</p>
+              <p>v2.1.1</p>
               {Object.keys(SETTINGS)
                 .filter((k) => SETTINGS[k as SettingKey].display === 'general')
                 .map((settingKey) => (
