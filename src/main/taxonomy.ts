@@ -302,15 +302,17 @@ const loadTagsByMediaPath =
     }
   };
 
-type SelectNewPathInput = [string];
+type SelectNewPathInput = [string, boolean];
 const selectNewPath =
   (db: Database, mainWindow: Electron.BrowserWindow | null) =>
   async (_: IpcMainInvokeEvent, args: SelectNewPathInput) => {
     if (!mainWindow) {
       return null;
     }
-    const path = args[0];
+    const targetPath = args[0];
+    const updateAll = args[1];
     const result = await dialog.showOpenDialog(mainWindow, {
+      defaultPath: targetPath,
       properties: ['openFile'],
       filters: [
         {
@@ -355,11 +357,29 @@ const selectNewPath =
     if (!result.canceled) {
       // Update the media_tag_by_category table with the new path.
       const newPath = result.filePaths[0];
-      await db.run(
-        `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
-        [newPath, path]
-      );
-      return { newPath, path };
+      const pathWithoutFile = path.dirname(targetPath);
+      const newPathWithoutFile = path.dirname(newPath);
+
+      // If not updating all, only update the media_path, if updating all, update all media_paths that start with the pathWithoutFile
+      if (!updateAll) {
+        await db.run(
+          `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
+          [newPath, targetPath]
+        );
+      } else {
+        console.log(
+          'Updating all media paths that start with',
+          pathWithoutFile
+        );
+        await db.run(
+          `UPDATE media_tag_by_category
+          SET media_path = REPLACE(media_path, $1, $2)
+          WHERE media_path LIKE $3;`,
+          [pathWithoutFile, newPathWithoutFile, pathWithoutFile + '%']
+        );
+      }
+
+      return { newPath, path: targetPath, updateAll };
     } else {
       return null;
     }

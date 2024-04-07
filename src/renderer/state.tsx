@@ -83,11 +83,16 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
 
 const setPath = assign<LibraryState, AnyEventObject>({
   initialFile: (context, event) => {
-    console.log('setPath', event);
     if (!event.data) {
       return context.initialFile;
     }
     return event.data;
+  },
+  settings: (context, event) => {
+    return {
+      ...context.settings,
+      filters: 'all',
+    };
   },
 });
 
@@ -1023,6 +1028,7 @@ const libraryMachine = createMachine(
                 console.log('selectingFilePath', context, event);
                 return window.electron.ipcRenderer.invoke('select-new-path', [
                   event.path,
+                  event.updateAll,
                 ]);
               },
               onDone: {

@@ -10,6 +10,7 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import './video.css';
 import './sizing.css';
 import VideoControls from '../controls/video-controls';
+import { Image } from './image';
 
 type Props = {
   path: string;
@@ -151,7 +152,18 @@ export function Video({
   }, [onTimestampChange]);
 
   if (error) {
-    return <MediaErrorMsg path={path} />;
+    console.log('video error:', error);
+    return (
+      <Image
+        path={path}
+        scaleMode={scaleMode}
+        coverSize={coverSize}
+        handleLoad={handleLoad}
+        orientation={orientation}
+        cache={cache}
+        overRideCache={true}
+      />
+    );
   }
 
   if (!cache) {

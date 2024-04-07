@@ -120,24 +120,26 @@ export default function Tag({ tag, tags, active, handleEditAction }: Props) {
         });
       }}
     >
-      {previewImage && getFileType(previewImage) !== 'video' ? (
-        <img
-          src={window.electron.url.format({
-            protocol: 'gsm',
-            pathname: previewImage,
-          })}
-        />
-      ) : (
-        <video
-          src={window.electron.url.format({
-            protocol: 'gsm',
-            pathname: previewImage,
-          })}
-          controls={false}
-          autoPlay
-          loop
-        />
-      )}
+      {previewImage ? (
+        getFileType(previewImage) !== 'video' ? (
+          <img
+            src={window.electron.url.format({
+              protocol: 'gsm',
+              pathname: previewImage,
+            })}
+          />
+        ) : (
+          <video
+            src={window.electron.url.format({
+              protocol: 'gsm',
+              pathname: previewImage,
+            })}
+            controls={false}
+            autoPlay
+            loop
+          />
+        )
+      ) : null}
       <div className="label">{tag.label}</div>
       {active && <img className="check" src={checkCircle} />}
       <div className="actions">

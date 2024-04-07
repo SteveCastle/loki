@@ -1,15 +1,9 @@
 import { useContext, memo } from 'react';
-import { GlobalStateContext } from '../../state';
+import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Tooltip } from 'react-tooltip';
 import './tags.css';
-
-type Media = {
-  path: string;
-  timeStamp?: number;
-  tagLabel: string;
-};
 
 type Tag = {
   tag_label: string;
@@ -22,7 +16,7 @@ type Metadata = {
   path: string;
   tags: Tag[];
 };
-const loadTagsByMediaPath = (media: Media) => async (): Promise<Metadata> => {
+const loadTagsByMediaPath = (media: Item) => async (): Promise<Metadata> => {
   let metadata: any;
   metadata = await window.electron.ipcRenderer.invoke(
     'load-tags-by-media-path',
@@ -38,7 +32,7 @@ const deleteTag = async ({ path, tag }: { path: string; tag: Tag }) => {
 };
 
 interface Props {
-  item: Media;
+  item: Item;
 }
 
 function getLabel(currentVideoTimeStamp: number) {

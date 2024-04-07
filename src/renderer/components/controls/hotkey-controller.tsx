@@ -116,7 +116,9 @@ export default function HotKeyController() {
       up: () => {},
     },
     applyMostRecentTag: {
-      down: () => {
+      down: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         async function createAssignment() {
           console.log('creating assignment', item.path, mostRecentTag);
           await window.electron.ipcRenderer.invoke('create-assignment', [
