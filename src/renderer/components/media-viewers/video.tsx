@@ -4,12 +4,10 @@ import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { ScaleModeOption } from 'settings';
-import MediaErrorMsg from './media-error';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 import './video.css';
 import './sizing.css';
-import VideoControls from '../controls/video-controls';
 import { Image } from './image';
 
 type Props = {
@@ -211,11 +209,6 @@ export function Video({
           autoPlay
           loop
         />
-        {settable && !showControls && (
-          <div className="videoControls">
-            <VideoControls />
-          </div>
-        )}
       </>
     );
   }

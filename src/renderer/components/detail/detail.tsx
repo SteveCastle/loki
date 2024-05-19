@@ -4,6 +4,7 @@ import { useSelector } from '@xstate/react';
 import { GlobalStateContext, Item } from '../../state';
 import filter from 'renderer/filter';
 import { Image } from '../media-viewers/image';
+import VideoControls from '../controls/video-controls';
 import { Video } from '../media-viewers/video';
 import { Settings } from 'settings';
 import { getFileType, FileTypes } from '../../../file-types';
@@ -276,7 +277,11 @@ export function Detail({ offset = 0 }: { offset?: number }) {
           item.timeStamp
         )}
       </div>
-
+      {!settings.showControls && getFileType(item.path) === 'video' && (
+        <div className="videoControls">
+          <VideoControls />
+        </div>
+      )}
       {settings.showTags === 'all' || settings.showTags === 'detail' ? (
         <div className="controls">
           <Tags item={item} />
