@@ -38,6 +38,7 @@ export type Channels =
   | 'delete-tag'
   | 'update-assignment-weight'
   | 'generate-transcript'
+  | 'delete-file'
   | 'minimize';
 
 const loadMediaFromDB = async (

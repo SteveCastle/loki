@@ -60,7 +60,31 @@ export default function FileMetadata({ item }: { item: any }) {
         {item?.path && <Tags item={item} />}
       </div>
       <div className="section">
-        <h2>Suggested Tags</h2>
+        <h2
+          onClick={() => {
+            const copyContent = async (text: string) => {
+              try {
+                await navigator.clipboard.writeText(text);
+                console.log('Content copied to clipboard');
+              } catch (err) {
+                console.error('Failed to copy: ', err);
+              }
+            };
+            const allTags: string[] = [];
+            if (data.extendedMetadata?.tags) {
+              const tags = Object.values(data.extendedMetadata?.tags);
+              allTags.push(...tags.flat());
+            }
+            console.log(allTags);
+            const htmlString = allTags.join(', ');
+            // convert html encoded string to plain text
+            const plainText = decodeURIComponent(htmlString);
+
+            copyContent(plainText);
+          }}
+        >
+          Suggested Tags
+        </h2>
         <div className={``}>
           {data.extendedMetadata?.tags &&
             Object.keys(data.extendedMetadata?.tags).map((category: string) => (

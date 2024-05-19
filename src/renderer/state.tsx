@@ -242,6 +242,7 @@ const libraryMachine = createMachine(
           'copyAllSelectedFiles',
           'c+control+shift'
         ),
+        deleteFile: window.electron.store.get('deleteFile', 'delete'),
         applyMostRecentTag: window.electron.store.get(
           'applyMostRecentTag',
           'tab'
@@ -415,6 +416,63 @@ const libraryMachine = createMachine(
                 return {
                   display: false,
                   position: event.position,
+                };
+              },
+            }),
+          },
+        },
+      },
+      videoPlayer: {
+        on: {
+          SET_VIDEO_TIME: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                return {
+                  ...context.videoPlayer,
+                  timeStamp: event.timeStamp,
+                  eventId: event.eventId,
+                };
+              },
+            }),
+          },
+          SET_ACTUAL_VIDEO_TIME: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                return {
+                  ...context.videoPlayer,
+                  actualVideoTime: event.timeStamp,
+                };
+              },
+            }),
+          },
+          SET_PLAYING_STATE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                return {
+                  ...context.videoPlayer,
+                  playing: event.playing,
+                };
+              },
+            }),
+          },
+          LOOP_VIDEO: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                return {
+                  ...context.videoPlayer,
+                  loopLength: event.loopLength,
+                  loopStartTime: event.loopStartTime,
+                };
+              },
+            }),
+          },
+          SET_VIDEO_LENGTH: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                console.log('SET_VIDEO_LENGTH', context, event);
+                return {
+                  ...context.videoPlayer,
+                  videoLength: event.videoLength,
                 };
               },
             }),
@@ -695,6 +753,37 @@ const libraryMachine = createMachine(
                   initialFile: (context, event) => event.path,
                 }),
               },
+              DELETE_FILE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    console.log('DELETE_FILE', context, event);
+                    try {
+                      window.electron.ipcRenderer.invoke('delete-file', [
+                        event.data.path,
+                      ]);
+                    } catch (e) {
+                      console.error(e);
+                    }
+                    const path = event.data.path;
+                    const library = [...context.library];
+                    const index = library.findIndex(
+                      (item) => item.path === path
+                    );
+                    if (index > -1) {
+                      library.splice(index, 1);
+                    }
+                    return library;
+                  },
+                  cursor: (context) => {
+                    // If the cursor was on the last item in the library, decrement it.
+                    if (context.cursor >= context.library.length - 1) {
+                      return context.cursor - 1;
+                    }
+                    return context.cursor;
+                  },
+                  libraryLoadId: () => uniqueId(),
+                }),
+              },
               CHANGE_SETTING_AND_RELOAD: {
                 target: 'loadingFromFS',
                 actions: assign<LibraryState, AnyEventObject>({
@@ -759,60 +848,6 @@ const libraryMachine = createMachine(
                     actions: assign<LibraryState, AnyEventObject>({
                       scrollPosition: (context, event) => {
                         return event.position;
-                      },
-                    }),
-                  },
-                  SET_VIDEO_TIME: {
-                    target: 'idle',
-                    actions: assign<LibraryState, AnyEventObject>({
-                      videoPlayer: (context, event) => {
-                        return {
-                          ...context.videoPlayer,
-                          timeStamp: event.timeStamp,
-                          eventId: event.eventId,
-                        };
-                      },
-                    }),
-                  },
-                  SET_ACTUAL_VIDEO_TIME: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      videoPlayer: (context, event) => {
-                        return {
-                          ...context.videoPlayer,
-                          actualVideoTime: event.timeStamp,
-                        };
-                      },
-                    }),
-                  },
-                  SET_PLAYING_STATE: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      videoPlayer: (context, event) => {
-                        return {
-                          ...context.videoPlayer,
-                          playing: event.playing,
-                        };
-                      },
-                    }),
-                  },
-                  LOOP_VIDEO: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      videoPlayer: (context, event) => {
-                        return {
-                          ...context.videoPlayer,
-                          loopLength: event.loopLength,
-                          loopStartTime: event.loopStartTime,
-                        };
-                      },
-                    }),
-                  },
-                  SET_VIDEO_LENGTH: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      videoPlayer: (context, event) => {
-                        console.log('SET_VIDEO_LENGTH', context, event);
-                        return {
-                          ...context.videoPlayer,
-                          videoLength: event.videoLength,
-                        };
                       },
                     }),
                   },

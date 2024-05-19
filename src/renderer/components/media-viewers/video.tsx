@@ -195,6 +195,7 @@ export function Video({
             if (mediaRef && mediaRef.current && startTime) {
               mediaRef.current.currentTime = startTime;
             }
+
             handleLoad && handleLoad(e);
           }}
           onError={() => {
