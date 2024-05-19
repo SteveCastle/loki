@@ -1,11 +1,6 @@
 import { Channels } from 'main/preload';
 import type { VttCue } from 'main/parse-vtt';
-import {
-  FilterModeOption,
-  FilterOption,
-  OrderingOption,
-  SortByOption,
-} from 'settings';
+import { FilterModeOption, FilterOption, SortByOption } from 'settings';
 
 declare global {
   interface Window {

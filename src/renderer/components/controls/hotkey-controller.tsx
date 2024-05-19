@@ -389,6 +389,16 @@ export default function HotKeyController() {
       },
       up: () => {},
     },
+    deleteFile: {
+      down: (e) => {
+        e.preventDefault();
+        libraryService.send({
+          type: 'DELETE_FILE',
+          data: { path: item.path },
+        });
+      },
+      up: () => {},
+    },
   };
   const actionByHotkey: ActionMap = Object.entries(hotKeys).reduce(
     (acc, [key, hotKey]) => {
