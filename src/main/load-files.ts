@@ -2,6 +2,8 @@ import readdir from 'readdir-enhanced';
 
 import * as path from 'path';
 import naturalCompare from 'natural-compare';
+import { Database } from './database';
+import { IpcMainInvokeEvent } from 'electron';
 
 type File = {
   path: string;
@@ -42,7 +44,6 @@ const filters: Filters = {
 
 const readdirStreamAsync = (
   folderPath: string,
-  filter: string,
   recursive: boolean
 ): Promise<File[]> => {
   return new Promise((resolve) => {
@@ -67,30 +68,29 @@ const readdirStreamAsync = (
   });
 };
 
-export default async function loadFiles(
-  filePath: string,
-  filter = 'all',
-  sortOrder = 'name',
-  recursive = false
-) {
-  // folderPath is the directory the filePath is in.
-  const folderPath = path.dirname(filePath);
+type LoadFilesInput = [string, string, boolean];
 
-  // fileName is the fileName portion of the filePath
-  const fileName = path.basename(filePath);
+export const loadFiles =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: LoadFilesInput) => {
+    const [filePath, sortOrder, recursive] = args;
+    // folderPath is the directory the filePath is in.
+    const folderPath = path.dirname(filePath);
 
-  // Get the list of files in the folderPath
-  const files = await readdirStreamAsync(folderPath, filter, recursive);
+    // fileName is the fileName portion of the filePath
+    const fileName = path.basename(filePath);
 
-  const sortedFiles = files.sort(sorts[sortOrder]);
-  console.log('sorting with', sortOrder);
-  const cursorIndex = sortedFiles.findIndex(
-    (item) => path.basename(item.path) === fileName
-  );
-  const cursor = cursorIndex === -1 ? 0 : cursorIndex;
+    // Get the list of files in the folderPath
+    const files = await readdirStreamAsync(folderPath, recursive);
 
-  return {
-    library: sortedFiles,
-    cursor,
+    const sortedFiles = files.sort(sorts[sortOrder]);
+    console.log('sorting with', sortOrder);
+    const cursorIndex = sortedFiles.findIndex(
+      (item) => path.basename(item.path) === fileName
+    );
+    const cursor = cursorIndex === -1 ? 0 : cursorIndex;
+    console.log('invoked loadFiles');
+    return {
+      library: sortedFiles,
+      cursor,
+    };
   };
-}

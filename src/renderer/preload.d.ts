@@ -1,6 +1,6 @@
 import { Channels } from 'main/preload';
 import type { VttCue } from 'main/parse-vtt';
-import { FilterModeOption, FilterOption, SortByOption } from 'settings';
+import { FilterModeOption } from 'settings';
 
 declare global {
   interface Window {
@@ -19,12 +19,6 @@ declare global {
       url: {
         format: typeof import('url').format;
       };
-      loadFiles: (
-        targetDir: string,
-        filters: FilterOption,
-        sortBy: SortByOption,
-        recursive: boolean
-      ) => Promise<{ path: string }[]>;
       loadMediaFromDB: (
         tag: string[],
         mode: FilterModeOption

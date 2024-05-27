@@ -2,13 +2,13 @@ import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import * as url from 'url';
 import * as path from 'path';
 import { isValidFilePath } from './file-handling';
-import loadFiles from './load-files';
 import { loadTranscript } from './transcript';
 import { FilterModeOption } from 'settings';
 
 export type Channels =
   | 'shutdown'
   | 'select-file'
+  | 'load-files'
   | 'select-new-path'
   | 'select-db'
   | 'load-db'
@@ -70,7 +70,6 @@ const fetchMediaPreview = async (
 };
 
 contextBridge.exposeInMainWorld('electron', {
-  loadFiles,
   loadMediaFromDB,
   fetchTagPreview,
   fetchMediaPreview,
