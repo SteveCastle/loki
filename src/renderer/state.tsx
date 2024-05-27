@@ -651,12 +651,11 @@ const libraryMachine = createMachine(
               src: (context, event) => {
                 console.log('loadingFromFS', context, event);
                 const { recursive } = context.settings;
-                return window.electron.loadFiles(
+                return window.electron.ipcRenderer.invoke('load-files', [
                   context.initialFile,
-                  context.settings.filters,
                   context.settings.sortBy,
-                  recursive
-                );
+                  recursive,
+                ]);
               },
               onDone: {
                 target: 'loadedFromFS',

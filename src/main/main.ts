@@ -46,6 +46,7 @@ import {
 
 import { loadFileMetaData } from './metadata';
 import { createJob } from './jobs';
+import { loadFiles } from './load-files';
 
 // app.commandLine.appendSwitch('remote-debugging-port', '8315');
 app.commandLine.appendSwitch('inspect');
@@ -151,8 +152,10 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('delete-tag');
   ipcMain.removeHandler('create-job');
   ipcMain.removeHandler('delete-file');
+  ipcMain.removeHandler('load-files');
 
   // Register Media Events
+  ipcMain.handle('load-files', loadFiles(db));
   ipcMain.handle('load-media-by-tags', loadMediaByTags(db));
   ipcMain.handle('update-elo', updateElo(db));
   ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
