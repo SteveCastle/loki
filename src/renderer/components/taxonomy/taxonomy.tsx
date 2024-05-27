@@ -63,12 +63,10 @@ export default function Taxonomy() {
     libraryService,
     (state) => state.context.initSessionId
   );
-  const { applyTagPreview, filteringMode, applyTagToAll } = useSelector(
-    libraryService,
-    (state) => {
+  const { applyTagPreview, filteringMode, applyTagToAll, libraryLayout } =
+    useSelector(libraryService, (state) => {
       return state.context.settings;
-    }
-  );
+    });
 
   const textFilter = useSelector(
     libraryService,
@@ -154,7 +152,12 @@ export default function Taxonomy() {
     });
   return (
     <>
-      <div className={`Taxonomy`}>
+      <div
+        className={`Taxonomy`}
+        style={{
+          marginTop: libraryLayout === 'left' ? '20px' : '0',
+        }}
+      >
         <div className="search">
           <div className="textSearch">
             <input
