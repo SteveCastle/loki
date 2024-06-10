@@ -251,7 +251,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         settings.controlMode === 'mouse' ? 'grabbable' : '',
       ].join(' ')}
     >
-      {settings.comicMode && loadedFromDB ? (
+      {settings.comicMode && settings.battleMode && loadedFromDB ? (
         <BattleMode item={item} offset={offset} />
       ) : null}
       <div

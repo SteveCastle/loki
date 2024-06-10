@@ -678,6 +678,15 @@ const libraryMachine = createMachine(
                   },
                 }),
               },
+              APPEND_TO_LIBRARY: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    console.log('APPEND_TO_LIBRARY', context, event);
+                    return [...context.library, ...event.items];
+                  },
+                  libraryLoadId: () => uniqueId(),
+                }),
+              },
             },
           },
           loadingFromDB: {

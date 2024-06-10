@@ -155,7 +155,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-files');
 
   // Register Media Events
-  ipcMain.handle('load-files', loadFiles(db));
   ipcMain.handle('load-media-by-tags', loadMediaByTags(db));
   ipcMain.handle('update-elo', updateElo(db));
   ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
@@ -200,6 +199,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('order-tags', orderTags(db));
   ipcMain.handle('delete-tag', deleteTag(db));
   if (!mainWindow) return;
+  ipcMain.handle('load-files', loadFiles(db, mainWindow.webContents));
   ipcMain.handle('create-job', createJob(db, mainWindow.webContents));
 });
 

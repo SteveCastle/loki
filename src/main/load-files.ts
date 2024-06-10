@@ -44,10 +44,12 @@ const filters: Filters = {
 
 const readdirStreamAsync = (
   folderPath: string,
-  recursive: boolean
+  recursive: boolean,
+  invokingWindow: Electron.WebContents
 ): Promise<File[]> => {
   return new Promise((resolve) => {
     const files: File[] = [];
+    let idx = 0;
     readdir
       .stream(folderPath, {
         basePath: folderPath,
@@ -59,6 +61,10 @@ const readdirStreamAsync = (
         console.log(err);
       })
       .on('data', (data: File) => {
+        idx++;
+        if (idx % 100 === 0) {
+          invokingWindow.send('file-loaded', [files.slice(-100)]);
+        }
         files.push({ path: data.path, mtimeMs: data.mtimeMs });
       })
       .on('end', () => {
@@ -71,7 +77,8 @@ const readdirStreamAsync = (
 type LoadFilesInput = [string, string, boolean];
 
 export const loadFiles =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: LoadFilesInput) => {
+  (db: Database, invokingWindow: Electron.WebContents) =>
+  async (_: IpcMainInvokeEvent, args: LoadFilesInput) => {
     const [filePath, sortOrder, recursive] = args;
     // folderPath is the directory the filePath is in.
     const folderPath = path.dirname(filePath);
@@ -80,15 +87,17 @@ export const loadFiles =
     const fileName = path.basename(filePath);
 
     // Get the list of files in the folderPath
-    const files = await readdirStreamAsync(folderPath, recursive);
+    const files = await readdirStreamAsync(
+      folderPath,
+      recursive,
+      invokingWindow
+    );
 
     const sortedFiles = files.sort(sorts[sortOrder]);
-    console.log('sorting with', sortOrder);
     const cursorIndex = sortedFiles.findIndex(
       (item) => path.basename(item.path) === fileName
     );
     const cursor = cursorIndex === -1 ? 0 : cursorIndex;
-    console.log('invoked loadFiles');
     return {
       library: sortedFiles,
       cursor,

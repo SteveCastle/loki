@@ -2,7 +2,7 @@ import React, { useContext, useEffect } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import cancel from '../../../../assets/cancel.svg';
-import { GlobalStateContext } from '../../state';
+import { GlobalStateContext, Item } from '../../state';
 import './job-toast.css';
 import { Job } from 'main/jobs';
 
@@ -27,10 +27,16 @@ export function JobToast() {
     libraryService.send({ type: 'UPDATE_JOB', job });
   };
 
+  const handleFileLoaded = (args: any) => {
+    const items = args[0] as Item;
+    libraryService.send({ type: 'APPEND_TO_LIBRARY', items });
+  };
+
   useEffect(() => {
     // Here we are listening for the 'message-from-server' event
     window.electron.ipcRenderer.on('job-complete', handleJobComplete);
     window.electron.ipcRenderer.on('job-updated', handleJobUpdated);
+    window.electron.ipcRenderer.on('file-loaded', handleFileLoaded);
 
     // Clean up by removing the listener when the component unmounts
     return () => {
