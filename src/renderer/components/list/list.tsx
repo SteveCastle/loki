@@ -11,6 +11,7 @@ import './list.css';
 const OVERSCAN = 2;
 
 export function List() {
+  const [initialLoad, setInitialLoad] = useState(true);
   const { libraryService } = useContext(GlobalStateContext);
 
   const { library } = useSelector(
@@ -33,6 +34,10 @@ export function List() {
       a.libraryLoadId === b.libraryLoadId &&
       a.filters === b.filters &&
       a.sortBy === b.sortBy
+  );
+  const scrollPosition = useSelector(
+    libraryService,
+    (state) => state.context.scrollPosition
   );
   const cursor = useSelector(
     libraryService,
@@ -74,8 +79,13 @@ export function List() {
   }, [gridSize, rowVirtualizer]);
 
   useEffect(() => {
-    if (parentRef.current && cursor) {
-      rowVirtualizer.scrollToIndex(Math.floor(cursor / columns));
+    if (initialLoad && parentRef.current && cursor) {
+      rowVirtualizer.scrollToOffset(scrollPosition);
+      setInitialLoad(false);
+    } else if (parentRef.current && cursor) {
+      rowVirtualizer.scrollToIndex(Math.floor(cursor / columns), {
+        align: 'auto',
+      });
     }
   }, [rowVirtualizer, cursor]);
 
