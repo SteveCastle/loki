@@ -70,6 +70,14 @@ function CollapsiblePanel({
 const Layout = () => {
   const [renderID, setRenderID] = useState(0);
   const { libraryService } = useContext(GlobalStateContext);
+  const state = useSelector(
+    libraryService,
+    (state) => state,
+    (a, b) => {
+      return a.matches(b);
+    }
+  );
+
   const comicMode = useSelector(
     libraryService,
     (state) => state.context.settings.comicMode
@@ -160,18 +168,22 @@ const Layout = () => {
               <VerticalHandle />
             </>
           ) : null}
-          <CollapsiblePanel
-            className="panel"
-            defaultSize={50}
-            order={1}
-            panelRef={listRef}
-            renderId={renderID}
-          >
-            <div className="panel" onDoubleClick={handleListClick}>
-              <List />
-            </div>
-          </CollapsiblePanel>
-          <VerticalHandle />
+          {!state.matches({ library: 'loadingFromFS' }) && (
+            <>
+              <CollapsiblePanel
+                className="panel"
+                defaultSize={50}
+                order={1}
+                panelRef={listRef}
+                renderId={renderID}
+              >
+                <div className="panel" onDoubleClick={handleListClick}>
+                  <List />
+                </div>
+              </CollapsiblePanel>
+              <VerticalHandle />
+            </>
+          )}
           <CollapsiblePanel
             className="panel"
             order={2}
