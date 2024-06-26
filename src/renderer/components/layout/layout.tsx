@@ -9,16 +9,16 @@ import {
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { Detail } from '../detail/detail';
-
+import filter from 'renderer/filter';
 import { List } from '../list/list';
 import './panels.css';
 import Taxonomy from '../taxonomy/taxonomy';
 import Metadata from '../metadata/metadata';
 import CommandPalette from '../controls/command-palette';
 
-function VerticalHandle() {
+function VerticalHandle({ disabled }: { disabled?: boolean }) {
   return (
-    <PanelResizeHandle className="handle vertical">
+    <PanelResizeHandle className="handle vertical" disabled={disabled}>
       <div className={'inner-handle'}></div>
     </PanelResizeHandle>
   );
@@ -76,6 +76,28 @@ const Layout = () => {
     (a, b) => {
       return a.matches(b);
     }
+  );
+
+  const { library } = useSelector(
+    libraryService,
+    (state) => {
+      return {
+        filters: state.context.settings.filters,
+        sortBy: state.context.settings.sortBy,
+        library: filter(
+          state.context.libraryLoadId,
+          state.context.textFilter,
+          state.context.library,
+          state.context.settings.filters,
+          state.context.settings.sortBy
+        ),
+        libraryLoadId: state.context.libraryLoadId,
+      };
+    },
+    (a, b) =>
+      a.libraryLoadId === b.libraryLoadId &&
+      a.filters === b.filters &&
+      a.sortBy === b.sortBy
   );
 
   const comicMode = useSelector(
@@ -140,6 +162,12 @@ const Layout = () => {
     }
   }
 
+  useEffect(() => {
+    if (library.length === 1) {
+      handleListClick();
+    }
+  }, [library]);
+
   return (
     <PanelGroup
       direction="vertical"
@@ -168,22 +196,20 @@ const Layout = () => {
               <VerticalHandle />
             </>
           ) : null}
-          {!state.matches({ library: 'loadingFromFS' }) && (
-            <>
-              <CollapsiblePanel
-                className="panel"
-                defaultSize={50}
-                order={1}
-                panelRef={listRef}
-                renderId={renderID}
-              >
-                <div className="panel" onDoubleClick={handleListClick}>
-                  <List />
-                </div>
-              </CollapsiblePanel>
-              <VerticalHandle />
-            </>
-          )}
+          <CollapsiblePanel
+            className="panel"
+            defaultSize={50}
+            order={1}
+            panelRef={listRef}
+            renderId={renderID}
+          >
+            <div className="panel" onDoubleClick={handleListClick}>
+              <List />
+            </div>
+          </CollapsiblePanel>
+          <VerticalHandle
+            disabled={state.matches({ library: 'loadingFromFS' })}
+          />
           <CollapsiblePanel
             className="panel"
             order={2}
