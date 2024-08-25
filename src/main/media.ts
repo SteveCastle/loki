@@ -102,7 +102,10 @@ const fetchMediaPreview =
     const userHomeDirectory = require('os').homedir();
     const defaultBasePath = path.join(path.join(userHomeDirectory, '.lowkey'));
     const dbPath = store.get('dbPath', defaultBasePath) as string;
-
+    const regenerateMediaCache = store.get(
+      'regenerateMediaCache',
+      false
+    ) as boolean;
     // Parts of the thumbnail path. The filename is a sha256 hash of the input path.
     const basePath = path.dirname(dbPath);
     const thumbnailFullPath = getMediaCachePath(
@@ -112,7 +115,7 @@ const fetchMediaPreview =
       timeStamp
     );
     const thumbnailExists = checkIfMediaCacheExists(thumbnailFullPath);
-    if (!thumbnailExists) {
+    if (!thumbnailExists || regenerateMediaCache) {
       await asyncCreateThumbnail(filePath, basePath, cache, timeStamp);
     }
     return thumbnailFullPath;
