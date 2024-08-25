@@ -2,7 +2,8 @@ const fs = require('fs');
 const os = require('os');
 const sharp = require('sharp');
 const path = require('path');
-const { exec } = require('child_process');
+const { promisify } = require('util');
+const execFile = promisify(require('child_process').execFile);
 const crypto = require('crypto');
 const workerpool = require('workerpool');
 
@@ -16,9 +17,7 @@ const ffProbePath = isDev
   : path.join(__dirname, '../../../bin/ffprobe');
 
 function createHash(input) {
-  const hash = crypto.createHash('sha256');
-  hash.update(input);
-  return hash.digest('hex');
+  return crypto.createHash('sha256').update(input).digest('hex');
 }
 
 const FileTypes = {
@@ -30,28 +29,18 @@ const FileTypes = {
 };
 
 const Extensions = {
-  Image: 'jpg|jpeg|png|bmp|svg|jfif|pjpeg|pjp|webp',
-  Video: 'mp4|webm|ogg|mkv|gif',
-  Audio: 'mp3|wav',
-  Document: 'pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv',
+  Image: /\.(jpg|jpeg|png|bmp|svg|jfif|pjpeg|pjp|webp)$/i,
+  Video: /\.(mp4|webm|ogg|mkv|gif)$/i,
+  Audio: /\.(mp3|wav)$/i,
+  Document: /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv)$/i,
 };
 
 const getFileType = (fileName) => {
-  const extension = fileName.split('.').pop()?.toLowerCase();
-  if (extension) {
-    if (Extensions.Image.includes(extension)) {
-      return FileTypes.Image;
-    }
-    if (Extensions.Video.includes(extension)) {
-      return FileTypes.Video;
-    }
-    if (Extensions.Audio.includes(extension)) {
-      return FileTypes.Audio;
-    }
-    if (Extensions.Document.includes(extension)) {
-      return FileTypes.Document;
-    }
-  }
+  const extension = path.extname(fileName).toLowerCase();
+  if (Extensions.Image.test(extension)) return FileTypes.Image;
+  if (Extensions.Video.test(extension)) return FileTypes.Video;
+  if (Extensions.Audio.test(extension)) return FileTypes.Audio;
+  if (Extensions.Document.test(extension)) return FileTypes.Document;
   return FileTypes.Other;
 };
 
@@ -61,155 +50,104 @@ const cacheSizes = {
   thumbnail_path_100: 100,
 };
 
-// Given a file path, generate a thumbnail, and return the path to the thumbnail.
 async function createThumbnail(filePath, basePath, cache, timeStamp) {
-  // Parts of the thumbnail path. The filename is a sha256 hash of the input path.
   const thumbnailBasePath = path.join(basePath, cache);
-
-  //Check if thumbnailBasePath exists, if it does not, create it.
-  if (!fs.existsSync(thumbnailBasePath)) {
-    fs.mkdirSync(thumbnailBasePath, { recursive: true });
-  }
+  await fs.promises.mkdir(thumbnailBasePath, { recursive: true });
 
   const thumbnailFileName = createHash(
     filePath + (timeStamp > 0 ? timeStamp.toString() : '')
   );
-  let thumbnailFullPath = thumbnailBasePath + '/' + thumbnailFileName;
-  if (getFileType(filePath) === 'video') {
-    thumbnailFullPath = thumbnailFullPath + '.mp4';
-  }
+  let thumbnailFullPath = path.join(thumbnailBasePath, thumbnailFileName);
 
   const fileType = getFileType(filePath);
-  if (fileType === 'video') {
-    // Get home directory from node.
+  if (fileType === FileTypes.Video) {
+    thumbnailFullPath += '.mp4';
     await createVideoThumbnail(filePath, thumbnailFullPath, timeStamp);
-    return thumbnailFullPath;
+  } else if (fileType === FileTypes.Image) {
+    await createImageThumbnail(filePath, thumbnailFullPath, cache);
+  } else {
+    throw new Error('Unsupported file type');
   }
-  // Read the image file.
-  const imageBuffer = fs.readFileSync(filePath);
-
-  // Create a thumbnail.
-  await sharp(imageBuffer)
-    .resize(cacheSizes[cache])
-    .webp()
-    .toFile(thumbnailFullPath);
-
-  // Convert the output Buffer to a Blob.
 
   return thumbnailFullPath;
 }
 
-const getVideoMetadata = (videoFilePath) => {
-  return new Promise((resolve, reject) => {
-    exec(
-      `"${ffProbePath}" -v quiet -print_format json -show_format -show_streams "${videoFilePath}"`,
-      (err, stdout, stderr) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(JSON.parse(stdout));
-        }
-      }
-    );
-  });
-};
+async function createImageThumbnail(filePath, thumbnailFullPath, cache) {
+  const imageBuffer = await fs.promises.readFile(filePath);
+  await sharp(imageBuffer)
+    .resize(cacheSizes[cache])
+    .webp()
+    .toFile(thumbnailFullPath);
+}
 
-const generateUpscaledThumbnail = (imageFilePath, thumbnailFullPath) => {
-  return new Promise((resolve, reject) => {
-    exec(`up -i ${imageFilePath} -o ${thumbnailFullPath}.webp -s 2`)
-      .on('exit', (code) => {
-        if (code !== 0) {
-          return reject(new Error(`up exited with code ${code}`));
-        }
-        resolve();
-      })
-      .on('error', reject);
-  });
-};
+async function getVideoMetadata(videoFilePath) {
+  try {
+    const { stdout } = await execFile(ffProbePath, [
+      '-v',
+      'quiet',
+      '-print_format',
+      'json',
+      '-show_format',
+      '-show_streams',
+      videoFilePath,
+    ]);
+    return JSON.parse(stdout);
+  } catch (error) {
+    console.error('Error getting video metadata:', error);
+    throw error;
+  }
+}
 
-// Calls ffmpeg thumbnail function to generate a thumbnail.
-const generateVideoThumbnail = (
+async function generateVideoThumbnail(
   videoFilePath,
   thumbnailTime,
   thumbnailFullPath,
   useMiddle
-) => {
-  return new Promise((resolve, reject) => {
-    if (useMiddle) {
-      exec(
-        `"${ffmpegPath}" -y -ss ${thumbnailTime} -i "${videoFilePath}" -vf "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2" -t 2 -an "${thumbnailFullPath}"
-      `,
-        (err, stdout, stderr) => {
-          if (err) {
-            //console.log(err);
-          }
-          if (stderr) {
-            //console.log(stderr);
-          }
-          if (stdout) {
-            //console.log(stdout);
-          }
-        }
-      )
-        .on('exit', (code) => {
-          if (code !== 0) {
-            return reject(new Error(`ffmpeg exited with code ${code}`));
-          }
-          resolve();
-        })
-        .on('error', (err) => {
-          reject(err);
-        });
-    } else {
-      exec(
-        `"${ffmpegPath}" -y -i "${videoFilePath}" -vf "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2" -an "${thumbnailFullPath}"
-        `,
-        (err, stdout, stderr) => {
-          if (err) {
-            console.log(err);
-          }
-          if (stderr) {
-            // console.log(stderr);
-          }
-          if (stdout) {
-            // console.log(stdout);
-          }
-        }
-      )
-        .on('exit', (code) => {
-          if (code !== 0) {
-            return reject(new Error(`ffmpeg exited with code ${code}`));
-          }
-          resolve();
-        })
-        .on('error', reject);
-    }
-  });
-};
+) {
+  const ffmpegArgs = [
+    '-y',
+    useMiddle ? '-ss' : '-i',
+    useMiddle ? thumbnailTime : videoFilePath,
+    useMiddle ? '-i' : '-ss',
+    useMiddle ? videoFilePath : thumbnailTime,
+    '-vf',
+    "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2",
+    '-t',
+    '2',
+    '-an',
+    thumbnailFullPath,
+  ];
 
-const createVideoThumbnail = async (
+  try {
+    await execFile(ffmpegPath, ffmpegArgs);
+  } catch (error) {
+    console.error('Error generating video thumbnail:', error);
+    throw error;
+  }
+}
+
+async function createVideoThumbnail(
   videoFilePath,
   thumbnailFullPath,
   timeStamp
-) => {
+) {
   try {
     const metadata = await getVideoMetadata(videoFilePath);
     const duration_sec = metadata.format.duration || 0;
-    const thumbnailTime = timeStamp ? timeStamp : duration_sec / 2;
+    const thumbnailTime = timeStamp || duration_sec / 2;
     const useMiddle = duration_sec > 6;
-    console.log('Generating thumbnail in a worker.');
+
     await generateVideoThumbnail(
       videoFilePath,
       thumbnailTime,
       thumbnailFullPath,
       useMiddle
     );
-    console.log('Thumbnail generated in a worker.');
   } catch (err) {
     console.error('Error during thumbnail generation', err);
-    return err;
+    throw err;
   }
-};
+}
 
 workerpool.worker({
   createThumbnail: createThumbnail,

@@ -245,7 +245,7 @@ const libraryMachine = createMachine(
         deleteFile: window.electron.store.get('deleteFile', 'delete'),
         applyMostRecentTag: window.electron.store.get(
           'applyMostRecentTag',
-          'tab'
+          'a'
         ),
         storeCategory1: window.electron.store.get('storeCategory1', '1+alt'),
         storeCategory2: window.electron.store.get('storeCategory2', '2+alt'),
