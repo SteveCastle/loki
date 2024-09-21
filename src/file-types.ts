@@ -14,7 +14,7 @@ export enum FileTypes {
 
 export enum Extensions {
   Image = 'jpg|jpeg|png|gif|bmp|svg|jfif|pjpeg|pjp|webp',
-  Video = 'mp4|webm|ogg|mkv',
+  Video = 'mov|mp4|webm|ogg|mkv',
   Audio = 'mp3|wav',
   Document = 'pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv',
 }

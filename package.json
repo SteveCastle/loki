@@ -291,6 +291,11 @@
         "ext": "mp4",
         "name": "Mp4 Video File",
         "role": "Viewer"
+      },
+      {
+        "ext": "mov",
+        "name": "Mov Video File",
+        "role": "Viewer"
       }
     ],
     "dmg": {
