@@ -884,7 +884,7 @@ const libraryMachine = createMachine(
                 target: 'selectingFilePath',
               },
               CLEAR_QUERY_TAG: {
-                target: 'loadingFromFS',
+                target: 'loadingFromPreviousLibrary',
                 actions: assign<LibraryState, AnyEventObject>({
                   dbQuery: (context, event) => {
                     console.log('CLEAR QUERY TAG', context, event);
