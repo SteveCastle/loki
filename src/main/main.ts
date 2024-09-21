@@ -249,6 +249,7 @@ ipcMain.handle(
             'pjp',
             'webp',
             'mp4',
+            'mov',
             'mkv',
             'webm',
           ],
@@ -269,7 +270,7 @@ ipcMain.handle(
             'webp',
           ],
         },
-        { name: 'Movies', extensions: ['mp4', 'mkv', 'webm'] },
+        { name: 'Movies', extensions: ['mp4', 'mkv', 'webm', 'mov'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });

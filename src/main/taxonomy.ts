@@ -329,6 +329,7 @@ const selectNewPath =
             'pjp',
             'webp',
             'mp4',
+            'mov',
             'mkv',
             'webm',
           ],
@@ -349,7 +350,7 @@ const selectNewPath =
             'webp',
           ],
         },
-        { name: 'Movies', extensions: ['mp4', 'mkv', 'webm'] },
+        { name: 'Movies', extensions: ['mp4', 'mkv', 'webm', 'mov'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });
