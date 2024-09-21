@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef } from 'react';
+import React, { useContext, useRef } from 'react';
 import { useSelector } from '@xstate/react';
 import { useDrag } from 'react-dnd';
 import { GlobalStateContext } from '../../state';
@@ -11,11 +11,13 @@ import { ScaleModeOption } from 'settings';
 import useTagDrop from 'renderer/hooks/useTagDrop';
 import './list-item.css';
 import Tags from '../metadata/tags';
+import Scene from '../media-viewers/scene';
 
 type Item = {
   path: string;
   weight: number;
   timeStamp: number;
+  mtimeMs: number;
   elo?: number;
   tagLabel: string;
 };
@@ -34,6 +36,9 @@ function getPlayer(
   imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
   startTime = 0
 ) {
+  if (getFileType(path) === FileTypes.Scene) {
+    return <Scene path={path} orientation={orientation} />;
+  }
   if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
     return (
       <Video

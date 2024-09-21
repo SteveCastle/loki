@@ -5,6 +5,7 @@ import {
   app,
   BrowserWindow,
   shell,
+  session,
   ipcMain,
   protocol,
   dialog,
@@ -257,6 +258,8 @@ ipcMain.handle(
             'mp4',
             'mkv',
             'webm',
+            'obj',
+            'glb',
           ],
         },
 
@@ -337,7 +340,7 @@ const createWindow = async () => {
     titleBarStyle: 'hidden',
     icon: getAssetPath('icon.png'),
     webPreferences: {
-      webSecurity: true,
+      webSecurity: false,
       nodeIntegration: true,
       nodeIntegrationInWorker: true,
       preload: app.isPackaged

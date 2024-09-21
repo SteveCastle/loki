@@ -9,6 +9,7 @@ export enum FileTypes {
   Video = 'video',
   Audio = 'audio',
   Document = 'document',
+  Scene = 'scene',
   Other = 'other',
 }
 
@@ -16,6 +17,7 @@ export enum Extensions {
   Image = 'jpg|jpeg|png|gif|bmp|svg|jfif|pjpeg|pjp|webp',
   Video = 'mp4|webm|ogg|mkv',
   Audio = 'mp3|wav',
+  Scene = 'obj|fbx|gltf|glb',
   Document = 'pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv',
 }
 
@@ -39,6 +41,9 @@ export const getFileType = (
     }
     if (Extensions.Document.includes(extension)) {
       return FileTypes.Document;
+    }
+    if (Extensions.Scene.includes(extension)) {
+      return FileTypes.Scene;
     }
   }
   return FileTypes.Other;

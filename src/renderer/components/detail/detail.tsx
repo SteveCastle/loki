@@ -13,6 +13,7 @@ import './detail.css';
 import useTagDrop from 'renderer/hooks/useTagDrop';
 import Tags from '../metadata/tags';
 import BattleMode from '../elo/BattleMode';
+import Scene from '../media-viewers/scene';
 
 function resizeToCover(
   parentWidth: number,
@@ -52,6 +53,23 @@ function getPlayer(
   imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
   startTime = 0
 ) {
+  if (getFileType(path) === FileTypes.Scene) {
+    return (
+      <Scene
+        path={path}
+        scaleMode={settings.scaleMode}
+        settable
+        coverSize={coverSize}
+        playSound={settings.playSound}
+        handleLoad={handleLoad}
+        showControls={settings.showControls}
+        mediaRef={mediaRef as React.RefObject<HTMLVideoElement>}
+        orientation={orientation}
+        startTime={startTime}
+        cache={imageCache}
+      />
+    );
+  }
   if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
     return (
       <Video

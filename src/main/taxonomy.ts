@@ -331,6 +331,8 @@ const selectNewPath =
             'mp4',
             'mkv',
             'webm',
+            'gltf',
+            'glb',
           ],
         },
 
