@@ -42,6 +42,8 @@ import {
   deleteTag,
   loadTagsByMediaPath,
   selectNewPath,
+  applyELO,
+  applyWeight,
 } from './taxonomy';
 
 import { loadFileMetaData } from './metadata';
@@ -149,6 +151,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('rename-tag');
   ipcMain.removeHandler('move-tag');
   ipcMain.removeHandler('order-tags');
+  ipcMain.removeHandler('apply-elo');
+  ipcMain.removeHandler('apply-weight');
   ipcMain.removeHandler('delete-tag');
   ipcMain.removeHandler('create-job');
   ipcMain.removeHandler('delete-file');
@@ -198,6 +202,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('rename-tag', renameTag(db));
   ipcMain.handle('move-tag', moveTag(db));
   ipcMain.handle('order-tags', orderTags(db));
+  ipcMain.handle('apply-elo', applyELO(db));
+  ipcMain.handle('apply-weight', applyWeight(db));
   ipcMain.handle('delete-tag', deleteTag(db));
   if (!mainWindow) return;
   ipcMain.handle('create-job', createJob(db, mainWindow.webContents));

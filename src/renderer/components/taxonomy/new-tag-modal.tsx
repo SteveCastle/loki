@@ -1,15 +1,17 @@
-import { useRef, useState } from 'react';
+import { useContext, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 
 import './new-modal.css';
+import { GlobalStateContext } from 'renderer/state';
 
 type Props = {
   categoryLabel: string;
   handleClose: () => void;
   currentValue?: string;
 };
+
 export default function NewTagModal({
   categoryLabel,
   handleClose,
@@ -21,6 +23,26 @@ export default function NewTagModal({
     handleClose();
   });
   const queryClient = useQueryClient();
+  const { libraryService } = useContext(GlobalStateContext);
+
+  function handleApplyELO() {
+    async function applyELO() {
+      await window.electron.ipcRenderer.invoke('apply-elo', [currentValue]);
+      libraryService.send('REFRESH');
+      handleClose();
+    }
+    applyELO();
+  }
+
+  function handleApplyWeight() {
+    async function applyWeight() {
+      await window.electron.ipcRenderer.invoke('apply-weight', [currentValue]);
+      libraryService.send('REFRESH');
+      handleClose();
+    }
+    applyWeight();
+  }
+
   function handleSubmit() {
     async function submit() {
       if (currentValue) {
@@ -73,6 +95,8 @@ export default function NewTagModal({
               }
             }}
           />
+          <button onClick={handleApplyELO}>Apply ELO</button>
+          <button onClick={handleApplyWeight}>Apply Weight</button>
           <button onClick={handleSubmit}>
             {currentValue ? 'Save' : 'Create'}
           </button>

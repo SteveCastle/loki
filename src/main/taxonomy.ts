@@ -405,10 +405,46 @@ const orderTags =
         WHERE
           category_label = $1
           AND EXISTS (SELECT 1 FROM RankedLabels WHERE tag.label = RankedLabels.label);
-        `,
+`,
       [categoryLabel]
     );
     return tags;
+  };
+
+type ApplyELOInput = [string];
+const applyELO =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: ApplyELOInput) => {
+    const [tagLabel] = args;
+    // Update the weights based on the elo rating. Do this by sorting by elo then assigning the index to the weight.
+    console.log('Applying ELO to tag', tagLabel);
+    await db.run(
+      `      WITH RankedElo AS (
+          SELECT
+          	path,
+            elo,
+            ROW_NUMBER() OVER (ORDER BY elo DESC) AS rank
+          FROM
+            media
+          WHERE
+            tag_label = $1
+        )
+        UPDATE media_tag_by_category
+        SET weight = (SELECT rank FROM RankedElo WHERE media_tag_by_category.media_path = RankedElo.path)
+        WHERE
+          tag_label = $1
+          AND EXISTS (SELECT 1 FROM RankedElo WHERE media_tag_by_category.media_path = RankedElo.path);
+;`,
+      [tagLabel]
+    );
+    return;
+  };
+
+type ApplyWeightInput = [string];
+const applyWeight =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: ApplyWeightInput) => {
+    const [categoryLabel] = args;
+    console.log('Applying weight to category', categoryLabel);
+    return;
   };
 
 export {
@@ -425,6 +461,8 @@ export {
   renameTag,
   moveTag,
   orderTags,
+  applyELO,
+  applyWeight,
   deleteTag,
   loadTagsByMediaPath,
   selectNewPath,

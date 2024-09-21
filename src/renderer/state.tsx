@@ -983,6 +983,12 @@ const libraryMachine = createMachine(
                 target: 'switchingTag',
                 actions: () => console.log('deleted assignment'),
               },
+              REFRESH: {
+                target: 'switchingTag',
+                actions: assign<LibraryState, AnyEventObject>({
+                  libraryLoadId: () => uniqueId(),
+                }),
+              },
               SORTED_WEIGHTS: {
                 target: 'switchingTag',
                 actions: () => console.log('sorting weights'),

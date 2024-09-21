@@ -6,7 +6,6 @@ import type { ScaleModeOption } from '../../../settings';
 import './image.css';
 import './sizing.css';
 import MediaErrorMsg from './media-error';
-import { over } from 'lodash';
 
 type Props = {
   path: string;
@@ -54,7 +53,6 @@ export function Image({
   return data || !cache ? (
     <img
       className={`Image ${scaleMode} ${orientation}`}
-      loading="lazy"
       style={
         scaleMode === 'cover' && coverSize.height && coverSize.width
           ? { height: coverSize.height, width: coverSize.width }
