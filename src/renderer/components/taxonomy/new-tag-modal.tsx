@@ -10,6 +10,7 @@ type Props = {
   handleClose: () => void;
   currentValue?: string;
 };
+
 export default function NewTagModal({
   categoryLabel,
   handleClose,
@@ -21,6 +22,27 @@ export default function NewTagModal({
     handleClose();
   });
   const queryClient = useQueryClient();
+
+  function handleApplyELO() {
+    async function applyELO() {
+      await window.electron.ipcRenderer.invoke('apply-elo', [currentValue]);
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      handleClose();
+    }
+    applyELO();
+  }
+
+  function handleApplyWeight() {
+    async function applyWeight() {
+      await window.electron.ipcRenderer.invoke('apply-weight', [currentValue]);
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      handleClose();
+    }
+    applyWeight();
+  }
+
   function handleSubmit() {
     async function submit() {
       if (currentValue) {
@@ -73,6 +95,8 @@ export default function NewTagModal({
               }
             }}
           />
+          <button onClick={handleApplyELO}>Apply ELO</button>
+          <button onClick={handleApplyWeight}>Apply Weight</button>
           <button onClick={handleSubmit}>
             {currentValue ? 'Save' : 'Create'}
           </button>

@@ -43,22 +43,20 @@ async function loadTranscript(filePath: string) {
 async function _generateTranscript(mediaPath: string) {
   // Call the command line command whisper to generate the transcript.
   await new Promise((resolve, reject) => {
-    const outputDir = path.dirname(mediaPath);
-    const child = exec(
-      `whisper --output_format vtt --output_dir "${outputDir}" "${mediaPath}"`,
-      (error: any, stdout: any, stderr: any) => {
-        if (error) {
-          console.log(`error: ${error.message}`);
-          reject(error);
-        }
-        if (stderr) {
-          console.log(`stderr: ${stderr}`);
-          reject(stderr);
-        }
-        console.log(`stdout: ${stdout}`);
-        resolve(stdout);
+    const outputDir = path.normalize(path.dirname(mediaPath));
+    const command = `whisper-faster "${mediaPath}" --output_format vtt --output_dir ${outputDir} --language en`;
+    const child = exec(command, (error: any, stdout: any, stderr: any) => {
+      if (error) {
+        console.log(`error: ${error.message}`);
+        reject(error);
       }
-    );
+      if (stderr) {
+        console.log(`stderr: ${stderr}`);
+        reject(stderr);
+      }
+      console.log(`stdout: ${stdout}`);
+      resolve(stdout);
+    });
   });
 }
 
