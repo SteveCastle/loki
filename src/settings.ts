@@ -119,7 +119,7 @@ export const SORT_BY = {
       value: 'date',
     },
     weight: {
-      label: 'Weight',
+      label: 'Custom',
       value: 'weight',
     },
     elo: {
