@@ -2,7 +2,7 @@ import React, { useContext, useEffect, useRef } from 'react';
 import { useSelector } from '@xstate/react';
 import { useDrag } from 'react-dnd';
 import { GlobalStateContext } from '../../state';
-
+import { Item } from '../../state';
 import { Image } from '../media-viewers/image';
 import { Video } from '../media-viewers/video';
 import { getFileType, FileTypes } from '../../../file-types';
@@ -11,14 +11,6 @@ import { ScaleModeOption } from 'settings';
 import useTagDrop from 'renderer/hooks/useTagDrop';
 import './list-item.css';
 import Tags from '../metadata/tags';
-
-type Item = {
-  path: string;
-  weight: number;
-  timeStamp: number;
-  elo?: number;
-  tagLabel: string;
-};
 
 type Props = {
   item: Item;
