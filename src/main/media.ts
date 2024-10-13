@@ -5,7 +5,8 @@ const clipboardEx = require('electron-clipboard-ex');
 import type Store from 'electron-store';
 import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
-import { IpcMainInvokeEvent } from 'electron';
+import { IpcMainInvokeEvent, shell } from 'electron';
+import fs from 'fs';
 type LoadMediaInput = [string[], string];
 
 function createHash(input: string) {
@@ -144,4 +145,43 @@ const updateElo =
     await db.run(updateElo, [losingPath, newLoserElo, newLoserElo]);
   };
 
-export { loadMediaByTags, fetchMediaPreview, copyFileIntoClipboard, updateElo };
+type DeleteMediaInput = [string];
+const deleteMedia =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: DeleteMediaInput) => {
+    const filePath = args[0];
+    shell
+      .trashItem(filePath)
+      .then(
+        () => {
+          console.log('File was moved to the trash');
+          db.run('DELETE FROM media WHERE path = ?', [filePath]);
+          db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
+            filePath,
+          ]);
+        },
+        () => {
+          console.error('Error deleting file trying unlink:');
+          fs.unlinkSync(filePath);
+          db.run('DELETE FROM media WHERE path = ?', [filePath]);
+          db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
+            filePath,
+          ]);
+        }
+      )
+      .catch(() => {
+        console.error('Error deleting file trying unlink:');
+        fs.unlinkSync(filePath);
+        db.run('DELETE FROM media WHERE path = ?', [filePath]);
+        db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
+          filePath,
+        ]);
+      });
+  };
+
+export {
+  loadMediaByTags,
+  fetchMediaPreview,
+  copyFileIntoClipboard,
+  deleteMedia,
+  updateElo,
+};
