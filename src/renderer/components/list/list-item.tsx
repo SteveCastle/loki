@@ -139,7 +139,7 @@ export function ListItem({ item, idx, height }: Props) {
       ) : null}
       {showFileInfo === 'all' || showFileInfo === 'list' ? (
         <div className="item-info">
-          <span className="file-path">item.path</span>
+          <span className="file-path">{item.path}</span>
         </div>
       ) : null}
     </div>
