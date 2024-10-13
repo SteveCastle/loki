@@ -30,7 +30,7 @@ const FileTypes = {
 
 const Extensions = {
   Image: /\.(jpg|jpeg|png|bmp|svg|jfif|pjpeg|pjp|webp)$/i,
-  Video: /\.(mp4|webm|ogg|mkv|gif)$/i,
+  Video: /\.(mp4|webm|ogg|mkv|mov|gif)$/i,
   Audio: /\.(mp3|wav)$/i,
   Document: /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv)$/i,
 };
