@@ -112,7 +112,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         state.context.settings.filters,
         state.context.settings.sortBy
       );
-      return getValueWithCycling(library, state.context.cursor + offset);
+      return library
+        ? getValueWithCycling(library, state.context.cursor + offset)
+        : null;
     },
     (a, b) => a?.path === b?.path && a?.timeStamp === b?.timeStamp
   ) as Item;
