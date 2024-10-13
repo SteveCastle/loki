@@ -251,7 +251,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         settings.controlMode === 'mouse' ? 'grabbable' : '',
       ].join(' ')}
     >
-      {settings.comicMode && loadedFromDB ? (
+      {settings.battleMode && loadedFromDB ? (
         <BattleMode item={item} offset={offset} />
       ) : null}
       <div
@@ -289,9 +289,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       ) : null}
       {settings.showFileInfo === 'all' || settings.showFileInfo === 'detail' ? (
         <div className="item-info">
-          <span className="file-path">
-            {settings.battleMode ? item.elo?.toFixed(2) : item.path}
-          </span>
+          <span className="file-path">{item.path}</span>
         </div>
       ) : null}
     </div>

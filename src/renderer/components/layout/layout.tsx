@@ -105,6 +105,11 @@ const Layout = () => {
     (state) => state.context.settings.comicMode
   );
 
+  const battleMode = useSelector(
+    libraryService,
+    (state) => state.context.settings.battleMode
+  );
+
   const controlMode = useSelector(
     libraryService,
     (state) => state.context.settings.controlMode,
@@ -223,7 +228,7 @@ const Layout = () => {
               }
             >
               <Detail />
-              {comicMode ? <Detail offset={1} /> : null}
+              {comicMode || battleMode ? <Detail offset={1} /> : null}
             </div>
           </CollapsiblePanel>
           <VerticalHandle />

@@ -21,15 +21,33 @@
 .BattleMode button {
   pointer-events: auto;
   color: white;
-  background: #ba3c7d;
+  background: #212021;
   border-radius: 2px;
-  padding: 1rem;
+  padding: 0.5rem 1rem;
   border: none;
   margin: 0 2px;
   font-weight: 800;
   opacity: 0.6;
   cursor: pointer;
   transition: cubic-bezier(1, 0, 0, 1) 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.BattleMode button .vote-label {
+  font-size: 1.2rem;
+  font-weight: 800;
+}
+
+.BattleMode button .elo-score {
+  background-color: #ffffff;
+  margin-left: 0.5rem;
+  color: black;
+  border-radius: 8px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 400;
 }
 
 .BattleMode button:hover {
