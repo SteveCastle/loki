@@ -23,6 +23,7 @@ import {
   loadMediaByTags,
   copyFileIntoClipboard,
   updateElo,
+  deleteMedia,
   fetchMediaPreview,
 } from './media';
 import {
@@ -159,24 +160,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('load-media-by-tags', loadMediaByTags(db));
   ipcMain.handle('update-elo', updateElo(db));
   ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
-  ipcMain.handle('delete-file', async (event, args) => {
-    const filePath = args[0];
-    shell
-      .trashItem(filePath)
-      .then(
-        () => {
-          console.log('File was moved to the trash');
-        },
-        () => {
-          console.error('Error deleting file trying unlink:');
-          fs.unlinkSync(filePath);
-        }
-      )
-      .catch(() => {
-        console.error('Error deleting file trying unlink:');
-        fs.unlinkSync(filePath);
-      });
-  });
+  ipcMain.handle('delete-file', deleteMedia(db));
 
   // Register Metaata Events
   ipcMain.handle('load-tags-by-media-path', loadTagsByMediaPath(db));

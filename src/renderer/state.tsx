@@ -930,6 +930,37 @@ const libraryMachine = createMachine(
                   libraryLoadId: () => uniqueId(),
                 }),
               },
+              DELETE_FILE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    console.log('DELETE_FILE', context, event);
+                    try {
+                      window.electron.ipcRenderer.invoke('delete-file', [
+                        event.data.path,
+                      ]);
+                    } catch (e) {
+                      console.error(e);
+                    }
+                    const path = event.data.path;
+                    const library = [...context.library];
+                    const index = library.findIndex(
+                      (item) => item.path === path
+                    );
+                    if (index > -1) {
+                      library.splice(index, 1);
+                    }
+                    return library;
+                  },
+                  cursor: (context) => {
+                    // If the cursor was on the last item in the library, decrement it.
+                    if (context.cursor >= context.library.length - 1) {
+                      return context.cursor - 1;
+                    }
+                    return context.cursor;
+                  },
+                  libraryLoadId: () => uniqueId(),
+                }),
+              },
               SET_QUERY_TAG: [
                 {
                   target: 'switchingTag',
