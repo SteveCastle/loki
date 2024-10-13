@@ -121,7 +121,7 @@ function Tags({ item }: Props) {
               </li>
             );
           })}
-        <li>{item.elo && battleMode ? item.elo.toFixed(0) : 'Unranked'}</li>
+        <li>{item.elo ? item.elo.toFixed(0) : 'Unranked'}</li>
       </ul>
     </div>
   );
