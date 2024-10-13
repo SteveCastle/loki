@@ -65,7 +65,7 @@ export function ListItem({ item, idx, height }: Props) {
   const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
   const { libraryService } = useContext(GlobalStateContext);
   const cursor = useSelector(libraryService, (state) => state.context.cursor);
-  const { sortBy, battleMode } = useSelector(libraryService, (state) => {
+  const { sortBy } = useSelector(libraryService, (state) => {
     return state.context.settings;
   });
   const state = useSelector(
@@ -147,9 +147,7 @@ export function ListItem({ item, idx, height }: Props) {
       ) : null}
       {showFileInfo === 'all' || showFileInfo === 'list' ? (
         <div className="item-info">
-          <span className="file-path">
-            {battleMode ? item.elo?.toFixed(2) : item.path}
-          </span>
+          <span className="file-path">item.path</span>
         </div>
       ) : null}
     </div>

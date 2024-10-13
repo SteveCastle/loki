@@ -44,7 +44,7 @@ const updateElo = async ({
 
 export default function BattleMode({ item, offset }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
-
+  console.log(item);
   const { mutate } = useMutation({
     mutationFn: updateElo,
     onSuccess: (data, variables) => {
@@ -89,7 +89,10 @@ export default function BattleMode({ item, offset }: Props) {
           });
         }}
       >
-        Pick
+        <span className="vote-label">Vote</span>
+        <span className="elo-score">
+          {item?.elo ? item?.elo.toFixed(0) : 'Unranked'}
+        </span>
       </button>
     </div>
   );

@@ -79,7 +79,7 @@ export default function CommandPalette() {
     libraryService,
     (state) => state.context.initialFile
   );
-  const { playSound, recursive, showControls } = useSelector(
+  const { playSound, recursive, showControls, battleMode } = useSelector(
     libraryService,
     (state) => state.context.settings
   );
@@ -204,7 +204,15 @@ export default function CommandPalette() {
           {tab === 'imageOptions' && (
             <div className="tabContent">
               {Object.keys(SETTINGS)
-                .filter((k) => SETTINGS[k as SettingKey].display === 'image')
+                .filter((k) => {
+                  const setting = SETTINGS[k as SettingKey];
+                  // Exclude 'comicMode' if 'battleMode' is on
+                  if (battleMode && k === 'comicMode') {
+                    return false;
+                  }
+                  // Otherwise, allow if the display is 'image'
+                  return setting.display === 'image';
+                })
                 .map((settingKey) => (
                   <Setting
                     settingKey={settingKey as SettingKey}

@@ -4,6 +4,7 @@ import { uniqueId } from 'lodash';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { Tooltip } from 'react-tooltip';
 import './tags.css';
+import { useSelector } from '@xstate/react';
 
 type Tag = {
   tag_label: string;
@@ -64,6 +65,10 @@ function Tags({ item }: Props) {
       refetch();
     },
   });
+
+  const { battleMode } = useSelector(libraryService, (state) => {
+    return state.context.settings;
+  });
   if (isLoading || !data) return null;
   if (error) return <p>{error.message}</p>;
   return (
@@ -116,6 +121,7 @@ function Tags({ item }: Props) {
               </li>
             );
           })}
+        <li>{item.elo && battleMode ? item.elo.toFixed(0) : 'Unranked'}</li>
       </ul>
     </div>
   );
