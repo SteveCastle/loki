@@ -104,14 +104,16 @@ export function Detail({ offset = 0 }: { offset?: number }) {
 
   const item = useSelector(
     libraryService,
-    (state) =>
-      filter(
+    (state) => {
+      const library = filter(
         state.context.libraryLoadId,
         state.context.textFilter,
         state.context.library,
         state.context.settings.filters,
         state.context.settings.sortBy
-      )[state.context.cursor + offset],
+      );
+      return getValueWithCycling(library, state.context.cursor + offset);
+    },
     (a, b) => a?.path === b?.path && a?.timeStamp === b?.timeStamp
   ) as Item;
 
@@ -294,4 +296,19 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       ) : null}
     </div>
   );
+}
+
+function getValueWithCycling<T>(arr: T[], index: number): T {
+  if (arr.length === 0) {
+    throw new Error('Array is empty');
+  }
+
+  // Use the modulo operator to cycle through the array
+  const cycledIndex = index % arr.length;
+
+  // Ensure the index is non-negative
+  const normalizedIndex =
+    cycledIndex < 0 ? cycledIndex + arr.length : cycledIndex;
+
+  return arr[normalizedIndex];
 }
