@@ -300,9 +300,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   );
 }
 
-function getValueWithCycling<T>(arr: T[], index: number): T {
+function getValueWithCycling<T>(arr: T[], index: number): T | null {
   if (arr.length === 0) {
-    throw new Error('Array is empty');
+    return null;
   }
 
   // Use the modulo operator to cycle through the array
