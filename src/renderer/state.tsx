@@ -14,6 +14,7 @@ export type Item = {
   weight?: number;
   timeStamp?: number;
   elo?: number | null;
+  description?: string;
 };
 
 type Props = {
@@ -150,6 +151,14 @@ const willHaveTag = (context: LibraryState, event: AnyEventObject) => {
   return newTagList.length !== 0;
 };
 
+const isEmpty = (context: LibraryState, event: AnyEventObject) => {
+  return event.data.textFilter.length === 0;
+};
+
+const notEmpty = (context: LibraryState, event: AnyEventObject) => {
+  return event.data.textFilter.length > 0;
+};
+
 const noTag = (context: LibraryState, event: AnyEventObject) => {
   // Detect if the result of toggling a tag is an empty tag list.
   // If so return true.
@@ -196,7 +205,7 @@ const libraryMachine = createMachine(
       settings: {
         order: window.electron.store.get('sortOrder', 'asc'),
         sortBy: window.electron.store.get('sortBy', 'name'),
-        filters: window.electron.store.get('filters', 'all'),
+        filters: 'all',
         recursive: false,
         scale: 1,
         comicMode: window.electron.store.get('comicMode', false),
@@ -698,6 +707,40 @@ const libraryMachine = createMachine(
               },
             },
           },
+          loadingFromSearch: {
+            invoke: {
+              src: (context, event) => {
+                console.log('loading from Search', context, event);
+                return window.electron.loadMediaByDescriptionSearch(
+                  context.textFilter
+                );
+              },
+              onDone: {
+                target: 'loadedFromSearch',
+                actions: ['setLibraryWithPrevious'],
+              },
+              onError: {
+                target: 'loadedFromFS',
+              },
+            },
+          },
+          changingSearch: {
+            invoke: {
+              src: (context, event) => {
+                console.log('loading from Search', context, event);
+                return window.electron.loadMediaByDescriptionSearch(
+                  context.textFilter
+                );
+              },
+              onDone: {
+                target: 'loadedFromSearch',
+                actions: ['setLibrary'],
+              },
+              onError: {
+                target: 'loadedFromFS',
+              },
+            },
+          },
           switchingTag: {
             invoke: {
               src: (context, event) => {
@@ -749,6 +792,7 @@ const libraryMachine = createMachine(
               SET_FILE: {
                 target: 'loadingFromFS',
                 actions: assign<LibraryState, AnyEventObject>({
+                  textFilter: () => '',
                   initialFile: (context, event) => event.path,
                 }),
               },
@@ -813,13 +857,8 @@ const libraryMachine = createMachine(
                 },
               ],
               SET_TEXT_FILTER: {
+                target: 'loadingFromSearch',
                 actions: assign<LibraryState, AnyEventObject>({
-                  cursor: (context, event) => {
-                    return context.textFilter === event.data.textFilter
-                      ? context.cursor
-                      : 0;
-                  },
-                  libraryLoadId: () => uniqueId(),
                   textFilter: (context, event) => {
                     console.log('SET_TEXT_FILTER', context, event);
                     return event.data.textFilter;
@@ -854,6 +893,101 @@ const libraryMachine = createMachine(
               },
             },
           },
+          loadedFromSearch: {
+            initial: 'idle',
+            states: {
+              idle: {},
+            },
+            on: {
+              SET_QUERY_TAG: [
+                {
+                  target: 'changingSearch',
+                  actions: assign<LibraryState, AnyEventObject>({
+                    textFilter: (context, event) => {
+                      // Either add or remove the tag from the text filter.
+                      console.log('SET QUERY TAG', context, event);
+                      return event.data.tag;
+                    },
+                  }),
+                },
+              ],
+              SET_TEXT_FILTER: [
+                {
+                  cond: notEmpty,
+                  target: 'changingSearch',
+                  actions: assign<LibraryState, AnyEventObject>({
+                    textFilter: (context, event) => {
+                      console.log('Changing Search', context, event);
+                      return event.data.textFilter;
+                    },
+                  }),
+                },
+                {
+                  cond: isEmpty,
+                  target: 'loadingFromPreviousLibrary',
+                  actions: assign<LibraryState, AnyEventObject>({
+                    textFilter: (context, event) => {
+                      console.log('Clearing search', context, event);
+                      return event.data.textFilter;
+                    },
+                  }),
+                },
+              ],
+              SET_ACTIVE_CATEGORY: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  activeCategory: (context, event) => {
+                    console.log('SET_ACTIVE_CATEGORY', context, event);
+                    window.electron;
+                    return event.data.category;
+                  },
+                }),
+              },
+              SELECT_FILE: {
+                target: 'selecting',
+              },
+              SET_FILE: {
+                target: 'loadingFromFS',
+                actions: assign<LibraryState, AnyEventObject>({
+                  textFilter: () => '',
+                  initialFile: (context, event) => event.path,
+                }),
+              },
+              CHANGE_DB_PATH: {
+                target: 'selectingDB',
+              },
+              UPDATE_FILE_PATH: {
+                target: 'selectingFilePath',
+              },
+              SHUFFLE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context, event) => {
+                    console.log('SHUFFLE', context, event);
+                    return {
+                      ...context.settings,
+                      sortBy: 'shuffle',
+                    };
+                  },
+                }),
+              },
+              UPDATE_MEDIA_ELO: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    console.log('UPDATE_MEDIA_ELO', context, event);
+                    const { path, elo } = event;
+                    const library = [...context.library];
+                    const item = library.find((item) => item.path === path);
+                    if (item) {
+                      item.elo = elo;
+                    }
+                    return library;
+                  },
+                  libraryLoadId: () => uniqueId(),
+                }),
+              },
+            },
+          },
           loadedFromDB: {
             initial: 'idle',
             entry: (context, event) =>
@@ -865,6 +999,7 @@ const libraryMachine = createMachine(
               SET_FILE: {
                 target: 'loadingFromFS',
                 actions: assign<LibraryState, AnyEventObject>({
+                  textFilter: () => '',
                   initialFile: (context, event) => event.path,
                 }),
               },
@@ -893,6 +1028,7 @@ const libraryMachine = createMachine(
                 }),
               },
               SET_TEXT_FILTER: {
+                target: 'loadingFromSearch',
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
                   libraryLoadId: () => uniqueId(),

@@ -5,6 +5,7 @@ import { exec } from 'child_process';
 const isDev = require('electron-is-dev');
 import { promisify } from 'util';
 import { IpcMainInvokeEvent } from 'electron';
+import { Database } from './database';
 const isMac = os.platform() === 'darwin';
 const exifToolPath = isMac
   ? 'exiftool'
@@ -25,6 +26,7 @@ const execPromisified = promisify(exec);
 
 export interface Metadata {
   fileMetadata: FileMetadata;
+  description?: string;
   stableDiffusionMetaData?: StableDiffusionMetaData;
   extendedMetadata?: ExtendedMetadata;
 }
@@ -40,6 +42,8 @@ export interface FileMetadata {
   modified: Date;
   width?: number;
   height?: number;
+  description?: string;
+  transcript?: string;
 }
 
 // Interface with tags where tags is an object with string keys and an array of string values
@@ -154,50 +158,54 @@ function getExtendedMetadata(jsonPath: string): ExtendedMetadata {
   return data;
 }
 
-async function loadFileMetaData(
-  _: IpcMainInvokeEvent,
-  args: FileMetadataInput
-): Promise<Metadata> {
-  const [filePath] = args;
-  const absolutePath = path.resolve(filePath);
-  let stats;
-  try {
-    stats = await stat(absolutePath);
-  } catch (e) {
-    return {
-      fileMetadata: {
-        size: '0 Bytes',
-        modified: new Date(),
-        height: 0,
-        width: 0,
-      },
-    };
-  }
-  // load json from same path as file with .json appended
-  const jsonPath = absolutePath + '.json';
-  const extendedMetadata: ExtendedMetadata = getExtendedMetadata(jsonPath);
+const loadFileMetaData =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: FileMetadataInput): Promise<Metadata> => {
+    const [filePath] = args;
+    const absolutePath = path.resolve(filePath);
+    let stats;
+    try {
+      stats = await stat(absolutePath);
+    } catch (e) {
+      return {
+        fileMetadata: {
+          size: '0 Bytes',
+          modified: new Date(),
+          height: 0,
+          width: 0,
+        },
+      };
+    }
+    // load json from same path as file with .json appended
+    const jsonPath = absolutePath + '.json';
+    const extendedMetadata: ExtendedMetadata = getExtendedMetadata(jsonPath);
 
-  let exif;
-  let parameters;
-  try {
-    exif = await getExif(absolutePath);
-    parameters = exif ? exif['Parameters'] : null;
-  } catch (e) {
-    exif = null;
-    parameters = null;
-  }
-  return {
-    fileMetadata: {
-      size: formatFileSize(stats.size),
-      modified: stats.mtime,
-      height: exif ? exif['ImageHeight'] : 0,
-      width: exif ? exif['ImageWidth'] : 0,
-    },
-    extendedMetadata,
-    stableDiffusionMetaData: parameters
-      ? parseStableDiffusionMetaData(parameters)
-      : undefined,
+    const media = await db.get('SELECT * FROM media WHERE path = ?', [
+      absolutePath,
+    ]);
+
+    let exif;
+    let parameters;
+    try {
+      exif = await getExif(absolutePath);
+      parameters = exif ? exif['Parameters'] : null;
+    } catch (e) {
+      exif = null;
+      parameters = null;
+    }
+    return {
+      description: media?.description,
+      fileMetadata: {
+        size: formatFileSize(stats.size),
+        modified: stats.mtime,
+        height: exif ? exif['ImageHeight'] : 0,
+        width: exif ? exif['ImageWidth'] : 0,
+      },
+      extendedMetadata,
+      stableDiffusionMetaData: parameters
+        ? parseStableDiffusionMetaData(parameters)
+        : undefined,
+    };
   };
-}
 
 export { loadFileMetaData };

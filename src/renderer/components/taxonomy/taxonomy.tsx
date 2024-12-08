@@ -1,4 +1,4 @@
-import { useState, useContext, useRef } from 'react';
+import { useState, useContext, useRef, useEffect } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { Tooltip } from 'react-tooltip';
@@ -19,6 +19,7 @@ import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
 import './taxonomy.css';
 import Category from './category';
+import { debounce } from 'lodash';
 
 type Concept = {
   label: string;
@@ -80,6 +81,7 @@ export default function Taxonomy() {
       return a.matches(b);
     }
   );
+  const [newTextFilter, setNewTextFilter] = useState<string>('');
 
   function setTextFilter(text: string) {
     libraryService.send({
@@ -87,6 +89,25 @@ export default function Taxonomy() {
       data: { textFilter: text },
     });
   }
+
+  const debouncedSetTextFilter = useRef(
+    debounce((text: string) => {
+      setTextFilter(text);
+    }, 500)
+  );
+
+  useEffect(() => {
+    if (textFilter !== newTextFilter) {
+      debouncedSetTextFilter.current(newTextFilter);
+    }
+  }, [newTextFilter]);
+
+  // If textFilter changes, update the input field
+  useEffect(() => {
+    if (textFilter !== newTextFilter) {
+      setNewTextFilter(textFilter);
+    }
+  }, [textFilter]);
 
   const [tagFilter, setTagFilter] = useState<string>('');
 
@@ -163,12 +184,12 @@ export default function Taxonomy() {
             <input
               type="text"
               placeholder="Search Content"
-              value={textFilter}
-              onChange={(e) => setTextFilter(e.currentTarget.value)}
+              value={newTextFilter}
+              onChange={(e) => setNewTextFilter(e.currentTarget.value)}
             />
             <button
               onClick={() => {
-                setTextFilter('');
+                setNewTextFilter('');
                 setEditingTag(null);
               }}
             >

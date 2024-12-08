@@ -71,10 +71,15 @@ const createAssignment =
     // eslint-disable-next-line prefer-const
     let [mediaPaths, tagLabel, categoryLabel, timeStamp, applyTagPreview] =
       args;
+
+    if (!tagLabel || tagLabel.length === 0) {
+      return;
+    }
+
     // Open mediaPaths and create thumbnail as a blog to store in the database.
     await db.run('BEGIN TRANSACTION');
     const insertStatement = await db.prepare(
-      `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp) VALUES ($1, $2, $3, $4, $5) ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
+      `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
     );
     const results = await db.get(
       `SELECT COUNT(*) AS count FROM media_tag_by_category WHERE tag_label = $2`,
@@ -92,12 +97,14 @@ const createAssignment =
         if (getFileType(mediaPath) === 'image' || !timeStamp) {
           timeStamp = 0;
         }
+        const createdAt = Date.now();
         await insertStatement.run(
           mediaPath,
           tagLabel,
           categoryLabel,
           newWeight,
-          timeStamp
+          timeStamp,
+          createdAt
         );
       } catch (e) {
         console.log(e);

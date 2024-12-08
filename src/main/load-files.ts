@@ -4,6 +4,7 @@ import * as path from 'path';
 import naturalCompare from 'natural-compare';
 import { Database } from './database';
 import { IpcMainInvokeEvent } from 'electron';
+import { insertBulkMedia } from './media';
 
 type File = {
   path: string;
@@ -83,12 +84,14 @@ export const loadFiles =
     const files = await readdirStreamAsync(folderPath, recursive);
 
     const sortedFiles = files.sort(sorts[sortOrder]);
-    console.log('sorting with', sortOrder);
     const cursorIndex = sortedFiles.findIndex(
       (item) => path.basename(item.path) === fileName
     );
     const cursor = cursorIndex === -1 ? 0 : cursorIndex;
-    console.log('invoked loadFiles');
+    insertBulkMedia(
+      db,
+      sortedFiles.map((file) => file.path)
+    );
     return {
       library: sortedFiles,
       cursor,

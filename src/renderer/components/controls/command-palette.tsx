@@ -73,6 +73,10 @@ export default function CommandPalette() {
     )
   );
   const cursor = useSelector(libraryService, (state) => state.context.cursor);
+  const textFilter = useSelector(
+    libraryService,
+    (state) => state.context.textFilter
+  );
   const item = library[cursor];
   const fileType = item?.path ? getFileType(item.path) : '';
   const activeDirectory = useSelector(
@@ -189,7 +193,9 @@ export default function CommandPalette() {
       <div className="menuArea">
         <div className="menuContent">
           <span className="listContext">
-            {Array.isArray(tags) && tags.length > 0
+            {textFilter
+              ? textFilter
+              : Array.isArray(tags) && tags.length > 0
               ? tags.join(', ')
               : `${getDirectory(activeDirectory)}`}
           </span>

@@ -37,9 +37,6 @@ function filter(
       }
       return false;
     })
-    .filter((item) =>
-      item.path.toLowerCase().includes(textFilter.toLowerCase())
-    )
     .sort((a, b) => {
       if (sortBy === 'name') {
         return naturalCompare(a.path.toLowerCase(), b.path.toLowerCase());
