@@ -21,6 +21,7 @@ import { Database, initDB } from './database';
 
 import {
   loadMediaByTags,
+  loadMediaByDescriptionSearch,
   copyFileIntoClipboard,
   updateElo,
   deleteMedia,
@@ -131,6 +132,7 @@ ipcMain.handle('load-db', async (event, args) => {
   db = new Database(dbPath);
   await initDB(db);
   ipcMain.removeHandler('load-media-by-tags');
+  ipcMain.removeHandler('load-media-by-description-search');
   ipcMain.removeHandler('load-tags-by-media-path');
   ipcMain.removeHandler('copy-file-into-clipboard');
   ipcMain.removeHandler('load-taxonomy');
@@ -154,10 +156,15 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('create-job');
   ipcMain.removeHandler('delete-file');
   ipcMain.removeHandler('load-files');
+  ipcMain.removeHandler('load-file-metadata');
 
   // Register Media Events
   ipcMain.handle('load-files', loadFiles(db));
   ipcMain.handle('load-media-by-tags', loadMediaByTags(db));
+  ipcMain.handle(
+    'load-media-by-description-search',
+    loadMediaByDescriptionSearch(db)
+  );
   ipcMain.handle('update-elo', updateElo(db));
   ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
   ipcMain.handle('delete-file', deleteMedia(db));
@@ -165,7 +172,7 @@ ipcMain.handle('load-db', async (event, args) => {
   // Register Metaata Events
   ipcMain.handle('load-tags-by-media-path', loadTagsByMediaPath(db));
 
-  // Register Taxonomy Events
+  // Register Taxonomy Eventsmet
   ipcMain.handle('load-taxonomy', loadTaxonomy(db));
   ipcMain.handle('create-tag', createTag(db));
   ipcMain.handle('create-category', createCategory(db));
@@ -174,7 +181,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('update-assignment-weight', updateAssignmentWeight(db));
   ipcMain.handle('update-tag-weight', updateTagWeight(db));
   ipcMain.handle('fetch-tag-preview', fetchTagPreview(db));
-  ipcMain.handle('fetch-media-preview', fetchMediaPreview(store));
+  ipcMain.handle('fetch-media-preview', fetchMediaPreview(db, store));
+  ipcMain.handle('load-file-metadata', loadFileMetaData(db));
 
   ipcMain.handle('select-new-path', selectNewPath(db, mainWindow));
   ipcMain.handle('rename-category', renameCategory(db));
@@ -266,8 +274,6 @@ ipcMain.handle(
     }
   }
 );
-
-ipcMain.handle('load-file-metadata', loadFileMetaData);
 
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');

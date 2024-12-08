@@ -38,6 +38,27 @@ function checkIfMediaCacheExists(cachePath: string) {
   return require('fs').existsSync(cachePath);
 }
 
+const loadMediaByDescriptionSearch =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: string[]) => {
+    const search = args[0];
+    const sql = `SELECT DISTINCT media.*
+FROM media
+LEFT JOIN media_tag_by_category mtc ON path = mtc.media_path
+WHERE media.description LIKE $1
+   OR media.path LIKE $1
+   OR mtc.tag_label LIKE $1;`;
+    try {
+      const media = await db.all(sql, [`%${search}%`]);
+      const library = media.map((media) => ({
+        path: media.path,
+        weight: media.weight,
+      }));
+      return { library, cursor: 0 };
+    } catch (e) {
+      console.log(e);
+    }
+  };
+
 const loadMediaByTags =
   (db: Database) => async (_: IpcMainInvokeEvent, args: LoadMediaInput) => {
     const tableName = 'media_tag_by_category';
@@ -82,7 +103,7 @@ const loadMediaByTags =
       const library = media.map((media) => ({
         path: media.media_path,
         weight: media.weight,
-        mtimeMs: 0,
+        mtimeMs: media.created_at || 0,
         timeStamp: media.time_stamp,
         elo: media.elo,
         tagLabel: media.tag_label,
@@ -95,7 +116,7 @@ const loadMediaByTags =
 
 type FetchMediaPreviewInput = [string, string?, timeStamp?: number];
 const fetchMediaPreview =
-  (store: Store) =>
+  (db: Database, store: Store) =>
   async (_: IpcMainInvokeEvent, args: FetchMediaPreviewInput) => {
     const filePath = args[0];
     const cache = args[1] || 'thumbnail_path_600';
@@ -115,6 +136,8 @@ const fetchMediaPreview =
       cache,
       timeStamp
     );
+    insertMedia(db, filePath);
+
     const thumbnailExists = checkIfMediaCacheExists(thumbnailFullPath);
     if (!thumbnailExists || regenerateMediaCache) {
       await asyncCreateThumbnail(filePath, basePath, cache, timeStamp);
@@ -178,8 +201,83 @@ const deleteMedia =
       });
   };
 
+// Function to calculate file hash
+async function calculateFileHash(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const maxBytes = 3 * 1024 * 1024; // 3MB
+
+    // Create a read stream with a limit of 3MB
+    const stream = fs.createReadStream(filePath, {
+      start: 0,
+      end: maxBytes - 1,
+    });
+
+    stream.on('data', (data) => hash.update(data));
+    stream.on('end', () => resolve(hash.digest('hex')));
+    stream.on('error', (err) => reject(err));
+  });
+}
+export async function insertBulkMedia(
+  db: Database,
+  filePaths: string[]
+): Promise<void> {
+  await db.run('BEGIN TRANSACTION');
+  const insertStatement = await db.prepare(
+    `
+    INSERT INTO media (path)
+    VALUES (?)
+    ON CONFLICT(path)
+    DO NOTHING
+    `
+  );
+
+  for (const filePath of filePaths) {
+    await insertStatement.run(filePath);
+  }
+
+  await db.run('COMMIT');
+}
+
+// Main function
+async function insertMedia(db: Database, filePath: string): Promise<void> {
+  try {
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      console.error('File does not exist:', filePath);
+      return;
+    }
+
+    // Get file stats
+    const stats = fs.statSync(filePath);
+    const fileSize = stats.size;
+
+    // Calculate file hash
+    const fileHash = await calculateFileHash(filePath);
+
+    db.run(
+      `
+        INSERT INTO media (path, size, hash, views)
+        VALUES (?, ?, ?, 1)
+        ON CONFLICT(path)
+        DO UPDATE SET
+          size = excluded.size,
+          hash = excluded.hash,
+          views = views + 1
+        `,
+      [filePath, fileSize, fileHash]
+    );
+  } catch (error) {
+    console.error(
+      'Error processing file:',
+      error instanceof Error ? error.message : error
+    );
+  }
+}
+
 export {
   loadMediaByTags,
+  loadMediaByDescriptionSearch,
   fetchMediaPreview,
   copyFileIntoClipboard,
   deleteMedia,

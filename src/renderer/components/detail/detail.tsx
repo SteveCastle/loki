@@ -90,14 +90,6 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
   let { events } = useScrollOnDrag(containerRef);
   const { libraryService } = useContext(GlobalStateContext);
-  const state = useSelector(
-    libraryService,
-    (state) => state,
-    (a, b) => {
-      return a.matches(b);
-    }
-  );
-  const loadedFromDB = state.matches({ library: 'loadedFromDB' });
   const settings = useSelector(libraryService, (state) => {
     return state.context.settings;
   });
@@ -255,9 +247,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         settings.controlMode === 'mouse' ? 'grabbable' : '',
       ].join(' ')}
     >
-      {settings.battleMode && loadedFromDB ? (
-        <BattleMode item={item} offset={offset} />
-      ) : null}
+      {settings.battleMode ? <BattleMode item={item} offset={offset} /> : null}
       <div
         className="Detail"
         onContextMenu={(e) => {
@@ -293,7 +283,15 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       ) : null}
       {settings.showFileInfo === 'all' || settings.showFileInfo === 'detail' ? (
         <div className="item-info">
-          <span className="file-path">{item.path}</span>
+          <span
+            className="file-path"
+            onClick={() => {
+              console.log('SET_FILE', { path: item.path });
+              libraryService.send('SET_FILE', { path: item.path });
+            }}
+          >
+            {item.path}
+          </span>
         </div>
       ) : null}
     </div>

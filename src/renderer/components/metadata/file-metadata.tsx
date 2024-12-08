@@ -36,6 +36,7 @@ export default function FileMetadata({ item }: { item: any }) {
           <h2>Tags</h2>
           {item?.path && <Tags item={item} />}
         </div>
+
         <div className="placeholder">
           <SkeletonTheme baseColor="#202020" highlightColor="#444">
             <Skeleton count={3} />
@@ -58,6 +59,10 @@ export default function FileMetadata({ item }: { item: any }) {
       <div className="section">
         <h2>Tags</h2>
         {item?.path && <Tags item={item} />}
+      </div>
+      <div className="section">
+        <h2>Description</h2>
+        {data?.description}
       </div>
       <div className="section">
         <h2

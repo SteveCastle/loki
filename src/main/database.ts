@@ -89,6 +89,11 @@ export async function initDB(db: Database) {
   path TEXT PRIMARY KEY,
   description TEXT,
   transcript TEXT,
+  views INTEGER,
+  wins INTEGER,
+  losses INTEGER,
+  size INTEGER,
+  hash TEXT,
   elo REAL
 )`);
 
@@ -98,13 +103,25 @@ export async function initDB(db: Database) {
   );
   if (mediaTable) {
     const tableInfo = await db.all(`PRAGMA table_info(media)`);
-    const columnExists = tableInfo.some((column: any) => column.name === 'elo');
-
-    if (!columnExists) {
-      await db.run(`ALTER TABLE media ADD COLUMN elo REAL`);
+    const columnsToMigrate = [
+      { name: 'elo', type: 'REAL' },
+      { name: 'views', type: 'INTEGER' },
+      { name: 'wins', type: 'INTEGER' },
+      { name: 'losses', type: 'INTEGER' },
+      { name: 'size', type: 'INTEGER' },
+      { name: 'hash', type: 'TEXT' },
+    ];
+    for (const column of columnsToMigrate) {
+      const columnExists = tableInfo.some(
+        (tableColumn: any) => tableColumn.name === column.name
+      );
+      if (!columnExists) {
+        await db.run(
+          `ALTER TABLE media ADD COLUMN ${column.name} ${column.type}`
+        );
+      }
     }
   }
-
   await db.run(`CREATE TABLE IF NOT EXISTS category (
   label TEXT PRIMARY KEY,
   weight REAL
@@ -127,10 +144,29 @@ export async function initDB(db: Database) {
   category_label TEXT,
   weight REAL,
   job_id INTEGER,
+  created_at INTEGER,
   time_stamp REAL,
   PRIMARY KEY (media_path, tag_label, category_label, time_stamp),
   FOREIGN KEY (media_path) REFERENCES media (path),
   FOREIGN KEY (tag_label) REFERENCES tag (label),
   FOREIGN KEY (category_label) REFERENCES category (label)
 )`);
+
+  const tagTable = await db.get(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='media_tag_by_category'`
+  );
+  if (tagTable) {
+    const tableInfo = await db.all(`PRAGMA table_info(media_tag_by_category)`);
+    const columnsToMigrate = [{ name: 'created_at', type: 'INTEGER' }];
+    for (const column of columnsToMigrate) {
+      const columnExists = tableInfo.some(
+        (tableColumn: any) => tableColumn.name === column.name
+      );
+      if (!columnExists) {
+        await db.run(
+          `ALTER TABLE media_tag_by_category ADD COLUMN ${column.name} ${column.type}`
+        );
+      }
+    }
+  }
 }

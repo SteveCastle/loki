@@ -17,6 +17,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  white-space: pre-line;
 }
 .InfoTable .value .copy-button {
   background: none;

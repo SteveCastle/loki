@@ -23,6 +23,9 @@ declare global {
         tag: string[],
         mode: FilterModeOption
       ) => Promise<{ path: string }[]>;
+      loadMediaByDescriptionSearch: (
+        description: string
+      ) => Promise<{ path: string }[]>;
       fetchTagPreview: (tag: string) => Promise<string>;
       fetchMediaPreview: (
         path: string,
