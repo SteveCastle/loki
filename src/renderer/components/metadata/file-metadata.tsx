@@ -6,6 +6,7 @@ import InfoTable from './info-table';
 import Tags from './tags';
 import PathTree from './path-tree';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
+import { Description } from './description';
 
 const loadFileMetadata = (path: string) => async (): Promise<Metadata> => {
   let metadata: any;
@@ -62,7 +63,7 @@ export default function FileMetadata({ item }: { item: any }) {
       </div>
       <div className="section">
         <h2>Description</h2>
-        {data?.description}
+        <Description data={data} key={item.path} path={item.path} />
       </div>
       <div className="section">
         <h2

@@ -1,0 +1,28 @@
+.Description {
+  margin-bottom: 10px;
+}
+
+/* When showing text as a <div> */
+.Description > div {
+  min-height: 100px;
+  padding: 10px;
+  border: 1px solid rgb(53, 53, 59);
+  border-radius: 5px;
+  background-color: rgb(23, 23, 26);
+  color: #fff;
+  cursor: pointer; /* so users know it's clickable */
+}
+
+/* When editing as a <textarea> */
+.Description > textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 10px;
+  border: 1px solid rgb(53, 53, 59);
+  border-radius: 5px;
+  background-color: rgb(23, 23, 26);
+  color: #fff;
+  resize: vertical; /* let users resize vertically if desired */
+  outline: none;
+  box-sizing: border-box;
+}

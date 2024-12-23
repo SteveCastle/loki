@@ -168,6 +168,19 @@ const updateElo =
     await db.run(updateElo, [losingPath, newLoserElo, newLoserElo]);
   };
 
+type UpdateDescriptionInput = [string, string];
+
+const updateDescription =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateDescriptionInput) => {
+    const filePath = args[0];
+    const description = args[1];
+    db.run('UPDATE media SET description = ? WHERE path = ?', [
+      description,
+      filePath,
+    ]);
+  };
+
 type DeleteMediaInput = [string];
 const deleteMedia =
   (db: Database) => async (_: IpcMainInvokeEvent, args: DeleteMediaInput) => {
@@ -282,4 +295,5 @@ export {
   copyFileIntoClipboard,
   deleteMedia,
   updateElo,
+  updateDescription,
 };
