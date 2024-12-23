@@ -16,6 +16,7 @@ export type Channels =
   | 'toggle-fullscreen'
   | 'add-media'
   | 'update-elo'
+  | 'update-description'
   | 'copy-file-into-clipboard'
   | 'load-taxonomy'
   | 'load-file-metadata'

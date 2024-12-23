@@ -185,6 +185,12 @@ export default function Taxonomy() {
               type="text"
               placeholder="Search Content"
               value={newTextFilter}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+              }}
+              onKeyUp={(e) => {
+                e.stopPropagation();
+              }}
               onChange={(e) => setNewTextFilter(e.currentTarget.value)}
             />
             <button
@@ -201,6 +207,12 @@ export default function Taxonomy() {
               type="text"
               placeholder="Search Tags"
               value={tagFilter}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+              }}
+              onKeyUp={(e) => {
+                e.stopPropagation();
+              }}
               onChange={(e) => setTagFilter(e.currentTarget.value)}
             />
             <button

@@ -26,6 +26,7 @@ import {
   updateElo,
   deleteMedia,
   fetchMediaPreview,
+  updateDescription,
 } from './media';
 import {
   loadTaxonomy,
@@ -146,6 +147,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('fetch-media-preview');
   ipcMain.removeHandler('add-media');
   ipcMain.removeHandler('update-elo');
+  ipcMain.removeHandler('update-description');
   ipcMain.removeHandler('select-new-path');
   ipcMain.removeHandler('rename-category');
   ipcMain.removeHandler('delete-category');
@@ -166,6 +168,7 @@ ipcMain.handle('load-db', async (event, args) => {
     loadMediaByDescriptionSearch(db)
   );
   ipcMain.handle('update-elo', updateElo(db));
+  ipcMain.handle('update-description', updateDescription(db));
   ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
   ipcMain.handle('delete-file', deleteMedia(db));
 
