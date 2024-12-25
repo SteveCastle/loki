@@ -895,6 +895,10 @@ const libraryMachine = createMachine(
           },
           loadedFromSearch: {
             initial: 'idle',
+            entry: assign<LibraryState, AnyEventObject>({
+              dbQuery: () => ({ tags: [] }),
+              libraryLoadId: () => uniqueId(),
+            }),
             states: {
               idle: {},
             },
@@ -984,6 +988,13 @@ const libraryMachine = createMachine(
                     return library;
                   },
                   libraryLoadId: () => uniqueId(),
+                }),
+              },
+              SET_SCROLL_POSITION: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  scrollPosition: (context, event) => {
+                    return event.position;
+                  },
                 }),
               },
             },
