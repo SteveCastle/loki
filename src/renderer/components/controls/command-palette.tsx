@@ -244,7 +244,7 @@ export default function CommandPalette() {
           {tab === 'hotKeyOptions' && <HotKeyOptions />}
           {tab === 'generalOptions' && (
             <div className="tabContent">
-              <p>v2.2.0</p>
+              <p>v2.3.0</p>
               {Object.keys(SETTINGS)
                 .filter((k) => SETTINGS[k as SettingKey].display === 'general')
                 .map((settingKey) => (

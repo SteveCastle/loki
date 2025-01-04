@@ -1,6 +1,6 @@
 {
   "name": "loki",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "productName": "Lowkey Media Viewer",
   "description": "A Media library for quick curation.",
   "keywords": [],
@@ -344,10 +344,6 @@
       "owner": "stevecastle",
       "repo": "loki"
     }
-  },
-  "devEngines": {
-    "node": ">=14.x",
-    "npm": ">=7.x"
   },
   "electronmon": {
     "patterns": [
