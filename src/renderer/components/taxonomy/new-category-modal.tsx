@@ -79,8 +79,12 @@ export default function NewCategoryModal({
             autoFocus
             type="text"
             className="input"
-            onChange={(e) => setNewLabel(e.currentTarget.value)}
+            onChange={(e) => {
+              e.stopPropagation();
+              setNewLabel(e.currentTarget.value);
+            }}
             onKeyDown={(e) => {
+              e.stopPropagation();
               if (e.key === 'Enter') {
                 handleSubmit();
               }
