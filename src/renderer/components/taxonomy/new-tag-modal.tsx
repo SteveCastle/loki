@@ -65,9 +65,13 @@ export default function NewTagModal({
             autoFocus
             type="text"
             className="input"
-            onChange={(e) => setNewLabel(e.currentTarget.value)}
+            onChange={(e) => {
+              e.stopPropagation();
+              setNewLabel(e.currentTarget.value);
+            }}
             value={newLabel}
             onKeyDown={(e) => {
+              e.stopPropagation();
               if (e.key === 'Enter') {
                 handleSubmit();
               }
