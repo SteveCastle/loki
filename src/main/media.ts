@@ -38,24 +38,167 @@ function checkIfMediaCacheExists(cachePath: string) {
   return require('fs').existsSync(cachePath);
 }
 
+function parseSearchString(search: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < search.length; i++) {
+    const c = search[i];
+
+    if (c === '"') {
+      // Toggle inQuotes on/off
+      inQuotes = !inQuotes;
+    } else if (/\s/.test(c) && !inQuotes) {
+      // Whitespace outside quotes => new token boundary
+      if (current.trim()) {
+        tokens.push(current);
+      }
+      current = '';
+    } else {
+      // Accumulate character
+      current += c;
+    }
+  }
+
+  // Push the last token if present
+  if (current.trim()) {
+    tokens.push(current);
+  }
+
+  return tokens;
+}
+
 const loadMediaByDescriptionSearch =
   (db: Database) => async (_: IpcMainInvokeEvent, args: string[]) => {
-    const search = args[0];
-    const sql = `SELECT DISTINCT media.*
-FROM media
-LEFT JOIN media_tag_by_category mtc ON path = mtc.media_path
-WHERE media.description LIKE $1
-   OR media.path LIKE $1
-   OR mtc.tag_label LIKE $1;`;
+    const search = args[0] || '';
+
+    // 1) Tokenize: respect quoted phrases
+    const rawTokens = parseSearchString(search);
+
+    // 2) Build up WHERE clauses
+    const whereClauses: string[] = [];
+    const params: string[] = [];
+
+    for (let token of rawTokens) {
+      if (!token) continue;
+
+      // Check if token is excluded (leading '-')
+      let isExclude = false;
+      if (token.startsWith('-')) {
+        isExclude = true;
+        token = token.slice(1).trim();
+      }
+
+      // Identify columns to search
+      let columns: Array<'description' | 'path' | 'tag'> = [];
+
+      // Check for column-specific prefixes
+      if (token.startsWith('description:')) {
+        columns = ['description'];
+        token = token.replace(/^description:/, '').trim();
+      } else if (token.startsWith('tag:')) {
+        columns = ['tag'];
+        token = token.replace(/^tag:/, '').trim();
+      } else if (token.startsWith('path:')) {
+        columns = ['path'];
+        token = token.replace(/^path:/, '').trim();
+      } else {
+        // No prefix => search in all three
+        columns = ['description', 'path', 'tag'];
+      }
+
+      // If the token ended up empty after stripping prefixes, skip
+      if (!token) continue;
+
+      // We'll accumulate sub-expressions for these columns
+      const subExprs: string[] = [];
+      const likeParam = `%${token}%`;
+
+      for (const col of columns) {
+        if (col === 'description') {
+          if (isExclude) {
+            subExprs.push('(media.description NOT LIKE ?)');
+            params.push(likeParam);
+          } else {
+            subExprs.push('(media.description LIKE ?)');
+            params.push(likeParam);
+          }
+        } else if (col === 'path') {
+          if (isExclude) {
+            subExprs.push('(media.path NOT LIKE ?)');
+            params.push(likeParam);
+          } else {
+            subExprs.push('(media.path LIKE ?)');
+            params.push(likeParam);
+          }
+        } else if (col === 'tag') {
+          if (isExclude) {
+            // Must NOT have this tag
+            subExprs.push(`
+            NOT EXISTS (
+              SELECT 1 FROM media_tag_by_category mtc
+              WHERE mtc.media_path = media.path
+                AND mtc.tag_label LIKE ?
+            )
+          `);
+            params.push(likeParam);
+          } else {
+            // Must have this tag
+            subExprs.push(`
+            EXISTS (
+              SELECT 1 FROM media_tag_by_category mtc
+              WHERE mtc.media_path = media.path
+                AND mtc.tag_label LIKE ?
+            )
+          `);
+            params.push(likeParam);
+          }
+        }
+      }
+
+      // If multiple columns, for "includes" we OR them; for "excludes" we AND them.
+      // e.g. a no-prefix token "foo" => (description LIKE ? OR path LIKE ? OR tag LIKE ?)
+      //      an exclude token "-foo" => (description NOT LIKE ? AND path NOT LIKE ? AND NOT EXISTS ... )
+      let combined: string;
+      if (columns.length > 1) {
+        if (isExclude) {
+          combined = '(' + subExprs.join(' AND ') + ')';
+        } else {
+          combined = '(' + subExprs.join(' OR ') + ')';
+        }
+      } else {
+        // Only one sub-expression
+        combined = subExprs[0];
+      }
+
+      whereClauses.push(combined);
+    }
+
+    // Combine all conditions with AND
+    const whereClause = whereClauses.length
+      ? `WHERE ${whereClauses.join(' AND ')}`
+      : '';
+
+    // Final SQL: we do subqueries for tags instead of an explicit join
+    const sql = `
+    SELECT DISTINCT media.*
+    FROM media
+    ${whereClause}
+  `;
+
     try {
-      const media = await db.all(sql, [`%${search}%`]);
-      const library = media.map((media) => ({
-        path: media.path,
-        weight: media.weight,
+      const mediaRows = await db.all(sql, params);
+
+      const library = mediaRows.map((m: any) => ({
+        path: m.path,
+        weight: m.weight,
       }));
+
       return { library, cursor: 0 };
-    } catch (e) {
-      console.log(e);
+    } catch (error) {
+      console.error('Error in loadMediaByDescriptionSearch:', error);
+      throw error;
     }
   };
 
