@@ -172,7 +172,7 @@ export function List() {
             style={{
               height: `${virtualItem.size}px`,
               transform: `translateY(${virtualItem.start}px)`,
-              gridTemplateColumns: `repeat(${columns}, 1fr)`,
+              gridAutoFlow: 'column',
             }}
           >
             {new Array(columns).fill(columns).map((_, i) => {
