@@ -54,7 +54,6 @@ export function Image({
   return data || !cache ? (
     <img
       className={`Image ${scaleMode} ${orientation}`}
-      loading="lazy"
       style={
         scaleMode === 'cover' && coverSize.height && coverSize.width
           ? { height: coverSize.height, width: coverSize.width }
