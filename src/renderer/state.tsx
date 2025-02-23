@@ -908,9 +908,16 @@ const libraryMachine = createMachine(
                   target: 'changingSearch',
                   actions: assign<LibraryState, AnyEventObject>({
                     textFilter: (context, event) => {
-                      // Either add or remove the tag from the text filter.
                       console.log('SET QUERY TAG', context, event);
-                      return event.data.tag;
+                      // If the event.data.tag is already in the textFilter, remove it.
+                      // If it withis not in the textFilter, add it with a leading space wrapped in quotes to the end of the textFilter.
+                      const tag = `"tag:${event.data.tag}"`;
+                      const textFilter = context.textFilter;
+                      const index = textFilter.indexOf(tag);
+                      if (index > -1) {
+                        return textFilter.replace(tag, '');
+                      }
+                      return `${textFilter} ${tag}`;
                     },
                   }),
                 },
@@ -1039,7 +1046,7 @@ const libraryMachine = createMachine(
                 }),
               },
               SET_TEXT_FILTER: {
-                target: 'loadingFromSearch',
+                target: 'changingSearch',
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
                   libraryLoadId: () => uniqueId(),

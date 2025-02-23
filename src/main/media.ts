@@ -360,7 +360,7 @@ const deleteMedia =
 // Function to calculate file hash
 async function calculateFileHash(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
+    const hash = crypto.createHash('md5');
     const maxBytes = 3 * 1024 * 1024; // 3MB
 
     // Create a read stream with a limit of 3MB
@@ -401,6 +401,8 @@ async function insertMedia(db: Database, filePath: string): Promise<void> {
     // Check if file exists
     if (!fs.existsSync(filePath)) {
       console.error('File does not exist:', filePath);
+      // Remove path from database
+      db.run('DELETE FROM media WHERE path = ?', [filePath]);
       return;
     }
 
