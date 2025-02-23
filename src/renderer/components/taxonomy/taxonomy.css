@@ -32,6 +32,7 @@
   position: relative;
 }
 
+
 .Taxonomy .search .textSearch button {
   border: none;
   background: none;
@@ -57,6 +58,14 @@
   padding: 0.5rem;
   border-radius: 2px;
   color: #fff;
+}
+
+.Taxonomy .search input:focus {
+  outline: none;
+}
+
+.Taxonomy .search input:disabled {
+  opacity: 0.5;
 }
 
 .Taxonomy .categories-column {

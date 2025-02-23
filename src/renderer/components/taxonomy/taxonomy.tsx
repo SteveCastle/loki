@@ -119,6 +119,13 @@ export default function Taxonomy() {
     libraryService,
     (state) => state.context.activeCategory
   );
+
+  const isDisabled =
+    state.matches({ library: 'boot' }) ||
+    state.matches({ library: 'selectingDB' }) ||
+    state.matches({ library: 'loadingFromFS' }) ||
+    state.matches({ library: 'loadingDB' });
+
   function setActiveCategory(category: string) {
     libraryService.send({
       type: 'SET_ACTIVE_CATEGORY',
@@ -192,6 +199,7 @@ export default function Taxonomy() {
                 e.stopPropagation();
               }}
               onChange={(e) => setNewTextFilter(e.currentTarget.value)}
+              disabled={isDisabled}
             />
             <button
               onClick={() => {
