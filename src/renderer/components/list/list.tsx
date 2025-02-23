@@ -46,14 +46,17 @@ export function List() {
   );
   const items = library;
 
-  const { gridSize } = useSelector(
-    libraryService,
-    (state) => state.context.settings
-  );
+  const [columns, rows] = useSelector(libraryService, (state) => {
+    const columns = state.context.settings.gridSize[0];
+    let rows = state.context.settings.gridSize[1];
+    const totalNumberOfRows = Math.ceil(items.length / columns);
+    if (totalNumberOfRows < rows) {
+      rows = totalNumberOfRows;
+    }
+    return [columns, rows];
+  });
 
-  const [columns, setColumns] = useState(gridSize[0]);
-
-  const [height, setHeight] = useState(window.innerHeight / gridSize[1]);
+  const [height, setHeight] = useState(window.innerHeight / rows);
 
   const parentRef = useRef<HTMLDivElement>(null);
   const listLength = Math.ceil(items.length / columns);
@@ -66,17 +69,15 @@ export function List() {
   });
 
   useEffect(() => {
-    setHeight(window.innerHeight / gridSize[1]);
-    setColumns(gridSize[0]);
+    setHeight(window.innerHeight / rows);
     rowVirtualizer.measure();
     const handleResize = () => {
-      setHeight(window.innerHeight / gridSize[1]);
-      setColumns(gridSize[0]);
+      setHeight(window.innerHeight / rows);
       rowVirtualizer.measure();
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [gridSize, rowVirtualizer]);
+  }, [columns, rows, library, rowVirtualizer]);
 
   useEffect(() => {
     if (initialLoad && parentRef.current && cursor) {
