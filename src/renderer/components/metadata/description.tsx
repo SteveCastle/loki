@@ -29,10 +29,21 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
     }
   }, [description]);
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'; // Reset height to recalculate
+      textareaRef.current.style.height =
+        textareaRef.current.scrollHeight + 'px'; // Set new height
+    }
+  }, [description, editing]); // Runs whenever text changes
+
   return (
     <div className="Description">
       {editing ? (
         <textarea
+          ref={textareaRef}
           autoFocus
           value={description}
           onKeyDown={(e) => {

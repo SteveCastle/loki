@@ -4,6 +4,7 @@
   height: 100vh;
   border-left: 1px solid var(--border-color);
   font-size: 0.7rem;
+  width: 100%;
 }
 
 .FileMetadata .section {
