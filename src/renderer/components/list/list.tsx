@@ -61,6 +61,7 @@ export function List() {
   const parentRef = useRef<HTMLDivElement>(null);
   const listLength = Math.ceil(items.length / columns);
   // The virtualizer
+  console.log('rendering list');
   const rowVirtualizer = useVirtualizer({
     count: listLength,
     getScrollElement: () => parentRef.current,
@@ -69,15 +70,19 @@ export function List() {
   });
 
   useEffect(() => {
+    console.log('setting height', window.innerHeight / rows);
     setHeight(window.innerHeight / rows);
-    rowVirtualizer.measure();
     const handleResize = () => {
       setHeight(window.innerHeight / rows);
-      rowVirtualizer.measure();
     };
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [columns, rows, library, rowVirtualizer]);
+
+  // if height changes run   rowVirtualizer.measure();
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [height]);
 
   useEffect(() => {
     if (initialLoad && parentRef.current && cursor) {
