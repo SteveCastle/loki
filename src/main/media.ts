@@ -91,7 +91,7 @@ const loadMediaByDescriptionSearch =
       }
 
       // Identify columns to search
-      let columns: Array<'description' | 'path' | 'tag'> = [];
+      let columns: Array<'description' | 'path' | 'tag' | 'hash'> = [];
 
       // Check for column-specific prefixes
       if (token.startsWith('description:')) {
@@ -103,6 +103,9 @@ const loadMediaByDescriptionSearch =
       } else if (token.startsWith('path:')) {
         columns = ['path'];
         token = token.replace(/^path:/, '').trim();
+      } else if (token.startsWith('hash:')) {
+        columns = ['hash'];
+        token = token.replace(/^hash:/, '').trim();
       } else {
         // No prefix => search in all three
         columns = ['description', 'path', 'tag'];
@@ -130,6 +133,14 @@ const loadMediaByDescriptionSearch =
             params.push(likeParam);
           } else {
             subExprs.push('(media.path LIKE ?)');
+            params.push(likeParam);
+          }
+        } else if (col === 'hash') {
+          if (isExclude) {
+            subExprs.push('(media.hash NOT LIKE ?)');
+            params.push(likeParam);
+          } else {
+            subExprs.push('(media.hash LIKE ?)');
             params.push(likeParam);
           }
         } else if (col === 'tag') {
