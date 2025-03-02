@@ -27,14 +27,12 @@
 .ListItem.hovered.left video {
   z-index: -1;
   transform: translateX(20px) scale3d(0.8, 0.8, 0.8);
-  position: absolute;
 }
 
 .ListItem.hovered.right img,
 .ListItem.hovered.right video {
   z-index: -1;
   transform: translateX(-20px) scale3d(0.8, 0.8, 0.8);
-  position: absolute;
 }
 
 .ListItem .inner {
