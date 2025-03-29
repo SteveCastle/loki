@@ -31,6 +31,7 @@ export type SettingKey =
   | 'filters'
   | 'playSound'
   | 'comicMode'
+  | 'showTagCount'
   | 'libraryLayout'
   | 'battleMode'
   | 'followTranscript'
@@ -47,6 +48,7 @@ export type Settings = {
   filters: FilterOption;
   playSound: boolean;
   comicMode: boolean;
+  showTagCount: boolean;
   libraryLayout: LibraryLayout;
   battleMode: boolean;
   showTags: ShowTagOptions;
@@ -189,6 +191,22 @@ export const COMIC_MODE = {
   title: 'Comic Mode',
   reload: false,
   display: 'image',
+  options: {
+    name: {
+      label: 'Yes',
+      value: true,
+    },
+    date: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
+export const SHOW_TAG_COUNT = {
+  title: 'Show Tag Count',
+  reload: false,
+  display: 'general',
   options: {
     name: {
       label: 'Yes',
@@ -366,6 +384,7 @@ export const SETTINGS: SettingsObject = {
   filters: FILTERS,
   playSound: PLAY_SOUND,
   comicMode: COMIC_MODE,
+  showTagCount: SHOW_TAG_COUNT,
   battleMode: BATTLE_MODE,
   libraryLayout: LIBRARY_LAYOUT,
   followTranscript: FOLLOW_TRANSCRIPT,

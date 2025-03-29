@@ -30,6 +30,7 @@ import {
 } from './media';
 import {
   loadTaxonomy,
+  getTagCount,
   createCategory,
   createTag,
   createAssignment,
@@ -137,6 +138,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-tags-by-media-path');
   ipcMain.removeHandler('copy-file-into-clipboard');
   ipcMain.removeHandler('load-taxonomy');
+  ipcMain.removeHandler('get-tag-count');
   ipcMain.removeHandler('create-tag');
   ipcMain.removeHandler('create-category');
   ipcMain.removeHandler('create-assignment');
@@ -177,6 +179,7 @@ ipcMain.handle('load-db', async (event, args) => {
 
   // Register Taxonomy Eventsmet
   ipcMain.handle('load-taxonomy', loadTaxonomy(db));
+  ipcMain.handle('get-tag-count', getTagCount(db));
   ipcMain.handle('create-tag', createTag(db));
   ipcMain.handle('create-category', createCategory(db));
   ipcMain.handle('create-assignment', createAssignment(db, store));

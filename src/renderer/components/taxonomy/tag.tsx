@@ -9,6 +9,8 @@ import { useDrag, useDrop, DropTargetMonitor } from 'react-dnd';
 import ConfirmDeleteTag from './confirm-delete-tag';
 import './taxonomy.css';
 import { getFileType } from 'file-types';
+import { useSelector } from '@xstate/react';
+import TagCount from './tag-count';
 
 type Concept = {
   label: string;
@@ -30,6 +32,10 @@ const fetchTagPreview = (tag: string) => async (): Promise<string> => {
 
 export default function Tag({ tag, tags, active, handleEditAction }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  const showTagCount = useSelector(
+    libraryService,
+    (state) => state.context.settings.showTagCount
+  );
   const queryClient = useQueryClient();
   const ref = React.useRef<HTMLDivElement>(null);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
@@ -143,6 +149,7 @@ export default function Tag({ tag, tags, active, handleEditAction }: Props) {
       <div className="label">{tag.label}</div>
       {active && <img className="check" src={checkCircle} />}
       <div className="actions">
+        {showTagCount ? <TagCount tag={tag} /> : null}
         <button
           onClick={(e) => {
             e.stopPropagation();

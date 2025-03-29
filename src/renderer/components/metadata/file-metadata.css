@@ -15,7 +15,16 @@
   margin: 0.2rem 1rem;
   flex: 1 1 100%;
   min-width: 300px;
+  overflow: hidden;
   opacity: 0.8;
+}
+
+.FileMetadata .section.action {
+  cursor: pointer;
+}
+
+.FileMetadata .section.action:hover {
+  opacity: 1;
 }
 
 .FileMetadata .placeholder {

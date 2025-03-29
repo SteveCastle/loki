@@ -19,6 +19,7 @@ export type Channels =
   | 'update-description'
   | 'copy-file-into-clipboard'
   | 'load-taxonomy'
+  | 'get-tag-count'
   | 'load-file-metadata'
   | 'load-tags-by-media-path'
   | 'create-tag'
@@ -63,6 +64,11 @@ const fetchTagPreview = async (tag: string) => {
   return results;
 };
 
+const fetchTagCount = async (tag: string) => {
+  const count = await ipcRenderer.invoke('get-tag-count', [tag]);
+  return count;
+};
+
 const fetchMediaPreview = async (
   tag: string,
   cache: string,
@@ -81,6 +87,7 @@ contextBridge.exposeInMainWorld('electron', {
   loadMediaFromDB,
   loadMediaByDescriptionSearch,
   fetchTagPreview,
+  fetchTagCount,
   fetchMediaPreview,
   loadTranscript,
   userHome: path.join(process.env.HOME || '', '.lowkey', 'dream.sqlite'),

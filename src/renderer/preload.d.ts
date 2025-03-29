@@ -27,6 +27,7 @@ declare global {
         description: string
       ) => Promise<{ path: string }[]>;
       fetchTagPreview: (tag: string) => Promise<string>;
+      fetchTagCount: (tag: string) => Promise<number>;
       fetchMediaPreview: (
         path: string,
         cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,

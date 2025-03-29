@@ -41,6 +41,20 @@ const loadTaxonomy = (db: Database) => async () => {
   }
 };
 
+type TagCountInput = [string];
+
+const getTagCount =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: TagCountInput) => {
+    const tagLabel = args[0];
+    const results = await db.get(
+      `SELECT COUNT(*) AS count FROM media_tag_by_category WHERE tag_label = $1`,
+      [tagLabel]
+    );
+    console.log(args);
+    console.log(tagLabel, results);
+    return results.count;
+  };
+
 type TagInput = [string, string];
 
 const createTag =
@@ -421,6 +435,7 @@ const orderTags =
 
 export {
   loadTaxonomy,
+  getTagCount,
   createTag,
   createAssignment,
   createCategory,

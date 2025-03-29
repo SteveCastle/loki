@@ -162,7 +162,7 @@
   grid-gap: 0.5rem;
   flex: 8 1 0;
   overflow: auto;
-  padding-bottom: 66px;
+  padding-bottom: 77px;
   height: 100%;
 }
 
@@ -232,6 +232,14 @@
   bottom: 0;
   right: 0;
   margin: 6px;
+}
+
+.Taxonomy .tag .actions span {
+  display: flex;
+  padding: 0;
+  margin-right: 10px;
+  height: 16px;
+  text-shadow: 0px 0px 2px black, 0px 0px 5px rgb(25, 25, 25), 0px 0px 8px rgb(44, 44, 44);
 }
 
 .Taxonomy .tag .actions button {
