@@ -27,6 +27,8 @@ const execPromisified = promisify(exec);
 export interface Metadata {
   fileMetadata: FileMetadata;
   description?: string;
+  transcript?: string;
+  hash: string;
   stableDiffusionMetaData?: StableDiffusionMetaData;
   extendedMetadata?: ExtendedMetadata;
 }
@@ -195,6 +197,8 @@ const loadFileMetaData =
     }
     return {
       description: media?.description,
+      transcript: media?.transcript,
+      hash: media?.hash,
       fileMetadata: {
         size: formatFileSize(stats.size),
         modified: stats.mtime,

@@ -7,6 +7,8 @@ import Tags from './tags';
 import PathTree from './path-tree';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import { Description } from './description';
+import { useContext } from 'react';
+import { GlobalStateContext } from '../../state';
 
 const loadFileMetadata = (path: string) => async (): Promise<Metadata> => {
   let metadata: any;
@@ -19,6 +21,7 @@ const loadFileMetadata = (path: string) => async (): Promise<Metadata> => {
 };
 
 export default function FileMetadata({ item }: { item: any }) {
+  const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
   const path = item?.path;
   const { data, error, isLoading } = useQuery<Metadata, Error>(
@@ -26,6 +29,7 @@ export default function FileMetadata({ item }: { item: any }) {
     loadFileMetadata(path),
     { retry: true }
   );
+
   if (isLoading || !data)
     return (
       <div className="FileMetadata">
@@ -56,6 +60,18 @@ export default function FileMetadata({ item }: { item: any }) {
       <div className="section">
         <h2>Path</h2>
         {item?.path && <PathTree path={item?.path} />}
+      </div>
+      <div
+        className="section action"
+        onClick={() => {
+          libraryService.send({
+            type: 'SET_TEXT_FILTER',
+            data: { textFilter: `hash:${data.hash}` },
+          });
+        }}
+      >
+        <h2>Hash</h2>
+        {item?.path && data.hash}
       </div>
       <div className="section">
         <h2>Tags</h2>

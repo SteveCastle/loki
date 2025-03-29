@@ -209,6 +209,7 @@ const libraryMachine = createMachine(
         recursive: false,
         scale: 1,
         comicMode: window.electron.store.get('comicMode', false),
+        showTagCount: window.electron.store.get('showTagCount', false),
         battleMode: window.electron.store.get('battleMode', false),
         libraryLayout: window.electron.store.get('libraryLayout', 'bottom'),
         applyTagPreview: window.electron.store.get('applyTagPreview', true),
