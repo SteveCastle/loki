@@ -11,6 +11,7 @@ import './App.css';
 import { Loader } from './components/layout/loader';
 import HotKeyController from './components/controls/hotkey-controller';
 import { JobToast } from './components/controls/job-toast';
+import AutoPlayController from './components/controls/autoplay-controller';
 
 const queryClient = new QueryClient();
 
@@ -25,7 +26,14 @@ export default function App(): JSX.Element {
   );
   if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
 
-  console.log('rendering app');
+  const autoPlay = useSelector(
+    libraryService,
+    (state) => state.context.settings.autoPlay,
+    (a, b) => {
+      return a === b;
+    }
+  );
+
   return (
     <QueryClientProvider client={queryClient}>
       <DndProvider backend={HTML5Backend}>
@@ -37,6 +45,7 @@ export default function App(): JSX.Element {
           <Loader />
         ) : null}
         <HotKeyController />
+        {autoPlay && <AutoPlayController />}
         <JobToast />
       </DndProvider>
     </QueryClientProvider>

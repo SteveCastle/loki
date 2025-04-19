@@ -55,6 +55,7 @@ function getPlayer(
   if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
     return (
       <Video
+        key={path}
         path={path}
         scaleMode={settings.scaleMode}
         settable

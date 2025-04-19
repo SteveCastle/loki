@@ -60,8 +60,6 @@ export function List() {
 
   const parentRef = useRef<HTMLDivElement>(null);
   const listLength = Math.ceil(items.length / columns);
-  // The virtualizer
-  console.log('rendering list');
   const rowVirtualizer = useVirtualizer({
     count: listLength,
     getScrollElement: () => parentRef.current,

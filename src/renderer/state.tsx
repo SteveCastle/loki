@@ -228,6 +228,12 @@ const libraryMachine = createMachine(
         ),
         detailImageCache: window.electron.store.get('detailImageCache', false),
         controlMode: window.electron.store.get('controlMode', 'mouse'),
+        autoPlay: window.electron.store.get('autoPlay', false),
+        autoPlayTime: window.electron.store.get('autoPlayTime', false),
+        autoPlayVideoLoops: window.electron.store.get(
+          'autoPlayVideoLoops',
+          false
+        ),
       },
       hotKeys: {
         incrementCursor: window.electron.store.get(
