@@ -39,7 +39,10 @@ export type SettingKey =
   | 'showFileInfo'
   | 'showControls'
   | 'recursive'
-  | 'controlMode';
+  | 'controlMode'
+  | 'autoPlay'
+  | 'autoPlayTime'
+  | 'autoPlayVideoLoops';
 
 export type Settings = {
   scaleMode: ScaleModeOption;
@@ -63,6 +66,9 @@ export type Settings = {
   detailImageCache: DetailImageCache;
   controlMode: ControlMode;
   gridSize: [number, number];
+  autoPlay: boolean;
+  autoPlayTime: number | false;
+  autoPlayVideoLoops: number | false;
 };
 
 export const SCALE_MODES = {
@@ -82,6 +88,7 @@ export const SCALE_MODES = {
     overscan: {
       label: 'Overscan',
       value: 140,
+      increment: 10,
     },
     actual: {
       label: 'Actual',
@@ -166,6 +173,7 @@ type SettingsObject = {
       [key: string]: {
         label: string;
         value: string | number | boolean;
+        increment?: number;
       };
     };
   };
@@ -288,11 +296,11 @@ export const SHOW_CONTROLS = {
   reload: false,
   display: 'none',
   options: {
-    name: {
+    yes: {
       label: 'Yes',
       value: true,
     },
-    date: {
+    no: {
       label: 'No',
       value: false,
     },
@@ -304,11 +312,11 @@ export const FOLLOW_TRANSCRIPT = {
   reload: false,
   display: 'none',
   options: {
-    name: {
+    yes: {
       label: 'Yes',
       value: true,
     },
-    date: {
+    no: {
       label: 'No',
       value: false,
     },
@@ -320,11 +328,11 @@ export const RECURSIVE = {
   reload: true,
   display: 'none',
   options: {
-    name: {
+    yes: {
       label: 'Yes',
       value: true,
     },
-    date: {
+    no: {
       label: 'No',
       value: false,
     },
@@ -336,13 +344,63 @@ export const CONTROL_MODE = {
   reload: false,
   display: 'general',
   options: {
-    name: {
+    mouse: {
       label: 'Mouse',
       value: 'mouse',
     },
-    date: {
+    touchPad: {
       label: 'TouchPad',
       value: 'touchpad',
+    },
+  },
+};
+
+export const AUTO_PLAY = {
+  title: 'Auto Play',
+  reload: false,
+  display: 'autoplay',
+  options: {
+    on: {
+      label: 'On',
+      value: true,
+    },
+    off: {
+      label: 'Off',
+      value: false,
+    },
+  },
+};
+
+export const AUTO_PLAY_TIME = {
+  title: 'Time (seconds)',
+  reload: false,
+  display: 'autoplay',
+  options: {
+    off: {
+      label: 'Off',
+      value: false,
+    },
+    time: {
+      label: '5',
+      value: 5,
+      increment: 5,
+    },
+  },
+};
+
+export const AUTO_PLAY_VIDEO_LOOPS = {
+  title: 'Video Loops',
+  reload: false,
+  display: 'autoplay',
+  options: {
+    off: {
+      label: 'Off',
+      value: false,
+    },
+    loops: {
+      label: '1',
+      value: 1,
+      increment: 1,
     },
   },
 };
@@ -393,4 +451,7 @@ export const SETTINGS: SettingsObject = {
   showControls: SHOW_CONTROLS,
   recursive: RECURSIVE,
   controlMode: CONTROL_MODE,
+  autoPlay: AUTO_PLAY,
+  autoPlayTime: AUTO_PLAY_TIME,
+  autoPlayVideoLoops: AUTO_PLAY_VIDEO_LOOPS,
 };

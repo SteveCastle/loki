@@ -49,8 +49,18 @@ function Setting({
                   className={'incrementButton'}
                   onClick={(e) => {
                     e.stopPropagation();
+                    // If current value is less than 5 increment is 1, otherwise increment is option value to give more fine grained control at small numbers.
+                    const increment =
+                      currentValue <= 5 ? 1 : option.increment ?? 1;
+
+                    if ((currentValue as number) - (increment ?? 1) <= 0)
+                      return;
+
                     libraryService.send('CHANGE_SETTING', {
-                      data: { [settingKey]: (currentValue as number) - 10 },
+                      data: {
+                        [settingKey]:
+                          (currentValue as number) - (increment ?? 1),
+                      },
                     });
                   }}
                 >
@@ -61,8 +71,13 @@ function Setting({
                   className={'incrementButton'}
                   onClick={(e) => {
                     e.stopPropagation();
+                    const increment =
+                      currentValue < 5 ? 1 : option.increment ?? 1;
                     libraryService.send('CHANGE_SETTING', {
-                      data: { [settingKey]: (currentValue as number) + 10 },
+                      data: {
+                        [settingKey]:
+                          (currentValue as number) + (increment ?? 1),
+                      },
                     });
                   }}
                 >

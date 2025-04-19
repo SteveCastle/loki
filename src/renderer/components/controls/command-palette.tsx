@@ -1,339 +1,611 @@
-import React, { useRef, useContext, useState } from 'react';
+import React, {
+  useRef,
+  useContext,
+  useState,
+  useCallback,
+  useMemo,
+} from 'react';
 import { useSelector } from '@xstate/react';
 import { Tooltip } from 'react-tooltip';
 import useComponentSize from '@rehooks/component-size';
+
+// State & Hooks
 import { GlobalStateContext } from '../../state';
-import filter from '../../filter';
+import useOnClickOutside from '../../hooks/useOnClickOutside';
+import filter from '../../filter'; // Assuming this is a function for filtering library items
+import { getFileType } from 'file-types'; // Assuming this identifies file types
+
+// Child Components
 import ProgressBar from './progress-bar';
 import HotKeyOptions from './hotkey-options';
-import useOnClickOutside from '../../hooks/useOnClickOutside';
-import sound from '../../../../assets/sound-high.svg';
-import videoControls from '../../../../assets/video-camera.svg';
-import noVideoControls from '../../../../assets/video-camera-off.svg';
-import gear from '../../../../assets/settings-3.svg';
-import shuffle from '../../../../assets/shuffle.svg';
-import db from '../../../../assets/database.svg';
-import keyboard from '../../../../assets/keyboard.svg';
-import grid from '../../../../assets/view-grid.svg';
-import image from '../../../../assets/image-2-fill.svg';
-import noSound from '../../../../assets/sound-off.svg';
-import recursiveIcon from '../../../../assets/recursive.svg';
-import folder from '../../../../assets/folder-open-fill.svg';
-
 import Setting from './setting';
-import { SETTINGS, SettingKey } from 'settings';
-
-import './command-palette.css';
 import DbPathWidget from './db-path';
 import GridSizePicker from './gridsize-picker';
 import CacheSetting from './cache-setting';
-import { getFileType } from 'file-types';
 
+// Assets (Icons)
+import soundIcon from '../../../../assets/sound-high.svg';
+import videoControlsIcon from '../../../../assets/video-camera.svg';
+import noVideoControlsIcon from '../../../../assets/video-camera-off.svg';
+import gearIcon from '../../../../assets/settings-3.svg';
+import shuffleIcon from '../../../../assets/shuffle.svg';
+import dbIcon from '../../../../assets/database.svg';
+import keyboardIcon from '../../../../assets/keyboard.svg';
+import autoplayIcon from '../../../../assets/autoplay.svg'; // Note: Used for 'autoPlayOptions' tab, but content missing
+import gridIcon from '../../../../assets/view-grid.svg';
+import imageIcon from '../../../../assets/image-2-fill.svg';
+import noSoundIcon from '../../../../assets/sound-off.svg';
+import recursiveIcon from '../../../../assets/recursive.svg';
+import folderIcon from '../../../../assets/folder-open-fill.svg';
+
+// Settings & Types
+import { SETTINGS, SettingKey } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
+
+// Styles
+import './command-palette.css';
+
+// --- Helper Functions ---
+
+/**
+ * Extracts the directory path from a full file path.
+ * @param path The full file path.
+ * @returns The directory path.
+ */
 function getDirectory(path: string): string {
-  // Use JavaScript's built-in path-separation character as a regex pattern
+  if (!path) return '';
   const separator = /[\\/]/;
-
-  // Split the path into components
   const components = path.split(separator);
-
-  // Remove the last component (the file)
-  components.pop();
-
-  // Reconstruct the path
-  const directory = components.join('/');
-
-  return directory;
+  components.pop(); // Remove the file name
+  return components.join('/');
 }
 
-export default function CommandPalette() {
+// --- Types ---
+
+type TabType =
+  | 'imageOptions'
+  | 'listViewOptions'
+  | 'dbOptions'
+  | 'autoPlayOptions' // Added for completeness, though content is missing
+  | 'hotKeyOptions'
+  | 'generalOptions';
+
+// eslint-disable-next-line @typescript-eslint/no-empty-interface
+interface CommandPaletteProps {}
+interface WindowControlsProps {
+  onClose: () => void;
+  onMinimize: () => void;
+  onToggleFullscreen: () => void;
+}
+interface ActionButtonProps {
+  icon: string;
+  tooltipId?: string;
+  tooltipContent?: string; // Pass content directly if preferred
+  onClick: () => void;
+  className?: string;
+  isSelected?: boolean; // For highlighting active states like 'recursive'
+}
+interface ActionButtonsProps {
+  libraryService: any; // Consider more specific type if possible
+  recursive: boolean;
+  playSound: boolean;
+  showControls: boolean;
+}
+interface MenuBarProps extends ActionButtonsProps {
+  windowControlsProps: WindowControlsProps;
+}
+interface ListContextDisplayProps {
+  textFilter: string;
+  tags: string[];
+  activeDirectory: string;
+}
+interface SettingsListProps {
+  filterType: 'image' | 'general' | 'autoplay';
+  battleMode: boolean;
+  currentItem: any; // Type according to your item structure
+}
+interface MenuContentAreaProps extends SettingsListProps {
+  activeTab: TabType;
+  cursor: number;
+  libraryLength: number;
+  isLoading: boolean;
+  listContextProps: ListContextDisplayProps;
+  libraryService: any; // Consider specific type
+}
+interface TabSelectorProps {
+  activeTab: TabType;
+  onTabSelect: (tab: TabType) => void;
+}
+
+// --- Child Components ---
+
+const WindowControls: React.FC<WindowControlsProps> = React.memo(
+  ({ onClose, onMinimize, onToggleFullscreen }) => (
+    <div className="windowControls">
+      <span className="closeControl" onClick={onClose} />
+      <span className="windowedControl" onClick={onMinimize} />
+      <span className="fullScreenControl" onClick={onToggleFullscreen} />
+    </div>
+  )
+);
+WindowControls.displayName = 'WindowControls'; // Add display name
+
+const ActionButton: React.FC<ActionButtonProps> = React.memo(
+  ({ icon, tooltipId, onClick, className = '', isSelected = false }) => (
+    <button
+      data-tooltip-id={tooltipId}
+      data-tooltip-delay-show={500}
+      data-tooltip-offset={20}
+      className={`menuIconButton ${className} ${
+        isSelected ? 'selected' : ''
+      }`.trim()}
+      onClick={onClick}
+    >
+      <img src={icon} alt={tooltipId || 'action button'} />
+    </button>
+  )
+);
+ActionButton.displayName = 'ActionButton'; // Add display name
+
+const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
+  ({ libraryService, recursive, playSound, showControls }) => {
+    const handleSettingChange = useCallback(
+      (key: SettingKey, value: any, reload = false) => {
+        const eventType = reload
+          ? 'CHANGE_SETTING_AND_RELOAD'
+          : 'CHANGE_SETTING';
+        libraryService.send(eventType, { data: { [key]: value } });
+      },
+      [libraryService]
+    );
+
+    return (
+      <div className="menuBarRight">
+        <ActionButton
+          icon={folderIcon}
+          onClick={() => libraryService.send('SELECT_FILE')}
+          tooltipId="select-folder" // Add tooltips if desired
+        />
+        <ActionButton
+          icon={recursiveIcon}
+          onClick={() => handleSettingChange('recursive', !recursive, true)}
+          isSelected={recursive}
+          tooltipId="recursive"
+        />
+        <ActionButton
+          icon={shuffleIcon}
+          onClick={() => libraryService.send('SHUFFLE')}
+          tooltipId="shuffle"
+        />
+        <ActionButton
+          icon={playSound ? soundIcon : noSoundIcon}
+          onClick={() => handleSettingChange('playSound', !playSound)}
+          tooltipId="sound"
+        />
+        <ActionButton
+          icon={showControls ? videoControlsIcon : noVideoControlsIcon}
+          onClick={() => handleSettingChange('showControls', !showControls)}
+          tooltipId="video-controls"
+        />
+      </div>
+    );
+  }
+);
+ActionButtons.displayName = 'ActionButtons'; // Add display name
+
+const MenuBar: React.FC<MenuBarProps> = React.memo(
+  ({ windowControlsProps, ...actionButtonsProps }) => (
+    <div className="menuBar">
+      <WindowControls {...windowControlsProps} />
+      <ActionButtons {...actionButtonsProps} />
+    </div>
+  )
+);
+MenuBar.displayName = 'MenuBar'; // Add display name
+
+const ListContextDisplay: React.FC<ListContextDisplayProps> = React.memo(
+  ({ textFilter, tags, activeDirectory }) => {
+    const displayContent = useMemo(() => {
+      if (textFilter) return textFilter;
+      if (Array.isArray(tags) && tags.length > 0) return tags.join(', ');
+      return getDirectory(activeDirectory);
+    }, [textFilter, tags, activeDirectory]);
+
+    return (
+      <span className="listContext">{displayContent || 'No Context'}</span>
+    );
+  }
+);
+ListContextDisplay.displayName = 'ListContextDisplay'; // Add display name
+
+const SettingsList: React.FC<SettingsListProps> = React.memo(
+  ({ filterType, battleMode, currentItem }) => {
+    const settingKeys = useMemo(() => {
+      return Object.keys(SETTINGS).filter((key) => {
+        const settingKey = key as SettingKey;
+        const setting = SETTINGS[settingKey];
+        // Special case: Exclude 'comicMode' if 'battleMode' is on and we are filtering for 'image'
+        if (
+          filterType === 'image' &&
+          battleMode &&
+          settingKey === 'comicMode'
+        ) {
+          return false;
+        }
+        return setting.display === filterType;
+      }) as SettingKey[];
+    }, [filterType, battleMode]);
+
+    return (
+      <>
+        {settingKeys.map((settingKey) => {
+          const setting = SETTINGS[settingKey];
+          return (
+            <Setting
+              settingKey={settingKey}
+              key={settingKey}
+              reload={setting.reload}
+              resetCursor={setting.resetCursor}
+              currentItem={currentItem}
+            />
+          );
+        })}
+      </>
+    );
+  }
+);
+SettingsList.displayName = 'SettingsList'; // Add display name
+
+const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
+  ({
+    activeTab,
+    cursor,
+    libraryLength,
+    isLoading,
+    listContextProps,
+    libraryService,
+    battleMode,
+    currentItem,
+  }) => {
+    const handleSetCursor = useCallback(
+      (c: number) => {
+        libraryService.send('SET_CURSOR', { idx: c });
+      },
+      [libraryService]
+    );
+
+    const renderTabContent = () => {
+      switch (activeTab) {
+        case 'imageOptions':
+          return (
+            <div className="tabContent">
+              <SettingsList
+                filterType="image"
+                battleMode={battleMode}
+                currentItem={currentItem}
+              />
+            </div>
+          );
+        case 'listViewOptions':
+          return (
+            <div className="tabContent">
+              <GridSizePicker />
+            </div>
+          );
+        case 'dbOptions':
+          return (
+            <div className="tabContent">
+              <DbPathWidget />
+              <CacheSetting />
+            </div>
+          );
+        case 'hotKeyOptions':
+          // Assuming HotKeyOptions doesn't need specific props from here
+          return <HotKeyOptions />;
+        case 'generalOptions':
+          return (
+            <div className="tabContent">
+              <p>v2.5.0</p> {/* Consider making version dynamic */}
+              <SettingsList
+                filterType="general"
+                battleMode={battleMode}
+                currentItem={currentItem}
+              />
+            </div>
+          );
+        case 'autoPlayOptions':
+          return (
+            <div className="tabContent">
+              <SettingsList
+                filterType="autoplay"
+                battleMode={battleMode}
+                currentItem={currentItem}
+              />
+            </div>
+          );
+        default:
+          return null;
+      }
+    };
+
+    const handleDonateClick = useCallback(() => {
+      window.electron.ipcRenderer.sendMessage('open-external', [
+        'https://www.buymeacoffee.com/lowkeyviewer',
+      ]);
+    }, []);
+
+    const handlePatreonClick = useCallback(() => {
+      window.electron.ipcRenderer.sendMessage('open-external', [
+        'https://www.patreon.com/lowkeyviewer',
+      ]);
+    }, []);
+
+    return (
+      <div className="menuContent">
+        <ListContextDisplay {...listContextProps} />
+        <ProgressBar
+          value={cursor}
+          total={libraryLength}
+          isLoading={isLoading}
+          setCursor={handleSetCursor}
+        />
+
+        {renderTabContent()}
+
+        {/* Donation Buttons - Could be another component if they grow */}
+        <button
+          data-tooltip-id="donate-buttons"
+          data-tooltip-offset={20}
+          data-tooltip-delay-show={500}
+          className="donateButton"
+          onClick={handleDonateClick}
+        >
+          Donate
+        </button>
+        <button
+          data-tooltip-id="donate-buttons"
+          data-tooltip-offset={20}
+          data-tooltip-delay-show={500}
+          className="patreonButton"
+          onClick={handlePatreonClick}
+        >
+          Patreon
+        </button>
+      </div>
+    );
+  }
+);
+MenuContentArea.displayName = 'MenuContentArea'; // Add display name
+
+const TabSelector: React.FC<TabSelectorProps> = React.memo(
+  ({ activeTab, onTabSelect }) => {
+    const tabs: { id: TabType; icon: string }[] = [
+      { id: 'imageOptions', icon: imageIcon },
+      { id: 'listViewOptions', icon: gridIcon },
+      { id: 'dbOptions', icon: dbIcon },
+      { id: 'autoPlayOptions', icon: autoplayIcon },
+      { id: 'hotKeyOptions', icon: keyboardIcon },
+      { id: 'generalOptions', icon: gearIcon },
+    ];
+
+    return (
+      <div className="tabs">
+        {tabs.map((tabInfo) => (
+          <button
+            key={tabInfo.id}
+            className={activeTab === tabInfo.id ? 'active' : ''}
+            onClick={() => onTabSelect(tabInfo.id)}
+            aria-label={`${tabInfo.id} tab`} // Accessibility
+          >
+            <img src={tabInfo.icon} alt={`${tabInfo.id} options`} />
+          </button>
+        ))}
+      </div>
+    );
+  }
+);
+TabSelector.displayName = 'TabSelector'; // Add display name
+
+const CommandPaletteTooltips: React.FC = React.memo(() => (
+  <>
+    <Tooltip
+      id="recursive"
+      content="Include files from all subdirectories."
+      place="top"
+    />
+    <Tooltip id="shuffle" content="Shuffle items in the list." place="top" />
+    <Tooltip id="sound" content="Toggle video audio playback." place="top" />
+    <Tooltip
+      id="video-controls"
+      content="Toggle video player controls."
+      place="top"
+    />
+    <Tooltip
+      id="select-folder"
+      content="Select folder or file to view."
+      place="top"
+    />
+    <Tooltip
+      id="donate-buttons"
+      content="Your donations make Lowkey Media Viewer possible!"
+      place="top"
+    />
+    {/* Add tooltips for other buttons if needed */}
+  </>
+));
+CommandPaletteTooltips.displayName = 'CommandPaletteTooltips'; // Add display name
+
+// --- Main Component ---
+
+const CommandPalette: React.FC<CommandPaletteProps> = () => {
   const { libraryService } = useContext(GlobalStateContext);
+
+  // Selectors for Command Palette State
   const { display, position } = useSelector(
     libraryService,
     (state) => state.context.commandPalette
   );
 
+  // Selectors for Library and Settings State
   const tags = useSelector(
     libraryService,
     (state) => state.context.dbQuery.tags
   );
-
-  const ref = useRef(null);
-  const [tab, setTab] = useState('imageOptions');
-  const { width, height } = useComponentSize(ref);
-  const windowWidth = window.innerWidth;
-  const windowHeight = window.innerHeight;
-
-  const library = useSelector(libraryService, (state) =>
-    filter(
-      state.context.libraryLoadId,
-      state.context.textFilter,
-      state.context.library,
-      state.context.settings.filters,
-      state.context.settings.sortBy
-    )
-  );
-  const cursor = useSelector(libraryService, (state) => state.context.cursor);
   const textFilter = useSelector(
     libraryService,
     (state) => state.context.textFilter
   );
-  const item = library[cursor];
-  const fileType = item?.path ? getFileType(item.path) : '';
   const activeDirectory = useSelector(
     libraryService,
     (state) => state.context.initialFile
   );
-  const { playSound, recursive, showControls, battleMode } = useSelector(
+  const cursor = useSelector(libraryService, (state) => state.context.cursor);
+  const settings = useSelector(
     libraryService,
     (state) => state.context.settings
   );
-
   const isLoading = useSelector(libraryService, (state) =>
     state.matches('loadingFromFS')
   );
+  const libraryLoadId = useSelector(
+    libraryService,
+    (state) => state.context.libraryLoadId
+  );
+  const rawLibrary = useSelector(
+    libraryService,
+    (state) => state.context.library
+  );
 
-  const getMenuPosition = (x: number, y: number) => {
-    const xOverlap = x + Math.max(width, 400) - windowWidth;
-    const yOverlap = y + Math.max(height, 200) - windowHeight;
-    return {
-      left: xOverlap > 0 ? x - xOverlap : x,
-      top: yOverlap > 0 ? y - yOverlap : y,
-    };
-  };
+  // Derived State
+  const library = useMemo(
+    () =>
+      filter(
+        libraryLoadId,
+        textFilter,
+        rawLibrary,
+        settings.filters,
+        settings.sortBy
+      ),
+    [libraryLoadId, textFilter, rawLibrary, settings.filters, settings.sortBy]
+  );
+  const currentItem = useMemo(() => library[cursor], [library, cursor]);
+  // const fileType = useMemo(() => currentItem?.path ? getFileType(currentItem.path) : '', [currentItem]); // Uncomment if needed
 
-  useOnClickOutside(ref, () => {
+  // Local State
+  const [activeTab, setActiveTab] = useState<TabType>('imageOptions');
+  const paletteRef = useRef<HTMLDivElement>(null);
+  const { width, height } = useComponentSize(paletteRef); // Size of the palette itself
+
+  // Positioning Logic
+  const getMenuPosition = useCallback(
+    (x: number, y: number) => {
+      if (!paletteRef.current) return { left: x, top: y }; // Default if ref not ready
+
+      const windowWidth = window.innerWidth;
+      const windowHeight = window.innerHeight;
+      const paletteWidth = Math.max(width, 400); // Use measured or min width
+      const paletteHeight = Math.max(height, 200); // Use measured or min height
+
+      const xOverlap = x + paletteWidth - windowWidth;
+      const yOverlap = y + paletteHeight - windowHeight;
+
+      return {
+        left: xOverlap > 0 ? Math.max(0, x - xOverlap - 10) : x, // Adjust slightly off edge
+        top: yOverlap > 0 ? Math.max(0, y - yOverlap - 10) : y, // Adjust slightly off edge
+      };
+    },
+    [width, height]
+  ); // Recalculate only when size changes
+
+  // Close on Click Outside
+  useOnClickOutside(paletteRef, () => {
     libraryService.send('HIDE_COMMAND_PALETTE');
   });
 
-  return display ? (
+  // Window Control Callbacks (using useCallback)
+  const handleClose = useCallback(
+    () => window.electron.ipcRenderer.sendMessage('shutdown', []),
+    []
+  );
+  const handleMinimize = useCallback(
+    () => window.electron.ipcRenderer.sendMessage('minimize', []),
+    []
+  );
+  const handleToggleFullscreen = useCallback(
+    () => window.electron.ipcRenderer.sendMessage('toggle-fullscreen', []),
+    []
+  );
+
+  // Prepare props for child components
+  const windowControlsProps: WindowControlsProps = {
+    onClose: handleClose,
+    onMinimize: handleMinimize,
+    onToggleFullscreen: handleToggleFullscreen,
+  };
+
+  const actionButtonsProps: ActionButtonsProps = {
+    libraryService,
+    recursive: settings.recursive,
+    playSound: settings.playSound,
+    showControls: settings.showControls,
+  };
+
+  const listContextProps: ListContextDisplayProps = {
+    textFilter,
+    tags,
+    activeDirectory,
+  };
+
+  const menuContentAreaProps: Omit<
+    MenuContentAreaProps,
+    | 'activeTab'
+    | 'cursor'
+    | 'libraryLength'
+    | 'isLoading'
+    | 'listContextProps'
+    | 'libraryService'
+  > = {
+    battleMode: settings.battleMode,
+    currentItem: currentItem,
+    filterType: 'image', // Default, but MenuContentArea uses activeTab to select SettingsList props
+  };
+
+  // --- Render Logic ---
+  if (!display) {
+    return null;
+  }
+
+  const style = getMenuPosition(position.x, position.y);
+
+  return (
     <div
       className="CommandPalette"
-      ref={ref}
-      tabIndex={-1}
-      style={getMenuPosition(position.x, position.y)}
+      ref={paletteRef}
+      tabIndex={-1} // Make it focusable if needed, e.g., for keyboard events
+      style={style}
     >
-      <div className="menuBar">
-        <div className="windowControls">
-          <span
-            className="closeControl"
-            onClick={() =>
-              window.electron.ipcRenderer.sendMessage('shutdown', [])
-            }
-          />
-          <span
-            className="windowedControl"
-            onClick={() => {
-              window.electron.ipcRenderer.sendMessage('minimize', []);
-            }}
-          />
-          <span
-            className="fullScreenControl"
-            onClick={() =>
-              window.electron.ipcRenderer.sendMessage('toggle-fullscreen', [])
-            }
-          />
-        </div>
-        <div className="menuBarRight">
-          <button
-            className="menuIconButton"
-            onClick={() => libraryService.send('SELECT_FILE')}
-          >
-            <img src={folder} />
-          </button>
-          <button
-            data-tooltip-delay-show={500}
-            data-tooltip-offset={20}
-            data-tooltip-id="recursive"
-            className={`menuIconButton ${recursive ? 'selected' : ''}`}
-            onClick={() =>
-              libraryService.send('CHANGE_SETTING_AND_RELOAD', {
-                data: { recursive: !recursive },
-              })
-            }
-          >
-            <img src={recursiveIcon} />
-          </button>
-          <button
-            data-tooltip-id="shuffle"
-            data-tooltip-delay-show={500}
-            data-tooltip-offset={20}
-            className={`menuIconButton ${recursive ? 'selected' : ''}`}
-            onClick={() => libraryService.send('SHUFFLE')}
-          >
-            <img src={shuffle} />
-          </button>
-          <button
-            data-tooltip-id="sound"
-            data-tooltip-delay-show={500}
-            data-tooltip-offset={20}
-            className="menuIconButton"
-            onClick={() =>
-              libraryService.send('CHANGE_SETTING', {
-                data: { playSound: !playSound },
-              })
-            }
-          >
-            <img src={playSound ? sound : noSound} />
-          </button>
-          <button
-            data-tooltip-id="video-controls"
-            data-tooltip-delay-show={500}
-            data-tooltip-offset={20}
-            className="menuIconButton"
-            onClick={() =>
-              libraryService.send('CHANGE_SETTING', {
-                data: { showControls: !showControls },
-              })
-            }
-          >
-            <img src={showControls ? videoControls : noVideoControls} />
-          </button>
-        </div>
-      </div>
+      <MenuBar
+        windowControlsProps={windowControlsProps}
+        {...actionButtonsProps}
+      />
+
       <div className="menuArea">
-        <div className="menuContent">
-          <span className="listContext">
-            {textFilter
-              ? textFilter
-              : Array.isArray(tags) && tags.length > 0
-              ? tags.join(', ')
-              : `${getDirectory(activeDirectory)}`}
-          </span>
-          <ProgressBar
-            value={cursor}
-            total={library.length}
-            isLoading={isLoading}
-            setCursor={(c) => {
-              libraryService.send('SET_CURSOR', { idx: c });
-            }}
-          />
-          {tab === 'imageOptions' && (
-            <div className="tabContent">
-              {Object.keys(SETTINGS)
-                .filter((k) => {
-                  const setting = SETTINGS[k as SettingKey];
-                  // Exclude 'comicMode' if 'battleMode' is on
-                  if (battleMode && k === 'comicMode') {
-                    return false;
-                  }
-                  // Otherwise, allow if the display is 'image'
-                  return setting.display === 'image';
-                })
-                .map((settingKey) => (
-                  <Setting
-                    settingKey={settingKey as SettingKey}
-                    key={settingKey}
-                    reload={SETTINGS[settingKey as SettingKey].reload}
-                    resetCursor={SETTINGS[settingKey as SettingKey].resetCursor}
-                    currentItem={item}
-                  />
-                ))}
-            </div>
-          )}
-          {tab === 'listViewOptions' && (
-            <div className="tabContent">
-              <GridSizePicker />
-            </div>
-          )}
-          {tab === 'dbOptions' && (
-            <div className="tabContent">
-              <DbPathWidget />
-              <CacheSetting />
-            </div>
-          )}
-          {tab === 'hotKeyOptions' && <HotKeyOptions />}
-          {tab === 'generalOptions' && (
-            <div className="tabContent">
-              <p>v2.4.0</p>
-              {Object.keys(SETTINGS)
-                .filter((k) => SETTINGS[k as SettingKey].display === 'general')
-                .map((settingKey) => (
-                  <Setting
-                    settingKey={settingKey as SettingKey}
-                    key={settingKey}
-                    reload={SETTINGS[settingKey as SettingKey].reload}
-                    resetCursor={SETTINGS[settingKey as SettingKey].resetCursor}
-                    currentItem={item}
-                  />
-                ))}
-            </div>
-          )}
-          <button
-            data-tooltip-id="donate-buttons"
-            data-tooltip-offset={20}
-            data-tooltip-delay-show={500}
-            className="donateButton"
-            onClick={() => {
-              window.electron.ipcRenderer.sendMessage('open-external', [
-                'https://www.buymeacoffee.com/lowkeyviewer',
-              ]);
-            }}
-          >
-            Donate
-          </button>
-          <button
-            data-tooltip-id="donate-buttons"
-            data-tooltip-offset={20}
-            data-tooltip-delay-show={500}
-            className="patreonButton"
-            onClick={() => {
-              window.electron.ipcRenderer.sendMessage('open-external', [
-                'https://www.patreon.com/lowkeyviewer',
-              ]);
-            }}
-          >
-            Patreon
-          </button>
-        </div>
-        <div className="tabs">
-          <button
-            className={tab === 'imageOptions' ? 'active' : ''}
-            onClick={() => setTab('imageOptions')}
-          >
-            <img src={image} />
-          </button>
-          <button
-            className={tab === 'listViewOptions' ? 'active' : ''}
-            onClick={() => setTab('listViewOptions')}
-          >
-            <img src={grid} />
-          </button>
-          <button
-            className={tab === 'dbOptions' ? 'active' : ''}
-            onClick={() => setTab('dbOptions')}
-          >
-            <img src={db} />
-          </button>
-          <button
-            className={tab === 'hotKeyOptions' ? 'active' : ''}
-            onClick={() => setTab('hotKeyOptions')}
-          >
-            <img src={keyboard} />
-          </button>
-          <button
-            className={tab === 'generalOptions' ? 'active' : ''}
-            onClick={() => setTab('generalOptions')}
-          >
-            <img src={gear} />
-          </button>
-        </div>
+        <MenuContentArea
+          activeTab={activeTab}
+          cursor={cursor}
+          libraryLength={library.length}
+          isLoading={isLoading}
+          listContextProps={listContextProps}
+          libraryService={libraryService}
+          {...menuContentAreaProps} // Pass battleMode and currentItem
+        />
+        <TabSelector activeTab={activeTab} onTabSelect={setActiveTab} />
       </div>
-      <Tooltip
-        id="recursive"
-        content={`Include files from all subdirectories.`}
-        place="top"
-      />
-      <Tooltip
-        id="shuffle"
-        content={`Shuffle images in the list.`}
-        place="top"
-      />
-      <Tooltip id="sound" content={`Play video audio.`} place="top" />
-      <Tooltip
-        id="donate-buttons"
-        content={`Your donations make Lowkey Media Viewer possible!`}
-        place="top"
-      />
+
+      <CommandPaletteTooltips />
     </div>
-  ) : null;
-}
+  );
+};
+// Add display name for the main component too for good measure
+CommandPalette.displayName = 'CommandPalette';
+
+export default CommandPalette;
