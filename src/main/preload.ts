@@ -14,6 +14,7 @@ export type Channels =
   | 'load-db'
   | 'open-external'
   | 'toggle-fullscreen'
+  | 'set-always-on-top'
   | 'add-media'
   | 'update-elo'
   | 'update-description'

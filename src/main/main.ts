@@ -108,6 +108,24 @@ ipcMain.on('toggle-fullscreen', async () => {
   mainWindow?.setFullScreen(!mainWindow?.isFullScreen());
 });
 
+ipcMain.on('set-always-on-top', async (event, args) => {
+  const alwaysOnTop = args[0];
+  const wasFullScreen = mainWindow?.isFullScreen();
+  const wasFocused = mainWindow?.isFocused();
+
+  console.log(
+    `Setting always-on-top to: ${alwaysOnTop}, fullscreen: ${wasFullScreen}`
+  );
+
+  // Always apply the setting, even in fullscreen mode
+  mainWindow?.setAlwaysOnTop(alwaysOnTop);
+
+  // If the window was focused before and we're enabling always-on-top, ensure it stays focused
+  if (wasFocused && alwaysOnTop) {
+    mainWindow?.focus();
+  }
+});
+
 // Electron Store Provider
 const store = new Store();
 ipcMain.on('electron-store-get', async (event, key, defaultValue) => {
@@ -352,6 +370,34 @@ const createWindow = async () => {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+  });
+
+  // Handle fullscreen state changes to keep always-on-top in sync
+  mainWindow.on('leave-full-screen', () => {
+    // Re-apply always-on-top setting when exiting fullscreen
+    // Use a small delay to ensure the window has fully transitioned out of fullscreen
+    setTimeout(() => {
+      const alwaysOnTop = store.get('alwaysOnTop', false) as boolean;
+      console.log('Exiting fullscreen, alwaysOnTop setting:', alwaysOnTop);
+
+      // Always re-apply the setting to ensure sync, whether true or false
+      mainWindow?.setAlwaysOnTop(alwaysOnTop);
+      console.log(
+        `Applied always-on-top: ${alwaysOnTop} after exiting fullscreen`
+      );
+
+      // Ensure window stays focused if always-on-top was enabled
+      if (alwaysOnTop) {
+        setTimeout(() => {
+          mainWindow?.focus();
+        }, 50);
+      }
+    }, 200);
+  });
+
+  mainWindow.on('enter-full-screen', () => {
+    // When entering fullscreen, the always-on-top state might be overridden
+    // but we don't need to do anything special here as fullscreen takes precedence
   });
 
   const menuBuilder = new MenuBuilder(mainWindow);

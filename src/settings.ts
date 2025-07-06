@@ -43,7 +43,8 @@ export type SettingKey =
   | 'controlMode'
   | 'autoPlay'
   | 'autoPlayTime'
-  | 'autoPlayVideoLoops';
+  | 'autoPlayVideoLoops'
+  | 'alwaysOnTop';
 
 export type Settings = {
   scaleMode: ScaleModeOption;
@@ -71,6 +72,7 @@ export type Settings = {
   autoPlay: boolean;
   autoPlayTime: number | false;
   autoPlayVideoLoops: number | false;
+  alwaysOnTop: boolean;
 };
 
 export const SCALE_MODES = {
@@ -440,6 +442,22 @@ export const VOLUME = {
   },
 };
 
+export const ALWAYS_ON_TOP = {
+  title: 'Always On Top',
+  reload: false,
+  display: 'none',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -474,4 +492,5 @@ export const SETTINGS: SettingsObject = {
   autoPlay: AUTO_PLAY,
   autoPlayTime: AUTO_PLAY_TIME,
   autoPlayVideoLoops: AUTO_PLAY_VIDEO_LOOPS,
+  alwaysOnTop: ALWAYS_ON_TOP,
 };
