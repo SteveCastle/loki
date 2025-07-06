@@ -19,7 +19,6 @@ import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
 import './taxonomy.css';
 import Category from './category';
-import { debounce } from 'lodash';
 
 type Concept = {
   label: string;
@@ -90,17 +89,18 @@ export default function Taxonomy() {
     });
   }
 
-  const debouncedSetTextFilter = useRef(
-    debounce((text: string) => {
-      setTextFilter(text);
-    }, 500)
-  );
-
-  useEffect(() => {
-    if (textFilter !== newTextFilter) {
-      debouncedSetTextFilter.current(newTextFilter);
+  function handleSubmitSearch() {
+    if (newTextFilter.trim()) {
+      setTextFilter(newTextFilter.trim());
     }
-  }, [newTextFilter]);
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    e.stopPropagation();
+    if (e.key === 'Enter' && newTextFilter.trim()) {
+      handleSubmitSearch();
+    }
+  }
 
   // If textFilter changes, update the input field
   useEffect(() => {
@@ -192,9 +192,7 @@ export default function Taxonomy() {
               type="text"
               placeholder="Search Content"
               value={newTextFilter}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-              }}
+              onKeyDown={handleSearchKeyDown}
               onKeyUp={(e) => {
                 e.stopPropagation();
               }}
@@ -202,8 +200,18 @@ export default function Taxonomy() {
               disabled={isDisabled}
             />
             <button
+              className="submit-search"
+              onClick={handleSubmitSearch}
+              disabled={!newTextFilter.trim() || isDisabled}
+              title="Search"
+            >
+              →
+            </button>
+            <button
+              className="clear-search"
               onClick={() => {
                 setNewTextFilter('');
+                setTextFilter('');
                 setEditingTag(null);
               }}
             >
@@ -224,6 +232,7 @@ export default function Taxonomy() {
               onChange={(e) => setTagFilter(e.currentTarget.value)}
             />
             <button
+              className="clear-search"
               onClick={() => {
                 setTagFilter('');
                 setEditingTag(null);
