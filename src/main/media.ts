@@ -70,9 +70,11 @@ function parseSearchString(search: string): string[] {
 }
 
 const loadMediaByDescriptionSearch =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: string[]) => {
+  (db: Database) => async (_: IpcMainInvokeEvent, args: any[]) => {
     const search = args[0] || '';
-
+    const tags = args[1] || [];
+    const filteringMode = args[2] || 'EXCLUSIVE';
+    console.log('loadMediaByDescriptionSearch', search, tags, filteringMode);
     // 1) Tokenize: respect quoted phrases
     const rawTokens = parseSearchString(search);
 
@@ -184,6 +186,34 @@ const loadMediaByDescriptionSearch =
       }
 
       whereClauses.push(combined);
+    }
+
+    // 3) Add tag filtering conditions if tags are provided
+    if (tags && tags.length > 0) {
+      if (filteringMode === 'EXCLUSIVE') {
+        // For exclusive mode, media must have ALL specified tags
+        for (const tag of tags) {
+          whereClauses.push(`
+            EXISTS (
+              SELECT 1 FROM media_tag_by_category mtc
+              WHERE mtc.media_path = media.path
+                AND mtc.tag_label = ?
+            )
+          `);
+          params.push(tag);
+        }
+      } else {
+        // For inclusive mode, media must have ANY of the specified tags
+        const tagConditions = tags.map(() => `mtc.tag_label = ?`).join(' OR ');
+        whereClauses.push(`
+          EXISTS (
+            SELECT 1 FROM media_tag_by_category mtc
+            WHERE mtc.media_path = media.path
+              AND (${tagConditions})
+          )
+        `);
+        params.push(...tags);
+      }
     }
 
     // Combine all conditions with AND

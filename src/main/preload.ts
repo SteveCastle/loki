@@ -51,9 +51,15 @@ const loadMediaFromDB = async (
   return files;
 };
 
-const loadMediaByDescriptionSearch = async (description: string) => {
+const loadMediaByDescriptionSearch = async (
+  description: string,
+  tags?: string[],
+  filteringMode?: string
+) => {
   const files = await ipcRenderer.invoke('load-media-by-description-search', [
     description,
+    tags,
+    filteringMode,
   ]);
   return files;
 };

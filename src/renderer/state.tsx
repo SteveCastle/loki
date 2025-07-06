@@ -147,6 +147,8 @@ const willHaveTag = (context: LibraryState, event: AnyEventObject) => {
   const newTagList = [...tagList];
   if (index > -1) {
     newTagList.splice(index, 1);
+  } else {
+    newTagList.push(tag);
   }
   return newTagList.length !== 0;
 };
@@ -159,7 +161,7 @@ const notEmpty = (context: LibraryState, event: AnyEventObject) => {
   return event.data.textFilter.length > 0;
 };
 
-const noTag = (context: LibraryState, event: AnyEventObject) => {
+const willHaveNoTag = (context: LibraryState, event: AnyEventObject) => {
   // Detect if the result of toggling a tag is an empty tag list.
   // If so return true.
   const tag = event.data.tag;
@@ -168,6 +170,8 @@ const noTag = (context: LibraryState, event: AnyEventObject) => {
   const newTagList = [...tagList];
   if (index > -1) {
     newTagList.splice(index, 1);
+  } else {
+    newTagList.push(tag);
   }
   return newTagList.length === 0;
 };
@@ -717,9 +721,16 @@ const libraryMachine = createMachine(
           loadingFromSearch: {
             invoke: {
               src: (context, event) => {
-                console.log('loading from Search', context, event);
+                console.log(
+                  'initial search',
+                  context.textFilter,
+                  context.dbQuery.tags,
+                  context.settings.filteringMode
+                );
                 return window.electron.loadMediaByDescriptionSearch(
-                  context.textFilter
+                  context.textFilter,
+                  context.dbQuery.tags,
+                  context.settings.filteringMode
                 );
               },
               onDone: {
@@ -734,9 +745,16 @@ const libraryMachine = createMachine(
           changingSearch: {
             invoke: {
               src: (context, event) => {
-                console.log('loading from Search', context, event);
+                console.log(
+                  'changing Search',
+                  context.textFilter,
+                  context.dbQuery.tags,
+                  context.settings.filteringMode
+                );
                 return window.electron.loadMediaByDescriptionSearch(
-                  context.textFilter
+                  context.textFilter,
+                  context.dbQuery.tags,
+                  context.settings.filteringMode
                 );
               },
               onDone: {
@@ -903,7 +921,6 @@ const libraryMachine = createMachine(
           loadedFromSearch: {
             initial: 'idle',
             entry: assign<LibraryState, AnyEventObject>({
-              dbQuery: () => ({ tags: [] }),
               libraryLoadId: () => uniqueId(),
             }),
             states: {
@@ -913,18 +930,56 @@ const libraryMachine = createMachine(
               SET_QUERY_TAG: [
                 {
                   target: 'changingSearch',
+                  cond: willHaveTag,
                   actions: assign<LibraryState, AnyEventObject>({
-                    textFilter: (context, event) => {
-                      console.log('SET QUERY TAG', context, event);
-                      // If the event.data.tag is already in the textFilter, remove it.
-                      // If it withis not in the textFilter, add it with a leading space wrapped in quotes to the end of the textFilter.
-                      const tag = `"tag:${event.data.tag}"`;
-                      const textFilter = context.textFilter;
-                      const index = textFilter.indexOf(tag);
-                      if (index > -1) {
-                        return textFilter.replace(tag, '');
+                    dbQuery: (context, event) => {
+                      console.log(
+                        'willHaveTag branch',
+                        context,
+                        event.data.tags
+                      );
+                      // Get active tags and index by tag.
+                      const activeTags = context.dbQuery.tags.reduce(
+                        (acc, tag) => {
+                          acc[tag] = true;
+                          return acc;
+                        },
+                        {} as { [key: string]: boolean }
+                      );
+                      // eslint-disable-next-line no-constant-condition
+                      if (true) {
+                        // DELETE ALL KEYS THAT DONT MATCH THE EVENT TAG
+                        Object.keys(activeTags).forEach((tag) => {
+                          if (
+                            tag !== event.data.tag &&
+                            context.settings.filteringMode === 'EXCLUSIVE'
+                          ) {
+                            delete activeTags[tag];
+                          }
+                        });
                       }
-                      return `${textFilter} ${tag}`;
+                      // If the tag is already active, remove it.
+                      if (activeTags[event.data.tag]) {
+                        delete activeTags[event.data.tag];
+                      } else {
+                        // Otherwise, add it.
+                        activeTags[event.data.tag] = true;
+                      }
+                      return { tags: Object.keys(activeTags) };
+                    },
+                  }),
+                },
+                {
+                  target: 'changingSearch',
+                  cond: willHaveNoTag,
+                  actions: assign<LibraryState, AnyEventObject>({
+                    dbQuery: (context, event) => {
+                      console.log(
+                        'will have no tag branch',
+                        context,
+                        event.data.tag
+                      );
+                      return { tags: [] };
                     },
                   }),
                 },
@@ -1193,7 +1248,7 @@ const libraryMachine = createMachine(
                 },
                 {
                   target: 'loadingFromPreviousLibrary',
-                  cond: noTag,
+                  cond: willHaveNoTag,
                   actions: assign<LibraryState, AnyEventObject>({
                     dbQuery: (context, event) => {
                       console.log('SET QUERY TAG TO', context, event.data.tag);
