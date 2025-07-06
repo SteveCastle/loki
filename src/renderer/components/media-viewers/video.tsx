@@ -16,6 +16,7 @@ type Props = {
   settable?: boolean;
   coverSize?: { width: number; height: number };
   playSound?: boolean;
+  volume?: number;
   handleLoad?: React.ReactEventHandler<HTMLImageElement | HTMLVideoElement>;
   showControls?: boolean;
   mediaRef?: React.RefObject<HTMLVideoElement>;
@@ -50,6 +51,7 @@ export function Video({
   path,
   settable = false,
   playSound = false,
+  volume = 1.0,
   scaleMode,
   handleLoad,
   mediaRef,
@@ -148,6 +150,13 @@ export function Video({
       video.removeEventListener('timeupdate', handleTimeUpdate);
     };
   }, [onTimestampChange]);
+
+  // Apply volume setting to video element
+  useEffect(() => {
+    if (mediaRef && mediaRef.current) {
+      mediaRef.current.volume = volume;
+    }
+  }, [volume]);
 
   if (error) {
     console.log('video error:', error);

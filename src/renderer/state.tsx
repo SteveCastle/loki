@@ -238,6 +238,7 @@ const libraryMachine = createMachine(
           'autoPlayVideoLoops',
           false
         ),
+        volume: window.electron.store.get('volume', 1.0),
       },
       hotKeys: {
         incrementCursor: window.electron.store.get(

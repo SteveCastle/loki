@@ -6,6 +6,7 @@ import filter from 'renderer/filter';
 import { Image } from '../media-viewers/image';
 import VideoControls from '../controls/video-controls';
 import { Video } from '../media-viewers/video';
+import { Audio } from '../media-viewers/audio';
 import { Settings } from 'settings';
 import { getFileType, FileTypes } from '../../../file-types';
 import useMediaDimensions from 'renderer/hooks/useMediaDimensions';
@@ -44,8 +45,12 @@ function resizeToCover(
 
 function getPlayer(
   path: string,
-  mediaRef: React.RefObject<HTMLImageElement | HTMLVideoElement>,
-  handleLoad: React.ReactEventHandler<HTMLImageElement | HTMLVideoElement>,
+  mediaRef: React.RefObject<
+    HTMLImageElement | HTMLVideoElement | HTMLAudioElement
+  >,
+  handleLoad: React.ReactEventHandler<
+    HTMLImageElement | HTMLVideoElement | HTMLAudioElement
+  >,
   settings: Settings,
   orientation: 'portrait' | 'landscape' | 'unknown',
   coverSize: { width: number; height: number },
@@ -63,6 +68,25 @@ function getPlayer(
         handleLoad={handleLoad}
         mediaRef={mediaRef as React.RefObject<HTMLVideoElement>}
         playSound={settings.playSound}
+        volume={settings.volume}
+        showControls={settings.showControls}
+        orientation={orientation}
+        startTime={startTime}
+      />
+    );
+  }
+  if (getFileType(path) === FileTypes.Audio) {
+    return (
+      <Audio
+        key={path}
+        path={path}
+        scaleMode={settings.scaleMode}
+        settable
+        coverSize={coverSize}
+        handleLoad={handleLoad}
+        mediaRef={mediaRef as React.RefObject<HTMLAudioElement>}
+        playSound={settings.playSound}
+        volume={settings.volume}
         showControls={settings.showControls}
         orientation={orientation}
         startTime={startTime}
@@ -88,7 +112,9 @@ function getPlayer(
 
 export function Detail({ offset = 0 }: { offset?: number }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
+  const mediaRef = useRef<
+    HTMLImageElement | HTMLVideoElement | HTMLAudioElement
+  >(null);
   let { events } = useScrollOnDrag(containerRef);
   const { libraryService } = useContext(GlobalStateContext);
   const settings = useSelector(libraryService, (state) => {
@@ -156,7 +182,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     }
   }
 
-  const { orientation } = useMediaDimensions(mediaRef);
+  const { orientation } = useMediaDimensions(
+    mediaRef as React.RefObject<HTMLImageElement | HTMLVideoElement>
+  );
   const [coverSize, setCoverSize] = useState({ width: 0, height: 0 });
 
   const handleResize = () => {
@@ -165,6 +193,11 @@ export function Detail({ offset = 0 }: { offset?: number }) {
 
     // Calculate the center of the image relative to the parent div
     if (media === null || parentDiv === null) {
+      return;
+    }
+
+    // Audio elements don't need visual resizing
+    if (media instanceof HTMLAudioElement) {
       return;
     }
 
@@ -200,6 +233,20 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     handleResize();
 
     if (media instanceof HTMLVideoElement) {
+      libraryService.send('SET_VIDEO_LENGTH', {
+        videoLength: media.duration,
+      });
+      libraryService.send('SET_PLAYING_STATE', {
+        playing: true,
+      });
+      libraryService.send('LOOP_VIDEO', {
+        loopStartTime: 0,
+        loopLength: 0,
+      });
+      if (item.timeStamp) {
+        media.currentTime = item.timeStamp;
+      }
+    } else if (media instanceof HTMLAudioElement) {
       libraryService.send('SET_VIDEO_LENGTH', {
         videoLength: media.duration,
       });
@@ -272,11 +319,13 @@ export function Detail({ offset = 0 }: { offset?: number }) {
           item.timeStamp
         )}
       </div>
-      {!settings.showControls && getFileType(item.path) === 'video' && (
-        <div className="videoControls">
-          <VideoControls />
-        </div>
-      )}
+      {!settings.showControls &&
+        (getFileType(item.path) === 'video' ||
+          getFileType(item.path) === 'audio') && (
+          <div className="videoControls">
+            <VideoControls />
+          </div>
+        )}
       {settings.showTags === 'all' || settings.showTags === 'detail' ? (
         <div className="controls">
           <Tags item={item} />

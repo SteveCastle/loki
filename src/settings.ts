@@ -4,7 +4,7 @@ export type OrderingOption = 'asc' | 'desc';
 
 export type SortByOption = 'name' | 'date' | 'weight' | 'shuffle' | 'elo';
 
-export type FilterOption = 'all' | 'static' | 'video';
+export type FilterOption = 'all' | 'static' | 'video' | 'audio';
 
 export type FilterModeOption = 'AND' | 'OR' | 'EXCLUSIVE';
 
@@ -30,6 +30,7 @@ export type SettingKey =
   | 'sortBy'
   | 'filters'
   | 'playSound'
+  | 'volume'
   | 'comicMode'
   | 'showTagCount'
   | 'libraryLayout'
@@ -50,6 +51,7 @@ export type Settings = {
   sortBy: SortByOption;
   filters: FilterOption;
   playSound: boolean;
+  volume: number;
   comicMode: boolean;
   showTagCount: boolean;
   libraryLayout: LibraryLayout;
@@ -159,6 +161,10 @@ export const FILTERS = {
     video: {
       label: 'Motion',
       value: 'video',
+    },
+    audio: {
+      label: 'Audio',
+      value: 'audio',
     },
   },
 };
@@ -421,6 +427,19 @@ export const LIBRARY_LAYOUT = {
   },
 };
 
+export const VOLUME = {
+  title: 'Volume',
+  reload: false,
+  display: 'general',
+  options: {
+    value: {
+      label: '100%',
+      value: 1.0,
+      increment: 0.1,
+    },
+  },
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -441,6 +460,7 @@ export const SETTINGS: SettingsObject = {
   sortBy: SORT_BY,
   filters: FILTERS,
   playSound: PLAY_SOUND,
+  volume: VOLUME,
   comicMode: COMIC_MODE,
   showTagCount: SHOW_TAG_COUNT,
   battleMode: BATTLE_MODE,

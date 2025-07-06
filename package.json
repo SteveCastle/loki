@@ -301,6 +301,16 @@
         "ext": "m4v",
         "name": "M4v Video File",
         "role": "Viewer"
+      },
+      {
+        "ext": "m4a",
+        "name": "M4a Audio File",
+        "role": "Viewer"
+      },
+      {
+        "ext": "mkv",
+        "name": "Mkv Video File",
+        "role": "Viewer"
       }
     ],
     "dmg": {

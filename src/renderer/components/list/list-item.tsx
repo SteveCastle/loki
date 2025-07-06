@@ -5,6 +5,7 @@ import { GlobalStateContext } from '../../state';
 import { Item } from '../../state';
 import { Image } from '../media-viewers/image';
 import { Video } from '../media-viewers/video';
+import { Audio } from '../media-viewers/audio';
 import { getFileType, FileTypes } from '../../../file-types';
 import useMediaDimensions from 'renderer/hooks/useMediaDimensions';
 import { ScaleModeOption } from 'settings';
@@ -21,7 +22,9 @@ type Props = {
 
 function getPlayer(
   path: string,
-  mediaRef: React.RefObject<HTMLImageElement | HTMLVideoElement>,
+  mediaRef: React.RefObject<
+    HTMLImageElement | HTMLVideoElement | HTMLAudioElement
+  >,
   orientation: 'portrait' | 'landscape' | 'unknown',
   imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
   startTime = 0
@@ -35,6 +38,19 @@ function getPlayer(
         mediaRef={mediaRef as React.RefObject<HTMLVideoElement>}
         orientation={orientation}
         cache={imageCache}
+        startTime={startTime}
+      />
+    );
+  }
+  if (getFileType(path) === FileTypes.Audio) {
+    return (
+      <Audio
+        path={path}
+        initialTimestamp={0}
+        scaleMode="cover"
+        mediaRef={mediaRef as React.RefObject<HTMLAudioElement>}
+        orientation={orientation}
+        cache={false}
         startTime={startTime}
       />
     );
@@ -54,7 +70,9 @@ function getPlayer(
 }
 
 export function ListItem({ item, idx, height }: Props) {
-  const mediaRef = useRef<HTMLImageElement | HTMLVideoElement>(null);
+  const mediaRef = useRef<
+    HTMLImageElement | HTMLVideoElement | HTMLAudioElement
+  >(null);
   const { libraryService } = useContext(GlobalStateContext);
   const cursor = useSelector(libraryService, (state) => state.context.cursor);
   const { sortBy } = useSelector(libraryService, (state) => {
@@ -77,7 +95,9 @@ export function ListItem({ item, idx, height }: Props) {
   const imageCache = useSelector(libraryService, (state) => {
     return state.context.settings.listImageCache;
   });
-  const { orientation } = useMediaDimensions(mediaRef);
+  const { orientation } = useMediaDimensions(
+    mediaRef as React.RefObject<HTMLImageElement | HTMLVideoElement>
+  );
   const [{ isDragging, offset }, drag, dragPreview] = useDrag(
     () => ({
       type: 'MEDIA',

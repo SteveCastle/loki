@@ -21,6 +21,7 @@ type Concept = {
 type Props = {
   tag: Concept;
   active: boolean;
+  isDisabled: boolean;
   tags: Concept[];
   handleEditAction: (tag: string) => void;
 };
@@ -30,7 +31,13 @@ const fetchTagPreview = (tag: string) => async (): Promise<string> => {
   return path;
 };
 
-export default function Tag({ tag, tags, active, handleEditAction }: Props) {
+export default function Tag({
+  tag,
+  tags,
+  active,
+  handleEditAction,
+  isDisabled,
+}: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const showTagCount = useSelector(
     libraryService,
@@ -117,13 +124,16 @@ export default function Tag({ tag, tags, active, handleEditAction }: Props) {
         collectedProps.isOver && !collectedProps.isSelf ? 'hovered' : '',
         collectedProps.isOver && isLeft ? 'left' : '',
         collectedProps.isOver && !isLeft ? 'right' : '',
+        isDisabled ? 'disabled' : '',
       ].join(' ')}
       ref={ref}
       onClick={() => {
-        libraryService.send({
-          type: 'SET_QUERY_TAG',
-          data: { tag: tag.label },
-        });
+        if (!isDisabled) {
+          libraryService.send({
+            type: 'SET_QUERY_TAG',
+            data: { tag: tag.label },
+          });
+        }
       }}
     >
       {previewImage ? (
@@ -151,17 +161,25 @@ export default function Tag({ tag, tags, active, handleEditAction }: Props) {
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}
         <button
+          disabled={isDisabled}
+          className={isDisabled ? 'disabled' : ''}
           onClick={(e) => {
             e.stopPropagation();
-            handleEditAction(tag.label);
+            if (!isDisabled) {
+              handleEditAction(tag.label);
+            }
           }}
         >
           <img src={editPencil} />
         </button>
         <button
+          disabled={isDisabled}
+          className={isDisabled ? 'disabled' : ''}
           onClick={(e) => {
             e.stopPropagation();
-            setShowDeleteModal(true);
+            if (!isDisabled) {
+              setShowDeleteModal(true);
+            }
           }}
         >
           <img src={deleteIcon} />
