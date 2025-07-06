@@ -83,6 +83,8 @@ interface ActionButtonProps {
   onClick: () => void;
   className?: string;
   isSelected?: boolean; // For highlighting active states like 'recursive'
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
 }
 interface ActionButtonsProps {
   libraryService: any; // Consider more specific type if possible
@@ -130,7 +132,15 @@ const WindowControls: React.FC<WindowControlsProps> = React.memo(
 WindowControls.displayName = 'WindowControls'; // Add display name
 
 const ActionButton: React.FC<ActionButtonProps> = React.memo(
-  ({ icon, tooltipId, onClick, className = '', isSelected = false }) => (
+  ({
+    icon,
+    tooltipId,
+    onClick,
+    className = '',
+    isSelected = false,
+    onMouseEnter,
+    onMouseLeave,
+  }) => (
     <button
       data-tooltip-id={tooltipId}
       data-tooltip-delay-show={500}
@@ -139,6 +149,8 @@ const ActionButton: React.FC<ActionButtonProps> = React.memo(
         isSelected ? 'selected' : ''
       }`.trim()}
       onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
     >
       <img src={icon} alt={tooltipId || 'action button'} />
     </button>
@@ -148,6 +160,16 @@ ActionButton.displayName = 'ActionButton'; // Add display name
 
 const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
   ({ libraryService, recursive, playSound, showControls }) => {
+    const [showVolumeControl, setShowVolumeControl] = useState(false);
+    const [mouseOverButton, setMouseOverButton] = useState(false);
+    const volumeRef = useRef<HTMLInputElement>(null);
+    const volumeContainerRef = useRef<HTMLDivElement>(null);
+
+    const volume = useSelector(
+      libraryService,
+      (state: any) => state.context.settings.volume
+    );
+
     const handleSettingChange = useCallback(
       (key: SettingKey, value: any, reload = false) => {
         const eventType = reload
@@ -157,6 +179,44 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
       },
       [libraryService]
     );
+
+    const handleVolumeMouseEnter = useCallback(() => {
+      setMouseOverButton(true);
+      if (playSound) {
+        setShowVolumeControl(true);
+      }
+    }, [playSound]);
+
+    const handleVolumeMouseLeave = useCallback(() => {
+      setMouseOverButton(false);
+      // Small delay to allow moving to the volume control
+      setTimeout(() => {
+        if (!volumeContainerRef.current?.matches(':hover')) {
+          setShowVolumeControl(false);
+        }
+      }, 100);
+    }, []);
+
+    const handleVolumeContainerMouseEnter = useCallback(() => {
+      if (playSound) {
+        setShowVolumeControl(true);
+      }
+    }, [playSound]);
+
+    const handleVolumeContainerMouseLeave = useCallback(() => {
+      // When leaving the entire container, hide the volume control
+      setShowVolumeControl(false);
+    }, []);
+
+    const handleSoundToggle = useCallback(() => {
+      const newPlaySound = !playSound;
+      handleSettingChange('playSound', newPlaySound);
+
+      // If turning sound on and mouse is over the button, show volume control immediately
+      if (newPlaySound && mouseOverButton) {
+        setShowVolumeControl(true);
+      }
+    }, [playSound, mouseOverButton, handleSettingChange]);
 
     return (
       <div className="menuBarRight">
@@ -176,11 +236,39 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
           onClick={() => libraryService.send('SHUFFLE')}
           tooltipId="shuffle"
         />
-        <ActionButton
-          icon={playSound ? soundIcon : noSoundIcon}
-          onClick={() => handleSettingChange('playSound', !playSound)}
-          tooltipId="sound"
-        />
+        <div
+          ref={volumeContainerRef}
+          className="volumeButtonContainer"
+          onMouseEnter={handleVolumeContainerMouseEnter}
+          onMouseLeave={handleVolumeContainerMouseLeave}
+        >
+          <ActionButton
+            icon={playSound ? soundIcon : noSoundIcon}
+            onClick={handleSoundToggle}
+            tooltipId={showVolumeControl ? undefined : 'sound'}
+            onMouseEnter={handleVolumeMouseEnter}
+            onMouseLeave={handleVolumeMouseLeave}
+          />
+          {showVolumeControl && playSound && (
+            <div className="volumeControlHover">
+              <div className="volumeLabel">{Math.round(volume * 100)}%</div>
+              <input
+                ref={volumeRef}
+                type="range"
+                min="0"
+                max="1"
+                step="0.1"
+                value={volume}
+                onChange={(e) => {
+                  const newVolume = parseFloat(e.target.value);
+                  handleSettingChange('volume', newVolume);
+                }}
+                className="volumeSliderHover"
+                aria-label="Volume"
+              />
+            </div>
+          )}
+        </div>
         <ActionButton
           icon={showControls ? videoControlsIcon : noVideoControlsIcon}
           onClick={() => handleSettingChange('showControls', !showControls)}
@@ -413,7 +501,6 @@ const CommandPaletteTooltips: React.FC = React.memo(() => (
       place="top"
     />
     <Tooltip id="shuffle" content="Shuffle items in the list." place="top" />
-    <Tooltip id="sound" content="Toggle video audio playback." place="top" />
     <Tooltip
       id="video-controls"
       content="Toggle video player controls."

@@ -31,7 +31,8 @@ const sorts: Sorts = {
 const filters: Filters = {
   all: {
     label: 'All',
-    value: /jpg$|jpeg$|jfif$|webp$|png$|webm$|mp4$|mov$|mpeg$|gif$|mkv|m4v$/i,
+    value:
+      /jpg$|jpeg$|jfif$|webp$|png$|webm$|mp4$|mov$|mpeg$|gif$|mkv|m4v$|mp3$|wav$|flac$|aac$|ogg$|m4a$|opus$|wma$|aiff$|ape$/i,
   },
   static: {
     label: 'Static',
@@ -40,6 +41,10 @@ const filters: Filters = {
   video: {
     label: 'Videos',
     value: /mp4$|mpeg$|gif$|webm$|mkv$|m4v$/i,
+  },
+  audio: {
+    label: 'Audio',
+    value: /mp3$|wav$|flac$|aac$|ogg$|m4a$|opus$|wma$|aiff$|ape$/i,
   },
 };
 

@@ -224,6 +224,11 @@
   text-shadow: 0 0 2px #000;
 }
 
+.Taxonomy .tag.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .Taxonomy .tag.hovered img {
   transform: scale3d(0.6, 0.6, 0.6);
   border-radius: 2px;

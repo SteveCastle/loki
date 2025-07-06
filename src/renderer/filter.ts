@@ -35,6 +35,9 @@ function filter(
       if (filters === 'video' && mediaType === 'motion') {
         return true;
       }
+      if (filters === 'audio' && mediaType === 'audio') {
+        return true;
+      }
       return false;
     })
     .sort((a, b) => {

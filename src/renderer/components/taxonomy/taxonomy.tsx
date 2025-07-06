@@ -325,6 +325,7 @@ export default function Taxonomy() {
             ? tags.map((tag: Concept) => {
                 return (
                   <Tag
+                    isDisabled={isDisabled}
                     tags={tags}
                     tag={{
                       label: tag.label,

@@ -65,7 +65,7 @@
   border: none;
   height: 16px;
   width: 16px;
-  margin: 6px 0 8px 8px;
+  margin: 4px;
   opacity: 0.7;
   cursor: pointer;
 }
@@ -178,4 +178,112 @@
   align-items: center;
   flex-direction: column;
   height: 100%;
+}
+
+.CommandPalette .volumeButtonContainer {
+  position: relative;
+  display: inline-block;
+  height: 16px;
+  width: 16px;
+  margin: 6px 0 8px 8px;
+}
+
+.CommandPalette .volumeButtonContainer > button {
+  background: none;
+  border: none;
+  height: 16px;
+  width: 16px;
+  margin: 0;
+  padding: 0;
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.CommandPalette .volumeButtonContainer > button:hover {
+  opacity: 1;
+}
+
+.CommandPalette .volumeButtonContainer > button img {
+  height: 16px;
+  width: 16px;
+}
+
+.CommandPalette .volumeButtonContainer > button.selected {
+  opacity: 1;
+}
+
+.CommandPalette .volumeControlHover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.9);
+  padding: 8px 12px;
+  border-radius: 4px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 10000;
+  min-width: 80px;
+  pointer-events: all;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.CommandPalette .volumeLabel {
+  color: white;
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.8;
+  text-align: center;
+  min-width: 30px;
+}
+
+.CommandPalette .volumeSliderHover {
+  width: 80px;
+  height: 4px;
+  background: #555;
+  border-radius: 2px;
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+  pointer-events: all;
+  transition: background-color 0.2s ease;
+}
+
+.CommandPalette .volumeSliderHover:hover {
+  background: #666;
+}
+
+.CommandPalette .volumeSliderHover::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease;
+}
+
+.CommandPalette .volumeSliderHover::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.CommandPalette .volumeSliderHover::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease;
+}
+
+.CommandPalette .volumeSliderHover::-moz-range-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
