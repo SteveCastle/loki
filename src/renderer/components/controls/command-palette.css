@@ -74,14 +74,25 @@
   opacity: 1;
   background: rgba(0, 150, 136, 0.2);
   border-radius: 3px;
-  border: 1px solid rgba(0, 150, 136, 0.4);
-  box-shadow: 0 0 4px rgba(0, 150, 136, 0.3);
+  position: relative;
 }
+
+.CommandPalette .menuBar .menuBarRight .selected::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 4px;
+  height: 4px;
+  background: #00c896;
+  border-radius: 50%;
+  box-shadow: 0 0 2px rgba(0, 200, 150, 0.6);
+}
+
 .CommandPalette .menuBar .menuBarRight .selected:hover {
   background: rgba(0, 150, 136, 0.3);
-  border-color: rgba(0, 150, 136, 0.6);
-  box-shadow: 0 0 6px rgba(0, 150, 136, 0.4);
 }
+
 .CommandPalette .menuBar .menuBarRight > button {
   background: none;
   border: none;
@@ -246,14 +257,23 @@
 .CommandPalette .volumeButtonContainer > button.selected {
   opacity: 1;
   background: rgba(0, 150, 136, 0.2);
-  border: 1px solid rgba(0, 150, 136, 0.4);
-  box-shadow: 0 0 4px rgba(0, 150, 136, 0.3);
+  position: relative;
+}
+
+.CommandPalette .volumeButtonContainer > button.selected::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 4px;
+  height: 4px;
+  background: #00c896;
+  border-radius: 50%;
+  box-shadow: 0 0 2px rgba(0, 200, 150, 0.6);
 }
 
 .CommandPalette .volumeButtonContainer > button.selected:hover {
   background: rgba(0, 150, 136, 0.3);
-  border-color: rgba(0, 150, 136, 0.6);
-  box-shadow: 0 0 6px rgba(0, 150, 136, 0.4);
 }
 
 .CommandPalette .volumeControlHover {
