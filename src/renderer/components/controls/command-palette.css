@@ -12,6 +12,13 @@
   min-width: 400px;
 }
 
+.CommandPalette .windowControls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
+}
+
 .CommandPalette .windowedControl {
   display: inline-block;
   height: 16px;
@@ -51,14 +58,29 @@
 
 .CommandPalette .menuBar {
   display: flex;
+  flex-direction: row;
+  align-items: center;
   margin-bottom: 4px;
 }
 .CommandPalette .menuBar .menuBarRight {
   margin-left: auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
 }
 
 .CommandPalette .menuBar .menuBarRight .selected {
   opacity: 1;
+  background: rgba(0, 150, 136, 0.2);
+  border-radius: 3px;
+  border: 1px solid rgba(0, 150, 136, 0.4);
+  box-shadow: 0 0 4px rgba(0, 150, 136, 0.3);
+}
+.CommandPalette .menuBar .menuBarRight .selected:hover {
+  background: rgba(0, 150, 136, 0.3);
+  border-color: rgba(0, 150, 136, 0.6);
+  box-shadow: 0 0 6px rgba(0, 150, 136, 0.4);
 }
 .CommandPalette .menuBar .menuBarRight > button {
   background: none;
@@ -68,10 +90,17 @@
   margin: 4px;
   opacity: 0.7;
   cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
 .CommandPalette .menuBar .menuBarRight > button:hover {
   opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .CommandPalette .menuBar .menuBarRight > button img {
@@ -185,7 +214,7 @@
   display: inline-block;
   height: 16px;
   width: 16px;
-  margin: 6px 0 8px 8px;
+  margin: 4px;
 }
 
 .CommandPalette .volumeButtonContainer > button {
@@ -197,10 +226,16 @@
   padding: 0;
   opacity: 0.7;
   cursor: pointer;
+  border-radius: 3px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .CommandPalette .volumeButtonContainer > button:hover {
   opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .CommandPalette .volumeButtonContainer > button img {
@@ -210,6 +245,15 @@
 
 .CommandPalette .volumeButtonContainer > button.selected {
   opacity: 1;
+  background: rgba(0, 150, 136, 0.2);
+  border: 1px solid rgba(0, 150, 136, 0.4);
+  box-shadow: 0 0 4px rgba(0, 150, 136, 0.3);
+}
+
+.CommandPalette .volumeButtonContainer > button.selected:hover {
+  background: rgba(0, 150, 136, 0.3);
+  border-color: rgba(0, 150, 136, 0.6);
+  box-shadow: 0 0 6px rgba(0, 150, 136, 0.4);
 }
 
 .CommandPalette .volumeControlHover {

@@ -37,6 +37,7 @@ import imageIcon from '../../../../assets/image-2-fill.svg';
 import noSoundIcon from '../../../../assets/sound-off.svg';
 import recursiveIcon from '../../../../assets/recursive.svg';
 import folderIcon from '../../../../assets/folder-open-fill.svg';
+import lockIcon from '../../../../assets/lock-fill.svg';
 
 // Settings & Types
 import { SETTINGS, SettingKey } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
@@ -91,6 +92,7 @@ interface ActionButtonsProps {
   recursive: boolean;
   playSound: boolean;
   showControls: boolean;
+  alwaysOnTop: boolean;
 }
 interface MenuBarProps extends ActionButtonsProps {
   windowControlsProps: WindowControlsProps;
@@ -159,7 +161,7 @@ const ActionButton: React.FC<ActionButtonProps> = React.memo(
 ActionButton.displayName = 'ActionButton'; // Add display name
 
 const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
-  ({ libraryService, recursive, playSound, showControls }) => {
+  ({ libraryService, recursive, playSound, showControls, alwaysOnTop }) => {
     const [showVolumeControl, setShowVolumeControl] = useState(false);
     const volumeRef = useRef<HTMLInputElement>(null);
     const volumeContainerRef = useRef<HTMLDivElement>(null);
@@ -228,6 +230,12 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
           onClick={() => libraryService.send('SHUFFLE')}
           tooltipId="shuffle"
         />
+        <ActionButton
+          icon={lockIcon}
+          onClick={() => handleSettingChange('alwaysOnTop', !alwaysOnTop)}
+          isSelected={alwaysOnTop}
+          tooltipId="always-on-top"
+        />
         <div
           ref={volumeContainerRef}
           className="volumeButtonContainer"
@@ -259,11 +267,6 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
             </div>
           )}
         </div>
-        <ActionButton
-          icon={showControls ? videoControlsIcon : noVideoControlsIcon}
-          onClick={() => handleSettingChange('showControls', !showControls)}
-          tooltipId="video-controls"
-        />
       </div>
     );
   }
@@ -492,8 +495,8 @@ const CommandPaletteTooltips: React.FC = React.memo(() => (
     />
     <Tooltip id="shuffle" content="Shuffle items in the list." place="top" />
     <Tooltip
-      id="video-controls"
-      content="Toggle video player controls."
+      id="always-on-top"
+      content="Keep window always on top."
       place="top"
     />
     <Tooltip
@@ -624,6 +627,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
     recursive: settings.recursive,
     playSound: settings.playSound,
     showControls: settings.showControls,
+    alwaysOnTop: settings.alwaysOnTop,
   };
 
   const listContextProps: ListContextDisplayProps = {

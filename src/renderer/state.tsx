@@ -239,6 +239,7 @@ const libraryMachine = createMachine(
           false
         ),
         volume: window.electron.store.get('volume', 1.0),
+        alwaysOnTop: window.electron.store.get('alwaysOnTop', false),
       },
       hotKeys: {
         incrementCursor: window.electron.store.get(
@@ -367,6 +368,13 @@ const libraryMachine = createMachine(
                 console.log('CHANGE_SETTING', context, event);
                 for (const key in event.data) {
                   window.electron.store.set(key, event.data[key]);
+                  // Handle alwaysOnTop setting specially
+                  if (key === 'alwaysOnTop') {
+                    window.electron.ipcRenderer.sendMessage(
+                      'set-always-on-top',
+                      [event.data[key]]
+                    );
+                  }
                 }
                 return {
                   ...context.settings,
