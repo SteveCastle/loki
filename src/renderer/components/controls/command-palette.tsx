@@ -40,7 +40,7 @@ import folderIcon from '../../../../assets/folder-open-fill.svg';
 import lockIcon from '../../../../assets/lock-fill.svg';
 
 // Settings & Types
-import { SETTINGS, SettingKey } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
+import { SETTINGS, SettingKey, clampVolume } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
 
 // Styles
 import './command-palette.css';
@@ -258,7 +258,7 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
                 step="0.1"
                 value={volume}
                 onChange={(e) => {
-                  const newVolume = parseFloat(e.target.value);
+                  const newVolume = clampVolume(parseFloat(e.target.value));
                   handleSettingChange('volume', newVolume);
                 }}
                 className="volumeSliderHover"

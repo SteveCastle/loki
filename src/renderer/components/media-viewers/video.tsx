@@ -3,7 +3,7 @@ import React, { useEffect, useContext, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
-import { ScaleModeOption } from 'settings';
+import { ScaleModeOption, clampVolume } from 'settings';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 import './video.css';
@@ -154,7 +154,7 @@ export function Video({
   // Apply volume setting to video element
   useEffect(() => {
     if (mediaRef && mediaRef.current) {
-      mediaRef.current.volume = volume;
+      mediaRef.current.volume = clampVolume(volume);
     }
   }, [volume]);
 
