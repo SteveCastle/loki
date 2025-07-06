@@ -53,13 +53,15 @@ function Setting({
                     const increment =
                       currentValue <= 5 ? 1 : option.increment ?? 1;
 
-                    if ((currentValue as number) - (increment ?? 1) <= 0)
-                      return;
+                    const newValue =
+                      (currentValue as number) - (increment ?? 1);
+                    const minValue = (option as any).min ?? 0;
+
+                    if (newValue < minValue) return;
 
                     libraryService.send('CHANGE_SETTING', {
                       data: {
-                        [settingKey]:
-                          (currentValue as number) - (increment ?? 1),
+                        [settingKey]: newValue,
                       },
                     });
                   }}
@@ -73,10 +75,17 @@ function Setting({
                     e.stopPropagation();
                     const increment =
                       currentValue < 5 ? 1 : option.increment ?? 1;
+
+                    const newValue =
+                      (currentValue as number) + (increment ?? 1);
+                    const maxValue = (option as any).max;
+
+                    // Check if max value is defined and new value would exceed it
+                    if (maxValue !== undefined && newValue > maxValue) return;
+
                     libraryService.send('CHANGE_SETTING', {
                       data: {
-                        [settingKey]:
-                          (currentValue as number) + (increment ?? 1),
+                        [settingKey]: newValue,
                       },
                     });
                   }}

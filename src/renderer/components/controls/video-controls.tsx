@@ -14,6 +14,7 @@ import soundHigh from '../../../../assets/sound-high.svg';
 import soundOff from '../../../../assets/sound-off.svg';
 import { uniqueId } from 'xstate/lib/utils';
 import { GlobalStateContext } from '../../state';
+import { clampVolume } from '../../../settings';
 import './video-controls.css';
 
 // --- Helper Functions (mapRange, getLabel, useElementSize - remain the same) ---
@@ -468,7 +469,7 @@ export default function VideoControls() {
                 step="0.05"
                 value={volume}
                 onChange={(e) => {
-                  const newVolume = parseFloat(e.target.value);
+                  const newVolume = clampVolume(parseFloat(e.target.value));
                   handleSettingChange('volume', newVolume);
                 }}
                 className="volumeSliderHover"

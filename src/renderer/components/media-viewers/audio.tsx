@@ -1,7 +1,7 @@
 import React, { useEffect, useContext, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
-import { ScaleModeOption } from 'settings';
+import { ScaleModeOption, clampVolume } from 'settings';
 import './audio.css';
 import './sizing.css';
 import MediaErrorMsg from './media-error';
@@ -165,7 +165,7 @@ export function Audio({
   // Apply volume setting to audio element
   useEffect(() => {
     if (mediaRef && mediaRef.current) {
-      mediaRef.current.volume = volume;
+      mediaRef.current.volume = clampVolume(volume);
     }
   }, [volume]);
 

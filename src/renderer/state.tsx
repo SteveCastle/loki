@@ -3,7 +3,7 @@ import { useInterpret } from '@xstate/react';
 import { uniqueId } from 'lodash';
 import path from 'path-browserify';
 import { AnyEventObject, assign, createMachine, InterpreterFrom } from 'xstate';
-import { Settings } from 'settings';
+import { Settings, clampVolume } from 'settings';
 import filter from './filter';
 import { Job, JobQueue } from '../main/jobs';
 
@@ -366,19 +366,29 @@ const libraryMachine = createMachine(
             actions: assign<LibraryState, AnyEventObject>({
               settings: (context, event) => {
                 console.log('CHANGE_SETTING', context, event);
-                for (const key in event.data) {
-                  window.electron.store.set(key, event.data[key]);
+                const processedData = { ...event.data };
+
+                for (const key in processedData) {
+                  // Clamp volume to valid range [0, 1]
+                  if (
+                    key === 'volume' &&
+                    typeof processedData[key] === 'number'
+                  ) {
+                    processedData[key] = clampVolume(processedData[key]);
+                  }
+
+                  window.electron.store.set(key, processedData[key]);
                   // Handle alwaysOnTop setting specially
                   if (key === 'alwaysOnTop') {
                     window.electron.ipcRenderer.sendMessage(
                       'set-always-on-top',
-                      [event.data[key]]
+                      [processedData[key]]
                     );
                   }
                 }
                 return {
                   ...context.settings,
-                  ...event.data,
+                  ...processedData,
                 };
               },
             }),
@@ -866,12 +876,22 @@ const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   settings: (context, event) => {
                     console.log('CHANGE_SETTING_AND_RELOAD', context, event);
-                    for (const key in event.data) {
-                      window.electron.store.set(key, event.data[key]);
+                    const processedData = { ...event.data };
+
+                    for (const key in processedData) {
+                      // Clamp volume to valid range [0, 1]
+                      if (
+                        key === 'volume' &&
+                        typeof processedData[key] === 'number'
+                      ) {
+                        processedData[key] = clampVolume(processedData[key]);
+                      }
+
+                      window.electron.store.set(key, processedData[key]);
                     }
                     return {
                       ...context.settings,
-                      ...event.data,
+                      ...processedData,
                     };
                   },
                 }),

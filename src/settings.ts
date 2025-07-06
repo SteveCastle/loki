@@ -432,12 +432,14 @@ export const LIBRARY_LAYOUT = {
 export const VOLUME = {
   title: 'Volume',
   reload: false,
-  display: 'general',
+  display: 'none',
   options: {
     value: {
       label: '100%',
       value: 1.0,
       increment: 0.1,
+      min: 0.0,
+      max: 1.0,
     },
   },
 };
@@ -471,6 +473,10 @@ export function getNextFilterMode(
     default:
       throw new Error(`Invalid filter mode: ${currentMode}`);
   }
+}
+
+export function clampVolume(volume: number): number {
+  return Math.max(0, Math.min(1, volume));
 }
 
 export const SETTINGS: SettingsObject = {
