@@ -161,9 +161,10 @@ ActionButton.displayName = 'ActionButton'; // Add display name
 const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
   ({ libraryService, recursive, playSound, showControls }) => {
     const [showVolumeControl, setShowVolumeControl] = useState(false);
-    const [mouseOverButton, setMouseOverButton] = useState(false);
     const volumeRef = useRef<HTMLInputElement>(null);
     const volumeContainerRef = useRef<HTMLDivElement>(null);
+    const showTimeoutRef = useRef<NodeJS.Timeout>();
+    const hideTimeoutRef = useRef<NodeJS.Timeout>();
 
     const volume = useSelector(
       libraryService,
@@ -180,43 +181,34 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
       [libraryService]
     );
 
-    const handleVolumeMouseEnter = useCallback(() => {
-      setMouseOverButton(true);
-      if (playSound) {
-        setShowVolumeControl(true);
-      }
-    }, [playSound]);
-
-    const handleVolumeMouseLeave = useCallback(() => {
-      setMouseOverButton(false);
-      // Small delay to allow moving to the volume control
-      setTimeout(() => {
-        if (!volumeContainerRef.current?.matches(':hover')) {
-          setShowVolumeControl(false);
-        }
-      }, 100);
-    }, []);
-
     const handleVolumeContainerMouseEnter = useCallback(() => {
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
       if (playSound) {
-        setShowVolumeControl(true);
+        showTimeoutRef.current = setTimeout(
+          () => setShowVolumeControl(true),
+          300
+        ); // Delay showing
       }
     }, [playSound]);
 
     const handleVolumeContainerMouseLeave = useCallback(() => {
-      // When leaving the entire container, hide the volume control
-      setShowVolumeControl(false);
+      if (showTimeoutRef.current) clearTimeout(showTimeoutRef.current);
+      hideTimeoutRef.current = setTimeout(
+        () => setShowVolumeControl(false),
+        200
+      ); // Delay hiding
     }, []);
 
     const handleSoundToggle = useCallback(() => {
       const newPlaySound = !playSound;
       handleSettingChange('playSound', newPlaySound);
 
-      // If turning sound on and mouse is over the button, show volume control immediately
-      if (newPlaySound && mouseOverButton) {
+      // If turning sound on, show volume control immediately
+      if (newPlaySound) {
+        if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
         setShowVolumeControl(true);
       }
-    }, [playSound, mouseOverButton, handleSettingChange]);
+    }, [playSound, handleSettingChange]);
 
     return (
       <div className="menuBarRight">
@@ -246,8 +238,6 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
             icon={playSound ? soundIcon : noSoundIcon}
             onClick={handleSoundToggle}
             tooltipId={showVolumeControl ? undefined : 'sound'}
-            onMouseEnter={handleVolumeMouseEnter}
-            onMouseLeave={handleVolumeMouseLeave}
           />
           {showVolumeControl && playSound && (
             <div className="volumeControlHover">

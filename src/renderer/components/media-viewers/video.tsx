@@ -251,7 +251,7 @@ export function Video({
       onDoubleClick={(e) => {
         e.preventDefault();
       }}
-      muted
+      muted={!playSound}
       src={window.electron.url.format({ protocol: 'gsm', pathname: data })}
       controls={false}
       controlsList={'nodownload nofullscreen'}
