@@ -214,11 +214,10 @@
 
 .CommandPalette .volumeControlHover {
   position: absolute;
-  top: calc(100% + 4px);
-  left: 50%;
+  bottom: calc(100% + 4px);
+  padding: 8px 12px;
   transform: translateX(-50%);
   background: rgba(0, 0, 0, 0.9);
-  padding: 8px 12px;
   border-radius: 4px;
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.1);

@@ -10,6 +10,8 @@ import { useEventListener, useIsomorphicLayoutEffect } from 'usehooks-ts';
 import repeat from '../../../../assets/repeat.svg';
 import play from '../../../../assets/play.svg';
 import pause from '../../../../assets/pause.svg';
+import soundHigh from '../../../../assets/sound-high.svg';
+import soundOff from '../../../../assets/sound-off.svg';
 import { uniqueId } from 'xstate/lib/utils';
 import { GlobalStateContext } from '../../state';
 import './video-controls.css';
@@ -44,8 +46,7 @@ function useElementSize<T extends HTMLElement = HTMLDivElement>(): [
 
   const setRef = useCallback((newNode: T | null) => {
     setNode(newNode);
-    // @ts-ignore
-    ref.current = newNode;
+    (ref as React.MutableRefObject<T | null>).current = newNode;
   }, []);
 
   const [size, setSize] = useState<Size>({
@@ -60,11 +61,7 @@ function useElementSize<T extends HTMLElement = HTMLDivElement>(): [
     });
   }, [node?.offsetHeight, node?.offsetWidth]);
 
-  useEventListener(
-    'resize',
-    handleSize,
-    typeof window !== 'undefined' ? window : undefined
-  );
+  useEventListener('resize', handleSize);
 
   useIsomorphicLayoutEffect(() => {
     handleSize();
@@ -94,17 +91,90 @@ export default function VideoControls() {
     libraryService,
     (state) => state.context.videoPlayer
   );
+  const { volume, playSound } = useSelector(
+    libraryService,
+    (state: any) => state.context.settings
+  );
 
   const [setProgressBarRef, progressBarRef, { width: progressBarWidth }] =
     useElementSize<HTMLDivElement>();
 
   const [isDragging, setIsDragging] = useState(false);
+  const [showVolumeControl, setShowVolumeControl] = useState(false);
+  const volumeContainerRef = useRef<HTMLDivElement>(null);
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [hoverPosition, setHoverPosition] = useState(0);
+
   // Refs for smoother scrubbing logic
   const wasPlayingRef = useRef(false); // Store playing state before drag
   const rafRef = useRef<number | null>(null); // Store requestAnimationFrame ID
   const latestMouseXRef = useRef(0); // Store latest mouse position for rAF
 
+  // --- Volume Logic ---
+  const handleSettingChange = useCallback(
+    (key: any, value: any) => {
+      libraryService.send('CHANGE_SETTING', { data: { [key]: value } });
+    },
+    [libraryService]
+  );
+
+  const handleVolumeMouseEnter = useCallback(() => {
+    if (playSound) {
+      setShowVolumeControl(true);
+    }
+  }, [playSound]);
+
+  const handleVolumeMouseLeave = useCallback(() => {
+    // Small delay to allow moving to the volume control
+    setTimeout(() => {
+      if (!volumeContainerRef.current?.matches(':hover')) {
+        setShowVolumeControl(false);
+      }
+    }, 100);
+  }, []);
+
+  const handleVolumeContainerMouseLeave = useCallback(() => {
+    setShowVolumeControl(false);
+  }, []);
+
+  const handleSoundToggle = useCallback(() => {
+    handleSettingChange('playSound', !playSound);
+  }, [playSound, handleSettingChange]);
+
   // --- Scrubbing Logic ---
+
+  const handleProgressHover = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (
+        !progressBarRef.current ||
+        progressBarWidth <= 0 ||
+        videoLength <= 0
+      ) {
+        setHoverTime(null);
+        return;
+      }
+      const rect = progressBarRef.current.getBoundingClientRect();
+      const offsetX = e.clientX - rect.left;
+
+      // Clamp offsetX to be within progress bar bounds
+      const clampedOffsetX = Math.max(0, Math.min(offsetX, progressBarWidth));
+
+      const time = mapRange(
+        clampedOffsetX,
+        0,
+        progressBarWidth,
+        0,
+        videoLength
+      );
+      setHoverTime(time);
+      setHoverPosition(clampedOffsetX);
+    },
+    [progressBarRef, progressBarWidth, videoLength]
+  );
+
+  const handleProgressLeave = useCallback(() => {
+    setHoverTime(null);
+  }, []);
 
   // Function to perform the actual time update (called within rAF)
   const performTimeUpdate = useCallback(() => {
@@ -258,61 +328,9 @@ export default function VideoControls() {
   // --- Render (mostly same as before) ---
   return (
     <div className="VideoControls">
-      <div
-        className="progressBar"
-        onMouseDown={handleMouseDown}
-        ref={setProgressBarRef}
-        style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
-        role="slider" // Accessibility
-        aria-label="Video progress"
-        aria-valuemin={0}
-        aria-valuemax={videoLength || 0}
-        aria-valuenow={actualVideoTime || 0}
-        aria-valuetext={getLabel(actualVideoTime || 0)}
-        tabIndex={0} // Make focusable
-        // Add keyboard controls maybe? (future enhancement)
-      >
-        <div className="label">
-          <span className="value">{getLabel(actualVideoTime)}</span>
-          <span className="total value"> / {getLabel(videoLength)}</span>
-        </div>
-        <div
-          style={{
-            width:
-              progressBarWidth > 0 && videoLength > 0
-                ? `${mapRange(
-                    actualVideoTime,
-                    0,
-                    videoLength,
-                    0,
-                    progressBarWidth
-                  )}px`
-                : '0px',
-            pointerEvents: 'none',
-          }}
-          className="progress"
-        ></div>
-        <div
-          className="progressThumb"
-          style={{
-            left:
-              progressBarWidth > 0 && videoLength > 0
-                ? `${mapRange(
-                    actualVideoTime,
-                    0,
-                    videoLength,
-                    0,
-                    progressBarWidth
-                  )}px`
-                : '0px',
-            pointerEvents: 'none',
-            opacity: isDragging ? 1 : 0.8, // Make thumb more visible during drag
-          }}
-        ></div>
-      </div>
-
-      <div className="playerButtons">
+      <div className="controls-left">
         <button
+          className="control-button"
           onClick={() => {
             libraryService.send('SET_PLAYING_STATE', {
               playing: !playing,
@@ -328,33 +346,137 @@ export default function VideoControls() {
         </button>
       </div>
 
-      <div className="loopButtons">
-        <div className="icon">
-          <img src={repeat} alt="Repeat Icon" />
-        </div>
-        {[1, 2, 5, 10].map((length) => (
-          <button
-            key={length}
-            className={[
-              'loopButton',
-              loopLength === length ? 'selected' : '',
-            ].join(' ')}
-            onClick={() => {
-              const isCurrentlySelected = loopLength === length;
-              // Calculate the loop start time based on the *current* video time,
-              // not potentially stale time during a drag.
-              const currentTimeForLoop = actualVideoTime;
-              libraryService.send('LOOP_VIDEO', {
-                loopStartTime: isCurrentlySelected ? 0 : currentTimeForLoop,
-                loopLength: isCurrentlySelected ? 0 : length,
-              });
-            }}
-            aria-pressed={loopLength === length}
+      <div className="controls-center">
+        <div className="progress-container">
+          <div
+            className="progressBar"
+            onMouseDown={handleMouseDown}
+            ref={setProgressBarRef}
+            style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
+            role="slider" // Accessibility
+            aria-label="Video progress"
+            aria-valuemin={0}
+            aria-valuemax={videoLength || 0}
+            aria-valuenow={actualVideoTime || 0}
+            aria-valuetext={getLabel(actualVideoTime || 0)}
+            tabIndex={0} // Make focusable
+            onMouseMove={handleProgressHover}
+            onMouseLeave={handleProgressLeave}
           >
-            <span>{`${length}`}</span>
-            <span className="units">sec</span>
+            {hoverTime !== null && !isDragging && (
+              <div
+                className="hover-timestamp"
+                style={{
+                  left: `${hoverPosition}px`,
+                  transform: 'translateX(-50%)',
+                }}
+              >
+                {getLabel(hoverTime)}
+              </div>
+            )}
+            <div className="progress-track"></div>
+            <div
+              style={{
+                width:
+                  progressBarWidth > 0 && videoLength > 0
+                    ? `${mapRange(
+                        actualVideoTime,
+                        0,
+                        videoLength,
+                        0,
+                        progressBarWidth
+                      )}px`
+                    : '0px',
+                pointerEvents: 'none',
+              }}
+              className="progress"
+            ></div>
+            <div
+              className="progressThumb"
+              style={{
+                left:
+                  progressBarWidth > 0 && videoLength > 0
+                    ? `${mapRange(
+                        actualVideoTime,
+                        0,
+                        videoLength,
+                        0,
+                        progressBarWidth
+                      )}px`
+                    : '0px',
+                pointerEvents: 'none',
+                opacity: isDragging ? 1 : 0.8,
+              }}
+            ></div>
+          </div>
+          <div className="timestamp-label">
+            <span className="value">{getLabel(actualVideoTime)}</span>
+            <span className="total value"> / {getLabel(videoLength)}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="controls-right">
+        <div className="loopButtons">
+          <div className="icon">
+            <img src={repeat} alt="Repeat Icon" />
+          </div>
+          {[1, 2, 5, 10].map((length) => (
+            <button
+              key={length}
+              className={[
+                'loopButton',
+                'control-button',
+                loopLength === length ? 'selected' : '',
+              ].join(' ')}
+              onClick={() => {
+                const isCurrentlySelected = loopLength === length;
+                const currentTimeForLoop = actualVideoTime;
+                libraryService.send('LOOP_VIDEO', {
+                  loopStartTime: isCurrentlySelected ? 0 : currentTimeForLoop,
+                  loopLength: isCurrentlySelected ? 0 : length,
+                });
+              }}
+              aria-pressed={loopLength === length}
+            >
+              <span>{`${length}s`}</span>
+            </button>
+          ))}
+        </div>
+
+        <div
+          className="volumeButtonContainer"
+          ref={volumeContainerRef}
+          onMouseLeave={handleVolumeContainerMouseLeave}
+        >
+          <button
+            className="control-button"
+            onClick={handleSoundToggle}
+            onMouseEnter={handleVolumeMouseEnter}
+            onMouseLeave={handleVolumeMouseLeave}
+            aria-label={playSound ? 'Mute' : 'Unmute'}
+          >
+            <img src={playSound ? soundHigh : soundOff} alt="Volume" />
           </button>
-        ))}
+          {showVolumeControl && playSound && (
+            <div className="volumeControlHover">
+              <div className="volumeLabel">{Math.round(volume * 100)}%</div>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={volume}
+                onChange={(e) => {
+                  const newVolume = parseFloat(e.target.value);
+                  handleSettingChange('volume', newVolume);
+                }}
+                className="volumeSliderHover"
+                aria-label="Volume"
+              />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
