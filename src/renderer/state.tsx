@@ -459,7 +459,7 @@ const libraryMachine = createMachine(
                   const newToast = {
                     id: uniqueId(),
                     type: 'success' as const,
-                    title: `Category stored to slot ${position}`,
+                    title: `Slot ${position}`,
                     message: category,
                     timestamp: Date.now(),
                   };
@@ -487,12 +487,11 @@ const libraryMachine = createMachine(
               assign<LibraryState, AnyEventObject>({
                 toasts: (context, event) => {
                   const { tags, position } = event.data;
-                  const tagCount = tags.length;
                   const newToast = {
                     id: uniqueId(),
-                    type: 'success' as const,
-                    title: `${tagCount} tag${tagCount !== 1 ? 's' : ''} stored to slot ${position}`,
-                    message: tags.join(', '),
+                    type: tags.length === 0 ? 'error' as const : 'success' as const,
+                    title: `Slot ${position}`,
+                    message: tags.length === 0 ? 'No Tags Selected' : tags.join(', '),
                     timestamp: Date.now(),
                   };
                   return [...context.toasts, newToast];

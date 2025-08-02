@@ -1,7 +1,7 @@
 import React, { useContext, useEffect } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
-import cancel from '../../../../assets/cancel.svg';
+// Removed cancel import - using Unicode character instead
 import { GlobalStateContext } from '../../state';
 import { Job } from 'main/jobs';
 import './toast-system.css';
@@ -52,7 +52,7 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
         </div>
       </div>
       <div className="toast-close" onClick={onClear}>
-        <img src={cancel} alt="Close" />
+        ×
       </div>
     </div>
   );
@@ -85,7 +85,7 @@ const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
         </div>
       </div>
       <div className="toast-close" onClick={onClear}>
-        <img src={cancel} alt="Close" />
+        ×
       </div>
     </div>
   );
