@@ -8,7 +8,6 @@ const crypto = require('crypto');
 const workerpool = require('workerpool');
 
 const isDev = process.env.NODE_ENV === 'development';
-const isMac = os.platform() === 'darwin';
 const ffmpegPath = isDev
   ? path.join(__dirname, 'resources/bin/ffmpeg')
   : path.join(__dirname, '../../../bin/ffmpeg');

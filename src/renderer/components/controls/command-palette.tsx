@@ -12,8 +12,7 @@ import useComponentSize from '@rehooks/component-size';
 // State & Hooks
 import { GlobalStateContext } from '../../state';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
-import filter from '../../filter'; // Assuming this is a function for filtering library items
-import { getFileType } from 'file-types'; // Assuming this identifies file types
+import filter from '../../filter';
 
 // Child Components
 import ProgressBar from './progress-bar';
@@ -25,8 +24,6 @@ import CacheSetting from './cache-setting';
 
 // Assets (Icons)
 import soundIcon from '../../../../assets/sound-high.svg';
-import videoControlsIcon from '../../../../assets/video-camera.svg';
-import noVideoControlsIcon from '../../../../assets/video-camera-off.svg';
 import gearIcon from '../../../../assets/settings-3.svg';
 import shuffleIcon from '../../../../assets/shuffle.svg';
 import dbIcon from '../../../../assets/database.svg';

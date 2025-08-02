@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useRef } from 'react';
+import React, { useContext, useRef } from 'react';
 import { useSelector } from '@xstate/react';
 import { useDrag } from 'react-dnd';
 import { GlobalStateContext } from '../../state';
@@ -98,7 +98,7 @@ export function ListItem({ item, idx, height }: Props) {
   const { orientation } = useMediaDimensions(
     mediaRef as React.RefObject<HTMLImageElement | HTMLVideoElement>
   );
-  const [{ isDragging, offset }, drag, dragPreview] = useDrag(
+  const [, drag] = useDrag(
     () => ({
       type: 'MEDIA',
       item: item,
