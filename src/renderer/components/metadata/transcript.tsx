@@ -39,6 +39,10 @@ export default function Transcript() {
   const item = library[cursor];
   const path = item?.path;
 
+  if (!path) {
+    return null;
+  }
+
   const transcriptJobs = useSelector(
     libraryService,
     (state) => {
@@ -84,7 +88,7 @@ export default function Transcript() {
     );
   }
   if (!transcript) {
-    return <GenerateTranscript path={item.path} />;
+    return <GenerateTranscript path={path} />;
   }
 
   return (
