@@ -17,6 +17,13 @@ type ActionMap = {
 export default function HotKeyController() {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
+  
+  // Add debugging for video player state
+  const videoPlayerState = useSelector(
+    libraryService,
+    (state) => state.context.videoPlayer,
+    (a, b) => a.playing === b.playing
+  );
   const { library, libraryLoadId, textFilter, activeTag, hotKeys } =
     useSelector(
       libraryService,
@@ -515,6 +522,18 @@ export default function HotKeyController() {
       },
       up: () => {},
     },
+    togglePlayPause: {
+      down: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('Spacebar pressed - current playing state:', videoPlayerState.playing);
+        console.log('Sending TOGGLE_PLAY_PAUSE event');
+        libraryService.send({
+          type: 'TOGGLE_PLAY_PAUSE',
+        });
+      },
+      up: () => {},
+    },
   };
   const actionByHotkey: ActionMap = Object.entries(hotKeys).reduce(
     (acc, [key, hotKey]) => {
@@ -535,7 +554,21 @@ export default function HotKeyController() {
       return;
     }
     
-    const keys: string[] = [mainKey];
+    // Special handling for spacebar - only trigger if not focused on input elements
+    if (mainKey === ' ' || mainKey === 'space') {
+      const target = e.target as HTMLElement;
+      const isInputElement = target && (
+        target.tagName === 'INPUT' || 
+        target.tagName === 'TEXTAREA' || 
+        target.contentEditable === 'true'
+      );
+      
+      if (isInputElement) {
+        return; // Let the input handle the spacebar
+      }
+    }
+    
+    const keys: string[] = [mainKey === 'space' ? ' ' : mainKey];
     
     // Add modifier keys in the format expected by the existing system
     // Note: We don't add shift because e.key already gives us the shifted character (e.g., "!" for Shift+1)

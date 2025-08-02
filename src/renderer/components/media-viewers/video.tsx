@@ -115,12 +115,15 @@ export function Video({
 
   // if playing is true, play the video, if its false, pause the video
   useEffect(() => {
+    console.log('Video playing state changed:', playing, 'settable:', settable);
     if (mediaRef && mediaRef.current && settable) {
       if (playing) {
+        console.log('Playing video...');
         mediaRef.current.play().catch((e) => {
           console.log('playback error', e);
         });
       } else {
+        console.log('Pausing video...');
         mediaRef.current.pause();
       }
     }
