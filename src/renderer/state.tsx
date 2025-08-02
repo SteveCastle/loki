@@ -1161,7 +1161,22 @@ const libraryMachine = createMachine(
           },
           loadingFromPreviousLibrary: {
             entry: assign<LibraryState, AnyEventObject>({
-              library: (context) => context.previousLibrary,
+              library: (context) => {
+                const library = context.previousLibrary;
+                // Immediately persist the restored library
+                window.electron.store.set('persistedLibrary', {
+                  library,
+                  initialFile: context.initialFile,
+                  cursor: context.previousCursor,
+                  previousLibrary: [],
+                  previousCursor: 0,
+                  dbQuery: context.dbQuery,
+                  mostRecentTag: context.mostRecentTag,
+                  mostRecentCategory: context.mostRecentCategory,
+                  textFilter: context.textFilter,
+                });
+                return library;
+              },
               libraryLoadId: () => uniqueId(),
               cursor: (context) => context.previousCursor,
             }),
@@ -1465,10 +1480,14 @@ const libraryMachine = createMachine(
               },
               SET_FILE: {
                 target: 'loadingFromFS',
-                actions: assign<LibraryState, AnyEventObject>({
-                  textFilter: () => '',
-                  initialFile: (context, event) => event.path,
-                }),
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    previousLibrary: (context) => context.library,
+                    previousCursor: (context) => context.cursor,
+                    textFilter: () => '',
+                    initialFile: (context, event) => event.path,
+                  })
+                ],
               },
               CHANGE_DB_PATH: {
                 target: 'selectingDB',
@@ -1523,10 +1542,14 @@ const libraryMachine = createMachine(
               },
               SET_FILE: {
                 target: 'loadingFromFS',
-                actions: assign<LibraryState, AnyEventObject>({
-                  textFilter: () => '',
-                  initialFile: (context, event) => event.path,
-                }),
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    previousLibrary: (context) => context.library,
+                    previousCursor: (context) => context.cursor,
+                    textFilter: () => '',
+                    initialFile: (context, event) => event.path,
+                  })
+                ],
               },
               SET_ACTIVE_CATEGORY: {
                 actions: assign<LibraryState, AnyEventObject>({
