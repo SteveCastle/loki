@@ -36,6 +36,13 @@ declare global {
         timeStamp?: number
       ) => Promise<string>;
       loadTranscript: (filePath: string) => Promise<VttCue[]>;
+      modifyTranscript: (input: {
+        mediaPath: string;
+        cueIndex: number;
+        startTime?: string;
+        endTime?: string;
+        text?: string;
+      }) => Promise<boolean>;
       loadTaxonomy: () => Promise<string[]>;
       ipcRenderer: {
         invoke(channel: Channels, args: unknown[]): Promise<unknown>;

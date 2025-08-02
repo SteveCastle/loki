@@ -2,12 +2,17 @@
   height: 100%;
   overflow-y: scroll;
   position: relative;
+  padding: 0.5rem;
+  background: #0d1117;
 }
 
 .Transcript ul {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .Transcript li {
@@ -15,61 +20,238 @@
   padding: 0;
 }
 
-.cue {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  margin: 0.2rem;
-  padding: 0.5rem;
-  background-color: #1e1b1c;
-  border-radius: 2px;
-  cursor: pointer;
-  opacity: 0.8;
+/* Cue Container */
+.cue-container {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  transition: all 0.2s ease;
 }
 
-.cue.active {
-  opacity: 1;
+.cue-container:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.cue-container.active {
+  box-shadow: 0 0 0 2px #58a6ff;
+}
+
+.cue-container.editing {
+  box-shadow: 0 0 0 2px #f85149;
+}
+
+/* Main Cue */
+.cue {
+  background: linear-gradient(135deg, #21262d 0%, #1c2128 100%);
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
 }
 
 .cue:hover {
+  background: linear-gradient(135deg, #262c36 0%, #1f252e 100%);
+  border-color: #424a53;
+}
+
+.cue-container.active .cue {
+  background: linear-gradient(135deg, #0d419d 0%, #0969da 100%);
+  border-color: #1f6feb;
+  color: white;
+}
+
+.cue-container.editing .cue {
+  background: linear-gradient(135deg, #2d1117 0%, #21262d 100%);
+  border-color: #f85149;
+}
+
+/* Header */
+.cue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.timestamps {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.start-time, .end-time {
+  color: #7d8590;
+  background: rgba(110, 118, 129, 0.1);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.cue-container.active .start-time,
+.cue-container.active .end-time {
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.time-separator {
+  color: #7d8590;
+  font-weight: bold;
+}
+
+.cue-container.active .time-separator {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Time Inputs */
+.time-input {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #f0f6fc;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  width: 80px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.time-input:focus {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+.time-input::placeholder {
+  color: #6e7681;
+}
+
+/* Edit Actions */
+.edit-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.save-btn, .cancel-btn {
+  background: none;
+  border: 1px solid;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: bold;
+  transition: all 0.2s ease;
+}
+
+.save-btn {
+  border-color: #238636;
+  color: #3fb950;
+}
+
+.save-btn:hover:not(:disabled) {
+  background: #238636;
+  color: white;
+}
+
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-btn {
+  border-color: #da3633;
+  color: #f85149;
+}
+
+.cancel-btn:hover {
+  background: #da3633;
+  color: white;
+}
+
+/* Content */
+.cue-content {
+  position: relative;
+}
+
+.text-display {
+  font-size: 0.875rem;
+  line-height: 1.4;
+  color: #e6edf3;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.cue-container.active .text-display {
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.text-input {
+  width: 100%;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #f0f6fc;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  padding: 0.5rem;
+  resize: vertical;
+  min-height: 2.5rem;
+  outline: none;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.text-input:focus {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+.text-input::placeholder {
+  color: #6e7681;
+}
+
+/* Edit Hint */
+.edit-hint {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  font-size: 0.6rem;
+  color: #6e7681;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  background: rgba(13, 17, 23, 0.9);
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  backdrop-filter: blur(4px);
+}
+
+.cue-container:hover .edit-hint {
   opacity: 1;
 }
 
-.cue .row {
-  display: flex;
-  flex-direction: row;
-  margin: 0;
-  padding: 0;
+.cue-container.editing .edit-hint {
+  display: none;
 }
 
-.cue .speaker {
-  font-weight: bold;
-  margin-right: 0.5em;
-}
-
-.cue .start {
-  font-size: 0.8em;
-  color: #999;
-}
-
-.cue .end {
-  font-size: 0.8em;
-  margin-left: 0.5em;
-  color: #999;
-}
-
-.cue .text {
-  margin-top: 0.5em;
-  font-size: 0.9em;
-  flex-grow: 1;
-}
-
+/* Loading States */
 .transcript-loader {
   height: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
   width: 100%;
+  background: #0d1117;
 }
 
 .transcript-loader-inner {
@@ -77,4 +259,72 @@
   align-items: center;
   padding: 2rem;
   width: 100%;
+}
+
+/* Scrollbar Styling */
+.Transcript::-webkit-scrollbar {
+  width: 6px;
+}
+
+.Transcript::-webkit-scrollbar-track {
+  background: #161b22;
+}
+
+.Transcript::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 3px;
+}
+
+.Transcript::-webkit-scrollbar-thumb:hover {
+  background: #424a53;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .cue {
+    padding: 0.5rem;
+  }
+  
+  .timestamps {
+    font-size: 0.7rem;
+  }
+  
+  .text-display,
+  .text-input {
+    font-size: 0.8rem;
+  }
+  
+  .time-input {
+    width: 70px;
+    font-size: 0.7rem;
+  }
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  .cue-container,
+  .cue,
+  .time-input,
+  .text-input,
+  .save-btn,
+  .cancel-btn,
+  .edit-hint {
+    transition: none;
+  }
+  
+  .cue-container:hover {
+    transform: none;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .cue {
+    border-width: 2px;
+  }
+  
+  .time-input,
+  .text-input {
+    border-width: 2px;
+  }
 }
