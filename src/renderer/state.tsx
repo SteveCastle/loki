@@ -63,6 +63,13 @@ type LibraryState = {
     position: { x: number; y: number };
   };
   jobs: JobQueue;
+  toasts: {
+    id: string;
+    type: 'success' | 'error' | 'info';
+    title: string;
+    message?: string;
+    timestamp: number;
+  }[];
 };
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
@@ -318,6 +325,7 @@ const libraryMachine = createMachine(
         position: { x: 0, y: 0 },
       },
       jobs: new Map<string, Job>(),
+      toasts: [],
     } as LibraryState,
     states: {
       jobQueue: {
@@ -430,36 +438,67 @@ const libraryMachine = createMachine(
             }),
           },
           STORE_CATEGORY: {
-            actions: assign<LibraryState, AnyEventObject>({
-              storedCategories: (context, event) => {
-                console.log('STORE_CATEGORY', context, event);
-                const { category, position } = event.data;
-                window.electron.store.set(`storedCategories`, {
-                  ...context.storedCategories,
-                  [position]: category,
-                });
-                return {
-                  ...context.storedCategories,
-                  [position]: category,
-                };
-              },
-            }),
+            actions: [
+              assign<LibraryState, AnyEventObject>({
+                storedCategories: (context, event) => {
+                  console.log('STORE_CATEGORY', context, event);
+                  const { category, position } = event.data;
+                  window.electron.store.set(`storedCategories`, {
+                    ...context.storedCategories,
+                    [position]: category,
+                  });
+                  return {
+                    ...context.storedCategories,
+                    [position]: category,
+                  };
+                },
+              }),
+              assign<LibraryState, AnyEventObject>({
+                toasts: (context, event) => {
+                  const { category, position } = event.data;
+                  const newToast = {
+                    id: uniqueId(),
+                    type: 'success' as const,
+                    title: `Category stored to slot ${position}`,
+                    message: category,
+                    timestamp: Date.now(),
+                  };
+                  return [...context.toasts, newToast];
+                },
+              }),
+            ],
           },
           STORE_TAG: {
-            actions: assign<LibraryState, AnyEventObject>({
-              storedTags: (context, event) => {
-                console.log('STORE_TAG', context, event);
-                const { tags, position } = event.data;
-                window.electron.store.set(`storedTags`, {
-                  ...context.storedTags,
-                  [position]: tags,
-                });
-                return {
-                  ...context.storedTags,
-                  [position]: tags,
-                };
-              },
-            }),
+            actions: [
+              assign<LibraryState, AnyEventObject>({
+                storedTags: (context, event) => {
+                  console.log('STORE_TAG', context, event);
+                  const { tags, position } = event.data;
+                  window.electron.store.set(`storedTags`, {
+                    ...context.storedTags,
+                    [position]: tags,
+                  });
+                  return {
+                    ...context.storedTags,
+                    [position]: tags,
+                  };
+                },
+              }),
+              assign<LibraryState, AnyEventObject>({
+                toasts: (context, event) => {
+                  const { tags, position } = event.data;
+                  const tagCount = tags.length;
+                  const newToast = {
+                    id: uniqueId(),
+                    type: 'success' as const,
+                    title: `${tagCount} tag${tagCount !== 1 ? 's' : ''} stored to slot ${position}`,
+                    message: tags.join(', '),
+                    timestamp: Date.now(),
+                  };
+                  return [...context.toasts, newToast];
+                },
+              }),
+            ],
           },
           SET_MOST_RECENT_TAG: {
             actions: assign<LibraryState, AnyEventObject>({
@@ -470,6 +509,27 @@ const libraryMachine = createMachine(
               mostRecentCategory: (context, event) => {
                 console.log('SET_MOST_RECENT_CATEGORY', context, event);
                 return event.category;
+              },
+            }),
+          },
+          ADD_TOAST: {
+            actions: assign<LibraryState, AnyEventObject>({
+              toasts: (context, event) => {
+                const newToast = {
+                  id: uniqueId(),
+                  type: event.data.type || 'info',
+                  title: event.data.title,
+                  message: event.data.message,
+                  timestamp: Date.now(),
+                };
+                return [...context.toasts, newToast];
+              },
+            }),
+          },
+          REMOVE_TOAST: {
+            actions: assign<LibraryState, AnyEventObject>({
+              toasts: (context, event) => {
+                return context.toasts.filter(toast => toast.id !== event.data.id);
               },
             }),
           },
@@ -879,35 +939,50 @@ const libraryMachine = createMachine(
                 }),
               },
               DELETE_FILE: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
-                    console.log('DELETE_FILE', context, event);
-                    try {
-                      window.electron.ipcRenderer.invoke('delete-file', [
-                        event.data.path,
-                      ]);
-                    } catch (e) {
-                      console.error(e);
-                    }
-                    const path = event.data.path;
-                    const library = [...context.library];
-                    const index = library.findIndex(
-                      (item) => item.path === path
-                    );
-                    if (index > -1) {
-                      library.splice(index, 1);
-                    }
-                    return library;
-                  },
-                  cursor: (context) => {
-                    // If the cursor was on the last item in the library, decrement it.
-                    if (context.cursor >= context.library.length - 1) {
-                      return context.cursor - 1;
-                    }
-                    return context.cursor;
-                  },
-                  libraryLoadId: () => uniqueId(),
-                }),
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    library: (context, event) => {
+                      console.log('DELETE_FILE', context, event);
+                      try {
+                        window.electron.ipcRenderer.invoke('delete-file', [
+                          event.data.path,
+                        ]);
+                      } catch (e) {
+                        console.error(e);
+                      }
+                      const path = event.data.path;
+                      const library = [...context.library];
+                      const index = library.findIndex(
+                        (item) => item.path === path
+                      );
+                      if (index > -1) {
+                        library.splice(index, 1);
+                      }
+                      return library;
+                    },
+                    cursor: (context) => {
+                      // If the cursor was on the last item in the library, decrement it.
+                      if (context.cursor >= context.library.length - 1) {
+                        return context.cursor - 1;
+                      }
+                      return context.cursor;
+                    },
+                    libraryLoadId: () => uniqueId(),
+                  }),
+                  assign<LibraryState, AnyEventObject>({
+                    toasts: (context, event) => {
+                      const filename = event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const newToast = {
+                        id: uniqueId(),
+                        type: 'info' as const,
+                        title: 'File deleted',
+                        message: filename,
+                        timestamp: Date.now(),
+                      };
+                      return [...context.toasts, newToast];
+                    },
+                  }),
+                ],
               },
               CHANGE_SETTING_AND_RELOAD: {
                 target: 'loadingFromFS',
@@ -1074,35 +1149,50 @@ const libraryMachine = createMachine(
                 },
               ],
               DELETE_FILE: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
-                    console.log('DELETE_FILE', context, event);
-                    try {
-                      window.electron.ipcRenderer.invoke('delete-file', [
-                        event.data.path,
-                      ]);
-                    } catch (e) {
-                      console.error(e);
-                    }
-                    const path = event.data.path;
-                    const library = [...context.library];
-                    const index = library.findIndex(
-                      (item) => item.path === path
-                    );
-                    if (index > -1) {
-                      library.splice(index, 1);
-                    }
-                    return library;
-                  },
-                  cursor: (context) => {
-                    // If the cursor was on the last item in the library, decrement it.
-                    if (context.cursor >= context.library.length - 1) {
-                      return context.cursor - 1;
-                    }
-                    return context.cursor;
-                  },
-                  libraryLoadId: () => uniqueId(),
-                }),
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    library: (context, event) => {
+                      console.log('DELETE_FILE', context, event);
+                      try {
+                        window.electron.ipcRenderer.invoke('delete-file', [
+                          event.data.path,
+                        ]);
+                      } catch (e) {
+                        console.error(e);
+                      }
+                      const path = event.data.path;
+                      const library = [...context.library];
+                      const index = library.findIndex(
+                        (item) => item.path === path
+                      );
+                      if (index > -1) {
+                        library.splice(index, 1);
+                      }
+                      return library;
+                    },
+                    cursor: (context) => {
+                      // If the cursor was on the last item in the library, decrement it.
+                      if (context.cursor >= context.library.length - 1) {
+                        return context.cursor - 1;
+                      }
+                      return context.cursor;
+                    },
+                    libraryLoadId: () => uniqueId(),
+                  }),
+                  assign<LibraryState, AnyEventObject>({
+                    toasts: (context, event) => {
+                      const filename = event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const newToast = {
+                        id: uniqueId(),
+                        type: 'info' as const,
+                        title: 'File deleted',
+                        message: filename,
+                        timestamp: Date.now(),
+                      };
+                      return [...context.toasts, newToast];
+                    },
+                  }),
+                ],
               },
               SET_ACTIVE_CATEGORY: {
                 actions: assign<LibraryState, AnyEventObject>({
@@ -1245,35 +1335,50 @@ const libraryMachine = createMachine(
                 }),
               },
               DELETE_FILE: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
-                    console.log('DELETE_FILE', context, event);
-                    try {
-                      window.electron.ipcRenderer.invoke('delete-file', [
-                        event.data.path,
-                      ]);
-                    } catch (e) {
-                      console.error(e);
-                    }
-                    const path = event.data.path;
-                    const library = [...context.library];
-                    const index = library.findIndex(
-                      (item) => item.path === path
-                    );
-                    if (index > -1) {
-                      library.splice(index, 1);
-                    }
-                    return library;
-                  },
-                  cursor: (context) => {
-                    // If the cursor was on the last item in the library, decrement it.
-                    if (context.cursor >= context.library.length - 1) {
-                      return context.cursor - 1;
-                    }
-                    return context.cursor;
-                  },
-                  libraryLoadId: () => uniqueId(),
-                }),
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    library: (context, event) => {
+                      console.log('DELETE_FILE', context, event);
+                      try {
+                        window.electron.ipcRenderer.invoke('delete-file', [
+                          event.data.path,
+                        ]);
+                      } catch (e) {
+                        console.error(e);
+                      }
+                      const path = event.data.path;
+                      const library = [...context.library];
+                      const index = library.findIndex(
+                        (item) => item.path === path
+                      );
+                      if (index > -1) {
+                        library.splice(index, 1);
+                      }
+                      return library;
+                    },
+                    cursor: (context) => {
+                      // If the cursor was on the last item in the library, decrement it.
+                      if (context.cursor >= context.library.length - 1) {
+                        return context.cursor - 1;
+                      }
+                      return context.cursor;
+                    },
+                    libraryLoadId: () => uniqueId(),
+                  }),
+                  assign<LibraryState, AnyEventObject>({
+                    toasts: (context, event) => {
+                      const filename = event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const newToast = {
+                        id: uniqueId(),
+                        type: 'info' as const,
+                        title: 'File deleted',
+                        message: filename,
+                        timestamp: Date.now(),
+                      };
+                      return [...context.toasts, newToast];
+                    },
+                  }),
+                ],
               },
               SET_QUERY_TAG: [
                 {
