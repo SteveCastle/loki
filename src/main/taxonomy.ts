@@ -433,6 +433,49 @@ const orderTags =
     return tags;
   };
 
+type UpdateTimestampInput = [string, string, number, number];
+const updateTimestamp =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateTimestampInput) => {
+    const [mediaPath, tagLabel, oldTimestamp, newTimestamp] = args;
+    const normalizedMediaPath = path.normalize(mediaPath);
+    await db.run(
+      `UPDATE media_tag_by_category SET time_stamp = $1 WHERE media_path = $2 AND tag_label = $3 AND time_stamp = $4;`,
+      [newTimestamp, normalizedMediaPath, tagLabel, oldTimestamp]
+    );
+  };
+
+type RemoveTimestampInput = [string, string, number];
+const removeTimestamp =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: RemoveTimestampInput) => {
+    const [mediaPath, tagLabel, timestamp] = args;
+    const normalizedMediaPath = path.normalize(mediaPath);
+    console.log('Removing timestamp:', { mediaPath: normalizedMediaPath, tagLabel, timestamp });
+    
+    // First, check if there's already a tag without timestamp
+    const existingTag = await db.get(
+      `SELECT * FROM media_tag_by_category WHERE media_path = $1 AND tag_label = $2 AND time_stamp = 0`,
+      [normalizedMediaPath, tagLabel]
+    );
+    
+    if (existingTag) {
+      // If there's already a tag without timestamp, just delete the timestamped one
+      const result = await db.run(
+        `DELETE FROM media_tag_by_category WHERE media_path = $1 AND tag_label = $2 AND time_stamp = $3;`,
+        [normalizedMediaPath, tagLabel, timestamp]
+      );
+      console.log('Deleted timestamped tag (keeping existing non-timestamped):', result);
+    } else {
+      // If there's no tag without timestamp, update the timestamp to 0
+      const result = await db.run(
+        `UPDATE media_tag_by_category SET time_stamp = 0 WHERE media_path = $1 AND tag_label = $2 AND time_stamp = $3;`,
+        [normalizedMediaPath, tagLabel, timestamp]
+      );
+      console.log('Updated timestamp to 0:', result);
+    }
+  };
+
 export {
   loadTaxonomy,
   getTagCount,
@@ -451,4 +494,6 @@ export {
   deleteTag,
   loadTagsByMediaPath,
   selectNewPath,
+  updateTimestamp,
+  removeTimestamp,
 };

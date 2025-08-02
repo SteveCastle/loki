@@ -2,9 +2,8 @@ import { useContext, memo } from 'react';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { Tooltip } from 'react-tooltip';
 import './tags.css';
-import { useSelector } from '@xstate/react';
+import TimestampTooltip from './timestamp-tooltip';
 
 type Tag = {
   tag_label: string;
@@ -32,24 +31,37 @@ const deleteTag = async ({ path, tag }: { path: string; tag: Tag }) => {
   await window.electron.ipcRenderer.invoke('delete-assignment', [path, tag]);
 };
 
+const updateTimestamp = async ({ 
+  path, 
+  tagLabel, 
+  oldTimestamp, 
+  newTimestamp 
+}: { 
+  path: string; 
+  tagLabel: string; 
+  oldTimestamp: number; 
+  newTimestamp: number; 
+}) => {
+  await window.electron.ipcRenderer.invoke('update-timestamp', [path, tagLabel, oldTimestamp, newTimestamp]);
+};
+
+const removeTimestamp = async ({ 
+  path, 
+  tagLabel, 
+  timestamp 
+}: { 
+  path: string; 
+  tagLabel: string; 
+  timestamp: number; 
+}) => {
+  console.log('Frontend: removing timestamp', { path, tagLabel, timestamp });
+  await window.electron.ipcRenderer.invoke('remove-timestamp', [path, tagLabel, timestamp]);
+};
+
 interface Props {
   item: Item;
 }
 
-function getLabel(currentVideoTimeStamp: number) {
-  // Returns a string in the format of 00:00:00
-  const hours = Math.floor(currentVideoTimeStamp / 3600);
-  const minutes = Math.floor((currentVideoTimeStamp - hours * 3600) / 60);
-  const seconds = Math.floor(
-    currentVideoTimeStamp - hours * 3600 - minutes * 60
-  );
-
-  const hoursString = hours < 10 ? `0${hours}` : `${hours}`;
-  const minutesString = minutes < 10 ? `0${minutes}` : `${minutes}`;
-  const secondsString = seconds < 10 ? `0${seconds}` : `${seconds}`;
-
-  return `${hoursString}:${minutesString}:${secondsString}`;
-}
 
 function Tags({ item }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
@@ -66,24 +78,34 @@ function Tags({ item }: Props) {
     },
   });
 
-  const { battleMode } = useSelector(libraryService, (state) => {
-    return state.context.settings;
+  const { mutate: mutateUpdateTimestamp } = useMutation({
+    mutationFn: updateTimestamp,
+    onSuccess: () => {
+      refetch();
+    },
   });
+
+  const { mutate: mutateRemoveTimestamp } = useMutation({
+    mutationFn: removeTimestamp,
+    onSuccess: () => {
+      console.log('Remove timestamp success, refetching...');
+      refetch();
+    },
+    onError: (error) => {
+      console.error('Remove timestamp error:', error);
+    },
+  });
+
   if (isLoading || !data) return null;
   if (error) return <p>{error.message}</p>;
   return (
     <div className={`Tags`}>
       <ul>
         {(data.tags || [])
-          .filter(
-            (tag) =>
-              tag.time_stamp === item.timeStamp ||
-              tag.tag_label !== item.tagLabel
-          )
           .map((tag, idx) => {
             return (
               <li
-                key={`${tag.tag_label}-${idx}`}
+                key={`${tag.tag_label}-${tag.time_stamp || 0}-${idx}`}
                 onClick={() => {
                   libraryService.send({
                     type: 'SET_QUERY_TAG',
@@ -92,18 +114,50 @@ function Tags({ item }: Props) {
                 }}
               >
                 {tag.time_stamp ? (
-                  <span
-                    data-tooltip-id={`tooltip-${tag.tag_label}-${idx}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      libraryService.send('SET_VIDEO_TIME', {
-                        timeStamp: tag.time_stamp,
-                        eventId: uniqueId(),
-                      });
-                    }}
-                  >
-                    🕑
-                  </span>
+                  <>
+                    <span
+                      data-tooltip-id={`tooltip-${tag.tag_label}-${tag.time_stamp}-${idx}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        libraryService.send('SET_VIDEO_TIME', {
+                          timeStamp: tag.time_stamp,
+                          eventId: uniqueId(),
+                        });
+                      }}
+                    >
+                      🕑
+                    </span>
+                    <TimestampTooltip
+                      id={`tooltip-${tag.tag_label}-${tag.time_stamp}-${idx}`}
+                      timestamp={tag.time_stamp}
+                      onEdit={(newTimestamp) => {
+                        console.log('Editing timestamp:', { 
+                          path: item.path, 
+                          tagLabel: tag.tag_label, 
+                          oldTimestamp: tag.time_stamp, 
+                          newTimestamp 
+                        });
+                        mutateUpdateTimestamp({
+                          path: item.path,
+                          tagLabel: tag.tag_label,
+                          oldTimestamp: tag.time_stamp,
+                          newTimestamp,
+                        });
+                      }}
+                      onRemove={() => {
+                        console.log('Removing timestamp:', { 
+                          path: item.path, 
+                          tagLabel: tag.tag_label, 
+                          timestamp: tag.time_stamp 
+                        });
+                        mutateRemoveTimestamp({
+                          path: item.path,
+                          tagLabel: tag.tag_label,
+                          timestamp: tag.time_stamp,
+                        });
+                      }}
+                    />
+                  </>
                 ) : null}
                 <span>{tag.tag_label}</span>
                 <button
@@ -114,10 +168,6 @@ function Tags({ item }: Props) {
                 >
                   ❌
                 </button>
-                <Tooltip
-                  id={`tooltip-${tag.tag_label}-${idx}`}
-                  content={getLabel(tag.time_stamp)}
-                />
               </li>
             );
           })}

@@ -40,6 +40,8 @@ export type Channels =
   | 'delete-assignment'
   | 'delete-tag'
   | 'update-assignment-weight'
+  | 'update-timestamp'
+  | 'remove-timestamp'
   | 'generate-transcript'
   | 'delete-file'
   | 'minimize';

@@ -46,6 +46,8 @@ import {
   deleteTag,
   loadTagsByMediaPath,
   selectNewPath,
+  updateTimestamp,
+  removeTimestamp,
 } from './taxonomy';
 
 import { loadFileMetaData } from './metadata';
@@ -164,6 +166,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('update-assignment-weight');
   ipcMain.removeHandler('update-tag-weight');
   ipcMain.removeHandler('fetch-tag-preview');
+  ipcMain.removeHandler('update-timestamp');
+  ipcMain.removeHandler('remove-timestamp');
   ipcMain.removeHandler('fetch-media-preview');
   ipcMain.removeHandler('add-media');
   ipcMain.removeHandler('update-elo');
@@ -205,6 +209,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('update-assignment-weight', updateAssignmentWeight(db));
   ipcMain.handle('update-tag-weight', updateTagWeight(db));
   ipcMain.handle('fetch-tag-preview', fetchTagPreview(db));
+  ipcMain.handle('update-timestamp', updateTimestamp(db));
+  ipcMain.handle('remove-timestamp', removeTimestamp(db));
   ipcMain.handle('fetch-media-preview', fetchMediaPreview(db, store));
   ipcMain.handle('load-file-metadata', loadFileMetaData(db));
 
