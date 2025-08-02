@@ -39,10 +39,6 @@ export default function Transcript() {
   const item = library[cursor];
   const path = item?.path;
 
-  if (!path) {
-    return null;
-  }
-
   const transcriptJobs = useSelector(
     libraryService,
     (state) => {
@@ -58,13 +54,18 @@ export default function Transcript() {
     },
     (a, b) => a.length === b.length
   );
-  console.log('transcriptJobs', transcriptJobs);
+  
   const { data: transcript } = useQuery({
     queryKey: ['transcript', path],
     queryFn: loadTranscript(path),
     enabled: !!path,
   });
+  
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  if (!path) {
+    return null;
+  }
   // function to setScroll top smoothly
   function setScrollTop(scrollTop: number) {
     if (scrollRef.current) {
@@ -75,8 +76,9 @@ export default function Transcript() {
     }
   }
 
+  console.log('transcriptJobs', transcriptJobs);
+  
   if (transcriptJobs.length > 0) {
-    console.log('trascriptJobs', transcriptJobs);
     return (
       <div className="transcript-loader">
         <div className="transcript-loader-inner">

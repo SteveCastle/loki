@@ -22,6 +22,20 @@ export type Item = {
   description?: string;
 };
 
+type PersistedLibraryData = {
+  library: Item[];
+  initialFile: string;
+  cursor: number;
+  previousLibrary?: Item[];
+  previousCursor?: number;
+  dbQuery?: {
+    tags: string[];
+  };
+  mostRecentTag?: string;
+  mostRecentCategory?: string;
+  textFilter?: string;
+};
+
 type Props = {
   children: React.ReactNode;
 };
@@ -78,7 +92,21 @@ type LibraryState = {
 };
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
-  library: (_, event) => event.data.library,
+  library: (context, event) => {
+    const library = event.data.library;
+    window.electron.store.set('persistedLibrary', {
+      library,
+      initialFile: context.initialFile,
+      cursor: event.data.cursor,
+      previousLibrary: context.previousLibrary,
+      previousCursor: context.previousCursor,
+      dbQuery: context.dbQuery,
+      mostRecentTag: context.mostRecentTag,
+      mostRecentCategory: context.mostRecentCategory,
+      textFilter: context.textFilter,
+    });
+    return library;
+  },
   libraryLoadId: () => uniqueId(),
   cursor: (_, event) => event.data.cursor,
 });
@@ -86,7 +114,23 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
 const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
   previousLibrary: (context) => context.library,
   previousCursor: (context) => context.cursor,
-  library: (_, event) => event.data.library,
+  library: (context, event) => {
+    const library = event.data.library;
+    const previousLibrary = context.library;
+    const previousCursor = context.cursor;
+    window.electron.store.set('persistedLibrary', {
+      library,
+      initialFile: context.initialFile,
+      cursor: event.data.cursor,
+      previousLibrary,
+      previousCursor,
+      dbQuery: context.dbQuery,
+      mostRecentTag: context.mostRecentTag,
+      mostRecentCategory: context.mostRecentCategory,
+      textFilter: context.textFilter,
+    });
+    return library;
+  },
   libraryLoadId: () => uniqueId(),
   cursor: (_, event) => event.data.cursor,
   commandPalette: (context) => {
@@ -97,11 +141,43 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
   },
 });
 
+const clearPersistedLibrary = () => {
+  window.electron.store.set('persistedLibrary', null);
+};
+
+const updatePersistedCursor = (context: LibraryState, cursor: number) => {
+  const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+  if (persistedData) {
+    window.electron.store.set('persistedLibrary', {
+      ...persistedData,
+      cursor,
+      dbQuery: context.dbQuery,
+      mostRecentTag: context.mostRecentTag,
+      mostRecentCategory: context.mostRecentCategory,
+      textFilter: context.textFilter,
+    });
+  }
+};
+
+const updatePersistedState = (context: LibraryState) => {
+  const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+  if (persistedData) {
+    window.electron.store.set('persistedLibrary', {
+      ...persistedData,
+      dbQuery: context.dbQuery,
+      mostRecentTag: context.mostRecentTag,
+      mostRecentCategory: context.mostRecentCategory,
+      textFilter: context.textFilter,
+    });
+  }
+};
+
 const setPath = assign<LibraryState, AnyEventObject>({
   initialFile: (context, event) => {
     if (!event.data) {
       return context.initialFile;
     }
+    clearPersistedLibrary();
     return event.data;
   },
   settings: (context, event) => {
@@ -151,6 +227,23 @@ const setDB = assign<LibraryState, AnyEventObject>({
 
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
 const missingDb = (context: LibraryState) => !context.dbPath;
+const hasPersistedLibrary = (context: LibraryState): boolean => {
+  const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+  return !!(persistedData && 
+         persistedData.library && 
+         Array.isArray(persistedData.library) && 
+         persistedData.library.length > 0);
+};
+
+const hasPersistedTextFilter = (context: LibraryState): boolean => {
+  const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+  return !!(persistedData && persistedData.textFilter && persistedData.textFilter.length > 0);
+};
+
+const hasPersistedTags = (context: LibraryState): boolean => {
+  const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+  return !!(persistedData && persistedData.dbQuery && persistedData.dbQuery.tags && persistedData.dbQuery.tags.length > 0);
+};
 
 const willHaveTag = (context: LibraryState, event: AnyEventObject) => {
   // Detect if the result of toggling a tag is not an empty tag list.
@@ -596,16 +689,24 @@ const libraryMachine = createMachine(
             ],
           },
           SET_MOST_RECENT_TAG: {
-            actions: assign<LibraryState, AnyEventObject>({
-              mostRecentTag: (context, event) => {
-                console.log('SET_MOST_RECENT_TAG', context, event);
-                return event.tag;
-              },
-              mostRecentCategory: (context, event) => {
-                console.log('SET_MOST_RECENT_CATEGORY', context, event);
-                return event.category;
-              },
-            }),
+            actions: [
+              assign<LibraryState, AnyEventObject>({
+                mostRecentTag: (context, event) => {
+                  console.log('SET_MOST_RECENT_TAG', context, event);
+                  const newTag = event.tag;
+                  updatePersistedState({
+                    ...context,
+                    mostRecentTag: newTag,
+                    mostRecentCategory: event.category
+                  });
+                  return newTag;
+                },
+                mostRecentCategory: (context, event) => {
+                  console.log('SET_MOST_RECENT_CATEGORY', context, event);
+                  return event.category;
+                },
+              })
+            ],
           },
           ADD_TOAST: {
             actions: assign<LibraryState, AnyEventObject>({
@@ -717,7 +818,11 @@ const libraryMachine = createMachine(
         on: {
           SET_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>({
-              cursor: (context, event) => event.idx,
+              cursor: (context, event) => {
+                const cursor = event.idx;
+                updatePersistedCursor(context, cursor);
+                return cursor;
+              },
             }),
           },
           RESET_CURSOR: {
@@ -738,13 +843,16 @@ const libraryMachine = createMachine(
                       path.normalize(event.currentItem?.path)
                 );
                 console.log('index of current item', event.currentItem, cursor);
-                return cursor > -1 ? cursor : 0;
+                const finalCursor = cursor > -1 ? cursor : 0;
+                updatePersistedCursor(context, finalCursor);
+                return finalCursor;
               },
             }),
           },
           INCREMENT_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>({
               cursor: (context) => {
+                let newCursor;
                 if (
                   context.cursor <
                   filter(
@@ -756,27 +864,32 @@ const libraryMachine = createMachine(
                   ).length -
                     1
                 ) {
-                  return context.cursor + 1;
+                  newCursor = context.cursor + 1;
+                } else {
+                  newCursor = 0;
                 }
-                return 0;
+                updatePersistedCursor(context, newCursor);
+                return newCursor;
               },
             }),
           },
           DECREMENT_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>({
               cursor: (context) => {
+                let newCursor;
                 if (context.cursor > 0) {
-                  return context.cursor - 1;
-                }
-                return (
-                  filter(
+                  newCursor = context.cursor - 1;
+                } else {
+                  newCursor = filter(
                     context.libraryLoadId,
                     context.textFilter,
                     context.library,
                     context.settings.filters,
                     context.settings.sortBy
-                  ).length - 1
-                );
+                  ).length - 1;
+                }
+                updatePersistedCursor(context, newCursor);
+                return newCursor;
               },
             }),
           },
@@ -851,6 +964,7 @@ const libraryMachine = createMachine(
           init: {
             always: [
               { target: 'loadingFromFS', cond: hasInitialFile },
+              { target: 'loadingFromPersisted', cond: hasPersistedLibrary },
               { target: 'selecting' },
             ],
             entry: assign<LibraryState, AnyEventObject>({
@@ -880,6 +994,7 @@ const libraryMachine = createMachine(
               library: (context) => [{ path: context.initialFile, mtimeMs: 0 }],
               libraryLoadId: () => uniqueId(),
               cursor: 0,
+              dbQuery: () => ({ tags: [] }),
             }),
             invoke: {
               src: (context, event) => {
@@ -998,6 +1113,52 @@ const libraryMachine = createMachine(
               },
             },
           },
+          loadingFromPersisted: {
+            entry: assign<LibraryState, AnyEventObject>({
+              library: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData ? persistedData.library : [];
+              },
+              initialFile: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData ? persistedData.initialFile : context.initialFile;
+              },
+              cursor: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData ? persistedData.cursor : 0;
+              },
+              previousLibrary: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData && persistedData.previousLibrary ? persistedData.previousLibrary : [];
+              },
+              previousCursor: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData ? (persistedData.previousCursor || 0) : 0;
+              },
+              dbQuery: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData && persistedData.dbQuery ? persistedData.dbQuery : { tags: [] };
+              },
+              mostRecentTag: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData ? (persistedData.mostRecentTag || '') : '';
+              },
+              mostRecentCategory: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData ? (persistedData.mostRecentCategory || '') : '';
+              },
+              textFilter: (context) => {
+                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                return persistedData ? (persistedData.textFilter || '') : '';
+              },
+              libraryLoadId: () => uniqueId(),
+            }),
+            always: [
+              { target: 'loadedFromSearch', cond: hasPersistedTextFilter },
+              { target: 'loadedFromDB', cond: hasPersistedTags },
+              { target: 'loadedFromFS' },
+            ],
+          },
           loadingFromPreviousLibrary: {
             entry: assign<LibraryState, AnyEventObject>({
               library: (context) => context.previousLibrary,
@@ -1008,9 +1169,6 @@ const libraryMachine = createMachine(
           },
           loadedFromFS: {
             initial: 'idle',
-            entry: assign<LibraryState, AnyEventObject>({
-              dbQuery: () => ({ tags: [] }),
-            }),
             on: {
               SELECT_FILE: {
                 target: 'selecting',
