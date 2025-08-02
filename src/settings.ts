@@ -48,6 +48,7 @@ export type SettingKey =
 
 export type Settings = {
   scaleMode: ScaleModeOption;
+  scale: number;
   order: OrderingOption;
   sortBy: SortByOption;
   filters: FilterOption;

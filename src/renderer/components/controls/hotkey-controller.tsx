@@ -17,13 +17,6 @@ type ActionMap = {
 export default function HotKeyController() {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
-  
-  // Add debugging for video player state
-  const videoPlayerState = useSelector(
-    libraryService,
-    (state) => state.context.videoPlayer,
-    (a, b) => a.playing === b.playing
-  );
   const { library, libraryLoadId, textFilter, activeTag, hotKeys } =
     useSelector(
       libraryService,
@@ -526,8 +519,6 @@ export default function HotKeyController() {
       down: (e) => {
         e.preventDefault();
         e.stopPropagation();
-        console.log('Spacebar pressed - current playing state:', videoPlayerState.playing);
-        console.log('Sending TOGGLE_PLAY_PAUSE event');
         libraryService.send({
           type: 'TOGGLE_PLAY_PAUSE',
         });
