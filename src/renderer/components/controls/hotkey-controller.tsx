@@ -4,11 +4,6 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
 import filter from '../../filter';
 import { GlobalStateContext, Item } from '../../state';
-import { usePrevious } from '@react-hooks-library/core';
-
-type KeyState = {
-  [key: string]: boolean;
-};
 
 type Action = {
   down: (arg: Event) => void;
@@ -52,6 +47,12 @@ export default function HotKeyController() {
     (a, b) => a === b
   );
 
+  const storedTags = useSelector(
+    libraryService,
+    (state) => state.context.storedTags,
+    (a, b) => a === b
+  );
+
   const mostRecentTag = useSelector(
     libraryService,
     (state) => state.context.mostRecentTag,
@@ -62,6 +63,12 @@ export default function HotKeyController() {
     libraryService,
     (state) => state.context.mostRecentCategory,
     (a, b) => a === b
+  );
+
+  const activeTags = useSelector(
+    libraryService,
+    (state) => state.context.dbQuery.tags,
+    (a, b) => JSON.stringify(a) === JSON.stringify(b)
   );
 
   const cursor = useSelector(
@@ -79,8 +86,34 @@ export default function HotKeyController() {
   );
 
   const item = filteredLibrary[cursor];
-  const [keyState, setKeyState] = useState<KeyState>({});
-  const previousKeyState = usePrevious<KeyState>(keyState);
+
+  // Helper function to apply multiple tags
+  const createApplyTagAction = (position: string) => ({
+    down: (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const tags = storedTags[position];
+      if (tags && tags.length > 0 && item?.path) {
+        async function createAssignments() {
+          for (const tag of tags) {
+            await window.electron.ipcRenderer.invoke('create-assignment', [
+              [item.path],
+              tag,
+              mostRecentCategory,
+              null,
+              false,
+            ]);
+            queryClient.invalidateQueries({
+              queryKey: ['taxonomy', 'tag', tag],
+            });
+          }
+          queryClient.invalidateQueries({ queryKey: ['metadata'] });
+        }
+        createAssignments();
+      }
+    },
+    up: () => {},
+  });
 
   const actions: ActionMap = {
     toggleTagPreview: {
@@ -291,6 +324,87 @@ export default function HotKeyController() {
       },
       up: () => {},
     },
+    storeTag1: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '1' },
+        }),
+      up: () => {},
+    },
+    storeTag2: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '2' },
+        }),
+      up: () => {},
+    },
+    storeTag3: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '3' },
+        }),
+      up: () => {},
+    },
+    storeTag4: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '4' },
+        }),
+      up: () => {},
+    },
+    storeTag5: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '5' },
+        }),
+      up: () => {},
+    },
+    storeTag6: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '6' },
+        }),
+      up: () => {},
+    },
+    storeTag7: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '7' },
+        }),
+      up: () => {},
+    },
+    storeTag8: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '8' },
+        }),
+      up: () => {},
+    },
+    storeTag9: {
+      down: () =>
+        libraryService.send({
+          type: 'STORE_TAG',
+          data: { tags: activeTags, position: '9' },
+        }),
+      up: () => {},
+    },
+    applyTag1: createApplyTagAction('1'),
+    applyTag2: createApplyTagAction('2'),
+    applyTag3: createApplyTagAction('3'),
+    applyTag4: createApplyTagAction('4'),
+    applyTag5: createApplyTagAction('5'),
+    applyTag6: createApplyTagAction('6'),
+    applyTag7: createApplyTagAction('7'),
+    applyTag8: createApplyTagAction('8'),
+    applyTag9: createApplyTagAction('9'),
     toggleSound: {
       down: () => libraryService.send({ type: 'CHANGE_SETTING', data: {} }),
       up: () => {},
@@ -411,18 +525,37 @@ export default function HotKeyController() {
   );
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    const lowerCaseKey = e.key.toLowerCase();
-    if (keyState[lowerCaseKey] === true) return;
-    setKeyState((prev) => ({ ...prev, [lowerCaseKey]: true }));
+    // Build current key combination string to match existing format
+    let mainKey = e.key.toLowerCase();
+    
+    // Don't process if it's just a modifier key
+    if (['alt', 'control', 'shift', 'meta'].includes(mainKey)) {
+      return;
+    }
+    
+    const keys: string[] = [mainKey];
+    
+    // Add modifier keys in the format expected by the existing system
+    // Note: We don't add shift because e.key already gives us the shifted character (e.g., "!" for Shift+1)
+    if (e.altKey) keys.push('alt');
+    if (e.ctrlKey || e.metaKey) keys.push('control');  // Handle both Ctrl and Cmd
+    
+    const keyCombo = keys.join('+');
+    
+    console.log('Key combination:', keyCombo, 'Available hotkeys:', Object.keys(actionByHotkey));
+    
+    // Check if this combination has an action and execute it immediately
+    if (actionByHotkey[keyCombo]) {
+      e.preventDefault();
+      e.stopPropagation();
+      actionByHotkey[keyCombo].down(e);
+      console.log('Executed action for:', keyCombo);
+    }
   };
 
   const handleKeyUp = (e: KeyboardEvent) => {
-    const lowerCaseKey = e.key.toLowerCase();
-    setKeyState((prev) => ({ ...prev, [lowerCaseKey]: false }));
-  };
-
-  const handleBlur = () => {
-    setKeyState({});
+    // For key up, we need to track which combinations were active
+    // For now, we'll handle this simpler since most actions are on keydown
   };
 
   useEffect(() => {
@@ -433,78 +566,10 @@ export default function HotKeyController() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [
-    keyState,
-    cursor,
-    activeTag,
-    activeCategory,
-    storedCategories,
-    libraryLoadId,
-  ]);
+  }, [actionByHotkey]); // Only depend on actionByHotkey changes
 
-  useEffect(() => {
-    window.addEventListener('blur', handleBlur);
-
-    return () => {
-      window.addEventListener('blur', handleBlur);
-    };
-  }, []);
-
-  useEffect(() => {
-    // Construct a string of all active keys joined by a plus sign.
-    if (
-      !keyState ||
-      !previousKeyState ||
-      isEquivalent(keyState, previousKeyState)
-    )
-      return;
-    console.log('keyState', keyState);
-
-    const activeKeys = Object.entries(keyState)
-      .filter(([key, value]) => value === true)
-      .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
-      .map(([key]) => key)
-      .join('+');
-
-    if (!previousKeyState) {
-      actionByHotkey[activeKeys]?.down?.(new Event('down'));
-    }
-
-    if (previousKeyState) {
-      const previousKeys = Object.entries(previousKeyState)
-        .filter(([key, value]) => value === true)
-        .sort(([keyA], [keyB]) => keyA.localeCompare(keyB))
-        .map(([key]) => key)
-        .join('+');
-
-      if (activeKeys.length > previousKeys.length) {
-        actionByHotkey[activeKeys]?.down?.(new Event('down'));
-      }
-      //Call the up action for any keys that were active before but are no longer active.
-      actionByHotkey[previousKeys]?.up?.(new Event('up'));
-    }
-    // If the key state has just become true for a key, call the down action.
-  }, [keyState, previousKeyState]);
+  // Key state processing is now handled directly in handleKeyDown for better reliability
 
   return null;
 }
 
-// check if an object has the same keys and values in any order
-function isEquivalent(a: any, b: any) {
-  const aProps = Object.getOwnPropertyNames(a);
-  const bProps = Object.getOwnPropertyNames(b);
-
-  if (aProps.length !== bProps.length) {
-    return false;
-  }
-
-  for (let i = 0; i < aProps.length; i++) {
-    const propName = aProps[i];
-
-    if (a[propName] !== b[propName]) {
-      return false;
-    }
-  }
-
-  return true;
-}

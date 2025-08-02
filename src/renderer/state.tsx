@@ -34,6 +34,9 @@ type LibraryState = {
   storedCategories: {
     [key: string]: string;
   };
+  storedTags: {
+    [key: string]: string[];
+  };
   mostRecentTag: string;
   mostRecentCategory: string;
   previousCursor: number;
@@ -190,6 +193,7 @@ const libraryMachine = createMachine(
       textFilter: '',
       activeCategory: window.electron.store.get('activeCategory', ''),
       storedCategories: window.electron.store.get('storedCategories', {}),
+      storedTags: window.electron.store.get('storedTags', {}),
       mostRecentTag: '',
       mostRecentCategory: '',
       cursor: 0,
@@ -278,15 +282,33 @@ const libraryMachine = createMachine(
         storeCategory7: window.electron.store.get('storeCategory7', '7+alt'),
         storeCategory8: window.electron.store.get('storeCategory8', '8+alt'),
         storeCategory9: window.electron.store.get('storeCategory9', '9+alt'),
-        tagCategory1: window.electron.store.get('tagCategory1', '1'),
-        tagCategory2: window.electron.store.get('tagCategory2', '2'),
-        tagCategory3: window.electron.store.get('tagCategory3', '3'),
-        tagCategory4: window.electron.store.get('tagCategory4', '4'),
-        tagCategory5: window.electron.store.get('tagCategory5', '5'),
-        tagCategory6: window.electron.store.get('tagCategory6', '6'),
-        tagCategory7: window.electron.store.get('tagCategory7', '7'),
-        tagCategory8: window.electron.store.get('tagCategory8', '8'),
-        tagCategory9: window.electron.store.get('tagCategory9', '9'),
+        tagCategory1: window.electron.store.get('tagCategory1', '!'),
+        tagCategory2: window.electron.store.get('tagCategory2', '@'),
+        tagCategory3: window.electron.store.get('tagCategory3', '#'),
+        tagCategory4: window.electron.store.get('tagCategory4', '$'),
+        tagCategory5: window.electron.store.get('tagCategory5', '%'),
+        tagCategory6: window.electron.store.get('tagCategory6', '^'),
+        tagCategory7: window.electron.store.get('tagCategory7', '&'),
+        tagCategory8: window.electron.store.get('tagCategory8', '*'),
+        tagCategory9: window.electron.store.get('tagCategory9', '('),
+        storeTag1: window.electron.store.get('storeTag1', '1+control'),
+        storeTag2: window.electron.store.get('storeTag2', '2+control'),
+        storeTag3: window.electron.store.get('storeTag3', '3+control'),
+        storeTag4: window.electron.store.get('storeTag4', '4+control'),
+        storeTag5: window.electron.store.get('storeTag5', '5+control'),
+        storeTag6: window.electron.store.get('storeTag6', '6+control'),
+        storeTag7: window.electron.store.get('storeTag7', '7+control'),
+        storeTag8: window.electron.store.get('storeTag8', '8+control'),
+        storeTag9: window.electron.store.get('storeTag9', '9+control'),
+        applyTag1: window.electron.store.get('applyTag1', '1'),
+        applyTag2: window.electron.store.get('applyTag2', '2'),
+        applyTag3: window.electron.store.get('applyTag3', '3'),
+        applyTag4: window.electron.store.get('applyTag4', '4'),
+        applyTag5: window.electron.store.get('applyTag5', '5'),
+        applyTag6: window.electron.store.get('applyTag6', '6'),
+        applyTag7: window.electron.store.get('applyTag7', '7'),
+        applyTag8: window.electron.store.get('applyTag8', '8'),
+        applyTag9: window.electron.store.get('applyTag9', '9'),
       },
       dbQuery: {
         tags: [],
@@ -419,6 +441,22 @@ const libraryMachine = createMachine(
                 return {
                   ...context.storedCategories,
                   [position]: category,
+                };
+              },
+            }),
+          },
+          STORE_TAG: {
+            actions: assign<LibraryState, AnyEventObject>({
+              storedTags: (context, event) => {
+                console.log('STORE_TAG', context, event);
+                const { tags, position } = event.data;
+                window.electron.store.set(`storedTags`, {
+                  ...context.storedTags,
+                  [position]: tags,
+                });
+                return {
+                  ...context.storedTags,
+                  [position]: tags,
                 };
               },
             }),

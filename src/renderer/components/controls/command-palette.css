@@ -350,3 +350,136 @@
   transform: scale(1.1);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
 }
+
+/* Stored Items View Styles */
+.CommandPalette .storedItemsContainer {
+  max-height: 300px;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
+
+.CommandPalette .storedItemsContainer::-webkit-scrollbar {
+  width: 4px;
+}
+
+.CommandPalette .storedItemsContainer::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.CommandPalette .storedItemsContainer::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 2px;
+}
+
+.CommandPalette .storedItemsContainer::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.CommandPalette .storedItemsSection {
+  margin-bottom: 16px;
+  width: 100%;
+}
+
+.CommandPalette .sectionTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  margin: 0 0 6px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.CommandPalette .storedItemsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.CommandPalette .storedItem {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.CommandPalette .itemRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 16px;
+}
+
+.CommandPalette .hotKeyIndicator {
+  background: rgba(0, 150, 136, 0.3);
+  color: #00c896;
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: monospace;
+  min-width: 50px;
+  text-align: center;
+}
+
+.CommandPalette .actionLabel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-style: italic;
+}
+
+.CommandPalette .itemValue {
+  color: #fff;
+  font-size: 11px;
+  margin-top: 2px;
+  padding-left: 2px;
+  font-weight: 500;
+}
+
+.CommandPalette .emptyState {
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+  text-align: center;
+  padding: 12px;
+  font-size: 11px;
+}
+
+.CommandPalette .storedItemsHelp {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 12px;
+}
+
+.CommandPalette .storedItemsHelp p {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  color: #fff;
+}
+
+.CommandPalette .storedItemsHelp ul {
+  margin: 0;
+  padding-left: 16px;
+  list-style-type: none;
+}
+
+.CommandPalette .storedItemsHelp li {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 4px;
+  position: relative;
+}
+
+.CommandPalette .storedItemsHelp li::before {
+  content: '•';
+  color: #00c896;
+  position: absolute;
+  left: -12px;
+}
+
