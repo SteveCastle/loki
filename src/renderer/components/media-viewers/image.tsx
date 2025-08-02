@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
@@ -27,7 +27,7 @@ const fetchMediaPreview =
     return path;
   };
 
-export function Image({
+function ImageComponent({
   path,
   scaleMode = 'cover',
   mediaRef,
@@ -47,6 +47,23 @@ export function Image({
   useEffect(() => {
     setError(false);
   }, [path]);
+  
+  const imgStyle = useMemo(() => {
+    if (scaleMode === 'cover' && coverSize.height && coverSize.width) {
+      return { height: coverSize.height, width: coverSize.width };
+    }
+    if (typeof scaleMode === 'number') {
+      return { height: `${scaleMode}%` };
+    }
+    return {};
+  }, [scaleMode, coverSize]);
+  
+  const imgSrc = useMemo(() => {
+    return cache && !overRideCache
+      ? window.electron.url.format({ protocol: 'gsm', pathname: data })
+      : window.electron.url.format({ protocol: 'gsm', pathname: path });
+  }, [cache, overRideCache, data, path]);
+  
   if (error) {
     return <MediaErrorMsg path={path} />;
   }
@@ -54,13 +71,7 @@ export function Image({
   return data || !cache ? (
     <img
       className={`Image ${scaleMode} ${orientation}`}
-      style={
-        scaleMode === 'cover' && coverSize.height && coverSize.width
-          ? { height: coverSize.height, width: coverSize.width }
-          : typeof scaleMode === 'number'
-          ? { height: `${scaleMode}%` }
-          : {}
-      }
+      style={imgStyle}
       ref={mediaRef}
       onLoad={(e) => {
         handleLoad && handleLoad(e);
@@ -69,11 +80,7 @@ export function Image({
         setError(true);
         console.log('failed to load image');
       }}
-      src={
-        cache && !overRideCache
-          ? window.electron.url.format({ protocol: 'gsm', pathname: data })
-          : window.electron.url.format({ protocol: 'gsm', pathname: path })
-      }
+      src={imgSrc}
       alt="detail"
     />
   ) : (
@@ -86,3 +93,17 @@ export function Image({
     </div>
   );
 }
+
+export const Image = React.memo(ImageComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.path === nextProps.path &&
+    prevProps.scaleMode === nextProps.scaleMode &&
+    prevProps.cache === nextProps.cache &&
+    prevProps.orientation === nextProps.orientation &&
+    prevProps.overRideCache === nextProps.overRideCache &&
+    prevProps.coverSize?.width === nextProps.coverSize?.width &&
+    prevProps.coverSize?.height === nextProps.coverSize?.height
+  );
+});
+
+Image.displayName = 'Image';

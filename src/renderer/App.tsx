@@ -1,4 +1,4 @@
-import React, { useContext } from 'react';
+import React, { useContext, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from './state';
 
@@ -12,8 +12,18 @@ import { Loader } from './components/layout/loader';
 import HotKeyController from './components/controls/hotkey-controller';
 import { ToastSystem } from './components/controls/toast-system';
 import AutoPlayController from './components/controls/autoplay-controller';
+import { PERFORMANCE_CONSTANTS } from './constants/performance';
 
-const queryClient = new QueryClient();
+// Create QueryClient with optimized settings
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: PERFORMANCE_CONSTANTS.QUERY_STALE_TIME,
+      cacheTime: PERFORMANCE_CONSTANTS.QUERY_CACHE_TIME,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 export default function App(): JSX.Element {
   const { libraryService } = useContext(GlobalStateContext);
@@ -29,21 +39,23 @@ export default function App(): JSX.Element {
   const autoPlay = useSelector(
     libraryService,
     (state) => state.context.settings.autoPlay,
-    (a, b) => {
-      return a === b;
-    }
+    (a, b) => a === b
   );
+  
+  const isLoadingState = useMemo(() => {
+    return (
+      state.matches({ library: 'boot' }) ||
+      state.matches({ library: 'selectingDB' }) ||
+      state.matches({ library: 'loadingFromFS' }) ||
+      state.matches({ library: 'loadingDB' })
+    );
+  }, [state]);
 
   return (
     <QueryClientProvider client={queryClient}>
       <DndProvider backend={HTML5Backend}>
         <Panels />
-        {state.matches({ library: 'boot' }) ||
-        state.matches({ library: 'selectingDB' }) ||
-        state.matches({ library: 'loadingFromFS' }) ||
-        state.matches({ library: 'loadingDB' }) ? (
-          <Loader />
-        ) : null}
+        {isLoadingState && <Loader />}
         <HotKeyController />
         {autoPlay && <AutoPlayController />}
         <ToastSystem />

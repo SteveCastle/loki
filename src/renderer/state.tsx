@@ -186,28 +186,24 @@ const willHaveNoTag = (context: LibraryState, event: AnyEventObject) => {
   return newTagList.length === 0;
 };
 
-const libraryMachine = createMachine(
-  {
-    id: 'library',
-    predictableActionArguments: true,
-    type: 'parallel',
-    context: {
-      initialFile: window.appArgs?.filePath || '',
-      dbPath: window.electron.store.get('dbPath', null),
-      library: [],
-      libraryLoadId: '',
-      initSessionId: '',
-      textFilter: '',
-      activeCategory: window.electron.store.get('activeCategory', ''),
-      storedCategories: window.electron.store.get('storedCategories', {}),
-      storedTags: window.electron.store.get('storedTags', {}),
-      mostRecentTag: '',
-      mostRecentCategory: '',
-      cursor: 0,
-      previousLibrary: [],
-      previousCursor: 0,
-      scrollPosition: 0,
-      previousScrollPosition: 0,
+// Memoize context initialization to prevent unnecessary re-computations  
+const getInitialContext = (): LibraryState => ({
+  initialFile: window.appArgs?.filePath || '',
+  dbPath: window.electron.store.get('dbPath', null),
+  library: [],
+  libraryLoadId: '',
+  initSessionId: '',
+  textFilter: '',
+  activeCategory: window.electron.store.get('activeCategory', ''),
+  storedCategories: window.electron.store.get('storedCategories', {}),
+  storedTags: window.electron.store.get('storedTags', {}),
+  mostRecentTag: '',
+  mostRecentCategory: '',
+  cursor: 0,
+  previousLibrary: [],
+  previousCursor: 0,
+  scrollPosition: 0,
+  previousScrollPosition: 0,
       videoPlayer: {
         eventId: 'initial',
         timeStamp: 0,
@@ -326,7 +322,14 @@ const libraryMachine = createMachine(
       },
       jobs: new Map<string, Job>(),
       toasts: [],
-    } as LibraryState,
+});
+
+const libraryMachine = createMachine(
+  {
+    id: 'library',
+    predictableActionArguments: true,
+    type: 'parallel',
+    context: getInitialContext(),
     states: {
       jobQueue: {
         initial: 'waiting',
