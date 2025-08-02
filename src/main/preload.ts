@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import * as url from 'url';
 import * as path from 'path';
 import { isValidFilePath } from './file-handling';
-import { loadTranscript } from './transcript';
+import { loadTranscript, modifyTranscript } from './transcript';
 import { FilterModeOption } from 'settings';
 
 export type Channels =
@@ -43,6 +43,7 @@ export type Channels =
   | 'update-timestamp'
   | 'remove-timestamp'
   | 'generate-transcript'
+  | 'modify-transcript'
   | 'delete-file'
   | 'minimize';
 
@@ -99,6 +100,7 @@ contextBridge.exposeInMainWorld('electron', {
   fetchTagCount,
   fetchMediaPreview,
   loadTranscript,
+  modifyTranscript,
   userHome: path.join(process.env.HOME || '', '.lowkey', 'dream.sqlite'),
   store: {
     get(key: string, defaultValue: any) {

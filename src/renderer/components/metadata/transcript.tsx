@@ -90,9 +90,11 @@ export default function Transcript() {
   return (
     <div className="Transcript" ref={scrollRef}>
       <ul>
-        {transcript?.map((cue) => (
+        {transcript?.map((cue, index) => (
           <Cue
             cue={cue}
+            cueIndex={index}
+            mediaPath={path}
             key={cue.startTime}
             setScrollTop={setScrollTop}
             followVideoTime={followTranscript}

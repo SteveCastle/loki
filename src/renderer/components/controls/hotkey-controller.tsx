@@ -545,18 +545,20 @@ export default function HotKeyController() {
       return;
     }
     
-    // Special handling for spacebar - only trigger if not focused on input elements
-    if (mainKey === ' ' || mainKey === 'space') {
-      const target = e.target as HTMLElement;
-      const isInputElement = target && (
-        target.tagName === 'INPUT' || 
-        target.tagName === 'TEXTAREA' || 
-        target.contentEditable === 'true'
-      );
-      
-      if (isInputElement) {
-        return; // Let the input handle the spacebar
-      }
+    // Check if we're currently focused on any input element
+    const target = e.target as HTMLElement;
+    const isInputElement = target && (
+      target.tagName === 'INPUT' || 
+      target.tagName === 'TEXTAREA' || 
+      target.contentEditable === 'true' ||
+      target.classList.contains('time-input') ||
+      target.classList.contains('text-input')
+    );
+    
+    // For most keys, if we're in an input element, let the input handle it
+    // Exception: Allow Ctrl+combinations and Escape to still work for shortcuts
+    if (isInputElement && !e.ctrlKey && !e.metaKey && mainKey !== 'escape') {
+      return; // Let the input handle the key
     }
     
     const keys: string[] = [mainKey === 'space' ? ' ' : mainKey];

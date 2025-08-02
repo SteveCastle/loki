@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 const { exec } = require('node:child_process');
-import parseVttFile from './parse-vtt';
+import parseVttFile, { VttCue } from './parse-vtt';
 
 function isPathToFile(path: string) {
   try {
@@ -87,4 +87,81 @@ const checkIfWhisperIsInstalled = async (): Promise<boolean> => {
   return true;
 };
 
-export { loadTranscript, generateTranscript, checkIfWhisperIsInstalled };
+function writeVttFile(filePath: string, cues: VttCue[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const vttContent = ['WEBVTT', ''];
+    
+    cues.forEach((cue, index) => {
+      if (index > 0) {
+        vttContent.push('');
+      }
+      vttContent.push(`${cue.startTime} --> ${cue.endTime}`);
+      vttContent.push(cue.text);
+    });
+    
+    vttContent.push('');
+    
+    fs.writeFile(filePath, vttContent.join('\n'), 'utf8', (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+type ModifyTranscriptInput = {
+  mediaPath: string;
+  cueIndex: number;
+  startTime?: string;
+  endTime?: string;
+  text?: string;
+};
+
+async function modifyTranscript(input: ModifyTranscriptInput): Promise<boolean> {
+  const { mediaPath, cueIndex, startTime, endTime, text } = input;
+  
+  // Find the transcript file path
+  const pathOptions = [
+    mediaPath.replace(/\.[^/.]+$/, '.vtt'),
+    mediaPath + '.vtt',
+  ];
+  
+  let transcriptPath: string | null = null;
+  for (const pathOption of pathOptions) {
+    if (isPathToFile(pathOption)) {
+      transcriptPath = pathOption;
+      break;
+    }
+  }
+  
+  if (!transcriptPath) {
+    throw new Error('Transcript file not found');
+  }
+  
+  // Load existing transcript
+  const cues = await parseVttFile(transcriptPath);
+  
+  if (cueIndex < 0 || cueIndex >= cues.length) {
+    throw new Error('Invalid cue index');
+  }
+  
+  // Modify the specified cue
+  if (startTime !== undefined) {
+    cues[cueIndex].startTime = startTime;
+  }
+  if (endTime !== undefined) {
+    cues[cueIndex].endTime = endTime;
+  }
+  if (text !== undefined) {
+    cues[cueIndex].text = text;
+  }
+  
+  // Write the modified transcript back to file
+  await writeVttFile(transcriptPath, cues);
+  
+  return true;
+}
+
+export { loadTranscript, generateTranscript, checkIfWhisperIsInstalled, modifyTranscript };
