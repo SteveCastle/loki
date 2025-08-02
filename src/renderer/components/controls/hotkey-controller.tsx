@@ -542,14 +542,11 @@ export default function HotKeyController() {
     
     const keyCombo = keys.join('+');
     
-    console.log('Key combination:', keyCombo, 'Available hotkeys:', Object.keys(actionByHotkey));
-    
     // Check if this combination has an action and execute it immediately
     if (actionByHotkey[keyCombo]) {
       e.preventDefault();
       e.stopPropagation();
       actionByHotkey[keyCombo].down(e);
-      console.log('Executed action for:', keyCombo);
     }
   };
 

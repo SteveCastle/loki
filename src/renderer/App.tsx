@@ -10,7 +10,7 @@ import { Panels } from './components/layout/panels';
 import './App.css';
 import { Loader } from './components/layout/loader';
 import HotKeyController from './components/controls/hotkey-controller';
-import { JobToast } from './components/controls/job-toast';
+import { ToastSystem } from './components/controls/toast-system';
 import AutoPlayController from './components/controls/autoplay-controller';
 
 const queryClient = new QueryClient();
@@ -46,7 +46,7 @@ export default function App(): JSX.Element {
         ) : null}
         <HotKeyController />
         {autoPlay && <AutoPlayController />}
-        <JobToast />
+        <ToastSystem />
       </DndProvider>
     </QueryClientProvider>
   );
