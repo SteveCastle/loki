@@ -35,7 +35,7 @@ import noSoundIcon from '../../../../assets/sound-off.svg';
 import recursiveIcon from '../../../../assets/recursive.svg';
 import folderIcon from '../../../../assets/folder-open-fill.svg';
 import lockIcon from '../../../../assets/lock-fill.svg';
-import listIcon from '../../../../assets/file-list-2-fill.svg';
+import tag from '../../../../assets/tag.svg';
 
 // Settings & Types
 import { SETTINGS, SettingKey, clampVolume } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
@@ -337,67 +337,74 @@ const SettingsList: React.FC<SettingsListProps> = React.memo(
 );
 SettingsList.displayName = 'SettingsList'; // Add display name
 
-const StoredItemsView: React.FC<{ storedCategories: { [key: string]: string }; storedTags: { [key: string]: string[] } }> = React.memo(
-  ({ storedCategories, storedTags }) => {
-    return (
-      <div className="tabContent">
-        <div className="storedItemsContainer">
-          <div className="storedItemsSection">
-            <h3 className="sectionTitle">Stored Categories</h3>
-            <div className="storedItemsList">
-              {Object.entries(storedCategories).length === 0 ? (
-                <div className="emptyState">No categories stored yet</div>
-              ) : (
-                Object.entries(storedCategories).map(([position, category]) => (
-                  <div key={position} className="storedItem">
-                    <div className="itemRow">
-                      <span className="hotKeyIndicator">Shift+{position}</span>
-                      <span className="itemValue">{category || 'Empty'}</span>
-                    </div>
+const StoredItemsView: React.FC<{
+  storedCategories: { [key: string]: string };
+  storedTags: { [key: string]: string[] };
+}> = React.memo(({ storedCategories, storedTags }) => {
+  return (
+    <div className="tabContent">
+      <div className="storedItemsContainer">
+        <div className="storedItemsSection">
+          <h3 className="sectionTitle">Stored Categories</h3>
+          <div className="storedItemsList">
+            {Object.entries(storedCategories).length === 0 ? (
+              <div className="emptyState">No categories stored yet</div>
+            ) : (
+              Object.entries(storedCategories).map(([position, category]) => (
+                <div key={position} className="storedItem">
+                  <div className="itemRow">
+                    <span className="hotKeyIndicator">Shift+{position}</span>
+                    <span className="itemValue">{category || 'Empty'}</span>
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-          
-          <div className="storedItemsSection">
-            <h3 className="sectionTitle">Stored Tags</h3>
-            <div className="storedItemsList">
-              {Object.entries(storedTags).length === 0 ? (
-                <div className="emptyState">No tags stored yet</div>
-              ) : (
-                Object.entries(storedTags).map(([position, tags]) => (
-                  <div key={position} className="storedItem">
-                    <div className="itemRow">
-                      <span className="hotKeyIndicator">{position}</span>
-                      <div className="itemValue">
-                        {tags && tags.length > 0 ? (
-                          tags.join(', ')
-                        ) : (
-                          'Empty'
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          
-          <div className="storedItemsHelp">
-            <p><strong>Usage:</strong></p>
-            <ul>
-              <li><strong>Alt+1-9:</strong> Store current category</li>
-              <li><strong>Shift+1-9:</strong> Switch to stored category</li>
-              <li><strong>Ctrl+1-9:</strong> Store currently active tags</li>
-              <li><strong>1-9:</strong> Apply stored tags to current item</li>
-            </ul>
+                </div>
+              ))
+            )}
           </div>
         </div>
+
+        <div className="storedItemsSection">
+          <h3 className="sectionTitle">Stored Tags</h3>
+          <div className="storedItemsList">
+            {Object.entries(storedTags).length === 0 ? (
+              <div className="emptyState">No tags stored yet</div>
+            ) : (
+              Object.entries(storedTags).map(([position, tags]) => (
+                <div key={position} className="storedItem">
+                  <div className="itemRow">
+                    <span className="hotKeyIndicator">{position}</span>
+                    <div className="itemValue">
+                      {tags && tags.length > 0 ? tags.join(', ') : 'Empty'}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="storedItemsHelp">
+          <p>
+            <strong>Usage:</strong>
+          </p>
+          <ul>
+            <li>
+              <strong>Alt+1-9:</strong> Store current category
+            </li>
+            <li>
+              <strong>Shift+1-9:</strong> Switch to stored category
+            </li>
+            <li>
+              <strong>Ctrl+1-9:</strong> Store currently active tags
+            </li>
+            <li>
+              <strong>1-9:</strong> Apply stored tags to current item
+            </li>
+          </ul>
+        </div>
       </div>
-    );
-  }
-);
+    </div>
+  );
+});
 StoredItemsView.displayName = 'StoredItemsView';
 
 const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
@@ -538,7 +545,7 @@ const TabSelector: React.FC<TabSelectorProps> = React.memo(
       { id: 'dbOptions', icon: dbIcon },
       { id: 'autoPlayOptions', icon: autoplayIcon },
       { id: 'hotKeyOptions', icon: keyboardIcon },
-      { id: 'storedItems', icon: listIcon },
+      { id: 'storedItems', icon: tag },
       { id: 'generalOptions', icon: gearIcon },
     ];
 
