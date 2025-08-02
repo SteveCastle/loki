@@ -39,7 +39,9 @@ const tabs = [
 ];
 
 export default function Metadata() {
-  const [activeTab, setActiveTab] = useState(0);
+  const [activeTab, setActiveTab] = useState(() => {
+    return window.electron.store.get('metadata.activeTab', 0);
+  });
   const { libraryService } = useContext(GlobalStateContext);
   const followTranscript = useSelector(
     libraryService,
@@ -66,9 +68,14 @@ export default function Metadata() {
 
   const itemType = getFileType(item?.path || '');
 
+  const handleTabChange = (tabIndex: number) => {
+    setActiveTab(tabIndex);
+    window.electron.store.set('metadata.activeTab', tabIndex);
+  };
+
   useEffect(() => {
     if (itemType === FileTypes.Image) {
-      setActiveTab(0);
+      handleTabChange(0);
     }
   }, [itemType]);
 
@@ -95,7 +102,7 @@ export default function Metadata() {
           .map((tab, idx) => (
             <div
               className={`tab ${activeTab === idx ? 'active' : ''}`}
-              onClick={() => setActiveTab(idx)}
+              onClick={() => handleTabChange(idx)}
               key={tab.label}
             >
               <span>{tab.label}</span>
