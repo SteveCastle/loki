@@ -3,7 +3,12 @@ import { useInterpret } from '@xstate/react';
 import { uniqueId } from 'lodash';
 import path from 'path-browserify';
 import { AnyEventObject, assign, createMachine, InterpreterFrom } from 'xstate';
-import { Settings, clampVolume } from 'settings';
+import {
+  DetailImageCache,
+  FilterModeOption,
+  Settings,
+  clampVolume,
+} from 'settings';
 import filter from './filter';
 import { Job, JobQueue } from '../main/jobs';
 
@@ -186,17 +191,21 @@ const willHaveNoTag = (context: LibraryState, event: AnyEventObject) => {
   return newTagList.length === 0;
 };
 
-// Memoize context initialization to prevent unnecessary re-computations  
+// Memoize context initialization to prevent unnecessary re-computations
 const getInitialContext = (): LibraryState => ({
   initialFile: window.appArgs?.filePath || '',
-  dbPath: window.electron.store.get('dbPath', null),
+  dbPath: window.electron.store.get('dbPath', null) as string,
   library: [],
   libraryLoadId: '',
   initSessionId: '',
   textFilter: '',
-  activeCategory: window.electron.store.get('activeCategory', ''),
-  storedCategories: window.electron.store.get('storedCategories', {}),
-  storedTags: window.electron.store.get('storedTags', {}),
+  activeCategory: window.electron.store.get('activeCategory', '') as string,
+  storedCategories: window.electron.store.get('storedCategories', {}) as {
+    [key: string]: string;
+  },
+  storedTags: window.electron.store.get('storedTags', {}) as {
+    [key: string]: string[];
+  },
   mostRecentTag: '',
   mostRecentCategory: '',
   cursor: 0,
@@ -204,125 +213,192 @@ const getInitialContext = (): LibraryState => ({
   previousCursor: 0,
   scrollPosition: 0,
   previousScrollPosition: 0,
-      videoPlayer: {
-        eventId: 'initial',
-        timeStamp: 0,
-        playing: true,
-        videoLength: 0,
-        actualVideoTime: 0,
-        loopLength: 0,
-        loopStartTime: 0,
-      },
-      settings: {
-        order: window.electron.store.get('sortOrder', 'asc'),
-        sortBy: window.electron.store.get('sortBy', 'name'),
-        filters: 'all',
-        recursive: false,
-        scale: 1,
-        comicMode: window.electron.store.get('comicMode', false),
-        showTagCount: window.electron.store.get('showTagCount', false),
-        battleMode: window.electron.store.get('battleMode', false),
-        libraryLayout: window.electron.store.get('libraryLayout', 'bottom'),
-        applyTagPreview: window.electron.store.get('applyTagPreview', true),
-        filteringMode: window.electron.store.get('filteringMode', 'EXCLUSIVE'),
-        applyTagToAll: window.electron.store.get('applyTagToAll', false),
-        scaleMode: window.electron.store.get('scaleMode', 'fit'),
-        playSound: window.electron.store.get('playSound', false),
-        followTranscript: window.electron.store.get('followTranscript', true),
-        showTags: window.electron.store.get('showTags', 'all'),
-        showFileInfo: window.electron.store.get('showFileInfo', 'none'),
-        showControls: window.electron.store.get('showControls', true),
-        gridSize: window.electron.store.get('gridSize', [4, 4]),
-        listImageCache: window.electron.store.get(
-          'listImageCache',
-          'thumbnail_path_600'
-        ),
-        detailImageCache: window.electron.store.get('detailImageCache', false),
-        controlMode: window.electron.store.get('controlMode', 'mouse'),
-        autoPlay: window.electron.store.get('autoPlay', false),
-        autoPlayTime: window.electron.store.get('autoPlayTime', false),
-        autoPlayVideoLoops: window.electron.store.get(
-          'autoPlayVideoLoops',
-          false
-        ),
-        volume: window.electron.store.get('volume', 1.0),
-        alwaysOnTop: window.electron.store.get('alwaysOnTop', false),
-      },
-      hotKeys: {
-        incrementCursor: window.electron.store.get(
-          'incrementCursor',
-          'arrowright'
-        ),
-        decrementCursor: window.electron.store.get(
-          'decrementCursor',
-          'arrowleft'
-        ),
-        toggleTagPreview: window.electron.store.get(
-          'toggleTagPreview',
-          'shift'
-        ),
-        toggleTagAll: window.electron.store.get('toggleTagAll', 'control'),
-        moveToTop: window.electron.store.get('moveToTop', '['),
-        moveToEnd: window.electron.store.get('moveToEnd', ']'),
-        minimize: window.electron.store.get('minimize', 'escape'),
-        shuffle: window.electron.store.get('shuffle', 'x'),
-        copyFile: window.electron.store.get('copyFilePath', 'c+control'),
-        copyAllSelectedFiles: window.electron.store.get(
-          'copyAllSelectedFiles',
-          'c+control+shift'
-        ),
-        deleteFile: window.electron.store.get('deleteFile', 'delete'),
-        applyMostRecentTag: window.electron.store.get(
-          'applyMostRecentTag',
-          'a'
-        ),
-        storeCategory1: window.electron.store.get('storeCategory1', '1+alt'),
-        storeCategory2: window.electron.store.get('storeCategory2', '2+alt'),
-        storeCategory3: window.electron.store.get('storeCategory3', '3+alt'),
-        storeCategory4: window.electron.store.get('storeCategory4', '4+alt'),
-        storeCategory5: window.electron.store.get('storeCategory5', '5+alt'),
-        storeCategory6: window.electron.store.get('storeCategory6', '6+alt'),
-        storeCategory7: window.electron.store.get('storeCategory7', '7+alt'),
-        storeCategory8: window.electron.store.get('storeCategory8', '8+alt'),
-        storeCategory9: window.electron.store.get('storeCategory9', '9+alt'),
-        tagCategory1: window.electron.store.get('tagCategory1', '!'),
-        tagCategory2: window.electron.store.get('tagCategory2', '@'),
-        tagCategory3: window.electron.store.get('tagCategory3', '#'),
-        tagCategory4: window.electron.store.get('tagCategory4', '$'),
-        tagCategory5: window.electron.store.get('tagCategory5', '%'),
-        tagCategory6: window.electron.store.get('tagCategory6', '^'),
-        tagCategory7: window.electron.store.get('tagCategory7', '&'),
-        tagCategory8: window.electron.store.get('tagCategory8', '*'),
-        tagCategory9: window.electron.store.get('tagCategory9', '('),
-        storeTag1: window.electron.store.get('storeTag1', '1+control'),
-        storeTag2: window.electron.store.get('storeTag2', '2+control'),
-        storeTag3: window.electron.store.get('storeTag3', '3+control'),
-        storeTag4: window.electron.store.get('storeTag4', '4+control'),
-        storeTag5: window.electron.store.get('storeTag5', '5+control'),
-        storeTag6: window.electron.store.get('storeTag6', '6+control'),
-        storeTag7: window.electron.store.get('storeTag7', '7+control'),
-        storeTag8: window.electron.store.get('storeTag8', '8+control'),
-        storeTag9: window.electron.store.get('storeTag9', '9+control'),
-        applyTag1: window.electron.store.get('applyTag1', '1'),
-        applyTag2: window.electron.store.get('applyTag2', '2'),
-        applyTag3: window.electron.store.get('applyTag3', '3'),
-        applyTag4: window.electron.store.get('applyTag4', '4'),
-        applyTag5: window.electron.store.get('applyTag5', '5'),
-        applyTag6: window.electron.store.get('applyTag6', '6'),
-        applyTag7: window.electron.store.get('applyTag7', '7'),
-        applyTag8: window.electron.store.get('applyTag8', '8'),
-        applyTag9: window.electron.store.get('applyTag9', '9'),
-        togglePlayPause: window.electron.store.get('togglePlayPause', ' '),
-      },
-      dbQuery: {
-        tags: [],
-      },
-      commandPalette: {
-        display: false,
-        position: { x: 0, y: 0 },
-      },
-      jobs: new Map<string, Job>(),
-      toasts: [],
+  videoPlayer: {
+    eventId: 'initial',
+    timeStamp: 0,
+    playing: true,
+    videoLength: 0,
+    actualVideoTime: 0,
+    loopLength: 0,
+    loopStartTime: 0,
+  },
+  settings: {
+    order: window.electron.store.get('sortOrder', 'asc') as 'asc' | 'desc',
+    sortBy: window.electron.store.get('sortBy', 'name') as
+      | 'name'
+      | 'date'
+      | 'weight'
+      | 'elo'
+      | 'shuffle',
+    filters: 'all',
+    recursive: false,
+    scale: 1,
+    comicMode: window.electron.store.get('comicMode', false) as boolean,
+    showTagCount: window.electron.store.get('showTagCount', false) as boolean,
+    battleMode: window.electron.store.get('battleMode', false) as boolean,
+    libraryLayout: window.electron.store.get('libraryLayout', 'bottom') as
+      | 'left'
+      | 'bottom',
+    applyTagPreview: window.electron.store.get(
+      'applyTagPreview',
+      true
+    ) as boolean,
+    filteringMode: window.electron.store.get(
+      'filteringMode',
+      'EXCLUSIVE'
+    ) as FilterModeOption,
+    applyTagToAll: window.electron.store.get('applyTagToAll', false) as boolean,
+    scaleMode: window.electron.store.get('scaleMode', 'fit') as
+      | 'fit'
+      | 'cover'
+      | number,
+    playSound: window.electron.store.get('playSound', false) as boolean,
+    followTranscript: window.electron.store.get(
+      'followTranscript',
+      true
+    ) as boolean,
+    showTags: window.electron.store.get('showTags', 'all') as
+      | 'all'
+      | 'list'
+      | 'detail'
+      | 'none',
+    showFileInfo: window.electron.store.get('showFileInfo', 'none') as
+      | 'all'
+      | 'list'
+      | 'detail'
+      | 'none',
+    showControls: window.electron.store.get('showControls', true) as boolean,
+    gridSize: window.electron.store.get('gridSize', [4, 4]) as [number, number],
+    listImageCache: window.electron.store.get(
+      'listImageCache',
+      'thumbnail_path_600'
+    ) as 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
+    detailImageCache: window.electron.store.get(
+      'detailImageCache',
+      false
+    ) as DetailImageCache,
+    controlMode: window.electron.store.get('controlMode', 'mouse') as
+      | 'mouse'
+      | 'touchpad',
+    autoPlay: window.electron.store.get('autoPlay', false) as boolean,
+    autoPlayTime: window.electron.store.get('autoPlayTime', false) as
+      | number
+      | false,
+    autoPlayVideoLoops: window.electron.store.get(
+      'autoPlayVideoLoops',
+      false
+    ) as number | false,
+    volume: window.electron.store.get('volume', 1.0) as number,
+    alwaysOnTop: window.electron.store.get('alwaysOnTop', false) as boolean,
+  },
+  hotKeys: {
+    incrementCursor: window.electron.store.get(
+      'incrementCursor',
+      'arrowright'
+    ) as string,
+    decrementCursor: window.electron.store.get(
+      'decrementCursor',
+      'arrowleft'
+    ) as string,
+    toggleTagPreview: window.electron.store.get(
+      'toggleTagPreview',
+      'shift'
+    ) as string,
+    toggleTagAll: window.electron.store.get(
+      'toggleTagAll',
+      'control'
+    ) as string,
+    moveToTop: window.electron.store.get('moveToTop', '[') as string,
+    moveToEnd: window.electron.store.get('moveToEnd', ']') as string,
+    minimize: window.electron.store.get('minimize', 'escape') as string,
+    shuffle: window.electron.store.get('shuffle', 'x') as string,
+    copyFile: window.electron.store.get('copyFilePath', 'c+control') as string,
+    copyAllSelectedFiles: window.electron.store.get(
+      'copyAllSelectedFiles',
+      'c+control+shift'
+    ) as string,
+    deleteFile: window.electron.store.get('deleteFile', 'delete') as string,
+    applyMostRecentTag: window.electron.store.get(
+      'applyMostRecentTag',
+      'a'
+    ) as string,
+    storeCategory1: window.electron.store.get(
+      'storeCategory1',
+      '1+alt'
+    ) as string,
+    storeCategory2: window.electron.store.get(
+      'storeCategory2',
+      '2+alt'
+    ) as string,
+    storeCategory3: window.electron.store.get(
+      'storeCategory3',
+      '3+alt'
+    ) as string,
+    storeCategory4: window.electron.store.get(
+      'storeCategory4',
+      '4+alt'
+    ) as string,
+    storeCategory5: window.electron.store.get(
+      'storeCategory5',
+      '5+alt'
+    ) as string,
+    storeCategory6: window.electron.store.get(
+      'storeCategory6',
+      '6+alt'
+    ) as string,
+    storeCategory7: window.electron.store.get(
+      'storeCategory7',
+      '7+alt'
+    ) as string,
+    storeCategory8: window.electron.store.get(
+      'storeCategory8',
+      '8+alt'
+    ) as string,
+    storeCategory9: window.electron.store.get(
+      'storeCategory9',
+      '9+alt'
+    ) as string,
+    tagCategory1: window.electron.store.get('tagCategory1', '!') as string,
+    tagCategory2: window.electron.store.get('tagCategory2', '@') as string,
+    tagCategory3: window.electron.store.get('tagCategory3', '#') as string,
+    tagCategory4: window.electron.store.get('tagCategory4', '$') as string,
+    tagCategory5: window.electron.store.get('tagCategory5', '%') as string,
+    tagCategory6: window.electron.store.get('tagCategory6', '^') as string,
+    tagCategory7: window.electron.store.get('tagCategory7', '&') as string,
+    tagCategory8: window.electron.store.get('tagCategory8', '*') as string,
+    tagCategory9: window.electron.store.get('tagCategory9', '(') as string,
+    storeTag1: window.electron.store.get('storeTag1', '1+control') as string,
+    storeTag2: window.electron.store.get('storeTag2', '2+control') as string,
+    storeTag3: window.electron.store.get('storeTag3', '3+control') as string,
+    storeTag4: window.electron.store.get('storeTag4', '4+control') as string,
+    storeTag5: window.electron.store.get('storeTag5', '5+control') as string,
+    storeTag6: window.electron.store.get('storeTag6', '6+control') as string,
+    storeTag7: window.electron.store.get('storeTag7', '7+control') as string,
+    storeTag8: window.electron.store.get('storeTag8', '8+control') as string,
+    storeTag9: window.electron.store.get('storeTag9', '9+control') as string,
+    applyTag1: window.electron.store.get('applyTag1', '1') as string,
+    applyTag2: window.electron.store.get('applyTag2', '2') as string,
+    applyTag3: window.electron.store.get('applyTag3', '3') as string,
+    applyTag4: window.electron.store.get('applyTag4', '4') as string,
+    applyTag5: window.electron.store.get('applyTag5', '5') as string,
+    applyTag6: window.electron.store.get('applyTag6', '6') as string,
+    applyTag7: window.electron.store.get('applyTag7', '7') as string,
+    applyTag8: window.electron.store.get('applyTag8', '8') as string,
+    applyTag9: window.electron.store.get('applyTag9', '9') as string,
+    togglePlayPause: window.electron.store.get(
+      'togglePlayPause',
+      ' '
+    ) as string,
+  },
+  dbQuery: {
+    tags: [],
+  },
+  commandPalette: {
+    display: false,
+    position: { x: 0, y: 0 },
+  },
+  jobs: new Map<string, Job>(),
+  toasts: [],
 });
 
 const libraryMachine = createMachine(
@@ -335,7 +411,6 @@ const libraryMachine = createMachine(
       TOGGLE_PLAY_PAUSE: {
         actions: assign<LibraryState, AnyEventObject>({
           videoPlayer: (context, event) => {
-            console.log('TOGGLE_PLAY_PAUSE at root level - current playing:', context.videoPlayer.playing);
             return {
               ...context.videoPlayer,
               playing: !context.videoPlayer.playing,
@@ -506,9 +581,13 @@ const libraryMachine = createMachine(
                   const { tags, position } = event.data;
                   const newToast = {
                     id: uniqueId(),
-                    type: tags.length === 0 ? 'error' as const : 'success' as const,
+                    type:
+                      tags.length === 0
+                        ? ('error' as const)
+                        : ('success' as const),
                     title: `Slot ${position}`,
-                    message: tags.length === 0 ? 'No Tags Selected' : tags.join(', '),
+                    message:
+                      tags.length === 0 ? 'No Tags Selected' : tags.join(', '),
                     timestamp: Date.now(),
                   };
                   return [...context.toasts, newToast];
@@ -545,7 +624,9 @@ const libraryMachine = createMachine(
           REMOVE_TOAST: {
             actions: assign<LibraryState, AnyEventObject>({
               toasts: (context, event) => {
-                return context.toasts.filter(toast => toast.id !== event.data.id);
+                return context.toasts.filter(
+                  (toast) => toast.id !== event.data.id
+                );
               },
             }),
           },
@@ -577,17 +658,6 @@ const libraryMachine = createMachine(
       },
       videoPlayer: {
         on: {
-          TOGGLE_PLAY_PAUSE: {
-            actions: assign<LibraryState, AnyEventObject>({
-              videoPlayer: (context, event) => {
-                console.log('TOGGLE_PLAY_PAUSE in videoPlayer state', context.videoPlayer.playing);
-                return {
-                  ...context.videoPlayer,
-                  playing: !context.videoPlayer.playing,
-                };
-              },
-            }),
-          },
           SET_VIDEO_TIME: {
             actions: assign<LibraryState, AnyEventObject>({
               videoPlayer: (context, event) => {
@@ -637,17 +707,6 @@ const libraryMachine = createMachine(
                 return {
                   ...context.videoPlayer,
                   videoLength: event.videoLength,
-                };
-              },
-            }),
-          },
-          TOGGLE_PLAY_PAUSE: {
-            actions: assign<LibraryState, AnyEventObject>({
-              videoPlayer: (context, event) => {
-                console.log('TOGGLE_PLAY_PAUSE', context, event);
-                return {
-                  ...context.videoPlayer,
-                  playing: !context.videoPlayer.playing,
                 };
               },
             }),
@@ -1009,7 +1068,8 @@ const libraryMachine = createMachine(
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
-                      const filename = event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const filename =
+                        event.data.path.split(/[\\/]/).pop() || event.data.path;
                       const newToast = {
                         id: uniqueId(),
                         type: 'info' as const,
@@ -1094,16 +1154,6 @@ const libraryMachine = createMachine(
                       },
                     }),
                   },
-                  TOGGLE_PLAY_PAUSE: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      videoPlayer: (context, event) => {
-                        return {
-                          ...context.videoPlayer,
-                          playing: !context.videoPlayer.playing,
-                        };
-                      },
-                    }),
-                  },
                 },
               },
             },
@@ -1114,20 +1164,7 @@ const libraryMachine = createMachine(
               libraryLoadId: () => uniqueId(),
             }),
             states: {
-              idle: {
-                on: {
-                  TOGGLE_PLAY_PAUSE: {
-                    actions: assign<LibraryState, AnyEventObject>({
-                      videoPlayer: (context, event) => {
-                        return {
-                          ...context.videoPlayer,
-                          playing: !context.videoPlayer.playing,
-                        };
-                      },
-                    }),
-                  },
-                },
-              },
+              idle: {},
             },
             on: {
               SET_QUERY_TAG: [
@@ -1242,7 +1279,8 @@ const libraryMachine = createMachine(
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
-                      const filename = event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const filename =
+                        event.data.path.split(/[\\/]/).pop() || event.data.path;
                       const newToast = {
                         id: uniqueId(),
                         type: 'info' as const,
@@ -1428,7 +1466,8 @@ const libraryMachine = createMachine(
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
-                      const filename = event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const filename =
+                        event.data.path.split(/[\\/]/).pop() || event.data.path;
                       const newToast = {
                         id: uniqueId(),
                         type: 'info' as const,
