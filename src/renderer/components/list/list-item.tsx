@@ -1,4 +1,4 @@
-import React, { useContext, useRef } from 'react';
+import React, { useContext, useRef, useCallback, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { useDrag } from 'react-dnd';
 import { GlobalStateContext } from '../../state';
@@ -20,15 +20,15 @@ type Props = {
   height: number;
 };
 
-function getPlayer(
-  path: string,
-  mediaRef: React.RefObject<
-    HTMLImageElement | HTMLVideoElement | HTMLAudioElement
-  >,
-  orientation: 'portrait' | 'landscape' | 'unknown',
-  imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
-  startTime = 0
-) {
+const GetPlayer = React.memo((props: {
+  path: string;
+  mediaRef: React.RefObject<HTMLImageElement | HTMLVideoElement | HTMLAudioElement>;
+  orientation: 'portrait' | 'landscape' | 'unknown';
+  imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
+  startTime?: number;
+}) => {
+  const { path, mediaRef, orientation, imageCache, startTime = 0 } = props;
+  
   if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
     return (
       <Video
@@ -67,9 +67,11 @@ function getPlayer(
     );
   }
   return null;
-}
+});
 
-export function ListItem({ item, idx, height }: Props) {
+GetPlayer.displayName = 'GetPlayer';
+
+function ListItemComponent({ item, idx, height }: Props) {
   const mediaRef = useRef<
     HTMLImageElement | HTMLVideoElement | HTMLAudioElement
   >(null);
@@ -113,44 +115,57 @@ export function ListItem({ item, idx, height }: Props) {
 
   const { drop, collectedProps, containerRef } = useTagDrop(item, 'LIST');
   drag(drop(containerRef));
+  
+  const handleClick = useCallback(() => {
+    libraryService.send('SET_CURSOR', { idx });
+  }, [libraryService, idx]);
+  
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    libraryService.send('SHOW_COMMAND_PALETTE', {
+      position: { x: e.clientX, y: e.clientY },
+    });
+  }, [libraryService]);
+  
+  const handleFilePathClick = useCallback(() => {
+    libraryService.send('SET_FILE', { path: item.path });
+  }, [libraryService, item.path]);
+  
+  const classNames = useMemo(() => [
+    'ListItem',
+    cursor === idx ? 'selected' : '',
+    collectedProps.isOver &&
+    !collectedProps.isSelf &&
+    collectedProps.itemType === 'MEDIA'
+      ? 'hovered'
+      : '',
+    collectedProps.isOver &&
+    !collectedProps.isSelf &&
+    collectedProps.itemType === 'TAG'
+      ? 'hovered-by-tag'
+      : '',
+    canDrag ? 'can-drag' : '',
+    collectedProps.isLeft ? 'left' : 'right',
+  ].join(' '), [cursor, idx, collectedProps, canDrag]);
+
   return (
     <div
       ref={containerRef}
       style={{
         height,
       }}
-      className={[
-        'ListItem',
-        cursor === idx ? 'selected' : '',
-        collectedProps.isOver &&
-        !collectedProps.isSelf &&
-        collectedProps.itemType === 'MEDIA'
-          ? 'hovered'
-          : '',
-        collectedProps.isOver &&
-        !collectedProps.isSelf &&
-        collectedProps.itemType === 'TAG'
-          ? 'hovered-by-tag'
-          : '',
-        canDrag ? 'can-drag' : '',
-        collectedProps.isLeft ? 'left' : 'right',
-      ].join(' ')}
-      onClick={() => libraryService.send('SET_CURSOR', { idx })}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        libraryService.send('SHOW_COMMAND_PALETTE', {
-          position: { x: e.clientX, y: e.clientY },
-        });
-      }}
+      className={classNames}
+      onClick={handleClick}
+      onContextMenu={handleContextMenu}
     >
       <div className="inner">
-        {getPlayer(
-          item.path,
-          mediaRef,
-          orientation,
-          imageCache,
-          item.timeStamp
-        )}
+        <GetPlayer
+          path={item.path}
+          mediaRef={mediaRef}
+          orientation={orientation}
+          imageCache={imageCache}
+          startTime={item.timeStamp}
+        />
       </div>
       {showTags === 'all' || showTags === 'list' ? (
         <div className="controls">
@@ -161,7 +176,7 @@ export function ListItem({ item, idx, height }: Props) {
         <div className="item-info">
           <span
             className="file-path"
-            onClick={() => libraryService.send('SET_FILE', { path: item.path })}
+            onClick={handleFilePathClick}
           >
             {item.path}
           </span>
@@ -170,3 +185,16 @@ export function ListItem({ item, idx, height }: Props) {
     </div>
   );
 }
+
+export const ListItem = React.memo(ListItemComponent, (prevProps, nextProps) => {
+  return (
+    prevProps.item.path === nextProps.item.path &&
+    prevProps.idx === nextProps.idx &&
+    prevProps.height === nextProps.height &&
+    prevProps.item.timeStamp === nextProps.item.timeStamp &&
+    prevProps.item.elo === nextProps.item.elo &&
+    prevProps.item.weight === nextProps.item.weight
+  );
+});
+
+ListItem.displayName = 'ListItem';

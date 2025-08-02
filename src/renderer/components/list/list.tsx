@@ -1,14 +1,13 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useDragLayer } from 'react-dnd';
 import filter from '../../filter';
 import { ListItem } from './list-item';
+import { PERFORMANCE_CONSTANTS } from '../../constants/performance';
 import './list-item.css';
 import './list.css';
-
-const OVERSCAN = 2;
 
 export function List() {
   const [initialLoad, setInitialLoad] = useState(true);
@@ -44,7 +43,7 @@ export function List() {
     (state) => state.context.cursor,
     (a, b) => a === b
   );
-  const items = library;
+  const items = useMemo(() => library, [library]);
 
   const [columns, rows] = useSelector(libraryService, (state) => {
     const columns = state.context.settings.gridSize[0];
@@ -59,12 +58,12 @@ export function List() {
   const [height, setHeight] = useState(window.innerHeight / rows);
 
   const parentRef = useRef<HTMLDivElement>(null);
-  const listLength = Math.ceil(items.length / columns);
+  const listLength = useMemo(() => Math.ceil(items.length / columns), [items.length, columns]);
   const rowVirtualizer = useVirtualizer({
     count: listLength,
     getScrollElement: () => parentRef.current,
     estimateSize: () => height,
-    overscan: OVERSCAN,
+    overscan: PERFORMANCE_CONSTANTS.LIST_OVERSCAN,
   });
 
   useEffect(() => {
@@ -99,28 +98,32 @@ export function List() {
     type: monitor.getItemType(),
   }));
 
-  function mapRange(
+  const mapRange = useCallback((
     value: number,
     low1: number,
     high1: number,
     low2: number,
     high2: number
-  ) {
+  ) => {
     return low2 + ((high2 - low2) * (value - low1)) / (high1 - low1);
-  }
+  }, []);
 
-  function getScrollSpeed(offset: number, height: number) {
+  const getScrollSpeed = useCallback((offset: number, height: number) => {
     let scrollSpeed = 0;
-    if (offset < 200) {
+    const threshold = PERFORMANCE_CONSTANTS.SCROLL_SPEED_THRESHOLD;
+    const minSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MIN;
+    const maxSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MAX;
+    
+    if (offset < threshold) {
       // The smaller the offset the faster it scrolls.
-      scrollSpeed = mapRange(offset, 0, 200, -200, 0);
-    } else if (offset > height - 200 && offset < height) {
+      scrollSpeed = mapRange(offset, 0, threshold, minSpeed, 0);
+    } else if (offset > height - threshold && offset < height) {
       // The closer to the bottom the faster it scrolls.
-      scrollSpeed = mapRange(offset, height - 200, height, 0, 200);
+      scrollSpeed = mapRange(offset, height - threshold, height, 0, maxSpeed);
     }
 
     return scrollSpeed;
-  }
+  }, [mapRange]);
 
   useEffect(() => {
     let animationFrameId: number;
@@ -149,17 +152,20 @@ export function List() {
     animationFrameId = requestAnimationFrame(scroll);
 
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isDragging, offset]); // Dependency array means this effect runs whenever isDragging or offset changes
+  }, [isDragging, offset, getScrollSpeed]); // Dependency array means this effect runs whenever isDragging or offset changes
+  
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    libraryService.send('SET_SCROLL_POSITION', {
+      position: target.scrollTop,
+    });
+  }, [libraryService]);
+
   return (
     <div
       className="List"
       ref={parentRef}
-      onScroll={(e) => {
-        const target = e.target as HTMLDivElement;
-        libraryService.send('SET_SCROLL_POSITION', {
-          position: target.scrollTop,
-        });
-      }}
+      onScroll={handleScroll}
     >
       <div
         className="ListContainer"
