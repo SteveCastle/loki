@@ -312,6 +312,7 @@ const getInitialContext = (): LibraryState => ({
         applyTag7: window.electron.store.get('applyTag7', '7'),
         applyTag8: window.electron.store.get('applyTag8', '8'),
         applyTag9: window.electron.store.get('applyTag9', '9'),
+        togglePlayPause: window.electron.store.get('togglePlayPause', ' '),
       },
       dbQuery: {
         tags: [],
@@ -330,6 +331,19 @@ const libraryMachine = createMachine(
     predictableActionArguments: true,
     type: 'parallel',
     context: getInitialContext(),
+    on: {
+      TOGGLE_PLAY_PAUSE: {
+        actions: assign<LibraryState, AnyEventObject>({
+          videoPlayer: (context, event) => {
+            console.log('TOGGLE_PLAY_PAUSE at root level - current playing:', context.videoPlayer.playing);
+            return {
+              ...context.videoPlayer,
+              playing: !context.videoPlayer.playing,
+            };
+          },
+        }),
+      },
+    },
     states: {
       jobQueue: {
         initial: 'waiting',
@@ -563,6 +577,17 @@ const libraryMachine = createMachine(
       },
       videoPlayer: {
         on: {
+          TOGGLE_PLAY_PAUSE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                console.log('TOGGLE_PLAY_PAUSE in videoPlayer state', context.videoPlayer.playing);
+                return {
+                  ...context.videoPlayer,
+                  playing: !context.videoPlayer.playing,
+                };
+              },
+            }),
+          },
           SET_VIDEO_TIME: {
             actions: assign<LibraryState, AnyEventObject>({
               videoPlayer: (context, event) => {
@@ -612,6 +637,17 @@ const libraryMachine = createMachine(
                 return {
                   ...context.videoPlayer,
                   videoLength: event.videoLength,
+                };
+              },
+            }),
+          },
+          TOGGLE_PLAY_PAUSE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                console.log('TOGGLE_PLAY_PAUSE', context, event);
+                return {
+                  ...context.videoPlayer,
+                  playing: !context.videoPlayer.playing,
                 };
               },
             }),
@@ -1058,6 +1094,16 @@ const libraryMachine = createMachine(
                       },
                     }),
                   },
+                  TOGGLE_PLAY_PAUSE: {
+                    actions: assign<LibraryState, AnyEventObject>({
+                      videoPlayer: (context, event) => {
+                        return {
+                          ...context.videoPlayer,
+                          playing: !context.videoPlayer.playing,
+                        };
+                      },
+                    }),
+                  },
                 },
               },
             },
@@ -1068,7 +1114,20 @@ const libraryMachine = createMachine(
               libraryLoadId: () => uniqueId(),
             }),
             states: {
-              idle: {},
+              idle: {
+                on: {
+                  TOGGLE_PLAY_PAUSE: {
+                    actions: assign<LibraryState, AnyEventObject>({
+                      videoPlayer: (context, event) => {
+                        return {
+                          ...context.videoPlayer,
+                          playing: !context.videoPlayer.playing,
+                        };
+                      },
+                    }),
+                  },
+                },
+              },
             },
             on: {
               SET_QUERY_TAG: [
