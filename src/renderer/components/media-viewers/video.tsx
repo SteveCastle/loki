@@ -236,6 +236,7 @@ export function Video({
 
   return (
     <video
+      key={`${path}-${initialTimestamp}-${startTime}`}
       style={
         scaleMode === 'cover' && coverSize.height && coverSize.width
           ? { height: coverSize.height, width: coverSize.width }
