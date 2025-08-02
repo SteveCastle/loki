@@ -21,3 +21,80 @@
 .GenerateTranscript button:hover {
   background-color: rgb(74, 74, 105);
 }
+
+.GenerateTranscript .checking-server {
+  color: #888;
+  font-style: italic;
+  font-size: 14px;
+}
+
+.GenerateTranscript .server-unavailable {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background-color: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 4px;
+  max-width: 400px;
+}
+
+.GenerateTranscript .server-unavailable .icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.GenerateTranscript .server-unavailable .message {
+  color: #ddd;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.GenerateTranscript .server-unavailable .message strong {
+  color: #fff;
+  display: block;
+  margin-bottom: 8px;
+  font-size: 16px;
+}
+
+.GenerateTranscript .server-unavailable .message p {
+  margin: 0 0 8px 0;
+}
+
+.GenerateTranscript .server-unavailable .message p:last-child {
+  margin-bottom: 0;
+}
+
+.GenerateTranscript .server-unavailable .message code {
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 2px 4px;
+  border-radius: 2px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+}
+
+.GenerateTranscript .job-running {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #ddd;
+  font-size: 14px;
+}
+
+.GenerateTranscript .loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-left-color: #fff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.GenerateTranscript .job-status {
+  font-style: italic;
+}

@@ -10,7 +10,7 @@ import {
   clampVolume,
 } from 'settings';
 import filter from './filter';
-import { Job, JobQueue } from '../main/jobs';
+// Job management removed - now handled by external job runner service
 
 export type Item = {
   path: string;
@@ -81,7 +81,7 @@ type LibraryState = {
     display: boolean;
     position: { x: number; y: number };
   };
-  jobs: JobQueue;
+  // jobs: removed - now handled by external job runner service
   toasts: {
     id: string;
     type: 'success' | 'error' | 'info';
@@ -204,15 +204,7 @@ const updateFilePath = assign<LibraryState, AnyEventObject>({
   },
 });
 
-const createJob = assign<LibraryState, AnyEventObject>({
-  jobs: (context, event) => {
-    console.log('createJob', event);
-    const job = event.data as Job;
-    const jobs = new Map(context.jobs);
-    jobs.set(job.id, job);
-    return jobs;
-  },
-});
+// createJob removed - jobs now handled by external job runner service
 
 const setDB = assign<LibraryState, AnyEventObject>({
   dbPath: (context, event) => {
@@ -490,7 +482,7 @@ const getInitialContext = (): LibraryState => ({
     display: false,
     position: { x: 0, y: 0 },
   },
-  jobs: new Map<string, Job>(),
+  // jobs: removed - now handled by external job runner service
   toasts: [],
 });
 
@@ -513,68 +505,7 @@ const libraryMachine = createMachine(
       },
     },
     states: {
-      jobQueue: {
-        initial: 'waiting',
-
-        states: {
-          waiting: {
-            on: {
-              CREATE_JOB: {
-                target: 'creatingJob',
-              },
-              UPDATE_JOB: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  jobs: (context, event) => {
-                    console.log('update job', context, event);
-                    const jobs = new Map(context.jobs);
-                    jobs.set(event.job.id, event.job);
-                    return jobs;
-                  },
-                }),
-              },
-              COMPLETE_JOB: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  jobs: (context, event) => {
-                    console.log('complete job', context, event);
-                    const jobs = new Map(context.jobs);
-                    jobs.set(event.job.id, event.job);
-                    return jobs;
-                  },
-                }),
-              },
-              CLEAR_JOB: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  jobs: (context, event) => {
-                    console.log('clear job', context, event);
-                    const jobs = new Map(context.jobs);
-                    jobs.delete(event.job.id);
-                    return jobs;
-                  },
-                }),
-              },
-            },
-          },
-          creatingJob: {
-            invoke: {
-              src: (context, event) => {
-                console.log('adding Job', context, event);
-                return window.electron.ipcRenderer.invoke('create-job', [
-                  event.paths,
-                  event.jobType,
-                  event.invalidations,
-                ]);
-              },
-              onDone: {
-                target: 'waiting',
-                actions: ['createJob'],
-              },
-              onError: {
-                target: 'waiting',
-              },
-            },
-          },
-        },
-      },
+      // jobQueue: removed - jobs now handled by external job runner service
       settings: {
         on: {
           CHANGE_SETTING: {
@@ -1819,7 +1750,7 @@ const libraryMachine = createMachine(
       setLibraryWithPrevious,
       setPath,
       setDB,
-      createJob,
+      // createJob removed - jobs now handled by external job runner service
       updateFilePath,
     },
   }

@@ -39,21 +39,8 @@ export default function Transcript() {
   const item = library[cursor];
   const path = item?.path;
 
-  const transcriptJobs = useSelector(
-    libraryService,
-    (state) => {
-      const jobs = state.context.jobs;
-      const jobsArray = Array.from(jobs, ([key, value]) => ({ key, value }));
-      const transcriptJobs = jobsArray.filter(
-        ({ value: job }) =>
-          job.type === 'generateTranscript' &&
-          job.mediaPaths.includes(path) &&
-          (job.status === 'started' || job.status === 'pending')
-      );
-      return transcriptJobs;
-    },
-    (a, b) => a.length === b.length
-  );
+  // Job checking removed - transcript jobs now handled by external job runner service
+  const transcriptJobs: any[] = [];
   
   const { data: transcript } = useQuery({
     queryKey: ['transcript', path],

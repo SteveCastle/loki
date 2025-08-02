@@ -51,7 +51,7 @@ import {
 } from './taxonomy';
 
 import { loadFileMetaData } from './metadata';
-import { createJob } from './jobs';
+// Job management removed - now handled by external job runner service
 import { loadFiles } from './load-files';
 
 // app.commandLine.appendSwitch('remote-debugging-port', '8315');
@@ -222,7 +222,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('order-tags', orderTags(db));
   ipcMain.handle('delete-tag', deleteTag(db));
   if (!mainWindow) return;
-  ipcMain.handle('create-job', createJob(db, mainWindow.webContents));
+  // Job creation removed - now handled by external job runner service
 });
 
 type SelectDBInput = [string | undefined];
