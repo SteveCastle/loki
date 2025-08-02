@@ -1,0 +1,153 @@
+.timestamp-tooltip {
+  background-color: #1a1a1a !important;
+  border: 1px solid #333 !important;
+  border-radius: 6px !important;
+  padding: 0 !important;
+  font-size: 12px !important;
+  min-width: 200px !important;
+  max-width: 300px !important;
+  z-index: 99999 !important;
+  pointer-events: auto !important;
+  position: fixed !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+}
+
+.timestamp-tooltip-content {
+  padding: 12px;
+  color: #fff;
+  cursor: default;
+  user-select: none;
+}
+
+.timestamp-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.timestamp-value {
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  font-size: 14px;
+  color: #4CAF50;
+}
+
+.timestamp-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.timestamp-controls button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 16px;
+  transition: background-color 0.2s;
+  min-width: 32px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.edit-btn:hover {
+  background-color: #333;
+}
+
+.remove-btn:hover {
+  background-color: #f44336;
+}
+
+.timestamp-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.timestamp-input {
+  font-family: 'Courier New', monospace;
+  background-color: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: #fff;
+  font-size: 16px;
+  text-align: center;
+  outline: none;
+  width: 100px;
+  min-height: 36px;
+}
+
+.timestamp-input:focus {
+  border-color: #4CAF50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+.timestamp-input.invalid {
+  border-color: #f44336;
+  box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.2);
+}
+
+.timestamp-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.save-btn,
+.cancel-btn {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 14px;
+  transition: all 0.2s;
+  min-width: 40px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.save-btn:hover:not(:disabled) {
+  background-color: #4CAF50;
+  border-color: #4CAF50;
+}
+
+.save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cancel-btn:hover {
+  background-color: #f44336;
+  border-color: #f44336;
+}
+
+.error-message {
+  color: #f44336;
+  font-size: 10px;
+  text-align: center;
+  margin-top: 2px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .timestamp-tooltip {
+    min-width: 160px !important;
+  }
+  
+  .timestamp-value {
+    font-size: 12px;
+  }
+  
+  .timestamp-input {
+    font-size: 12px;
+    width: 70px;
+  }
+}
