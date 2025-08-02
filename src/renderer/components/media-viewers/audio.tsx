@@ -33,18 +33,13 @@ export function Audio({
   settable = false,
   playSound = true,
   volume = 1.0,
-  scaleMode,
   handleLoad,
   mediaRef,
-  showControls = true,
   initialTimestamp = 0,
   startTime = 0,
-  coverSize = { width: 0, height: 0 },
-  orientation = 'unknown',
   onTimestampChange = () => {
     return;
   },
-  cache = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const { timeStamp, loopLength, loopStartTime, playing } = useSelector(

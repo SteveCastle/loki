@@ -87,6 +87,23 @@ export default function HotKeyController() {
 
   const item = filteredLibrary[cursor];
 
+  // Helper function to create assignments
+  const createAssignments = async (tags: string[], itemPath: string) => {
+    for (const tag of tags) {
+      await window.electron.ipcRenderer.invoke('create-assignment', [
+        [itemPath],
+        tag,
+        mostRecentCategory,
+        null,
+        false,
+      ]);
+      queryClient.invalidateQueries({
+        queryKey: ['taxonomy', 'tag', tag],
+      });
+    }
+    queryClient.invalidateQueries({ queryKey: ['metadata'] });
+  };
+
   // Helper function to apply multiple tags
   const createApplyTagAction = (position: string) => ({
     down: (e: Event) => {
@@ -94,22 +111,7 @@ export default function HotKeyController() {
       e.stopPropagation();
       const tags = storedTags[position];
       if (tags && tags.length > 0 && item?.path) {
-        async function createAssignments() {
-          for (const tag of tags) {
-            await window.electron.ipcRenderer.invoke('create-assignment', [
-              [item.path],
-              tag,
-              mostRecentCategory,
-              null,
-              false,
-            ]);
-            queryClient.invalidateQueries({
-              queryKey: ['taxonomy', 'tag', tag],
-            });
-          }
-          queryClient.invalidateQueries({ queryKey: ['metadata'] });
-        }
-        createAssignments();
+        createAssignments(tags, item.path);
       }
     },
     up: () => {},
@@ -526,7 +528,7 @@ export default function HotKeyController() {
 
   const handleKeyDown = (e: KeyboardEvent) => {
     // Build current key combination string to match existing format
-    let mainKey = e.key.toLowerCase();
+    const mainKey = e.key.toLowerCase();
     
     // Don't process if it's just a modifier key
     if (['alt', 'control', 'shift', 'meta'].includes(mainKey)) {
