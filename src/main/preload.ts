@@ -24,9 +24,7 @@ export type Channels =
   | 'load-file-metadata'
   | 'load-tags-by-media-path'
   | 'create-tag'
-  | 'create-job'
-  | 'get-jobs'
-  | 'complete-job'
+  // Job-related IPC handlers removed - now handled by external job runner service
   | 'create-category'
   | 'rename-category'
   | 'delete-category'
