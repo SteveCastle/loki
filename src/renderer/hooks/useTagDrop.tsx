@@ -97,7 +97,9 @@ export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
           queryClient.invalidateQueries({
             queryKey: ['taxonomy', 'tag', droppedItem.label],
           });
-          console.log('invalidated tag', droppedItem.label);
+          queryClient.invalidateQueries({
+            queryKey: ['tags-by-path', item.path],
+          });
         }
         if (droppedItem.label && item.path) {
           createAssignment();
