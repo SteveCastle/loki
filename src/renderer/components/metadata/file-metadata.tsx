@@ -39,7 +39,7 @@ export default function FileMetadata({ item }: { item: any }) {
         </div>
         <div className="section">
           <h2>Tags</h2>
-          {item?.path && <Tags item={item} />}
+          {item?.path && <Tags item={item} enableTagGeneration={true} />}
         </div>
 
         <div className="placeholder">
@@ -75,7 +75,7 @@ export default function FileMetadata({ item }: { item: any }) {
       </div>
       <div className="section">
         <h2>Tags</h2>
-        {item?.path && <Tags item={item} />}
+        {item?.path && <Tags item={item} enableTagGeneration={true} />}
       </div>
       <div className="section">
         <h2>Description</h2>

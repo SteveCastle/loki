@@ -169,7 +169,7 @@ function ListItemComponent({ item, idx, height }: Props) {
       </div>
       {showTags === 'all' || showTags === 'list' ? (
         <div className="controls">
-          <Tags item={item} />
+          <Tags item={item} enableTagGeneration={false} />
         </div>
       ) : null}
       {showFileInfo === 'all' || showFileInfo === 'list' ? (

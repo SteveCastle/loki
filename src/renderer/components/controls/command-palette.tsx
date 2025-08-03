@@ -47,14 +47,27 @@ import './command-palette.css';
 
 /**
  * Extracts the directory path from a full file path.
- * @param path The full file path.
+ * If the path is a file (has extension), returns the parent directory.
+ * If the path is a directory (no extension), returns the path as-is.
+ * @param path The full file path or directory path.
  * @returns The directory path.
  */
 function getDirectory(path: string): string {
   if (!path) return '';
   const separator = /[\\/]/;
   const components = path.split(separator);
-  components.pop(); // Remove the file name
+  const lastComponent = components[components.length - 1];
+  
+  // Check if the last component has a file extension
+  // A file extension is indicated by a dot followed by alphanumeric characters
+  const hasExtension = /\.[a-zA-Z0-9]+$/.test(lastComponent);
+  
+  if (hasExtension) {
+    // It's a file, remove the filename to get the directory
+    components.pop();
+  }
+  // If no extension, assume it's already a directory path
+  
   return components.join('/');
 }
 
@@ -184,6 +197,12 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
       [libraryService]
     );
 
+    const handlePatreonClick = useCallback(() => {
+      window.electron.ipcRenderer.sendMessage('open-external', [
+        'https://www.patreon.com/lowkeyviewer',
+      ]);
+    }, []);
+
     const handleVolumeContainerMouseEnter = useCallback(() => {
       if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
       if (playSound) {
@@ -216,9 +235,14 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
     return (
       <div className="menuBarRight">
         <ActionButton
-          icon={folderIcon}
+          icon={imageIcon}
           onClick={() => libraryService.send('SELECT_FILE')}
-          tooltipId="select-folder" // Add tooltips if desired
+          tooltipId="select-file"
+        />
+        <ActionButton
+          icon={folderIcon}
+          onClick={() => libraryService.send('SELECT_DIRECTORY')}
+          tooltipId="select-directory"
         />
         <ActionButton
           icon={recursiveIcon}
@@ -268,6 +292,15 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
             </div>
           )}
         </div>
+        <button
+          data-tooltip-id="patreon-button"
+          data-tooltip-offset={20}
+          data-tooltip-delay-show={500}
+          className="patreonButton"
+          onClick={handlePatreonClick}
+        >
+          Patreon
+        </button>
       </div>
     );
   }
@@ -488,18 +521,6 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
       }
     };
 
-    const handleDonateClick = useCallback(() => {
-      window.electron.ipcRenderer.sendMessage('open-external', [
-        'https://www.buymeacoffee.com/lowkeyviewer',
-      ]);
-    }, []);
-
-    const handlePatreonClick = useCallback(() => {
-      window.electron.ipcRenderer.sendMessage('open-external', [
-        'https://www.patreon.com/lowkeyviewer',
-      ]);
-    }, []);
-
     return (
       <div className="menuContent">
         <ListContextDisplay {...listContextProps} />
@@ -511,26 +532,6 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
         />
 
         {renderTabContent()}
-
-        {/* Donation Buttons - Could be another component if they grow */}
-        <button
-          data-tooltip-id="donate-buttons"
-          data-tooltip-offset={20}
-          data-tooltip-delay-show={500}
-          className="donateButton"
-          onClick={handleDonateClick}
-        >
-          Donate
-        </button>
-        <button
-          data-tooltip-id="donate-buttons"
-          data-tooltip-offset={20}
-          data-tooltip-delay-show={500}
-          className="patreonButton"
-          onClick={handlePatreonClick}
-        >
-          Patreon
-        </button>
       </div>
     );
   }
@@ -580,14 +581,15 @@ const CommandPaletteTooltips: React.FC = React.memo(() => (
       content="Keep window always on top."
       place="top"
     />
+    <Tooltip id="select-file" content="Select a file to view." place="top" />
     <Tooltip
-      id="select-folder"
-      content="Select folder or file to view."
+      id="select-directory"
+      content="Select a directory to browse."
       place="top"
     />
     <Tooltip
-      id="donate-buttons"
-      content="Your donations make Lowkey Media Viewer possible!"
+      id="patreon-button"
+      content="Support development on Patreon"
       place="top"
     />
     {/* Add tooltips for other buttons if needed */}

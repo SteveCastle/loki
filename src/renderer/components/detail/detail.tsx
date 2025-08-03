@@ -328,7 +328,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         )}
       {settings.showTags === 'all' || settings.showTags === 'detail' ? (
         <div className="controls">
-          <Tags item={item} />
+          <Tags item={item} enableTagGeneration={false} />
         </div>
       ) : null}
       {settings.showFileInfo === 'all' || settings.showFileInfo === 'detail' ? (

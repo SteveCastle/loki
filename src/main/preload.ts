@@ -8,6 +8,7 @@ import { FilterModeOption } from 'settings';
 export type Channels =
   | 'shutdown'
   | 'select-file'
+  | 'select-directory'
   | 'load-files'
   | 'select-new-path'
   | 'select-db'
