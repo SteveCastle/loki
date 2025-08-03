@@ -17,6 +17,7 @@ type ActionMap = {
 export default function HotKeyController() {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
+  const [keysPressed, setKeysPressed] = useState<Set<string>>(new Set());
   const { library, libraryLoadId, textFilter, activeTag, hotKeys } =
     useSelector(
       libraryService,
@@ -537,11 +538,37 @@ export default function HotKeyController() {
   );
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    // Build current key combination string to match existing format
     const mainKey = e.key.toLowerCase();
     
-    // Don't process if it's just a modifier key
-    if (['alt', 'control', 'shift', 'meta'].includes(mainKey)) {
+    // Handle modifier keys separately for toggle actions
+    if (['shift', 'control'].includes(mainKey)) {
+      const newKeysPressed = new Set(keysPressed);
+      newKeysPressed.add(mainKey);
+      setKeysPressed(newKeysPressed);
+      
+      // Only trigger toggle actions if no other modifier keys are pressed
+      const isShiftOnly = mainKey === 'shift' && !e.ctrlKey && !e.altKey && !e.metaKey;
+      const isControlOnly = mainKey === 'control' && !e.shiftKey && !e.altKey && !e.metaKey;
+      
+      if (isShiftOnly && hotKeys.toggleTagPreview === 'shift') {
+        actions.toggleTagPreview.down(e);
+      }
+      if (isControlOnly && hotKeys.toggleTagAll === 'control') {
+        actions.toggleTagAll.down(e);
+      }
+      return;
+    }
+    
+    // If any non-modifier key is pressed while shift/ctrl are held, turn off their toggles
+    if (keysPressed.has('shift') && hotKeys.toggleTagPreview === 'shift') {
+      actions.toggleTagPreview.up(e);
+    }
+    if (keysPressed.has('control') && hotKeys.toggleTagAll === 'control') {
+      actions.toggleTagAll.up(e);
+    }
+    
+    // Don't process other modifier keys as main keys
+    if (['alt', 'meta'].includes(mainKey)) {
       return;
     }
     
@@ -579,8 +606,23 @@ export default function HotKeyController() {
   };
 
   const handleKeyUp = (e: KeyboardEvent) => {
-    // For key up, we need to track which combinations were active
-    // For now, we'll handle this simpler since most actions are on keydown
+    const mainKey = e.key.toLowerCase();
+    
+    // Handle modifier key releases for toggle actions
+    if (['shift', 'control'].includes(mainKey)) {
+      const newKeysPressed = new Set(keysPressed);
+      newKeysPressed.delete(mainKey);
+      setKeysPressed(newKeysPressed);
+      
+      // Always turn off toggle actions when the modifier key is released
+      if (mainKey === 'shift' && hotKeys.toggleTagPreview === 'shift') {
+        actions.toggleTagPreview.up(e);
+      }
+      if (mainKey === 'control' && hotKeys.toggleTagAll === 'control') {
+        actions.toggleTagAll.up(e);
+      }
+      return;
+    }
   };
 
   useEffect(() => {
