@@ -103,6 +103,9 @@ export default function HotKeyController() {
       });
     }
     queryClient.invalidateQueries({ queryKey: ['metadata'] });
+    queryClient.invalidateQueries({
+      queryKey: ['tags-by-path', item.path],
+    });
   };
 
   // Helper function to apply multiple tags
@@ -168,7 +171,9 @@ export default function HotKeyController() {
           queryClient.invalidateQueries({
             queryKey: ['taxonomy', 'tag', mostRecentTag],
           });
-          console.log('invalidated tag', mostRecentTag);
+          queryClient.invalidateQueries({
+            queryKey: ['tags-by-path', item.path],
+          });
         }
         createAssignment();
       },
@@ -539,17 +544,19 @@ export default function HotKeyController() {
 
   const handleKeyDown = (e: KeyboardEvent) => {
     const mainKey = e.key.toLowerCase();
-    
+
     // Handle modifier keys separately for toggle actions
     if (['shift', 'control'].includes(mainKey)) {
       const newKeysPressed = new Set(keysPressed);
       newKeysPressed.add(mainKey);
       setKeysPressed(newKeysPressed);
-      
+
       // Only trigger toggle actions if no other modifier keys are pressed
-      const isShiftOnly = mainKey === 'shift' && !e.ctrlKey && !e.altKey && !e.metaKey;
-      const isControlOnly = mainKey === 'control' && !e.shiftKey && !e.altKey && !e.metaKey;
-      
+      const isShiftOnly =
+        mainKey === 'shift' && !e.ctrlKey && !e.altKey && !e.metaKey;
+      const isControlOnly =
+        mainKey === 'control' && !e.shiftKey && !e.altKey && !e.metaKey;
+
       if (isShiftOnly && hotKeys.toggleTagPreview === 'shift') {
         actions.toggleTagPreview.down(e);
       }
@@ -558,7 +565,7 @@ export default function HotKeyController() {
       }
       return;
     }
-    
+
     // If any non-modifier key is pressed while shift/ctrl are held, turn off their toggles
     if (keysPressed.has('shift') && hotKeys.toggleTagPreview === 'shift') {
       actions.toggleTagPreview.up(e);
@@ -566,37 +573,37 @@ export default function HotKeyController() {
     if (keysPressed.has('control') && hotKeys.toggleTagAll === 'control') {
       actions.toggleTagAll.up(e);
     }
-    
+
     // Don't process other modifier keys as main keys
     if (['alt', 'meta'].includes(mainKey)) {
       return;
     }
-    
+
     // Check if we're currently focused on any input element
     const target = e.target as HTMLElement;
-    const isInputElement = target && (
-      target.tagName === 'INPUT' || 
-      target.tagName === 'TEXTAREA' || 
-      target.contentEditable === 'true' ||
-      target.classList.contains('time-input') ||
-      target.classList.contains('text-input')
-    );
-    
+    const isInputElement =
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.contentEditable === 'true' ||
+        target.classList.contains('time-input') ||
+        target.classList.contains('text-input'));
+
     // For most keys, if we're in an input element, let the input handle it
     // Exception: Allow Ctrl+combinations and Escape to still work for shortcuts
     if (isInputElement && !e.ctrlKey && !e.metaKey && mainKey !== 'escape') {
       return; // Let the input handle the key
     }
-    
+
     const keys: string[] = [mainKey === 'space' ? ' ' : mainKey];
-    
+
     // Add modifier keys in the format expected by the existing system
     // Note: We don't add shift because e.key already gives us the shifted character (e.g., "!" for Shift+1)
     if (e.altKey) keys.push('alt');
-    if (e.ctrlKey || e.metaKey) keys.push('control');  // Handle both Ctrl and Cmd
-    
+    if (e.ctrlKey || e.metaKey) keys.push('control'); // Handle both Ctrl and Cmd
+
     const keyCombo = keys.join('+');
-    
+
     // Check if this combination has an action and execute it immediately
     if (actionByHotkey[keyCombo]) {
       e.preventDefault();
@@ -607,13 +614,13 @@ export default function HotKeyController() {
 
   const handleKeyUp = (e: KeyboardEvent) => {
     const mainKey = e.key.toLowerCase();
-    
+
     // Handle modifier key releases for toggle actions
     if (['shift', 'control'].includes(mainKey)) {
       const newKeysPressed = new Set(keysPressed);
       newKeysPressed.delete(mainKey);
       setKeysPressed(newKeysPressed);
-      
+
       // Always turn off toggle actions when the modifier key is released
       if (mainKey === 'shift' && hotKeys.toggleTagPreview === 'shift') {
         actions.toggleTagPreview.up(e);
@@ -639,4 +646,3 @@ export default function HotKeyController() {
 
   return null;
 }
-
