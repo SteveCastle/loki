@@ -305,6 +305,26 @@ ipcMain.handle(
   }
 );
 
+// Handle directory selection event from renderer process
+type SelectDirectoryInput = [string | undefined];
+ipcMain.handle(
+  'select-directory',
+  async (_: IpcMainInvokeEvent, args: SelectDirectoryInput) => {
+    invariant(mainWindow, 'mainWindow is not defined');
+    const defaultPath = args[0];
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      defaultPath,
+    });
+
+    if (!result.canceled) {
+      return result.filePaths[0];
+    } else {
+      return null;
+    }
+  }
+);
+
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');
   sourceMapSupport.install();

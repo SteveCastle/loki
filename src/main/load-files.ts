@@ -79,19 +79,30 @@ type LoadFilesInput = [string, string, boolean];
 export const loadFiles =
   (db: Database) => async (_: IpcMainInvokeEvent, args: LoadFilesInput) => {
     const [filePath, sortOrder, recursive] = args;
-    // folderPath is the directory the filePath is in.
-    const folderPath = path.dirname(filePath);
-
-    // fileName is the fileName portion of the filePath
-    const fileName = path.basename(filePath);
+    const fs = require('fs');
+    
+    // Check if the path is a directory or file
+    const stats = fs.lstatSync(filePath);
+    let folderPath: string;
+    let fileName: string;
+    
+    if (stats.isDirectory()) {
+      // If it's a directory, use it as the folder and set cursor to 0
+      folderPath = filePath;
+      fileName = '';
+    } else {
+      // If it's a file, extract directory and filename
+      folderPath = path.dirname(filePath);
+      fileName = path.basename(filePath);
+    }
 
     // Get the list of files in the folderPath
     const files = await readdirStreamAsync(folderPath, recursive);
 
     const sortedFiles = files.sort(sorts[sortOrder]);
-    const cursorIndex = sortedFiles.findIndex(
+    const cursorIndex = fileName ? sortedFiles.findIndex(
       (item) => path.basename(item.path) === fileName
-    );
+    ) : 0;
     const cursor = cursorIndex === -1 ? 0 : cursorIndex;
     insertBulkMedia(
       db,

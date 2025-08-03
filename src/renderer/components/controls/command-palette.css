@@ -170,46 +170,34 @@
   text-align: center;
 }
 
-.CommandPalette .donateButton {
-  background: rgb(23, 73, 59);
-  border-radius: 0 2px 2px 0;
+.CommandPalette .menuBarRight .patreonButton {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a52);
   border: none;
-  color: rgb(255, 255, 255);
-  margin: 0;
-  padding: 0.1rem 1rem;
-  margin: 0.5rem;
+  border-radius: 3px;
+  color: white;
+  padding: 2px 8px;
+  margin: 4px;
   cursor: pointer;
-  width: 60px;
-  font-size: 0.6rem;
-  font-weight: bold;
-  position: absolute;
-  top: 6px;
-  right: 140px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(238, 90, 82, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  height: 16px;
+  min-width: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.8;
 }
 
-.CommandPalette .patreonButton {
-  background: rgb(59, 52, 66);
-  border-radius: 2px 0 0 2px;
-  border: none;
-  color: rgb(255, 255, 255);
-  margin: 0;
-  padding: 0.1rem 1rem;
-  margin: 0.5rem;
-  width: 60px;
-  cursor: pointer;
-  font-size: 0.6rem;
-  font-weight: bold;
-  position: absolute;
-  top: 6px;
-  right: 200px;
-}
-
-.CommandPalette .patreonButton:hover {
-  background: rgb(93, 83, 103);
-}
-
-.CommandPalette .donateButton:hover {
-  background: rgb(22, 114, 88);
+.CommandPalette .menuBarRight .patreonButton:hover {
+  background: linear-gradient(135deg, #ff5252, #e53935);
+  box-shadow: 0 2px 6px rgba(238, 90, 82, 0.4);
+  border-color: rgba(255, 255, 255, 0.2);
+  opacity: 1;
 }
 
 .CommandPalette .tabContent {

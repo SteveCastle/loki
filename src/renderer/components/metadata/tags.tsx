@@ -1,4 +1,4 @@
-import { useContext, memo } from 'react';
+import { useContext, memo, useRef, useEffect, useState } from 'react';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -61,17 +61,51 @@ const removeTimestamp = async ({
 
 interface Props {
   item: Item;
+  enableTagGeneration?: boolean;
 }
 
 
-function Tags({ item }: Props) {
+function Tags({ item, enableTagGeneration = false }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(enableTagGeneration); // Always visible for metadata panel
+  
+  // Reset visibility when item changes (for detail views)
+  useEffect(() => {
+    if (!enableTagGeneration) {
+      setIsVisible(false);
+    }
+  }, [item.path, enableTagGeneration]);
+  
+  // For detail views, use intersection observer to only load when visible
+  useEffect(() => {
+    if (enableTagGeneration) return; // Skip for metadata panel
+    
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsVisible(true);
+          observer.disconnect(); // Only load once when first visible
+        }
+      },
+      { threshold: 0.1, rootMargin: '50px' } // Load slightly before visible
+    );
+    
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+    
+    return () => observer.disconnect();
+  }, [enableTagGeneration, isVisible]); // Re-observe when visibility resets
   
   const { data, error, isLoading } = useQuery<Metadata, Error>({
     queryKey: ['tags-by-path', item.path],
     queryFn: loadTagsByMediaPath(item),
     retry: true,
+    enabled: isVisible, // Only run query when visible
+    staleTime: enableTagGeneration ? 0 : 5 * 60 * 1000, // 5 minutes for detail views
+    cacheTime: enableTagGeneration ? 5 * 60 * 1000 : 10 * 60 * 1000, // Longer cache for detail views
   });
 
   const { mutate } = useMutation({
@@ -109,10 +143,14 @@ function Tags({ item }: Props) {
     },
   });
 
-  if (isLoading || !data) return null;
-  if (error) return <p>{error.message}</p>;
+  if (!isVisible) {
+    return <div ref={containerRef} className={`Tags`} style={{ minHeight: '20px' }} />;
+  }
+  
+  if (isLoading || !data) return <div ref={containerRef} className={`Tags`} />;
+  if (error) return <div ref={containerRef} className={`Tags`}><p>{error.message}</p></div>;
   return (
-    <div className={`Tags`}>
+    <div ref={containerRef} className={`Tags`}>
       <ul>
         {(data.tags || [])
           .map((tag, idx) => {
@@ -186,9 +224,12 @@ function Tags({ item }: Props) {
           })}
         {item.elo && <li>{item.elo.toFixed(0)}</li>}
       </ul>
-      <GenerateTags path={item.path} />
+      {enableTagGeneration && <GenerateTags path={item.path} />}
     </div>
   );
 }
 
-export default memo(Tags);
+export default memo(Tags, (prevProps, nextProps) => {
+  return prevProps.item.path === nextProps.item.path && 
+         prevProps.enableTagGeneration === nextProps.enableTagGeneration;
+});
