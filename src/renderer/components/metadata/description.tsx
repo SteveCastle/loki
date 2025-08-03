@@ -3,11 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import './description.css';
 import { debounce } from 'lodash';
 import { useQueryClient } from '@tanstack/react-query';
+import GenerateDescription from './generate-description';
 
 export function Description({ path, data }: { path: string; data: Metadata }) {
   const [editing, setEditing] = useState(false);
   const [description, setDescription] = useState(data?.description || '');
   const client = useQueryClient();
+
+  // Update local description state when data changes
+  useEffect(() => {
+    setDescription(data?.description || '');
+  }, [data?.description]);
 
   const updateDescription = async (newValue: string) => {
     console.log('updateDescription', path, newValue);
@@ -61,8 +67,19 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
           }}
         />
       ) : (
-        <div title="Click to edit" onClick={() => setEditing(true)}>
-          {description}
+        <div>
+          <div 
+            title="Double-click to enter text manually" 
+            onDoubleClick={() => setEditing(true)}
+            className={!description ? "empty-description" : ""}
+          >
+            {description ? description : (
+              <div className="empty-content">
+                <span className="placeholder-text">Double-click to enter text or generate automatically</span>
+                <GenerateDescription path={path} />
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
