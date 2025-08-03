@@ -1,0 +1,51 @@
+.GenerateTags {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.GenerateTags button {
+  background-color: transparent;
+  color: #aaa;
+  border: 1px solid #555;
+  outline: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 400;
+  transition: all 0.2s ease-in-out;
+}
+
+.GenerateTags button:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #ddd;
+  border-color: #777;
+}
+
+.GenerateTags .job-running {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ddd;
+  font-size: 11px;
+}
+
+.GenerateTags .loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-left-color: #fff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.GenerateTags .job-status {
+  font-style: italic;
+}
