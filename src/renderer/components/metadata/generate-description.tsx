@@ -1,6 +1,7 @@
 import { useContext, useEffect, useState } from 'react';
 import { GlobalStateContext } from '../../state';
-import './generate-transcript.css';
+import { useQueryClient } from '@tanstack/react-query';
+import './generate-description.css';
 
 interface JobRunnerJob {
   id: string;
@@ -13,8 +14,9 @@ type Props = {
   path: string;
 };
 
-export default function GenerateTranscript({ path }: Props) {
+export default function GenerateDescription({ path }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  const queryClient = useQueryClient();
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(null);
   const [runningJobs, setRunningJobs] = useState<JobRunnerJob[]>([]);
 
@@ -48,6 +50,7 @@ export default function GenerateTranscript({ path }: Props) {
             job.command === 'metadata' && 
             job.arguments && 
             Array.isArray(job.arguments) &&
+            job.arguments.some(arg => arg && arg.includes && arg.includes('description')) &&
             job.arguments.some(arg => arg && arg.includes && arg.includes(path))) {
           return [...filtered, job];
         }
@@ -63,7 +66,15 @@ export default function GenerateTranscript({ path }: Props) {
 
     eventSource.addEventListener('update', (event) => {
       const data = JSON.parse(event.data);
-      updateRunningJobs(data.job);
+      const job = data.job;
+      updateRunningJobs(job);
+      
+      // If description job completed, refresh the metadata
+      if (job.state === 2 && job.command === 'metadata' && 
+          job.arguments && job.arguments.some(arg => arg && arg.includes('description')) &&
+          job.arguments.some(arg => arg && arg.includes(path))) {
+        queryClient.invalidateQueries(['file-metadata', path]);
+      }
     });
 
     eventSource.addEventListener('delete', (event) => {
@@ -74,9 +85,9 @@ export default function GenerateTranscript({ path }: Props) {
     return () => {
       eventSource.close();
     };
-  }, [jobServerAvailable, path]);
+  }, [jobServerAvailable, path, queryClient]);
 
-  const handleGenerateTranscript = async () => {
+  const handleGenerateDescription = async () => {
     try {
       const response = await fetch('http://localhost:8090/create', {
         method: 'POST',
@@ -84,33 +95,33 @@ export default function GenerateTranscript({ path }: Props) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          input: `metadata --type transcript --apply all "${path}"`,
+          input: `metadata --type description --apply all "${path}"`
         }),
       });
-
+      
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-
+      
       const result = await response.json();
       console.log('Job created:', result.id);
       // No toast needed - job will appear in job toast list automatically
     } catch (error) {
-      console.error('Failed to create transcript job:', error);
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: {
-          type: 'error',
-          title: 'Failed to Create Job',
-          message: 'Could not communicate with job service',
-        },
+      console.error('Failed to create description job:', error);
+      libraryService.send({ 
+        type: 'ADD_TOAST', 
+        data: { 
+          type: 'error', 
+          title: 'Failed to Create Job', 
+          message: 'Could not communicate with job service' 
+        } 
       });
     }
   };
 
   if (jobServerAvailable === null) {
     return (
-      <div className="GenerateTranscript">
+      <div className="GenerateDescription">
         <div className="checking-server">Checking job service...</div>
       </div>
     );
@@ -118,12 +129,12 @@ export default function GenerateTranscript({ path }: Props) {
 
   if (jobServerAvailable === false) {
     return (
-      <div className="GenerateTranscript">
+      <div className="GenerateDescription">
         <div className="server-unavailable">
           <div className="icon">⚠️</div>
           <div className="message">
             <strong>Job Service Required</strong>
-            <p>To generate transcripts and run other long-running tasks, you need to install and run the Shrike job service.</p>
+            <p>To generate descriptions and run other long-running tasks, you need to install and run the Shrike job service.</p>
             <p>Start the service at <code>localhost:8090</code> to enable this feature.</p>
           </div>
         </div>
@@ -138,11 +149,11 @@ export default function GenerateTranscript({ path }: Props) {
     const isInProgress = job.state === 1;
     
     return (
-      <div className="GenerateTranscript">
+      <div className="GenerateDescription">
         <div className="job-running">
           <div className="loading-spinner"></div>
           <div className="job-status">
-            {isInProgress ? 'Generating transcript...' : 'Transcript job queued...'}
+            {isInProgress ? 'Generating description...' : 'Description job queued...'}
           </div>
         </div>
       </div>
@@ -150,9 +161,9 @@ export default function GenerateTranscript({ path }: Props) {
   }
 
   return (
-    <div className="GenerateTranscript">
-      <button className="generate" onClick={handleGenerateTranscript}>
-        Generate Transcript
+    <div className="GenerateDescription">
+      <button className="generate" onClick={handleGenerateDescription}>
+        Generate Description
       </button>
     </div>
   );

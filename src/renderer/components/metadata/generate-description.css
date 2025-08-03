@@ -1,0 +1,101 @@
+.GenerateDescription {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.GenerateDescription button {
+  background-color: transparent;
+  color: #aaa;
+  border: 1px solid #555;
+  outline: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 400;
+  transition: all 0.2s ease-in-out;
+}
+
+.GenerateDescription button:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #ddd;
+  border-color: #777;
+}
+
+.GenerateDescription .checking-server {
+  color: #888;
+  font-style: italic;
+  font-size: 12px;
+}
+
+.GenerateDescription .server-unavailable {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  background-color: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 4px;
+  max-width: 300px;
+}
+
+.GenerateDescription .server-unavailable .icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.GenerateDescription .server-unavailable .message {
+  color: #ddd;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.GenerateDescription .server-unavailable .message strong {
+  color: #fff;
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.GenerateDescription .server-unavailable .message p {
+  margin: 0 0 6px 0;
+}
+
+.GenerateDescription .server-unavailable .message p:last-child {
+  margin-bottom: 0;
+}
+
+.GenerateDescription .server-unavailable .message code {
+  background-color: rgba(0, 0, 0, 0.3);
+  padding: 2px 4px;
+  border-radius: 2px;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+}
+
+.GenerateDescription .job-running {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ddd;
+  font-size: 12px;
+}
+
+.GenerateDescription .loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-left-color: #fff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.GenerateDescription .job-status {
+  font-style: italic;
+}

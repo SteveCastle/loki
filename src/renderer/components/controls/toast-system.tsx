@@ -135,26 +135,48 @@ export function ToastSystem() {
   const queryClient = useQueryClient();
   const { libraryService } = useContext(GlobalStateContext);
   const [jobs, setJobs] = useState<Map<string, JobRunnerJob>>(new Map());
+  const [jobServerAvailable, setJobServerAvailable] = useState<boolean>(false);
   
   const toasts = useSelector(libraryService, (state) => state.context.toasts || []);
 
+  // Check if job server is available before attempting SSE connection
   useEffect(() => {
+    const checkJobServer = async () => {
+      try {
+        const response = await fetch('http://localhost:8090/health', {
+          method: 'GET',
+          signal: AbortSignal.timeout(3000), // 3 second timeout
+        });
+        setJobServerAvailable(response.ok);
+      } catch (error) {
+        setJobServerAvailable(false);
+      }
+    };
+
+    checkJobServer();
+    
+    // Recheck every 30 seconds if server is not available
+    const interval = setInterval(() => {
+      if (!jobServerAvailable) {
+        checkJobServer();
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [jobServerAvailable]);
+
+  useEffect(() => {
+    if (!jobServerAvailable) {
+      return; // Don't attempt SSE connection if server is not available
+    }
+
     const eventSource = new EventSource('http://localhost:8090/stream');
 
     eventSource.addEventListener('create', (event) => {
       const data = JSON.parse(event.data);
       const job = data.job as JobRunnerJob;
       setJobs(prev => new Map(prev).set(job.id, job));
-      
-      // Show success toast for job creation
-      libraryService.send({ 
-        type: 'ADD_TOAST', 
-        data: { 
-          type: 'info', 
-          title: 'Job Created', 
-          message: getJobTitle(job.command) 
-        } 
-      });
+      // No toast for job creation - the job toast itself shows the status
     });
 
     eventSource.addEventListener('update', (event) => {
@@ -168,14 +190,15 @@ export function ToastSystem() {
         if (job.command === 'metadata' || job.command === 'ingest') {
           queryClient.invalidateQueries(['transcript']);
           queryClient.invalidateQueries(['media']);
+          queryClient.invalidateQueries(['file-metadata']);
         }
         
-        // Show completion toast
+        // Show simple completion toast
         libraryService.send({ 
           type: 'ADD_TOAST', 
           data: { 
             type: 'success', 
-            title: 'Job Completed', 
+            title: 'Task Complete', 
             message: getJobTitle(job.command) 
           } 
         });
@@ -184,7 +207,7 @@ export function ToastSystem() {
           type: 'ADD_TOAST', 
           data: { 
             type: 'error', 
-            title: 'Job Failed', 
+            title: 'Task Failed', 
             message: getJobTitle(job.command) 
           } 
         });
@@ -203,20 +226,14 @@ export function ToastSystem() {
 
     eventSource.onerror = (error) => {
       console.error('SSE connection error:', error);
-      libraryService.send({ 
-        type: 'ADD_TOAST', 
-        data: { 
-          type: 'error', 
-          title: 'Connection Error', 
-          message: 'Lost connection to job service' 
-        } 
-      });
+      // Mark server as unavailable and let the health check handle reconnection
+      setJobServerAvailable(false);
     };
 
     return () => {
       eventSource.close();
     };
-  }, [queryClient, libraryService]);
+  }, [jobServerAvailable, queryClient, libraryService]);
 
   const handleClearJob = async (job: JobRunnerJob) => {
     try {

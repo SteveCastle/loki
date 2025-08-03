@@ -31,3 +31,24 @@
   box-sizing: border-box;
   font-size: .7rem;
 }
+
+.Description .empty-description {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+}
+
+.Description .empty-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.Description .placeholder-text {
+  color: #888;
+  font-style: italic;
+  font-size: 0.9em;
+}
