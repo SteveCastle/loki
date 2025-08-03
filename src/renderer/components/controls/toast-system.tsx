@@ -8,6 +8,7 @@ interface JobRunnerJob {
   id: string;
   command: string;
   arguments: string[];
+  input: string;
   state: number; // 0=Pending, 1=InProgress, 2=Completed, 3=Cancelled, 4=Error
   created_at: string;
   claimed_at?: string;
@@ -30,28 +31,45 @@ interface JobToastProps {
 
 const getJobStatus = (state: number): string => {
   switch (state) {
-    case 0: return 'pending';
-    case 1: return 'started';
-    case 2: return 'complete';
-    case 3: return 'cancelled';
-    case 4: return 'error';
-    default: return 'pending';
+    case 0:
+      return 'pending';
+    case 1:
+      return 'started';
+    case 2:
+      return 'complete';
+    case 3:
+      return 'cancelled';
+    case 4:
+      return 'error';
+    default:
+      return 'pending';
   }
 };
 
 const getJobTitle = (command: string): string => {
   switch (command) {
-    case 'wait': return 'Wait';
-    case 'gallery-dl': return 'Gallery Download';
-    case 'dce': return 'DCE';
-    case 'yt-dlp': return 'Video Download';
-    case 'ffmpeg': return 'Media Processing';
-    case 'remove': return 'Remove Media';
-    case 'cleanup': return 'Cleanup';
-    case 'ingest': return 'Ingest Media';
-    case 'metadata': return 'Generate Metadata';
-    case 'move': return 'Move Media';
-    default: return command;
+    case 'wait':
+      return 'Wait';
+    case 'gallery-dl':
+      return 'Gallery Download';
+    case 'dce':
+      return 'DCE';
+    case 'yt-dlp':
+      return 'Video Download';
+    case 'ffmpeg':
+      return 'Media Processing';
+    case 'remove':
+      return 'Remove Media';
+    case 'cleanup':
+      return 'Cleanup';
+    case 'ingest':
+      return 'Ingest Media';
+    case 'metadata':
+      return 'Generate Metadata';
+    case 'move':
+      return 'Move Media';
+    default:
+      return command;
   }
 };
 
@@ -59,6 +77,25 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
   const { libraryService } = useContext(GlobalStateContext);
   const status = getJobStatus(job.state);
   const title = getJobTitle(job.command);
+
+  // Extract file path from input - look for quoted paths or file-like arguments
+  const extractFilePath = (input: string): string | null => {
+    // Match quoted paths first (most reliable)
+    const quotedMatch = input.match(/"([^"]+)"/);
+    if (quotedMatch) {
+      return quotedMatch[1];
+    }
+    
+    // Fallback: look for path-like strings (contain / or \ or have file extensions)
+    const pathMatch = input.match(/([^\s]+(?:\/|\\)[^\s]*|[^\s]*\.[a-zA-Z0-9]{2,4})/);
+    if (pathMatch) {
+      return pathMatch[1];
+    }
+    
+    return null;
+  };
+
+  const filePath = extractFilePath(job.input);
 
   return (
     <div className="toast job-toast">
@@ -74,21 +111,21 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
         ></div>
         <div className="toast-text">
           <span className="toast-title">{title}</span>
-          {(job.arguments || []).map((arg, index) => (
-            <span
-              key={index}
-              className="toast-file"
-              onClick={() => {
-                if (arg.includes('/') || arg.includes('\\')) {
+          {filePath && (
+            <div className="toast-file-path-container">
+              <span
+                className="toast-file-path"
+                onClick={() => {
                   libraryService.send('RESET_CURSOR', {
-                    currentItem: { path: arg },
+                    currentItem: { path: filePath },
                   });
-                }
-              }}
-            >
-              {arg.split(/[\\/]/).pop() || arg}
-            </span>
-          ))}
+                }}
+                title={filePath}
+              >
+                {filePath}
+              </span>
+            </div>
+          )}
         </div>
       </div>
       <div className="toast-close" onClick={onClear}>
@@ -136,8 +173,11 @@ export function ToastSystem() {
   const { libraryService } = useContext(GlobalStateContext);
   const [jobs, setJobs] = useState<Map<string, JobRunnerJob>>(new Map());
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean>(false);
-  
-  const toasts = useSelector(libraryService, (state) => state.context.toasts || []);
+
+  const toasts = useSelector(
+    libraryService,
+    (state) => state.context.toasts || []
+  );
 
   // Check if job server is available before attempting SSE connection
   useEffect(() => {
@@ -154,7 +194,7 @@ export function ToastSystem() {
     };
 
     checkJobServer();
-    
+
     // Recheck every 30 seconds if server is not available
     const interval = setInterval(() => {
       if (!jobServerAvailable) {
@@ -175,49 +215,52 @@ export function ToastSystem() {
     eventSource.addEventListener('create', (event) => {
       const data = JSON.parse(event.data);
       const job = data.job as JobRunnerJob;
-      setJobs(prev => new Map(prev).set(job.id, job));
+      console.log('Job created:', job);
+      setJobs((prev) => new Map(prev).set(job.id, job));
       // No toast for job creation - the job toast itself shows the status
     });
 
     eventSource.addEventListener('update', (event) => {
       const data = JSON.parse(event.data);
       const job = data.job as JobRunnerJob;
-      setJobs(prev => new Map(prev).set(job.id, job));
-      
+      console.log('Job updated:', job);
+      setJobs((prev) => new Map(prev).set(job.id, job));
+
       // Handle job completion
-      if (job.state === 2) { // Completed
+      if (job.state === 2) {
+        // Completed
         // Invalidate queries for metadata jobs
         if (job.command === 'metadata' || job.command === 'ingest') {
           queryClient.invalidateQueries(['transcript']);
           queryClient.invalidateQueries(['media']);
           queryClient.invalidateQueries(['file-metadata']);
+          queryClient.invalidateQueries(['tags-by-path']);
         }
-        
-        // Show simple completion toast
-        libraryService.send({ 
-          type: 'ADD_TOAST', 
-          data: { 
-            type: 'success', 
-            title: 'Task Complete', 
-            message: getJobTitle(job.command) 
-          } 
-        });
-      } else if (job.state === 4) { // Error
-        libraryService.send({ 
-          type: 'ADD_TOAST', 
-          data: { 
-            type: 'error', 
-            title: 'Task Failed', 
-            message: getJobTitle(job.command) 
-          } 
-        });
+
+        // Auto-remove completed jobs after 3 seconds to show completion state briefly
+        setTimeout(() => {
+          setJobs((prev) => {
+            const newJobs = new Map(prev);
+            newJobs.delete(job.id);
+            return newJobs;
+          });
+        }, 3000);
+      } else if (job.state === 4) {
+        // Error - also auto-remove after 5 seconds (longer to let user see the error)
+        setTimeout(() => {
+          setJobs((prev) => {
+            const newJobs = new Map(prev);
+            newJobs.delete(job.id);
+            return newJobs;
+          });
+        }, 5000);
       }
     });
 
     eventSource.addEventListener('delete', (event) => {
       const data = JSON.parse(event.data);
       const jobId = data.job.id;
-      setJobs(prev => {
+      setJobs((prev) => {
         const newJobs = new Map(prev);
         newJobs.delete(jobId);
         return newJobs;
@@ -237,20 +280,25 @@ export function ToastSystem() {
 
   const handleClearJob = async (job: JobRunnerJob) => {
     try {
-      if (job.state === 0 || job.state === 1) { // Pending or InProgress
-        await fetch(`http://localhost:8090/job/${job.id}/cancel`, { method: 'POST' });
+      if (job.state === 0 || job.state === 1) {
+        // Pending or InProgress
+        await fetch(`http://localhost:8090/job/${job.id}/cancel`, {
+          method: 'POST',
+        });
       } else {
-        await fetch(`http://localhost:8090/job/${job.id}/remove`, { method: 'POST' });
+        await fetch(`http://localhost:8090/job/${job.id}/remove`, {
+          method: 'POST',
+        });
       }
     } catch (error) {
       console.error('Failed to clear job:', error);
-      libraryService.send({ 
-        type: 'ADD_TOAST', 
-        data: { 
-          type: 'error', 
-          title: 'Failed to clear job', 
-          message: 'Could not communicate with job service' 
-        } 
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to clear job',
+          message: 'Could not communicate with job service',
+        },
       });
     }
   };
@@ -266,13 +314,9 @@ export function ToastSystem() {
     <div className="ToastSystem">
       {/* Job Toasts */}
       {jobsArray.map(({ key, value: job }) => (
-        <JobToast
-          key={key}
-          job={job}
-          onClear={() => handleClearJob(job)}
-        />
+        <JobToast key={key} job={job} onClear={() => handleClearJob(job)} />
       ))}
-      
+
       {/* Action Toasts */}
       {toasts.map((toast) => (
         <ActionToast

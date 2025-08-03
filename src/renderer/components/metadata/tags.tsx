@@ -1,9 +1,10 @@
 import { useContext, memo } from 'react';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import './tags.css';
 import TimestampTooltip from './timestamp-tooltip';
+import GenerateTags from './generate-tags';
 
 type Tag = {
   tag_label: string;
@@ -65,31 +66,43 @@ interface Props {
 
 function Tags({ item }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
-  const { data, error, isLoading, refetch } = useQuery<Metadata, Error>(
-    ['metadata', item],
-    loadTagsByMediaPath(item),
-    { retry: true }
-  );
+  const queryClient = useQueryClient();
+  
+  const { data, error, isLoading } = useQuery<Metadata, Error>({
+    queryKey: ['tags-by-path', item.path],
+    queryFn: loadTagsByMediaPath(item),
+    retry: true,
+  });
+
   const { mutate } = useMutation({
     mutationFn: deleteTag,
     onSuccess: () => {
       libraryService.send({ type: 'DELETED_ASSIGNMENT' });
-      refetch();
+      queryClient.invalidateQueries({
+        queryKey: ['tags-by-path', item.path],
+      });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
     },
   });
 
   const { mutate: mutateUpdateTimestamp } = useMutation({
     mutationFn: updateTimestamp,
     onSuccess: () => {
-      refetch();
+      queryClient.invalidateQueries({
+        queryKey: ['tags-by-path', item.path],
+      });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
     },
   });
 
   const { mutate: mutateRemoveTimestamp } = useMutation({
     mutationFn: removeTimestamp,
     onSuccess: () => {
-      console.log('Remove timestamp success, refetching...');
-      refetch();
+      console.log('Remove timestamp success, invalidating queries...');
+      queryClient.invalidateQueries({
+        queryKey: ['tags-by-path', item.path],
+      });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
     },
     onError: (error) => {
       console.error('Remove timestamp error:', error);
@@ -173,6 +186,7 @@ function Tags({ item }: Props) {
           })}
         {item.elo && <li>{item.elo.toFixed(0)}</li>}
       </ul>
+      <GenerateTags path={item.path} />
     </div>
   );
 }

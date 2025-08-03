@@ -76,6 +76,39 @@
   color: #f8cdf9;
 }
 
+.toast-file-path-container {
+  position: relative;
+  max-width: 250px;
+  overflow: hidden;
+}
+
+.toast-file-path {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  position: relative;
+}
+
+.toast-file-path:hover {
+  opacity: 1;
+  color: #a8b3cf;
+}
+
+.toast-file-path-container::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
+  height: 100%;
+  background: linear-gradient(to right, transparent, rgba(0, 0, 0, 0.9));
+  pointer-events: none;
+}
+
 .toast-close {
   opacity: 0.6;
   cursor: pointer;
@@ -119,7 +152,7 @@
 }
 
 .loading-animation.pending {
-  background-color: #a1c045;
+  background-color: #fbbf24;
 }
 
 .loading-animation.error {
