@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
@@ -185,6 +185,12 @@ export function ToastSystem() {
   const { libraryService } = useContext(GlobalStateContext);
   const [jobs, setJobs] = useState<Map<string, JobRunnerJob>>(new Map());
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean>(false);
+  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [sseGeneration, setSseGeneration] = useState<number>(0);
+
+  // Track last activity time to aid in debugging/health visibility
+  const lastActivityAtRef = useRef<number>(Date.now());
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const toasts = useSelector(
     libraryService,
@@ -195,37 +201,93 @@ export function ToastSystem() {
   useEffect(() => {
     const checkJobServer = async () => {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
         const response = await fetch('http://localhost:8090/health', {
           method: 'GET',
-          signal: AbortSignal.timeout(3000), // 3 second timeout
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
         setJobServerAvailable(response.ok);
       } catch (error) {
         setJobServerAvailable(false);
       }
     };
 
-    checkJobServer();
+    if (isOnline) {
+      checkJobServer();
+    } else {
+      setJobServerAvailable(false);
+    }
 
     // Recheck every 30 seconds if server is not available
     const interval = setInterval(() => {
-      if (!jobServerAvailable) {
+      if (!jobServerAvailable && isOnline) {
         checkJobServer();
       }
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [jobServerAvailable]);
+  }, [jobServerAvailable, isOnline]);
+
+  // Track online/offline to prevent futile reconnect loops when offline
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => {
+      setIsOnline(false);
+      setJobServerAvailable(false);
+      // Close any existing SSE connection if we go offline
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
-    if (!jobServerAvailable) {
+    if (!jobServerAvailable || !isOnline) {
       return; // Don't attempt SSE connection if server is not available
     }
 
     const eventSource = new EventSource('http://localhost:8090/stream');
+    eventSourceRef.current = eventSource;
+
+    type JobEventPayload = { job: JobRunnerJob };
+    const parseJobEvent = (data: string): JobEventPayload | null => {
+      try {
+        const parsed: unknown = JSON.parse(data);
+        if (
+          parsed &&
+          typeof parsed === 'object' &&
+          'job' in (parsed as Record<string, unknown>)
+        ) {
+          return parsed as JobEventPayload;
+        }
+        return null;
+      } catch (e) {
+        console.error('Malformed SSE data:', e, data);
+        return null;
+      }
+    };
+
+    eventSource.onopen = () => {
+      // Connection established or re-established
+      setJobServerAvailable(true);
+      lastActivityAtRef.current = Date.now();
+    };
 
     eventSource.addEventListener('create', (event) => {
-      const data = JSON.parse(event.data);
+      lastActivityAtRef.current = Date.now();
+      const data = parseJobEvent((event as MessageEvent).data);
+      if (!data || !data.job) return;
       const job = data.job as JobRunnerJob;
       console.log('Job created:', job);
       setJobs((prev) => new Map(prev).set(job.id, job));
@@ -233,7 +295,9 @@ export function ToastSystem() {
     });
 
     eventSource.addEventListener('update', (event) => {
-      const data = JSON.parse(event.data);
+      lastActivityAtRef.current = Date.now();
+      const data = parseJobEvent((event as MessageEvent).data);
+      if (!data || !data.job) return;
       const job = data.job as JobRunnerJob;
       console.log('Job updated:', job);
       setJobs((prev) => new Map(prev).set(job.id, job));
@@ -276,7 +340,9 @@ export function ToastSystem() {
     });
 
     eventSource.addEventListener('delete', (event) => {
-      const data = JSON.parse(event.data);
+      lastActivityAtRef.current = Date.now();
+      const data = parseJobEvent((event as MessageEvent).data);
+      if (!data || !data.job) return;
       const jobId = data.job.id;
       setJobs((prev) => {
         const newJobs = new Map(prev);
@@ -285,29 +351,61 @@ export function ToastSystem() {
       });
     });
 
+    // Some servers emit default 'message' events (e.g., ping). Track activity.
+    eventSource.onmessage = () => {
+      lastActivityAtRef.current = Date.now();
+    };
+
     eventSource.onerror = (error) => {
       console.error('SSE connection error:', error);
-      // Mark server as unavailable and let the health check handle reconnection
-      setJobServerAvailable(false);
+      // Do not immediately mark unavailable; EventSource will auto-reconnect.
+      // If we are offline, ensure we reflect unavailable state.
+      if (!navigator.onLine) {
+        setJobServerAvailable(false);
+      }
     };
 
     return () => {
       eventSource.close();
+      if (eventSourceRef.current === eventSource) {
+        eventSourceRef.current = null;
+      }
     };
-  }, [jobServerAvailable, queryClient, libraryService]);
+  }, [jobServerAvailable, isOnline, sseGeneration, queryClient]);
+
+  // Watchdog: if connection is stale or closed and no activity for a while, force a fresh subscribe
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const secondsSinceActivity = (now - lastActivityAtRef.current) / 1000;
+      const current = eventSourceRef.current;
+      if (!isOnline) return;
+
+      // If we have an EventSource but it's closed or has been idle too long, force regeneration
+      if (current && (current.readyState === 2 || secondsSinceActivity > 90)) {
+        try {
+          current.close();
+        } catch (err) {
+          // noop; closing a dead EventSource can throw in some environments
+        }
+        eventSourceRef.current = null;
+        // Trigger effect to recreate the EventSource immediately
+        setSseGeneration((g) => g + 1);
+      }
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [isOnline]);
 
   const handleClearJob = async (job: JobRunnerJob) => {
     try {
-      if (job.state === 0 || job.state === 1) {
-        // Pending or InProgress
-        await fetch(`http://localhost:8090/job/${job.id}/cancel`, {
-          method: 'POST',
-        });
-      } else {
-        await fetch(`http://localhost:8090/job/${job.id}/remove`, {
-          method: 'POST',
-        });
-      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const url =
+        job.state === 0 || job.state === 1
+          ? `http://localhost:8090/job/${job.id}/cancel`
+          : `http://localhost:8090/job/${job.id}/remove`;
+      await fetch(url, { method: 'POST', signal: controller.signal });
+      clearTimeout(timeoutId);
     } catch (error) {
       console.error('Failed to clear job:', error);
       libraryService.send({
