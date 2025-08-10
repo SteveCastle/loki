@@ -137,6 +137,17 @@ export default function Taxonomy() {
     loadTaxonomy
   );
 
+  // Ensure activeCategory is valid; if not, reset to the first available category
+  useEffect(() => {
+    if (!taxonomy) return;
+    const categories = Object.values(taxonomy || {});
+    if (categories.length === 0) return;
+    const exists = categories.some((c) => c.label === activeCategory);
+    if (!exists) {
+      setActiveCategory(categories[0].label);
+    }
+  }, [taxonomy, activeCategory]);
+
   // Given every Category is 20 pixels tall, this will scroll to the active category
   // when it is not visible in the list by setting the scrollTop of the categoryListRef
 
