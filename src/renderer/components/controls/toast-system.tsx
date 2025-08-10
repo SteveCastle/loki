@@ -68,6 +68,8 @@ const getJobTitle = (command: string): string => {
       return 'Generate Metadata';
     case 'move':
       return 'Move Media';
+    case 'autotag':
+      return 'Autotag Media';
     default:
       return command;
   }
@@ -75,6 +77,7 @@ const getJobTitle = (command: string): string => {
 
 const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
   const { libraryService } = useContext(GlobalStateContext);
+  const library = useSelector(libraryService, (state) => state.context.library);
   const status = getJobStatus(job.state);
   const title = getJobTitle(job.command);
 
@@ -85,13 +88,15 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
     if (quotedMatch) {
       return quotedMatch[1];
     }
-    
+
     // Fallback: look for path-like strings (contain / or \ or have file extensions)
-    const pathMatch = input.match(/([^\s]+(?:\/|\\)[^\s]*|[^\s]*\.[a-zA-Z0-9]{2,4})/);
+    const pathMatch = input.match(
+      /([^\s]+(?:\/|\\)[^\s]*|[^\s]*\.[a-zA-Z0-9]{2,4})/
+    );
     if (pathMatch) {
       return pathMatch[1];
     }
-    
+
     return null;
   };
 
@@ -116,9 +121,16 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
               <span
                 className="toast-file-path"
                 onClick={() => {
-                  libraryService.send('RESET_CURSOR', {
-                    currentItem: { path: filePath },
-                  });
+                  const isInLibrary =
+                    Array.isArray(library) &&
+                    library.some((item) => item?.path === filePath);
+                  if (isInLibrary) {
+                    libraryService.send('RESET_CURSOR', {
+                      currentItem: { path: filePath },
+                    });
+                  } else {
+                    libraryService.send('SET_FILE', { path: filePath });
+                  }
                 }}
                 title={filePath}
               >
@@ -235,6 +247,12 @@ export function ToastSystem() {
           queryClient.invalidateQueries(['media']);
           queryClient.invalidateQueries(['file-metadata']);
           queryClient.invalidateQueries(['tags-by-path']);
+          // If this metadata job was an autotag job, also invalidate taxonomy queries
+        }
+
+        if (job.command === 'autotag') {
+          queryClient.invalidateQueries(['tags-by-path']);
+          queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
         }
 
         // Auto-remove completed jobs after 3 seconds to show completion state briefly

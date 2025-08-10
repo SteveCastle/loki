@@ -27,6 +27,7 @@ export default function ConfirmDeleteCategory({
       handleClose();
       queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      queryClient.invalidateQueries(['tags-by-path']);
     }
     submit();
   }
