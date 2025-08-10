@@ -22,6 +22,7 @@ export default function ConfirmDeleteTag({ handleClose, currentValue }: Props) {
       handleClose();
       queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      queryClient.invalidateQueries(['tags-by-path']);
     }
     submit();
   }
