@@ -2,29 +2,27 @@ import { useContext, useEffect, useState } from 'react';
 import { GlobalStateContext } from '../../state';
 import './generate-transcript.css';
 
-interface JobRunnerJob {
-  id: string;
-  command: string;
-  arguments: string[];
-  state: number; // 0=Pending, 1=InProgress, 2=Completed, 3=Cancelled, 4=Error
-}
-
 type Props = {
   path: string;
 };
 
 export default function GenerateTranscript({ path }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
-  const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(null);
-  const [runningJobs, setRunningJobs] = useState<JobRunnerJob[]>([]);
+  const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
+    null
+  );
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   useEffect(() => {
     const checkJobServer = async () => {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
         const response = await fetch('http://localhost:8090/health', {
           method: 'GET',
-          signal: AbortSignal.timeout(3000), // 3 second timeout
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
         setJobServerAvailable(response.ok);
       } catch (error) {
         setJobServerAvailable(false);
@@ -34,50 +32,13 @@ export default function GenerateTranscript({ path }: Props) {
     checkJobServer();
   }, []);
 
-  useEffect(() => {
-    if (!jobServerAvailable) return;
-
-    const eventSource = new EventSource('http://localhost:8090/stream');
-
-    const updateRunningJobs = (job: JobRunnerJob) => {
-      setRunningJobs(prev => {
-        const filtered = prev.filter(j => j.id !== job.id);
-        
-        // Only include jobs that are pending or in progress and are metadata commands with our path
-        if ((job.state === 0 || job.state === 1) && 
-            job.command === 'metadata' && 
-            job.arguments && 
-            Array.isArray(job.arguments) &&
-            job.arguments.some(arg => arg && arg.includes && arg.includes(path))) {
-          return [...filtered, job];
-        }
-        
-        return filtered;
-      });
-    };
-
-    eventSource.addEventListener('create', (event) => {
-      const data = JSON.parse(event.data);
-      updateRunningJobs(data.job);
-    });
-
-    eventSource.addEventListener('update', (event) => {
-      const data = JSON.parse(event.data);
-      updateRunningJobs(data.job);
-    });
-
-    eventSource.addEventListener('delete', (event) => {
-      const data = JSON.parse(event.data);
-      setRunningJobs(prev => prev.filter(j => j.id !== data.job.id));
-    });
-
-    return () => {
-      eventSource.close();
-    };
-  }, [jobServerAvailable, path]);
+  // No SSE subscription here; ToastSystem handles job progress globally
 
   const handleGenerateTranscript = async () => {
     try {
+      setIsSubmitting(true);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const response = await fetch('http://localhost:8090/create', {
         method: 'POST',
         headers: {
@@ -86,15 +47,15 @@ export default function GenerateTranscript({ path }: Props) {
         body: JSON.stringify({
           input: `metadata --type transcript --apply all "${path}"`,
         }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const result = await response.json();
-      console.log('Job created:', result.id);
-      // No toast needed - job will appear in job toast list automatically
+      // Let the ToastSystem show job lifecycle
     } catch (error) {
       console.error('Failed to create transcript job:', error);
       libraryService.send({
@@ -105,6 +66,8 @@ export default function GenerateTranscript({ path }: Props) {
           message: 'Could not communicate with job service',
         },
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -123,26 +86,14 @@ export default function GenerateTranscript({ path }: Props) {
           <div className="icon">⚠️</div>
           <div className="message">
             <strong>Job Service Required</strong>
-            <p>To generate transcripts and run other long-running tasks, you need to install and run the Shrike job service.</p>
-            <p>Start the service at <code>localhost:8090</code> to enable this feature.</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const hasRunningJob = runningJobs.length > 0;
-
-  if (hasRunningJob) {
-    const job = runningJobs[0];
-    const isInProgress = job.state === 1;
-    
-    return (
-      <div className="GenerateTranscript">
-        <div className="job-running">
-          <div className="loading-spinner"></div>
-          <div className="job-status">
-            {isInProgress ? 'Generating transcript...' : 'Transcript job queued...'}
+            <p>
+              To generate transcripts and run other long-running tasks, you need
+              to install and run the Shrike job service.
+            </p>
+            <p>
+              Start the service at <code>localhost:8090</code> to enable this
+              feature.
+            </p>
           </div>
         </div>
       </div>
@@ -151,7 +102,11 @@ export default function GenerateTranscript({ path }: Props) {
 
   return (
     <div className="GenerateTranscript">
-      <button className="generate" onClick={handleGenerateTranscript}>
+      <button
+        className="generate"
+        onClick={handleGenerateTranscript}
+        disabled={isSubmitting}
+      >
         Generate Transcript
       </button>
     </div>
