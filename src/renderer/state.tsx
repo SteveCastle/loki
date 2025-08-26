@@ -125,7 +125,7 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
     const library = event.data.library;
     const previousLibrary = context.library;
     const previousCursor = context.cursor;
-    
+
     // Update library data
     window.electron.store.set('persistedLibrary', {
       library,
@@ -140,7 +140,7 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
       previousLibrary,
       previousCursor,
     });
-    
+
     return library;
   },
   libraryLoadId: () => uniqueId(),
@@ -223,21 +223,41 @@ const setDB = assign<LibraryState, AnyEventObject>({
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
 const missingDb = (context: LibraryState) => !context.dbPath;
 const hasPersistedLibrary = (context: LibraryState): boolean => {
-  const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
-  return !!(persistedData && 
-         persistedData.library && 
-         Array.isArray(persistedData.library) && 
-         persistedData.library.length > 0);
+  const persistedData = window.electron.store.get(
+    'persistedLibrary',
+    null
+  ) as PersistedLibraryData | null;
+  return !!(
+    persistedData &&
+    persistedData.library &&
+    Array.isArray(persistedData.library) &&
+    persistedData.library.length > 0
+  );
 };
 
 const hasPersistedTextFilter = (context: LibraryState): boolean => {
-  const persistedData = window.electron.store.get('persistedQuery', null) as PersistedQueryData | null;
-  return !!(persistedData && persistedData.textFilter && persistedData.textFilter.length > 0);
+  const persistedData = window.electron.store.get(
+    'persistedQuery',
+    null
+  ) as PersistedQueryData | null;
+  return !!(
+    persistedData &&
+    persistedData.textFilter &&
+    persistedData.textFilter.length > 0
+  );
 };
 
 const hasPersistedTags = (context: LibraryState): boolean => {
-  const persistedData = window.electron.store.get('persistedQuery', null) as PersistedQueryData | null;
-  return !!(persistedData && persistedData.dbQuery && persistedData.dbQuery.tags && persistedData.dbQuery.tags.length > 0);
+  const persistedData = window.electron.store.get(
+    'persistedQuery',
+    null
+  ) as PersistedQueryData | null;
+  return !!(
+    persistedData &&
+    persistedData.dbQuery &&
+    persistedData.dbQuery.tags &&
+    persistedData.dbQuery.tags.length > 0
+  );
 };
 
 const willHaveTag = (context: LibraryState, event: AnyEventObject) => {
@@ -355,7 +375,7 @@ const getInitialContext = (): LibraryState => ({
       | 'list'
       | 'detail'
       | 'none',
-    showControls: window.electron.store.get('showControls', true) as boolean,
+    showControls: window.electron.store.get('showControls', false) as boolean,
     gridSize: window.electron.store.get('gridSize', [4, 4]) as [number, number],
     listImageCache: window.electron.store.get(
       'listImageCache',
@@ -631,7 +651,7 @@ const libraryMachine = createMachine(
                   updatePersistedState({
                     ...context,
                     mostRecentTag: newTag,
-                    mostRecentCategory: event.category
+                    mostRecentCategory: event.category,
                   });
                   return newTag;
                 },
@@ -639,7 +659,7 @@ const libraryMachine = createMachine(
                   console.log('SET_MOST_RECENT_CATEGORY', context, event);
                   return event.category;
                 },
-              })
+              }),
             ],
           },
           ADD_TOAST: {
@@ -814,13 +834,14 @@ const libraryMachine = createMachine(
                 if (context.cursor > 0) {
                   newCursor = context.cursor - 1;
                 } else {
-                  newCursor = filter(
-                    context.libraryLoadId,
-                    context.textFilter,
-                    context.library,
-                    context.settings.filters,
-                    context.settings.sortBy
-                  ).length - 1;
+                  newCursor =
+                    filter(
+                      context.libraryLoadId,
+                      context.textFilter,
+                      context.library,
+                      context.settings.filters,
+                      context.settings.sortBy
+                    ).length - 1;
                 }
                 updatePersistedCursor(context, newCursor);
                 return newCursor;
@@ -1071,39 +1092,68 @@ const libraryMachine = createMachine(
           loadingFromPersisted: {
             entry: assign<LibraryState, AnyEventObject>({
               library: (context) => {
-                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
+                const persistedData = window.electron.store.get(
+                  'persistedLibrary',
+                  null
+                ) as PersistedLibraryData | null;
                 return persistedData ? persistedData.library : [];
               },
               initialFile: (context) => {
-                const persistedData = window.electron.store.get('persistedLibrary', null) as PersistedLibraryData | null;
-                return persistedData ? persistedData.initialFile : context.initialFile;
+                const persistedData = window.electron.store.get(
+                  'persistedLibrary',
+                  null
+                ) as PersistedLibraryData | null;
+                return persistedData
+                  ? persistedData.initialFile
+                  : context.initialFile;
               },
               cursor: (context) => {
-                const cursorData = window.electron.store.get('persistedCursor', null) as PersistedCursorData | null;
+                const cursorData = window.electron.store.get(
+                  'persistedCursor',
+                  null
+                ) as PersistedCursorData | null;
                 return cursorData ? cursorData.cursor : 0;
               },
               previousLibrary: (context) => {
-                const previousData = window.electron.store.get('persistedPrevious', null) as PersistedPreviousData | null;
+                const previousData = window.electron.store.get(
+                  'persistedPrevious',
+                  null
+                ) as PersistedPreviousData | null;
                 return previousData ? previousData.previousLibrary : [];
               },
               previousCursor: (context) => {
-                const previousData = window.electron.store.get('persistedPrevious', null) as PersistedPreviousData | null;
+                const previousData = window.electron.store.get(
+                  'persistedPrevious',
+                  null
+                ) as PersistedPreviousData | null;
                 return previousData ? previousData.previousCursor : 0;
               },
               dbQuery: (context) => {
-                const queryData = window.electron.store.get('persistedQuery', null) as PersistedQueryData | null;
+                const queryData = window.electron.store.get(
+                  'persistedQuery',
+                  null
+                ) as PersistedQueryData | null;
                 return queryData ? queryData.dbQuery : { tags: [] };
               },
               mostRecentTag: (context) => {
-                const queryData = window.electron.store.get('persistedQuery', null) as PersistedQueryData | null;
+                const queryData = window.electron.store.get(
+                  'persistedQuery',
+                  null
+                ) as PersistedQueryData | null;
                 return queryData ? queryData.mostRecentTag : '';
               },
               mostRecentCategory: (context) => {
-                const queryData = window.electron.store.get('persistedQuery', null) as PersistedQueryData | null;
+                const queryData = window.electron.store.get(
+                  'persistedQuery',
+                  null
+                ) as PersistedQueryData | null;
                 return queryData ? queryData.mostRecentCategory : '';
               },
               textFilter: (context) => {
-                const queryData = window.electron.store.get('persistedQuery', null) as PersistedQueryData | null;
+                const queryData = window.electron.store.get(
+                  'persistedQuery',
+                  null
+                ) as PersistedQueryData | null;
                 return queryData ? queryData.textFilter : '';
               },
               libraryLoadId: () => uniqueId(),
@@ -1248,7 +1298,11 @@ const libraryMachine = createMachine(
                   actions: [
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
-                        console.log('SET QUERY TAG TO', context, event.data.tag);
+                        console.log(
+                          'SET QUERY TAG TO',
+                          context,
+                          event.data.tag
+                        );
                         return { tags: [event.data.tag] };
                       },
                     }),
@@ -1256,9 +1310,9 @@ const libraryMachine = createMachine(
                       // Persist the updated state
                       updatePersistedState({
                         ...context,
-                        dbQuery: { tags: [event.data.tag] }
+                        dbQuery: { tags: [event.data.tag] },
                       });
-                    }
+                    },
                   ],
                 },
               ],
@@ -1274,9 +1328,9 @@ const libraryMachine = createMachine(
                   (context, event) => {
                     updatePersistedState({
                       ...context,
-                      textFilter: event.data.textFilter
+                      textFilter: event.data.textFilter,
                     });
-                  }
+                  },
                 ],
               },
               SHUFFLE: {
@@ -1381,9 +1435,9 @@ const libraryMachine = createMachine(
                       }
                       updatePersistedState({
                         ...context,
-                        dbQuery: { tags: Object.keys(activeTags) }
+                        dbQuery: { tags: Object.keys(activeTags) },
                       });
-                    }
+                    },
                   ],
                 },
                 {
@@ -1403,9 +1457,9 @@ const libraryMachine = createMachine(
                     (context, event) => {
                       updatePersistedState({
                         ...context,
-                        dbQuery: { tags: [] }
+                        dbQuery: { tags: [] },
                       });
-                    }
+                    },
                   ],
                 },
               ],
@@ -1423,9 +1477,9 @@ const libraryMachine = createMachine(
                     (context, event) => {
                       updatePersistedState({
                         ...context,
-                        textFilter: event.data.textFilter
+                        textFilter: event.data.textFilter,
                       });
-                    }
+                    },
                   ],
                 },
                 {
@@ -1441,9 +1495,9 @@ const libraryMachine = createMachine(
                     (context, event) => {
                       updatePersistedState({
                         ...context,
-                        textFilter: event.data.textFilter
+                        textFilter: event.data.textFilter,
                       });
-                    }
+                    },
                   ],
                 },
               ],
@@ -1517,7 +1571,7 @@ const libraryMachine = createMachine(
                     previousCursor: (context) => context.cursor,
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
-                  })
+                  }),
                 ],
               },
               CHANGE_DB_PATH: {
@@ -1582,7 +1636,7 @@ const libraryMachine = createMachine(
                     previousCursor: (context) => context.cursor,
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
-                  })
+                  }),
                 ],
               },
               SET_ACTIVE_CATEGORY: {
@@ -1612,9 +1666,9 @@ const libraryMachine = createMachine(
                   (context, event) => {
                     updatePersistedState({
                       ...context,
-                      dbQuery: { tags: [] }
+                      dbQuery: { tags: [] },
                     });
-                  }
+                  },
                 ],
               },
               SET_TEXT_FILTER: {
@@ -1631,9 +1685,9 @@ const libraryMachine = createMachine(
                   (context, event) => {
                     updatePersistedState({
                       ...context,
-                      textFilter: event.data.textFilter
+                      textFilter: event.data.textFilter,
                     });
-                  }
+                  },
                 ],
               },
               SHUFFLE: {
@@ -1718,7 +1772,11 @@ const libraryMachine = createMachine(
                   actions: [
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
-                        console.log('SET QUERY TAG TO', context, event.data.tags);
+                        console.log(
+                          'SET QUERY TAG TO',
+                          context,
+                          event.data.tags
+                        );
                         // Get active tags and index by tag.
                         const activeTags = context.dbQuery.tags.reduce(
                           (acc, tag) => {
@@ -1772,9 +1830,9 @@ const libraryMachine = createMachine(
                       }
                       updatePersistedState({
                         ...context,
-                        dbQuery: { tags: Object.keys(activeTags) }
+                        dbQuery: { tags: Object.keys(activeTags) },
                       });
-                    }
+                    },
                   ],
                 },
                 {
@@ -1783,16 +1841,20 @@ const libraryMachine = createMachine(
                   actions: [
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
-                        console.log('SET QUERY TAG TO', context, event.data.tag);
+                        console.log(
+                          'SET QUERY TAG TO',
+                          context,
+                          event.data.tag
+                        );
                         return { tags: [] };
                       },
                     }),
                     (context, event) => {
                       updatePersistedState({
                         ...context,
-                        dbQuery: { tags: [] }
+                        dbQuery: { tags: [] },
                       });
-                    }
+                    },
                   ],
                 },
               ],

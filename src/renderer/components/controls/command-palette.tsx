@@ -57,17 +57,17 @@ function getDirectory(path: string): string {
   const separator = /[\\/]/;
   const components = path.split(separator);
   const lastComponent = components[components.length - 1];
-  
+
   // Check if the last component has a file extension
   // A file extension is indicated by a dot followed by alphanumeric characters
   const hasExtension = /\.[a-zA-Z0-9]+$/.test(lastComponent);
-  
+
   if (hasExtension) {
     // It's a file, remove the filename to get the directory
     components.pop();
   }
   // If no extension, assume it's already a directory path
-  
+
   return components.join('/');
 }
 
@@ -491,7 +491,7 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
         case 'generalOptions':
           return (
             <div className="tabContent">
-              <p>v2.6.0</p> {/* Consider making version dynamic */}
+              <p>v2.6.3</p> {/* Consider making version dynamic */}
               <SettingsList
                 filterType="general"
                 battleMode={battleMode}
