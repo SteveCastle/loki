@@ -2,7 +2,14 @@ import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
 import * as url from 'url';
 import * as path from 'path';
 import { isValidFilePath } from './file-handling';
-import { loadTranscript, modifyTranscript } from './transcript';
+// Defer transcript module loading until used to speed cold start
+let transcriptModule: typeof import('./transcript') | null = null;
+async function ensureTranscriptModule() {
+  if (!transcriptModule) {
+    transcriptModule = await import('./transcript');
+  }
+  return transcriptModule;
+}
 import { FilterModeOption } from 'settings';
 
 export type Channels =
@@ -98,8 +105,14 @@ contextBridge.exposeInMainWorld('electron', {
   fetchTagPreview,
   fetchTagCount,
   fetchMediaPreview,
-  loadTranscript,
-  modifyTranscript,
+  async loadTranscript(filePath: string) {
+    const mod = await ensureTranscriptModule();
+    return mod.loadTranscript(filePath);
+  },
+  async modifyTranscript(input: any) {
+    const mod = await ensureTranscriptModule();
+    return mod.modifyTranscript(input);
+  },
   userHome: path.join(process.env.HOME || '', '.lowkey', 'dream.sqlite'),
   store: {
     get(key: string, defaultValue: any) {
@@ -107,6 +120,9 @@ contextBridge.exposeInMainWorld('electron', {
     },
     set(property: string, val: any) {
       ipcRenderer.send('electron-store-set', property, val);
+    },
+    getMany(pairs: [string, any][]) {
+      return ipcRenderer.sendSync('electron-store-get-many', pairs);
     },
   },
   url: {
@@ -131,6 +147,20 @@ contextBridge.exposeInMainWorld('electron', {
     },
     removeListener(channel: Channels, func: (...args: unknown[]) => void) {
       ipcRenderer.removeListener(channel, func);
+    },
+  },
+  transcript: {
+    async loadTranscript(filePath: string) {
+      const mod = await ensureTranscriptModule();
+      return mod.loadTranscript(filePath);
+    },
+    async modifyTranscript(input: any) {
+      const mod = await ensureTranscriptModule();
+      return mod.modifyTranscript(input);
+    },
+    async checkIfWhisperIsInstalled() {
+      const mod = await ensureTranscriptModule();
+      return mod.checkIfWhisperIsInstalled();
     },
   },
 });

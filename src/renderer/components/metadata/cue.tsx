@@ -30,7 +30,13 @@ function usePrevious<T>(value: T): T {
   return ref.current;
 }
 
-export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = false }: Props) {
+export function Cue({
+  cue,
+  cueIndex,
+  mediaPath,
+  setScrollTop,
+  followVideoTime = false,
+}: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
   const { actualVideoTime } = useSelector(
@@ -51,7 +57,7 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
   const previousIsActive = usePrevious(isActive);
   const ref = useRef<HTMLLIElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  
+
   useEffect(() => {
     if (isActive && !previousIsActive && ref.current && followVideoTime) {
       setScrollTop(ref.current.offsetTop);
@@ -61,26 +67,29 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
   useEffect(() => {
     if (isEditing && textAreaRef.current) {
       textAreaRef.current.focus();
-      textAreaRef.current.setSelectionRange(textAreaRef.current.value.length, textAreaRef.current.value.length);
+      textAreaRef.current.setSelectionRange(
+        textAreaRef.current.value.length,
+        textAreaRef.current.value.length
+      );
     }
   }, [isEditing]);
 
   const handleSave = async () => {
     if (isSaving) return;
-    
+
     setIsSaving(true);
     try {
-      await window.electron.modifyTranscript({
+      await window.electron.transcript.modifyTranscript({
         mediaPath,
         cueIndex,
         startTime: editStartTime !== cue.startTime ? editStartTime : undefined,
         endTime: editEndTime !== cue.endTime ? editEndTime : undefined,
         text: editText !== cue.text ? editText : undefined,
       });
-      
+
       // Invalidate the transcript query to refresh the data
       queryClient.invalidateQueries({ queryKey: ['transcript', mediaPath] });
-      
+
       setIsEditing(false);
     } catch (error) {
       console.error('Failed to save transcript changes:', error);
@@ -103,7 +112,7 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
   const handleTextKeyDown = (e: React.KeyboardEvent) => {
     // Stop event bubbling to prevent hotkey system from capturing
     e.stopPropagation();
-    
+
     if (e.key === 'Enter' && e.ctrlKey) {
       e.preventDefault();
       handleSave();
@@ -116,7 +125,7 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
   const handleTimeKeyDown = (e: React.KeyboardEvent) => {
     // Stop event bubbling to prevent hotkey system from capturing
     e.stopPropagation();
-    
+
     if (e.key === 'Enter') {
       e.preventDefault();
       handleSave();
@@ -126,7 +135,9 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => {
     // Stop event bubbling to prevent any interference
     e.stopPropagation();
   };
@@ -144,9 +155,17 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
   return (
     <li
       ref={ref}
-      className={['cue-container', isActive ? 'active' : '', isEditing ? 'editing' : ''].join(' ')}
+      className={[
+        'cue-container',
+        isActive ? 'active' : '',
+        isEditing ? 'editing' : '',
+      ].join(' ')}
     >
-      <div className="cue" onClick={handleCueClick} onDoubleClick={handleDoubleClick}>
+      <div
+        className="cue"
+        onClick={handleCueClick}
+        onDoubleClick={handleDoubleClick}
+      >
         <div className="cue-header">
           <div className="timestamps">
             {isEditing ? (
@@ -185,16 +204,16 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
           </div>
           {isEditing && (
             <div className="edit-actions">
-              <button 
-                className="save-btn" 
-                onClick={handleSave} 
+              <button
+                className="save-btn"
+                onClick={handleSave}
                 disabled={isSaving}
                 title="Save (Ctrl+Enter)"
               >
                 {isSaving ? '⟳' : '✓'}
               </button>
-              <button 
-                className="cancel-btn" 
+              <button
+                className="cancel-btn"
                 onClick={handleCancel}
                 title="Cancel (Escape)"
               >
@@ -222,9 +241,7 @@ export function Cue({ cue, cueIndex, mediaPath, setScrollTop, followVideoTime = 
           )}
         </div>
       </div>
-      {!isEditing && (
-        <div className="edit-hint">Double-click to edit</div>
-      )}
+      {!isEditing && <div className="edit-hint">Double-click to edit</div>}
     </li>
   );
 }
