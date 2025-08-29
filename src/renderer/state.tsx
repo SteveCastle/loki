@@ -300,214 +300,216 @@ const willHaveNoTag = (context: LibraryState, event: AnyEventObject) => {
 };
 
 // Memoize context initialization to prevent unnecessary re-computations
-const getInitialContext = (): LibraryState => ({
-  initialFile: window.appArgs?.filePath || '',
-  dbPath: window.electron.store.get('dbPath', null) as string,
-  library: [],
-  libraryLoadId: '',
-  initSessionId: '',
-  textFilter: '',
-  activeCategory: window.electron.store.get('activeCategory', '') as string,
-  storedCategories: window.electron.store.get('storedCategories', {}) as {
-    [key: string]: string;
-  },
-  storedTags: window.electron.store.get('storedTags', {}) as {
-    [key: string]: string[];
-  },
-  mostRecentTag: '',
-  mostRecentCategory: '',
-  cursor: 0,
-  previousLibrary: [],
-  previousCursor: 0,
-  scrollPosition: 0,
-  previousScrollPosition: 0,
-  videoPlayer: {
-    eventId: 'initial',
-    timeStamp: 0,
-    playing: true,
-    videoLength: 0,
-    actualVideoTime: 0,
-    loopLength: 0,
-    loopStartTime: 0,
-  },
-  settings: {
-    order: window.electron.store.get('sortOrder', 'asc') as 'asc' | 'desc',
-    sortBy: window.electron.store.get('sortBy', 'name') as
-      | 'name'
-      | 'date'
-      | 'weight'
-      | 'elo'
-      | 'shuffle',
-    filters: 'all',
-    recursive: false,
-    scale: 1,
-    comicMode: window.electron.store.get('comicMode', false) as boolean,
-    showTagCount: window.electron.store.get('showTagCount', false) as boolean,
-    battleMode: window.electron.store.get('battleMode', false) as boolean,
-    libraryLayout: window.electron.store.get('libraryLayout', 'bottom') as
-      | 'left'
-      | 'bottom',
-    applyTagPreview: window.electron.store.get(
-      'applyTagPreview',
-      true
-    ) as boolean,
-    filteringMode: window.electron.store.get(
-      'filteringMode',
-      'EXCLUSIVE'
-    ) as FilterModeOption,
-    applyTagToAll: window.electron.store.get('applyTagToAll', false) as boolean,
-    scaleMode: window.electron.store.get('scaleMode', 'fit') as
-      | 'fit'
-      | 'cover'
-      | number,
-    playSound: window.electron.store.get('playSound', false) as boolean,
-    followTranscript: window.electron.store.get(
-      'followTranscript',
-      true
-    ) as boolean,
-    showTags: window.electron.store.get('showTags', 'all') as
-      | 'all'
-      | 'list'
-      | 'detail'
-      | 'none',
-    showFileInfo: window.electron.store.get('showFileInfo', 'none') as
-      | 'all'
-      | 'list'
-      | 'detail'
-      | 'none',
-    showControls: window.electron.store.get('showControls', false) as boolean,
-    gridSize: window.electron.store.get('gridSize', [4, 4]) as [number, number],
-    listImageCache: window.electron.store.get(
-      'listImageCache',
-      'thumbnail_path_600'
-    ) as 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
-    detailImageCache: window.electron.store.get(
-      'detailImageCache',
-      false
-    ) as DetailImageCache,
-    controlMode: window.electron.store.get('controlMode', 'mouse') as
-      | 'mouse'
-      | 'touchpad',
-    autoPlay: window.electron.store.get('autoPlay', false) as boolean,
-    autoPlayTime: window.electron.store.get('autoPlayTime', false) as
-      | number
-      | false,
-    autoPlayVideoLoops: window.electron.store.get(
-      'autoPlayVideoLoops',
-      false
-    ) as number | false,
-    volume: window.electron.store.get('volume', 1.0) as number,
-    alwaysOnTop: window.electron.store.get('alwaysOnTop', false) as boolean,
-  },
-  hotKeys: {
-    incrementCursor: window.electron.store.get(
-      'incrementCursor',
-      'arrowright'
-    ) as string,
-    decrementCursor: window.electron.store.get(
-      'decrementCursor',
-      'arrowleft'
-    ) as string,
-    toggleTagPreview: window.electron.store.get(
-      'toggleTagPreview',
-      'shift'
-    ) as string,
-    toggleTagAll: window.electron.store.get(
-      'toggleTagAll',
-      'control'
-    ) as string,
-    moveToTop: window.electron.store.get('moveToTop', '[') as string,
-    moveToEnd: window.electron.store.get('moveToEnd', ']') as string,
-    minimize: window.electron.store.get('minimize', 'escape') as string,
-    shuffle: window.electron.store.get('shuffle', 'x') as string,
-    copyFile: window.electron.store.get('copyFilePath', 'c+control') as string,
-    copyAllSelectedFiles: window.electron.store.get(
-      'copyAllSelectedFiles',
-      'c+control+shift'
-    ) as string,
-    deleteFile: window.electron.store.get('deleteFile', 'delete') as string,
-    applyMostRecentTag: window.electron.store.get(
-      'applyMostRecentTag',
-      'a'
-    ) as string,
-    storeCategory1: window.electron.store.get(
-      'storeCategory1',
-      '1+alt'
-    ) as string,
-    storeCategory2: window.electron.store.get(
-      'storeCategory2',
-      '2+alt'
-    ) as string,
-    storeCategory3: window.electron.store.get(
-      'storeCategory3',
-      '3+alt'
-    ) as string,
-    storeCategory4: window.electron.store.get(
-      'storeCategory4',
-      '4+alt'
-    ) as string,
-    storeCategory5: window.electron.store.get(
-      'storeCategory5',
-      '5+alt'
-    ) as string,
-    storeCategory6: window.electron.store.get(
-      'storeCategory6',
-      '6+alt'
-    ) as string,
-    storeCategory7: window.electron.store.get(
-      'storeCategory7',
-      '7+alt'
-    ) as string,
-    storeCategory8: window.electron.store.get(
-      'storeCategory8',
-      '8+alt'
-    ) as string,
-    storeCategory9: window.electron.store.get(
-      'storeCategory9',
-      '9+alt'
-    ) as string,
-    tagCategory1: window.electron.store.get('tagCategory1', '!') as string,
-    tagCategory2: window.electron.store.get('tagCategory2', '@') as string,
-    tagCategory3: window.electron.store.get('tagCategory3', '#') as string,
-    tagCategory4: window.electron.store.get('tagCategory4', '$') as string,
-    tagCategory5: window.electron.store.get('tagCategory5', '%') as string,
-    tagCategory6: window.electron.store.get('tagCategory6', '^') as string,
-    tagCategory7: window.electron.store.get('tagCategory7', '&') as string,
-    tagCategory8: window.electron.store.get('tagCategory8', '*') as string,
-    tagCategory9: window.electron.store.get('tagCategory9', '(') as string,
-    storeTag1: window.electron.store.get('storeTag1', '1+control') as string,
-    storeTag2: window.electron.store.get('storeTag2', '2+control') as string,
-    storeTag3: window.electron.store.get('storeTag3', '3+control') as string,
-    storeTag4: window.electron.store.get('storeTag4', '4+control') as string,
-    storeTag5: window.electron.store.get('storeTag5', '5+control') as string,
-    storeTag6: window.electron.store.get('storeTag6', '6+control') as string,
-    storeTag7: window.electron.store.get('storeTag7', '7+control') as string,
-    storeTag8: window.electron.store.get('storeTag8', '8+control') as string,
-    storeTag9: window.electron.store.get('storeTag9', '9+control') as string,
-    applyTag1: window.electron.store.get('applyTag1', '1') as string,
-    applyTag2: window.electron.store.get('applyTag2', '2') as string,
-    applyTag3: window.electron.store.get('applyTag3', '3') as string,
-    applyTag4: window.electron.store.get('applyTag4', '4') as string,
-    applyTag5: window.electron.store.get('applyTag5', '5') as string,
-    applyTag6: window.electron.store.get('applyTag6', '6') as string,
-    applyTag7: window.electron.store.get('applyTag7', '7') as string,
-    applyTag8: window.electron.store.get('applyTag8', '8') as string,
-    applyTag9: window.electron.store.get('applyTag9', '9') as string,
-    togglePlayPause: window.electron.store.get(
-      'togglePlayPause',
-      ' '
-    ) as string,
-  },
-  dbQuery: {
-    tags: [],
-  },
-  commandPalette: {
-    display: false,
-    position: { x: 0, y: 0 },
-  },
-  // jobs: removed - now handled by external job runner service
-  toasts: [],
-});
+const getInitialContext = (): LibraryState => {
+  const batched = (window.electron.store as any).getMany([
+    ['dbPath', null],
+    ['activeCategory', ''],
+    ['storedCategories', {}],
+    ['storedTags', {}],
+    ['sortOrder', 'asc'],
+    ['sortBy', 'name'],
+    ['comicMode', false],
+    ['showTagCount', false],
+    ['battleMode', false],
+    ['libraryLayout', 'bottom'],
+    ['applyTagPreview', true],
+    ['filteringMode', 'EXCLUSIVE'],
+    ['applyTagToAll', false],
+    ['scaleMode', 'fit'],
+    ['playSound', false],
+    ['followTranscript', true],
+    ['showTags', 'all'],
+    ['showFileInfo', 'none'],
+    ['showControls', false],
+    ['gridSize', [4, 4]],
+    ['listImageCache', 'thumbnail_path_600'],
+    ['detailImageCache', false],
+    ['controlMode', 'mouse'],
+    ['autoPlay', false],
+    ['autoPlayTime', false],
+    ['autoPlayVideoLoops', false],
+    ['volume', 1.0],
+    ['alwaysOnTop', false],
+    ['incrementCursor', 'arrowright'],
+    ['decrementCursor', 'arrowleft'],
+    ['toggleTagPreview', 'shift'],
+    ['toggleTagAll', 'control'],
+    ['moveToTop', '['],
+    ['moveToEnd', ']'],
+    ['minimize', 'escape'],
+    ['shuffle', 'x'],
+    ['copyFilePath', 'c+control'],
+    ['copyAllSelectedFiles', 'c+control+shift'],
+    ['deleteFile', 'delete'],
+    ['applyMostRecentTag', 'a'],
+    ['storeCategory1', '1+alt'],
+    ['storeCategory2', '2+alt'],
+    ['storeCategory3', '3+alt'],
+    ['storeCategory4', '4+alt'],
+    ['storeCategory5', '5+alt'],
+    ['storeCategory6', '6+alt'],
+    ['storeCategory7', '7+alt'],
+    ['storeCategory8', '8+alt'],
+    ['storeCategory9', '9+alt'],
+    ['tagCategory1', '!'],
+    ['tagCategory2', '@'],
+    ['tagCategory3', '#'],
+    ['tagCategory4', '$'],
+    ['tagCategory5', '%'],
+    ['tagCategory6', '^'],
+    ['tagCategory7', '&'],
+    ['tagCategory8', '*'],
+    ['tagCategory9', '('],
+    ['storeTag1', '1+control'],
+    ['storeTag2', '2+control'],
+    ['storeTag3', '3+control'],
+    ['storeTag4', '4+control'],
+    ['storeTag5', '5+control'],
+    ['storeTag6', '6+control'],
+    ['storeTag7', '7+control'],
+    ['storeTag8', '8+control'],
+    ['storeTag9', '9+control'],
+    ['applyTag1', '1'],
+    ['applyTag2', '2'],
+    ['applyTag3', '3'],
+    ['applyTag4', '4'],
+    ['applyTag5', '5'],
+    ['applyTag6', '6'],
+    ['applyTag7', '7'],
+    ['applyTag8', '8'],
+    ['applyTag9', '9'],
+    ['togglePlayPause', ' '],
+  ] as [string, any][]);
+
+  return {
+    initialFile: window.appArgs?.filePath || '',
+    dbPath: batched['dbPath'] as string,
+    library: [],
+    libraryLoadId: '',
+    initSessionId: '',
+    textFilter: '',
+    activeCategory: batched['activeCategory'] as string,
+    storedCategories: batched['storedCategories'] as { [key: string]: string },
+    storedTags: batched['storedTags'] as { [key: string]: string[] },
+    mostRecentTag: '',
+    mostRecentCategory: '',
+    cursor: 0,
+    previousLibrary: [],
+    previousCursor: 0,
+    scrollPosition: 0,
+    previousScrollPosition: 0,
+    videoPlayer: {
+      eventId: 'initial',
+      timeStamp: 0,
+      playing: true,
+      videoLength: 0,
+      actualVideoTime: 0,
+      loopLength: 0,
+      loopStartTime: 0,
+    },
+    settings: {
+      order: batched['sortOrder'] as 'asc' | 'desc',
+      sortBy: batched['sortBy'] as
+        | 'name'
+        | 'date'
+        | 'weight'
+        | 'elo'
+        | 'shuffle',
+      filters: 'all',
+      recursive: false,
+      scale: 1,
+      comicMode: batched['comicMode'] as boolean,
+      showTagCount: batched['showTagCount'] as boolean,
+      battleMode: batched['battleMode'] as boolean,
+      libraryLayout: batched['libraryLayout'] as 'left' | 'bottom',
+      applyTagPreview: batched['applyTagPreview'] as boolean,
+      filteringMode: batched['filteringMode'] as FilterModeOption,
+      applyTagToAll: batched['applyTagToAll'] as boolean,
+      scaleMode: batched['scaleMode'] as 'fit' | 'cover' | number,
+      playSound: batched['playSound'] as boolean,
+      followTranscript: batched['followTranscript'] as boolean,
+      showTags: batched['showTags'] as 'all' | 'list' | 'detail' | 'none',
+      showFileInfo: batched['showFileInfo'] as
+        | 'all'
+        | 'list'
+        | 'detail'
+        | 'none',
+      showControls: batched['showControls'] as boolean,
+      gridSize: batched['gridSize'] as [number, number],
+      listImageCache: batched['listImageCache'] as
+        | 'thumbnail_path_1200'
+        | 'thumbnail_path_600'
+        | false,
+      detailImageCache: batched['detailImageCache'] as DetailImageCache,
+      controlMode: batched['controlMode'] as 'mouse' | 'touchpad',
+      autoPlay: batched['autoPlay'] as boolean,
+      autoPlayTime: batched['autoPlayTime'] as number | false,
+      autoPlayVideoLoops: batched['autoPlayVideoLoops'] as number | false,
+      volume: batched['volume'] as number,
+      alwaysOnTop: batched['alwaysOnTop'] as boolean,
+    },
+    hotKeys: {
+      incrementCursor: batched['incrementCursor'] as string,
+      decrementCursor: batched['decrementCursor'] as string,
+      toggleTagPreview: batched['toggleTagPreview'] as string,
+      toggleTagAll: batched['toggleTagAll'] as string,
+      moveToTop: batched['moveToTop'] as string,
+      moveToEnd: batched['moveToEnd'] as string,
+      minimize: batched['minimize'] as string,
+      shuffle: batched['shuffle'] as string,
+      copyFile: batched['copyFilePath'] as string,
+      copyAllSelectedFiles: batched['copyAllSelectedFiles'] as string,
+      deleteFile: batched['deleteFile'] as string,
+      applyMostRecentTag: batched['applyMostRecentTag'] as string,
+      storeCategory1: batched['storeCategory1'] as string,
+      storeCategory2: batched['storeCategory2'] as string,
+      storeCategory3: batched['storeCategory3'] as string,
+      storeCategory4: batched['storeCategory4'] as string,
+      storeCategory5: batched['storeCategory5'] as string,
+      storeCategory6: batched['storeCategory6'] as string,
+      storeCategory7: batched['storeCategory7'] as string,
+      storeCategory8: batched['storeCategory8'] as string,
+      storeCategory9: batched['storeCategory9'] as string,
+      tagCategory1: batched['tagCategory1'] as string,
+      tagCategory2: batched['tagCategory2'] as string,
+      tagCategory3: batched['tagCategory3'] as string,
+      tagCategory4: batched['tagCategory4'] as string,
+      tagCategory5: batched['tagCategory5'] as string,
+      tagCategory6: batched['tagCategory6'] as string,
+      tagCategory7: batched['tagCategory7'] as string,
+      tagCategory8: batched['tagCategory8'] as string,
+      tagCategory9: batched['tagCategory9'] as string,
+      storeTag1: batched['storeTag1'] as string,
+      storeTag2: batched['storeTag2'] as string,
+      storeTag3: batched['storeTag3'] as string,
+      storeTag4: batched['storeTag4'] as string,
+      storeTag5: batched['storeTag5'] as string,
+      storeTag6: batched['storeTag6'] as string,
+      storeTag7: batched['storeTag7'] as string,
+      storeTag8: batched['storeTag8'] as string,
+      storeTag9: batched['storeTag9'] as string,
+      applyTag1: batched['applyTag1'] as string,
+      applyTag2: batched['applyTag2'] as string,
+      applyTag3: batched['applyTag3'] as string,
+      applyTag4: batched['applyTag4'] as string,
+      applyTag5: batched['applyTag5'] as string,
+      applyTag6: batched['applyTag6'] as string,
+      applyTag7: batched['applyTag7'] as string,
+      applyTag8: batched['applyTag8'] as string,
+      applyTag9: batched['applyTag9'] as string,
+      togglePlayPause: batched['togglePlayPause'] as string,
+    },
+    dbQuery: {
+      tags: [],
+    },
+    commandPalette: {
+      display: false,
+      position: { x: 0, y: 0 },
+    },
+    // jobs: removed - now handled by external job runner service
+    toasts: [],
+  };
+};
 
 const libraryMachine = createMachine(
   {
