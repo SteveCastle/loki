@@ -1000,6 +1000,7 @@ const libraryMachine = createMachine(
                   // Ask main to sort with original sort once complete
                   context.savedSortByDuringStreaming || 'name',
                   recursive,
+                  { fastest: true },
                 ]);
               },
               onDone: {
