@@ -815,48 +815,51 @@ const libraryMachine = createMachine(
             }),
           },
           INCREMENT_CURSOR: {
-            actions: assign<LibraryState, AnyEventObject>({
-              cursor: (context) => {
-                let newCursor;
-                if (
-                  context.cursor <
-                  filter(
-                    context.libraryLoadId,
-                    context.textFilter,
-                    context.library,
-                    context.settings.filters,
-                    context.settings.sortBy
-                  ).length -
-                    1
-                ) {
-                  newCursor = context.cursor + 1;
-                } else {
-                  newCursor = 0;
-                }
-                updatePersistedCursor(context, newCursor);
-                return newCursor;
-              },
+            actions: assign<LibraryState, AnyEventObject>((context) => {
+              const view = filter(
+                context.libraryLoadId,
+                context.textFilter,
+                context.library,
+                context.settings.filters,
+                context.settings.sortBy
+              );
+              const lastIndex = Math.max(0, view.length - 1);
+              const nextCursor =
+                context.cursor < lastIndex ? context.cursor + 1 : 0;
+              updatePersistedCursor(context, nextCursor);
+              return {
+                cursor: nextCursor,
+                pinnedPath: context.streaming
+                  ? view[nextCursor]?.path || context.pinnedPath
+                  : context.pinnedPath,
+                userMovedCursorDuringStreaming: context.streaming
+                  ? true
+                  : context.userMovedCursorDuringStreaming,
+              };
             }),
           },
           DECREMENT_CURSOR: {
-            actions: assign<LibraryState, AnyEventObject>({
-              cursor: (context) => {
-                let newCursor;
-                if (context.cursor > 0) {
-                  newCursor = context.cursor - 1;
-                } else {
-                  newCursor =
-                    filter(
-                      context.libraryLoadId,
-                      context.textFilter,
-                      context.library,
-                      context.settings.filters,
-                      context.settings.sortBy
-                    ).length - 1;
-                }
-                updatePersistedCursor(context, newCursor);
-                return newCursor;
-              },
+            actions: assign<LibraryState, AnyEventObject>((context) => {
+              const view = filter(
+                context.libraryLoadId,
+                context.textFilter,
+                context.library,
+                context.settings.filters,
+                context.settings.sortBy
+              );
+              const lastIndex = Math.max(0, view.length - 1);
+              const nextCursor =
+                context.cursor > 0 ? context.cursor - 1 : lastIndex;
+              updatePersistedCursor(context, nextCursor);
+              return {
+                cursor: nextCursor,
+                pinnedPath: context.streaming
+                  ? view[nextCursor]?.path || context.pinnedPath
+                  : context.pinnedPath,
+                userMovedCursorDuringStreaming: context.streaming
+                  ? true
+                  : context.userMovedCursorDuringStreaming,
+              };
             }),
           },
         },
@@ -1007,6 +1010,7 @@ const libraryMachine = createMachine(
                 target: 'loadedFromFS',
                 actions: [
                   'setLibrary',
+                  // First: restore sort and compute final cursor while pinnedPath is still available
                   assign<LibraryState, AnyEventObject>({
                     // Restore original sort mode and selection
                     settings: (context) => ({
@@ -1014,24 +1018,44 @@ const libraryMachine = createMachine(
                       sortBy: (context.savedSortByDuringStreaming ||
                         'name') as any,
                     }),
+                    cursor: (context, event) => {
+                      const lib = (event.data?.library || []) as Item[];
+                      if (!Array.isArray(lib) || lib.length === 0) {
+                        return event.data?.cursor ?? context.cursor;
+                      }
+                      const restoredSort =
+                        (context.savedSortByDuringStreaming || 'name') as any;
+                      const tempLibraryLoadId = 'final-' + uniqueId();
+                      const sorted = filter(
+                        tempLibraryLoadId,
+                        context.textFilter,
+                        lib,
+                        context.settings.filters,
+                        restoredSort
+                      );
+                      const preferredPaths = [
+                        context.pinnedPath || undefined,
+                        context.library[context.cursor]?.path || undefined,
+                      ].filter(Boolean) as string[];
+                      for (const p of preferredPaths) {
+                        const idx = sorted.findIndex(
+                          (it: Item) =>
+                            it?.path &&
+                            path.normalize(it.path) === path.normalize(p)
+                        );
+                        if (idx !== -1) {
+                          updatePersistedCursor(context, idx);
+                          return idx;
+                        }
+                      }
+                      return event.data?.cursor ?? context.cursor;
+                    },
+                  }),
+                  // Second: now clear streaming flags and pinned state
+                  assign<LibraryState, AnyEventObject>({
                     streaming: () => false,
                     pinnedPath: () => null,
                     userMovedCursorDuringStreaming: () => false,
-                    cursor: (context, event) => {
-                      const lib = (event.data?.library || []) as Item[];
-                      const pinned = context.pinnedPath;
-                      if (!pinned || !Array.isArray(lib) || lib.length === 0) {
-                        return event.data?.cursor ?? context.cursor;
-                      }
-                      const idx = lib.findIndex(
-                        (it) =>
-                          it?.path &&
-                          path.normalize(it.path) === path.normalize(pinned)
-                      );
-                      return idx !== -1
-                        ? idx
-                        : event.data?.cursor ?? context.cursor;
-                    },
                   }),
                 ],
               },
@@ -1041,8 +1065,19 @@ const libraryMachine = createMachine(
             },
             on: {
               LOAD_FILES_BATCH: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
+                actions: assign<LibraryState, AnyEventObject>(
+                  (context, event) => {
+                    const currentView = filter(
+                      context.libraryLoadId,
+                      context.textFilter,
+                      context.library,
+                      context.settings.filters,
+                      (context.streaming
+                        ? 'stream'
+                        : context.settings.sortBy) as any
+                    );
+                    const previousSelectedPath =
+                      context.pinnedPath || currentView[context.cursor]?.path;
                     const existing = new Set(
                       context.library.map((item) => item.path)
                     );
@@ -1050,11 +1085,40 @@ const libraryMachine = createMachine(
                     const newItems = incoming.filter(
                       (f) => f?.path && !existing.has(f.path)
                     );
-                    return context.library.concat(newItems);
-                  },
-                  libraryLoadId: () => uniqueId(),
-                  streaming: () => true,
-                }),
+                    const updatedLibrary = context.library.concat(newItems);
+
+                    let nextCursor = context.cursor;
+                    if (previousSelectedPath) {
+                      const tempLibraryLoadId = 'batch-' + uniqueId();
+                      const sorted = filter(
+                        tempLibraryLoadId,
+                        context.textFilter,
+                        updatedLibrary,
+                        context.settings.filters,
+                        (context.streaming
+                          ? 'stream'
+                          : context.settings.sortBy) as any
+                      );
+                      const newIndex = sorted.findIndex(
+                        (item: Item) =>
+                          item?.path &&
+                          path.normalize(item.path).toLowerCase() ===
+                            path.normalize(previousSelectedPath).toLowerCase()
+                      );
+                      if (newIndex !== -1) {
+                        updatePersistedCursor(context, newIndex);
+                        nextCursor = newIndex;
+                      }
+                    }
+
+                    return {
+                      library: updatedLibrary,
+                      cursor: nextCursor,
+                      libraryLoadId: uniqueId(),
+                      streaming: true,
+                    };
+                  }
+                ),
               },
               SET_ACTIVE_CATEGORY: {
                 actions: assign<LibraryState, AnyEventObject>({
@@ -1076,16 +1140,21 @@ const libraryMachine = createMachine(
                       : context.userMovedCursorDuringStreaming,
                   pinnedPath: (context, event) =>
                     context.streaming
-                      ? context.library[event.idx]?.path || context.pinnedPath
+                      ? filter(
+                          context.libraryLoadId,
+                          context.textFilter,
+                          context.library,
+                          context.settings.filters,
+                          context.settings.sortBy
+                        )[event.idx]?.path || context.pinnedPath
                       : context.pinnedPath,
                 }),
               },
               LOAD_FILES_DONE: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  streaming: () => false,
-                  pinnedPath: () => null,
-                  userMovedCursorDuringStreaming: () => false,
-                }),
+                // Do not clear pinnedPath or flip streaming here.
+                // Let the invoke onDone handler finalize state so it can
+                // compute the correct cursor using the pinned path.
+                actions: assign<LibraryState, AnyEventObject>({}),
               },
             },
           },
@@ -1437,6 +1506,9 @@ const libraryMachine = createMachine(
                   LOAD_FILES_BATCH: {
                     actions: assign<LibraryState, AnyEventObject>({
                       library: (context, event) => {
+                        const previousSelectedPath =
+                          context.pinnedPath ||
+                          context.library[context.cursor]?.path;
                         const existing = new Set(
                           context.library.map((item) => item.path)
                         );
@@ -1444,7 +1516,40 @@ const libraryMachine = createMachine(
                         const newItems = incoming.filter(
                           (f) => f?.path && !existing.has(f.path)
                         );
-                        return context.library.concat(newItems);
+                        const updatedLibrary = context.library.concat(newItems);
+
+                        if (previousSelectedPath) {
+                          const tempLibraryLoadId = 'batch-' + uniqueId();
+                          const sorted = filter(
+                            tempLibraryLoadId,
+                            context.textFilter,
+                            updatedLibrary,
+                            context.settings.filters,
+                            (context.streaming
+                              ? 'stream'
+                              : context.settings.sortBy) as any
+                          );
+                          const newIndex = sorted.findIndex(
+                            (item: Item) =>
+                              item?.path &&
+                              path.normalize(item.path) ===
+                                path.normalize(previousSelectedPath)
+                          );
+                          if (newIndex !== -1) {
+                            updatePersistedCursor(context, newIndex);
+                            (event as any).__newCursor = newIndex;
+                          }
+                        }
+
+                        return updatedLibrary;
+                      },
+                      cursor: (context, event) => {
+                        const computed = (event as any).__newCursor as
+                          | number
+                          | undefined;
+                        return typeof computed === 'number'
+                          ? computed
+                          : context.cursor;
                       },
                       libraryLoadId: () => uniqueId(),
                       streaming: () => true,
@@ -1499,8 +1604,8 @@ const libraryMachine = createMachine(
                       const newIndex = sorted.findIndex(
                         (item: Item) =>
                           item?.path &&
-                          path.normalize(item.path) ===
-                            path.normalize(previousSelectedPath)
+                          path.normalize(item.path).toLowerCase() ===
+                            path.normalize(previousSelectedPath).toLowerCase()
                       );
                       if (newIndex !== -1) {
                         updatePersistedCursor(context, newIndex);
