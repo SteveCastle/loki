@@ -98,6 +98,11 @@ type LibraryState = {
     message?: string;
     timestamp: number;
   }[];
+  // Streaming state to stabilize ordering and selection during directory scans
+  streaming: boolean;
+  pinnedPath: string | null;
+  savedSortByDuringStreaming: Settings['sortBy'] | null;
+  userMovedCursorDuringStreaming: boolean;
 };
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
@@ -508,6 +513,10 @@ const getInitialContext = (): LibraryState => {
     },
     // jobs: removed - now handled by external job runner service
     toasts: [],
+    streaming: false,
+    pinnedPath: null,
+    savedSortByDuringStreaming: null,
+    userMovedCursorDuringStreaming: false,
   };
 };
 
@@ -973,6 +982,14 @@ const libraryMachine = createMachine(
               libraryLoadId: () => uniqueId(),
               cursor: 0,
               dbQuery: () => ({ tags: [] }),
+              streaming: () => true,
+              pinnedPath: (context) => context.initialFile,
+              savedSortByDuringStreaming: (context) => context.settings.sortBy,
+              userMovedCursorDuringStreaming: () => false,
+              settings: (context) => ({
+                ...context.settings,
+                sortBy: 'stream',
+              }),
             }),
             invoke: {
               src: (context, event) => {
@@ -980,19 +997,64 @@ const libraryMachine = createMachine(
                 const { recursive } = context.settings;
                 return window.electron.ipcRenderer.invoke('load-files', [
                   context.initialFile,
-                  context.settings.sortBy,
+                  // Ask main to sort with original sort once complete
+                  context.savedSortByDuringStreaming || 'name',
                   recursive,
                 ]);
               },
               onDone: {
                 target: 'loadedFromFS',
-                actions: ['setLibrary'],
+                actions: [
+                  'setLibrary',
+                  assign<LibraryState, AnyEventObject>({
+                    // Restore original sort mode and selection
+                    settings: (context) => ({
+                      ...context.settings,
+                      sortBy: (context.savedSortByDuringStreaming ||
+                        'name') as any,
+                    }),
+                    streaming: () => false,
+                    pinnedPath: () => null,
+                    userMovedCursorDuringStreaming: () => false,
+                    cursor: (context, event) => {
+                      const lib = (event.data?.library || []) as Item[];
+                      const pinned = context.pinnedPath;
+                      if (!pinned || !Array.isArray(lib) || lib.length === 0) {
+                        return event.data?.cursor ?? context.cursor;
+                      }
+                      const idx = lib.findIndex(
+                        (it) =>
+                          it?.path &&
+                          path.normalize(it.path) === path.normalize(pinned)
+                      );
+                      return idx !== -1
+                        ? idx
+                        : event.data?.cursor ?? context.cursor;
+                    },
+                  }),
+                ],
               },
               onError: {
                 target: 'loadedFromFS',
               },
             },
             on: {
+              LOAD_FILES_BATCH: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    const existing = new Set(
+                      context.library.map((item) => item.path)
+                    );
+                    const incoming = (event.data?.files || []) as Item[];
+                    const newItems = incoming.filter(
+                      (f) => f?.path && !existing.has(f.path)
+                    );
+                    return context.library.concat(newItems);
+                  },
+                  libraryLoadId: () => uniqueId(),
+                  streaming: () => true,
+                }),
+              },
               SET_ACTIVE_CATEGORY: {
                 actions: assign<LibraryState, AnyEventObject>({
                   activeCategory: (context, event) => {
@@ -1003,6 +1065,25 @@ const libraryMachine = createMachine(
                     );
                     return event.data.category;
                   },
+                }),
+              },
+              SET_CURSOR: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  userMovedCursorDuringStreaming: (context) =>
+                    context.streaming
+                      ? true
+                      : context.userMovedCursorDuringStreaming,
+                  pinnedPath: (context, event) =>
+                    context.streaming
+                      ? context.library[event.idx]?.path || context.pinnedPath
+                      : context.pinnedPath,
+                }),
+              },
+              LOAD_FILES_DONE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  streaming: () => false,
+                  pinnedPath: () => null,
+                  userMovedCursorDuringStreaming: () => false,
                 }),
               },
             },
@@ -1352,6 +1433,22 @@ const libraryMachine = createMachine(
             states: {
               idle: {
                 on: {
+                  LOAD_FILES_BATCH: {
+                    actions: assign<LibraryState, AnyEventObject>({
+                      library: (context, event) => {
+                        const existing = new Set(
+                          context.library.map((item) => item.path)
+                        );
+                        const incoming = (event.data?.files || []) as Item[];
+                        const newItems = incoming.filter(
+                          (f) => f?.path && !existing.has(f.path)
+                        );
+                        return context.library.concat(newItems);
+                      },
+                      libraryLoadId: () => uniqueId(),
+                      streaming: () => true,
+                    }),
+                  },
                   SET_SCROLL_POSITION: {
                     actions: assign<LibraryState, AnyEventObject>({
                       scrollPosition: (context, event) => {
@@ -1372,6 +1469,58 @@ const libraryMachine = createMachine(
               idle: {},
             },
             on: {
+              LOAD_FILES_BATCH: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    const previousSelectedPath =
+                      context.pinnedPath ||
+                      context.library[context.cursor]?.path;
+                    const existing = new Set(
+                      context.library.map((item) => item.path)
+                    );
+                    const incoming = (event.data?.files || []) as Item[];
+                    const newItems = incoming.filter(
+                      (f) => f?.path && !existing.has(f.path)
+                    );
+                    const updatedLibrary = context.library.concat(newItems);
+
+                    if (previousSelectedPath) {
+                      const tempLibraryLoadId = 'batch-' + uniqueId();
+                      const sorted = filter(
+                        tempLibraryLoadId,
+                        context.textFilter,
+                        updatedLibrary,
+                        context.settings.filters,
+                        (context.streaming
+                          ? 'stream'
+                          : context.settings.sortBy) as any
+                      );
+                      const newIndex = sorted.findIndex(
+                        (item: Item) =>
+                          item?.path &&
+                          path.normalize(item.path) ===
+                            path.normalize(previousSelectedPath)
+                      );
+                      if (newIndex !== -1) {
+                        updatePersistedCursor(context, newIndex);
+                        (event as any).__newCursor = newIndex;
+                      }
+                    }
+
+                    return updatedLibrary;
+                  },
+                  cursor: (context, event) => {
+                    const computed = (event as any).__newCursor as
+                      | number
+                      | undefined;
+                    return typeof computed === 'number'
+                      ? computed
+                      : context.cursor;
+                  },
+                  libraryLoadId: () => uniqueId(),
+                  streaming: () => true,
+                }),
+              },
               SET_QUERY_TAG: [
                 {
                   target: 'changingSearch',
@@ -1624,6 +1773,56 @@ const libraryMachine = createMachine(
             entry: (context, event) =>
               console.log('loadedFromDB', context, event),
             on: {
+              LOAD_FILES_BATCH: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    const previousSelectedPath =
+                      context.pinnedPath ||
+                      context.library[context.cursor]?.path;
+                    const existing = new Set(
+                      context.library.map((item) => item.path)
+                    );
+                    const incoming = (event.data?.files || []) as Item[];
+                    const newItems = incoming.filter(
+                      (f) => f?.path && !existing.has(f.path)
+                    );
+                    const updatedLibrary = context.library.concat(newItems);
+                    if (previousSelectedPath) {
+                      const tempLibraryLoadId = 'batch-' + uniqueId();
+                      const sorted = filter(
+                        tempLibraryLoadId,
+                        context.textFilter,
+                        updatedLibrary,
+                        context.settings.filters,
+                        (context.streaming
+                          ? 'stream'
+                          : context.settings.sortBy) as any
+                      );
+                      const newIndex = sorted.findIndex(
+                        (item: Item) =>
+                          item?.path &&
+                          path.normalize(item.path) ===
+                            path.normalize(previousSelectedPath)
+                      );
+                      if (newIndex !== -1) {
+                        updatePersistedCursor(context, newIndex);
+                        (event as any).__newCursor = newIndex;
+                      }
+                    }
+                    return updatedLibrary;
+                  },
+                  cursor: (context, event) => {
+                    const computed = (event as any).__newCursor as
+                      | number
+                      | undefined;
+                    return typeof computed === 'number'
+                      ? computed
+                      : context.cursor;
+                  },
+                  libraryLoadId: () => uniqueId(),
+                  streaming: () => true,
+                }),
+              },
               SELECT_FILE: {
                 target: 'selecting',
               },
@@ -1981,6 +2180,26 @@ export const GlobalStateContext = createContext({
 
 export const GlobalStateProvider = (props: Props) => {
   const libraryService = useInterpret(libraryMachine);
+
+  React.useEffect(() => {
+    const offBatch = window.electron.ipcRenderer.on(
+      'load-files-batch',
+      (...args: unknown[]) => {
+        const batch = (args[0] as { path: string; mtimeMs: number }[]) || [];
+        libraryService.send({
+          type: 'LOAD_FILES_BATCH',
+          data: { files: batch },
+        });
+      }
+    );
+    const offDone = window.electron.ipcRenderer.on('load-files-done', () => {
+      libraryService.send({ type: 'LOAD_FILES_DONE' });
+    });
+    return () => {
+      if (typeof offBatch === 'function') offBatch();
+      if (typeof offDone === 'function') offDone();
+    };
+  }, [libraryService]);
 
   return (
     <GlobalStateContext.Provider value={{ libraryService }}>
