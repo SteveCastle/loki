@@ -86,6 +86,91 @@ async function walkDirectory(
   }
 }
 
+async function listFilesFastDarwin(
+  rootDir: string,
+  recursive: boolean,
+  filterRegex: RegExp,
+  onFile: (file: File) => void,
+  needMtime: boolean
+) {
+  return new Promise<void>((resolve) => {
+    const args = [rootDir, '-type', 'f', '-print0'];
+    console.log('[fastest-mac] Spawning find:', { cmd: 'find', args });
+    const child = spawn('find', args, {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    console.log('[fastest-mac] child pid:', child.pid);
+
+    let buffer = Buffer.alloc(0);
+    let filesQueued: string[] = [];
+    let activeStats = 0;
+    const MAX_CONC_STATS = needMtime ? 32 : 0;
+
+    const trySchedule = () => {
+      if (!needMtime) return;
+      while (activeStats < MAX_CONC_STATS && filesQueued.length > 0) {
+        const p = filesQueued.shift() as string;
+        activeStats += 1;
+        fsPromises
+          .stat(p)
+          .then((st) => {
+            onFile({ path: p, mtimeMs: st.mtimeMs });
+          })
+          .catch(() => {
+            onFile({ path: p, mtimeMs: 0 });
+          })
+          .finally(() => {
+            activeStats -= 1;
+            trySchedule();
+          });
+      }
+    };
+
+    const handlePath = (filePath: string) => {
+      const base = path.basename(filePath);
+      if (!filterRegex.test(base)) return;
+      if (needMtime) {
+        filesQueued.push(filePath);
+        trySchedule();
+      } else {
+        onFile({ path: filePath, mtimeMs: 0 });
+      }
+    };
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      let idx;
+      while ((idx = buffer.indexOf(0)) !== -1) {
+        const filePath = buffer.slice(0, idx).toString('utf8');
+        buffer = buffer.slice(idx + 1);
+        if (filePath) handlePath(filePath);
+      }
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      console.log('[fastest-mac] stderr:', chunk.toString('utf8'));
+    });
+    const finalize = () => {
+      const onIdle = () => {
+        if (activeStats === 0) resolve();
+        else setTimeout(onIdle, 10);
+      };
+      onIdle();
+    };
+    child.on('error', (err) => {
+      console.log('[fastest-mac] child error:', err);
+      finalize();
+    });
+    child.on('close', () => {
+      if (buffer.length > 0) {
+        const filePath = buffer.toString('utf8');
+        if (filePath) handlePath(filePath);
+      }
+      finalize();
+    });
+  });
+}
+
 async function listFilesFastWindows(
   rootDir: string,
   recursive: boolean,
@@ -96,7 +181,7 @@ async function listFilesFastWindows(
     // Use PowerShell for robust quoting, UNC support, and UTF-8 output
     const psPath = rootDir.replace(/'/g, "''");
     const recurseFlag = recursive ? '-Recurse' : '';
-    const psCommand = `[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-ChildItem -LiteralPath '${psPath}' -File ${recurseFlag} -Force | ForEach-Object { $_.FullName }`;
+    const psCommand = `[Console]::OutputEncoding=[Text.Encoding]::UTF8; Get-ChildItem -LiteralPath '${psPath}' -File ${recurseFlag} -Force | ForEach-Object { '{0}\t{1}' -f $_.FullName, ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeMilliseconds() }`;
     console.log('[fastest] Spawning powershell.exe for dir:', {
       rootDir,
       psCommand,
@@ -121,10 +206,18 @@ async function listFilesFastWindows(
         const line = buffer.slice(0, idx).replace(/\r$/, '');
         buffer = buffer.slice(idx + 1);
         if (!line) continue;
-        const filePath = line;
+        let filePath = line;
+        let mtimeMs = 0;
+        const sep = line.lastIndexOf('\t');
+        if (sep > -1) {
+          filePath = line.slice(0, sep);
+          const ts = line.slice(sep + 1);
+          const n = Number(ts);
+          mtimeMs = Number.isFinite(n) ? n : 0;
+        }
         const base = path.basename(filePath);
         if (filterRegex.test(base)) {
-          onFile({ path: filePath, mtimeMs: 0 });
+          onFile({ path: filePath, mtimeMs });
         }
         lineCount += 1;
       }
@@ -135,10 +228,18 @@ async function listFilesFastWindows(
     const flushRemainder = () => {
       const trimmed = buffer.trim();
       if (trimmed.length > 0) {
-        const filePath = trimmed;
+        let filePath = trimmed;
+        let mtimeMs = 0;
+        const sep = trimmed.lastIndexOf('\t');
+        if (sep > -1) {
+          filePath = trimmed.slice(0, sep);
+          const ts = trimmed.slice(sep + 1);
+          const n = Number(ts);
+          mtimeMs = Number.isFinite(n) ? n : 0;
+        }
         const base = path.basename(filePath);
         if (filterRegex.test(base)) {
-          onFile({ path: filePath, mtimeMs: 0 });
+          onFile({ path: filePath, mtimeMs });
         }
         lineCount += 1;
       }
@@ -241,6 +342,21 @@ export const loadFiles =
             flushBatch();
           }
         }
+      );
+    } else if (options.fastest && os.platform() === 'darwin') {
+      console.log('[loader] using fastest macOS mode for folder:', folderPath);
+      await listFilesFastDarwin(
+        folderPath,
+        recursive,
+        filters.all.value,
+        (file) => {
+          files.push(file);
+          batch.push(file);
+          if (batch.length >= BATCH_SIZE) {
+            flushBatch();
+          }
+        },
+        sortOrder === 'date' && !options.skipStat
       );
     } else {
       console.log('[loader] using Node walker for folder:', folderPath);
