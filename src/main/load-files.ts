@@ -77,15 +77,15 @@ const readdirStreamAsync = (
 type LoadFilesInput = [string, string, boolean];
 
 export const loadFiles =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: LoadFilesInput) => {
+  (db: Database) => async (event: IpcMainInvokeEvent, args: LoadFilesInput) => {
     const [filePath, sortOrder, recursive] = args;
     const fs = require('fs');
-    
+
     // Check if the path is a directory or file
     const stats = fs.lstatSync(filePath);
     let folderPath: string;
     let fileName: string;
-    
+
     if (stats.isDirectory()) {
       // If it's a directory, use it as the folder and set cursor to 0
       folderPath = filePath;
@@ -96,18 +96,70 @@ export const loadFiles =
       fileName = path.basename(filePath);
     }
 
-    // Get the list of files in the folderPath
-    const files = await readdirStreamAsync(folderPath, recursive);
+    // Stream the directory and emit batches to the renderer for incremental UI updates
+    const files: File[] = [];
+    const batch: File[] = [];
+    const BATCH_SIZE = 250;
+
+    const flushBatch = () => {
+      if (batch.length === 0) return;
+      try {
+        // Send and clear the batch
+        event.sender.send('load-files-batch', batch.splice(0, batch.length));
+      } catch (err) {
+        // Ignore send errors (window might be gone)
+        // but continue processing to resolve invoke
+        // console.error('load-files-batch send error', err);
+      }
+    };
+
+    await new Promise<void>((resolve) => {
+      readdir
+        .stream(folderPath, {
+          basePath: folderPath,
+          deep: recursive,
+          filter: filters.all.value,
+          stats: true,
+        })
+        .on('error', (err) => {
+          console.log(err);
+          resolve();
+        })
+        .on('data', (data: File) => {
+          const file: File = { path: data.path, mtimeMs: data.mtimeMs };
+          files.push(file);
+          batch.push(file);
+          if (batch.length >= BATCH_SIZE) {
+            flushBatch();
+          }
+        })
+        .on('end', () => {
+          flushBatch();
+          resolve();
+        });
+    });
 
     const sortedFiles = files.sort(sorts[sortOrder]);
-    const cursorIndex = fileName ? sortedFiles.findIndex(
-      (item) => path.basename(item.path) === fileName
-    ) : 0;
+    const cursorIndex = fileName
+      ? sortedFiles.findIndex((item) => path.basename(item.path) === fileName)
+      : 0;
     const cursor = cursorIndex === -1 ? 0 : cursorIndex;
+
+    // Insert into DB after scan to avoid frequent writes
     insertBulkMedia(
       db,
       sortedFiles.map((file) => file.path)
     );
+
+    try {
+      event.sender.send('load-files-done', {
+        total: sortedFiles.length,
+        cursor,
+      });
+    } catch (err) {
+      // ignore
+    }
+
     return {
       library: sortedFiles,
       cursor,

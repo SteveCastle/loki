@@ -23,36 +23,41 @@ function filter(
   if (!textFilter && !filters && !sortBy) {
     return library;
   }
-  const sortedLibrary = library
-    .filter((item) => {
-      const mediaType = getMediaType(item.path);
-      if (filters === 'all') {
-        return true;
-      }
-      if (filters === 'static' && mediaType === 'static') {
-        return true;
-      }
-      if (filters === 'video' && mediaType === 'motion') {
-        return true;
-      }
-      if (filters === 'audio' && mediaType === 'audio') {
-        return true;
-      }
-      return false;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'name') {
-        return naturalCompare(a.path.toLowerCase(), b.path.toLowerCase());
-      } else if (sortBy === 'date') {
-        return b.mtimeMs - a.mtimeMs;
-      } else if (sortBy === 'weight') {
-        return (a.weight || 0) - (b.weight || 0);
-      } else if (sortBy === 'elo') {
-        return (b.elo || 1500) - (a.elo || 1500);
-      }
+  const filtered = library.filter((item) => {
+    const mediaType = getMediaType(item.path);
+    if (filters === 'all') {
+      return true;
+    }
+    if (filters === 'static' && mediaType === 'static') {
+      return true;
+    }
+    if (filters === 'video' && mediaType === 'motion') {
+      return true;
+    }
+    if (filters === 'audio' && mediaType === 'audio') {
+      return true;
+    }
+    return false;
+  });
 
-      return 0;
-    });
+  if (sortBy === 'stream') {
+    // Preserve insertion order during streaming
+    return filtered;
+  }
+
+  const sortedLibrary = filtered.sort((a, b) => {
+    if (sortBy === 'name') {
+      return naturalCompare(a.path.toLowerCase(), b.path.toLowerCase());
+    } else if (sortBy === 'date') {
+      return b.mtimeMs - a.mtimeMs;
+    } else if (sortBy === 'weight') {
+      return (a.weight || 0) - (b.weight || 0);
+    } else if (sortBy === 'elo') {
+      return (b.elo || 1500) - (a.elo || 1500);
+    }
+
+    return 0;
+  });
 
   if (sortBy === 'shuffle') {
     // shuffle then sort any items with no elo to the beginning
