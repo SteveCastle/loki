@@ -18,60 +18,65 @@ type Props = {
   idx: number;
   scaleMode: ScaleModeOption;
   height: number;
+  visibleLibrary?: Item[];
 };
 
-const GetPlayer = React.memo((props: {
-  path: string;
-  mediaRef: React.RefObject<HTMLImageElement | HTMLVideoElement | HTMLAudioElement>;
-  orientation: 'portrait' | 'landscape' | 'unknown';
-  imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
-  startTime?: number;
-}) => {
-  const { path, mediaRef, orientation, imageCache, startTime = 0 } = props;
-  
-  if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
-    return (
-      <Video
-        path={path}
-        initialTimestamp={0.5}
-        scaleMode="cover"
-        mediaRef={mediaRef as React.RefObject<HTMLVideoElement>}
-        orientation={orientation}
-        cache={imageCache}
-        startTime={startTime}
-      />
-    );
+const GetPlayer = React.memo(
+  (props: {
+    path: string;
+    mediaRef: React.RefObject<
+      HTMLImageElement | HTMLVideoElement | HTMLAudioElement
+    >;
+    orientation: 'portrait' | 'landscape' | 'unknown';
+    imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
+    startTime?: number;
+  }) => {
+    const { path, mediaRef, orientation, imageCache, startTime = 0 } = props;
+
+    if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
+      return (
+        <Video
+          path={path}
+          initialTimestamp={0.5}
+          scaleMode="cover"
+          mediaRef={mediaRef as React.RefObject<HTMLVideoElement>}
+          orientation={orientation}
+          cache={imageCache}
+          startTime={startTime}
+        />
+      );
+    }
+    if (getFileType(path) === FileTypes.Audio) {
+      return (
+        <Audio
+          path={path}
+          initialTimestamp={0}
+          scaleMode="cover"
+          mediaRef={mediaRef as React.RefObject<HTMLAudioElement>}
+          orientation={orientation}
+          cache={false}
+          startTime={startTime}
+        />
+      );
+    }
+    if (getFileType(path) === FileTypes.Image) {
+      return (
+        <Image
+          path={path}
+          scaleMode="cover"
+          mediaRef={mediaRef as React.RefObject<HTMLImageElement>}
+          orientation={orientation}
+          cache={imageCache}
+        />
+      );
+    }
+    return null;
   }
-  if (getFileType(path) === FileTypes.Audio) {
-    return (
-      <Audio
-        path={path}
-        initialTimestamp={0}
-        scaleMode="cover"
-        mediaRef={mediaRef as React.RefObject<HTMLAudioElement>}
-        orientation={orientation}
-        cache={false}
-        startTime={startTime}
-      />
-    );
-  }
-  if (getFileType(path) === FileTypes.Image) {
-    return (
-      <Image
-        path={path}
-        scaleMode="cover"
-        mediaRef={mediaRef as React.RefObject<HTMLImageElement>}
-        orientation={orientation}
-        cache={imageCache}
-      />
-    );
-  }
-  return null;
-});
+);
 
 GetPlayer.displayName = 'GetPlayer';
 
-function ListItemComponent({ item, idx, height }: Props) {
+function ListItemComponent({ item, idx, height, visibleLibrary }: Props) {
   const mediaRef = useRef<
     HTMLImageElement | HTMLVideoElement | HTMLAudioElement
   >(null);
@@ -113,40 +118,51 @@ function ListItemComponent({ item, idx, height }: Props) {
     [item, canDrag]
   );
 
-  const { drop, collectedProps, containerRef } = useTagDrop(item, 'LIST');
+  const { drop, collectedProps, containerRef } = useTagDrop(
+    item,
+    'LIST',
+    visibleLibrary
+  );
   drag(drop(containerRef));
-  
+
   const handleClick = useCallback(() => {
     libraryService.send('SET_CURSOR', { idx });
   }, [libraryService, idx]);
-  
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    libraryService.send('SHOW_COMMAND_PALETTE', {
-      position: { x: e.clientX, y: e.clientY },
-    });
-  }, [libraryService]);
-  
+
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      libraryService.send('SHOW_COMMAND_PALETTE', {
+        position: { x: e.clientX, y: e.clientY },
+      });
+    },
+    [libraryService]
+  );
+
   const handleFilePathClick = useCallback(() => {
     libraryService.send('SET_FILE', { path: item.path });
   }, [libraryService, item.path]);
-  
-  const classNames = useMemo(() => [
-    'ListItem',
-    cursor === idx ? 'selected' : '',
-    collectedProps.isOver &&
-    !collectedProps.isSelf &&
-    collectedProps.itemType === 'MEDIA'
-      ? 'hovered'
-      : '',
-    collectedProps.isOver &&
-    !collectedProps.isSelf &&
-    collectedProps.itemType === 'TAG'
-      ? 'hovered-by-tag'
-      : '',
-    canDrag ? 'can-drag' : '',
-    collectedProps.isLeft ? 'left' : 'right',
-  ].join(' '), [cursor, idx, collectedProps, canDrag]);
+
+  const classNames = useMemo(
+    () =>
+      [
+        'ListItem',
+        cursor === idx ? 'selected' : '',
+        collectedProps.isOver &&
+        !collectedProps.isSelf &&
+        collectedProps.itemType === 'MEDIA'
+          ? 'hovered'
+          : '',
+        collectedProps.isOver &&
+        !collectedProps.isSelf &&
+        collectedProps.itemType === 'TAG'
+          ? 'hovered-by-tag'
+          : '',
+        canDrag ? 'can-drag' : '',
+        collectedProps.isLeft ? 'left' : 'right',
+      ].join(' '),
+    [cursor, idx, collectedProps, canDrag]
+  );
 
   return (
     <div
@@ -174,10 +190,7 @@ function ListItemComponent({ item, idx, height }: Props) {
       ) : null}
       {showFileInfo === 'all' || showFileInfo === 'list' ? (
         <div className="item-info">
-          <span
-            className="file-path"
-            onClick={handleFilePathClick}
-          >
+          <span className="file-path" onClick={handleFilePathClick}>
             {item.path}
           </span>
         </div>
@@ -186,15 +199,19 @@ function ListItemComponent({ item, idx, height }: Props) {
   );
 }
 
-export const ListItem = React.memo(ListItemComponent, (prevProps, nextProps) => {
-  return (
-    prevProps.item.path === nextProps.item.path &&
-    prevProps.idx === nextProps.idx &&
-    prevProps.height === nextProps.height &&
-    prevProps.item.timeStamp === nextProps.item.timeStamp &&
-    prevProps.item.elo === nextProps.item.elo &&
-    prevProps.item.weight === nextProps.item.weight
-  );
-});
+export const ListItem = React.memo(
+  ListItemComponent,
+  (prevProps, nextProps) => {
+    return (
+      prevProps.item.path === nextProps.item.path &&
+      prevProps.idx === nextProps.idx &&
+      prevProps.height === nextProps.height &&
+      prevProps.visibleLibrary === nextProps.visibleLibrary &&
+      prevProps.item.timeStamp === nextProps.item.timeStamp &&
+      prevProps.item.elo === nextProps.item.elo &&
+      prevProps.item.weight === nextProps.item.weight
+    );
+  }
+);
 
 ListItem.displayName = 'ListItem';

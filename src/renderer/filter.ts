@@ -1,17 +1,8 @@
 import { getMediaType } from 'file-types';
 import { FilterOption, SortByOption } from 'settings';
 import shuffle from 'shuffle-array';
-
 import naturalCompare from 'natural-compare';
-
-const memoize = require('lodash.memoize');
-
-export type Item = {
-  path: string;
-  mtimeMs: number;
-  weight?: number;
-  elo?: number;
-};
+import type { Item } from './state';
 
 function filter(
   libraryLoadId: string,
@@ -53,7 +44,7 @@ function filter(
     } else if (sortBy === 'weight') {
       return (a.weight || 0) - (b.weight || 0);
     } else if (sortBy === 'elo') {
-      return (b.elo || 1500) - (a.elo || 1500);
+      return (b.elo ?? 1500) - (a.elo ?? 1500);
     }
 
     return 0;
@@ -77,15 +68,4 @@ function filter(
   return sortedLibrary;
 }
 
-export default memoize(
-  filter,
-  (
-    libraryLoadId: string,
-    textFilter: string,
-    library: Item[],
-    filters: FilterOption,
-    sortBy: SortByOption
-  ) => {
-    return `${libraryLoadId}-${textFilter}-${sortBy}-${filters}`;
-  }
-);
+export default filter;

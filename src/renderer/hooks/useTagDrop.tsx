@@ -18,7 +18,11 @@ function getIsLeft(
   return isLeft;
 }
 
-export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
+export default function useTagDrop(
+  item: any,
+  location: 'DETAIL' | 'LIST',
+  visibleLibrary?: Item[]
+) {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
   const { applyTagPreview, applyTagToAll, sortBy } = useSelector(
@@ -27,23 +31,43 @@ export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
       return state.context.settings;
     }
   );
-  // Get Entire active library
+  // Active library: prefer provided list from parent to avoid recomputation per item
   const library = useSelector(
     libraryService,
     (state) => {
-      return filter(
-        state.context.libraryLoadId,
-        state.context.textFilter,
-        state.context.library,
-        state.context.settings.filters,
-        state.context.settings.sortBy
-      );
+      return {
+        library: state.context.library,
+        libraryLoadId: state.context.libraryLoadId,
+        textFilter: state.context.textFilter,
+        filters: state.context.settings.filters,
+        sortBy: state.context.settings.sortBy,
+      };
     },
     (a, b) =>
+      a.library === b.library &&
       a.libraryLoadId === b.libraryLoadId &&
+      a.textFilter === b.textFilter &&
       a.filters === b.filters &&
       a.sortBy === b.sortBy
   );
+
+  const activeLibrary: Item[] = useMemo(() => {
+    if (visibleLibrary) return visibleLibrary;
+    return filter(
+      library.libraryLoadId,
+      library.textFilter,
+      library.library,
+      library.filters,
+      library.sortBy
+    );
+  }, [
+    visibleLibrary,
+    library.libraryLoadId,
+    library.textFilter,
+    library.library,
+    library.filters,
+    library.sortBy,
+  ]);
 
   const actualVideoTime = useSelector(libraryService, (state) => {
     return state.context.videoPlayer.actualVideoTime;
@@ -54,8 +78,8 @@ export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
   });
 
   const libraryPaths = useMemo(
-    () => library.map((item: Item) => item.path),
-    [library]
+    () => activeLibrary.map((i: Item) => i.path),
+    [activeLibrary]
   );
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -108,11 +132,13 @@ export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
         async function updateAssignmentWeight() {
           console.log('DROPPED MEDIA ON MEDIA');
 
-          const index = library.findIndex((i: Item) => i.path === item.path);
-          const targetWeight = library[index]?.weight || 0;
-          const previousItemWeight = library[index - 1]?.weight || 0;
+          const index = activeLibrary.findIndex(
+            (i: Item) => i.path === item.path
+          );
+          const targetWeight = activeLibrary[index]?.weight || 0;
+          const previousItemWeight = activeLibrary[index - 1]?.weight || 0;
           const nextItemWeight =
-            library[index + 1]?.weight || library.length + 1;
+            activeLibrary[index + 1]?.weight || activeLibrary.length + 1;
           const isLeft = getIsLeft(monitor, containerRef);
           const newWeight = isLeft
             ? (previousItemWeight + targetWeight) / 2
@@ -137,7 +163,14 @@ export default function useTagDrop(item: any, location: 'DETAIL' | 'LIST') {
         }
       },
     }),
-    [item, applyTagPreview, library, applyTagToAll, activeTag, actualVideoTime]
+    [
+      item,
+      applyTagPreview,
+      activeLibrary,
+      applyTagToAll,
+      activeTag,
+      actualVideoTime,
+    ]
   );
 
   return { drop, collectedProps, containerRef };
