@@ -1,6 +1,5 @@
 import { getMediaType } from 'file-types';
 import { FilterOption, SortByOption } from 'settings';
-import shuffle from 'shuffle-array';
 import naturalCompare from 'natural-compare';
 import type { Item } from './state';
 
@@ -36,6 +35,35 @@ function filter(
     return filtered;
   }
 
+  // Deterministic shuffle based on libraryLoadId. This prevents re-shuffling on
+  // every render; the order only changes when sort switches to shuffle and the
+  // caller provides a new libraryLoadId (e.g., user re-applies shuffle).
+  if (sortBy === 'shuffle') {
+    const seed = libraryLoadId;
+    const hash = (s: string) => {
+      let h = 5381;
+      for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) + h) ^ s.charCodeAt(i);
+      }
+      return h >>> 0;
+    };
+
+    const ranked = filtered.map((item) => ({
+      item,
+      rank: hash(`${seed}::${item.path}`),
+    }));
+
+    ranked.sort((a, b) => {
+      const aNoElo = !a.item.elo;
+      const bNoElo = !b.item.elo;
+      if (aNoElo && !bNoElo) return -1;
+      if (!aNoElo && bNoElo) return 1;
+      return a.rank - b.rank;
+    });
+
+    return ranked.map((r) => r.item);
+  }
+
   const sortedLibrary = filtered.sort((a, b) => {
     if (sortBy === 'name') {
       return naturalCompare(a.path.toLowerCase(), b.path.toLowerCase());
@@ -49,22 +77,6 @@ function filter(
 
     return 0;
   });
-
-  if (sortBy === 'shuffle') {
-    // shuffle then sort any items with no elo to the beginning
-    shuffle(sortedLibrary).sort((a, b) => {
-      if (!a.elo && !b.elo) {
-        return 0;
-      }
-      if (!a.elo) {
-        return -1;
-      }
-      if (!b.elo) {
-        return 1;
-      }
-      return 0;
-    });
-  }
   return sortedLibrary;
 }
 
