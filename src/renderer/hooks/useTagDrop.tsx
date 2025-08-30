@@ -1,4 +1,4 @@
-import { useContext, useMemo, useRef } from 'react';
+import { useContext, useRef, useState } from 'react';
 import { GlobalStateContext, Item } from '../state';
 import filter from '../filter';
 import { useQueryClient } from '@tanstack/react-query';
@@ -18,57 +18,11 @@ function getIsLeft(
   return isLeft;
 }
 
-export default function useTagDrop(
-  item: any,
-  location: 'DETAIL' | 'LIST',
-  visibleLibrary?: Item[]
-) {
+export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
-  const { applyTagPreview, applyTagToAll, sortBy } = useSelector(
-    libraryService,
-    (state) => {
-      return state.context.settings;
-    }
-  );
-  // Active library: prefer provided list from parent to avoid recomputation per item
-  const library = useSelector(
-    libraryService,
-    (state) => {
-      return {
-        library: state.context.library,
-        libraryLoadId: state.context.libraryLoadId,
-        textFilter: state.context.textFilter,
-        filters: state.context.settings.filters,
-        sortBy: state.context.settings.sortBy,
-      };
-    },
-    (a, b) =>
-      a.library === b.library &&
-      a.libraryLoadId === b.libraryLoadId &&
-      a.textFilter === b.textFilter &&
-      a.filters === b.filters &&
-      a.sortBy === b.sortBy
-  );
-
-  const activeLibrary: Item[] = useMemo(() => {
-    if (visibleLibrary) return visibleLibrary;
-    return filter(
-      library.libraryLoadId,
-      library.textFilter,
-      library.library,
-      library.filters,
-      library.sortBy
-    );
-  }, [
-    visibleLibrary,
-    library.libraryLoadId,
-    library.textFilter,
-    library.library,
-    library.filters,
-    library.sortBy,
-  ]);
-
+  const [isLeft, setIsLeft] = useState<boolean>(false);
+  // Lightweight selectors for hover behavior, others are read from snapshot on drop
   const actualVideoTime = useSelector(libraryService, (state) => {
     return state.context.videoPlayer.actualVideoTime;
   });
@@ -77,60 +31,95 @@ export default function useTagDrop(
     return state.context.dbQuery.tags[0];
   });
 
-  const libraryPaths = useMemo(
-    () => activeLibrary.map((i: Item) => i.path),
-    [activeLibrary]
-  );
-
   const containerRef = useRef<HTMLDivElement>(null);
 
   type DropProps = {
     isOver: boolean;
-    isLeft: boolean;
     isSelf: boolean;
     itemType: string | symbol | null | undefined;
   };
 
-  const [collectedProps, drop] = useDrop<Item, unknown, DropProps>(
+  type DroppedTag = { label: string; category: string };
+  type DroppedMedia = { path: string; timeStamp?: number };
+  const isDroppedTag = (v: unknown): v is DroppedTag =>
+    typeof v === 'object' && v != null && 'label' in v && 'category' in v;
+  const isDroppedMedia = (v: unknown): v is DroppedMedia =>
+    typeof v === 'object' && v != null && 'path' in v;
+
+  const [collectedProps, drop] = useDrop<
+    DroppedTag | DroppedMedia,
+    unknown,
+    DropProps
+  >(
     () => ({
       accept: ['TAG', 'MEDIA'],
       collect: (monitor) => ({
-        isOver: monitor.isOver(),
-        isLeft: getIsLeft(monitor, containerRef),
-        isSelf:
-          monitor.getItem()?.path === item?.path &&
-          monitor.getItem()?.timeStamp === item?.timeStamp,
+        isOver: monitor.isOver({ shallow: true }),
+        isSelf: (() => {
+          const dragged = monitor.getItem();
+          if (isDroppedMedia(dragged)) {
+            return (
+              dragged.path === item?.path &&
+              dragged.timeStamp === item?.timeStamp
+            );
+          }
+          return false;
+        })(),
         itemType: monitor.getItemType(),
       }),
-      drop: (droppedItem: any, monitor) => {
-        // Check if dropped item is type Tag
-        async function createAssignment() {
-          console.log('INVOKING ASSIGNMENT WITH', droppedItem);
+      hover: (_droppedItem, monitor) => {
+        const nextIsLeft = getIsLeft(monitor, containerRef);
+        setIsLeft((prev) => (prev !== nextIsLeft ? nextIsLeft : prev));
+      },
+      drop: (droppedItem, monitor) => {
+        // Get latest snapshot to compute library only when needed
+        const snapshot = libraryService.getSnapshot();
+        const ctx = snapshot.context;
+        const { applyTagPreview, applyTagToAll } = ctx.settings;
+
+        async function createAssignment(tag: DroppedTag) {
+          let targetPaths: string[] = [item.path];
+          if (applyTagToAll) {
+            const activeLibrary: Item[] = filter(
+              ctx.libraryLoadId,
+              ctx.textFilter,
+              ctx.library,
+              ctx.settings.filters,
+              ctx.settings.sortBy
+            );
+            targetPaths = activeLibrary.map((i: Item) => i.path);
+          }
           await window.electron.ipcRenderer.invoke('create-assignment', [
-            applyTagToAll ? libraryPaths : [item.path],
-            droppedItem.label,
-            droppedItem.category,
+            targetPaths,
+            tag.label,
+            tag.category,
             location === 'DETAIL' ? actualVideoTime : null,
             applyTagPreview,
           ]);
           libraryService.send('SET_MOST_RECENT_TAG', {
-            tag: droppedItem.label,
-            category: droppedItem.category,
+            tag: tag.label,
+            category: tag.category,
           });
           queryClient.invalidateQueries({ queryKey: ['metadata'] });
           queryClient.invalidateQueries({
-            queryKey: ['taxonomy', 'tag', droppedItem.label],
+            queryKey: ['taxonomy', 'tag', tag.label],
           });
           queryClient.invalidateQueries({
             queryKey: ['tags-by-path', item.path],
           });
         }
-        if (droppedItem.label && item.path) {
-          createAssignment();
+        if (isDroppedTag(droppedItem) && item.path) {
+          createAssignment(droppedItem);
         }
 
-        async function updateAssignmentWeight() {
-          console.log('DROPPED MEDIA ON MEDIA');
+        async function updateAssignmentWeight(media: DroppedMedia) {
+          const activeLibrary: Item[] = filter(
+            ctx.libraryLoadId,
+            ctx.textFilter,
+            ctx.library,
+            ctx.settings.filters,
+            ctx.settings.sortBy
+          );
 
           const index = activeLibrary.findIndex(
             (i: Item) => i.path === item.path
@@ -143,35 +132,21 @@ export default function useTagDrop(
           const newWeight = isLeft
             ? (previousItemWeight + targetWeight) / 2
             : (nextItemWeight + targetWeight) / 2;
-          console.log(
-            'calling update-assignment-weight with:',
-            droppedItem.path,
-            activeTag,
-            newWeight,
-            droppedItem.timeStamp
-          );
           await window.electron.ipcRenderer.invoke('update-assignment-weight', [
-            droppedItem.path,
+            media.path,
             activeTag,
             newWeight,
-            droppedItem.timeStamp,
+            media.timeStamp,
           ]);
           libraryService.send({ type: 'SORTED_WEIGHTS' });
         }
-        if (droppedItem.path && item.path) {
-          updateAssignmentWeight();
+        if (isDroppedMedia(droppedItem) && item.path) {
+          updateAssignmentWeight(droppedItem);
         }
       },
     }),
-    [
-      item,
-      applyTagPreview,
-      activeLibrary,
-      applyTagToAll,
-      activeTag,
-      actualVideoTime,
-    ]
+    [item, libraryService, activeTag, actualVideoTime, location, queryClient]
   );
 
-  return { drop, collectedProps, containerRef };
+  return { drop, collectedProps, containerRef, isLeft };
 }
