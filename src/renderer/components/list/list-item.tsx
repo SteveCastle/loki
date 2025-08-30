@@ -18,7 +18,6 @@ type Props = {
   idx: number;
   scaleMode: ScaleModeOption;
   height: number;
-  visibleLibrary?: Item[];
 };
 
 const GetPlayer = React.memo(
@@ -76,7 +75,7 @@ const GetPlayer = React.memo(
 
 GetPlayer.displayName = 'GetPlayer';
 
-function ListItemComponent({ item, idx, height, visibleLibrary }: Props) {
+function ListItemComponent({ item, idx, height }: Props) {
   const mediaRef = useRef<
     HTMLImageElement | HTMLVideoElement | HTMLAudioElement
   >(null);
@@ -118,10 +117,9 @@ function ListItemComponent({ item, idx, height, visibleLibrary }: Props) {
     [item, canDrag]
   );
 
-  const { drop, collectedProps, containerRef } = useTagDrop(
+  const { drop, collectedProps, containerRef, isLeft } = useTagDrop(
     item,
-    'LIST',
-    visibleLibrary
+    'LIST'
   );
   drag(drop(containerRef));
 
@@ -142,7 +140,6 @@ function ListItemComponent({ item, idx, height, visibleLibrary }: Props) {
   const handleFilePathClick = useCallback(() => {
     libraryService.send('SET_FILE', { path: item.path });
   }, [libraryService, item.path]);
-
   const classNames = useMemo(
     () =>
       [
@@ -159,9 +156,17 @@ function ListItemComponent({ item, idx, height, visibleLibrary }: Props) {
           ? 'hovered-by-tag'
           : '',
         canDrag ? 'can-drag' : '',
-        collectedProps.isLeft ? 'left' : 'right',
+        isLeft ? 'left' : 'right',
       ].join(' '),
-    [cursor, idx, collectedProps, canDrag]
+    [
+      cursor,
+      idx,
+      canDrag,
+      collectedProps.isOver,
+      collectedProps.isSelf,
+      collectedProps.itemType,
+      isLeft,
+    ]
   );
 
   return (
@@ -206,7 +211,6 @@ export const ListItem = React.memo(
       prevProps.item.path === nextProps.item.path &&
       prevProps.idx === nextProps.idx &&
       prevProps.height === nextProps.height &&
-      prevProps.visibleLibrary === nextProps.visibleLibrary &&
       prevProps.item.timeStamp === nextProps.item.timeStamp &&
       prevProps.item.elo === nextProps.item.elo &&
       prevProps.item.weight === nextProps.item.weight

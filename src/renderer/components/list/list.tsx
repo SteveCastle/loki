@@ -57,7 +57,9 @@ export function List() {
     base.filters,
     base.sortBy,
   ]);
-  // Read initial scroll position once to avoid re-renders on scroll
+
+  console.log('rendering list');
+  // Read initial scroll position once
   const initialScrollPositionRef = useRef(0);
   useEffect(() => {
     initialScrollPositionRef.current =
@@ -81,18 +83,6 @@ export function List() {
 
   const [height, setHeight] = useState(window.innerHeight / rows);
 
-  const parentRef = useRef<HTMLDivElement>(null);
-  const listLength = useMemo(
-    () => Math.ceil(items.length / columns),
-    [items.length, columns]
-  );
-  const rowVirtualizer = useVirtualizer({
-    count: listLength,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => height,
-    overscan: PERFORMANCE_CONSTANTS.LIST_OVERSCAN,
-  });
-
   useEffect(() => {
     setHeight(window.innerHeight / rows);
     const handleResize = () => {
@@ -101,90 +91,6 @@ export function List() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [rows]);
-
-  // if height changes run   rowVirtualizer.measure();
-  useEffect(() => {
-    rowVirtualizer.measure();
-  }, [height]);
-
-  useEffect(() => {
-    if (initialLoad && parentRef.current && cursor) {
-      rowVirtualizer.scrollToOffset(initialScrollPositionRef.current);
-      setInitialLoad(false);
-    } else if (parentRef.current && cursor) {
-      rowVirtualizer.scrollToIndex(Math.floor(cursor / columns), {
-        align: 'auto',
-      });
-    }
-  }, [rowVirtualizer, cursor]);
-
-  const { isDragging, offset, type } = useDragLayer((monitor) => ({
-    isDragging: monitor.isDragging(),
-    offset: monitor.getClientOffset(),
-    type: monitor.getItemType(),
-  }));
-
-  const mapRange = useCallback(
-    (
-      value: number,
-      low1: number,
-      high1: number,
-      low2: number,
-      high2: number
-    ) => {
-      return low2 + ((high2 - low2) * (value - low1)) / (high1 - low1);
-    },
-    []
-  );
-
-  const getScrollSpeed = useCallback(
-    (offset: number, height: number) => {
-      let scrollSpeed = 0;
-      const threshold = PERFORMANCE_CONSTANTS.SCROLL_SPEED_THRESHOLD;
-      const minSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MIN;
-      const maxSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MAX;
-
-      if (offset < threshold) {
-        // The smaller the offset the faster it scrolls.
-        scrollSpeed = mapRange(offset, 0, threshold, minSpeed, 0);
-      } else if (offset > height - threshold && offset < height) {
-        // The closer to the bottom the faster it scrolls.
-        scrollSpeed = mapRange(offset, height - threshold, height, 0, maxSpeed);
-      }
-
-      return scrollSpeed;
-    },
-    [mapRange]
-  );
-
-  useEffect(() => {
-    let animationFrameId: number;
-    const height = parentRef.current?.clientHeight;
-
-    const scroll = () => {
-      if (
-        isDragging &&
-        type === 'MEDIA' &&
-        offset &&
-        parentRef.current &&
-        height
-      ) {
-        const mousePosition = offset.y;
-        const scrollSpeed = getScrollSpeed(mousePosition, height);
-        parentRef.current.scrollBy(0, scrollSpeed);
-        // Call requestAnimationFrame again to keep the loop going
-        animationFrameId = requestAnimationFrame(scroll);
-      } else {
-        // If dragging has stopped, cancel the animation frame
-        cancelAnimationFrame(animationFrameId);
-      }
-    };
-
-    // Call scroll for the first time
-    animationFrameId = requestAnimationFrame(scroll);
-
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [isDragging, offset, getScrollSpeed]); // Dependency array means this effect runs whenever isDragging or offset changes
 
   const debounceIdRef = useRef<number | null>(null);
   const pendingScrollTopRef = useRef<number>(0);
@@ -218,7 +124,161 @@ export function List() {
   }, []);
 
   return (
-    <div className="List" ref={parentRef} onScroll={handleScroll}>
+    <VirtualGrid
+      items={items}
+      columns={columns}
+      height={height}
+      overscan={PERFORMANCE_CONSTANTS.LIST_OVERSCAN}
+      initialScrollOffset={initialScrollPositionRef.current}
+      cursor={cursor}
+      onScroll={handleScroll}
+      onDidInitialScroll={() => setInitialLoad(false)}
+      shouldDoInitialScroll={initialLoad}
+    />
+  );
+}
+
+type VirtualGridProps = {
+  items: ReturnType<typeof filter>;
+  columns: number;
+  height: number;
+  overscan: number;
+  initialScrollOffset: number;
+  cursor: number | null;
+  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+  onDidInitialScroll: () => void;
+  shouldDoInitialScroll: boolean;
+};
+
+function VirtualGrid({
+  items,
+  columns,
+  height,
+  overscan,
+  initialScrollOffset,
+  cursor,
+  onScroll,
+  onDidInitialScroll,
+  shouldDoInitialScroll,
+}: VirtualGridProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const listLength = useMemo(
+    () => Math.ceil(items.length / columns),
+    [items.length, columns]
+  );
+  const rowVirtualizer = useVirtualizer({
+    count: listLength,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => height,
+    overscan,
+  });
+
+  // Recalculate measurements when row height changes
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [height, rowVirtualizer]);
+
+  // Handle initial restore of scroll position and scrolling to cursor updates
+  const didInitialScrollRef = useRef(false);
+  useEffect(() => {
+    if (!parentRef.current) return;
+
+    if (!didInitialScrollRef.current && shouldDoInitialScroll) {
+      rowVirtualizer.scrollToOffset(initialScrollOffset);
+      didInitialScrollRef.current = true;
+      onDidInitialScroll();
+      return;
+    }
+
+    if (cursor != null) {
+      rowVirtualizer.scrollToIndex(Math.floor(cursor / columns), {
+        align: 'auto',
+      });
+    }
+  }, [
+    cursor,
+    columns,
+    initialScrollOffset,
+    onDidInitialScroll,
+    shouldDoInitialScroll,
+    rowVirtualizer,
+  ]);
+
+  // Auto-scroll while dragging near edges
+  const { isDragging, offset, type } = useDragLayer((monitor) => ({
+    isDragging: monitor.isDragging(),
+    offset: monitor.getClientOffset(),
+    type: monitor.getItemType(),
+  }));
+
+  const mapRange = useCallback(
+    (
+      value: number,
+      low1: number,
+      high1: number,
+      low2: number,
+      high2: number
+    ) => {
+      return low2 + ((high2 - low2) * (value - low1)) / (high1 - low1);
+    },
+    []
+  );
+
+  const getScrollSpeed = useCallback(
+    (yOffset: number, containerHeight: number) => {
+      let scrollSpeed = 0;
+      const threshold = PERFORMANCE_CONSTANTS.SCROLL_SPEED_THRESHOLD;
+      const minSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MIN;
+      const maxSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MAX;
+
+      if (yOffset < threshold) {
+        scrollSpeed = mapRange(yOffset, 0, threshold, minSpeed, 0);
+      } else if (
+        yOffset > containerHeight - threshold &&
+        yOffset < containerHeight
+      ) {
+        scrollSpeed = mapRange(
+          yOffset,
+          containerHeight - threshold,
+          containerHeight,
+          0,
+          maxSpeed
+        );
+      }
+
+      return scrollSpeed;
+    },
+    [mapRange]
+  );
+
+  useEffect(() => {
+    let animationFrameId: number;
+    const containerHeight = parentRef.current?.clientHeight;
+
+    const scroll = () => {
+      if (
+        isDragging &&
+        type === 'MEDIA' &&
+        offset &&
+        parentRef.current &&
+        containerHeight
+      ) {
+        const mousePosition = offset.y;
+        const scrollSpeed = getScrollSpeed(mousePosition, containerHeight);
+        parentRef.current.scrollBy(0, scrollSpeed);
+        animationFrameId = requestAnimationFrame(scroll);
+      } else {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(scroll);
+
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isDragging, offset, type, getScrollSpeed]);
+
+  return (
+    <div className="List" ref={parentRef} onScroll={onScroll}>
       <div
         className="ListContainer"
         style={{
@@ -243,7 +303,6 @@ export function List() {
                 <ListItem
                   scaleMode={'cover'}
                   height={height}
-                  visibleLibrary={items}
                   key={
                     item?.path +
                     (item?.timeStamp != null ? String(item?.timeStamp) : 'null')
