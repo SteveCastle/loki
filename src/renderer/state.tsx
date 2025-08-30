@@ -571,6 +571,18 @@ const libraryMachine = createMachine(
                   ...processedData,
                 };
               },
+              libraryLoadId: (context, event) => {
+                const nextSortBy = event?.data?.sortBy as
+                  | Settings['sortBy']
+                  | undefined;
+                if (
+                  nextSortBy === 'shuffle' &&
+                  context.settings.sortBy !== 'shuffle'
+                ) {
+                  return uniqueId();
+                }
+                return context.libraryLoadId;
+              },
             }),
           },
           CHANGE_HOTKEY: {
