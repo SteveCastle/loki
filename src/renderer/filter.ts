@@ -3,6 +3,10 @@ import { FilterOption, SortByOption } from 'settings';
 import naturalCompare from 'natural-compare';
 import type { Item } from './state';
 
+// Single-entry memoization cache keyed by libraryLoadId + filters + sortBy
+let lastCacheKey: string | null = null;
+let lastResult: Item[] | null = null;
+
 function filter(
   libraryLoadId: string,
   textFilter: string,
@@ -10,7 +14,14 @@ function filter(
   filters: FilterOption,
   sortBy: SortByOption
 ) {
+  const cacheKey = `${libraryLoadId}::${filters}::${sortBy}`;
+  if (lastCacheKey === cacheKey && lastResult) {
+    return lastResult;
+  }
+
   if (!textFilter && !filters && !sortBy) {
+    lastCacheKey = cacheKey;
+    lastResult = library;
     return library;
   }
   const filtered = library.filter((item) => {
@@ -32,6 +43,8 @@ function filter(
 
   if (sortBy === 'stream') {
     // Preserve insertion order during streaming
+    lastCacheKey = cacheKey;
+    lastResult = filtered;
     return filtered;
   }
 
@@ -61,7 +74,10 @@ function filter(
       return a.rank - b.rank;
     });
 
-    return ranked.map((r) => r.item);
+    const result = ranked.map((r) => r.item);
+    lastCacheKey = cacheKey;
+    lastResult = result;
+    return result;
   }
 
   const sortedLibrary = filtered.sort((a, b) => {
@@ -77,6 +93,8 @@ function filter(
 
     return 0;
   });
+  lastCacheKey = cacheKey;
+  lastResult = sortedLibrary;
   return sortedLibrary;
 }
 
