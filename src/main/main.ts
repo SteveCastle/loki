@@ -17,45 +17,12 @@ import Store from 'electron-store';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 
-import { Database, initDB } from './database';
+import type { Database } from './database';
 
-import {
-  loadMediaByTags,
-  loadMediaByDescriptionSearch,
-  copyFileIntoClipboard,
-  updateElo,
-  deleteMedia,
-  fetchMediaPreview,
-  updateDescription,
-} from './media';
-import {
-  loadTaxonomy,
-  getTagCount,
-  createCategory,
-  createTag,
-  createAssignment,
-  deleteAssignment,
-  updateAssignmentWeight,
-  updateTagWeight,
-  fetchTagPreview,
-  renameCategory,
-  deleteCategory,
-  renameTag,
-  moveTag,
-  orderTags,
-  deleteTag,
-  loadTagsByMediaPath,
-  selectNewPath,
-  updateTimestamp,
-  removeTimestamp,
-} from './taxonomy';
-
-import { loadFileMetaData } from './metadata';
-// Job management removed - now handled by external job runner service
-import { loadFiles } from './load-files';
+// Heavy modules (database implementation, media, taxonomy, metadata, load-files)
+// are dynamically imported when needed to speed up cold start.
 
 // app.commandLine.appendSwitch('remote-debugging-port', '8315');
-app.commandLine.appendSwitch('inspect');
 
 let db: Database | null = null;
 let macPath = '';
@@ -137,6 +104,23 @@ ipcMain.on('electron-store-set', async (event, key, val) => {
   store.set(key, val);
 });
 
+// Batched synchronous get to reduce startup IPC roundtrips
+ipcMain.on('electron-store-get-many', async (event, keyDefaultPairs) => {
+  try {
+    const pairs: [string, any][] = Array.isArray(keyDefaultPairs)
+      ? keyDefaultPairs
+      : [];
+    const result: { [key: string]: any } = {};
+    for (const [k, def] of pairs) {
+      result[k] = store.get(k, def);
+    }
+    event.returnValue = result;
+  } catch (err) {
+    console.error('electron-store-get-many error', err);
+    event.returnValue = {};
+  }
+});
+
 ipcMain.handle('get-user-data-path', async () => {
   return app.getPath('userData');
 });
@@ -151,8 +135,10 @@ ipcMain.handle('load-db', async (event, args) => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  db = new Database(dbPath);
-  await initDB(db);
+  // Lazy import database implementation to reduce cold-start cost
+  const dbModule = await import('./database');
+  db = new dbModule.Database(dbPath);
+  await dbModule.initDB(db);
   ipcMain.removeHandler('load-media-by-tags');
   ipcMain.removeHandler('load-media-by-description-search');
   ipcMain.removeHandler('load-tags-by-media-path');
@@ -184,43 +170,68 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
 
+  // Dynamically import heavy modules in parallel and register handlers
+  const [mediaModule, taxonomyModule, metadataModule, loadFilesModule] =
+    await Promise.all([
+      import('./media'),
+      import('./taxonomy'),
+      import('./metadata'),
+      import('./load-files'),
+    ]);
+
   // Register Media Events
-  ipcMain.handle('load-files', loadFiles(db));
-  ipcMain.handle('load-media-by-tags', loadMediaByTags(db));
+  ipcMain.handle('load-files', loadFilesModule.loadFiles(db));
+  ipcMain.handle('load-media-by-tags', mediaModule.loadMediaByTags(db));
   ipcMain.handle(
     'load-media-by-description-search',
-    loadMediaByDescriptionSearch(db)
+    mediaModule.loadMediaByDescriptionSearch(db)
   );
-  ipcMain.handle('update-elo', updateElo(db));
-  ipcMain.handle('update-description', updateDescription(db));
-  ipcMain.handle('copy-file-into-clipboard', copyFileIntoClipboard());
-  ipcMain.handle('delete-file', deleteMedia(db));
+  ipcMain.handle('update-elo', mediaModule.updateElo(db));
+  ipcMain.handle('update-description', mediaModule.updateDescription(db));
+  ipcMain.handle(
+    'copy-file-into-clipboard',
+    mediaModule.copyFileIntoClipboard()
+  );
+  ipcMain.handle('delete-file', mediaModule.deleteMedia(db));
 
-  // Register Metaata Events
-  ipcMain.handle('load-tags-by-media-path', loadTagsByMediaPath(db));
+  // Register Metadata/Taxonomy Events
+  ipcMain.handle(
+    'load-tags-by-media-path',
+    taxonomyModule.loadTagsByMediaPath(db)
+  );
+  ipcMain.handle('load-taxonomy', taxonomyModule.loadTaxonomy(db));
+  ipcMain.handle('get-tag-count', taxonomyModule.getTagCount(db));
+  ipcMain.handle('create-tag', taxonomyModule.createTag(db));
+  ipcMain.handle('create-category', taxonomyModule.createCategory(db));
+  ipcMain.handle(
+    'create-assignment',
+    taxonomyModule.createAssignment(db, store)
+  );
+  ipcMain.handle('delete-assignment', taxonomyModule.deleteAssignment(db));
+  ipcMain.handle(
+    'update-assignment-weight',
+    taxonomyModule.updateAssignmentWeight(db)
+  );
+  ipcMain.handle('update-tag-weight', taxonomyModule.updateTagWeight(db));
+  ipcMain.handle('fetch-tag-preview', taxonomyModule.fetchTagPreview(db));
+  ipcMain.handle('update-timestamp', taxonomyModule.updateTimestamp(db));
+  ipcMain.handle('remove-timestamp', taxonomyModule.removeTimestamp(db));
+  ipcMain.handle(
+    'fetch-media-preview',
+    mediaModule.fetchMediaPreview(db, store)
+  );
+  ipcMain.handle('load-file-metadata', metadataModule.loadFileMetaData(db));
 
-  // Register Taxonomy Eventsmet
-  ipcMain.handle('load-taxonomy', loadTaxonomy(db));
-  ipcMain.handle('get-tag-count', getTagCount(db));
-  ipcMain.handle('create-tag', createTag(db));
-  ipcMain.handle('create-category', createCategory(db));
-  ipcMain.handle('create-assignment', createAssignment(db, store));
-  ipcMain.handle('delete-assignment', deleteAssignment(db));
-  ipcMain.handle('update-assignment-weight', updateAssignmentWeight(db));
-  ipcMain.handle('update-tag-weight', updateTagWeight(db));
-  ipcMain.handle('fetch-tag-preview', fetchTagPreview(db));
-  ipcMain.handle('update-timestamp', updateTimestamp(db));
-  ipcMain.handle('remove-timestamp', removeTimestamp(db));
-  ipcMain.handle('fetch-media-preview', fetchMediaPreview(db, store));
-  ipcMain.handle('load-file-metadata', loadFileMetaData(db));
-
-  ipcMain.handle('select-new-path', selectNewPath(db, mainWindow));
-  ipcMain.handle('rename-category', renameCategory(db));
-  ipcMain.handle('delete-category', deleteCategory(db));
-  ipcMain.handle('rename-tag', renameTag(db));
-  ipcMain.handle('move-tag', moveTag(db));
-  ipcMain.handle('order-tags', orderTags(db));
-  ipcMain.handle('delete-tag', deleteTag(db));
+  ipcMain.handle(
+    'select-new-path',
+    taxonomyModule.selectNewPath(db, mainWindow)
+  );
+  ipcMain.handle('rename-category', taxonomyModule.renameCategory(db));
+  ipcMain.handle('delete-category', taxonomyModule.deleteCategory(db));
+  ipcMain.handle('rename-tag', taxonomyModule.renameTag(db));
+  ipcMain.handle('move-tag', taxonomyModule.moveTag(db));
+  ipcMain.handle('order-tags', taxonomyModule.orderTags(db));
+  ipcMain.handle('delete-tag', taxonomyModule.deleteTag(db));
   if (!mainWindow) return;
   // Job creation removed - now handled by external job runner service
 });
@@ -335,8 +346,8 @@ const isDebug =
 
 if (isDebug) {
   require('electron-debug')();
+  app.commandLine.appendSwitch('inspect');
 }
-
 
 const createWindow = async () => {
   if (isDebug) {
@@ -380,6 +391,11 @@ const createWindow = async () => {
     } else {
       mainWindow.show();
     }
+    // Defer auto updates until after first paint
+    setTimeout(() => {
+      // eslint-disable-next-line
+      new AppUpdater();
+    }, 1500);
   });
 
   mainWindow.on('closed', () => {
@@ -423,9 +439,7 @@ const createWindow = async () => {
     return { action: 'deny' };
   });
 
-  // Remove this if your app does not use auto updates
-  // eslint-disable-next-line
-  new AppUpdater();
+  // Auto updater initialized after first paint (see ready-to-show)
 };
 
 /**

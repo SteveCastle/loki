@@ -2,7 +2,13 @@ export type ScaleModeOption = 'cover' | 'fit' | 'actual' | number;
 
 export type OrderingOption = 'asc' | 'desc';
 
-export type SortByOption = 'name' | 'date' | 'weight' | 'shuffle' | 'elo';
+export type SortByOption =
+  | 'name'
+  | 'date'
+  | 'weight'
+  | 'shuffle'
+  | 'elo'
+  | 'stream';
 
 export type FilterOption = 'all' | 'static' | 'video' | 'audio';
 

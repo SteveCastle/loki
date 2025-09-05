@@ -15,6 +15,7 @@ declare global {
       store: {
         get(key: string, defaultValue: any): unknown;
         set(property: string, val: unknown): void;
+        getMany(pairs: [string, any][]): Record<string, unknown>;
       };
       url: {
         format: typeof import('url').format;
@@ -35,14 +36,17 @@ declare global {
         cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
         timeStamp?: number
       ) => Promise<string>;
-      loadTranscript: (filePath: string) => Promise<VttCue[]>;
-      modifyTranscript: (input: {
-        mediaPath: string;
-        cueIndex: number;
-        startTime?: string;
-        endTime?: string;
-        text?: string;
-      }) => Promise<boolean>;
+      transcript: {
+        loadTranscript: (filePath: string) => Promise<VttCue[] | null>;
+        modifyTranscript: (input: {
+          mediaPath: string;
+          cueIndex: number;
+          startTime?: string;
+          endTime?: string;
+          text?: string;
+        }) => Promise<boolean>;
+        checkIfWhisperIsInstalled: () => Promise<boolean>;
+      };
       loadTaxonomy: () => Promise<string[]>;
       ipcRenderer: {
         invoke(channel: Channels, args: unknown[]): Promise<unknown>;

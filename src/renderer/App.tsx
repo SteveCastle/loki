@@ -41,16 +41,17 @@ export default function App(): JSX.Element {
     (state) => state.context.settings.autoPlay,
     (a, b) => a === b
   );
-  
+
   const isLoadingState = useMemo(() => {
     return (
       state.matches({ library: 'boot' }) ||
       state.matches({ library: 'selectingDB' }) ||
       state.matches({ library: 'loadingFromFS' }) ||
+      state.matches({ library: 'loadingFromSearch' }) ||
       state.matches({ library: 'loadingDB' })
     );
   }, [state]);
-
+  console.log('rendering app');
   return (
     <QueryClientProvider client={queryClient}>
       <DndProvider backend={HTML5Backend}>
