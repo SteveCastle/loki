@@ -47,6 +47,7 @@ export default function App(): JSX.Element {
       state.matches({ library: 'boot' }) ||
       state.matches({ library: 'selectingDB' }) ||
       state.matches({ library: 'loadingFromFS' }) ||
+      state.matches({ library: 'loadingFromSearch' }) ||
       state.matches({ library: 'loadingDB' })
     );
   }, [state]);
