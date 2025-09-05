@@ -11,7 +11,7 @@ import './transcript.css';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 const loadTranscript = (path: string) => async () => {
-  const transcript = await window.electron.loadTranscript(path);
+  const transcript = await window.electron.transcript.loadTranscript(path);
   return transcript as VttCue[];
 };
 
@@ -41,13 +41,13 @@ export default function Transcript() {
 
   // Job checking removed - transcript jobs now handled by external job runner service
   const transcriptJobs: any[] = [];
-  
+
   const { data: transcript } = useQuery({
     queryKey: ['transcript', path],
     queryFn: loadTranscript(path),
     enabled: !!path,
   });
-  
+
   const scrollRef = useRef<HTMLDivElement>(null);
 
   if (!path) {
@@ -64,7 +64,7 @@ export default function Transcript() {
   }
 
   console.log('transcriptJobs', transcriptJobs);
-  
+
   if (transcriptJobs.length > 0) {
     return (
       <div className="transcript-loader">
