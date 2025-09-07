@@ -191,7 +191,8 @@ function VirtualGrid({
     }
 
     if (cursor != null) {
-      rowVirtualizer.scrollToIndex(Math.floor(cursor / columns), {
+      const scrollTarget = Math.floor(cursor / columns) || 0;
+      rowVirtualizer.scrollToIndex(scrollTarget, {
         align: 'auto',
       });
     }
