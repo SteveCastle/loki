@@ -192,9 +192,14 @@ function VirtualGrid({
 
     if (cursor != null) {
       const scrollTarget = Math.floor(cursor / columns) || 0;
-      rowVirtualizer.scrollToIndex(scrollTarget, {
-        align: 'auto',
-      });
+      if (
+        rowVirtualizer.getVirtualItems()[0] &&
+        scrollTarget !== rowVirtualizer.getVirtualItems()[0].index
+      ) {
+        rowVirtualizer.scrollToIndex(scrollTarget, {
+          align: 'auto',
+        });
+      }
     }
   }, [
     cursor,
