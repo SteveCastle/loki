@@ -491,7 +491,7 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
         case 'generalOptions':
           return (
             <div className="tabContent">
-              <p>v2.6.5</p> {/* Consider making version dynamic */}
+              <p>v2.6.6</p> {/* Consider making version dynamic */}
               <SettingsList
                 filterType="general"
                 battleMode={battleMode}
