@@ -44,6 +44,25 @@ declare global {
         cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
         timeStamp?: number
       ) => Promise<string>;
+      listThumbnails: (path: string) => Promise<
+        {
+          cache:
+            | 'thumbnail_path_100'
+            | 'thumbnail_path_600'
+            | 'thumbnail_path_1200';
+          path: string;
+          exists: boolean;
+          size: number;
+        }[]
+      >;
+      regenerateThumbnail: (
+        path: string,
+        cache:
+          | 'thumbnail_path_100'
+          | 'thumbnail_path_600'
+          | 'thumbnail_path_1200',
+        timeStamp?: number
+      ) => Promise<string>;
       transcript: {
         loadTranscript: (filePath: string) => Promise<VttCue[] | null>;
         modifyTranscript: (input: {

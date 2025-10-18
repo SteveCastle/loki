@@ -623,3 +623,83 @@ export {
   loadDuplicatesByPath,
   mergeDuplicatesByPath,
 };
+
+// New helpers to manage thumbnails for a given media path
+type ListThumbnailsInput = [string];
+type ThumbnailInfo = {
+  cache: 'thumbnail_path_100' | 'thumbnail_path_600' | 'thumbnail_path_1200';
+  path: string;
+  exists: boolean;
+  size: number;
+};
+
+const caches: ThumbnailInfo['cache'][] = [
+  'thumbnail_path_100',
+  'thumbnail_path_600',
+  'thumbnail_path_1200',
+];
+
+const listThumbnails =
+  (store: Store) =>
+  async (_: IpcMainInvokeEvent, args: ListThumbnailsInput) => {
+    const filePath = args[0];
+    const userHomeDirectory = require('os').homedir();
+    const defaultBasePath = path.join(path.join(userHomeDirectory, '.lowkey'));
+    const dbPath = (store.get('dbPath', defaultBasePath) as string) || '';
+    const basePath = path.dirname(dbPath);
+
+    const timeStamp = 0; // images ignore timestamp hashing; videos use it
+
+    const results: ThumbnailInfo[] = caches.map((cache) => {
+      const thumbnailFullPath = getMediaCachePath(
+        filePath,
+        basePath,
+        cache,
+        timeStamp
+      );
+      const exists = checkIfMediaCacheExists(thumbnailFullPath);
+      let size = 0;
+      try {
+        if (exists) {
+          const stat = fs.statSync(thumbnailFullPath);
+          size = stat.size || 0;
+        }
+      } catch (_) {}
+      return { cache, path: thumbnailFullPath, exists, size };
+    });
+
+    return results;
+  };
+
+type RegenerateThumbnailInput = [string, ThumbnailInfo['cache'], number?];
+const regenerateThumbnail =
+  (store: Store) =>
+  async (_: IpcMainInvokeEvent, args: RegenerateThumbnailInput) => {
+    const [filePath, cache, timeStampArg] = args;
+    const timeStamp = typeof timeStampArg === 'number' ? timeStampArg : 0;
+
+    const userHomeDirectory = require('os').homedir();
+    const defaultBasePath = path.join(path.join(userHomeDirectory, '.lowkey'));
+    const dbPath = (store.get('dbPath', defaultBasePath) as string) || '';
+    const basePath = path.dirname(dbPath);
+
+    const thumbnailFullPath = getMediaCachePath(
+      filePath,
+      basePath,
+      cache,
+      timeStamp
+    );
+    // Delete existing file if it exists to force regeneration
+    try {
+      if (checkIfMediaCacheExists(thumbnailFullPath)) {
+        fs.unlinkSync(thumbnailFullPath);
+      }
+    } catch (e) {
+      console.warn('Could not delete existing thumbnail', thumbnailFullPath, e);
+    }
+
+    await asyncCreateThumbnail(filePath, basePath, cache, timeStamp);
+    return thumbnailFullPath;
+  };
+
+export { listThumbnails, regenerateThumbnail };

@@ -228,6 +228,11 @@ ipcMain.handle('load-db', async (event, args) => {
     'fetch-media-preview',
     mediaModule.fetchMediaPreview(db, store)
   );
+  ipcMain.handle('list-thumbnails', mediaModule.listThumbnails(store));
+  ipcMain.handle(
+    'regenerate-thumbnail',
+    mediaModule.regenerateThumbnail(store)
+  );
   ipcMain.handle('load-file-metadata', metadataModule.loadFileMetaData(db));
 
   ipcMain.handle(

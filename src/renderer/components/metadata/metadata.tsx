@@ -7,6 +7,7 @@ import eyeOpen from '../../../../assets/eye-open.svg';
 import eyeClosed from '../../../../assets/eye-closed.svg';
 import FileMetadata from './file-metadata';
 import Duplicates from './duplicates';
+import Thumbnails from './thumbnails';
 import Transcript from './transcript';
 import Transformations from './transformations';
 import './metadata.css';
@@ -21,6 +22,13 @@ const tabs = [
     label: 'File Info',
     fileTypes: [FileTypes.Image, FileTypes.Audio, FileTypes.Video],
     actions: [],
+    active: true,
+  },
+  {
+    key: 'thumbnails',
+    label: 'Thumbnails',
+    actions: [],
+    fileTypes: [FileTypes.Image, FileTypes.Video],
     active: true,
   },
   {
@@ -135,6 +143,11 @@ export default function Metadata() {
       </div>
       <div className={`tab-content`}>
         {activeTabKey === 'tags' && item && <FileMetadata item={item} />}
+        {activeTabKey === 'thumbnails' && item && (
+          <div style={{ height: '100%', overflow: 'hidden' }}>
+            <Thumbnails path={item.path} />
+          </div>
+        )}
         {activeTabKey === 'transcript' && <Transcript />}
         {activeTabKey === 'transformations' && <Transformations />}
         {activeTabKey === 'duplicates' && item && (
