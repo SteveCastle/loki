@@ -103,6 +103,29 @@ const fetchMediaPreview = async (
   return results;
 };
 
+const listThumbnails = async (filePath: string) => {
+  const results = await ipcRenderer.invoke('list-thumbnails', [filePath]);
+  return results as {
+    cache: 'thumbnail_path_100' | 'thumbnail_path_600' | 'thumbnail_path_1200';
+    path: string;
+    exists: boolean;
+    size: number;
+  }[];
+};
+
+const regenerateThumbnail = async (
+  filePath: string,
+  cache: 'thumbnail_path_100' | 'thumbnail_path_600' | 'thumbnail_path_1200',
+  timeStamp?: number
+) => {
+  const result = await ipcRenderer.invoke('regenerate-thumbnail', [
+    filePath,
+    cache,
+    timeStamp || 0,
+  ]);
+  return result as string;
+};
+
 const loadDuplicatesByPath = async (path: string) => {
   const files = await ipcRenderer.invoke('load-duplicates-by-path', [path]);
   return files;
@@ -123,6 +146,8 @@ contextBridge.exposeInMainWorld('electron', {
   fetchTagPreview,
   fetchTagCount,
   fetchMediaPreview,
+  listThumbnails,
+  regenerateThumbnail,
   loadDuplicatesByPath,
   mergeDuplicatesByPath,
   async loadTranscript(filePath: string) {
