@@ -410,7 +410,14 @@ async function calculateFileHash(filePath: string): Promise<string> {
       end: maxBytes - 1,
     });
 
-    stream.on('data', (data) => hash.update(data));
+    stream.on('data', (data: Buffer) => {
+      const view = new Uint8Array(
+        data.buffer,
+        data.byteOffset,
+        data.byteLength
+      );
+      hash.update(view);
+    });
     stream.on('end', () => resolve(hash.digest('hex')));
     stream.on('error', (err) => reject(err));
   });
@@ -474,6 +481,137 @@ async function insertMedia(db: Database, filePath: string): Promise<void> {
   }
 }
 
+// Finds other media entries that share the same hash as the provided path
+// Excludes the provided path itself and ignores null/empty hashes
+const loadDuplicatesByPath =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: [string]) => {
+    const targetPath = args[0];
+    try {
+      // Ensure the base file exists in DB with a hash; insert/update like fetchMediaPreview does
+      await insertMedia(db, targetPath);
+      const sql = `
+        SELECT m2.path, m2.elo
+        FROM media AS m
+        JOIN media AS m2 ON m2.hash = m.hash AND m2.path <> m.path
+        WHERE m.path = ?
+          AND m.hash IS NOT NULL AND m.hash <> ''
+        ORDER BY m2.path ASC
+      `;
+      const rows = await db.all(sql, [targetPath]);
+      const library = rows.map((r: any) => ({
+        path: r.path,
+        elo: r.elo,
+        mtimeMs: 0,
+      }));
+      return { library, cursor: 0 };
+    } catch (error) {
+      console.error('Error in loadDuplicatesByPath:', error);
+      throw error;
+    }
+  };
+
+// Merge: copy tags from all duplicates into target, then delete the duplicates
+type MergeDuplicatesInput = [string];
+const mergeDuplicatesByPath =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: MergeDuplicatesInput) => {
+    const targetPath = args[0];
+    try {
+      // Ensure target is inserted/updated to have hash
+      await insertMedia(db, targetPath);
+
+      // Find other duplicates by same hash
+      const dupSql = `
+        SELECT m2.path AS path
+        FROM media AS m
+        JOIN media AS m2 ON m2.hash = m.hash AND m2.path <> m.path
+        WHERE m.path = ?
+          AND m.hash IS NOT NULL AND m.hash <> ''
+        ORDER BY m2.path ASC
+      `;
+      const dupRows: { path: string }[] = await db.all(dupSql, [targetPath]);
+      const duplicatePaths = dupRows.map((r) => r.path);
+
+      if (duplicatePaths.length === 0) {
+        return { mergedInto: targetPath, deleted: [], copiedTags: 0 };
+      }
+
+      // Copy tags from each duplicate into target
+      let copiedTags = 0;
+      await db.run('BEGIN TRANSACTION');
+      const insertTagStmt = await db.prepare(
+        `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+         SELECT $1, tag_label, category_label, weight, time_stamp, created_at
+         FROM media_tag_by_category
+         WHERE media_path = $2
+         ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
+      );
+
+      for (const dupPath of duplicatePaths) {
+        try {
+          // Insert-select returns no rowcount here; optionally count source rows
+          const countRow = await db.get(
+            `SELECT COUNT(*) AS cnt FROM media_tag_by_category WHERE media_path = $1`,
+            [dupPath]
+          );
+          await insertTagStmt.run(targetPath, dupPath);
+          copiedTags += Number(countRow?.cnt || 0);
+        } catch (e) {
+          console.error('Error copying tags from', dupPath, e);
+        }
+      }
+      await db.run('COMMIT');
+
+      // After copying, delete the duplicates (file + db rows)
+      const deleted: string[] = [];
+      for (const dupPath of duplicatePaths) {
+        try {
+          await shell
+            .trashItem(dupPath)
+            .then(
+              async () => {
+                await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
+                await db.run(
+                  'DELETE FROM media_tag_by_category WHERE media_path = ?',
+                  [dupPath]
+                );
+                deleted.push(dupPath);
+              },
+              async () => {
+                console.error('Error deleting file trying unlink:', dupPath);
+                fs.unlinkSync(dupPath);
+                await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
+                await db.run(
+                  'DELETE FROM media_tag_by_category WHERE media_path = ?',
+                  [dupPath]
+                );
+                deleted.push(dupPath);
+              }
+            )
+            .catch(async () => {
+              console.error('Error deleting file trying unlink:', dupPath);
+              try {
+                fs.unlinkSync(dupPath);
+              } catch (_) {}
+              await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
+              await db.run(
+                'DELETE FROM media_tag_by_category WHERE media_path = ?',
+                [dupPath]
+              );
+              deleted.push(dupPath);
+            });
+        } catch (e) {
+          console.error('Failed to delete duplicate', dupPath, e);
+        }
+      }
+
+      return { mergedInto: targetPath, deleted, copiedTags };
+    } catch (error) {
+      console.error('Error in mergeDuplicatesByPath:', error);
+      throw error;
+    }
+  };
+
 export {
   loadMediaByTags,
   loadMediaByDescriptionSearch,
@@ -482,4 +620,6 @@ export {
   deleteMedia,
   updateElo,
   updateDescription,
+  loadDuplicatesByPath,
+  mergeDuplicatesByPath,
 };

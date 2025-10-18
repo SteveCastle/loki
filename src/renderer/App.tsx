@@ -34,7 +34,6 @@ export default function App(): JSX.Element {
       return a.matches(b);
     }
   );
-  if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
 
   const autoPlay = useSelector(
     libraryService,
@@ -51,6 +50,9 @@ export default function App(): JSX.Element {
       state.matches({ library: 'loadingDB' })
     );
   }, [state]);
+
+  if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
+
   console.log('rendering app');
   return (
     <QueryClientProvider client={queryClient}>

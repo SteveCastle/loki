@@ -6,6 +6,20 @@
   background: #0d1117;
 }
 
+/* Actions bar at top for regenerate/generate */
+.transcript-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.transcript-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(100% - 2rem);
+}
+
 .Transcript ul {
   list-style: none;
   margin: 0;
@@ -80,12 +94,14 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas,
+    'Courier New', monospace;
   font-size: 0.75rem;
   font-weight: 500;
 }
 
-.start-time, .end-time {
+.start-time,
+.end-time {
   color: #7d8590;
   background: rgba(110, 118, 129, 0.1);
   padding: 0.25rem 0.5rem;
@@ -115,7 +131,8 @@
   border: 1px solid #30363d;
   border-radius: 4px;
   color: #f0f6fc;
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas,
+    'Courier New', monospace;
   font-size: 0.75rem;
   padding: 0.25rem 0.5rem;
   width: 80px;
@@ -138,7 +155,8 @@
   gap: 0.25rem;
 }
 
-.save-btn, .cancel-btn {
+.save-btn,
+.cancel-btn {
   background: none;
   border: 1px solid;
   border-radius: 4px;
@@ -284,16 +302,16 @@
   .cue {
     padding: 0.5rem;
   }
-  
+
   .timestamps {
     font-size: 0.7rem;
   }
-  
+
   .text-display,
   .text-input {
     font-size: 0.8rem;
   }
-  
+
   .time-input {
     width: 70px;
     font-size: 0.7rem;
@@ -311,7 +329,7 @@
   .edit-hint {
     transition: none;
   }
-  
+
   .cue-container:hover {
     transform: none;
   }
@@ -322,7 +340,7 @@
   .cue {
     border-width: 2px;
   }
-  
+
   .time-input,
   .text-input {
     border-width: 2px;

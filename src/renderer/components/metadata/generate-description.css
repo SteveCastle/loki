@@ -4,6 +4,15 @@
   justify-content: center;
 }
 
+/* Variant modifiers for placement */
+.GenerateDescription.inline {
+  justify-content: flex-start;
+}
+
+.GenerateDescription.centered {
+  justify-content: center;
+}
+
 .GenerateDescription button {
   background-color: transparent;
   color: #aaa;
@@ -92,8 +101,12 @@
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .GenerateDescription .job-status {

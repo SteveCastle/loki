@@ -193,6 +193,14 @@ ipcMain.handle('load-db', async (event, args) => {
     mediaModule.copyFileIntoClipboard()
   );
   ipcMain.handle('delete-file', mediaModule.deleteMedia(db));
+  ipcMain.handle(
+    'load-duplicates-by-path',
+    mediaModule.loadDuplicatesByPath(db)
+  );
+  ipcMain.handle(
+    'merge-duplicates-by-path',
+    mediaModule.mergeDuplicatesByPath(db)
+  );
 
   // Register Metadata/Taxonomy Events
   ipcMain.handle(
