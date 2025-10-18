@@ -77,11 +77,25 @@ export default function Transcript() {
     );
   }
   if (!transcript) {
-    return <GenerateTranscript path={path} />;
+    return (
+      <GenerateTranscript
+        path={path}
+        variant="centered"
+        label="Generate Transcript"
+      />
+    );
   }
 
   return (
     <div className="Transcript" ref={scrollRef}>
+      {/* Top action bar with regenerate button when transcript exists */}
+      <div className="transcript-actions">
+        <GenerateTranscript
+          path={path}
+          label={'Regenerate Transcript'}
+          variant="inline"
+        />
+      </div>
       <ul>
         {transcript?.map((cue, index) => (
           <Cue

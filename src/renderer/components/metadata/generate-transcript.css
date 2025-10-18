@@ -5,6 +5,17 @@
   justify-content: center;
 }
 
+/* Inline variant for positioning within a header/action bar */
+.GenerateTranscript.inline {
+  height: auto;
+  justify-content: flex-start;
+}
+
+.GenerateTranscript.centered {
+  height: 100%;
+  justify-content: center;
+}
+
 .GenerateTranscript button {
   background-color: rgb(56, 56, 78);
   color: white;
@@ -91,8 +102,12 @@
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .GenerateTranscript .job-status {

@@ -72,11 +72,11 @@ export function List() {
   );
 
   const [columns, rows] = useMemo(() => {
-    const columns = base.gridSize[0];
-    let rows = base.gridSize[1];
+    const columns = Math.max(1, base.gridSize[0] || 0);
+    let rows = Math.max(1, base.gridSize[1] || 0);
     const totalNumberOfRows = Math.ceil(items.length / columns);
     if (totalNumberOfRows < rows) {
-      rows = totalNumberOfRows;
+      rows = Math.max(1, totalNumberOfRows);
     }
     return [columns, rows];
   }, [base.gridSize, items.length]);

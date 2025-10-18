@@ -29,6 +29,14 @@ declare global {
         tags?: string[],
         filteringMode?: string
       ) => Promise<{ path: string }[]>;
+      loadDuplicatesByPath: (
+        path: string
+      ) => Promise<{ library: { path: string }[]; cursor: number }>;
+      mergeDuplicatesByPath: (path: string) => Promise<{
+        mergedInto: string;
+        deleted: string[];
+        copiedTags: number;
+      }>;
       fetchTagPreview: (tag: string) => Promise<string>;
       fetchTagCount: (tag: string) => Promise<number>;
       fetchMediaPreview: (

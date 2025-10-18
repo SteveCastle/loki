@@ -4,9 +4,15 @@ import './generate-transcript.css';
 
 type Props = {
   path: string;
+  label?: string;
+  variant?: 'centered' | 'inline';
 };
 
-export default function GenerateTranscript({ path }: Props) {
+export default function GenerateTranscript({
+  path,
+  label,
+  variant = 'centered',
+}: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
     null
@@ -73,7 +79,7 @@ export default function GenerateTranscript({ path }: Props) {
 
   if (jobServerAvailable === null) {
     return (
-      <div className="GenerateTranscript">
+      <div className={`GenerateTranscript ${variant}`}>
         <div className="checking-server">Checking job service...</div>
       </div>
     );
@@ -81,7 +87,7 @@ export default function GenerateTranscript({ path }: Props) {
 
   if (jobServerAvailable === false) {
     return (
-      <div className="GenerateTranscript">
+      <div className={`GenerateTranscript ${variant}`}>
         <div className="server-unavailable">
           <div className="icon">⚠️</div>
           <div className="message">
@@ -101,13 +107,13 @@ export default function GenerateTranscript({ path }: Props) {
   }
 
   return (
-    <div className="GenerateTranscript">
+    <div className={`GenerateTranscript ${variant}`}>
       <button
         className="generate"
         onClick={handleGenerateTranscript}
         disabled={isSubmitting}
       >
-        Generate Transcript
+        {label || 'Generate Transcript'}
       </button>
     </div>
   );

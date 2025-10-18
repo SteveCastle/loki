@@ -68,15 +68,32 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
         />
       ) : (
         <div>
-          <div 
-            title="Double-click to enter text manually" 
+          {description && (
+            <div className="description-actions">
+              <GenerateDescription
+                path={path}
+                label="Regenerate Description"
+                variant="inline"
+              />
+            </div>
+          )}
+          <div
+            title="Double-click to enter text manually"
             onDoubleClick={() => setEditing(true)}
-            className={!description ? "empty-description" : ""}
+            className={!description ? 'empty-description' : ''}
           >
-            {description ? description : (
+            {description ? (
+              description
+            ) : (
               <div className="empty-content">
-                <span className="placeholder-text">Double-click to enter text or generate automatically</span>
-                <GenerateDescription path={path} />
+                <span className="placeholder-text">
+                  Double-click to enter text or generate automatically
+                </span>
+                <GenerateDescription
+                  path={path}
+                  label="Generate Description"
+                  variant="centered"
+                />
               </div>
             )}
           </div>

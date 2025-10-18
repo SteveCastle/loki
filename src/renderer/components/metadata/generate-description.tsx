@@ -4,9 +4,15 @@ import './generate-description.css';
 
 type Props = {
   path: string;
+  label?: string;
+  variant?: 'centered' | 'inline';
 };
 
-export default function GenerateDescription({ path }: Props) {
+export default function GenerateDescription({
+  path,
+  label,
+  variant = 'centered',
+}: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
     null
@@ -45,7 +51,7 @@ export default function GenerateDescription({ path }: Props) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          input: `metadata --type description --apply all "${path}"`,
+          input: `metadata --type description --apply all --overwrite "${path}"`,
         }),
         signal: controller.signal,
       });
@@ -73,7 +79,7 @@ export default function GenerateDescription({ path }: Props) {
 
   if (jobServerAvailable === null) {
     return (
-      <div className="GenerateDescription">
+      <div className={`GenerateDescription ${variant}`}>
         <div className="checking-server">Checking job service...</div>
       </div>
     );
@@ -81,7 +87,7 @@ export default function GenerateDescription({ path }: Props) {
 
   if (jobServerAvailable === false) {
     return (
-      <div className="GenerateDescription">
+      <div className={`GenerateDescription ${variant}`}>
         <div className="server-unavailable">
           <div className="icon">⚠️</div>
           <div className="message">
@@ -101,13 +107,13 @@ export default function GenerateDescription({ path }: Props) {
   }
 
   return (
-    <div className="GenerateDescription">
+    <div className={`GenerateDescription ${variant}`}>
       <button
         className="generate"
         onClick={handleGenerateDescription}
         disabled={isSubmitting}
       >
-        Generate Description
+        {label || 'Generate Description'}
       </button>
     </div>
   );

@@ -53,7 +53,9 @@ export type Channels =
   | 'generate-transcript'
   | 'modify-transcript'
   | 'delete-file'
-  | 'minimize';
+  | 'minimize'
+  | 'load-duplicates-by-path'
+  | 'merge-duplicates-by-path';
 
 const loadMediaFromDB = async (
   tags: string[],
@@ -101,12 +103,28 @@ const fetchMediaPreview = async (
   return results;
 };
 
+const loadDuplicatesByPath = async (path: string) => {
+  const files = await ipcRenderer.invoke('load-duplicates-by-path', [path]);
+  return files;
+};
+
+const mergeDuplicatesByPath = async (path: string) => {
+  const result = await ipcRenderer.invoke('merge-duplicates-by-path', [path]);
+  return result as {
+    mergedInto: string;
+    deleted: string[];
+    copiedTags: number;
+  };
+};
+
 contextBridge.exposeInMainWorld('electron', {
   loadMediaFromDB,
   loadMediaByDescriptionSearch,
   fetchTagPreview,
   fetchTagCount,
   fetchMediaPreview,
+  loadDuplicatesByPath,
+  mergeDuplicatesByPath,
   async loadTranscript(filePath: string) {
     const mod = await ensureTranscriptModule();
     return mod.loadTranscript(filePath);
