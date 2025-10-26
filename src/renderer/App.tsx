@@ -50,7 +50,7 @@ export default function App(): JSX.Element {
       state.matches({ library: 'loadingDB' })
     );
   }, [state]);
-
+  console.log('state', state);
   if (state.matches({ library: 'manualSetup' })) return <SetupWizard />;
 
   console.log('rendering app');
