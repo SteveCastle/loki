@@ -6,7 +6,6 @@ import type { ScaleModeOption } from '../../../settings';
 import './image.css';
 import './sizing.css';
 import MediaErrorMsg from './media-error';
-import { over } from 'lodash';
 
 type Props = {
   path: string;
@@ -113,7 +112,8 @@ export const Image = React.memo(ImageComponent, (prevProps, nextProps) => {
     prevProps.orientation === nextProps.orientation &&
     prevProps.overRideCache === nextProps.overRideCache &&
     prevProps.coverSize?.width === nextProps.coverSize?.width &&
-    prevProps.coverSize?.height === nextProps.coverSize?.height
+    prevProps.coverSize?.height === nextProps.coverSize?.height &&
+    prevProps.version === nextProps.version
   );
 });
 
