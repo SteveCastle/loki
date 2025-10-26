@@ -166,6 +166,10 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('order-tags');
   ipcMain.removeHandler('delete-tag');
   ipcMain.removeHandler('create-job');
+  ipcMain.removeHandler('load-duplicates-by-path');
+  ipcMain.removeHandler('merge-duplicates-by-path');
+  ipcMain.removeHandler('list-thumbnails');
+  ipcMain.removeHandler('regenerate-thumbnail');
   ipcMain.removeHandler('delete-file');
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
