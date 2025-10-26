@@ -114,6 +114,7 @@ export default function Thumbnails({ path }: { path: string }) {
                 <div style={{ position: 'absolute', inset: 8, right: 8 }}>
                   {fileType === FileTypes.Video ? (
                     <Video
+                      key={`${t.cache}-${version}`}
                       path={path}
                       initialTimestamp={0}
                       scaleMode="cover"
@@ -127,6 +128,7 @@ export default function Thumbnails({ path }: { path: string }) {
                     />
                   ) : (
                     <Image
+                      key={`${t.cache}-${version}`}
                       path={path}
                       cache={
                         t.cache as 'thumbnail_path_1200' | 'thumbnail_path_600'

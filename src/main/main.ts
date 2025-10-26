@@ -470,10 +470,14 @@ app.on('open-file', (event, path) => {
 
 app.on('ready', async () => {
   protocol.registerFileProtocol('gsm', (request, callback) => {
-    const url = request.url.replace('gsm:', '');
     try {
-      const decodedUrl = decodeURIComponent(url);
-      return callback(decodedUrl);
+      const parsed = new URL(request.url);
+      let filePath = decodeURIComponent(parsed.pathname);
+      // Normalize leading slash on Windows (e.g. /C:/path -> C:/path)
+      if (process.platform === 'win32' && filePath.startsWith('/')) {
+        filePath = filePath.slice(1);
+      }
+      return callback(filePath);
     } catch (error) {
       console.error(error);
       return callback('404');
