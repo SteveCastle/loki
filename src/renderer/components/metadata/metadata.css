@@ -10,6 +10,7 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  flex-wrap: wrap;
   gap: 1px;
   margin: 0 10px 10px 10px;
   border-radius: 2px;
@@ -28,6 +29,7 @@
   align-items: center;
   font-size: 0.6rem;
   font-weight: 800;
+  white-space: nowrap;
 }
 
 .Metadata .tabs .tab:hover {
@@ -49,8 +51,14 @@
   border: none;
   background-color: transparent;
   cursor: pointer;
-  height: 18px;
+  height: 14px;
   opacity: 0.8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  margin-left: 4px;
 }
 
 .follow:hover {
@@ -58,6 +66,11 @@
 }
 
 .follow img {
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
+}
+
+.thumbnails-container {
+  height: 100%;
+  overflow: scroll;
 }

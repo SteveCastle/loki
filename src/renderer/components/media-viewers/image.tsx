@@ -18,6 +18,7 @@ type Props = {
   orientation: 'portrait' | 'landscape' | 'unknown';
   cache?: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
   overRideCache?: boolean;
+  version?: number;
 };
 
 const fetchMediaPreview =
@@ -36,10 +37,11 @@ function ImageComponent({
   cache = false,
   orientation = 'unknown',
   overRideCache = false,
+  version = 0,
 }: Props) {
   const [error, setError] = useState<boolean>(false);
   const { data } = useQuery<string, Error>(
-    ['media', 'preview', path, cache],
+    ['media', 'preview', path, cache, version],
     fetchMediaPreview(path, cache)
   );
 
@@ -47,7 +49,7 @@ function ImageComponent({
   useEffect(() => {
     setError(false);
   }, [path]);
-  
+
   const imgStyle = useMemo(() => {
     if (scaleMode === 'cover' && coverSize.height && coverSize.width) {
       return { height: coverSize.height, width: coverSize.width };
@@ -57,13 +59,22 @@ function ImageComponent({
     }
     return {};
   }, [scaleMode, coverSize]);
-  
+
   const imgSrc = useMemo(() => {
-    return cache && !overRideCache
-      ? window.electron.url.format({ protocol: 'gsm', pathname: data })
-      : window.electron.url.format({ protocol: 'gsm', pathname: path });
-  }, [cache, overRideCache, data, path]);
-  
+    if (cache && !overRideCache) {
+      return window.electron.url.format({
+        protocol: 'gsm',
+        pathname: data,
+        search: version ? `?v=${version}` : undefined,
+      });
+    }
+    return window.electron.url.format({
+      protocol: 'gsm',
+      pathname: path,
+      search: version ? `?v=${version}` : undefined,
+    });
+  }, [cache, overRideCache, data, path, version]);
+
   if (error) {
     return <MediaErrorMsg path={path} />;
   }

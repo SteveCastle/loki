@@ -14,6 +14,7 @@ export default function Thumbnails({ path }: { path: string }) {
   const [thumbs, setThumbs] = useState<ThumbInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [regening, setRegening] = useState<string | null>(null);
+  const [version, setVersion] = useState(0);
 
   const fileType = useMemo(() => getFileType(path), [path]);
 
@@ -42,6 +43,7 @@ export default function Thumbnails({ path }: { path: string }) {
       await window.electron.regenerateThumbnail(path, cache);
       const results = await window.electron.listThumbnails(path);
       setThumbs(results);
+      setVersion((v) => v + 1);
     } catch (e) {
       console.error(e);
     } finally {
@@ -49,16 +51,27 @@ export default function Thumbnails({ path }: { path: string }) {
     }
   };
 
+  const handlePreviewLoaded: React.ReactEventHandler<
+    HTMLImageElement | HTMLVideoElement
+  > = async () => {
+    try {
+      const results = await window.electron.listThumbnails(path);
+      setThumbs(results);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const grid = useMemo(() => {
     return {
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
       gap: '12px',
       padding: '16px 24px',
       width: '100%',
-      height: '100%',
       overflow: 'auto',
       boxSizing: 'border-box' as const,
+      paddingBottom: '80px',
     };
   }, []);
 
@@ -109,6 +122,8 @@ export default function Thumbnails({ path }: { path: string }) {
                         t.cache as 'thumbnail_path_1200' | 'thumbnail_path_600'
                       }
                       startTime={0}
+                      version={version}
+                      handleLoad={handlePreviewLoaded}
                     />
                   ) : (
                     <Image
@@ -117,6 +132,8 @@ export default function Thumbnails({ path }: { path: string }) {
                         t.cache as 'thumbnail_path_1200' | 'thumbnail_path_600'
                       }
                       orientation={'landscape'}
+                      version={version}
+                      handleLoad={handlePreviewLoaded}
                     />
                   )}
                 </div>

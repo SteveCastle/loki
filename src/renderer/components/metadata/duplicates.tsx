@@ -117,7 +117,6 @@ export default function Duplicates({ basePath }: Props) {
       alignContent: 'start',
       gap: '12px',
       width: '100%',
-      height: '100%',
       overflow: 'auto',
       padding: '16px 24px',
       boxSizing: 'border-box' as const,

@@ -25,17 +25,17 @@ const tabs = [
     active: true,
   },
   {
-    key: 'thumbnails',
-    label: 'Thumbnails',
-    actions: [],
-    fileTypes: [FileTypes.Image, FileTypes.Video],
-    active: true,
-  },
-  {
     key: 'transcript',
     label: 'Transcript',
     fileTypes: [FileTypes.Audio, FileTypes.Video],
     actions: ['followMetadata'],
+    active: true,
+  },
+  {
+    key: 'thumbnails',
+    label: 'Thumbnails',
+    actions: [],
+    fileTypes: [FileTypes.Image, FileTypes.Video],
     active: true,
   },
   {
@@ -144,14 +144,14 @@ export default function Metadata() {
       <div className={`tab-content`}>
         {activeTabKey === 'tags' && item && <FileMetadata item={item} />}
         {activeTabKey === 'thumbnails' && item && (
-          <div style={{ height: '100%', overflow: 'hidden' }}>
+          <div className="thumbnails-container">
             <Thumbnails path={item.path} />
           </div>
         )}
         {activeTabKey === 'transcript' && <Transcript />}
         {activeTabKey === 'transformations' && <Transformations />}
         {activeTabKey === 'duplicates' && item && (
-          <div style={{ height: '100%', overflow: 'hidden' }}>
+          <div className="thumbnails-container">
             <Duplicates basePath={item.path} />
           </div>
         )}

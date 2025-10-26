@@ -7,8 +7,8 @@
 
 /* Inline variant for positioning within a header/action bar */
 .GenerateTranscript.inline {
-  height: auto;
   justify-content: flex-start;
+  width: 100%;
 }
 
 .GenerateTranscript.centered {
@@ -26,6 +26,7 @@
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
+  width: 100%;
   transition: background-color 0.2s ease-in-out;
 }
 
