@@ -4,6 +4,7 @@ import React, {
   useState,
   useCallback,
   useMemo,
+  useLayoutEffect,
 } from 'react';
 import { useSelector } from '@xstate/react';
 import { Tooltip } from 'react-tooltip';
@@ -664,28 +665,64 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
   // Local State
   const [activeTab, setActiveTab] = useState<TabType>('imageOptions');
   const paletteRef = useRef<HTMLDivElement>(null);
-  const { width, height } = useComponentSize(paletteRef); // Size of the palette itself
+  const { width, height } = useComponentSize(paletteRef); // Observe size changes
+  const [computedPosition, setComputedPosition] = useState<{
+    left: number;
+    top: number;
+  }>({ left: -9999, top: -9999 });
+  const [positionReady, setPositionReady] = useState(false);
 
-  // Positioning Logic
+  // Positioning Logic - clamp within viewport with margins using latest measured size
   const getMenuPosition = useCallback(
-    (x: number, y: number) => {
-      if (!paletteRef.current) return { left: x, top: y }; // Default if ref not ready
-
-      const windowWidth = window.innerWidth;
-      const windowHeight = window.innerHeight;
-      const paletteWidth = Math.max(width, 400); // Use measured or min width
-      const paletteHeight = Math.max(height, 200); // Use measured or min height
-
-      const xOverlap = x + paletteWidth - windowWidth;
-      const yOverlap = y + paletteHeight - windowHeight;
-
-      return {
-        left: xOverlap > 0 ? Math.max(0, x - xOverlap - 10) : x, // Adjust slightly off edge
-        top: yOverlap > 0 ? Math.max(0, y - yOverlap - 10) : y, // Adjust slightly off edge
-      };
+    (x: number, y: number, w: number, h: number) => {
+      const margin = 8;
+      const maxLeft = Math.max(margin, window.innerWidth - w - margin);
+      const maxTop = Math.max(margin, window.innerHeight - h - margin);
+      const clampedLeft = Math.min(Math.max(x, margin), maxLeft);
+      const clampedTop = Math.min(Math.max(y, margin), maxTop);
+      return { left: clampedLeft, top: clampedTop };
     },
-    [width, height]
-  ); // Recalculate only when size changes
+    []
+  );
+
+  const recomputePosition = useCallback(() => {
+    const element = paletteRef.current;
+    if (!element) return;
+    // Use bounding rect for most accurate current size; fall back to observed size or minimums
+    const rect = element.getBoundingClientRect();
+    const paletteWidth = Math.max(rect.width || 0, width || 0, 400);
+    const paletteHeight = Math.max(rect.height || 0, height || 0, 200);
+    const px = typeof position?.x === 'number' ? position.x : 0;
+    const py = typeof position?.y === 'number' ? position.y : 0;
+    const next = getMenuPosition(px, py, paletteWidth, paletteHeight);
+    setComputedPosition(next);
+    setPositionReady(true);
+  }, [getMenuPosition, position?.x, position?.y, width, height]);
+
+  // Recompute after mount/show, on content resize, and on window resize
+  useLayoutEffect(() => {
+    if (!display) return;
+    recomputePosition();
+  }, [display, recomputePosition]);
+
+  React.useEffect(() => {
+    if (!display) return;
+    const onResize = () => recomputePosition();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, [display, recomputePosition]);
+
+  // Reset readiness when hidden so first paint after reopen is measured/positioned
+  React.useEffect(() => {
+    if (!display) {
+      setPositionReady(false);
+      setComputedPosition({ left: -9999, top: -9999 });
+    }
+  }, [display]);
 
   // Close on Click Outside
   useOnClickOutside(paletteRef, () => {
@@ -748,7 +785,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
     return null;
   }
 
-  const style = getMenuPosition(position.x, position.y);
+  const style: React.CSSProperties = positionReady
+    ? {
+        left: computedPosition.left,
+        top: computedPosition.top,
+        visibility: 'visible',
+      }
+    : { left: -9999, top: -9999, visibility: 'hidden' };
 
   return (
     <div
