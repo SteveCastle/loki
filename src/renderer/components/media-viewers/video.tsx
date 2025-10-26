@@ -25,6 +25,7 @@ type Props = {
   orientation: 'portrait' | 'landscape' | 'unknown';
   onTimestampChange?: (timestamp: number) => void;
   cache?: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
+  version?: number;
 };
 
 const fetchMediaPreview =
@@ -64,6 +65,7 @@ export function Video({
     return;
   },
   cache = false,
+  version = 0,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const { timeStamp, loopLength, loopStartTime, playing } = useSelector(
@@ -77,7 +79,7 @@ export function Video({
   );
 
   const { data, isLoading } = useQuery<string, Error>(
-    ['media', 'preview', path, cache, startTime],
+    ['media', 'preview', path, cache, startTime, version],
     fetchMediaPreview(path, cache, startTime)
   );
 
@@ -246,6 +248,9 @@ export function Video({
       }
       ref={mediaRef}
       className={`Video ${scaleMode} ${orientation}`}
+      onLoadedData={(e) => {
+        handleLoad && handleLoad(e);
+      }}
       onError={() => {
         setError(true);
       }}
@@ -253,7 +258,11 @@ export function Video({
         e.preventDefault();
       }}
       muted={!playSound}
-      src={window.electron.url.format({ protocol: 'gsm', pathname: data })}
+      src={window.electron.url.format({
+        protocol: 'gsm',
+        pathname: data,
+        search: version ? `?v=${version}` : undefined,
+      })}
       controls={false}
       controlsList={'nodownload nofullscreen'}
       autoPlay
