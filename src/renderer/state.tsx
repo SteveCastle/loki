@@ -1477,6 +1477,9 @@ const libraryMachine = createMachine(
                         ...context,
                         dbQuery: { tags: [event.data.tag] },
                       });
+                      // Invalidate persisted library snapshot to avoid query/library mismatch
+                      window.electron.store.set('persistedLibrary', null);
+                      window.electron.store.set('persistedCursor', null);
                     },
                   ],
                 },
@@ -1495,6 +1498,9 @@ const libraryMachine = createMachine(
                       ...context,
                       textFilter: event.data.textFilter,
                     });
+                    // Invalidate persisted library snapshot to avoid query/library mismatch
+                    window.electron.store.set('persistedLibrary', null);
+                    window.electron.store.set('persistedCursor', null);
                   },
                 ],
               },
@@ -1706,6 +1712,9 @@ const libraryMachine = createMachine(
                         ...context,
                         dbQuery: { tags: Object.keys(activeTags) },
                       });
+                      // Invalidate persisted library snapshot to avoid query/library mismatch
+                      window.electron.store.set('persistedLibrary', null);
+                      window.electron.store.set('persistedCursor', null);
                     },
                   ],
                 },
@@ -1728,6 +1737,9 @@ const libraryMachine = createMachine(
                         ...context,
                         dbQuery: { tags: [] },
                       });
+                      // Invalidate persisted library snapshot to avoid query/library mismatch
+                      window.electron.store.set('persistedLibrary', null);
+                      window.electron.store.set('persistedCursor', null);
                     },
                   ],
                 },
@@ -1748,6 +1760,9 @@ const libraryMachine = createMachine(
                         ...context,
                         textFilter: event.data.textFilter,
                       });
+                      // Invalidate persisted library snapshot to avoid query/library mismatch
+                      window.electron.store.set('persistedLibrary', null);
+                      window.electron.store.set('persistedCursor', null);
                     },
                   ],
                 },
@@ -1766,6 +1781,9 @@ const libraryMachine = createMachine(
                         ...context,
                         textFilter: event.data.textFilter,
                       });
+                      // Invalidate persisted library snapshot to avoid query/library mismatch
+                      window.electron.store.set('persistedLibrary', null);
+                      window.electron.store.set('persistedCursor', null);
                     },
                   ],
                 },
@@ -1987,6 +2005,9 @@ const libraryMachine = createMachine(
                       ...context,
                       dbQuery: { tags: [] },
                     });
+                    // Invalidate persisted library snapshot to avoid query/library mismatch
+                    window.electron.store.set('persistedLibrary', null);
+                    window.electron.store.set('persistedCursor', null);
                   },
                 ],
               },
@@ -2006,6 +2027,9 @@ const libraryMachine = createMachine(
                       ...context,
                       textFilter: event.data.textFilter,
                     });
+                    // Invalidate persisted library snapshot to avoid query/library mismatch
+                    window.electron.store.set('persistedLibrary', null);
+                    window.electron.store.set('persistedCursor', null);
                   },
                 ],
               },
@@ -2151,6 +2175,9 @@ const libraryMachine = createMachine(
                         ...context,
                         dbQuery: { tags: Object.keys(activeTags) },
                       });
+                      // Invalidate persisted library snapshot to avoid query/library mismatch
+                      window.electron.store.set('persistedLibrary', null);
+                      window.electron.store.set('persistedCursor', null);
                     },
                   ],
                 },
@@ -2173,6 +2200,9 @@ const libraryMachine = createMachine(
                         ...context,
                         dbQuery: { tags: [] },
                       });
+                      // Invalidate persisted library snapshot to avoid query/library mismatch
+                      window.electron.store.set('persistedLibrary', null);
+                      window.electron.store.set('persistedCursor', null);
                     },
                   ],
                 },
