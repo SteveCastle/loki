@@ -334,10 +334,25 @@
       "icon": "assets/icon.png"
     },
     "linux": {
+      "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+      "executableName": "lowkey-media-viewer",
+      "category": "AudioVideo",
+      "icon": "assets/icon.png",
       "target": [
-        "AppImage"
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
-      "category": "Development"
+      "desktop": {
+        "Name": "Lowkey Media Viewer",
+        "Comment": "Fast media library and viewer",
+        "Categories": "AudioVideo;Graphics;Utility;"
+      },
+      "synopsis": "Fast media library and viewer"
     },
     "directories": {
       "app": "release/app",
@@ -354,6 +369,8 @@
         ]
       }
     ],
+    "compression": "maximum",
+    "removePackageScripts": true,
     "publish": {
       "provider": "github",
       "owner": "stevecastle",
