@@ -1,5 +1,4 @@
 const fs = require('fs');
-const sharp = require('sharp');
 const path = require('path');
 const { promisify } = require('util');
 const execFile = promisify(require('child_process').execFile);
@@ -24,18 +23,7 @@ function fileLog(...args) {
   }
 }
 
-// Reduce libvips caching and limit concurrency to avoid rare assertion failures
-try {
-  sharp.cache({ files: 0, memory: 0, items: 0 });
-  sharp.concurrency(1);
-} catch (_) {
-  try {
-    log.error('Error configuring sharp:', _);
-  } catch (e) {
-    void 0;
-  }
-  fileLog('Error configuring sharp', String(_?.message || _));
-}
+// No sharp/libvips usage in this worker (ffmpeg-only)
 
 const isDev = process.env.NODE_ENV === 'development';
 const ffmpegPath = isDev
@@ -107,40 +95,36 @@ async function createThumbnail(filePath, basePath, cache, timeStamp) {
 
 async function createImageThumbnail(filePath, thumbnailFullPath, cache) {
   fileLog('createImageThumbnail:start', { filePath, out: thumbnailFullPath });
-  const ext = path.extname(filePath).toLowerCase();
-  const supportsSvgInput =
-    sharp.format && sharp.format.svg && sharp.format.svg.input;
-  if (ext === '.svg' && !supportsSvgInput) {
-    fileLog('createImageThumbnail:no-svg-support');
-    throw new Error('SVG input not supported by current libvips build');
-  }
   const stat = await fs.promises.stat(filePath);
   if (!stat.isFile() || stat.size === 0) {
     fileLog('createImageThumbnail:invalid-file');
     throw new Error('Invalid or empty image file');
   }
   const targetSize = cacheSizes[cache] || 600;
+  const scaleExpr = `scale='min(${targetSize},iw)':-2:force_original_aspect_ratio=decrease`;
+  const ffmpegArgs = [
+    '-y',
+    '-i',
+    filePath,
+    '-vf',
+    scaleExpr,
+    '-frames:v',
+    '1',
+    thumbnailFullPath,
+  ];
   try {
-    await sharp(filePath).resize(targetSize).webp().toFile(thumbnailFullPath);
-    fileLog('createImageThumbnail:sharp-ok');
-  } catch (err) {
+    await execFile(ffmpegPath, ffmpegArgs);
+  } catch (error) {
     try {
-      log.error(
-        'Sharp image thumbnail failed, falling back to ffmpeg',
-        JSON.stringify({ filePath, thumbnailFullPath, targetSize })
-      );
-      log.error(err?.stack || err?.message || String(err));
+      log.error('FFmpeg image thumbnail failed:', filePath);
+      log.error(error?.stack || error?.message || String(error));
     } catch (e) {
       void 0;
     }
-    fileLog('createImageThumbnail:sharp-failed', String(err?.message || err));
-    // Fallback to ffmpeg-based conversion for images if sharp fails
-    await generateImageThumbnailWithFFmpeg(
-      filePath,
-      thumbnailFullPath,
-      targetSize
-    );
+    fileLog('createImageThumbnail:error', String(error?.message || error));
+    throw error;
   }
+  fileLog('createImageThumbnail:done');
 }
 
 async function getVideoMetadata(videoFilePath) {
@@ -167,44 +151,7 @@ async function getVideoMetadata(videoFilePath) {
   }
 }
 
-async function generateImageThumbnailWithFFmpeg(
-  imageFilePath,
-  thumbnailFullPath,
-  targetSize
-) {
-  fileLog('generateImageThumbnailWithFFmpeg:start', {
-    imageFilePath,
-    out: thumbnailFullPath,
-    targetSize,
-  });
-  const scaleExpr = `scale='min(${targetSize},iw)':-2:force_original_aspect_ratio=decrease`;
-  const ffmpegArgs = [
-    '-y',
-    '-i',
-    imageFilePath,
-    '-vf',
-    scaleExpr,
-    '-frames:v',
-    '1',
-    thumbnailFullPath,
-  ];
-  try {
-    await execFile(ffmpegPath, ffmpegArgs);
-  } catch (error) {
-    try {
-      log.error('FFmpeg image fallback failed:', imageFilePath);
-      log.error(error?.stack || error?.message || String(error));
-    } catch (e) {
-      void 0;
-    }
-    fileLog(
-      'generateImageThumbnailWithFFmpeg:error',
-      String(error?.message || error)
-    );
-    throw error;
-  }
-  fileLog('generateImageThumbnailWithFFmpeg:done');
-}
+// Removed generateImageThumbnailWithFFmpeg helper; inlined in createImageThumbnail
 
 async function generateVideoThumbnail(
   videoFilePath,
