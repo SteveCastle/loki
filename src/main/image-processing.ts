@@ -15,11 +15,18 @@ function asyncCreateThumbnail(
   const existing = inFlightThumbnails.get(key);
   if (existing) return existing;
 
-  const promise = pool
-    .exec('createThumbnail', [filePath, basePath, cache, timeStamp])
-    .finally(() => {
+  const promise = Promise.resolve(
+    pool.exec('createThumbnail', [filePath, basePath, cache, timeStamp])
+  ).then(
+    (result: string) => {
       inFlightThumbnails.delete(key);
-    });
+      return result;
+    },
+    (error: unknown) => {
+      inFlightThumbnails.delete(key);
+      throw error;
+    }
+  );
   inFlightThumbnails.set(key, promise);
   return promise;
 }
