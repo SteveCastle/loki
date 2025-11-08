@@ -1,11 +1,21 @@
 const workerpool = require('workerpool');
 const log = require('electron-log');
+const path = require('path');
+const { app } = require('electron');
 
 // Use separate processes to isolate libvips (sharp) from Electron/worker-threads
+const thumbLogPath = path.join(app.getPath('userData'), 'thumbnail-worker.log');
 const pool = workerpool.pool(__dirname + '/image-processing-worker.js', {
   workerType: 'process',
   minWorkers: 1,
   maxWorkers: 1,
+  forkOpts: {
+    env: {
+      ...process.env,
+      THUMB_LOG: thumbLogPath,
+      NODE_NO_WARNINGS: '1',
+    },
+  },
 });
 
 // Ensure workers terminate on exit/reload
@@ -61,6 +71,7 @@ function asyncCreateThumbnail(
           JSON.stringify({ filePath, basePath, cache, timeStamp }),
           error instanceof Error ? error.stack || error.message : String(error)
         );
+        log.error?.('[thumb] worker log path:', thumbLogPath);
       } catch (_) {}
       throw error;
     }
