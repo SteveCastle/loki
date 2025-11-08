@@ -1,11 +1,18 @@
 const fs = require('fs');
-const os = require('os');
 const sharp = require('sharp');
 const path = require('path');
 const { promisify } = require('util');
 const execFile = promisify(require('child_process').execFile);
 const crypto = require('crypto');
 const workerpool = require('workerpool');
+
+// Reduce libvips caching and limit concurrency to avoid rare assertion failures
+try {
+  sharp.cache({ files: 0, memory: 0, items: 0 });
+  sharp.concurrency(1);
+} catch (_) {
+  console.error('Error configuring sharp:', _);
+}
 
 const isDev = process.env.NODE_ENV === 'development';
 const ffmpegPath = isDev
@@ -28,6 +35,7 @@ const FileTypes = {
 };
 
 const Extensions = {
+  // svg is conditionally supported; see getFileType
   Image: /\.(jpg|jpeg|png|bmp|svg|jfif|pjpeg|pjp|webp)$/i,
   Video: /\.(mp4|webm|ogg|mkv|mov|gif)$/i,
   Audio: /\.(mp3|wav)$/i,
@@ -72,11 +80,18 @@ async function createThumbnail(filePath, basePath, cache, timeStamp) {
 }
 
 async function createImageThumbnail(filePath, thumbnailFullPath, cache) {
-  const imageBuffer = await fs.promises.readFile(filePath);
-  await sharp(imageBuffer)
-    .resize(cacheSizes[cache])
-    .webp()
-    .toFile(thumbnailFullPath);
+  const ext = path.extname(filePath).toLowerCase();
+  const supportsSvgInput =
+    sharp.format && sharp.format.svg && sharp.format.svg.input;
+  if (ext === '.svg' && !supportsSvgInput) {
+    throw new Error('SVG input not supported by current libvips build');
+  }
+  const stat = await fs.promises.stat(filePath);
+  if (!stat.isFile() || stat.size === 0) {
+    throw new Error('Invalid or empty image file');
+  }
+  const targetSize = cacheSizes[cache] || 600;
+  await sharp(filePath).resize(targetSize).webp().toFile(thumbnailFullPath);
 }
 
 async function getVideoMetadata(videoFilePath) {
