@@ -11,6 +11,18 @@ try {
 } catch (_) {
   log = console;
 }
+const thumbLogPath = process.env.THUMB_LOG || '';
+function fileLog(...args) {
+  try {
+    if (!thumbLogPath) return;
+    const line = `[${new Date().toISOString()}] ${args
+      .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
+      .join(' ')}\n`;
+    fs.appendFileSync(thumbLogPath, line);
+  } catch (_) {
+    // best-effort
+  }
+}
 
 // Reduce libvips caching and limit concurrency to avoid rare assertion failures
 try {
@@ -22,6 +34,7 @@ try {
   } catch (e) {
     void 0;
   }
+  fileLog('Error configuring sharp', String(_?.message || _));
 }
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -68,6 +81,7 @@ const cacheSizes = {
 };
 
 async function createThumbnail(filePath, basePath, cache, timeStamp) {
+  fileLog('createThumbnail:start', { filePath, basePath, cache, timeStamp });
   const thumbnailBasePath = path.join(basePath, cache);
   await fs.promises.mkdir(thumbnailBasePath, { recursive: true });
 
@@ -83,26 +97,32 @@ async function createThumbnail(filePath, basePath, cache, timeStamp) {
   } else if (fileType === FileTypes.Image) {
     await createImageThumbnail(filePath, thumbnailFullPath, cache);
   } else {
+    fileLog('createThumbnail:unsupported', { filePath });
     throw new Error('Unsupported file type');
   }
 
+  fileLog('createThumbnail:done', { out: thumbnailFullPath });
   return thumbnailFullPath;
 }
 
 async function createImageThumbnail(filePath, thumbnailFullPath, cache) {
+  fileLog('createImageThumbnail:start', { filePath, out: thumbnailFullPath });
   const ext = path.extname(filePath).toLowerCase();
   const supportsSvgInput =
     sharp.format && sharp.format.svg && sharp.format.svg.input;
   if (ext === '.svg' && !supportsSvgInput) {
+    fileLog('createImageThumbnail:no-svg-support');
     throw new Error('SVG input not supported by current libvips build');
   }
   const stat = await fs.promises.stat(filePath);
   if (!stat.isFile() || stat.size === 0) {
+    fileLog('createImageThumbnail:invalid-file');
     throw new Error('Invalid or empty image file');
   }
   const targetSize = cacheSizes[cache] || 600;
   try {
     await sharp(filePath).resize(targetSize).webp().toFile(thumbnailFullPath);
+    fileLog('createImageThumbnail:sharp-ok');
   } catch (err) {
     try {
       log.error(
@@ -113,6 +133,7 @@ async function createImageThumbnail(filePath, thumbnailFullPath, cache) {
     } catch (e) {
       void 0;
     }
+    fileLog('createImageThumbnail:sharp-failed', String(err?.message || err));
     // Fallback to ffmpeg-based conversion for images if sharp fails
     await generateImageThumbnailWithFFmpeg(
       filePath,
@@ -141,6 +162,7 @@ async function getVideoMetadata(videoFilePath) {
     } catch (e) {
       void 0;
     }
+    fileLog('getVideoMetadata:error', String(error?.message || error));
     throw error;
   }
 }
@@ -150,6 +172,11 @@ async function generateImageThumbnailWithFFmpeg(
   thumbnailFullPath,
   targetSize
 ) {
+  fileLog('generateImageThumbnailWithFFmpeg:start', {
+    imageFilePath,
+    out: thumbnailFullPath,
+    targetSize,
+  });
   const scaleExpr = `scale='min(${targetSize},iw)':-2:force_original_aspect_ratio=decrease`;
   const ffmpegArgs = [
     '-y',
@@ -170,8 +197,13 @@ async function generateImageThumbnailWithFFmpeg(
     } catch (e) {
       void 0;
     }
+    fileLog(
+      'generateImageThumbnailWithFFmpeg:error',
+      String(error?.message || error)
+    );
     throw error;
   }
+  fileLog('generateImageThumbnailWithFFmpeg:done');
 }
 
 async function generateVideoThumbnail(
@@ -180,6 +212,11 @@ async function generateVideoThumbnail(
   thumbnailFullPath,
   useMiddle
 ) {
+  fileLog('generateVideoThumbnail:start', {
+    videoFilePath,
+    out: thumbnailFullPath,
+    t: thumbnailTime,
+  });
   const ffmpegArgs = [
     '-y',
     useMiddle ? '-ss' : '-i',
@@ -203,8 +240,10 @@ async function generateVideoThumbnail(
     } catch (e) {
       void 0;
     }
+    fileLog('generateVideoThumbnail:error', String(error?.message || error));
     throw error;
   }
+  fileLog('generateVideoThumbnail:done');
 }
 
 async function createVideoThumbnail(
@@ -231,6 +270,7 @@ async function createVideoThumbnail(
     } catch (e) {
       void 0;
     }
+    fileLog('createVideoThumbnail:error', String(err?.message || err));
     throw err;
   }
 }
@@ -249,6 +289,7 @@ process.on('uncaughtException', (err) => {
   } catch (_) {
     void 0;
   }
+  fileLog('uncaughtException', String(err?.stack || err?.message || err));
   process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
@@ -257,5 +298,9 @@ process.on('unhandledRejection', (reason) => {
   } catch (_) {
     void 0;
   }
+  fileLog('unhandledRejection', String(reason));
   process.exit(1);
+});
+process.on('exit', (code) => {
+  fileLog('worker:exit', String(code));
 });
