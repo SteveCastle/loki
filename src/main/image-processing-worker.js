@@ -5,13 +5,23 @@ const { promisify } = require('util');
 const execFile = promisify(require('child_process').execFile);
 const crypto = require('crypto');
 const workerpool = require('workerpool');
+let log;
+try {
+  log = require('electron-log');
+} catch (_) {
+  log = console;
+}
 
 // Reduce libvips caching and limit concurrency to avoid rare assertion failures
 try {
   sharp.cache({ files: 0, memory: 0, items: 0 });
   sharp.concurrency(1);
 } catch (_) {
-  console.error('Error configuring sharp:', _);
+  try {
+    log.error('Error configuring sharp:', _);
+  } catch (e) {
+    void 0;
+  }
 }
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -91,7 +101,25 @@ async function createImageThumbnail(filePath, thumbnailFullPath, cache) {
     throw new Error('Invalid or empty image file');
   }
   const targetSize = cacheSizes[cache] || 600;
-  await sharp(filePath).resize(targetSize).webp().toFile(thumbnailFullPath);
+  try {
+    await sharp(filePath).resize(targetSize).webp().toFile(thumbnailFullPath);
+  } catch (err) {
+    try {
+      log.error(
+        'Sharp image thumbnail failed, falling back to ffmpeg',
+        JSON.stringify({ filePath, thumbnailFullPath, targetSize })
+      );
+      log.error(err?.stack || err?.message || String(err));
+    } catch (e) {
+      void 0;
+    }
+    // Fallback to ffmpeg-based conversion for images if sharp fails
+    await generateImageThumbnailWithFFmpeg(
+      filePath,
+      thumbnailFullPath,
+      targetSize
+    );
+  }
 }
 
 async function getVideoMetadata(videoFilePath) {
@@ -107,7 +135,41 @@ async function getVideoMetadata(videoFilePath) {
     ]);
     return JSON.parse(stdout);
   } catch (error) {
-    console.error('Error getting video metadata:', error);
+    try {
+      log.error('Error getting video metadata:', videoFilePath);
+      log.error(error?.stack || error?.message || String(error));
+    } catch (e) {
+      void 0;
+    }
+    throw error;
+  }
+}
+
+async function generateImageThumbnailWithFFmpeg(
+  imageFilePath,
+  thumbnailFullPath,
+  targetSize
+) {
+  const scaleExpr = `scale='min(${targetSize},iw)':-2:force_original_aspect_ratio=decrease`;
+  const ffmpegArgs = [
+    '-y',
+    '-i',
+    imageFilePath,
+    '-vf',
+    scaleExpr,
+    '-frames:v',
+    '1',
+    thumbnailFullPath,
+  ];
+  try {
+    await execFile(ffmpegPath, ffmpegArgs);
+  } catch (error) {
+    try {
+      log.error('FFmpeg image fallback failed:', imageFilePath);
+      log.error(error?.stack || error?.message || String(error));
+    } catch (e) {
+      void 0;
+    }
     throw error;
   }
 }
@@ -135,7 +197,12 @@ async function generateVideoThumbnail(
   try {
     await execFile(ffmpegPath, ffmpegArgs);
   } catch (error) {
-    console.error('Error generating video thumbnail:', error);
+    try {
+      log.error('Error generating video thumbnail:', thumbnailFullPath);
+      log.error(error?.stack || error?.message || String(error));
+    } catch (e) {
+      void 0;
+    }
     throw error;
   }
 }
@@ -158,11 +225,37 @@ async function createVideoThumbnail(
       useMiddle
     );
   } catch (err) {
-    console.error('Error during thumbnail generation', err);
+    try {
+      log.error('Error during thumbnail generation', videoFilePath);
+      log.error(err?.stack || err?.message || String(err));
+    } catch (e) {
+      void 0;
+    }
     throw err;
   }
 }
 
 workerpool.worker({
   createThumbnail: createThumbnail,
+});
+
+// Ensure unexpected errors get logged
+process.on('uncaughtException', (err) => {
+  try {
+    log.error(
+      'UncaughtException in image-processing-worker:',
+      err?.stack || err?.message || String(err)
+    );
+  } catch (_) {
+    void 0;
+  }
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  try {
+    log.error('UnhandledRejection in image-processing-worker:', reason);
+  } catch (_) {
+    void 0;
+  }
+  process.exit(1);
 });
