@@ -102,12 +102,17 @@ async function createImageThumbnail(filePath, thumbnailFullPath, cache) {
   }
   const targetSize = cacheSizes[cache] || 600;
   const scaleExpr = `scale='min(${targetSize},iw)':-2:force_original_aspect_ratio=decrease`;
+  // Explicitly set muxer and codec so ffmpeg can write even without a file extension
   const ffmpegArgs = [
     '-y',
     '-i',
     filePath,
     '-vf',
     scaleExpr,
+    '-f',
+    'image2',
+    '-vcodec',
+    'png',
     '-frames:v',
     '1',
     thumbnailFullPath,
