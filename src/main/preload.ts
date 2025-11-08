@@ -28,7 +28,6 @@ export type Channels =
   | 'add-media'
   | 'update-elo'
   | 'update-description'
-  | 'copy-file-into-clipboard'
   | 'load-taxonomy'
   | 'get-tag-count'
   | 'load-file-metadata'

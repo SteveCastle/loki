@@ -142,7 +142,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-media-by-tags');
   ipcMain.removeHandler('load-media-by-description-search');
   ipcMain.removeHandler('load-tags-by-media-path');
-  ipcMain.removeHandler('copy-file-into-clipboard');
   ipcMain.removeHandler('load-taxonomy');
   ipcMain.removeHandler('get-tag-count');
   ipcMain.removeHandler('create-tag');
@@ -192,10 +191,6 @@ ipcMain.handle('load-db', async (event, args) => {
   );
   ipcMain.handle('update-elo', mediaModule.updateElo(db));
   ipcMain.handle('update-description', mediaModule.updateDescription(db));
-  ipcMain.handle(
-    'copy-file-into-clipboard',
-    mediaModule.copyFileIntoClipboard()
-  );
   ipcMain.handle('delete-file', mediaModule.deleteMedia(db));
   ipcMain.handle(
     'load-duplicates-by-path',

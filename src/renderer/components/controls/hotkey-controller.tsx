@@ -473,44 +473,6 @@ export default function HotKeyController() {
       },
       up: () => {},
     },
-    copyFile: {
-      down: (e) => {
-        e.preventDefault();
-        const copyContent = async (paths: string[]) => {
-          try {
-            console.log('ITEM PATH', paths);
-            await window.electron.ipcRenderer.invoke(
-              'copy-file-into-clipboard',
-              [paths]
-            );
-            console.log('Content copied to clipboard');
-          } catch (err) {
-            console.error('Failed to copy: ', err);
-          }
-        };
-        copyContent([item.path]);
-      },
-      up: () => {},
-    },
-    copyAllSelectedFiles: {
-      down: (e) => {
-        e.preventDefault();
-        const copyContent = async (paths: string[]) => {
-          try {
-            console.log('ITEM PATH', paths);
-            await window.electron.ipcRenderer.invoke(
-              'copy-file-into-clipboard',
-              [paths]
-            );
-            console.log('Content copied to clipboard');
-          } catch (err) {
-            console.error('Failed to copy: ', err);
-          }
-        };
-        copyContent(filteredLibrary.map((item: Item) => item.path));
-      },
-      up: () => {},
-    },
     deleteFile: {
       down: (e) => {
         e.preventDefault();
