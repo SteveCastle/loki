@@ -22,6 +22,7 @@ interface Toast {
   title: string;
   message?: string;
   timestamp: number;
+  durationMs?: number;
 }
 
 interface JobToastProps {
@@ -153,17 +154,36 @@ interface ActionToastProps {
 }
 
 const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
-  useEffect(() => {
-    // Auto-dismiss action toasts after 4 seconds
-    const timer = setTimeout(() => {
+  const [isClosing, setIsClosing] = useState(false);
+  const clearedRef = useRef(false);
+
+  const handleClear = () => {
+    if (clearedRef.current) return;
+    clearedRef.current = true;
+    setIsClosing(true);
+    setTimeout(() => {
       onClear();
-    }, 4000);
+    }, 250);
+  };
+
+  useEffect(() => {
+    // Auto-dismiss action toasts after specified duration or default 4 seconds
+    const timer = setTimeout(
+      () => {
+        handleClear();
+      },
+      typeof toast.durationMs === 'number' ? toast.durationMs : 4000
+    );
 
     return () => clearTimeout(timer);
-  }, [onClear]);
+  }, [toast.durationMs]);
 
   return (
-    <div className={`toast action-toast ${toast.type}`}>
+    <div
+      className={`toast action-toast ${toast.type} ${
+        isClosing ? 'closing' : ''
+      }`}
+    >
       <div className="toast-content">
         <div className={`toast-indicator ${toast.type}`}></div>
         <div className="toast-text">
@@ -173,7 +193,7 @@ const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
           )}
         </div>
       </div>
-      <div className="toast-close" onClick={onClear}>
+      <div className="toast-close" onClick={handleClear}>
         ×
       </div>
     </div>

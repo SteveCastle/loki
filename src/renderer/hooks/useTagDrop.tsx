@@ -89,6 +89,17 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
             );
             targetPaths = activeLibrary.map((i: Item) => i.path);
           }
+          if (applyTagToAll && targetPaths.length > 1) {
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: {
+                type: 'info',
+                title: `Applying "${tag.label}" to ${targetPaths.length} items`,
+                message: 'Bulk tagging in progress…',
+                durationMs: 3000,
+              },
+            });
+          }
           await window.electron.ipcRenderer.invoke('create-assignment', [
             targetPaths,
             tag.label,
