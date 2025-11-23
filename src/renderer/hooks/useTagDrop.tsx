@@ -89,6 +89,15 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
             );
             targetPaths = activeLibrary.map((i: Item) => i.path);
           }
+
+          console.log(
+            'createAssignment',
+            targetPaths,
+            tag.label,
+            tag.category,
+            location === 'DETAIL' ? actualVideoTime : null,
+            applyTagPreview
+          );
           await window.electron.ipcRenderer.invoke('create-assignment', [
             targetPaths,
             tag.label,
@@ -105,7 +114,7 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
             queryKey: ['taxonomy', 'tag', tag.label],
           });
           queryClient.invalidateQueries({
-            queryKey: ['tags-by-path', item.path],
+            queryKey: ['tags-by-path'],
           });
         }
         if (isDroppedTag(droppedItem) && item.path) {
