@@ -694,6 +694,7 @@ const libraryMachine = createMachine(
                   title: event.data.title,
                   message: event.data.message,
                   timestamp: Date.now(),
+                  durationMs: event.data.durationMs,
                 };
                 return [...context.toasts, newToast];
               },

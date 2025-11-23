@@ -25,6 +25,7 @@
   animation: slideIn 0.3s ease-out;
   min-height: 3rem;
   gap: 0.75rem;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 @keyframes slideIn {
@@ -36,6 +37,11 @@
     transform: translateX(0);
     opacity: 0.95;
   }
+}
+
+.toast.closing {
+  opacity: 0;
+  transform: translateY(6px);
 }
 
 .toast-content {
@@ -142,12 +148,7 @@
 }
 
 .loading-animation.started {
-  background: linear-gradient(
-    180deg,
-    #45c07a 25%,
-    #45c07a 50%,
-    #45c07a 75%
-  );
+  background: linear-gradient(180deg, #45c07a 25%, #45c07a 50%, #45c07a 75%);
   animation: loading 1s infinite ease-in-out;
 }
 
