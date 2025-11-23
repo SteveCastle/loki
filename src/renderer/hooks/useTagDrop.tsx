@@ -105,7 +105,7 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
             queryKey: ['taxonomy', 'tag', tag.label],
           });
           queryClient.invalidateQueries({
-            queryKey: ['tags-by-path', item.path],
+            queryKey: ['tags-by-path'],
           });
         }
         if (isDroppedTag(droppedItem) && item.path) {
