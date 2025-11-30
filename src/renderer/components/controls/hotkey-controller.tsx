@@ -598,9 +598,10 @@ export default function HotKeyController() {
     const keys: string[] = [mainKey === 'space' ? ' ' : mainKey];
 
     // Add modifier keys in the format expected by the existing system
-    // Note: We don't add shift because e.key already gives us the shifted character (e.g., "!" for Shift+1)
+    // Order must match the hotkey configuration format: key+alt+control+shift
     if (e.altKey) keys.push('alt');
     if (e.ctrlKey || e.metaKey) keys.push('control'); // Handle both Ctrl and Cmd
+    if (e.shiftKey) keys.push('shift');
 
     const keyCombo = keys.join('+');
 
