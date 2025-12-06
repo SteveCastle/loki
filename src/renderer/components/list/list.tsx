@@ -59,12 +59,10 @@ export function List() {
   ]);
 
   console.log('rendering list');
-  // Read initial scroll position once
-  const initialScrollPositionRef = useRef(0);
-  useEffect(() => {
-    initialScrollPositionRef.current =
-      libraryService.getSnapshot().context.scrollPosition;
-  }, [libraryService]);
+  // Read initial scroll position synchronously on mount (not in useEffect which runs after render)
+  const initialScrollPositionRef = useRef(
+    libraryService.getSnapshot().context.scrollPosition
+  );
   const cursor = useSelector(
     libraryService,
     (state) => state.context.cursor,
@@ -190,17 +188,17 @@ function VirtualGrid({
       return;
     }
 
-    if (cursor != null) {
-      const scrollTarget = Math.floor(cursor / columns) || 0;
-      if (
-        rowVirtualizer.getVirtualItems()[0] &&
-        scrollTarget !== rowVirtualizer.getVirtualItems()[0].index
-      ) {
-        rowVirtualizer.scrollToIndex(scrollTarget, {
-          align: 'auto',
-        });
-      }
-    }
+    // if (cursor != null) {
+    //   const scrollTarget = Math.floor(cursor / columns) || 0;
+    //   if (
+    //     rowVirtualizer.getVirtualItems()[0] &&
+    //     scrollTarget !== rowVirtualizer.getVirtualItems()[0].index
+    //   ) {
+    //     rowVirtualizer.scrollToIndex(scrollTarget, {
+    //       align: 'auto',
+    //     });
+    //   }
+    // }
   }, [
     cursor,
     columns,
