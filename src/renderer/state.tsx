@@ -29,6 +29,7 @@ type PersistedLibraryData = {
 
 type PersistedCursorData = {
   cursor: number;
+  scrollPosition?: number;
 };
 
 type PersistedQueryData = {
@@ -167,7 +168,10 @@ const clearPersistedLibrary = () => {
 
 const updatePersistedCursor = (context: LibraryState, cursor: number) => {
   // Only update cursor - much faster!
-  window.electron.store.set('persistedCursor', { cursor });
+  window.electron.store.set('persistedCursor', {
+    cursor,
+    scrollPosition: context.scrollPosition,
+  });
 };
 
 const updatePersistedState = (context: LibraryState) => {
@@ -1280,6 +1284,13 @@ const libraryMachine = createMachine(
                 ) as PersistedCursorData | null;
                 return cursorData ? cursorData.cursor : 0;
               },
+              scrollPosition: (context) => {
+                const cursorData = window.electron.store.get(
+                  'persistedCursor',
+                  null
+                ) as PersistedCursorData | null;
+                return cursorData?.scrollPosition ?? 0;
+              },
               previousLibrary: (context) => {
                 const previousData = window.electron.store.get(
                   'persistedPrevious',
@@ -2347,6 +2358,21 @@ export const GlobalStateProvider = (props: Props) => {
     return () => {
       if (typeof offBatch === 'function') offBatch();
       if (typeof offDone === 'function') offDone();
+    };
+  }, [libraryService]);
+
+  // Persist scroll position only when the app is about to close
+  React.useEffect(() => {
+    const handleBeforeUnload = () => {
+      const { scrollPosition, cursor } = libraryService.getSnapshot().context;
+      window.electron.store.set('persistedCursor', {
+        cursor,
+        scrollPosition,
+      });
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [libraryService]);
 
