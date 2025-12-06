@@ -104,6 +104,8 @@ type LibraryState = {
   pinnedPath: string | null;
   savedSortByDuringStreaming: Settings['sortBy'] | null;
   userMovedCursorDuringStreaming: boolean;
+  // When set to a new unique ID, signals the list to scroll to the current cursor
+  scrollToCursorEventId: string | null;
 };
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
@@ -521,6 +523,7 @@ const getInitialContext = (): LibraryState => {
     pinnedPath: null,
     savedSortByDuringStreaming: null,
     userMovedCursorDuringStreaming: false,
+    scrollToCursorEventId: null,
   };
 };
 
@@ -805,6 +808,13 @@ const libraryMachine = createMachine(
                 updatePersistedCursor(context, cursor);
                 return cursor;
               },
+              scrollToCursorEventId: (context, event) =>
+                event.scrollToView ? uniqueId() : context.scrollToCursorEventId,
+            }),
+          },
+          CLEAR_SCROLL_TO_CURSOR: {
+            actions: assign<LibraryState, AnyEventObject>({
+              scrollToCursorEventId: () => null,
             }),
           },
           RESET_CURSOR: {
@@ -832,7 +842,7 @@ const libraryMachine = createMachine(
             }),
           },
           INCREMENT_CURSOR: {
-            actions: assign<LibraryState, AnyEventObject>((context) => {
+            actions: assign<LibraryState, AnyEventObject>((context, event) => {
               const view = filter(
                 context.libraryLoadId,
                 context.textFilter,
@@ -852,11 +862,14 @@ const libraryMachine = createMachine(
                 userMovedCursorDuringStreaming: context.streaming
                   ? true
                   : context.userMovedCursorDuringStreaming,
+                scrollToCursorEventId: event.scrollToView
+                  ? uniqueId()
+                  : context.scrollToCursorEventId,
               };
             }),
           },
           DECREMENT_CURSOR: {
-            actions: assign<LibraryState, AnyEventObject>((context) => {
+            actions: assign<LibraryState, AnyEventObject>((context, event) => {
               const view = filter(
                 context.libraryLoadId,
                 context.textFilter,
@@ -876,6 +889,9 @@ const libraryMachine = createMachine(
                 userMovedCursorDuringStreaming: context.streaming
                   ? true
                   : context.userMovedCursorDuringStreaming,
+                scrollToCursorEventId: event.scrollToView
+                  ? uniqueId()
+                  : context.scrollToCursorEventId,
               };
             }),
           },
