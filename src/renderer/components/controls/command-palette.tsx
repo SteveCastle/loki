@@ -456,7 +456,7 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
   }) => {
     const handleSetCursor = useCallback(
       (c: number) => {
-        libraryService.send('SET_CURSOR', { idx: c });
+        libraryService.send('SET_CURSOR', { idx: c, scrollToView: true });
       },
       [libraryService]
     );

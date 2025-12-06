@@ -69,6 +69,12 @@ export function List() {
     (a, b) => a === b
   );
 
+  const scrollToCursorEventId = useSelector(
+    libraryService,
+    (state) => state.context.scrollToCursorEventId,
+    (a, b) => a === b
+  );
+
   const [columns, rows] = useMemo(() => {
     const columns = Math.max(1, base.gridSize[0] || 0);
     let rows = Math.max(1, base.gridSize[1] || 0);
@@ -129,6 +135,8 @@ export function List() {
       overscan={PERFORMANCE_CONSTANTS.LIST_OVERSCAN}
       initialScrollOffset={initialScrollPositionRef.current}
       cursor={cursor}
+      scrollToCursorEventId={scrollToCursorEventId}
+      libraryService={libraryService}
       onScroll={handleScroll}
       onDidInitialScroll={() => setInitialLoad(false)}
       shouldDoInitialScroll={initialLoad}
@@ -143,6 +151,9 @@ type VirtualGridProps = {
   overscan: number;
   initialScrollOffset: number;
   cursor: number | null;
+  scrollToCursorEventId: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  libraryService: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   onDidInitialScroll: () => void;
   shouldDoInitialScroll: boolean;
@@ -155,6 +166,8 @@ function VirtualGrid({
   overscan,
   initialScrollOffset,
   cursor,
+  scrollToCursorEventId,
+  libraryService,
   onScroll,
   onDidInitialScroll,
   shouldDoInitialScroll,
@@ -176,7 +189,7 @@ function VirtualGrid({
     rowVirtualizer.measure();
   }, [height, rowVirtualizer]);
 
-  // Handle initial restore of scroll position and scrolling to cursor updates
+  // Handle initial restore of scroll position
   const didInitialScrollRef = useRef(false);
   useEffect(() => {
     if (!parentRef.current) return;
@@ -185,28 +198,37 @@ function VirtualGrid({
       rowVirtualizer.scrollToOffset(initialScrollOffset);
       didInitialScrollRef.current = true;
       onDidInitialScroll();
-      return;
     }
-
-    // if (cursor != null) {
-    //   const scrollTarget = Math.floor(cursor / columns) || 0;
-    //   if (
-    //     rowVirtualizer.getVirtualItems()[0] &&
-    //     scrollTarget !== rowVirtualizer.getVirtualItems()[0].index
-    //   ) {
-    //     rowVirtualizer.scrollToIndex(scrollTarget, {
-    //       align: 'auto',
-    //     });
-    //   }
-    // }
   }, [
-    cursor,
-    columns,
     initialScrollOffset,
     onDidInitialScroll,
     shouldDoInitialScroll,
     rowVirtualizer,
   ]);
+
+  // Scroll to cursor when explicitly requested via scrollToCursorEventId
+  // Use refs to avoid effect re-running on every render
+  const cursorRef = useRef(cursor);
+  const columnsRef = useRef(columns);
+  const rowVirtualizerRef = useRef(rowVirtualizer);
+  cursorRef.current = cursor;
+  columnsRef.current = columns;
+  rowVirtualizerRef.current = rowVirtualizer;
+
+  useEffect(() => {
+    if (!scrollToCursorEventId) return;
+
+    const currentCursor = cursorRef.current;
+    if (currentCursor != null) {
+      const scrollTarget = Math.floor(currentCursor / columnsRef.current) || 0;
+      rowVirtualizerRef.current.scrollToIndex(scrollTarget, {
+        align: 'auto',
+      });
+    }
+
+    // Clear the event after processing to prevent duplicate scroll on remount
+    libraryService.send('CLEAR_SCROLL_TO_CURSOR');
+  }, [scrollToCursorEventId, libraryService]);
 
   // Auto-scroll while dragging near edges
   const { isDragging, offset, type } = useDragLayer((monitor) => ({
