@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // MediaItem represents a row from the media table
@@ -1461,7 +1462,7 @@ type TagInfo struct {
 }
 
 // EnsureTagsExist inserts any missing tags into the tag table.
-// The tag table is expected to have columns: label, category_label
+// The tag table uses label as primary key with category_label, weight, preview, and thumbnail_path_600
 func EnsureTagsExist(db *sql.DB, tags []TagInfo) error {
 	if len(tags) == 0 {
 		return nil
@@ -1471,7 +1472,10 @@ func EnsureTagsExist(db *sql.DB, tags []TagInfo) error {
 		return fmt.Errorf("EnsureTagsExist: begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	insertSQL := `INSERT OR IGNORE INTO tag (label, category_label) VALUES (?, ?)`
+	// Insert or update: if tag exists, update category_label; otherwise insert new tag
+	insertSQL := `INSERT INTO tag (label, category_label, weight, preview, thumbnail_path_600)
+	              VALUES (?, ?, NULL, NULL, NULL)
+	              ON CONFLICT(label) DO UPDATE SET category_label = excluded.category_label`
 	for _, t := range tags {
 		if strings.TrimSpace(t.Label) == "" {
 			continue
@@ -1522,11 +1526,15 @@ func AddTag(db *sql.DB, mediaPath, tagLabel, categoryLabel string) error {
 		return fmt.Errorf("failed to ensure tag exists: %w", err)
 	}
 
-	// Insert the tag assignment
+	// Insert the tag assignment with current timestamp
+	now := time.Now()
+	timestamp := float64(now.Unix()) + float64(now.Nanosecond())/1e9
+	createdAt := now.Unix()
+
 	_, err = db.Exec(`
-		INSERT INTO media_tag_by_category (media_path, tag_label, category_label)
-		VALUES (?, ?, ?)
-	`, mediaPath, tagLabel, categoryLabel)
+		INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+		VALUES (?, ?, ?, NULL, ?, ?)
+	`, mediaPath, tagLabel, categoryLabel, timestamp, createdAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert tag: %w", err)
 	}
