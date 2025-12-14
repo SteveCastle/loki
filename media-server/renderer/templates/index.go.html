@@ -453,6 +453,17 @@
         border: 1px solid rgba(97, 218, 251, 0.25);
       }
 
+      .status-message a {
+        color: inherit;
+        font-weight: 600;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+
+      .status-message a:hover {
+        opacity: 0.8;
+      }
+
       /* Footer Link */
       .footer-link {
         margin-top: var(--space-6);
@@ -682,11 +693,15 @@
         });
       }
 
-      function showStatus(elementId, message, type) {
+      function showStatus(elementId, message, type, isHtml = false) {
         const el = document.getElementById(elementId);
         if (!el) return;
         el.className = "status-message " + type;
-        el.textContent = message;
+        if (isHtml) {
+          el.innerHTML = message;
+        } else {
+          el.textContent = message;
+        }
         el.style.display = "block";
         if (type === "success") {
           setTimeout(() => {
@@ -695,15 +710,19 @@
         }
       }
 
+      function jobSuccessMessage(taskName, jobId) {
+        return `${taskName} started. <a href="/job/${jobId}">View progress</a>`;
+      }
+
       function createTranscriptsJob() {
         const query = 'transcript:""';
         const args = "--type transcript --apply all --query64=" + b64(query);
         postCreate(`metadata ${args}`)
           .then((res) => {
-            showStatus("transcriptStatus", "Job created: " + res.id, "success");
+            showStatus("transcriptStatus", jobSuccessMessage("Transcription", res.id), "success", true);
           })
           .catch((err) =>
-            showStatus("transcriptStatus", "Error: " + err.message, "error")
+            showStatus("transcriptStatus", "Failed to start: " + err.message, "error")
           );
       }
 
@@ -712,14 +731,10 @@
         const args = "--type description --apply all --query64=" + b64(query);
         postCreate(`metadata ${args}`)
           .then((res) => {
-            showStatus(
-              "descriptionStatus",
-              "Job created: " + res.id,
-              "success"
-            );
+            showStatus("descriptionStatus", jobSuccessMessage("Description generation", res.id), "success", true);
           })
           .catch((err) =>
-            showStatus("descriptionStatus", "Error: " + err.message, "error")
+            showStatus("descriptionStatus", "Failed to start: " + err.message, "error")
           );
       }
 
@@ -728,10 +743,10 @@
         const args = "--query64=" + b64(query);
         postCreate(`autotag ${args}`)
           .then((res) => {
-            showStatus("autotagStatus", "Job created: " + res.id, "success");
+            showStatus("autotagStatus", jobSuccessMessage("Auto-tagging", res.id), "success", true);
           })
           .catch((err) =>
-            showStatus("autotagStatus", "Error: " + err.message, "error")
+            showStatus("autotagStatus", "Failed to start: " + err.message, "error")
           );
       }
 
@@ -742,25 +757,25 @@
           showStatus("ingestStatus", "Please enter a folder path.", "error");
           return;
         }
-        showStatus("ingestStatus", "Creating ingest job...", "info");
+        showStatus("ingestStatus", "Starting...", "info");
         const args = (recursive ? "--recursive " : "") + `"${path}"`;
         postCreate(`ingest ${args}`)
           .then((res) => {
-            showStatus("ingestStatus", "Job created: " + res.id, "success");
+            showStatus("ingestStatus", jobSuccessMessage("Import", res.id), "success", true);
             document.getElementById("ingestPath").value = "";
           })
           .catch((err) =>
-            showStatus("ingestStatus", "Error: " + err.message, "error")
+            showStatus("ingestStatus", "Failed to start: " + err.message, "error")
           );
       }
 
       function createCleanupJob() {
         postCreate("cleanup")
           .then((res) => {
-            showStatus("cleanupStatus", "Job created: " + res.id, "success");
+            showStatus("cleanupStatus", jobSuccessMessage("Cleanup", res.id), "success", true);
           })
           .catch((err) =>
-            showStatus("cleanupStatus", "Error: " + err.message, "error")
+            showStatus("cleanupStatus", "Failed to start: " + err.message, "error")
           );
       }
 

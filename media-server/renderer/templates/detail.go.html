@@ -643,16 +643,22 @@
       }
 
       function jobStateToString(state) {
+        // Handle both numeric and string states
         switch (state) {
           case 0:
+          case "pending":
             return "Pending";
           case 1:
+          case "inprogress":
             return "InProgress";
           case 2:
+          case "completed":
             return "Completed";
           case 3:
+          case "cancelled":
             return "Cancelled";
           case 4:
+          case "error":
             return "Error";
           default:
             return "Unknown";
@@ -660,19 +666,25 @@
       }
 
       function jobStateToClass(state) {
+        // Handle both numeric and string states
         switch (state) {
           case 0:
-            return "pending";
+          case "pending":
+            return "Pending";
           case 1:
-            return "in-progress";
+          case "inprogress":
+            return "InProgress";
           case 2:
-            return "completed";
+          case "completed":
+            return "Completed";
           case 3:
-            return "cancelled";
+          case "cancelled":
+            return "Cancelled";
           case 4:
-            return "error";
+          case "error":
+            return "Error";
           default:
-            return "pending";
+            return "Pending";
         }
       }
     </script>

@@ -236,3 +236,65 @@ func parseTagsFromResponse(response string, availableTags []TagInfo) ([]TagInfo,
 	}
 	return selected, nil
 }
+
+// processAutotagForFile generates auto-tags for a single image file
+func processAutotagForFile(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string, overwrite bool, model string, availableTags []TagInfo, fromQuery bool) error {
+	// Check if it's an image file
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".heic":
+		// Valid image file
+	default:
+		return nil // Not an image file, skip silently
+	}
+
+	if len(availableTags) == 0 {
+		return nil // No tags available, skip silently
+	}
+
+	// If not from query, check if file exists in database first
+	if !fromQuery {
+		exists, err := fileExistsInDatabase(q.Db, filePath)
+		if err != nil {
+			return fmt.Errorf("error checking database: %w", err)
+		}
+		if !exists {
+			return nil // File not in database, skip
+		}
+	}
+
+	if !overwrite {
+		existingTags, err := getExistingTagsForFile(q.Db, filePath)
+		if err != nil {
+			return fmt.Errorf("failed to check existing tags: %w", err)
+		}
+		if len(existingTags) > 0 {
+			return nil // Skip, already has tags
+		}
+	}
+
+	selectedTags, err := generateAutoTagsWithVision(ctx, filePath, availableTags, model)
+	if err != nil {
+		return fmt.Errorf("failed to auto-tag: %w", err)
+	}
+	if len(selectedTags) == 0 {
+		q.PushJobStdout(jobID, fmt.Sprintf("  autotag: no tags selected"))
+		return nil
+	}
+
+	if overwrite {
+		if err := removeExistingTagsForFile(q.Db, filePath); err != nil {
+			return fmt.Errorf("failed to remove existing tags: %w", err)
+		}
+	}
+	if err := insertTagsForFile(q.Db, filePath, selectedTags); err != nil {
+		return fmt.Errorf("failed to insert tags: %w", err)
+	}
+
+	tagLabels := make([]string, len(selectedTags))
+	for i, tag := range selectedTags {
+		tagLabels[i] = tag.Label
+	}
+	q.PushJobStdout(jobID, fmt.Sprintf("  autotag: %s", strings.Join(tagLabels, ", ")))
+	return nil
+}

@@ -1684,6 +1684,85 @@ func SuggestPathDirs(db *sql.DB, prefix string, limit int) ([]string, error) {
 	return out, nil
 }
 
+// GetPathsByQuery retrieves all media paths matching a search query efficiently
+// This only fetches paths in a single query (no tags, no file existence checks, no pagination overhead)
+func GetPathsByQuery(db *sql.DB, searchQuery string) ([]string, error) {
+	baseQuery := `SELECT DISTINCT m.path FROM media m`
+	var joinClause string
+	orderBy := ` ORDER BY m.path`
+
+	// Parse search query if provided
+	sq, err := parseSearchQuery(searchQuery)
+	if err != nil {
+		log.Printf("Search query parsing failed: %v", err)
+		sq = nil
+	}
+
+	// Build WHERE clause and check if we need tag joins
+	whereClause, whereArgs, needsTagJoin, existsConditions := buildWhereClause(sq)
+
+	// If there are exists conditions, we need to fall back to the slower path
+	// since exists conditions require checking file system
+	if len(existsConditions) > 0 {
+		// Fall back to paginated approach for exists conditions
+		return getPathsByQueryWithExistence(db, searchQuery)
+	}
+
+	// Add JOIN if needed for tag/category searches
+	if needsTagJoin {
+		joinClause = ` JOIN media_tag_by_category mtbc ON m.path = mtbc.media_path`
+	}
+
+	// Construct full query (no pagination - get all at once)
+	var query string
+	var args []interface{}
+
+	if whereClause != "" {
+		query = baseQuery + joinClause + " " + whereClause + orderBy
+		args = whereArgs
+	} else {
+		query = baseQuery + orderBy
+	}
+
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths = append(paths, path)
+	}
+
+	return paths, nil
+}
+
+// getPathsByQueryWithExistence handles queries with exists conditions (requires file system checks)
+func getPathsByQueryWithExistence(db *sql.DB, searchQuery string) ([]string, error) {
+	const batchSize = 1000
+	offset := 0
+	var paths []string
+	for {
+		items, hasMore, err := GetItems(db, offset, batchSize, searchQuery)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			paths = append(paths, it.Path)
+		}
+		if !hasMore {
+			break
+		}
+		offset += batchSize
+	}
+	return paths, nil
+}
+
 // InitializeSchema creates the media database schema if it doesn't exist
 // This matches the schema from the Lowkey Media Viewer application
 func InitializeSchema(db *sql.DB) error {
