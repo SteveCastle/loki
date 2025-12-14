@@ -9,7 +9,8 @@
       "WebSearch",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:onnxruntime.ai)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(go run:*)"
     ]
   }
 }
