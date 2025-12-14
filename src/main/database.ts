@@ -85,19 +85,59 @@ export class Database {
 
 export async function initDB(db: Database) {
   if (!db) return;
+
+  // Create category table first (referenced by other tables)
+  await db.run(`CREATE TABLE IF NOT EXISTS category (
+  label TEXT PRIMARY KEY,
+  weight REAL
+)`);
+
+  // Create tag table (references category)
+  await db.run(`CREATE TABLE IF NOT EXISTS tag (
+  label TEXT PRIMARY KEY,
+  category_label TEXT,
+  weight REAL,
+  preview BLOB,
+  thumbnail_path_600 INTEGER,
+  FOREIGN KEY (category_label) REFERENCES category (label)
+)`);
+
+  // Create media table
   await db.run(`CREATE TABLE IF NOT EXISTS media (
   path TEXT PRIMARY KEY,
   description TEXT,
   transcript TEXT,
+  preview BLOB,
+  thumbnail_path_600 TEXT,
+  thumbnail_path_1200 TEXT,
+  elo REAL,
   views INTEGER,
   wins INTEGER,
   losses INTEGER,
   size INTEGER,
   hash TEXT,
-  elo REAL
+  width INTEGER,
+  height INTEGER
 )`);
 
-  // If media table exists but does not have elo column create it
+  // Create media_tag_by_category table
+  await db.run(`CREATE TABLE IF NOT EXISTS media_tag_by_category (
+  media_path TEXT,
+  tag_label TEXT,
+  category_label TEXT,
+  weight REAL,
+  time_stamp REAL,
+  created_at INTEGER,
+  PRIMARY KEY (media_path, tag_label, category_label, time_stamp)
+)`);
+
+  // Create cache table
+  await db.run(`CREATE TABLE IF NOT EXISTS cache (
+  "key" TEXT,
+  files TEXT
+)`);
+
+  // Migrate existing media table if needed
   const mediaTable = await db.get(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='media'`
   );
@@ -110,6 +150,12 @@ export async function initDB(db: Database) {
       { name: 'losses', type: 'INTEGER' },
       { name: 'size', type: 'INTEGER' },
       { name: 'hash', type: 'TEXT' },
+      { name: 'width', type: 'INTEGER' },
+      { name: 'height', type: 'INTEGER' },
+      { name: 'preview', type: 'BLOB' },
+      { name: 'thumbnail_path_600', type: 'TEXT' },
+      { name: 'thumbnail_path_1200', type: 'TEXT' },
+      { name: 'transcript', type: 'TEXT' },
     ];
     for (const column of columnsToMigrate) {
       const columnExists = tableInfo.some(
@@ -122,42 +168,39 @@ export async function initDB(db: Database) {
       }
     }
   }
-  await db.run(`CREATE TABLE IF NOT EXISTS category (
-  label TEXT PRIMARY KEY,
-  weight REAL
-)`);
 
-  await db.run(`CREATE TABLE IF NOT EXISTS tag (
-  label TEXT PRIMARY KEY,
-  category_label TEXT,
-  weight REAL,
-  thumbnail_path_100 TEXT,
-  thumbnail_path_300 TEXT,
-  thumbnail_path_600 TEXT,
-  thumbnail_path_1200 TEXT,
-  FOREIGN KEY (category_label) REFERENCES category (label)
-)`);
-
-  await db.run(`CREATE TABLE IF NOT EXISTS media_tag_by_category (
-  media_path TEXT,
-  tag_label TEXT,
-  category_label TEXT,
-  weight REAL,
-  job_id INTEGER,
-  created_at INTEGER,
-  time_stamp REAL,
-  PRIMARY KEY (media_path, tag_label, category_label, time_stamp),
-  FOREIGN KEY (media_path) REFERENCES media (path),
-  FOREIGN KEY (tag_label) REFERENCES tag (label),
-  FOREIGN KEY (category_label) REFERENCES category (label)
-)`);
-
+  // Migrate existing tag table if needed
   const tagTable = await db.get(
-    `SELECT name FROM sqlite_master WHERE type='table' AND name='media_tag_by_category'`
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='tag'`
   );
   if (tagTable) {
+    const tableInfo = await db.all(`PRAGMA table_info(tag)`);
+    const columnsToMigrate = [
+      { name: 'preview', type: 'BLOB' },
+      { name: 'thumbnail_path_600', type: 'INTEGER' },
+    ];
+    for (const column of columnsToMigrate) {
+      const columnExists = tableInfo.some(
+        (tableColumn: any) => tableColumn.name === column.name
+      );
+      if (!columnExists) {
+        await db.run(
+          `ALTER TABLE tag ADD COLUMN ${column.name} ${column.type}`
+        );
+      }
+    }
+  }
+
+  // Migrate existing media_tag_by_category table if needed
+  const mediaTagTable = await db.get(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='media_tag_by_category'`
+  );
+  if (mediaTagTable) {
     const tableInfo = await db.all(`PRAGMA table_info(media_tag_by_category)`);
-    const columnsToMigrate = [{ name: 'created_at', type: 'INTEGER' }];
+    const columnsToMigrate = [
+      { name: 'created_at', type: 'INTEGER' },
+      { name: 'time_stamp', type: 'REAL' },
+    ];
     for (const column of columnsToMigrate) {
       const columnExists = tableInfo.some(
         (tableColumn: any) => tableColumn.name === column.name
