@@ -1,0 +1,49 @@
+{{ define "detailHeader" }}
+<header>
+  <div class="breadcrumbs">
+    <a href="/" class="breadcrumb-path">Home</a>
+    <span class="breadcrumb-separator">›</span>
+    <a href="/jobs" class="breadcrumb-path">Jobs</a>
+    <span class="breadcrumb-separator">›</span>
+    <span class="breadcrumb-leaf">Job {{.ID}}</span>
+    {{ if or (eq .State 0) (eq .State 1) }}
+    <button id="cancel" data-id="{{.ID}}" onclick="cancelJob(event)">
+      Cancel
+    </button>
+    {{end}}
+  </div>
+  <div class="meta-info">
+    <div class="status-section">
+      <strong>Status:</strong>
+      <span class="job-status {{.State}}"></span>
+      <span id="state" class="status-text {{.State}}">{{.State}}</span>
+    </div>
+    <div class="command-section">
+      <strong>Command:</strong>
+      <span class="command-name">{{.Command}}</span>
+      {{if .Arguments}}
+      <span class="command-args">{{range .Arguments}}{{.}} {{end}}</span>
+      {{end}} {{if .Input}}
+      <span class="command-input">{{.Input}}</span>
+      {{end}}
+    </div>
+    {{- if .CreatedAt.IsZero | not}}
+    <div><strong>Created:</strong> {{formatTime .CreatedAt}}</div>
+    {{- end}} {{- if .CompletedAt.IsZero | not}}
+    <div>
+      <strong>Completed:</strong>
+      <span id="completedAt">{{formatTime .CompletedAt}}</span>
+    </div>
+    {{- end}} {{- if .ErroredAt.IsZero | not}}
+    <div>
+      <strong>Errored:</strong>
+      <span id="erroredAt">{{formatTime .ErroredAt}}</span>
+    </div>
+    {{- end}} {{- if .Dependencies}}
+    <div>
+      <strong>Dependencies:</strong> {{range .Dependencies}}{{.}} {{end}}
+    </div>
+    {{- end}}
+  </div>
+</header>
+{{ end }}

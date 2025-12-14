@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(.shrike.exe)",
+      "Bash(./shrike.exe:*)",
+      "Bash(timeout 3 ./shrike.exe:*)",
+      "Bash(go get:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:onnxruntime.ai)"
+    ]
+  }
+}
