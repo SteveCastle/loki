@@ -3451,7 +3451,7 @@
           switch (status) {
             case "pending":
               return "⏳";
-            case "running":
+            case "in_progress":
               return "⚡";
             case "success":
               return "✓";
@@ -3489,7 +3489,7 @@
               return itemText
                 ? `Queued ${itemText} for processing...`
                 : "Waiting in queue...";
-            case "running":
+            case "in_progress":
               return itemText
                 ? `Processing ${itemText}...`
                 : "Working on it...";
@@ -3527,7 +3527,7 @@
               <div class="toast-message">${message}</div>
               <div class="toast-progress-container">
                 <div class="toast-progress-bar ${
-                  status === "running" ? "indeterminate" : ""
+                  status === "in_progress" ? "indeterminate" : ""
                 }"></div>
               </div>
             </div>
@@ -3551,7 +3551,7 @@
             return; // Already tracking this job
           }
 
-          const toast = createToast(jobId, command, "running");
+          const toast = createToast(jobId, command, "in_progress");
           container.appendChild(toast);
           toasts.set(jobId, { element: toast, command, startTime: Date.now() });
 
@@ -3568,7 +3568,7 @@
             // Create a toast for them anyway so user sees the status
             if (job.state === 1) {
               // InProgress
-              const toast = createToast(jobId, job.command, "running");
+              const toast = createToast(jobId, job.command, "in_progress");
               container.appendChild(toast);
               toasts.set(jobId, {
                 element: toast,
@@ -3580,7 +3580,7 @@
           }
 
           const { element } = toastData;
-          let status = "running";
+          let status = "in_progress";
 
           // Map job states: 0=Pending, 1=InProgress, 2=Completed, 3=Cancelled, 4=Error
           switch (job.state) {
@@ -3588,7 +3588,7 @@
               status = "pending";
               break;
             case 1:
-              status = "running";
+              status = "in_progress";
               break;
             case 2:
               status = "success";
@@ -3618,7 +3618,7 @@
           const progressBar = element.querySelector(".toast-progress-bar");
           if (progressBar) {
             progressBar.className = "toast-progress-bar";
-            if (status === "running") {
+            if (status === "in_progress") {
               progressBar.classList.add("indeterminate");
             } else if (status === "success") {
               progressBar.classList.add("complete");
@@ -3661,7 +3661,7 @@
           toast.setAttribute("data-job-id", tempId);
 
           let icon = "ℹ";
-          let status = "running";
+          let status = "in_progress";
           if (type === "success") {
             icon = "✓";
             status = "success";

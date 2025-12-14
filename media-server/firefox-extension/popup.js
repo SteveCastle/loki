@@ -1,5 +1,5 @@
 // Shrike Firefox Extension
-const API_BASE = "http://localhost:8090";
+const API_BASE = 'http://localhost:8090';
 
 // State
 let eventSource = null;
@@ -28,22 +28,22 @@ const elements = {
 };
 
 // Initialize on DOM load
-document.addEventListener("DOMContentLoaded", init);
+document.addEventListener('DOMContentLoaded', init);
 
 async function init() {
   // Cache DOM elements
-  elements.serverStatus = document.getElementById("serverStatus");
-  elements.command = document.getElementById("command");
-  elements.args = document.getElementById("args");
-  elements.argsWrapper = document.querySelector(".args-wrapper");
-  elements.argsDropdown = document.getElementById("argsDropdown");
-  elements.clearArgsHistory = document.getElementById("clearArgsHistory");
-  elements.url = document.getElementById("url");
-  elements.createBtn = document.getElementById("createBtn");
-  elements.feedback = document.getElementById("feedback");
-  elements.jobsList = document.getElementById("jobsList");
-  elements.refreshBtn = document.getElementById("refreshBtn");
-  elements.clearAllBtn = document.getElementById("clearAllBtn");
+  elements.serverStatus = document.getElementById('serverStatus');
+  elements.command = document.getElementById('command');
+  elements.args = document.getElementById('args');
+  elements.argsWrapper = document.querySelector('.args-wrapper');
+  elements.argsDropdown = document.getElementById('argsDropdown');
+  elements.clearArgsHistory = document.getElementById('clearArgsHistory');
+  elements.url = document.getElementById('url');
+  elements.createBtn = document.getElementById('createBtn');
+  elements.feedback = document.getElementById('feedback');
+  elements.jobsList = document.getElementById('jobsList');
+  elements.refreshBtn = document.getElementById('refreshBtn');
+  elements.clearAllBtn = document.getElementById('clearAllBtn');
 
   // Fetch available tasks first
   await fetchTasks();
@@ -55,28 +55,28 @@ async function init() {
   await populateCurrentUrl();
 
   // Set up event listeners
-  elements.createBtn.addEventListener("click", createTask);
-  elements.refreshBtn.addEventListener("click", refreshJobs);
-  elements.clearAllBtn.addEventListener("click", clearAllJobs);
-  elements.command.addEventListener("change", handleCommandChange);
-  elements.clearArgsHistory.addEventListener("click", clearCurrentArgsHistory);
+  elements.createBtn.addEventListener('click', createTask);
+  elements.refreshBtn.addEventListener('click', refreshJobs);
+  elements.clearAllBtn.addEventListener('click', clearAllJobs);
+  elements.command.addEventListener('change', handleCommandChange);
+  elements.clearArgsHistory.addEventListener('click', clearCurrentArgsHistory);
 
   // Args input events for autocomplete
-  elements.args.addEventListener("focus", showArgsDropdown);
-  elements.args.addEventListener("blur", handleArgsBlur);
-  elements.args.addEventListener("input", handleArgsInput);
-  elements.args.addEventListener("keydown", handleArgsKeydown);
+  elements.args.addEventListener('focus', showArgsDropdown);
+  elements.args.addEventListener('blur', handleArgsBlur);
+  elements.args.addEventListener('input', handleArgsInput);
+  elements.args.addEventListener('keydown', handleArgsKeydown);
 
   // Allow Enter key to submit from URL field
-  elements.url.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") createTask();
+  elements.url.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') createTask();
   });
 
   // Set up event delegation for job actions
-  elements.jobsList.addEventListener("click", handleJobClick);
+  elements.jobsList.addEventListener('click', handleJobClick);
 
   // Close dropdown when clicking outside
-  document.addEventListener("click", (e) => {
+  document.addEventListener('click', (e) => {
     if (
       !elements.args.contains(e.target) &&
       !elements.argsDropdown.contains(e.target)
@@ -93,23 +93,23 @@ async function init() {
 // Handle clicks on job items using event delegation
 function handleJobClick(e) {
   // Find the closest element with a data-action attribute
-  const target = e.target.closest("[data-action]");
+  const target = e.target.closest('[data-action]');
   if (!target) return;
 
-  const action = target.getAttribute("data-action");
-  const id = target.getAttribute("data-id");
+  const action = target.getAttribute('data-action');
+  const id = target.getAttribute('data-id');
   if (!id) return;
 
   e.preventDefault();
 
   switch (action) {
-    case "cancel":
+    case 'cancel':
       cancelJob(id);
       break;
-    case "remove":
+    case 'remove':
       removeJobFromServer(id);
       break;
-    case "open":
+    case 'open':
       openJobDetail(id);
       break;
   }
@@ -126,7 +126,7 @@ async function populateCurrentUrl() {
       elements.url.value = tabs[0].url;
     }
   } catch (err) {
-    console.error("Failed to get current tab URL:", err);
+    console.error('Failed to get current tab URL:', err);
   }
 }
 
@@ -134,7 +134,7 @@ async function populateCurrentUrl() {
 async function fetchTasks() {
   try {
     const response = await fetch(`${API_BASE}/tasks`);
-    if (!response.ok) throw new Error("Failed to fetch tasks");
+    if (!response.ok) throw new Error('Failed to fetch tasks');
 
     const data = await response.json();
     if (Array.isArray(data.tasks)) {
@@ -143,11 +143,11 @@ async function fetchTasks() {
       updateServerStatus(true);
     }
   } catch (err) {
-    console.error("Fetch tasks error:", err);
+    console.error('Fetch tasks error:', err);
     // Fall back to a minimal set if server is unavailable
     tasks = [
-      { id: "gallery-dl", name: "gallery-dl" },
-      { id: "yt-dlp", name: "yt-dlp" },
+      { id: 'gallery-dl', name: 'gallery-dl' },
+      { id: 'yt-dlp', name: 'yt-dlp' },
     ];
     populateCommandDropdown();
     updateServerStatus(false);
@@ -163,7 +163,7 @@ function populateCommandDropdown() {
           task.name
         )}</option>`
     )
-    .join("");
+    .join('');
 }
 
 // Save/load preferences
@@ -182,9 +182,9 @@ function savePreferences() {
 async function loadPreferences() {
   try {
     const result = await browser.storage.local.get([
-      "lastCommand",
-      "argsHistory",
-      "currentArgsPerCommand",
+      'lastCommand',
+      'argsHistory',
+      'currentArgsPerCommand',
     ]);
 
     if (result.argsHistory) {
@@ -202,7 +202,7 @@ async function loadPreferences() {
         previousCommand = elements.command.value;
       } else {
         // Restore the args for the last command
-        elements.args.value = currentArgsPerCommand[result.lastCommand] || "";
+        elements.args.value = currentArgsPerCommand[result.lastCommand] || '';
         previousCommand = result.lastCommand;
       }
     } else {
@@ -211,7 +211,7 @@ async function loadPreferences() {
     }
     updateClearHistoryButton();
   } catch (err) {
-    console.error("Failed to load preferences:", err);
+    console.error('Failed to load preferences:', err);
     previousCommand = elements.command.value;
     updateClearHistoryButton();
   }
@@ -227,7 +227,7 @@ function handleCommandChange() {
   const newCommand = elements.command.value;
 
   // Load args for the new command
-  elements.args.value = currentArgsPerCommand[newCommand] || "";
+  elements.args.value = currentArgsPerCommand[newCommand] || '';
 
   // Update previous command for next switch
   previousCommand = newCommand;
@@ -238,7 +238,7 @@ function handleCommandChange() {
 
 // Args history management
 function addArgsToHistory(command, args) {
-  if (!args || args.trim() === "") return;
+  if (!args || args.trim() === '') return;
 
   const trimmedArgs = args.trim();
 
@@ -279,7 +279,7 @@ function clearCurrentArgsHistory() {
   const command = elements.command.value;
   delete argsHistory[command];
   delete currentArgsPerCommand[command];
-  elements.args.value = "";
+  elements.args.value = '';
   savePreferences();
   updateClearHistoryButton();
   hideArgsDropdown();
@@ -288,7 +288,7 @@ function clearCurrentArgsHistory() {
 function updateClearHistoryButton() {
   const command = elements.command.value;
   const hasHistory = argsHistory[command] && argsHistory[command].length > 0;
-  elements.clearArgsHistory.style.display = hasHistory ? "inline-flex" : "none";
+  elements.clearArgsHistory.style.display = hasHistory ? 'inline-flex' : 'none';
 }
 
 // Args dropdown functions
@@ -298,15 +298,15 @@ function showArgsDropdown() {
   const history = argsHistory[command] || [];
 
   if (history.length > 0) {
-    elements.argsDropdown.style.display = "block";
-    elements.argsWrapper.classList.add("dropdown-open");
+    elements.argsDropdown.style.display = 'block';
+    elements.argsWrapper.classList.add('dropdown-open');
     selectedDropdownIndex = -1;
   }
 }
 
 function hideArgsDropdown() {
-  elements.argsDropdown.style.display = "none";
-  elements.argsWrapper.classList.remove("dropdown-open");
+  elements.argsDropdown.style.display = 'none';
+  elements.argsWrapper.classList.remove('dropdown-open');
   selectedDropdownIndex = -1;
 }
 
@@ -327,8 +327,8 @@ function handleArgsInput() {
   const history = getFilteredHistory();
 
   if (history.length > 0) {
-    elements.argsDropdown.style.display = "block";
-    elements.argsWrapper.classList.add("dropdown-open");
+    elements.argsDropdown.style.display = 'block';
+    elements.argsWrapper.classList.add('dropdown-open');
   } else {
     hideArgsDropdown();
   }
@@ -337,8 +337,8 @@ function handleArgsInput() {
 function handleArgsKeydown(e) {
   const history = getFilteredHistory();
 
-  if (elements.argsDropdown.style.display === "none" || history.length === 0) {
-    if (e.key === "Enter") {
+  if (elements.argsDropdown.style.display === 'none' || history.length === 0) {
+    if (e.key === 'Enter') {
       e.preventDefault();
       createTask();
     }
@@ -346,7 +346,7 @@ function handleArgsKeydown(e) {
   }
 
   switch (e.key) {
-    case "ArrowDown":
+    case 'ArrowDown':
       e.preventDefault();
       selectedDropdownIndex = Math.min(
         selectedDropdownIndex + 1,
@@ -354,12 +354,12 @@ function handleArgsKeydown(e) {
       );
       updateDropdownSelection();
       break;
-    case "ArrowUp":
+    case 'ArrowUp':
       e.preventDefault();
       selectedDropdownIndex = Math.max(selectedDropdownIndex - 1, -1);
       updateDropdownSelection();
       break;
-    case "Enter":
+    case 'Enter':
       e.preventDefault();
       if (
         selectedDropdownIndex >= 0 &&
@@ -370,7 +370,7 @@ function handleArgsKeydown(e) {
         createTask();
       }
       break;
-    case "Escape":
+    case 'Escape':
       hideArgsDropdown();
       break;
   }
@@ -401,7 +401,7 @@ function renderArgsDropdown() {
     .map(
       (arg, index) => `
     <div class="args-dropdown-item${
-      index === selectedDropdownIndex ? " selected" : ""
+      index === selectedDropdownIndex ? ' selected' : ''
     }" data-arg="${escapeHtml(arg)}">
       <span class="arg-text" title="${escapeHtml(arg)}">${escapeHtml(
         arg
@@ -412,38 +412,38 @@ function renderArgsDropdown() {
     </div>
   `
     )
-    .join("");
+    .join('');
 
   // Add click handlers
   elements.argsDropdown
-    .querySelectorAll(".args-dropdown-item")
+    .querySelectorAll('.args-dropdown-item')
     .forEach((item) => {
-      item.addEventListener("mousedown", (e) => {
+      item.addEventListener('mousedown', (e) => {
         // Prevent the blur event from firing before we can handle the click
         e.preventDefault();
 
         // Check if clicking the remove button
-        if (e.target.classList.contains("remove-arg")) {
-          const arg = e.target.getAttribute("data-remove-arg");
+        if (e.target.classList.contains('remove-arg')) {
+          const arg = e.target.getAttribute('data-remove-arg');
           removeArgFromHistory(elements.command.value, arg);
           return;
         }
 
-        const arg = item.getAttribute("data-arg");
+        const arg = item.getAttribute('data-arg');
         selectArg(arg);
       });
     });
 }
 
 function updateDropdownSelection() {
-  const items = elements.argsDropdown.querySelectorAll(".args-dropdown-item");
+  const items = elements.argsDropdown.querySelectorAll('.args-dropdown-item');
   items.forEach((item, index) => {
-    item.classList.toggle("selected", index === selectedDropdownIndex);
+    item.classList.toggle('selected', index === selectedDropdownIndex);
   });
 
   // Scroll selected item into view
   if (selectedDropdownIndex >= 0 && items[selectedDropdownIndex]) {
-    items[selectedDropdownIndex].scrollIntoView({ block: "nearest" });
+    items[selectedDropdownIndex].scrollIntoView({ block: 'nearest' });
   }
 }
 
@@ -460,7 +460,7 @@ async function createTask() {
   const url = elements.url.value.trim();
 
   if (!url) {
-    showFeedback("Please enter a URL or input", "error");
+    showFeedback('Please enter a URL or input', 'error');
     return;
   }
 
@@ -477,8 +477,8 @@ async function createTask() {
 
   try {
     const response = await fetch(`${API_BASE}/create`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input }),
     });
 
@@ -488,7 +488,7 @@ async function createTask() {
     }
 
     const data = await response.json();
-    showFeedback(`Task created: ${data.id.slice(0, 8)}...`, "success");
+    showFeedback(`Task created: ${data.id.slice(0, 8)}...`, 'success');
 
     // Save args to history on successful task creation
     addArgsToHistory(command, args);
@@ -496,8 +496,8 @@ async function createTask() {
     // Refresh jobs list
     fetchJobs();
   } catch (err) {
-    console.error("Create task error:", err);
-    showFeedback(`Failed: ${err.message}`, "error");
+    console.error('Create task error:', err);
+    showFeedback(`Failed: ${err.message}`, 'error');
   } finally {
     setLoading(false);
   }
@@ -507,7 +507,7 @@ async function createTask() {
 async function fetchJobs() {
   try {
     const response = await fetch(`${API_BASE}/jobs/list`);
-    if (!response.ok) throw new Error("Failed to fetch jobs");
+    if (!response.ok) throw new Error('Failed to fetch jobs');
 
     const fetchedJobs = await response.json();
     updateServerStatus(true);
@@ -535,7 +535,7 @@ async function fetchJobs() {
       renderJobs();
     }
   } catch (err) {
-    console.error("Fetch jobs error:", err);
+    console.error('Fetch jobs error:', err);
     updateServerStatus(false);
   }
 }
@@ -558,19 +558,19 @@ function refreshJobs() {
 async function clearAllJobs() {
   try {
     const response = await fetch(`${API_BASE}/jobs/clear`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
     });
 
     if (!response.ok) {
-      throw new Error("Failed to clear jobs");
+      throw new Error('Failed to clear jobs');
     }
 
     // Refresh the jobs list
     fetchJobs();
   } catch (err) {
-    console.error("Clear all jobs error:", err);
-    showFeedback("Failed to clear jobs", "error");
+    console.error('Clear all jobs error:', err);
+    showFeedback('Failed to clear jobs', 'error');
   }
 }
 
@@ -584,7 +584,7 @@ function connectSSE() {
   }
 
   isConnecting = true;
-  updateServerStatus("connecting");
+  updateServerStatus('connecting');
 
   try {
     eventSource = new EventSource(`${API_BASE}/stream`);
@@ -592,11 +592,11 @@ function connectSSE() {
     eventSource.onopen = () => {
       isConnecting = false;
       updateServerStatus(true);
-      console.log("SSE connected");
+      console.log('SSE connected');
     };
 
     eventSource.onerror = (err) => {
-      console.error("SSE error:", err);
+      console.error('SSE error:', err);
       isConnecting = false;
       updateServerStatus(false);
 
@@ -610,42 +610,42 @@ function connectSSE() {
     };
 
     // Job creation event
-    eventSource.addEventListener("create", (event) => {
+    eventSource.addEventListener('create', (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.job) {
           addOrUpdateJob(data.job);
         }
       } catch (e) {
-        console.error("Parse create event:", e);
+        console.error('Parse create event:', e);
       }
     });
 
     // Job update event
-    eventSource.addEventListener("update", (event) => {
+    eventSource.addEventListener('update', (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.job) {
           addOrUpdateJob(data.job);
         }
       } catch (e) {
-        console.error("Parse update event:", e);
+        console.error('Parse update event:', e);
       }
     });
 
     // Job deletion event
-    eventSource.addEventListener("delete", (event) => {
+    eventSource.addEventListener('delete', (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data.job?.id) {
           removeJob(data.job.id);
         }
       } catch (e) {
-        console.error("Parse delete event:", e);
+        console.error('Parse delete event:', e);
       }
     });
   } catch (err) {
-    console.error("SSE connect error:", err);
+    console.error('SSE connect error:', err);
     isConnecting = false;
     updateServerStatus(false);
   }
@@ -694,7 +694,7 @@ function renderJobs() {
     .map((job) => {
       const statusClass = getStatusClass(job.state);
       const timeAgo = formatTimeAgo(job.created_at);
-      const truncatedInput = truncate(job.input || "", 50);
+      const truncatedInput = truncate(job.input || '', 50);
       const isActive = job.state === 0 || job.state === 1;
 
       return `
@@ -703,9 +703,9 @@ function renderJobs() {
         <div class="job-details" data-action="open" data-id="${
           job.id
         }" style="cursor: pointer;" title="Open in web UI">
-          <div class="job-command">${escapeHtml(job.command || "Unknown")}</div>
+          <div class="job-command">${escapeHtml(job.command || 'Unknown')}</div>
           <div class="job-input" title="${escapeHtml(
-            job.input || ""
+            job.input || ''
           )}">${escapeHtml(truncatedInput)}</div>
           <div class="job-time">${timeAgo}</div>
         </div>
@@ -719,23 +719,23 @@ function renderJobs() {
       </div>
     `;
     })
-    .join("");
+    .join('');
 }
 
 // Cancel a job
 async function cancelJob(jobId) {
   try {
     const response = await fetch(`${API_BASE}/job/${jobId}/cancel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
     });
 
     if (!response.ok) {
-      throw new Error("Failed to cancel job");
+      throw new Error('Failed to cancel job');
     }
   } catch (err) {
-    console.error("Cancel job error:", err);
-    showFeedback("Failed to cancel job", "error");
+    console.error('Cancel job error:', err);
+    showFeedback('Failed to cancel job', 'error');
   }
 }
 
@@ -743,19 +743,19 @@ async function cancelJob(jobId) {
 async function removeJobFromServer(jobId) {
   try {
     const response = await fetch(`${API_BASE}/job/${jobId}/remove`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
     });
 
     if (!response.ok) {
-      throw new Error("Failed to remove job");
+      throw new Error('Failed to remove job');
     }
 
     // Remove from local list
     removeJob(jobId);
   } catch (err) {
-    console.error("Remove job error:", err);
-    showFeedback("Failed to remove job", "error");
+    console.error('Remove job error:', err);
+    showFeedback('Failed to remove job', 'error');
   }
 }
 
@@ -766,69 +766,69 @@ function openJobDetail(jobId) {
 
 // UI Helpers
 function updateServerStatus(connected) {
-  if (connected === "connecting") {
-    elements.serverStatus.className = "status-indicator connecting";
-    elements.serverStatus.title = "Connecting...";
+  if (connected === 'connecting') {
+    elements.serverStatus.className = 'status-indicator connecting';
+    elements.serverStatus.title = 'Connecting...';
   } else if (connected) {
-    elements.serverStatus.className = "status-indicator connected";
-    elements.serverStatus.title = "Connected to Shrike server";
+    elements.serverStatus.className = 'status-indicator connected';
+    elements.serverStatus.title = 'Connected to Shrike server';
   } else {
-    elements.serverStatus.className = "status-indicator";
-    elements.serverStatus.title = "Disconnected from server";
+    elements.serverStatus.className = 'status-indicator';
+    elements.serverStatus.title = 'Disconnected from server';
   }
 }
 
 function setLoading(loading) {
   elements.createBtn.disabled = loading;
-  elements.createBtn.querySelector(".btn-text").style.display = loading
-    ? "none"
-    : "inline";
-  elements.createBtn.querySelector(".btn-loading").style.display = loading
-    ? "inline-flex"
-    : "none";
+  elements.createBtn.querySelector('.btn-text').style.display = loading
+    ? 'none'
+    : 'inline';
+  elements.createBtn.querySelector('.btn-loading').style.display = loading
+    ? 'inline-flex'
+    : 'none';
 }
 
 function showFeedback(message, type) {
   elements.feedback.textContent = message;
   elements.feedback.className = `feedback ${type}`;
-  elements.feedback.style.display = "flex";
+  elements.feedback.style.display = 'flex';
 
   // Auto-hide after 5 seconds for success messages
-  if (type === "success") {
+  if (type === 'success') {
     setTimeout(hideFeedback, 5000);
   }
 }
 
 function hideFeedback() {
-  elements.feedback.style.display = "none";
+  elements.feedback.style.display = 'none';
 }
 
 // Utility functions
 function getStatusClass(state) {
   switch (state) {
     case 0:
-      return "pending";
+      return 'pending';
     case 1:
-      return "running";
+      return 'in_progress';
     case 2:
-      return "completed";
+      return 'completed';
     case 3:
-      return "cancelled";
+      return 'cancelled';
     case 4:
-      return "error";
+      return 'error';
     default:
-      return "pending";
+      return 'pending';
   }
 }
 
 function formatTimeAgo(timestamp) {
-  if (!timestamp) return "";
+  if (!timestamp) return '';
 
   const date = new Date(timestamp);
   const now = new Date();
   const diff = Math.floor((now - date) / 1000);
 
-  if (diff < 60) return "Just now";
+  if (diff < 60) return 'Just now';
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
@@ -836,11 +836,11 @@ function formatTimeAgo(timestamp) {
 
 function truncate(str, maxLen) {
   if (str.length <= maxLen) return str;
-  return str.slice(0, maxLen - 3) + "...";
+  return str.slice(0, maxLen - 3) + '...';
 }
 
 function escapeHtml(str) {
-  const div = document.createElement("div");
+  const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
 }
@@ -854,7 +854,7 @@ function debounce(fn, ms) {
 }
 
 // Cleanup on popup close
-window.addEventListener("unload", () => {
+window.addEventListener('unload', () => {
   if (eventSource) {
     eventSource.close();
   }

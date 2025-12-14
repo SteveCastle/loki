@@ -118,7 +118,13 @@
         flex-shrink: 0;
       }
 
-      .job-status-indicator.running {
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .job-status-indicator.in_progress {
         background-color: transparent;
         border: 2px solid var(--accent-cyan);
         border-top-color: transparent;
@@ -196,6 +202,10 @@
         gap: var(--space-5);
       }
 
+      .task-card--wide {
+        grid-column: span 2;
+      }
+
       .task-card {
         background: var(--bg-card);
         border: 1px solid var(--border-subtle);
@@ -207,7 +217,7 @@
       }
 
       .task-card::before {
-        content: "";
+        content: '';
         position: absolute;
         top: 0;
         left: 0;
@@ -240,6 +250,12 @@
       }
       .task-card--cleanup {
         --card-accent: var(--status-error);
+      }
+      .task-card--fileinfo {
+        --card-accent: var(--accent-cyan);
+      }
+      .task-card--allmetadata {
+        --card-accent: #f59e0b;
       }
 
       /* Card Status Badge */
@@ -420,7 +436,7 @@
         align-items: center;
       }
 
-      .task-card label input[type="checkbox"] {
+      .task-card label input[type='checkbox'] {
         margin-right: var(--space-2);
         accent-color: var(--card-accent, var(--accent-primary));
       }
@@ -527,6 +543,29 @@
       </div>
 
       <div class="card-grid">
+        <!-- All Metadata Card -->
+        <div class="task-card task-card--allmetadata task-card--wide" id="card-allmetadata">
+          <div class="card-status" id="status-allmetadata">
+            <span class="status-dot"></span>
+            <span class="status-text">Running</span>
+          </div>
+          <div class="card-header">
+            <div class="card-icon">⚡</div>
+            <div class="card-titles">
+              <h3>Generate All Metadata</h3>
+              <p class="card-description">
+                Run all metadata tasks at once (hash, dimensions, descriptions, transcripts, auto-tags)
+              </p>
+            </div>
+          </div>
+          <div class="card-body">
+            <button class="btn btn-primary" onclick="createAllMetadataJob()">
+              Start Full Metadata Job
+            </button>
+            <div id="allmetadataStatus" class="status-message"></div>
+          </div>
+        </div>
+
         <!-- Ingest Card -->
         <div class="task-card task-card--ingest" id="card-ingest">
           <div class="card-status" id="status-ingest">
@@ -659,6 +698,30 @@
             <div id="cleanupStatus" class="status-message"></div>
           </div>
         </div>
+
+        <!-- File Info Card -->
+        <div class="task-card task-card--fileinfo" id="card-fileinfo">
+          <div class="card-status" id="status-fileinfo">
+            <span class="status-dot"></span>
+            <span class="status-text">Running</span>
+          </div>
+          <div class="card-header">
+            <div class="card-icon">📊</div>
+            <div class="card-titles">
+              <h3>Generate File Info</h3>
+              <p class="card-description">
+                Calculate file hashes and dimensions
+              </p>
+            </div>
+          </div>
+          <div class="card-body">
+            <button class="btn btn-primary" onclick="createFileInfoJob()">
+              Start File Info Job
+            </button>
+            <div id="fileinfoStatus" class="status-message"></div>
+          </div>
+        </div>
+
       </div>
 
       <div class="footer-link">
@@ -671,10 +734,10 @@
       const jobsState = {
         jobs: new Map(),
         cardTypes: {
-          ingest: "ingest",
+          ingest: 'ingest',
           metadata: null,
-          autotag: "autotag",
-          cleanup: "cleanup",
+          autotag: 'autotag',
+          cleanup: 'cleanup',
         },
       };
 
@@ -683,12 +746,12 @@
       }
 
       function postCreate(input) {
-        return fetch("/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        return fetch('/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ input }),
         }).then((r) => {
-          if (!r.ok) throw new Error("request failed");
+          if (!r.ok) throw new Error('request failed');
           return r.json();
         });
       }
@@ -696,16 +759,16 @@
       function showStatus(elementId, message, type, isHtml = false) {
         const el = document.getElementById(elementId);
         if (!el) return;
-        el.className = "status-message " + type;
+        el.className = 'status-message ' + type;
         if (isHtml) {
           el.innerHTML = message;
         } else {
           el.textContent = message;
         }
-        el.style.display = "block";
-        if (type === "success") {
+        el.style.display = 'block';
+        if (type === 'success') {
           setTimeout(() => {
-            el.style.display = "none";
+            el.style.display = 'none';
           }, 5000);
         }
       }
@@ -716,79 +779,172 @@
 
       function createTranscriptsJob() {
         const query = 'transcript:""';
-        const args = "--type transcript --apply all --query64=" + b64(query);
+        const args = '--type transcript --apply all --query64=' + b64(query);
         postCreate(`metadata ${args}`)
           .then((res) => {
-            showStatus("transcriptStatus", jobSuccessMessage("Transcription", res.id), "success", true);
+            showStatus(
+              'transcriptStatus',
+              jobSuccessMessage('Transcription', res.id),
+              'success',
+              true
+            );
           })
           .catch((err) =>
-            showStatus("transcriptStatus", "Failed to start: " + err.message, "error")
+            showStatus(
+              'transcriptStatus',
+              'Failed to start: ' + err.message,
+              'error'
+            )
           );
       }
 
       function createDescriptionsJob() {
         const query = 'description:""';
-        const args = "--type description --apply all --query64=" + b64(query);
+        const args = '--type description --apply all --query64=' + b64(query);
         postCreate(`metadata ${args}`)
           .then((res) => {
-            showStatus("descriptionStatus", jobSuccessMessage("Description generation", res.id), "success", true);
+            showStatus(
+              'descriptionStatus',
+              jobSuccessMessage('Description generation', res.id),
+              'success',
+              true
+            );
           })
           .catch((err) =>
-            showStatus("descriptionStatus", "Failed to start: " + err.message, "error")
+            showStatus(
+              'descriptionStatus',
+              'Failed to start: ' + err.message,
+              'error'
+            )
           );
       }
 
       function createOnnxAutotagJob() {
-        const query = "tags:none";
-        const args = "--query64=" + b64(query);
+        const query = 'tags:none';
+        const args = '--query64=' + b64(query);
         postCreate(`autotag ${args}`)
           .then((res) => {
-            showStatus("autotagStatus", jobSuccessMessage("Auto-tagging", res.id), "success", true);
+            showStatus(
+              'autotagStatus',
+              jobSuccessMessage('Auto-tagging', res.id),
+              'success',
+              true
+            );
           })
           .catch((err) =>
-            showStatus("autotagStatus", "Failed to start: " + err.message, "error")
+            showStatus(
+              'autotagStatus',
+              'Failed to start: ' + err.message,
+              'error'
+            )
           );
       }
 
       function createIngestJob() {
-        const path = (document.getElementById("ingestPath").value || "").trim();
-        const recursive = document.getElementById("ingestRecursive").checked;
+        const path = (document.getElementById('ingestPath').value || '').trim();
+        const recursive = document.getElementById('ingestRecursive').checked;
         if (!path) {
-          showStatus("ingestStatus", "Please enter a folder path.", "error");
+          showStatus('ingestStatus', 'Please enter a folder path.', 'error');
           return;
         }
-        showStatus("ingestStatus", "Starting...", "info");
-        const args = (recursive ? "--recursive " : "") + `"${path}"`;
+        showStatus('ingestStatus', 'Starting...', 'info');
+        const args = (recursive ? '--recursive ' : '') + `"${path}"`;
         postCreate(`ingest ${args}`)
           .then((res) => {
-            showStatus("ingestStatus", jobSuccessMessage("Import", res.id), "success", true);
-            document.getElementById("ingestPath").value = "";
+            showStatus(
+              'ingestStatus',
+              jobSuccessMessage('Import', res.id),
+              'success',
+              true
+            );
+            document.getElementById('ingestPath').value = '';
           })
           .catch((err) =>
-            showStatus("ingestStatus", "Failed to start: " + err.message, "error")
+            showStatus(
+              'ingestStatus',
+              'Failed to start: ' + err.message,
+              'error'
+            )
           );
       }
 
       function createCleanupJob() {
-        postCreate("cleanup")
+        postCreate('cleanup')
           .then((res) => {
-            showStatus("cleanupStatus", jobSuccessMessage("Cleanup", res.id), "success", true);
+            showStatus(
+              'cleanupStatus',
+              jobSuccessMessage('Cleanup', res.id),
+              'success',
+              true
+            );
           })
           .catch((err) =>
-            showStatus("cleanupStatus", "Failed to start: " + err.message, "error")
+            showStatus(
+              'cleanupStatus',
+              'Failed to start: ' + err.message,
+              'error'
+            )
+          );
+      }
+
+      function createFileInfoJob() {
+        const query = 'hash:""';
+        const args = '--type hash,dimensions --apply all --query64=' + b64(query);
+        postCreate(`metadata ${args}`)
+          .then((res) => {
+            showStatus(
+              'fileinfoStatus',
+              jobSuccessMessage('File info generation', res.id),
+              'success',
+              true
+            );
+          })
+          .catch((err) =>
+            showStatus(
+              'fileinfoStatus',
+              'Failed to start: ' + err.message,
+              'error'
+            )
+          );
+      }
+
+      function createAllMetadataJob() {
+        const args = '--type hash,dimensions,description,transcript,autotag --apply all';
+        postCreate(`metadata ${args}`)
+          .then((res) => {
+            showStatus(
+              'allmetadataStatus',
+              jobSuccessMessage('Full metadata generation', res.id),
+              'success',
+              true
+            );
+          })
+          .catch((err) =>
+            showStatus(
+              'allmetadataStatus',
+              'Failed to start: ' + err.message,
+              'error'
+            )
           );
       }
 
       function getCardTypeFromJob(job) {
-        const cmd = (job.command || job.Command || "").toLowerCase();
-        const args = (job.arguments || job.Arguments || "").toLowerCase();
+        const cmd = (job.command || job.Command || '').toLowerCase();
+        const argsRaw = job.arguments || job.Arguments || [];
+        const args = (
+          Array.isArray(argsRaw) ? argsRaw.join(' ') : String(argsRaw)
+        ).toLowerCase();
 
-        if (cmd === "ingest") return "ingest";
-        if (cmd === "autotag") return "autotag";
-        if (cmd === "cleanup") return "cleanup";
-        if (cmd === "metadata") {
-          if (args.includes("--type transcript")) return "transcript";
-          if (args.includes("--type description")) return "description";
+        if (cmd === 'ingest') return 'ingest';
+        if (cmd === 'autotag') return 'autotag';
+        if (cmd === 'cleanup') return 'cleanup';
+        if (cmd === 'metadata') {
+          // Check for specific single-type jobs first
+          if (args.includes('--type transcript') && !args.includes(',')) return 'transcript';
+          if (args.includes('--type description') && !args.includes(',')) return 'description';
+          if (args.includes('--type hash') && !args.includes('description') && !args.includes('transcript') && !args.includes('autotag')) return 'fileinfo';
+          // Multi-type metadata jobs go to allmetadata
+          if (args.includes(',')) return 'allmetadata';
         }
         return null;
       }
@@ -796,18 +952,22 @@
       function getJobState(job) {
         const state = job.state || job.State;
         // Handle both numeric and string states (lowercase from JSON, capitalized from templates)
-        if (state === 0 || state === "pending" || state === "Pending") return "pending";
-        if (state === 1 || state === "inprogress" || state === "InProgress") return "running";
+        if (state === 0 || state === 'pending' || state === 'Pending')
+          return 'pending';
+        if (state === 1 || state === 'in_progress' || state === 'InProgress')
+          return 'in_progress';
         return null;
       }
 
       function updateCardStatuses() {
         const cardStatuses = {
-          ingest: { running: 0, pending: 0 },
-          transcript: { running: 0, pending: 0 },
-          description: { running: 0, pending: 0 },
-          autotag: { running: 0, pending: 0 },
-          cleanup: { running: 0, pending: 0 },
+          ingest: { in_progress: 0, pending: 0 },
+          transcript: { in_progress: 0, pending: 0 },
+          description: { in_progress: 0, pending: 0 },
+          autotag: { in_progress: 0, pending: 0 },
+          cleanup: { in_progress: 0, pending: 0 },
+          fileinfo: { in_progress: 0, pending: 0 },
+          allmetadata: { in_progress: 0, pending: 0 },
         };
 
         jobsState.jobs.forEach((job) => {
@@ -819,51 +979,51 @@
         });
 
         Object.keys(cardStatuses).forEach((type) => {
-          const statusEl = document.getElementById("status-" + type);
+          const statusEl = document.getElementById('status-' + type);
           if (!statusEl) return;
 
-          const { running, pending } = cardStatuses[type];
-          if (running > 0) {
-            statusEl.className = "card-status running visible";
-            statusEl.querySelector(".status-text").textContent =
-              running > 1 ? `${running} Running` : "Running";
+          const { in_progress, pending } = cardStatuses[type];
+          if (in_progress > 0) {
+            statusEl.className = 'card-status running visible';
+            statusEl.querySelector('.status-text').textContent =
+              in_progress > 1 ? `${in_progress} Running` : 'Running';
           } else if (pending > 0) {
-            statusEl.className = "card-status pending visible";
-            statusEl.querySelector(".status-text").textContent =
-              pending > 1 ? `${pending} Queued` : "Queued";
+            statusEl.className = 'card-status pending visible';
+            statusEl.querySelector('.status-text').textContent =
+              pending > 1 ? `${pending} Queued` : 'Queued';
           } else {
-            statusEl.className = "card-status";
+            statusEl.className = 'card-status';
           }
         });
       }
 
       function renderActiveJobsList() {
-        const listEl = document.getElementById("activeJobsList");
-        const emptyEl = document.getElementById("emptyState");
-        const countEl = document.getElementById("jobsCount");
-        const activityEl = document.getElementById("activityIndicator");
+        const listEl = document.getElementById('activeJobsList');
+        const emptyEl = document.getElementById('emptyState');
+        const countEl = document.getElementById('jobsCount');
+        const activityEl = document.getElementById('activityIndicator');
 
         const activeJobs = Array.from(jobsState.jobs.values()).filter((job) => {
           const state = getJobState(job);
-          return state === "pending" || state === "running";
+          return state === 'pending' || state === 'in_progress';
         });
 
         activeJobs.sort((a, b) => {
           const stateA = getJobState(a);
           const stateB = getJobState(b);
-          if (stateA === "running" && stateB !== "running") return -1;
-          if (stateA !== "running" && stateB === "running") return 1;
+          if (stateA === 'in_progress' && stateB !== 'in_progress') return -1;
+          if (stateA !== 'in_progress' && stateB === 'in_progress') return 1;
           return 0;
         });
 
         const runningCount = activeJobs.filter(
-          (j) => getJobState(j) === "running"
+          (j) => getJobState(j) === 'in_progress'
         ).length;
         const pendingCount = activeJobs.filter(
-          (j) => getJobState(j) === "pending"
+          (j) => getJobState(j) === 'pending'
         ).length;
 
-        let countText = "";
+        let countText = '';
         if (runningCount > 0 && pendingCount > 0) {
           countText = `${runningCount} running, ${pendingCount} queued`;
         } else if (runningCount > 0) {
@@ -871,23 +1031,23 @@
         } else if (pendingCount > 0) {
           countText = `${pendingCount} queued`;
         } else {
-          countText = "0 jobs";
+          countText = '0 jobs';
         }
         countEl.textContent = countText;
 
         if (runningCount > 0) {
-          activityEl.classList.remove("idle");
+          activityEl.classList.remove('idle');
         } else {
-          activityEl.classList.add("idle");
+          activityEl.classList.add('idle');
         }
 
         if (activeJobs.length === 0) {
-          emptyEl.style.display = "block";
-          listEl.querySelectorAll(".job-item").forEach((el) => el.remove());
+          emptyEl.style.display = 'block';
+          listEl.querySelectorAll('.job-item').forEach((el) => el.remove());
           return;
         }
 
-        emptyEl.style.display = "none";
+        emptyEl.style.display = 'none';
 
         const existingIds = new Set();
         activeJobs.forEach((job) => {
@@ -896,15 +1056,15 @@
 
           let itemEl = listEl.querySelector(`[data-job-id="${jobId}"]`);
           const state = getJobState(job);
-          const command = job.command || job.Command || "";
-          const args = job.arguments || job.Arguments || "";
-          const input = job.input || job.Input || "";
+          const command = job.command || job.Command || '';
+          const args = job.arguments || job.Arguments || '';
+          const input = job.input || job.Input || '';
 
           if (!itemEl) {
-            itemEl = document.createElement("a");
+            itemEl = document.createElement('a');
             itemEl.href = `/job/${jobId}`;
-            itemEl.className = "job-item " + state;
-            itemEl.setAttribute("data-job-id", jobId);
+            itemEl.className = 'job-item ' + state;
+            itemEl.setAttribute('data-job-id', jobId);
             itemEl.innerHTML = `
               <div class="job-status-indicator ${state}"></div>
               <div class="job-info">
@@ -919,16 +1079,16 @@
             listEl.appendChild(itemEl);
           }
 
-          itemEl.className = "job-item " + state;
-          itemEl.querySelector(".job-status-indicator").className =
-            "job-status-indicator " + state;
-          itemEl.querySelector(".job-command").textContent =
-            command + (args ? " " + args : "");
-          itemEl.querySelector(".job-detail").textContent = input || "No input";
+          itemEl.className = 'job-item ' + state;
+          itemEl.querySelector('.job-status-indicator').className =
+            'job-status-indicator ' + state;
+          itemEl.querySelector('.job-command').textContent =
+            command + (args ? ' ' + args : '');
+          itemEl.querySelector('.job-detail').textContent = input || 'No input';
         });
 
-        listEl.querySelectorAll(".job-item").forEach((el) => {
-          const jobId = el.getAttribute("data-job-id");
+        listEl.querySelectorAll('.job-item').forEach((el) => {
+          const jobId = el.getAttribute('data-job-id');
           if (!existingIds.has(jobId)) {
             el.remove();
           }
@@ -937,18 +1097,18 @@
 
       function cancelJobById(id) {
         fetch(`/job/${id}/cancel`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
         })
           .then((r) => r.text())
-          .then((result) => console.log("Cancelled:", result))
-          .catch((err) => console.error("Error:", err));
+          .then((result) => console.log('Cancelled:', result))
+          .catch((err) => console.error('Error:', err));
       }
 
       // SSE Connection Management
-      document.addEventListener("DOMContentLoaded", function () {
-        const STREAM_URL = "/stream";
-        const connectionStatusEl = document.getElementById("connectionStatus");
+      document.addEventListener('DOMContentLoaded', function () {
+        const STREAM_URL = '/stream';
+        const connectionStatusEl = document.getElementById('connectionStatus');
 
         const sseState = {
           es: null,
@@ -964,14 +1124,14 @@
         };
 
         function updateConnectionStatus(status) {
-          connectionStatusEl.className = "connection-status " + status;
-          const textEl = connectionStatusEl.querySelector("span:last-child");
-          if (status === "connected") {
-            textEl.textContent = "Connected";
-          } else if (status === "connecting") {
-            textEl.textContent = "Connecting...";
+          connectionStatusEl.className = 'connection-status ' + status;
+          const textEl = connectionStatusEl.querySelector('span:last-child');
+          if (status === 'connected') {
+            textEl.textContent = 'Connected';
+          } else if (status === 'connecting') {
+            textEl.textContent = 'Connecting...';
           } else {
-            textEl.textContent = "Disconnected";
+            textEl.textContent = 'Disconnected';
           }
         }
 
@@ -997,7 +1157,7 @@
           sseState.heartbeatTimer = setInterval(() => {
             const inactiveMs = Date.now() - sseState.lastActivityTs;
             if (inactiveMs > 45000) {
-              console.warn("SSE idle too long; recreating connection");
+              console.warn('SSE idle too long; recreating connection');
               recreateConnection();
             }
           }, 15000);
@@ -1012,8 +1172,8 @@
           if (sseState.isExplicitlyClosed) return;
           if (sseState.reconnectTimer) return;
           const delay = withJitter(sseState.backoffMs);
-          console.log(`SSE reconnect in ${delay}ms (${reason || ""})`);
-          updateConnectionStatus("disconnected");
+          console.log(`SSE reconnect in ${delay}ms (${reason || ''})`);
+          updateConnectionStatus('disconnected');
           sseState.reconnectTimer = setTimeout(() => {
             sseState.reconnectTimer = null;
             connect();
@@ -1054,18 +1214,18 @@
           if (sseState.es && sseState.es.readyState !== EventSource.CLOSED)
             return;
           if (!navigator.onLine) {
-            scheduleReconnect("offline");
+            scheduleReconnect('offline');
             return;
           }
-          if (document.visibilityState === "hidden") {
-            scheduleReconnect("hidden");
+          if (document.visibilityState === 'hidden') {
+            scheduleReconnect('hidden');
             return;
           }
           sseState.isConnecting = true;
-          updateConnectionStatus("connecting");
+          updateConnectionStatus('connecting');
 
           try {
-            console.log("Connecting to EventSource...");
+            console.log('Connecting to EventSource...');
             const es = new EventSource(STREAM_URL);
             sseState.es = es;
             clearConnectingTimer();
@@ -1074,7 +1234,7 @@
                 sseState.es &&
                 sseState.es.readyState === EventSource.CONNECTING
               ) {
-                console.warn("SSE stuck CONNECTING; recreating");
+                console.warn('SSE stuck CONNECTING; recreating');
                 recreateConnection();
               }
             }, 20000);
@@ -1084,24 +1244,24 @@
               clearConnectingTimer();
               onActivity();
               startHeartbeat();
-              updateConnectionStatus("connected");
-              console.log("EventSource connected.");
+              updateConnectionStatus('connected');
+              console.log('EventSource connected.');
               fetchInitialJobs();
             };
 
             es.onerror = (error) => {
-              console.warn("SSE error", error);
+              console.warn('SSE error', error);
               onActivity();
               if (!sseState.es) return;
               if (sseState.es.readyState === EventSource.CLOSED) {
                 cleanupES(false);
-                scheduleReconnect("closed");
+                scheduleReconnect('closed');
               } else if (sseState.es.readyState === EventSource.CONNECTING) {
-                scheduleReconnect("connecting");
+                scheduleReconnect('connecting');
               }
             };
 
-            es.addEventListener("create", (event) => {
+            es.addEventListener('create', (event) => {
               onActivity();
               const job = parseJobFromEvent(event.data);
               if (job && (job.id || job.ID)) {
@@ -1111,7 +1271,7 @@
               }
             });
 
-            es.addEventListener("update", (event) => {
+            es.addEventListener('update', (event) => {
               onActivity();
               const job = parseJobFromEvent(event.data);
               if (job && (job.id || job.ID)) {
@@ -1121,7 +1281,7 @@
               }
             });
 
-            es.addEventListener("delete", (event) => {
+            es.addEventListener('delete', (event) => {
               onActivity();
               const data = JSON.parse(event.data);
               const jobId = data.job?.id || data.job?.ID;
@@ -1132,14 +1292,14 @@
               }
             });
           } catch (e) {
-            console.error("SSE connect threw", e);
+            console.error('SSE connect threw', e);
             sseState.isConnecting = false;
-            scheduleReconnect("exception");
+            scheduleReconnect('exception');
           }
         }
 
         function fetchInitialJobs() {
-          fetch("/jobs/list")
+          fetch('/jobs/list')
             .then((r) => r.json())
             .then((jobs) => {
               jobsState.jobs.clear();
@@ -1154,28 +1314,28 @@
               updateCardStatuses();
             })
             .catch((err) => {
-              console.warn("Failed to fetch initial jobs:", err);
+              console.warn('Failed to fetch initial jobs:', err);
             });
         }
 
         function setupLifecycle() {
           if (sseState.lifecycleSetup) return;
           sseState.lifecycleSetup = true;
-          window.addEventListener("online", () => {
+          window.addEventListener('online', () => {
             resetBackoff();
             connect();
           });
-          window.addEventListener("offline", () => {
+          window.addEventListener('offline', () => {
             cleanupES(false);
-            updateConnectionStatus("disconnected");
+            updateConnectionStatus('disconnected');
           });
-          document.addEventListener("visibilitychange", () => {
-            if (document.visibilityState === "visible") {
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
               resetBackoff();
               connect();
             }
           });
-          window.addEventListener("focus", () => {
+          window.addEventListener('focus', () => {
             resetBackoff();
             if (!sseState.es || sseState.es.readyState === EventSource.CLOSED) {
               connect();
@@ -1186,14 +1346,14 @@
               }
             }
           });
-          window.addEventListener("pageshow", () => {
+          window.addEventListener('pageshow', () => {
             resetBackoff();
             connect();
           });
-          window.addEventListener("pagehide", () => {
+          window.addEventListener('pagehide', () => {
             cleanupES(false);
           });
-          window.addEventListener("beforeunload", () => {
+          window.addEventListener('beforeunload', () => {
             cleanupES(true);
           });
         }
@@ -1205,14 +1365,14 @@
 
       // Populate directory suggestions
       (function loadPathDirSuggestions() {
-        fetch("/media/suggest?kind=pathdir&limit=50")
+        fetch('/media/suggest?kind=pathdir&limit=50')
           .then((r) => r.json())
           .then((data) => {
-            const list = document.getElementById("pathdir-suggestions");
+            const list = document.getElementById('pathdir-suggestions');
             if (!list || !Array.isArray(data.suggestions)) return;
-            list.innerHTML = "";
+            list.innerHTML = '';
             data.suggestions.forEach((p) => {
-              const opt = document.createElement("option");
+              const opt = document.createElement('option');
               opt.value = p;
               list.appendChild(opt);
             });
