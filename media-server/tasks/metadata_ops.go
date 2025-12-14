@@ -624,3 +624,181 @@ func fileExistsInDatabase(db *sql.DB, path string) (bool, error) {
 	}
 	return true, nil
 }
+
+// Single-file processing functions for the per-file metadata task flow
+// fromQuery parameter: if true, file came from database query so skip DB existence checks
+
+// processDescriptionForFile generates a description for a single file
+func processDescriptionForFile(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string, overwrite bool, model string, fromQuery bool) error {
+	// If not from query, check if file exists in database first
+	if !fromQuery {
+		exists, err := fileExistsInDatabase(q.Db, filePath)
+		if err != nil {
+			return fmt.Errorf("error checking database: %w", err)
+		}
+		if !exists {
+			return nil // File not in database, skip
+		}
+	}
+
+	if !overwrite {
+		hasDescription, err := hasExistingMetadata(q.Db, filePath, "description")
+		if err != nil {
+			return fmt.Errorf("error checking existing description: %w", err)
+		}
+		if hasDescription {
+			return nil // Skip, already has description
+		}
+	}
+
+	description, err := describeFileWithOllama(ctx, filePath, model)
+	if err != nil {
+		return fmt.Errorf("failed to describe: %w", err)
+	}
+	if err := updateMediaMetadata(q.Db, filePath, "description", description); err != nil {
+		return fmt.Errorf("failed to update: %w", err)
+	}
+	q.PushJobStdout(jobID, fmt.Sprintf("  description: generated"))
+	return nil
+}
+
+// processTranscriptForFile generates a transcript for a single video file
+func processTranscriptForFile(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string, overwrite bool, fromQuery bool) error {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	switch ext {
+	case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv":
+		// Valid video file
+	default:
+		return nil // Not a video file, skip silently
+	}
+
+	// If not from query, check if file exists in database first
+	if !fromQuery {
+		exists, err := fileExistsInDatabase(q.Db, filePath)
+		if err != nil {
+			return fmt.Errorf("error checking database: %w", err)
+		}
+		if !exists {
+			return nil // File not in database, skip
+		}
+	}
+
+	if !overwrite {
+		hasTranscript, err := hasExistingMetadata(q.Db, filePath, "transcript")
+		if err != nil {
+			return fmt.Errorf("error checking existing transcript: %w", err)
+		}
+		if hasTranscript {
+			return nil // Skip, already has transcript
+		}
+	}
+
+	transcript, err := generateTranscriptWithFasterWhisper(ctx, filePath)
+	if err != nil {
+		return fmt.Errorf("failed to transcribe: %w", err)
+	}
+	if err := updateMediaMetadata(q.Db, filePath, "transcript", transcript); err != nil {
+		return fmt.Errorf("failed to update: %w", err)
+	}
+	q.PushJobStdout(jobID, fmt.Sprintf("  transcript: generated"))
+	return nil
+}
+
+// processHashForFile generates a hash for a single file
+func processHashForFile(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string, overwrite bool, fromQuery bool) error {
+	const maxBytes = 3 * 1024 * 1024
+
+	// If not from query, check if file exists in database first
+	if !fromQuery {
+		exists, err := fileExistsInDatabase(q.Db, filePath)
+		if err != nil {
+			return fmt.Errorf("error checking database: %w", err)
+		}
+		if !exists {
+			return nil // File not in database, skip
+		}
+	}
+
+	if !overwrite {
+		hasHash, err := hasExistingMetadata(q.Db, filePath, "hash")
+		if err != nil {
+			return fmt.Errorf("error checking existing hash: %w", err)
+		}
+		if hasHash {
+			return nil // Skip, already has hash
+		}
+	}
+
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to stat: %w", err)
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open: %w", err)
+	}
+	hashVal, err := hashFirstNBytes(file, maxBytes)
+	file.Close()
+	if err != nil {
+		return fmt.Errorf("failed to hash: %w", err)
+	}
+	stmt := `UPDATE media SET hash = ?, size = ? WHERE path = ?`
+	_, err = q.Db.Exec(stmt, hashVal, fi.Size(), filePath)
+	if err != nil {
+		return fmt.Errorf("failed to update: %w", err)
+	}
+	q.PushJobStdout(jobID, fmt.Sprintf("  hash: generated"))
+	return nil
+}
+
+// processDimensionsForFile generates dimensions for a single file
+func processDimensionsForFile(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string, overwrite bool, fromQuery bool) error {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	var isImage, isVideo bool
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".heic":
+		isImage = true
+	case ".mp4", ".mov", ".avi", ".mkv", ".webm":
+		isVideo = true
+	default:
+		return nil // Not a supported file type, skip silently
+	}
+
+	// If not from query, check if file exists in database first
+	if !fromQuery {
+		exists, err := fileExistsInDatabase(q.Db, filePath)
+		if err != nil {
+			return fmt.Errorf("error checking database: %w", err)
+		}
+		if !exists {
+			return nil // File not in database, skip
+		}
+	}
+
+	if !overwrite {
+		hasDimensions, err := hasExistingDimensions(q.Db, filePath)
+		if err != nil {
+			return fmt.Errorf("error checking existing dimensions: %w", err)
+		}
+		if hasDimensions {
+			return nil // Skip, already has dimensions
+		}
+	}
+
+	var width, height int
+	var err error
+	if isImage {
+		width, height, err = getImageDimensions(filePath)
+	} else if isVideo {
+		width, height, err = getVideoDimensionsFFProbe(filePath)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to get dimensions: %w", err)
+	}
+	_, err = q.Db.Exec(`UPDATE media SET width = ?, height = ? WHERE path = ?`, width, height, filePath)
+	if err != nil {
+		return fmt.Errorf("failed to update: %w", err)
+	}
+	q.PushJobStdout(jobID, fmt.Sprintf("  dimensions: %dx%d", width, height))
+	return nil
+}

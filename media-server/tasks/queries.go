@@ -188,3 +188,9 @@ func getMediaPathsByQuery(db *sql.DB, query string) ([]string, error) {
 	}
 	return paths, nil
 }
+
+// getMediaPathsByQueryFast retrieves all media paths matching a search query efficiently
+// This only fetches paths (no tags, no file existence checks, no extra columns)
+func getMediaPathsByQueryFast(db *sql.DB, query string) ([]string, error) {
+	return media.GetPathsByQuery(db, query)
+}
