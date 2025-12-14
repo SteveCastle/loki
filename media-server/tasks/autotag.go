@@ -18,44 +18,59 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
 	var paths []string
+	fromQuery := false
 	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("autotag: using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQuery(q.Db, qstr)
+		q.PushJobStdout(j.ID, fmt.Sprintf("Using query: %s", qstr))
+		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
 		if err != nil {
-			q.PushJobStdout(j.ID, "autotag: failed to load paths from query: "+err.Error())
+			q.PushJobStdout(j.ID, "Failed to load paths from query: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
 		}
 		paths = mediaPaths
+		fromQuery = true
+		q.PushJobStdout(j.ID, fmt.Sprintf("Query matched %d items", len(paths)))
 	} else {
 		raw := strings.TrimSpace(j.Input)
 		if raw == "" {
-			q.PushJobStdout(j.ID, "autotag: no image path provided in job input or query flag")
+			q.PushJobStdout(j.ID, "No image path provided")
 			q.CompleteJob(j.ID)
 			return nil
 		}
 		paths = parseInputPaths(raw)
-	}
-
-	if err := EnsureCategoryExists(q.Db, "Suggested", 0); err != nil {
-		q.PushJobStdout(j.ID, "autotag: failed to ensure category: "+err.Error())
-		q.ErrorJob(j.ID)
-		return err
+		q.PushJobStdout(j.ID, fmt.Sprintf("Processing %d files from input", len(paths)))
 	}
 
 	if len(paths) == 0 {
-		q.PushJobStdout(j.ID, "autotag: no valid paths parsed from input")
+		q.PushJobStdout(j.ID, "No files to process")
 		q.CompleteJob(j.ID)
 		return nil
 	}
 
+	if err := EnsureCategoryExists(q.Db, "Suggested", 0); err != nil {
+		q.PushJobStdout(j.ID, "Failed to ensure category: "+err.Error())
+		q.ErrorJob(j.ID)
+		return err
+	}
+
+	processed := 0
+	skipped := 0
 	for idx, mediaPath := range paths {
 		select {
 		case <-ctx.Done():
-			q.PushJobStdout(j.ID, "autotag: task canceled")
+			q.PushJobStdout(j.ID, "Task canceled")
 			_ = q.CancelJob(j.ID)
 			return ctx.Err()
 		default:
+		}
+
+		// Check file exists (skip for query sources - they come from DB)
+		if !fromQuery {
+			if _, err := os.Stat(mediaPath); os.IsNotExist(err) {
+				q.PushJobStdout(j.ID, fmt.Sprintf("Skipping (not found): %s", filepath.Base(mediaPath)))
+				skipped++
+				continue
+			}
 		}
 
 		// Handle video files by extracting a frame first
@@ -69,10 +84,11 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 
 		if isVideo {
-			q.PushJobStdout(j.ID, fmt.Sprintf("autotag: [%d/%d] extracting frame from video %s", idx+1, len(paths), filepath.Base(mediaPath)))
+			q.PushJobStdout(j.ID, fmt.Sprintf("[%d/%d] Extracting frame: %s", idx+1, len(paths), filepath.Base(mediaPath)))
 			framePath, err := extractVideoFrame(ctx, mediaPath, "")
 			if err != nil {
-				q.PushJobStdout(j.ID, fmt.Sprintf("autotag: failed to extract frame from %s: %v", filepath.Base(mediaPath), err))
+				q.PushJobStdout(j.ID, fmt.Sprintf("  Failed to extract frame: %v", err))
+				skipped++
 				continue
 			}
 			tempFramePath = framePath
@@ -119,11 +135,11 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		args = append(args, `--image=`+imagePath)
 
-		q.PushJobStdout(j.ID, fmt.Sprintf("autotag: [%d/%d] tagging %s", idx+1, len(paths), filepath.Base(mediaPath)))
+		q.PushJobStdout(j.ID, fmt.Sprintf("[%d/%d] Tagging: %s", idx+1, len(paths), filepath.Base(mediaPath)))
 
 		cmd, cleanup, err := embedexec.GetExec(ctx, "onnxtag", args...)
 		if err != nil {
-			q.PushJobStdout(j.ID, "autotag: failed to prepare onnxtag: "+err.Error())
+			q.PushJobStdout(j.ID, "Failed to prepare onnxtag: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
 		}
@@ -132,13 +148,13 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			q.PushJobStdout(j.ID, "autotag: failed to get stdout pipe: "+err.Error())
+			q.PushJobStdout(j.ID, "Failed to get stdout pipe: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
 		}
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
-			q.PushJobStdout(j.ID, "autotag: failed to get stderr pipe: "+err.Error())
+			q.PushJobStdout(j.ID, "Failed to get stderr pipe: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
 		}
@@ -147,13 +163,13 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		go func() {
 			s := bufio.NewScanner(stderr)
 			for s.Scan() {
-				_ = q.PushJobStdout(j.ID, "autotag stderr: "+s.Text())
+				_ = q.PushJobStdout(j.ID, "  stderr: "+s.Text())
 			}
 			close(doneErr)
 		}()
 
 		if err := cmd.Start(); err != nil {
-			q.PushJobStdout(j.ID, "autotag: failed to start onnxtag: "+err.Error())
+			q.PushJobStdout(j.ID, "Failed to start onnxtag: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
 		}
@@ -164,17 +180,17 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			line := strings.TrimSpace(scan.Text())
 			if line != "" {
 				tags = append(tags, line)
-				_ = q.PushJobStdout(j.ID, "autotag: "+line)
 			}
 		}
 		_ = cmd.Wait()
 		<-doneErr
 
 		if len(tags) == 0 {
-			q.PushJobStdout(j.ID, "autotag: no tags returned")
+			q.PushJobStdout(j.ID, "  No tags detected")
 			if tempFramePath != "" {
 				_ = os.Remove(tempFramePath)
 			}
+			skipped++
 			continue
 		}
 
@@ -191,14 +207,15 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 
 		if err := insertTagsForFile(q.Db, mediaPath, tagInfos); err != nil {
-			q.PushJobStdout(j.ID, "autotag: failed to insert tags: "+err.Error())
+			q.PushJobStdout(j.ID, "  Failed to insert tags: "+err.Error())
 			if tempFramePath != "" {
 				_ = os.Remove(tempFramePath)
 			}
 			q.ErrorJob(j.ID)
 			return err
 		}
-		q.PushJobStdout(j.ID, fmt.Sprintf("autotag: wrote %d Suggested tags for %s", len(tagInfos), filepath.Base(mediaPath)))
+		q.PushJobStdout(j.ID, fmt.Sprintf("  Added %d tags", len(tagInfos)))
+		processed++
 
 		// Clean up temporary frame if we extracted one
 		if tempFramePath != "" {
@@ -206,6 +223,7 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 	}
 
+	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d tagged, %d skipped", processed, skipped))
 	q.CompleteJob(j.ID)
 	return nil
 }

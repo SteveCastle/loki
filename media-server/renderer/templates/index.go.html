@@ -795,8 +795,9 @@
 
       function getJobState(job) {
         const state = job.state || job.State;
-        if (state === 0 || state === "Pending") return "pending";
-        if (state === 1 || state === "InProgress") return "running";
+        // Handle both numeric and string states (lowercase from JSON, capitalized from templates)
+        if (state === 0 || state === "pending" || state === "Pending") return "pending";
+        if (state === 1 || state === "inprogress" || state === "InProgress") return "running";
         return null;
       }
 
@@ -1198,6 +1199,7 @@
         }
 
         setupLifecycle();
+        fetchInitialJobs(); // Load jobs immediately, don't wait for SSE
         connect();
       });
 
