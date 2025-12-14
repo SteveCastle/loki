@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shrike</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="header">
+        <div class="logo">
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M12 2L2 7L12 12L22 7L12 2Z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M2 17L12 22L22 17"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M2 12L12 17L22 12"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>Shrike</span>
+        </div>
+        <div class="status-indicator" id="serverStatus" title="Server status">
+          <span class="status-dot"></span>
+        </div>
+      </header>
+
+      <section class="create-task">
+        <h2>Create Task</h2>
+
+        <div class="form-group">
+          <label for="command">Command</label>
+          <select id="command" class="select-input">
+            <option value="">Loading...</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="args">
+            Arguments <span class="optional">(optional)</span>
+            <button
+              id="clearArgsHistory"
+              class="clear-history-btn"
+              title="Clear argument history"
+              style="display: none"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"
+                />
+              </svg>
+            </button>
+          </label>
+          <div class="args-wrapper">
+            <input
+              type="text"
+              id="args"
+              class="text-input"
+              placeholder="e.g. --format best"
+              autocomplete="off"
+            />
+            <div
+              id="argsDropdown"
+              class="args-dropdown"
+              style="display: none"
+            ></div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="url">URL / Input</label>
+          <input
+            type="text"
+            id="url"
+            class="text-input"
+            placeholder="Current page URL"
+          />
+        </div>
+
+        <button id="createBtn" class="btn btn-primary">
+          <span class="btn-text">Create Task</span>
+          <span class="btn-loading" style="display: none">
+            <svg class="spinner" viewBox="0 0 24 24">
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="3"
+                fill="none"
+                stroke-dasharray="31.4 31.4"
+                stroke-linecap="round"
+              />
+            </svg>
+          </span>
+        </button>
+
+        <div id="feedback" class="feedback" style="display: none"></div>
+      </section>
+
+      <section class="jobs-section">
+        <div class="jobs-header">
+          <h2>Running Jobs</h2>
+          <div class="jobs-header-actions">
+            <button
+              id="clearAllBtn"
+              class="btn btn-icon btn-danger"
+              title="Clear All"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"
+                />
+              </svg>
+            </button>
+            <button id="refreshBtn" class="btn btn-icon" title="Refresh">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M23 4v6h-6M1 20v-6h6" />
+                <path
+                  d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div id="jobsList" class="jobs-list">
+          <div class="jobs-empty">
+            <span>No active jobs</span>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <a
+          href="http://localhost:8090/jobs"
+          target="_blank"
+          class="footer-link"
+        >
+          Open Shrike Web UI →
+        </a>
+      </footer>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

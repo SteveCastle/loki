@@ -1,0 +1,39 @@
+{{ define "topnav" }}
+<nav class="nav">
+  <a href="/" class="nav-link">
+    <span>Home</span>
+  </a>
+  <a href="/jobs" class="nav-link">
+    <span>Jobs</span>
+  </a>
+  <a href="/media" class="nav-link">
+    <span>Media Browser</span>
+  </a>
+  <a href="/swipe" class="nav-link">
+    <span>Swipe</span>
+  </a>
+  <a href="/stats" class="nav-link">
+    <span>Stats</span>
+  </a>
+  <a href="/config" class="nav-link">
+    <span>Config</span>
+  </a>
+  <a href="/dependencies" class="nav-link">
+    <span>Dependencies</span>
+  </a>
+</nav>
+<script>
+  (function () {
+    var path = window.location.pathname;
+    var links = document.querySelectorAll(".nav .nav-link");
+    links.forEach(function (link) {
+      var href = link.getAttribute("href");
+      if (href === "/" && path === "/") {
+        link.classList.add("active");
+      } else if (href !== "/" && path.startsWith(href)) {
+        link.classList.add("active");
+      }
+    });
+  })();
+</script>
+{{ end }}

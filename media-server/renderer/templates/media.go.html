@@ -1,0 +1,4305 @@
+{{ define "media" }}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shrike Media Browser</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .media-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: var(--space-5);
+      }
+
+      .media-table {
+        width: 100%;
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        margin-top: var(--space-4);
+        border-radius: var(--radius-xl);
+        overflow: hidden;
+      }
+
+      .media-header,
+      .media-row {
+        display: grid;
+        grid-template-columns: 40px 3fr 2fr 80px 80px 100px 80px 1.5fr 2fr;
+        gap: var(--space-2);
+        border-bottom: 1px solid var(--border-subtle);
+        align-items: start;
+        min-height: 40px;
+      }
+
+      .media-header {
+        font-weight: 600;
+        background: var(--bg-elevated);
+        color: var(--text-secondary);
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+
+      .media-row:last-child {
+        border-bottom: none;
+      }
+
+      .media-row:hover {
+        background: var(--bg-hover);
+      }
+
+      .media-cell {
+        position: relative;
+        padding: var(--space-3);
+        text-align: left;
+        box-sizing: border-box;
+        color: var(--text-secondary);
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        overflow: hidden;
+        font-size: var(--text-sm);
+      }
+
+      .media-cell.checkbox {
+        justify-content: center;
+        padding: var(--space-2);
+      }
+
+      .media-cell.checkbox input[type="checkbox"] {
+        transform: scale(1.2);
+        cursor: pointer;
+        accent-color: var(--accent-primary);
+      }
+
+      .media-cell.path {
+        font-family: var(--font-mono);
+        color: var(--accent-primary);
+        word-break: break-all;
+        white-space: normal;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        text-decoration: none;
+      }
+
+      .media-cell.path:hover {
+        color: var(--accent-cyan);
+        text-decoration: underline;
+      }
+
+      .media-cell.description {
+        color: var(--text-secondary);
+        white-space: normal;
+        word-break: break-word;
+        max-height: 80px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        display: block;
+        padding: var(--space-2) var(--space-3);
+        line-height: 1.4;
+        box-sizing: border-box;
+        text-align: left;
+      }
+
+      .media-cell.dimensions {
+        color: var(--status-pending);
+        text-align: center;
+        justify-content: center;
+        font-size: var(--text-sm);
+      }
+
+      .media-cell.size {
+        color: var(--status-success);
+        text-align: right;
+        justify-content: flex-end;
+      }
+
+      .media-cell.exists {
+        text-align: center;
+        justify-content: center;
+        font-size: 1.2em;
+      }
+
+      .media-cell.hash {
+        font-family: var(--font-mono);
+        color: var(--status-error);
+        font-size: var(--text-xs);
+        word-break: break-all;
+      }
+
+      .media-cell.tags {
+        color: var(--accent-purple);
+        font-size: var(--text-xs);
+        line-height: 1.2;
+        white-space: normal;
+        word-break: break-word;
+        align-items: flex-start;
+        align-content: flex-start;
+        padding: var(--space-2) var(--space-3);
+        max-width: 200px;
+        min-width: 150px;
+        max-height: 80px;
+        overflow-y: auto;
+        overflow-x: hidden;
+        display: flex;
+        flex-wrap: wrap;
+      }
+
+      .tag-item {
+        display: inline-block;
+        background: var(--bg-active);
+        color: var(--text-secondary);
+        padding: 2px 6px;
+        margin: 2px;
+        border-radius: var(--radius-sm);
+        font-size: var(--text-xs);
+        white-space: nowrap;
+        vertical-align: top;
+        line-height: 1.3;
+        border: 1px solid var(--border-default);
+      }
+
+      .tag-category {
+        color: var(--text-muted);
+        font-weight: 500;
+        margin-right: 2px;
+      }
+
+      .loading {
+        text-align: center;
+        padding: var(--space-8) var(--space-5);
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+      }
+
+      .loading::before {
+        content: "";
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid var(--border-default);
+        border-top-color: var(--accent-primary);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-right: var(--space-3);
+        vertical-align: middle;
+      }
+
+      .end-of-list {
+        text-align: center;
+        padding: var(--space-8) var(--space-5);
+        color: var(--text-dim);
+        font-size: var(--text-sm);
+      }
+
+      /* Typeahead */
+      .typeahead-wrap {
+        position: relative;
+        flex: 1;
+        display: flex;
+      }
+
+      .typeahead-dropdown {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 0;
+        right: 0;
+        background: var(--bg-elevated);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-xl);
+        max-height: 320px;
+        overflow-y: auto;
+        z-index: 1000;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+          0 0 0 1px rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(8px);
+      }
+
+      .typeahead-section {
+        padding: var(--space-2) var(--space-4);
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--text-dim);
+        background: transparent;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+      }
+
+      .typeahead-section::before {
+        content: "";
+        flex: 0 0 auto;
+        width: 12px;
+        height: 1px;
+        background: var(--border-subtle);
+      }
+
+      .typeahead-section::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--border-subtle);
+      }
+
+      .typeahead-item {
+        padding: var(--space-3) var(--space-4);
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: var(--text-sm);
+        transition: all var(--transition-fast);
+        border-left: 2px solid transparent;
+        margin: 0 var(--space-2);
+      }
+
+      .typeahead-item:hover,
+      .typeahead-item.active {
+        background: var(--bg-active);
+        color: var(--text-primary);
+        border-left-color: var(--accent-primary);
+      }
+
+      .typeahead-item .hint {
+        color: var(--text-dim);
+        font-size: var(--text-xs);
+        font-family: var(--font-mono);
+        background: var(--bg-surface);
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+      }
+
+      /* Recent items - distinguished by icon, not background */
+      .typeahead-item.recent {
+        color: var(--text-muted);
+      }
+
+      .typeahead-item.recent:hover,
+      .typeahead-item.recent.active {
+        background: var(--bg-active);
+        color: var(--text-primary);
+        border-left-color: var(--accent-cyan);
+      }
+
+      .typeahead-item .recent-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        background: var(--bg-surface);
+        border-radius: var(--radius-sm);
+        color: var(--text-dim);
+        margin-right: var(--space-3);
+        font-size: 11px;
+        flex-shrink: 0;
+      }
+
+      .typeahead-item.recent:hover .recent-icon,
+      .typeahead-item.recent.active .recent-icon {
+        background: var(--accent-cyan-dim);
+        color: var(--accent-cyan);
+      }
+
+      .typeahead-item .remove-btn {
+        opacity: 0;
+        background: none;
+        border: none;
+        color: var(--text-dim);
+        font-size: 12px;
+        cursor: pointer;
+        padding: 4px 8px;
+        margin-left: var(--space-2);
+        border-radius: var(--radius-sm);
+        transition: all var(--transition-fast);
+        font-weight: 500;
+      }
+
+      .typeahead-item:hover .remove-btn,
+      .typeahead-item.active .remove-btn {
+        opacity: 0.6;
+      }
+
+      .typeahead-item .remove-btn:hover {
+        opacity: 1;
+        color: var(--status-error);
+        background: var(--status-error-dim);
+      }
+
+      .typeahead-clear-all {
+        padding: var(--space-3) var(--space-4);
+        margin: var(--space-2);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+        text-align: center;
+        cursor: pointer;
+        border-radius: var(--radius-md);
+        transition: all var(--transition-fast);
+        background: transparent;
+        border: 1px dashed var(--border-subtle);
+      }
+
+      .typeahead-clear-all:hover {
+        background: var(--status-error-dim);
+        color: var(--status-error);
+        border-color: rgba(239, 68, 68, 0.3);
+        border-style: solid;
+      }
+
+      /* Suggestion item icons */
+      .typeahead-item .suggest-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        background: var(--bg-surface);
+        border-radius: var(--radius-sm);
+        color: var(--text-dim);
+        margin-right: var(--space-3);
+        font-size: 10px;
+        flex-shrink: 0;
+      }
+
+      .typeahead-item:hover .suggest-icon,
+      .typeahead-item.active .suggest-icon {
+        background: var(--accent-primary-dim);
+        color: var(--accent-primary);
+      }
+
+      /* Empty state */
+      .typeahead-empty {
+        padding: var(--space-5) var(--space-4);
+        text-align: center;
+        color: var(--text-dim);
+        font-size: var(--text-sm);
+      }
+
+      /* Toast notification system */
+      .toast-container {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column-reverse;
+        gap: var(--space-3);
+        max-height: calc(100vh - 40px);
+        overflow-y: auto;
+        pointer-events: none;
+      }
+
+      .toast {
+        pointer-events: auto;
+        min-width: 320px;
+        max-width: 420px;
+        background: var(--bg-surface);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-lg);
+        overflow: hidden;
+        transform: translateX(100%);
+        opacity: 0;
+        animation: toastSlideIn 0.3s ease forwards;
+        border: 1px solid var(--border-subtle);
+      }
+
+      .toast.exiting {
+        animation: toastSlideOut 0.3s ease forwards;
+      }
+
+      @keyframes toastSlideIn {
+        from {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+        to {
+          transform: translateX(0);
+          opacity: 1;
+        }
+      }
+
+      @keyframes toastSlideOut {
+        from {
+          transform: translateX(0);
+          opacity: 1;
+        }
+        to {
+          transform: translateX(100%);
+          opacity: 0;
+        }
+      }
+
+      .toast-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: var(--space-4);
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border-subtle);
+      }
+
+      .toast-title {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        font-weight: 600;
+        color: var(--text-primary);
+        font-size: var(--text-sm);
+      }
+
+      .toast-status-icon {
+        width: 20px;
+        height: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+      }
+
+      .toast-status-icon.pending {
+        color: var(--text-muted);
+      }
+
+      .toast-status-icon.running {
+        color: var(--accent-primary);
+        animation: pulse 1.5s ease-in-out infinite;
+      }
+
+      .toast-status-icon.success {
+        color: var(--status-success);
+      }
+
+      .toast-status-icon.error {
+        color: var(--status-error);
+      }
+
+      .toast-close {
+        background: none;
+        border: none;
+        color: var(--text-muted);
+        font-size: 18px;
+        cursor: pointer;
+        padding: var(--space-1) var(--space-2);
+        border-radius: var(--radius-sm);
+        transition: background var(--transition-fast),
+          color var(--transition-fast);
+        line-height: 1;
+      }
+
+      .toast-close:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      .toast-body {
+        padding: var(--space-4);
+      }
+
+      .toast-message {
+        color: var(--text-secondary);
+        font-size: var(--text-sm);
+        line-height: 1.5;
+        margin-bottom: var(--space-3);
+      }
+
+      .toast-progress-container {
+        background: var(--bg-active);
+        border-radius: var(--radius-sm);
+        height: 3px;
+        overflow: hidden;
+        margin-bottom: var(--space-2);
+      }
+
+      .toast-progress-bar {
+        height: 100%;
+        background: var(--accent-primary);
+        border-radius: var(--radius-sm);
+        transition: width var(--transition-slow);
+        width: 0%;
+      }
+
+      .toast-progress-bar.indeterminate {
+        width: 30%;
+        animation: indeterminate 1.5s ease-in-out infinite;
+      }
+
+      .toast-progress-bar.complete {
+        background: var(--status-success);
+        width: 100%;
+      }
+
+      .toast-progress-bar.error {
+        background: var(--status-error);
+        width: 100%;
+      }
+
+      @keyframes indeterminate {
+        0% {
+          transform: translateX(-100%);
+        }
+        100% {
+          transform: translateX(400%);
+        }
+      }
+
+      .toast-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: var(--space-3) var(--space-4);
+        background: var(--bg-surface);
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      .toast-link {
+        color: var(--accent-primary);
+        text-decoration: none;
+        font-size: var(--text-xs);
+        font-weight: 500;
+        transition: color var(--transition-fast);
+      }
+
+      .toast-link:hover {
+        color: var(--text-primary);
+      }
+
+      .toast-time {
+        color: var(--text-dim);
+        font-size: var(--text-xs);
+      }
+
+      /* Responsive */
+      @media screen and (max-width: 500px) {
+        .toast-container {
+          left: 10px;
+          right: 10px;
+          bottom: 10px;
+        }
+
+        .toast {
+          min-width: auto;
+          max-width: none;
+          width: 100%;
+        }
+      }
+
+      /* View toggle */
+      .view-toggle {
+        display: inline-flex;
+        background: var(--bg-surface);
+        border-radius: var(--radius-md);
+        padding: 3px;
+        gap: 2px;
+      }
+
+      .toggle-btn {
+        padding: var(--space-2) var(--space-4);
+        background-color: transparent;
+        border: none;
+        color: var(--text-muted);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        font-family: var(--font-sans);
+        font-size: var(--text-sm);
+        font-weight: 500;
+        transition: all var(--transition-fast);
+      }
+
+      .toggle-btn:hover {
+        color: var(--text-secondary);
+        background-color: var(--bg-hover);
+      }
+
+      .toggle-btn.active {
+        background-color: var(--bg-active);
+        color: var(--text-primary);
+      }
+
+      /* Search box */
+      .search-container {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-xl);
+        padding: var(--space-4);
+        margin-bottom: 0;
+      }
+
+      .search-form {
+        display: flex;
+        gap: var(--space-3);
+        align-items: center;
+      }
+
+      .search-input {
+        flex: 1;
+        padding: var(--space-3) var(--space-4);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        color: var(--text-primary);
+        border-radius: var(--radius-md);
+        font-family: var(--font-sans);
+        font-size: var(--text-sm);
+        transition: border-color var(--transition-fast),
+          box-shadow var(--transition-fast);
+      }
+
+      .search-input::placeholder {
+        color: var(--text-muted);
+      }
+
+      .search-input:focus {
+        border-color: var(--accent-primary);
+        outline: none;
+        box-shadow: 0 0 0 3px var(--accent-primary-dim);
+      }
+
+      .search-btn {
+        padding: var(--space-3) var(--space-5);
+        background: var(--accent-primary);
+        color: #000;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-weight: 600;
+        font-size: var(--text-sm);
+        transition: all var(--transition-fast);
+      }
+
+      .search-btn:hover {
+        background: #00e6b8;
+        box-shadow: var(--shadow-glow);
+      }
+
+      .clear-btn {
+        padding: var(--space-3) var(--space-4);
+        background-color: transparent;
+        color: var(--text-secondary);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-size: var(--text-sm);
+        transition: all var(--transition-fast);
+      }
+
+      .clear-btn:hover {
+        background-color: var(--bg-hover);
+        color: var(--text-primary);
+        border-color: var(--border-strong);
+      }
+
+      .search-examples {
+        margin-top: var(--space-3);
+        padding-top: var(--space-3);
+        border-top: 1px solid var(--border-subtle);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        line-height: 1.6;
+      }
+
+      .search-examples strong {
+        color: var(--text-secondary);
+      }
+
+      .search-examples code {
+        background: var(--bg-active);
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+        color: var(--accent-primary);
+        font-size: var(--text-xs);
+      }
+
+      /* Grid view */
+      .media-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: var(--space-3);
+        margin-top: var(--space-4);
+      }
+
+      .grid-item {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        background: var(--bg-base);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }
+
+      .grid-item:hover {
+        border-color: var(--border-default);
+        transform: scale(1.02);
+      }
+
+      .grid-thumb {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .grid-badge {
+        position: absolute;
+        right: 6px;
+        top: 6px;
+        background: rgba(0, 0, 0, 0.7);
+        color: var(--text-primary);
+        font-size: var(--text-xs);
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        pointer-events: none;
+      }
+
+      .grid-select {
+        position: absolute;
+        left: 6px;
+        top: 6px;
+        background: rgba(0, 0, 0, 0.7);
+        border-radius: var(--radius-sm);
+        padding: var(--space-1);
+        z-index: 2;
+      }
+
+      .grid-select input[type="checkbox"] {
+        transform: scale(1.2);
+        cursor: pointer;
+        accent-color: var(--accent-primary);
+      }
+
+      .grid-item.selected {
+        outline: 2px solid var(--accent-primary);
+        box-shadow: 0 0 0 2px var(--accent-primary-dim) inset;
+      }
+
+      /* Lightbox overlay */
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.95);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+      }
+
+      .lightbox.show {
+        display: flex;
+      }
+
+      .lightbox-content {
+        max-width: 90vw;
+        max-height: 90vh;
+      }
+
+      .lightbox-content img,
+      .lightbox-content video {
+        max-width: 100%;
+        max-height: 90vh;
+        object-fit: contain;
+        border-radius: var(--radius-lg);
+      }
+
+      .lightbox-close {
+        position: absolute;
+        top: var(--space-4);
+        right: var(--space-4);
+        background: var(--bg-active);
+        color: var(--text-primary);
+        border: 1px solid var(--border-default);
+        padding: var(--space-2) var(--space-3);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }
+
+      .lightbox-close:hover {
+        background: var(--bg-hover);
+        border-color: var(--border-strong);
+      }
+
+      /* Page Header */
+      /* Sticky Selection Container */
+      .selection-container {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-xl);
+        margin-top: var(--space-4);
+      }
+
+      .selection-bar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-5);
+        flex-wrap: wrap;
+        padding: var(--space-3) var(--space-4);
+      }
+
+      .selection-bar-left {
+        display: flex;
+        align-items: center;
+        gap: var(--space-5);
+      }
+
+      .selection-bar-right {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin-left: auto;
+      }
+
+      .selection-label {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        color: var(--text-secondary);
+        font-size: var(--text-sm);
+        cursor: pointer;
+        user-select: none;
+        transition: color var(--transition-fast);
+      }
+
+      .selection-label:hover {
+        color: var(--text-primary);
+      }
+
+      .selection-label.disabled {
+        color: var(--text-dim);
+        cursor: not-allowed;
+      }
+
+      .selection-label.disabled:hover {
+        color: var(--text-dim);
+      }
+
+      .selection-label input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        cursor: inherit;
+        accent-color: var(--accent-primary);
+      }
+
+      .selection-count {
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+      }
+
+      .selection-count.active {
+        color: var(--accent-primary);
+        font-weight: 500;
+      }
+
+      /* Bulk Actions Panel */
+      .bulk-actions {
+        padding: var(--space-3) var(--space-4);
+        padding-top: 0;
+        display: none;
+      }
+
+      .bulk-actions.show {
+        display: block;
+      }
+
+      .bulk-actions-divider {
+        height: 1px;
+        background: var(--border-subtle);
+        margin: 0 0 var(--space-3) 0;
+      }
+
+      .bulk-actions-form {
+        display: flex;
+        gap: var(--space-3);
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .bulk-actions-form select {
+        padding: var(--space-2) var(--space-3);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        color: var(--text-primary);
+        border-radius: var(--radius-md);
+        font-family: var(--font-sans);
+        font-size: var(--text-sm);
+        min-width: 160px;
+        transition: border-color var(--transition-fast);
+      }
+
+      .bulk-actions-form select:hover {
+        border-color: var(--border-strong);
+      }
+
+      .bulk-actions-form select:focus {
+        border-color: var(--accent-primary);
+        outline: none;
+      }
+
+      .bulk-actions-form button {
+        padding: var(--space-2) var(--space-4);
+        background: var(--accent-primary);
+        color: #000;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-weight: 600;
+        font-size: var(--text-sm);
+        transition: all var(--transition-fast);
+      }
+
+      .bulk-actions-form button:hover {
+        background: #00e6b8;
+        box-shadow: var(--shadow-glow);
+      }
+
+      .bulk-actions-form button:disabled {
+        background: var(--bg-active);
+        color: var(--text-muted);
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+
+      .bulk-clear-btn {
+        background-color: transparent !important;
+        color: var(--text-secondary) !important;
+        border: 1px solid var(--border-default) !important;
+      }
+
+      .bulk-clear-btn:hover {
+        background-color: var(--bg-hover) !important;
+        color: var(--text-primary) !important;
+        border-color: var(--border-strong) !important;
+        box-shadow: none !important;
+      }
+
+      /* Media Preview Tooltip */
+      .media-preview {
+        position: fixed;
+        display: none;
+        z-index: 1000;
+        background: linear-gradient(135deg, var(--bg-card), var(--bg-surface));
+        border: 2px solid var(--accent-primary);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-lg), 0 0 20px var(--accent-primary-dim);
+        max-width: 400px;
+        max-height: 300px;
+        overflow: hidden;
+        backdrop-filter: blur(10px);
+        transition: opacity var(--transition-slow),
+          transform var(--transition-slow);
+        opacity: 0;
+        transform: translateY(10px) scale(0.95);
+        pointer-events: none;
+      }
+
+      .media-preview.show {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+
+      .media-preview-header {
+        background: linear-gradient(90deg, var(--accent-primary), #00a080);
+        color: #000;
+        padding: var(--space-2) var(--space-3);
+        font-size: var(--text-xs);
+        font-weight: 700;
+        text-align: center;
+        margin: 0;
+      }
+
+      .media-preview-content {
+        position: relative;
+        width: 100%;
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-base);
+      }
+
+      .media-preview img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        border-radius: 0;
+      }
+
+      .media-preview video {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        border-radius: 0;
+      }
+
+      .media-preview-loading {
+        color: var(--accent-primary);
+        font-size: var(--text-sm);
+        text-align: center;
+        padding: var(--space-5);
+      }
+
+      .media-preview-error {
+        color: var(--status-error);
+        font-size: var(--text-xs);
+        text-align: center;
+        padding: var(--space-5);
+        line-height: 1.4;
+      }
+
+      .media-preview-footer {
+        background: var(--bg-elevated);
+        color: var(--text-muted);
+        padding: var(--space-2) var(--space-3);
+        font-size: var(--text-xs);
+        text-align: center;
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      /* Responsive adjustments */
+      @media screen and (max-width: 800px) {
+        .media-container {
+          padding: var(--space-3);
+        }
+
+        .search-container {
+          padding: var(--space-3);
+        }
+
+        .search-form {
+          flex-direction: column;
+        }
+
+        .search-input,
+        .search-btn,
+        .clear-btn {
+          width: 100%;
+        }
+
+        .search-examples {
+          display: none;
+        }
+
+        .selection-bar {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: var(--space-3);
+        }
+
+        .selection-bar-right {
+          margin-left: 0;
+        }
+
+        .media-header,
+        .media-row {
+          grid-template-columns: 1fr;
+          gap: 0;
+        }
+
+        .media-row {
+          background: var(--bg-card);
+          border: 1px solid var(--border-subtle);
+          border-radius: var(--radius-lg);
+          margin: var(--space-3) 0;
+        }
+
+        .media-cell {
+          padding: var(--space-2) var(--space-3);
+          border-bottom: 1px dotted var(--border-subtle);
+          white-space: normal;
+          align-items: flex-start;
+        }
+
+        .media-cell:before {
+          content: attr(data-label) ": ";
+          font-weight: 600;
+          color: var(--text-muted);
+          margin-right: var(--space-3);
+          text-transform: uppercase;
+          font-size: var(--text-xs);
+        }
+
+        .media-header {
+          display: none;
+        }
+
+        .media-cell.tags {
+          max-width: none;
+          min-width: auto;
+        }
+
+        .tag-item {
+          margin: 1px 1px;
+          font-size: var(--text-xs);
+          padding: 1px 3px;
+        }
+
+        .media-preview {
+          max-width: 90vw;
+          max-height: 60vh;
+        }
+
+        .media-preview-content {
+          height: 150px;
+        }
+
+        .bulk-actions-form {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .bulk-actions-form select,
+        .bulk-actions-form button {
+          width: 100%;
+        }
+
+        /* Grid: single column full-width items */
+        .media-grid {
+          grid-template-columns: 1fr;
+          gap: var(--space-3);
+        }
+
+        .grid-item {
+          border-radius: var(--radius-lg);
+        }
+
+        .grid-thumb {
+          touch-action: manipulation;
+        }
+
+        /* Larger, easier-to-tap checkboxes */
+        .media-cell.checkbox input[type="checkbox"],
+        .grid-select input[type="checkbox"],
+        #select-all,
+        #grid-select-all {
+          transform: scale(1.25);
+        }
+
+        /* Metadata options responsive */
+        #metadata-options div[style*="display: flex"] {
+          flex-direction: column !important;
+          align-items: stretch !important;
+        }
+
+        #metadata-options div[style*="display: flex"] label {
+          min-width: auto !important;
+        }
+
+        #metadata-options select,
+        #metadata-options input[type="text"] {
+          width: 100% !important;
+          min-width: auto !important;
+        }
+
+        #metadata-options div[style*="gap: 15px"] {
+          gap: var(--space-3) !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="media-container">
+      {{ template "topnav" . }}
+
+      <div class="search-container">
+        <form id="search-form" class="search-form">
+          <div class="typeahead-wrap">
+            <input
+              type="text"
+              id="search-input"
+              class="search-input"
+              placeholder='Search (e.g., tag:"landscape" AND size:>1000000)'
+              value="{{.SearchQuery}}"
+              autocomplete="off"
+            />
+            <div
+              id="typeahead-dropdown"
+              class="typeahead-dropdown"
+              style="display: none"
+            ></div>
+          </div>
+          <button type="submit" class="search-btn">Search</button>
+          <button type="button" id="clear-search" class="clear-btn">
+            Clear
+          </button>
+        </form>
+
+        <div class="search-examples">
+          <strong>Examples:</strong>
+          <code>path:"*.mp4"</code> • <code>size:>1000000</code> •
+          <code>tag:"landscape"</code> • <code>tags:none</code> •
+          <code>NOT tag:"portrait"</code> • <code>pathdir:"/directory/"</code> •
+          <code>tagcount:>2</code>
+        </div>
+      </div>
+
+      <!-- Sticky Selection Container -->
+      <div id="selection-container" class="selection-container">
+        <div class="selection-bar">
+          <div class="selection-bar-left">
+            <label class="selection-label">
+              <input
+                type="checkbox"
+                id="select-all-unified"
+                onchange="toggleSelectAll(this)"
+              />
+              Select all visible
+            </label>
+            <label id="apply-to-query-label" class="selection-label disabled">
+              <input
+                type="checkbox"
+                class="apply-to-query"
+                id="apply-to-query-checkbox"
+                disabled
+              />
+              Include all matching query
+            </label>
+          </div>
+          <div class="selection-bar-right">
+            <div class="view-toggle">
+              <button id="view-table" type="button" class="toggle-btn">
+                Table
+              </button>
+              <button id="view-grid" type="button" class="toggle-btn">
+                Grid
+              </button>
+            </div>
+            <span id="selection-count" class="selection-count">0 items</span>
+          </div>
+        </div>
+
+        <!-- Bulk Actions Panel -->
+        <div id="bulk-actions" class="bulk-actions">
+          <div class="bulk-actions-divider"></div>
+          <form class="bulk-actions-form" id="bulk-actions-form">
+            <select id="task-select" required>
+              <option value="">Select task...</option>
+              <option value="remove">Remove from Database</option>
+              <option value="move">Move Files</option>
+              <option value="metadata">Generate Metadata</option>
+              <option value="autotag">Auto Tag (ONNX)</option>
+              <option value="lora-dataset">Create LoRA Dataset</option>
+            </select>
+            <div
+              id="metadata-options"
+              style="
+                display: none;
+                flex-direction: column;
+                gap: 10px;
+                margin-top: 10px;
+              "
+            >
+              <div style="color: #aaa; font-size: 0.9em; font-weight: bold">
+                Metadata Types:
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 15px;
+                  flex-wrap: wrap;
+                  margin-left: 10px;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em">
+                  <input
+                    type="checkbox"
+                    id="metadata-description"
+                    style="margin-right: 5px"
+                    checked
+                  />
+                  Description
+                </label>
+                <label style="color: #aaa; font-size: 0.9em">
+                  <input
+                    type="checkbox"
+                    id="metadata-transcript"
+                    style="margin-right: 5px"
+                  />
+                  Transcript
+                </label>
+                <label style="color: #aaa; font-size: 0.9em">
+                  <input
+                    type="checkbox"
+                    id="metadata-hash"
+                    style="margin-right: 5px"
+                    checked
+                  />
+                  Hash
+                </label>
+                <label style="color: #aaa; font-size: 0.9em">
+                  <input
+                    type="checkbox"
+                    id="metadata-dimensions"
+                    style="margin-right: 5px"
+                    checked
+                  />
+                  Dimensions
+                </label>
+                <label style="color: #aaa; font-size: 0.9em">
+                  <input
+                    type="checkbox"
+                    id="metadata-autotag"
+                    style="margin-right: 5px"
+                  />
+                  Auto Tag
+                </label>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >Apply Scope:</label
+                >
+                <select
+                  id="apply-scope-select"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    min-width: 120px;
+                  "
+                >
+                  <option value="all">All selected files</option>
+                  <option value="new">New files only</option>
+                </select>
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >AI Model:</label
+                >
+                <input
+                  type="text"
+                  id="ollama-model"
+                  value="{{.DefaultOllamaModel}}"
+                  placeholder="e.g., llama3.2-vision"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    flex: 1;
+                    min-width: 200px;
+                  "
+                />
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em">
+                  <input
+                    type="checkbox"
+                    id="overwrite-checkbox"
+                    style="margin-right: 5px"
+                  />
+                  Overwrite existing metadata
+                </label>
+              </div>
+              <div style="font-size: 0.8em; color: #888; line-height: 1.3">
+                <strong>Note:</strong> Description generation requires Ollama
+                with a vision model. Transcript generation requires
+                faster-whisper-xxl for video files. Hash and dimensions work for
+                all media types.
+              </div>
+            </div>
+            <div
+              id="move-options"
+              style="
+                display: none;
+                flex-direction: column;
+                gap: 10px;
+                margin-top: 10px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >Target Directory:</label
+                >
+                <input
+                  type="text"
+                  id="target-directory-path"
+                  placeholder="e.g., /new/base/directory/"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    flex: 1;
+                    min-width: 200px;
+                  "
+                />
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >Path Prefix to Remove:</label
+                >
+                <input
+                  type="text"
+                  id="path-prefix"
+                  placeholder="e.g., /old/base/path/"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    flex: 1;
+                    min-width: 200px;
+                  "
+                />
+              </div>
+              <div style="font-size: 0.8em; color: #888; line-height: 1.3">
+                <strong>Note:</strong> Files will be moved from their current
+                location to the target directory. The path prefix will be
+                removed from each file's current path before appending to the
+                target directory.
+              </div>
+            </div>
+            <div
+              id="lora-dataset-options"
+              style="
+                display: none;
+                flex-direction: column;
+                gap: 10px;
+                margin-top: 10px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >Target Directory:</label
+                >
+                <input
+                  type="text"
+                  id="lora-target-directory"
+                  placeholder="e.g., C:\lora\datasets"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    flex: 1;
+                    min-width: 200px;
+                  "
+                />
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >LoRA Name:</label
+                >
+                <input
+                  type="text"
+                  id="lora-name"
+                  placeholder="e.g., my_character_lora"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    flex: 1;
+                    min-width: 200px;
+                  "
+                />
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >Concept Prefix:</label
+                >
+                <input
+                  type="text"
+                  id="lora-concept-prefix"
+                  placeholder="e.g., ohwx person,"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    flex: 1;
+                    min-width: 200px;
+                  "
+                />
+              </div>
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >AI Model:</label
+                >
+                <input
+                  type="text"
+                  id="lora-ollama-model"
+                  value="{{.DefaultOllamaModel}}"
+                  placeholder="e.g., llama3.2-vision"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    flex: 1;
+                    min-width: 200px;
+                  "
+                />
+              </div>
+              <div style="font-size: 0.8em; color: #888; line-height: 1.3">
+                <strong>Note:</strong> Creates a LoRA training dataset folder
+                with images converted to JPG (renamed to UUIDs) and accompanying
+                text files containing descriptions. If a description doesn't
+                exist in the database, it will be generated using the AI model.
+                The concept prefix (e.g., "ohwx person,") will be prepended to
+                each description.
+              </div>
+            </div>
+            <button type="submit" id="execute-button">Execute</button>
+            <button
+              type="button"
+              class="bulk-clear-btn"
+              onclick="clearSelection()"
+            >
+              Clear Selection
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <div id="media-table" class="media-table">
+        <div class="media-header">
+          <div class="media-cell checkbox">
+            <input
+              type="checkbox"
+              id="select-all"
+              onchange="toggleSelectAll(this)"
+            />
+          </div>
+          <div class="media-cell">Path</div>
+          <div class="media-cell">Description</div>
+          <div class="media-cell">Width</div>
+          <div class="media-cell">Height</div>
+          <div class="media-cell">Size</div>
+          <div class="media-cell">Exists</div>
+          <div class="media-cell">Hash</div>
+          <div class="media-cell">Tags</div>
+        </div>
+        <div id="media-list" class="table-body">
+          {{range .MediaItems}}
+          <div class="media-row">
+            <div class="media-cell checkbox" data-label="Select">
+              <input
+                type="checkbox"
+                class="media-checkbox"
+                value="{{htmlAttr .Path}}"
+                onchange="updateSelection()"
+              />
+            </div>
+            <div
+              class="media-cell path"
+              data-label="Path"
+              data-media-path="{{htmlAttr .Path}}"
+              onclick="openLocalPath(event, '{{htmlAttr .Path}}')"
+              onmouseenter="showMediaPreview(event, this.dataset.mediaPath)"
+              onmouseleave="hideMediaPreview()"
+              style="cursor: pointer;"
+            >
+              {{.Path}}
+            </div>
+            <div class="media-cell description" data-label="Description">
+              {{if .Description.Valid}}{{.Description.String}}{{else}}-{{end}}
+            </div>
+            <div class="media-cell dimensions" data-label="Width">
+              {{if .Width.Valid}}{{.Width.Int64}}{{else}}-{{end}}
+            </div>
+            <div class="media-cell dimensions" data-label="Height">
+              {{if .Height.Valid}}{{.Height.Int64}}{{else}}-{{end}}
+            </div>
+            <div class="media-cell size" data-label="Size">
+              {{.FormattedSize}}
+            </div>
+            <div class="media-cell exists" data-label="Exists">
+              {{if .Exists}}✅{{else}}❌{{end}}
+            </div>
+            <div class="media-cell hash" data-label="Hash">
+              {{if .Hash.Valid}}{{.Hash.String}}{{else}}-{{end}}
+            </div>
+            <div class="media-cell tags" data-label="Tags">
+              {{if .Tags}} {{range .Tags}}
+              <span class="tag-item">
+                <span class="tag-category">{{.Category}}</span>:{{.Label}}
+              </span>
+              {{end}} {{else}} - {{end}}
+            </div>
+          </div>
+          {{end}}
+        </div>
+        <div id="loading" class="loading" style="display: none">
+          Loading more items...
+        </div>
+        <div id="end-of-list" class="end-of-list" style="display: none">
+          No more items to load
+        </div>
+      </div>
+      <div id="media-grid" class="media-grid" style="display: none"></div>
+    </div>
+
+    <!-- Media Preview Tooltip -->
+    <div id="media-preview" class="media-preview">
+      <div class="media-preview-header" id="preview-header">Media Preview</div>
+      <div class="media-preview-content" id="preview-content">
+        <div class="media-preview-loading" id="preview-loading">Loading...</div>
+      </div>
+      <div class="media-preview-footer" id="preview-footer">
+        Hover to preview media
+      </div>
+    </div>
+
+    <!-- Toast notifications container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Lightbox for fullscreen media -->
+    <div id="lightbox" class="lightbox" aria-hidden="true">
+      <button id="lightbox-close" class="lightbox-close" type="button">
+        Close
+      </button>
+      <div id="lightbox-content" class="lightbox-content"></div>
+    </div>
+
+    <script>
+      let currentOffset = Number("{{.Offset}}") || 0;
+      let isLoading = false;
+      let hasMoreItems =
+        "{{.HasMore}}" === "true" ||
+        "{{.HasMore}}" === "1" ||
+        "{{.HasMore}}" === "True";
+      let currentSearchQuery = "{{.SearchQuery}}";
+
+      // Restore last search query if no query parameter provided
+      const LAST_SEARCH_KEY = "media_last_search_query";
+      if (!currentSearchQuery) {
+        const savedQuery = localStorage.getItem(LAST_SEARCH_KEY);
+        if (savedQuery) {
+          // Redirect to apply the saved query
+          const queryParams = new URLSearchParams();
+          queryParams.set("q", savedQuery);
+          window.location.href = `/media?${queryParams}`;
+        }
+      }
+
+      // View mode state
+      let currentViewMode = localStorage.getItem("mediaViewMode") || "table";
+      let gridInitialized = false;
+      let gridObserver = null;
+
+      // Selection management
+      let selectedItems = new Set();
+
+      function updateSelection() {
+        selectedItems.clear();
+        const allCheckboxes = document.querySelectorAll(".media-checkbox");
+        allCheckboxes.forEach((cb) => {
+          if (cb.checked) {
+            selectedItems.add(cb.value);
+          }
+        });
+
+        // Keep duplicate checkboxes (table/grid) in sync
+        allCheckboxes.forEach((cb) => {
+          cb.checked = selectedItems.has(cb.value);
+        });
+
+        // Update grid item selected styling
+        document.querySelectorAll("#media-grid .grid-item").forEach((el) => {
+          const path = el.getAttribute("data-path");
+          if (selectedItems.has(path)) {
+            el.classList.add("selected");
+          } else {
+            el.classList.remove("selected");
+          }
+        });
+
+        // Update select-all checkbox state
+        const uniqueTotal = Array.from(allCheckboxes).reduce((set, cb) => {
+          set.add(cb.value);
+          return set;
+        }, new Set()).size;
+
+        const count = selectedItems.size;
+        const allSelected = count > 0 && count === uniqueTotal;
+
+        // Update all select-all checkboxes (unified bar + table header)
+        const selectAllCheckboxes = [
+          document.getElementById("select-all-unified"),
+          document.getElementById("select-all"),
+        ];
+
+        selectAllCheckboxes.forEach((el) => {
+          if (!el) return;
+          if (count === 0) {
+            el.indeterminate = false;
+            el.checked = false;
+          } else if (allSelected) {
+            el.indeterminate = false;
+            el.checked = true;
+          } else {
+            el.indeterminate = true;
+            el.checked = false;
+          }
+        });
+
+        // Enable/disable apply-to-query checkbox based on select-all state
+        updateApplyToQueryState(allSelected);
+
+        // Update selection counts
+        updateBulkActionsCount();
+
+        // Show/hide bulk actions panel
+        const bulkActions = document.getElementById("bulk-actions");
+        if (count > 0 || isApplyToQueryEnabled()) {
+          bulkActions.classList.add("show");
+        } else {
+          bulkActions.classList.remove("show");
+        }
+      }
+
+      function updateApplyToQueryState(allSelected) {
+        const applyCheckbox = document.getElementById(
+          "apply-to-query-checkbox"
+        );
+        const applyLabel = document.getElementById("apply-to-query-label");
+
+        if (applyCheckbox) {
+          if (allSelected && currentSearchQuery) {
+            applyCheckbox.disabled = false;
+          } else {
+            applyCheckbox.disabled = true;
+            applyCheckbox.checked = false; // Uncheck if disabled
+          }
+        }
+
+        // Update label styling
+        if (applyLabel) {
+          if (allSelected && currentSearchQuery) {
+            applyLabel.classList.remove("disabled");
+          } else {
+            applyLabel.classList.add("disabled");
+          }
+        }
+      }
+
+      function updateBulkActionsCount() {
+        const selectionCountEl = document.getElementById("selection-count");
+        const count = selectedItems.size;
+
+        if (isApplyToQueryEnabled() && currentSearchQuery) {
+          if (selectionCountEl) {
+            selectionCountEl.textContent = "All matching query";
+            selectionCountEl.classList.add("active");
+          }
+        } else {
+          const text =
+            count === 1 ? "1 item selected" : `${count} items selected`;
+          if (selectionCountEl) {
+            selectionCountEl.textContent = count > 0 ? text : "0 items";
+            selectionCountEl.classList.toggle("active", count > 0);
+          }
+        }
+      }
+
+      function toggleSelectAll(checkbox) {
+        const mediaCheckboxes = document.querySelectorAll(".media-checkbox");
+        mediaCheckboxes.forEach((cb) => {
+          cb.checked = checkbox.checked;
+        });
+        updateSelection();
+      }
+
+      function clearSelection() {
+        const checkboxes = document.querySelectorAll(
+          ".media-checkbox, #select-all, #select-all-unified, .apply-to-query"
+        );
+        checkboxes.forEach((cb) => {
+          cb.checked = false;
+          cb.indeterminate = false;
+        });
+        updateSelection();
+      }
+
+      // Show/hide options based on task selection
+      document
+        .getElementById("task-select")
+        .addEventListener("change", function () {
+          const metadataOptions = document.getElementById("metadata-options");
+          const moveOptions = document.getElementById("move-options");
+          const loraDatasetOptions = document.getElementById(
+            "lora-dataset-options"
+          );
+
+          // Hide all options first
+          metadataOptions.style.display = "none";
+          moveOptions.style.display = "none";
+          loraDatasetOptions.style.display = "none";
+
+          // Show relevant options
+          if (this.value === "metadata") {
+            metadataOptions.style.display = "flex";
+          } else if (this.value === "move") {
+            moveOptions.style.display = "flex";
+          } else if (this.value === "lora-dataset") {
+            loraDatasetOptions.style.display = "flex";
+          }
+        });
+
+      // Handle bulk actions form submission
+      document
+        .getElementById("bulk-actions-form")
+        .addEventListener("submit", function (e) {
+          e.preventDefault();
+
+          const taskSelect = document.getElementById("task-select");
+          const selectedTask = taskSelect.value;
+          const overwriteCheckbox =
+            document.getElementById("overwrite-checkbox");
+          const executeButton = document.getElementById("execute-button");
+          const applyToQuery = isApplyToQueryEnabled();
+
+          if (!selectedTask) {
+            alert("Please select a task to execute");
+            return;
+          }
+
+          const applyAllowedTasks = [
+            "metadata",
+            "autotag",
+            "move",
+            "remove",
+            "lora-dataset",
+          ];
+          if (
+            selectedItems.size === 0 &&
+            !(
+              applyAllowedTasks.includes(selectedTask) &&
+              applyToQuery &&
+              currentSearchQuery
+            )
+          ) {
+            alert(
+              "Please select at least one media item or enable 'Apply to all items matching current search'"
+            );
+            return;
+          }
+
+          // Prepare the command based on selected task
+          let command,
+            args = [],
+            input;
+
+          if (selectedTask === "remove") {
+            command = "remove";
+            args = [];
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push("--query64=" + encQuery);
+              } catch (e) {
+                args.push("--query", currentSearchQuery);
+              }
+              input = "";
+            } else {
+              input = Array.from(selectedItems).join("\n");
+            }
+          } else if (selectedTask === "move") {
+            command = "move";
+            args = [];
+
+            // Get target directory from text input
+            const targetDirectoryInput = document.getElementById(
+              "target-directory-path"
+            );
+            const pathPrefixInput = document.getElementById("path-prefix");
+
+            const targetPath = targetDirectoryInput.value.trim();
+
+            // Validate target path
+            if (!targetPath) {
+              alert("Please enter a target directory path");
+              return;
+            }
+
+            // Add target directory as first argument (no flag)
+            args.push(targetPath);
+
+            // Add path prefix if specified
+            const pathPrefix = pathPrefixInput.value.trim();
+            if (pathPrefix) {
+              args.push("--prefix", pathPrefix);
+            }
+
+            // If applying to current search, pass the query and no explicit paths
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push("--query64=" + encQuery);
+              } catch (e) {
+                args.push("--query", currentSearchQuery);
+              }
+              input = "";
+            } else {
+              // Create newline-separated list of files
+              input = Array.from(selectedItems).join("\n");
+            }
+          } else if (selectedTask === "metadata") {
+            command = "metadata";
+            args = [];
+
+            // Get selected metadata types
+            const metadataTypes = [];
+            if (document.getElementById("metadata-description").checked) {
+              metadataTypes.push("description");
+            }
+            if (document.getElementById("metadata-transcript").checked) {
+              metadataTypes.push("transcript");
+            }
+            if (document.getElementById("metadata-hash").checked) {
+              metadataTypes.push("hash");
+            }
+            if (document.getElementById("metadata-dimensions").checked) {
+              metadataTypes.push("dimensions");
+            }
+            if (document.getElementById("metadata-autotag").checked) {
+              metadataTypes.push("autotag");
+            }
+
+            // Validate that at least one metadata type is selected
+            if (metadataTypes.length === 0) {
+              alert("Please select at least one metadata type to generate");
+              return;
+            }
+
+            // Add metadata types as comma-separated list
+            args.push("--type", metadataTypes.join(","));
+
+            // Add apply scope
+            const applyScope =
+              document.getElementById("apply-scope-select").value;
+            args.push("--apply", applyScope);
+
+            // Add AI model
+            const ollamaModel = document
+              .getElementById("ollama-model")
+              .value.trim();
+            if (ollamaModel) {
+              args.push("--model", ollamaModel);
+            }
+
+            // Add overwrite flag if checked
+            if (overwriteCheckbox.checked) {
+              args.push("--overwrite");
+            }
+
+            // If applying to current search, pass the query and no explicit paths
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push("--query64=" + encQuery);
+              } catch (e) {
+                // Fallback to plain query if encoding fails
+                args.push("--query", currentSearchQuery);
+              }
+              input = "";
+            } else {
+              input = Array.from(selectedItems).join("\n");
+            }
+          } else if (selectedTask === "autotag") {
+            command = "autotag";
+            args = [];
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push("--query64=" + encQuery);
+              } catch (e) {
+                args.push("--query", currentSearchQuery);
+              }
+              input = "";
+            } else {
+              // Pass comma-separated list to support multi-file in one task
+              input = Array.from(selectedItems).join(",");
+            }
+          } else if (selectedTask === "lora-dataset") {
+            command = "lora-dataset";
+            args = [];
+
+            // Get LoRA dataset options
+            const loraTargetDir = document
+              .getElementById("lora-target-directory")
+              .value.trim();
+            const loraName = document.getElementById("lora-name").value.trim();
+            const loraConceptPrefix = document
+              .getElementById("lora-concept-prefix")
+              .value.trim();
+            const loraModel = document
+              .getElementById("lora-ollama-model")
+              .value.trim();
+
+            // Validate required fields
+            if (!loraTargetDir) {
+              alert("Please enter a target directory for the LoRA dataset");
+              return;
+            }
+            if (!loraName) {
+              alert("Please enter a LoRA name");
+              return;
+            }
+
+            // Add arguments
+            args.push("--target", loraTargetDir);
+            args.push("--name", loraName);
+
+            if (loraConceptPrefix) {
+              args.push("--prefix", loraConceptPrefix);
+            }
+
+            if (loraModel) {
+              args.push("--model", loraModel);
+            }
+
+            // If applying to current search, pass the query
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push("--query64=" + encQuery);
+              } catch (e) {
+                args.push("--query", currentSearchQuery);
+              }
+              input = "";
+            } else {
+              input = Array.from(selectedItems).join("\n");
+            }
+          }
+
+          // Disable the button
+          executeButton.disabled = true;
+          executeButton.textContent = "Executing...";
+
+          // Create the job - properly quote the input to treat it as a single argument
+          let formattedInput = "";
+          if (input) {
+            // Escape any quotes in the input and wrap the entire input in quotes
+            const escapedInput = input.replace(/"/g, '\\"');
+            formattedInput = `"${escapedInput}"`;
+          }
+
+          const jobData = {
+            input: `${command} ${args.join(" ")} ${formattedInput}`,
+          };
+
+          fetch("/create", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(jobData),
+          })
+            .then((response) => {
+              if (response.ok) {
+                return response.json();
+              }
+              throw new Error("Failed to create job");
+            })
+            .then((result) => {
+              // Create a toast for this job that will track its status
+              ToastManager.add(result.id, command);
+              clearSelection();
+            })
+            .catch((error) => {
+              console.error("Error creating job:", error);
+              alert("Error creating job. Please try again.");
+            })
+            .finally(() => {
+              executeButton.disabled = false;
+              executeButton.textContent = "Execute";
+            });
+        });
+
+      // Media preview functionality
+      let previewTimeout;
+      let hideTimeout;
+      let loadingTimeoutId = null;
+      let currentPreviewId = 0; // Track which preview request is active
+      let currentMediaElement = null; // Track the current media element being loaded
+      const previewDelay = 500; // ms
+      const hideDelay = 300; // ms
+      const imageLoadTimeout = 120000; // 120 seconds for images (large files from localhost)
+      const videoLoadTimeout = 180000; // 180 seconds for videos (large files from localhost)
+
+      function isImageFile(path) {
+        if (!path || typeof path !== "string") return false;
+        const imageExtensions = [
+          ".jpg",
+          ".jpeg",
+          ".png",
+          ".gif",
+          ".bmp",
+          ".webp",
+          ".svg",
+          ".tiff",
+          ".ico",
+        ];
+        try {
+          const lastDotIndex = path.lastIndexOf(".");
+          if (lastDotIndex === -1 || lastDotIndex === path.length - 1)
+            return false;
+          const ext = path.toLowerCase().substring(lastDotIndex);
+          return imageExtensions.includes(ext);
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function isVideoFile(path) {
+        if (!path || typeof path !== "string") return false;
+        const videoExtensions = [
+          ".mp4",
+          ".webm",
+          ".ogg",
+          ".avi",
+          ".mov",
+          ".wmv",
+          ".flv",
+          ".mkv",
+          ".m4v",
+        ];
+        try {
+          const lastDotIndex = path.lastIndexOf(".");
+          if (lastDotIndex === -1 || lastDotIndex === path.length - 1)
+            return false;
+          const ext = path.toLowerCase().substring(lastDotIndex);
+          return videoExtensions.includes(ext);
+        } catch (e) {
+          return false;
+        }
+      }
+
+      function isRemoteUrl(path) {
+        return path.startsWith("http://") || path.startsWith("https://");
+      }
+
+      function getMediaUrl(path) {
+        // Validate path
+        if (!path || typeof path !== "string") {
+          throw new Error("Invalid path");
+        }
+
+        // Trim and validate path length
+        path = path.trim();
+        if (path.length === 0) {
+          throw new Error("Empty path");
+        }
+        if (path.length > 1000) {
+          throw new Error("Path too long");
+        }
+
+        if (isRemoteUrl(path)) {
+          return path;
+        }
+
+        // For local files, properly encode the path
+        try {
+          return `/media/file?path=${encodeURIComponent(path)}`;
+        } catch (e) {
+          throw new Error("Failed to encode path");
+        }
+      }
+
+      function showMediaPreview(event, mediaPath) {
+        clearTimeout(hideTimeout);
+
+        // Cancel any pending loading timeout from previous preview
+        if (loadingTimeoutId) {
+          clearTimeout(loadingTimeoutId);
+          loadingTimeoutId = null;
+        }
+
+        // Validate media path
+        if (
+          !mediaPath ||
+          typeof mediaPath !== "string" ||
+          mediaPath.trim() === ""
+        ) {
+          return;
+        }
+
+        // Trim and sanitize the path
+        mediaPath = mediaPath.trim();
+
+        if (!isImageFile(mediaPath) && !isVideoFile(mediaPath)) {
+          return;
+        }
+
+        const preview = document.getElementById("media-preview");
+        const header = document.getElementById("preview-header");
+        const content = document.getElementById("preview-content");
+        const footer = document.getElementById("preview-footer");
+
+        previewTimeout = setTimeout(() => {
+          // Increment preview ID to track this request
+          currentPreviewId++;
+          const thisPreviewId = currentPreviewId;
+
+          // Clean up previous media element if any
+          if (currentMediaElement) {
+            if (currentMediaElement.tagName === "VIDEO") {
+              currentMediaElement.pause();
+              currentMediaElement.src = "";
+              currentMediaElement.load();
+            } else if (currentMediaElement.tagName === "IMG") {
+              currentMediaElement.src = "";
+            }
+            currentMediaElement = null;
+          }
+
+          // Position the preview near the mouse
+          const rect = event.target.getBoundingClientRect();
+
+          let left = event.clientX + 10;
+          let top = event.clientY - 10;
+
+          // Adjust if preview would go off screen
+          if (left + 400 > window.innerWidth) {
+            left = event.clientX - 410;
+          }
+          if (top + 300 > window.innerHeight) {
+            top = event.clientY - 310;
+          }
+
+          preview.style.left = Math.max(10, left) + "px";
+          preview.style.top = Math.max(10, top) + "px";
+
+          // Show preview
+          preview.style.display = "block";
+          setTimeout(() => preview.classList.add("show"), 10);
+
+          // Set header with safe file name extraction
+          const fileName = extractFileName(mediaPath);
+          header.textContent = fileName;
+
+          // Show loading
+          content.innerHTML =
+            '<div class="media-preview-loading">Loading...</div>';
+
+          let mediaUrl;
+          try {
+            mediaUrl = getMediaUrl(mediaPath);
+          } catch (e) {
+            content.innerHTML = `<div class="media-preview-error">Invalid path<br>${escapeHtml(
+              e.message
+            )}</div>`;
+            footer.textContent = "Path error";
+            return;
+          }
+
+          if (isImageFile(mediaPath)) {
+            const img = new Image();
+            currentMediaElement = img;
+
+            img.onload = function () {
+              // Only update if this is still the active preview
+              if (thisPreviewId !== currentPreviewId) return;
+              if (loadingTimeoutId) {
+                clearTimeout(loadingTimeoutId);
+                loadingTimeoutId = null;
+              }
+              content.innerHTML = "";
+              content.appendChild(img);
+              footer.textContent = `Image • ${img.naturalWidth}×${img.naturalHeight}`;
+            };
+
+            img.onerror = function (e) {
+              // Only show error if this is still the active preview
+              if (thisPreviewId !== currentPreviewId) return;
+              if (loadingTimeoutId) {
+                clearTimeout(loadingTimeoutId);
+                loadingTimeoutId = null;
+              }
+              // Check if this was an intentional abort (src set to empty)
+              if (img.src === "" || img.src === window.location.href) return;
+              content.innerHTML =
+                '<div class="media-preview-error">Failed to load image<br>Check if file exists and is accessible</div>';
+              footer.textContent = "Error loading media";
+            };
+
+            // Set a timeout for loading - generous for large local files
+            loadingTimeoutId = setTimeout(() => {
+              // Only timeout if this is still the active preview and not loaded
+              if (thisPreviewId !== currentPreviewId) return;
+              if (!img.complete && img.naturalWidth === 0) {
+                img.src = ""; // Cancel loading
+                content.innerHTML =
+                  '<div class="media-preview-error">Loading timeout<br>File may be too large or inaccessible</div>';
+                footer.textContent = "Loading timeout";
+              }
+              loadingTimeoutId = null;
+            }, imageLoadTimeout);
+
+            img.src = mediaUrl;
+          } else if (isVideoFile(mediaPath)) {
+            const video = document.createElement("video");
+            currentMediaElement = video;
+            video.muted = true;
+            video.autoplay = true;
+            video.loop = true;
+            video.controls = false;
+            video.preload = "metadata";
+
+            video.onloadedmetadata = function () {
+              // Only update if this is still the active preview
+              if (thisPreviewId !== currentPreviewId) return;
+              if (loadingTimeoutId) {
+                clearTimeout(loadingTimeoutId);
+                loadingTimeoutId = null;
+              }
+              content.innerHTML = "";
+              content.appendChild(video);
+              const duration = Math.round(video.duration);
+              footer.textContent = `Video • ${video.videoWidth}×${video.videoHeight} • ${duration}s`;
+            };
+
+            // Also listen for canplay as a fallback (some videos load metadata slowly)
+            video.oncanplay = function () {
+              // Only update if this is still the active preview and not already shown
+              if (thisPreviewId !== currentPreviewId) return;
+              if (content.contains(video)) return; // Already appended
+              if (loadingTimeoutId) {
+                clearTimeout(loadingTimeoutId);
+                loadingTimeoutId = null;
+              }
+              content.innerHTML = "";
+              content.appendChild(video);
+              const duration = video.duration
+                ? Math.round(video.duration)
+                : "?";
+              footer.textContent = `Video • ${video.videoWidth}×${video.videoHeight} • ${duration}s`;
+            };
+
+            video.onerror = function (e) {
+              // Only show error if this is still the active preview
+              if (thisPreviewId !== currentPreviewId) return;
+              if (loadingTimeoutId) {
+                clearTimeout(loadingTimeoutId);
+                loadingTimeoutId = null;
+              }
+              // Check if this was an intentional abort (src set to empty)
+              if (video.src === "" || !video.src) return;
+              content.innerHTML =
+                '<div class="media-preview-error">Failed to load video<br>Check if file exists and is accessible</div>';
+              footer.textContent = "Error loading media";
+            };
+
+            // Set a timeout for loading - very generous for large video files
+            loadingTimeoutId = setTimeout(() => {
+              // Only timeout if this is still the active preview
+              if (thisPreviewId !== currentPreviewId) return;
+              // readyState: 0=HAVE_NOTHING, 1=HAVE_METADATA, 2=HAVE_CURRENT_DATA, 3=HAVE_FUTURE_DATA, 4=HAVE_ENOUGH_DATA
+              // Only timeout if we haven't even started loading metadata
+              if (video.readyState < 1) {
+                video.src = ""; // Cancel loading
+                content.innerHTML =
+                  '<div class="media-preview-error">Loading timeout<br>File may be too large or inaccessible</div>';
+                footer.textContent = "Loading timeout";
+              }
+              loadingTimeoutId = null;
+            }, videoLoadTimeout);
+
+            video.src = mediaUrl;
+          }
+        }, previewDelay);
+      }
+
+      // Helper function to safely extract filename from path
+      function extractFileName(path) {
+        try {
+          // Handle both forward and backward slashes
+          const parts = path.split(/[/\\]/);
+          const fileName = parts[parts.length - 1];
+          // Limit filename length for display
+          return fileName.length > 50
+            ? fileName.substring(0, 47) + "..."
+            : fileName;
+        } catch (e) {
+          return "Unknown File";
+        }
+      }
+
+      function hideMediaPreview() {
+        clearTimeout(previewTimeout);
+
+        // Cancel any pending loading timeout immediately
+        if (loadingTimeoutId) {
+          clearTimeout(loadingTimeoutId);
+          loadingTimeoutId = null;
+        }
+
+        // Invalidate the current preview ID so any pending callbacks are ignored
+        currentPreviewId++;
+
+        hideTimeout = setTimeout(() => {
+          const preview = document.getElementById("media-preview");
+          preview.classList.remove("show");
+          setTimeout(() => {
+            preview.style.display = "none";
+            // Clean up any media elements to stop playback and free memory
+            const content = document.getElementById("preview-content");
+            const videos = content.querySelectorAll("video");
+            videos.forEach((video) => {
+              video.pause();
+              video.src = "";
+              video.load(); // Reset video element
+            });
+            const images = content.querySelectorAll("img");
+            images.forEach((img) => {
+              img.src = ""; // Cancel any pending image loads
+            });
+            // Clear the current media element reference
+            currentMediaElement = null;
+          }, 300);
+        }, hideDelay);
+      }
+
+      // Add event listeners to preview element to prevent hiding when hovering over it
+      document
+        .getElementById("media-preview")
+        .addEventListener("mouseenter", () => {
+          clearTimeout(hideTimeout);
+          // Don't cancel the loading timeout here - let the media continue loading
+        });
+
+      document
+        .getElementById("media-preview")
+        .addEventListener("mouseleave", hideMediaPreview);
+
+      function formatBytes(bytes) {
+        if (bytes === 0) return "0 B";
+        const k = 1024;
+        const sizes = ["B", "KB", "MB", "GB", "TB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+      }
+
+      function loadMoreItems() {
+        if (isLoading || !hasMoreItems) return;
+
+        isLoading = true;
+        document.getElementById("loading").style.display = "block";
+
+        const queryParams = new URLSearchParams({
+          offset: currentOffset,
+          limit: 25,
+        });
+
+        if (currentSearchQuery) {
+          queryParams.set("q", currentSearchQuery);
+        }
+
+        fetch(`/media/api?${queryParams}`)
+          .then((response) => response.json())
+          .then((data) => {
+            const mediaList = document.getElementById("media-list");
+
+            data.items.forEach((item) => {
+              const row = document.createElement("div");
+              row.className = "media-row";
+
+              // Build tags HTML
+              let tagsHtml = "-";
+              if (item.tags && item.tags.length > 0) {
+                tagsHtml = item.tags
+                  .map(
+                    (tag) =>
+                      `<span class="tag-item"><span class="tag-category">${escapeHtml(
+                        tag.category
+                      )}</span>:${escapeHtml(tag.label)}</span>`
+                  )
+                  .join("");
+              }
+
+              row.innerHTML = `
+                <div class="media-cell checkbox" data-label="Select">
+                  <input type="checkbox" class="media-checkbox" value="${escapeHtml(
+                    item.path
+                  )}" onchange="updateSelection()">
+                </div>
+                <div class="media-cell path" data-label="Path" data-media-path="${escapeHtml(
+                  item.path
+                )}" onclick="openLocalPath(event, '${escapeAttr(
+                item.path
+              )}')" onmouseenter="showMediaPreview(event, this.dataset.mediaPath)" onmouseleave="hideMediaPreview()" style="cursor: pointer;">${escapeHtml(
+                item.path
+              )}</div>
+                <div class="media-cell description" data-label="Description">${escapeHtml(
+                  item.description || "-"
+                )}</div>
+                <div class="media-cell dimensions" data-label="Width">${
+                  item.width || "-"
+                }</div>
+                <div class="media-cell dimensions" data-label="Height">${
+                  item.height || "-"
+                }</div>
+                <div class="media-cell size" data-label="Size">${
+                  item.size ? formatBytes(item.size) : "Unknown"
+                }</div>
+                <div class="media-cell exists" data-label="Exists">${
+                  item.exists ? "✅" : "❌"
+                }</div>
+                <div class="media-cell hash" data-label="Hash">${escapeHtml(
+                  item.hash || "-"
+                )}</div>
+                <div class="media-cell tags" data-label="Tags">${tagsHtml}</div>
+              `;
+              mediaList.appendChild(row);
+
+              // Keep grid in sync
+              appendGridItem(item.path);
+            });
+
+            currentOffset += data.items.length;
+            hasMoreItems = data.has_more;
+
+            if (!hasMoreItems) {
+              document.getElementById("end-of-list").style.display = "block";
+            }
+          })
+          .catch((error) => {
+            console.error("Error loading more items:", error);
+          })
+          .finally(() => {
+            isLoading = false;
+            document.getElementById("loading").style.display = "none";
+          });
+      }
+
+      function escapeHtml(text) {
+        if (text == null || text === undefined) {
+          return "";
+        }
+        const div = document.createElement("div");
+        div.textContent = String(text);
+        return div.innerHTML;
+      }
+
+      // Open local path using OS default application
+      function openLocalPath(event, path) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!path) return;
+
+        fetch("/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: path }),
+        })
+          .then((response) => {
+            if (!response.ok) {
+              console.error("Failed to open path:", path);
+            }
+          })
+          .catch((err) => console.error("Error opening path:", err));
+      }
+
+      // Escape for use in HTML attribute values (also escapes quotes)
+      function escapeAttr(text) {
+        if (text == null || text === undefined) {
+          return "";
+        }
+        return String(text)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function performSearch(query) {
+        const queryParams = new URLSearchParams();
+        if (query) {
+          queryParams.set("q", query);
+          // Save the query to localStorage for next visit
+          localStorage.setItem(LAST_SEARCH_KEY, query);
+        } else {
+          // Clear saved query when explicitly clearing search
+          localStorage.removeItem(LAST_SEARCH_KEY);
+        }
+
+        // Redirect to reload the page with the new search
+        window.location.href = `/media?${queryParams}`;
+      }
+
+      // Search form handling
+      document
+        .getElementById("search-form")
+        .addEventListener("submit", function (e) {
+          e.preventDefault();
+          const query = document.getElementById("search-input").value.trim();
+          performSearch(query);
+        });
+
+      // Clear search button
+      document
+        .getElementById("clear-search")
+        .addEventListener("click", function () {
+          document.getElementById("search-input").value = "";
+          performSearch("");
+        });
+
+      // Infinite scroll implementation
+      function checkScroll() {
+        const scrollTop =
+          window.pageYOffset || document.documentElement.scrollTop;
+        const windowHeight = window.innerHeight;
+        const documentHeight = document.documentElement.offsetHeight;
+
+        // Load more when user is within 200px of the bottom
+        if (scrollTop + windowHeight >= documentHeight - 200) {
+          loadMoreItems();
+        }
+      }
+
+      // Throttled scroll event listener
+      let scrollTimeout;
+      window.addEventListener("scroll", function () {
+        if (scrollTimeout) {
+          clearTimeout(scrollTimeout);
+        }
+        scrollTimeout = setTimeout(checkScroll, 100);
+      });
+
+      // Load initial items if the page is not tall enough to scroll
+      document.addEventListener("DOMContentLoaded", function () {
+        // View toggle buttons
+        const tableBtn = document.getElementById("view-table");
+        const gridBtn = document.getElementById("view-grid");
+        tableBtn.addEventListener("click", () => setViewMode("table"));
+        gridBtn.addEventListener("click", () => setViewMode("grid"));
+        initViewMode();
+
+        // Keep global apply-to-query checkboxes in sync and update count display
+        document.querySelectorAll(".apply-to-query").forEach((cb) => {
+          cb.addEventListener("change", function () {
+            setApplyToQueryEnabled(this.checked);
+            updateBulkActionsCount();
+          });
+        });
+
+        setTimeout(() => {
+          if (
+            document.documentElement.offsetHeight <= window.innerHeight &&
+            hasMoreItems
+          ) {
+            loadMoreItems();
+          }
+        }, 100);
+      });
+
+      // EventSource for real-time updates (robust, lifecycle-aware)
+      document.addEventListener("DOMContentLoaded", function () {
+        const STREAM_URL = "/stream";
+
+        const sseState = {
+          es: null,
+          reconnectTimer: null,
+          heartbeatTimer: null,
+          connectingTimer: null,
+          backoffMs: 1000,
+          maxBackoffMs: 30000,
+          isConnecting: false,
+          isExplicitlyClosed: false,
+          lastActivityTs: Date.now(),
+          lifecycleSetup: false,
+        };
+
+        function withJitter(ms) {
+          const jitter = Math.floor(ms * 0.2 * Math.random());
+          return ms + jitter;
+        }
+
+        function resetBackoff() {
+          sseState.backoffMs = 1000;
+        }
+
+        function onActivity() {
+          sseState.lastActivityTs = Date.now();
+          resetBackoff();
+        }
+
+        function stopHeartbeat() {
+          if (sseState.heartbeatTimer) {
+            clearInterval(sseState.heartbeatTimer);
+            sseState.heartbeatTimer = null;
+          }
+        }
+
+        function startHeartbeat() {
+          stopHeartbeat();
+          sseState.heartbeatTimer = setInterval(() => {
+            const inactiveMs = Date.now() - sseState.lastActivityTs;
+            if (inactiveMs > 45000) {
+              console.warn("Media SSE idle too long; recreating connection");
+              recreateConnection();
+            }
+          }, 15000);
+        }
+
+        function clearConnectingTimer() {
+          if (sseState.connectingTimer) {
+            clearTimeout(sseState.connectingTimer);
+            sseState.connectingTimer = null;
+          }
+        }
+
+        function scheduleReconnect(reason) {
+          if (sseState.isExplicitlyClosed) return;
+          if (sseState.reconnectTimer) return;
+          const delay = withJitter(sseState.backoffMs);
+          console.log(`Media SSE reconnect in ${delay}ms (${reason || ""})`);
+          sseState.reconnectTimer = setTimeout(() => {
+            sseState.reconnectTimer = null;
+            connect();
+          }, delay);
+          sseState.backoffMs = Math.min(
+            sseState.maxBackoffMs,
+            sseState.backoffMs * 2
+          );
+        }
+
+        function cleanupES(markExplicit) {
+          if (markExplicit) sseState.isExplicitlyClosed = true;
+          stopHeartbeat();
+          clearConnectingTimer();
+          if (sseState.es) {
+            try {
+              sseState.es.close();
+            } catch (e) {}
+          }
+          sseState.es = null;
+          sseState.isConnecting = false;
+        }
+
+        function recreateConnection() {
+          cleanupES(false);
+          connect();
+        }
+
+        function connect() {
+          if (sseState.isConnecting) return;
+          if (sseState.es && sseState.es.readyState !== EventSource.CLOSED)
+            return;
+          if (!navigator.onLine) {
+            scheduleReconnect("offline");
+            return;
+          }
+          if (document.visibilityState === "hidden") {
+            scheduleReconnect("hidden");
+            return;
+          }
+
+          sseState.isConnecting = true;
+          try {
+            console.log("Media SSE connecting...");
+            const es = new EventSource(STREAM_URL);
+            sseState.es = es;
+
+            clearConnectingTimer();
+            sseState.connectingTimer = setTimeout(() => {
+              if (
+                sseState.es &&
+                sseState.es.readyState === EventSource.CONNECTING
+              ) {
+                console.warn("Media SSE stuck CONNECTING; recreating");
+                recreateConnection();
+              }
+            }, 20000);
+
+            es.onopen = () => {
+              sseState.isConnecting = false;
+              clearConnectingTimer();
+              onActivity();
+              startHeartbeat();
+              console.log("Media SSE connected");
+            };
+
+            es.onerror = (error) => {
+              console.warn("Media SSE error", error);
+              onActivity();
+              if (!sseState.es) return;
+              if (sseState.es.readyState === EventSource.CLOSED) {
+                cleanupES(false);
+                scheduleReconnect("closed");
+              } else if (sseState.es.readyState === EventSource.CONNECTING) {
+                scheduleReconnect("connecting");
+              }
+            };
+
+            es.addEventListener("update", (event) => {
+              onActivity();
+              const jobUpdate = JSON.parse(event.data);
+              const job = jobUpdate.job;
+              if (job) {
+                // Update toast with job status
+                ToastManager.update(job);
+
+                // Handle completion for media-affecting jobs
+                if (job.state === 2) {
+                  // StateCompleted = 2
+                  handleJobCompletion(job);
+                }
+              }
+            });
+          } catch (e) {
+            console.error("Media SSE connect threw", e);
+            sseState.isConnecting = false;
+            scheduleReconnect("exception");
+          }
+        }
+
+        function setupLifecycle() {
+          if (sseState.lifecycleSetup) return;
+          sseState.lifecycleSetup = true;
+
+          window.addEventListener("online", () => {
+            resetBackoff();
+            connect();
+          });
+          window.addEventListener("offline", () => {
+            cleanupES(false);
+          });
+
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+              resetBackoff();
+              connect();
+            }
+          });
+
+          // Window focus: ensure we are connected or refresh stale connection
+          window.addEventListener("focus", () => {
+            resetBackoff();
+            if (!sseState.es || sseState.es.readyState === EventSource.CLOSED) {
+              connect();
+            } else {
+              const inactiveMs = Date.now() - sseState.lastActivityTs;
+              if (inactiveMs > 15000) {
+                recreateConnection();
+              }
+            }
+          });
+
+          window.addEventListener("pageshow", () => {
+            resetBackoff();
+            connect();
+          });
+
+          window.addEventListener("pagehide", () => {
+            cleanupES(false);
+          });
+
+          window.addEventListener("beforeunload", () => {
+            cleanupES(true);
+          });
+        }
+
+        setupLifecycle();
+        connect();
+      });
+
+      // Grid helpers
+      function initViewMode() {
+        setViewMode(currentViewMode);
+      }
+
+      function setViewMode(mode) {
+        currentViewMode = mode === "grid" ? "grid" : "table";
+        localStorage.setItem("mediaViewMode", currentViewMode);
+        const tableEl = document.getElementById("media-table");
+        const gridEl = document.getElementById("media-grid");
+        const tableBtn = document.getElementById("view-table");
+        const gridBtn = document.getElementById("view-grid");
+        if (currentViewMode === "grid") {
+          tableEl.style.display = "none";
+          gridEl.style.display = "grid";
+          tableBtn.classList.remove("active");
+          gridBtn.classList.add("active");
+          ensureGridInitialized();
+        } else {
+          tableEl.style.display = "block";
+          gridEl.style.display = "none";
+          gridBtn.classList.remove("active");
+          tableBtn.classList.add("active");
+        }
+      }
+
+      function getApplyToQueryCheckboxes() {
+        return document.querySelectorAll(".apply-to-query");
+      }
+
+      function isApplyToQueryEnabled() {
+        const cbs = getApplyToQueryCheckboxes();
+        return Array.from(cbs).some((cb) => cb.checked);
+      }
+
+      function setApplyToQueryEnabled(checked) {
+        const cbs = getApplyToQueryCheckboxes();
+        cbs.forEach((cb) => {
+          cb.checked = checked;
+        });
+      }
+
+      function ensureGridInitialized() {
+        if (gridInitialized) return;
+        gridInitialized = true;
+
+        // Build initial grid items from current table rows
+        const rows = document.querySelectorAll(
+          "#media-list .media-row .media-cell.path"
+        );
+        rows.forEach((cell) => {
+          const path =
+            cell.getAttribute("data-media-path") || cell.textContent.trim();
+          appendGridItem(path);
+        });
+
+        // Setup IntersectionObserver
+        gridObserver = new IntersectionObserver(
+          (entries) => {
+            entries.forEach((entry) => {
+              if (entry.isIntersecting) {
+                loadGridMedia(entry.target);
+                gridObserver.unobserve(entry.target);
+              }
+            });
+          },
+          { root: null, rootMargin: "100px", threshold: 0.01 }
+        );
+
+        // Observe all current items
+        document.querySelectorAll("#media-grid .grid-item").forEach((el) => {
+          gridObserver.observe(el);
+        });
+
+        // Sync selection UI for newly created grid items
+        updateSelection();
+      }
+
+      function appendGridItem(path) {
+        if (!path) return;
+        const grid = document.getElementById("media-grid");
+        const item = document.createElement("div");
+        item.className = "grid-item";
+        item.setAttribute("data-path", path);
+        item.setAttribute("data-loaded", "0");
+        const selectWrap = document.createElement("div");
+        selectWrap.className = "grid-select";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = "media-checkbox";
+        cb.value = path;
+        cb.addEventListener("click", (e) => e.stopPropagation());
+        cb.addEventListener("change", (e) => {
+          e.stopPropagation();
+          updateSelection();
+        });
+        selectWrap.appendChild(cb);
+        item.appendChild(selectWrap);
+        const badge = document.createElement("div");
+        badge.className = "grid-badge";
+        badge.textContent = isVideoFile(path) ? "Video" : "Image";
+        item.appendChild(badge);
+        item.addEventListener("click", () => openLightbox(path));
+        // If already selected, reflect state
+        if (selectedItems.has(path)) {
+          cb.checked = true;
+          item.classList.add("selected");
+        }
+        grid.appendChild(item);
+        if (gridObserver) {
+          gridObserver.observe(item);
+        }
+      }
+
+      function loadGridMedia(itemEl) {
+        if (!itemEl || itemEl.getAttribute("data-loaded") === "1") return;
+        const path = itemEl.getAttribute("data-path");
+        let url;
+        try {
+          url = getMediaUrl(path);
+        } catch (e) {
+          return;
+        }
+        if (isImageFile(path)) {
+          const img = new Image();
+          img.className = "grid-thumb";
+          img.loading = "lazy";
+          img.src = url;
+          img.alt = "";
+          itemEl.appendChild(img);
+        } else if (isVideoFile(path)) {
+          const video = document.createElement("video");
+          video.className = "grid-thumb";
+          video.muted = true;
+          video.playsInline = true;
+          video.autoplay = false;
+          video.controls = false;
+          video.preload = "metadata";
+          video.src = url;
+          itemEl.appendChild(video);
+        }
+        itemEl.setAttribute("data-loaded", "1");
+      }
+
+      // Lightbox
+      const lightbox = document.getElementById("lightbox");
+      const lightboxContent = document.getElementById("lightbox-content");
+      const lightboxClose = document.getElementById("lightbox-close");
+
+      function openLightbox(path) {
+        while (lightboxContent.firstChild)
+          lightboxContent.removeChild(lightboxContent.firstChild);
+        let url;
+        try {
+          url = getMediaUrl(path);
+        } catch (e) {
+          return;
+        }
+        if (isImageFile(path)) {
+          const img = new Image();
+          img.src = url;
+          img.alt = "";
+          lightboxContent.appendChild(img);
+        } else if (isVideoFile(path)) {
+          const video = document.createElement("video");
+          video.src = url;
+          video.controls = true; // show controls in fullscreen
+          video.muted = true; // keep muted by default
+          video.autoplay = true;
+          video.playsInline = true;
+          video.preload = "auto";
+          lightboxContent.appendChild(video);
+        }
+        lightbox.classList.add("show");
+        lightbox.setAttribute("aria-hidden", "false");
+      }
+
+      function closeLightbox() {
+        const vids = lightboxContent.querySelectorAll("video");
+        vids.forEach((v) => {
+          v.pause();
+          v.src = "";
+          v.load();
+        });
+        while (lightboxContent.firstChild)
+          lightboxContent.removeChild(lightboxContent.firstChild);
+        lightbox.classList.remove("show");
+        lightbox.setAttribute("aria-hidden", "true");
+      }
+
+      lightbox.addEventListener("click", (e) => {
+        if (e.target === lightbox) closeLightbox();
+      });
+      lightboxClose.addEventListener("click", closeLightbox);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && lightbox.classList.contains("show"))
+          closeLightbox();
+      });
+
+      function handleJobCompletion(job) {
+        const mediaAffectingCommands = [
+          "remove",
+          "metadata",
+          "ingest",
+          "cleanup",
+          "move",
+          "autotag",
+        ]; // include autotag
+
+        if (!mediaAffectingCommands.includes(job.command)) {
+          return; // Job doesn't affect media
+        }
+
+        console.log("Media-affecting job completed:", job);
+
+        switch (job.command) {
+          case "remove":
+            handleRemoveJobCompletion(job);
+            break;
+          case "metadata":
+            handleMetadataJobCompletion(job);
+            break;
+          case "ingest":
+            handleIngestJobCompletion(job);
+            break;
+          case "cleanup":
+            handleCleanupJobCompletion(job);
+            break;
+          case "move":
+            handleMoveJobCompletion(job);
+            break;
+          case "autotag":
+            // For autotag, refresh affected rows to show new tags
+            handleMetadataJobCompletion(job);
+            break;
+        }
+      }
+
+      function handleRemoveJobCompletion(job) {
+        // For remove jobs, we need to parse the input to get affected paths
+        const input = job.input;
+        if (!input) return;
+
+        const paths = input
+          .split("\n")
+          .map((path) => path.trim())
+          .filter((path) => path);
+
+        // Remove rows from the current view
+        paths.forEach((path) => {
+          const rows = document.querySelectorAll(".media-row");
+          rows.forEach((row) => {
+            const pathCell = row.querySelector(".media-cell.path");
+            if (pathCell && pathCell.textContent.trim() === path) {
+              row.remove();
+              // Also remove from selected items if it was selected
+              selectedItems.delete(path);
+            }
+          });
+        });
+
+        // Update selection UI
+        updateSelection();
+      }
+
+      function handleMetadataJobCompletion(job) {
+        // For metadata jobs, we need to refresh the affected rows
+        const input = job.input;
+        if (!input) return;
+
+        // Parse paths from input (newline separated)
+        const paths = input
+          .split("\n")
+          .map((path) => path.trim())
+          .filter((path) => path);
+
+        // Refresh affected rows by fetching updated data
+        refreshMediaRows(paths);
+      }
+
+      function handleIngestJobCompletion(job) {
+        // For ingest jobs, new media might have been added
+        // If we're showing all items (no search), offer to reload
+        if (!currentSearchQuery) {
+          if (
+            confirm(
+              "New media items have been ingested. Would you like to refresh the list?"
+            )
+          ) {
+            window.location.reload();
+          }
+        }
+      }
+
+      function handleCleanupJobCompletion(job) {
+        // For cleanup jobs, some items might have been removed
+        if (
+          confirm(
+            "Database cleanup completed. Would you like to refresh the list to see changes?"
+          )
+        ) {
+          window.location.reload();
+        }
+      }
+
+      function handleMoveJobCompletion(job) {
+        // For move jobs, file paths in the database have been updated to new locations
+        const input = job.input;
+        if (!input) return;
+
+        // Parse paths from input (newline separated for move jobs)
+        const originalPaths = input
+          .split("\n")
+          .map((path) => path.trim())
+          .filter((path) => path);
+
+        // Remove the original rows since the paths have changed
+        originalPaths.forEach((path) => {
+          const rows = document.querySelectorAll(".media-row");
+          rows.forEach((row) => {
+            const pathCell = row.querySelector(".media-cell.path");
+            if (pathCell && pathCell.textContent.trim() === path) {
+              row.remove();
+              // Also remove from selected items if it was selected
+              selectedItems.delete(path);
+            }
+          });
+        });
+
+        // Update selection UI
+        updateSelection();
+
+        // Suggest refreshing to see the moved items at their new paths
+        if (
+          confirm(
+            "Files have been moved successfully. Would you like to refresh the list to see the updated paths?"
+          )
+        ) {
+          window.location.reload();
+        }
+      }
+
+      function refreshMediaRows(paths) {
+        // For each path, find the row and refresh it with updated data
+        paths.forEach((path) => {
+          // Find the row for this path
+          const rows = document.querySelectorAll(".media-row");
+          const targetRow = Array.from(rows).find((row) => {
+            const pathCell = row.querySelector(".media-cell.path");
+            return pathCell && pathCell.textContent.trim() === path;
+          });
+
+          if (targetRow) {
+            refreshSingleMediaRow(targetRow, path);
+          }
+        });
+      }
+
+      function refreshSingleMediaRow(rowElement, path) {
+        // Fetch updated data for this specific media item
+        const encodedPath = encodeURIComponent(path);
+
+        fetch(`/media/api?path=${encodedPath}&single=true`)
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.items && data.items.length > 0) {
+              const item = data.items[0];
+              updateRowWithNewData(rowElement, item);
+            }
+          })
+          .catch((error) => {
+            console.error("Error refreshing media row:", error);
+          });
+      }
+
+      function updateRowWithNewData(rowElement, item) {
+        // Find and update specific cells
+        const descriptionCell = rowElement.querySelector(
+          ".media-cell.description"
+        );
+        if (descriptionCell) {
+          descriptionCell.textContent = item.description || "-";
+        }
+
+        const widthCells = rowElement.querySelectorAll(
+          ".media-cell.dimensions"
+        );
+        if (widthCells.length >= 1) {
+          widthCells[0].textContent = item.width || "-";
+        }
+        if (widthCells.length >= 2) {
+          widthCells[1].textContent = item.height || "-";
+        }
+
+        const hashCell = rowElement.querySelector(".media-cell.hash");
+        if (hashCell) {
+          hashCell.textContent = item.hash || "-";
+        }
+
+        const tagsCell = rowElement.querySelector(".media-cell.tags");
+        if (tagsCell) {
+          let tagsHtml = "-";
+          if (item.tags && item.tags.length > 0) {
+            tagsHtml = item.tags
+              .map(
+                (tag) =>
+                  `<span class="tag-item"><span class="tag-category">${escapeHtml(
+                    tag.category
+                  )}</span>:${escapeHtml(tag.label)}</span>`
+              )
+              .join("");
+          }
+          tagsCell.innerHTML = tagsHtml;
+        }
+
+        // Add a subtle animation to indicate the row was updated
+        rowElement.style.backgroundColor = "#2a4a3a";
+        setTimeout(() => {
+          rowElement.style.backgroundColor = "";
+        }, 2000);
+      }
+
+      // -----------------------------
+      // Toast Notification System
+      // -----------------------------
+      const ToastManager = (function () {
+        const container = document.getElementById("toast-container");
+        const toasts = new Map(); // jobId -> toast element
+
+        // Human-readable job names
+        const JOB_NAMES = {
+          remove: "Remove from Database",
+          metadata: "Generate Metadata",
+          autotag: "Auto-Tag Media",
+          move: "Move Files",
+          ingest: "Import Media",
+          cleanup: "Clean Up Database",
+          "lora-dataset": "Create LoRA Dataset",
+        };
+
+        // Status messages
+        const STATUS_MESSAGES = {
+          pending: "Waiting to start...",
+          running: "Processing your request...",
+          success: "Completed successfully!",
+          error: "Something went wrong.",
+        };
+
+        function getJobName(command) {
+          return JOB_NAMES[command] || command || "Task";
+        }
+
+        function getStatusIcon(status) {
+          switch (status) {
+            case "pending":
+              return "⏳";
+            case "running":
+              return "⚡";
+            case "success":
+              return "✓";
+            case "error":
+              return "✕";
+            default:
+              return "•";
+          }
+        }
+
+        function formatTime(date) {
+          return date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+        }
+
+        function getItemCount(job) {
+          if (!job.input) return null;
+          // Count items (newlines or commas depending on format)
+          const lines = job.input.split(/[\n,]/).filter((l) => l.trim());
+          return lines.length;
+        }
+
+        function getMessage(job, status) {
+          const count = getItemCount(job);
+          const itemText = count
+            ? count === 1
+              ? "1 item"
+              : `${count} items`
+            : null;
+
+          switch (status) {
+            case "pending":
+              return itemText
+                ? `Queued ${itemText} for processing...`
+                : "Waiting in queue...";
+            case "running":
+              return itemText
+                ? `Processing ${itemText}...`
+                : "Working on it...";
+            case "success":
+              return itemText
+                ? `Successfully processed ${itemText}!`
+                : "Task completed successfully!";
+            case "error":
+              return "The task encountered an error. Click to view details.";
+            default:
+              return STATUS_MESSAGES[status] || "";
+          }
+        }
+
+        function createToast(jobId, command, status = "pending") {
+          const job = { id: jobId, command, input: "" };
+          const toast = document.createElement("div");
+          toast.className = "toast";
+          toast.setAttribute("data-job-id", jobId);
+
+          const name = getJobName(command);
+          const icon = getStatusIcon(status);
+          const message = getMessage(job, status);
+          const time = formatTime(new Date());
+
+          toast.innerHTML = `
+            <div class="toast-header">
+              <div class="toast-title">
+                <span class="toast-status-icon ${status}">${icon}</span>
+                <span>${name}</span>
+              </div>
+              <button type="button" class="toast-close" title="Dismiss">✕</button>
+            </div>
+            <div class="toast-body">
+              <div class="toast-message">${message}</div>
+              <div class="toast-progress-container">
+                <div class="toast-progress-bar ${
+                  status === "running" ? "indeterminate" : ""
+                }"></div>
+              </div>
+            </div>
+            <div class="toast-footer">
+              <a href="/job/${jobId}" class="toast-link" target="_blank">View details →</a>
+              <span class="toast-time">Started ${time}</span>
+            </div>
+          `;
+
+          // Close button handler
+          toast.querySelector(".toast-close").addEventListener("click", (e) => {
+            e.stopPropagation();
+            removeToast(jobId);
+          });
+
+          return toast;
+        }
+
+        function addToast(jobId, command) {
+          if (toasts.has(jobId)) {
+            return; // Already tracking this job
+          }
+
+          const toast = createToast(jobId, command, "running");
+          container.appendChild(toast);
+          toasts.set(jobId, { element: toast, command, startTime: Date.now() });
+
+          // Auto-dismiss info toasts after 30 seconds if still pending/running
+          // (job updates will refresh the timer)
+        }
+
+        function updateToast(job) {
+          const jobId = job.id;
+          const toastData = toasts.get(jobId);
+
+          if (!toastData) {
+            // We might receive updates for jobs we didn't create via this page
+            // Create a toast for them anyway so user sees the status
+            if (job.state === 1) {
+              // InProgress
+              const toast = createToast(jobId, job.command, "running");
+              container.appendChild(toast);
+              toasts.set(jobId, {
+                element: toast,
+                command: job.command,
+                startTime: Date.now(),
+              });
+            }
+            return;
+          }
+
+          const { element } = toastData;
+          let status = "running";
+
+          // Map job states: 0=Pending, 1=InProgress, 2=Completed, 3=Cancelled, 4=Error
+          switch (job.state) {
+            case 0:
+              status = "pending";
+              break;
+            case 1:
+              status = "running";
+              break;
+            case 2:
+              status = "success";
+              break;
+            case 3:
+              status = "pending"; // Cancelled - treat as pending for display
+              break;
+            case 4:
+              status = "error";
+              break;
+          }
+
+          // Update icon
+          const iconEl = element.querySelector(".toast-status-icon");
+          if (iconEl) {
+            iconEl.className = `toast-status-icon ${status}`;
+            iconEl.textContent = getStatusIcon(status);
+          }
+
+          // Update message
+          const messageEl = element.querySelector(".toast-message");
+          if (messageEl) {
+            messageEl.textContent = getMessage(job, status);
+          }
+
+          // Update progress bar
+          const progressBar = element.querySelector(".toast-progress-bar");
+          if (progressBar) {
+            progressBar.className = "toast-progress-bar";
+            if (status === "running") {
+              progressBar.classList.add("indeterminate");
+            } else if (status === "success") {
+              progressBar.classList.add("complete");
+            } else if (status === "error") {
+              progressBar.classList.add("error");
+            }
+          }
+
+          // Auto-dismiss successful toasts after 5 seconds
+          if (status === "success") {
+            setTimeout(() => removeToast(jobId), 5000);
+          }
+
+          // Auto-dismiss error toasts after 10 seconds (give user time to click)
+          if (status === "error") {
+            setTimeout(() => removeToast(jobId), 10000);
+          }
+        }
+
+        function removeToast(jobId) {
+          const toastData = toasts.get(jobId);
+          if (!toastData) return;
+
+          const { element } = toastData;
+          element.classList.add("exiting");
+
+          setTimeout(() => {
+            if (element.parentNode) {
+              element.parentNode.removeChild(element);
+            }
+            toasts.delete(jobId);
+          }, 300);
+        }
+
+        // Simple notification (non-job related)
+        function notify(message, type = "info") {
+          const tempId = "notify-" + Date.now();
+          const toast = document.createElement("div");
+          toast.className = "toast";
+          toast.setAttribute("data-job-id", tempId);
+
+          let icon = "ℹ";
+          let status = "running";
+          if (type === "success") {
+            icon = "✓";
+            status = "success";
+          } else if (type === "error") {
+            icon = "✕";
+            status = "error";
+          }
+
+          toast.innerHTML = `
+            <div class="toast-header">
+              <div class="toast-title">
+                <span class="toast-status-icon ${status}">${icon}</span>
+                <span>Notification</span>
+              </div>
+              <button type="button" class="toast-close" title="Dismiss">✕</button>
+            </div>
+            <div class="toast-body">
+              <div class="toast-message">${escapeHtml(message)}</div>
+            </div>
+          `;
+
+          toast.querySelector(".toast-close").addEventListener("click", () => {
+            toast.classList.add("exiting");
+            setTimeout(() => {
+              if (toast.parentNode) toast.parentNode.removeChild(toast);
+            }, 300);
+          });
+
+          container.appendChild(toast);
+
+          // Auto-dismiss after 5 seconds
+          setTimeout(() => {
+            toast.classList.add("exiting");
+            setTimeout(() => {
+              if (toast.parentNode) toast.parentNode.removeChild(toast);
+            }, 300);
+          }, 5000);
+        }
+
+        return {
+          add: addToast,
+          update: updateToast,
+          remove: removeToast,
+          notify: notify,
+          getJobName: getJobName,
+        };
+      })();
+
+      // Backward-compatible showNotification
+      function showNotification(message, type = "info") {
+        ToastManager.notify(message, type);
+      }
+
+      function htmlToNode(html) {
+        const template = document.createElement("template");
+        template.innerHTML = html.trim();
+        const nNodes = template.content.childNodes.length;
+        if (nNodes !== 1) {
+          throw new Error(
+            `html parameter must represent a single node; got ${nNodes}. ` +
+              "Note that leading or trailing spaces around an element in your " +
+              'HTML, like " <img/> ", get parsed as text nodes neighbouring ' +
+              "the element; call .trim() on your input to avoid this."
+          );
+        }
+        return template.content.firstChild;
+      }
+
+      // -----------------------------
+      // Typeahead search with recent searches
+      // -----------------------------
+      (function initTypeahead() {
+        const input = document.getElementById("search-input");
+        const dropdown = document.getElementById("typeahead-dropdown");
+        if (!input || !dropdown) return;
+
+        const RECENT_STORAGE_KEY = "shrike_recent_searches";
+        const MAX_RECENT_SEARCHES = 10;
+
+        let items = [];
+        let activeIndex = -1;
+        let debounceTimer = null;
+        let lastReqId = 0;
+
+        // --- Recent Searches Management ---
+        function getRecentSearches() {
+          try {
+            const stored = localStorage.getItem(RECENT_STORAGE_KEY);
+            if (!stored) return [];
+            const parsed = JSON.parse(stored);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch (e) {
+            return [];
+          }
+        }
+
+        function saveRecentSearches(searches) {
+          try {
+            localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(searches));
+          } catch (e) {
+            // localStorage might be full or disabled
+          }
+        }
+
+        function addRecentSearch(query) {
+          if (!query || !query.trim()) return;
+          query = query.trim();
+          let recent = getRecentSearches();
+          // Remove if already exists (will re-add at top)
+          recent = recent.filter((s) => s !== query);
+          // Add to beginning
+          recent.unshift(query);
+          // Limit to max
+          if (recent.length > MAX_RECENT_SEARCHES) {
+            recent = recent.slice(0, MAX_RECENT_SEARCHES);
+          }
+          saveRecentSearches(recent);
+        }
+
+        function removeRecentSearch(query) {
+          let recent = getRecentSearches();
+          recent = recent.filter((s) => s !== query);
+          saveRecentSearches(recent);
+        }
+
+        function clearAllRecentSearches() {
+          saveRecentSearches([]);
+        }
+
+        // Hook into search form submission to save searches
+        const searchForm = document.getElementById("search-form");
+        if (searchForm) {
+          searchForm.addEventListener("submit", () => {
+            const query = input.value.trim();
+            if (query) {
+              addRecentSearch(query);
+            }
+          });
+        }
+
+        function hideDropdown() {
+          dropdown.style.display = "none";
+          dropdown.innerHTML = "";
+          items = [];
+          activeIndex = -1;
+        }
+
+        function renderDropdown(recentItems, suggestionItems, showClearAll) {
+          const hasRecent = recentItems && recentItems.length > 0;
+          const hasSuggestions = suggestionItems && suggestionItems.length > 0;
+
+          if (!hasRecent && !hasSuggestions) {
+            hideDropdown();
+            return;
+          }
+
+          // Build combined items array for keyboard navigation
+          items = [];
+          let html = "";
+
+          // Recent searches section
+          if (hasRecent) {
+            html += '<div class="typeahead-section">Recent Searches</div>';
+            recentItems.forEach((it) => {
+              const idx = items.length;
+              items.push({ text: it.text, kind: "recent", isRecent: true });
+              const cls =
+                idx === activeIndex
+                  ? "typeahead-item recent active"
+                  : "typeahead-item recent";
+              html += `<div class="${cls}" data-index="${idx}">
+                <span><span class="recent-icon">↺</span>${escapeHtml(
+                  it.text
+                )}</span>
+                <button type="button" class="remove-btn" data-remove="${escapeAttr(
+                  it.text
+                )}" title="Remove from history">✕</button>
+              </div>`;
+            });
+          }
+
+          // Suggestions section
+          if (hasSuggestions) {
+            if (hasRecent) {
+              html += '<div class="typeahead-section">Suggestions</div>';
+            }
+            suggestionItems.forEach((it) => {
+              const idx = items.length;
+              items.push({ text: it.text, kind: it.kind, hint: it.hint });
+              const cls =
+                idx === activeIndex
+                  ? "typeahead-item active"
+                  : "typeahead-item";
+              const hint = it.hint
+                ? `<span class="hint">${escapeHtml(it.hint)}</span>`
+                : "";
+              // Pick icon based on kind
+              let icon = "→";
+              if (it.kind === "filter") icon = "⚙";
+              else if (it.kind === "value") icon = "◇";
+              else if (it.kind === "key") icon = ":";
+              html += `<div class="${cls}" data-index="${idx}"><span><span class="suggest-icon">${icon}</span>${escapeHtml(
+                it.text
+              )}</span>${hint}</div>`;
+            });
+          }
+
+          // Clear all button
+          if (hasRecent && showClearAll) {
+            html +=
+              '<div class="typeahead-clear-all" data-clear-all="true">Clear search history</div>';
+          }
+
+          dropdown.style.display = "block";
+          dropdown.innerHTML = html;
+
+          // Event handling
+          Array.from(dropdown.querySelectorAll(".typeahead-item")).forEach(
+            (el) => {
+              el.addEventListener("mousedown", (e) => {
+                // Check if clicking the remove button (use closest for robustness)
+                const removeBtn = e.target.closest(".remove-btn");
+                if (removeBtn) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const queryToRemove = removeBtn.getAttribute("data-remove");
+                  if (queryToRemove) {
+                    removeRecentSearch(queryToRemove);
+                    // Refresh the dropdown
+                    showRecentSearches();
+                  }
+                  return;
+                }
+                e.preventDefault();
+                const idx = Number(el.getAttribute("data-index"));
+                if (!Number.isNaN(idx)) applySuggestion(items[idx]);
+              });
+            }
+          );
+
+          const clearAllBtn = dropdown.querySelector(".typeahead-clear-all");
+          if (clearAllBtn) {
+            clearAllBtn.addEventListener("mousedown", (e) => {
+              e.preventDefault();
+              clearAllRecentSearches();
+              hideDropdown();
+            });
+          }
+        }
+
+        function showRecentSearches() {
+          const inputValue = input.value.trim();
+          const recent = getRecentSearches();
+
+          if (inputValue === "") {
+            // Show only recent searches when input is empty
+            if (recent.length === 0) {
+              // No recent searches, show filter suggestions
+              buildSuggestions();
+              return;
+            }
+            const recentItems = recent.map((s) => ({ text: s }));
+            activeIndex = -1;
+            renderDropdown(recentItems, [], true);
+          } else {
+            // Input has content - show matching recent + API suggestions
+            buildSuggestions();
+          }
+        }
+
+        function moveActive(delta) {
+          if (items.length === 0) return;
+          if (activeIndex === -1) {
+            // No active item yet - start at first or last depending on direction
+            activeIndex = delta > 0 ? 0 : items.length - 1;
+          } else {
+            activeIndex = (activeIndex + delta + items.length) % items.length;
+          }
+          // Re-render with new active
+          const recentItems = items
+            .filter((it) => it.isRecent)
+            .map((it) => ({ text: it.text }));
+          const suggestionItems = items.filter((it) => !it.isRecent);
+          renderDropdown(
+            recentItems,
+            suggestionItems,
+            input.value.trim() === ""
+          );
+        }
+
+        function currentTokenInfo() {
+          const value = input.value;
+          const caret = input.selectionStart || 0;
+          // find token start (space outside quotes)
+          let inQuotes = false;
+          let start = 0;
+          for (let i = 0; i < caret; i++) {
+            const c = value[i];
+            if (c === '"') inQuotes = !inQuotes;
+            if (!inQuotes && c === " " && i + 1 <= caret) start = i + 1;
+          }
+          // find token end (exclusive)
+          inQuotes = false;
+          let end = value.length;
+          for (let i = start; i < value.length; i++) {
+            const c = value[i];
+            if (c === '"') inQuotes = !inQuotes;
+            if (!inQuotes && c === " ") {
+              end = i;
+              break;
+            }
+          }
+          const token = value.slice(start, caret);
+          const fullToken = value.slice(start, end);
+          // Identify key/value
+          let negate = fullToken.startsWith("NOT ");
+          const noNot = negate ? fullToken.slice(4) : fullToken;
+          let key = "";
+          let stage = "key"; // key | value | logic
+          if (token.length === 0) {
+            const prev = value.slice(0, start);
+            stage = prev.trimEnd().endsWith(":") ? "value" : "key";
+          }
+          const colonIdxInToken = noNot.indexOf(":");
+          if (colonIdxInToken >= 0) {
+            key = noNot.slice(0, colonIdxInToken).trim().toLowerCase();
+            stage = "value";
+          } else {
+            key = noNot.trim().toLowerCase();
+            stage = "key";
+          }
+          // valuePrefix chars after key: and optional opening quote, and absolute start for replacement
+          let valuePrefix = "";
+          let valueStartAbs = end;
+          let hasOpeningQuote = false;
+          let hasClosingQuote = false;
+          if (stage === "value") {
+            // find colon absolute index between start..end outside quotes
+            let q = false;
+            let colonAbs = -1;
+            for (let i = start; i < end; i++) {
+              const c = value[i];
+              if (c === '"') q = !q;
+              if (!q && c === ":") {
+                colonAbs = i;
+                break;
+              }
+            }
+            if (colonAbs >= 0) {
+              valueStartAbs = colonAbs + 1;
+              while (valueStartAbs < end && value[valueStartAbs] === " ")
+                valueStartAbs++;
+              // Check for opening quote and include it in replacement range
+              if (valueStartAbs < end && value[valueStartAbs] === '"') {
+                hasOpeningQuote = true;
+                // Don't skip past it - we'll replace it too
+              }
+              // Check for closing quote at end
+              if (end > valueStartAbs && value[end - 1] === '"') {
+                hasClosingQuote = true;
+              }
+              // Calculate valuePrefix (skip opening quote if present for prefix calculation)
+              const prefixStart = hasOpeningQuote
+                ? valueStartAbs + 1
+                : valueStartAbs;
+              valuePrefix = value.slice(prefixStart, caret);
+            }
+          }
+          return {
+            start,
+            end,
+            caret,
+            token,
+            key,
+            stage,
+            negate,
+            valuePrefix,
+            valueStartAbs,
+            hasOpeningQuote,
+            hasClosingQuote,
+          };
+        }
+
+        function shouldQuoteValueForKey(key) {
+          return (
+            key === "tag" ||
+            key === "category" ||
+            key === "path" ||
+            key === "pathdir" ||
+            key === "description" ||
+            key === "hash"
+          );
+        }
+
+        function buildSuggestions() {
+          const info = currentTokenInfo();
+          const value = input.value;
+          const reqId = ++lastReqId;
+          const inputTrimmed = value.trim();
+
+          // Get matching recent searches
+          const allRecent = getRecentSearches();
+          let matchingRecent = [];
+          if (inputTrimmed !== "") {
+            const lowerInput = inputTrimmed.toLowerCase();
+            matchingRecent = allRecent
+              .filter(
+                (s) =>
+                  s.toLowerCase().includes(lowerInput) && s !== inputTrimmed
+              )
+              .slice(0, 3); // Limit matching recent to top 3
+          }
+
+          // Stage: key suggestions
+          if (info.stage === "key") {
+            fetch(`/media/suggest?kind=filters`)
+              .then((r) => r.json())
+              .then((data) => {
+                if (reqId !== lastReqId) return;
+                const pref = info.key || "";
+                const arr = (data.suggestions || []).filter((s) =>
+                  s.startsWith(pref)
+                );
+                // Also suggest AND/OR if token empty
+                if (
+                  (info.token.trim() === "" && value.trim() !== "") ||
+                  info.token.toUpperCase() === "A" ||
+                  info.token.toUpperCase() === "O"
+                ) {
+                  arr.unshift("AND", "OR");
+                }
+                const suggestionItems = arr.map((s) => ({
+                  text: s,
+                  kind: "key",
+                }));
+                const recentItems = matchingRecent.map((s) => ({ text: s }));
+                activeIndex = -1;
+                renderDropdown(recentItems, suggestionItems, false);
+              })
+              .catch(() => hideDropdown());
+            return;
+          }
+
+          // Stage: value suggestions depending on key
+          const k = info.key;
+          if (k === "exists") {
+            const vals = ["true", "false"];
+            const pref = info.valuePrefix.toLowerCase();
+            const arr = vals.filter((v) => v.startsWith(pref));
+            const suggestionItems = arr.map((s) => ({
+              text: s,
+              kind: "value",
+            }));
+            const recentItems = matchingRecent.map((s) => ({ text: s }));
+            activeIndex = -1;
+            renderDropdown(recentItems, suggestionItems, false);
+            return;
+          }
+          if (k === "tags") {
+            const vals = ["none"];
+            const pref = info.valuePrefix.toLowerCase();
+            const arr = vals.filter((v) => v.startsWith(pref));
+            const suggestionItems = arr.map((s) => ({
+              text: s,
+              kind: "value",
+            }));
+            const recentItems = matchingRecent.map((s) => ({ text: s }));
+            activeIndex = -1;
+            renderDropdown(recentItems, suggestionItems, false);
+            return;
+          }
+          if (
+            k === "size" ||
+            k === "width" ||
+            k === "height" ||
+            k === "tagcount"
+          ) {
+            const ops = [">=", "<=", ">", "<"];
+            const pref = info.valuePrefix;
+            const arr = ops.filter((o) => o.startsWith(pref));
+            const suggestionItems = arr.map((s) => ({
+              text: s,
+              kind: "value",
+              hint: "operator",
+            }));
+            const recentItems = matchingRecent.map((s) => ({ text: s }));
+            activeIndex = -1;
+            renderDropdown(recentItems, suggestionItems, false);
+            return;
+          }
+          let kind = null;
+          if (k === "tag") kind = "tag";
+          else if (k === "category") kind = "category";
+          else if (k === "path") kind = "path";
+          else if (k === "pathdir") kind = "pathdir";
+          if (!kind) {
+            // No API suggestions, but might have matching recent
+            if (matchingRecent.length > 0) {
+              const recentItems = matchingRecent.map((s) => ({ text: s }));
+              activeIndex = -1;
+              renderDropdown(recentItems, [], false);
+            } else {
+              hideDropdown();
+            }
+            return;
+          }
+          const encPrefix = encodeURIComponent(info.valuePrefix || "");
+          fetch(`/media/suggest?kind=${kind}&prefix=${encPrefix}`)
+            .then((r) => r.json())
+            .then((data) => {
+              if (reqId !== lastReqId) return;
+              const arr = data.suggestions || [];
+              const suggestionItems = arr.map((s) => ({
+                text: s,
+                kind: "value",
+              }));
+              const recentItems = matchingRecent.map((s) => ({ text: s }));
+              activeIndex = -1;
+              renderDropdown(recentItems, suggestionItems, false);
+            })
+            .catch(() => hideDropdown());
+        }
+
+        function applySuggestion(sug) {
+          if (!sug) return;
+
+          // For recent searches, replace the entire input
+          if (sug.isRecent) {
+            input.value = sug.text;
+            const newCaret = sug.text.length;
+            input.setSelectionRange(newCaret, newCaret);
+            hideDropdown();
+            input.focus();
+            return;
+          }
+
+          const info = currentTokenInfo();
+          const value = input.value;
+          let insertText = sug.text;
+
+          if (info.stage === "key") {
+            insertText = (info.negate ? "NOT " : "") + insertText + ":";
+            const before = value.slice(0, info.start);
+            const after = value.slice(info.end);
+            input.value = before + insertText + after;
+            const newCaret = (before + insertText).length;
+            input.setSelectionRange(newCaret, newCaret);
+          } else if (info.stage === "value") {
+            const needsQuote =
+              shouldQuoteValueForKey(info.key) ||
+              /\s/.test(insertText) ||
+              info.key === "tag" ||
+              info.key === "path" ||
+              info.key === "pathdir" ||
+              info.key === "category";
+
+            // Determine where to start replacing
+            // If there's an opening quote, preserve it by starting replacement after it
+            let replaceStart = info.valueStartAbs;
+            if (info.hasOpeningQuote) {
+              replaceStart = info.valueStartAbs + 1; // Start after the existing quote
+            }
+
+            // Build the replacement text
+            if (needsQuote) {
+              // Add opening quote only if there isn't one already
+              const openQuote = info.hasOpeningQuote ? "" : '"';
+              // Always add closing quote (we'll handle existing closing quote in replaceEnd)
+              insertText = openQuote + insertText + '"';
+            }
+
+            const replaceEnd = info.end;
+            const before = value.slice(0, replaceStart);
+            const after = value.slice(replaceEnd);
+            input.value = before + insertText + after;
+            const newCaret = (before + insertText).length;
+            input.setSelectionRange(newCaret, newCaret);
+          } else {
+            // logic (AND/OR) - replace full token
+            const before = value.slice(0, info.start);
+            const after = value.slice(info.end);
+            insertText = insertText.toUpperCase();
+            input.value = before + insertText + after;
+            const newCaret = (before + insertText).length + 1;
+            input.setSelectionRange(newCaret, newCaret);
+          }
+
+          hideDropdown();
+          input.focus();
+        }
+
+        input.addEventListener("keydown", (e) => {
+          if (dropdown.style.display === "block") {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              moveActive(1);
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              moveActive(-1);
+              return;
+            }
+            if (e.key === "Enter" || e.key === "Tab") {
+              if (activeIndex >= 0 && items[activeIndex]) {
+                e.preventDefault();
+                applySuggestion(items[activeIndex]);
+                return;
+              }
+            }
+            if (e.key === "Escape") {
+              hideDropdown();
+              return;
+            }
+          }
+        });
+
+        input.addEventListener("input", () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            if (input.value.trim() === "") {
+              showRecentSearches();
+            } else {
+              buildSuggestions();
+            }
+          }, 150);
+        });
+
+        input.addEventListener("focus", () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(showRecentSearches, 100);
+        });
+
+        input.addEventListener("blur", () => {
+          setTimeout(() => hideDropdown(), 150);
+        });
+      })();
+    </script>
+  </body>
+</html>
+{{ end }}

@@ -1,0 +1,681 @@
+{{ define "detail" }}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Job {{.Job.ID}}</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .detail-container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: var(--space-5);
+      }
+
+      header {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        padding: var(--space-5);
+        border-radius: var(--radius-xl);
+        margin-bottom: var(--space-5);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .breadcrumbs {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        margin-bottom: var(--space-4);
+        min-height: 18px;
+      }
+
+      .breadcrumb-path {
+        text-decoration: none;
+        color: var(--accent-primary);
+        opacity: 0.8;
+        transition: opacity var(--transition-fast);
+        font-size: var(--text-sm);
+      }
+
+      .breadcrumb-path:hover {
+        opacity: 1;
+      }
+
+      .breadcrumb-separator {
+        color: var(--text-muted);
+        display: inline-block;
+      }
+
+      .breadcrumb-leaf {
+        color: var(--text-primary);
+        font-weight: 600;
+        font-size: var(--text-sm);
+      }
+
+      .meta-info {
+        margin-top: var(--space-3);
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+      }
+
+      .meta-info > div {
+        margin-bottom: var(--space-2);
+      }
+
+      .meta-info strong {
+        color: var(--text-primary);
+      }
+
+      .terminal {
+        background: var(--bg-base);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-xl);
+        height: 60vh;
+        overflow-y: auto;
+        margin-bottom: var(--space-5);
+      }
+
+      .terminal-content {
+        padding: var(--space-4);
+      }
+
+      .terminal-line {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        line-height: 1.5;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+      }
+
+      .terminal-line a {
+        color: var(--accent-cyan);
+        text-decoration: none;
+        cursor: pointer;
+        transition: opacity var(--transition-fast);
+      }
+
+      .terminal-line a:hover {
+        opacity: 0.8;
+        text-decoration: underline;
+      }
+
+      .terminal-line a.local-path {
+        color: var(--accent-primary);
+      }
+
+      .terminal-line a.local-path:hover {
+        color: var(--accent-cyan);
+      }
+
+      header button {
+        font-size: var(--text-sm);
+        padding: var(--space-2) var(--space-4);
+        background: transparent;
+        border: 1px solid var(--accent-primary);
+        color: var(--accent-primary);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        margin-left: var(--space-3);
+      }
+
+      header button:hover {
+        background: var(--accent-primary);
+        color: var(--bg-base);
+      }
+
+      /* Status styling */
+      .status-section {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        margin-bottom: var(--space-3);
+      }
+
+      .job-status {
+        width: 12px;
+        height: 12px;
+        border-radius: var(--radius-full);
+        display: inline-block;
+        margin-left: var(--space-2);
+        border: none;
+        animation: none;
+      }
+
+      .job-status.pending {
+        background-color: var(--status-pending);
+      }
+
+      .job-status.in-progress {
+        background-color: transparent;
+        border: 2px solid var(--accent-cyan);
+        border-top-color: transparent;
+        animation: spin 1s linear infinite;
+      }
+
+      .job-status.completed {
+        background-color: var(--status-success);
+      }
+
+      .job-status.cancelled {
+        background-color: var(--status-warning);
+      }
+
+      .job-status.error {
+        background-color: var(--status-error);
+      }
+
+      .status-text {
+        font-weight: 600;
+        padding: var(--space-1) var(--space-3);
+        border-radius: var(--radius-md);
+        font-size: var(--text-sm);
+      }
+
+      .status-text.pending {
+        color: var(--status-pending);
+        background-color: var(--status-pending-dim);
+      }
+
+      .status-text.in-progress {
+        color: var(--accent-cyan);
+        background-color: var(--accent-cyan-dim);
+      }
+
+      .status-text.completed {
+        color: var(--status-success);
+        background-color: var(--status-success-dim);
+      }
+
+      .status-text.cancelled {
+        color: var(--status-warning);
+        background-color: var(--status-warning-dim);
+      }
+
+      .status-text.error {
+        color: var(--status-error);
+        background-color: var(--status-error-dim);
+      }
+
+      /* Command styling */
+      .command-section {
+        margin-bottom: var(--space-3);
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: var(--space-2);
+      }
+
+      .command-name {
+        color: var(--accent-primary);
+        font-family: var(--font-mono);
+        font-weight: 600;
+      }
+
+      .command-args {
+        color: var(--accent-purple);
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+      }
+
+      .command-input {
+        color: var(--status-pending);
+        font-family: var(--font-mono);
+        font-weight: 500;
+        background-color: var(--status-pending-dim);
+        padding: var(--space-1) var(--space-2);
+        border-radius: var(--radius-sm);
+        border: 1px solid rgba(245, 158, 11, 0.3);
+        font-size: var(--text-sm);
+      }
+
+      @media screen and (max-width: 800px) {
+        .detail-container {
+          padding: var(--space-3);
+        }
+
+        header {
+          padding: var(--space-4);
+        }
+
+        .command-section {
+          gap: var(--space-2);
+        }
+
+        .terminal {
+          height: 50vh;
+        }
+
+        header button {
+          margin-left: var(--space-2);
+          margin-top: var(--space-2);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="detail-container">
+      {{ template "topnav" . }} {{ template "detailHeader" .Job }}
+
+      <div class="terminal">
+        <div class="terminal-content">
+          {{range $index, $line := .Job.Stdout }}
+          <div class="terminal-line" data-raw="{{$line}}"></div>
+          {{end}}
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Escape HTML special characters
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      // Linkify URLs and local paths in terminal output
+      function linkifyText(text) {
+        if (!text) return "";
+
+        // Combined pattern to match URLs and Windows paths in a single pass
+        // This prevents double-matching and maintains proper order
+        // Windows paths can contain spaces and common special characters
+        // Allowed: alphanumerics, spaces, . _ - \ ( ) [ ] { } @ # $ % & ! ~ ` ' +
+        const combinedPattern =
+          /(https?:\/\/[^\s<>"']+)|([A-Za-z]:\\[\w\s.\-\\()\[\]{}@#$%&!~`'+]+)/g;
+
+        let lastIndex = 0;
+        let result = "";
+        let match;
+
+        while ((match = combinedPattern.exec(text)) !== null) {
+          // Add escaped text before this match
+          const before = text.slice(lastIndex, match.index);
+          result += escapeHtml(before);
+
+          const url = match[1];
+          let winPath = match[2];
+
+          if (url) {
+            // It's a URL - open in new tab
+            result += `<a href="${escapeHtml(
+              url
+            )}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+              url
+            )}</a>`;
+          } else if (winPath) {
+            // Trim trailing whitespace from the path (spaces are valid in paths but not at the end)
+            winPath = winPath.trimEnd();
+            // It's a Windows path - open with OS default app
+            const escapedPath = escapeHtml(winPath);
+            result += `<a href="#" class="local-path" data-path="${escapedPath}" onclick="openLocalPath(event, this)">${escapedPath}</a>`;
+          }
+
+          lastIndex = match.index + match[0].length;
+        }
+
+        // Add remaining text after last match
+        result += escapeHtml(text.slice(lastIndex));
+
+        return result;
+      }
+
+      // Open local path using OS default application
+      function openLocalPath(event, element) {
+        event.preventDefault();
+        const path = element.getAttribute("data-path");
+        if (!path) return;
+
+        fetch("/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: path }),
+        })
+          .then((response) => {
+            if (!response.ok) {
+              console.error("Failed to open path:", path);
+            }
+          })
+          .catch((err) => console.error("Error opening path:", err));
+      }
+
+      // Apply linkification to all existing terminal lines on load
+      function linkifyExistingLines() {
+        document
+          .querySelectorAll(".terminal-line[data-raw]")
+          .forEach((line) => {
+            const rawText = line.getAttribute("data-raw");
+            if (rawText) {
+              line.innerHTML = linkifyText(rawText);
+            }
+          });
+      }
+    </script>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        // Linkify existing terminal content
+        linkifyExistingLines();
+
+        const STREAM_URL = "/stream";
+        const EVENT_STDOUT = "stdout-{{.Job.ID}}";
+        const EVENT_UPDATE = "update";
+
+        const sseState = {
+          es: null,
+          reconnectTimer: null,
+          heartbeatTimer: null,
+          connectingTimer: null,
+          backoffMs: 1000,
+          maxBackoffMs: 30000,
+          isConnecting: false,
+          isExplicitlyClosed: false,
+          lastActivityTs: Date.now(),
+          lifecycleSetup: false,
+        };
+
+        function withJitter(ms) {
+          const jitter = Math.floor(ms * 0.2 * Math.random());
+          return ms + jitter;
+        }
+
+        function resetBackoff() {
+          sseState.backoffMs = 1000;
+        }
+
+        function onActivity() {
+          sseState.lastActivityTs = Date.now();
+          resetBackoff();
+        }
+
+        function stopHeartbeat() {
+          if (sseState.heartbeatTimer) {
+            clearInterval(sseState.heartbeatTimer);
+            sseState.heartbeatTimer = null;
+          }
+        }
+
+        function startHeartbeat() {
+          stopHeartbeat();
+          sseState.heartbeatTimer = setInterval(() => {
+            const inactiveMs = Date.now() - sseState.lastActivityTs;
+            if (inactiveMs > 45000) {
+              console.warn("SSE idle too long; recreating connection");
+              recreateConnection();
+            }
+          }, 15000);
+        }
+
+        function clearConnectingTimer() {
+          if (sseState.connectingTimer) {
+            clearTimeout(sseState.connectingTimer);
+            sseState.connectingTimer = null;
+          }
+        }
+
+        function scheduleReconnect(reason) {
+          if (sseState.isExplicitlyClosed) return;
+          if (sseState.reconnectTimer) return;
+          const delay = withJitter(sseState.backoffMs);
+          console.log(`SSE reconnect in ${delay}ms (${reason || ""})`);
+          sseState.reconnectTimer = setTimeout(() => {
+            sseState.reconnectTimer = null;
+            connect();
+          }, delay);
+          sseState.backoffMs = Math.min(
+            sseState.maxBackoffMs,
+            sseState.backoffMs * 2
+          );
+        }
+
+        function cleanupES(markExplicit) {
+          if (markExplicit) sseState.isExplicitlyClosed = true;
+          stopHeartbeat();
+          clearConnectingTimer();
+          if (sseState.es) {
+            try {
+              sseState.es.close();
+            } catch (e) {}
+          }
+          sseState.es = null;
+          sseState.isConnecting = false;
+        }
+
+        function recreateConnection() {
+          cleanupES(false);
+          connect();
+        }
+
+        function connect() {
+          if (sseState.isConnecting) return;
+          if (sseState.es && sseState.es.readyState !== EventSource.CLOSED)
+            return;
+          if (!navigator.onLine) {
+            scheduleReconnect("offline");
+            return;
+          }
+          if (document.visibilityState === "hidden") {
+            scheduleReconnect("hidden");
+            return;
+          }
+
+          sseState.isConnecting = true;
+          try {
+            console.log("SSE connecting...");
+            const es = new EventSource(STREAM_URL);
+            sseState.es = es;
+
+            clearConnectingTimer();
+            sseState.connectingTimer = setTimeout(() => {
+              if (
+                sseState.es &&
+                sseState.es.readyState === EventSource.CONNECTING
+              ) {
+                console.warn("SSE stuck CONNECTING; recreating");
+                recreateConnection();
+              }
+            }, 20000);
+
+            es.onopen = () => {
+              sseState.isConnecting = false;
+              clearConnectingTimer();
+              onActivity();
+              startHeartbeat();
+              console.log("SSE connected");
+            };
+
+            es.onerror = (error) => {
+              console.warn("SSE error", error);
+              onActivity();
+              if (!sseState.es) return;
+              if (sseState.es.readyState === EventSource.CLOSED) {
+                cleanupES(false);
+                scheduleReconnect("closed");
+              } else if (sseState.es.readyState === EventSource.CONNECTING) {
+                scheduleReconnect("connecting");
+              }
+            };
+
+            es.addEventListener(EVENT_STDOUT, function (e) {
+              onActivity();
+              var data = JSON.parse(e.data);
+              if (data.line) {
+                var container = document.querySelector(".terminal-content");
+                if (!container) return;
+                var newLine = document.createElement("div");
+                newLine.className = "terminal-line";
+                newLine.innerHTML = linkifyText(data.line);
+                container.appendChild(newLine);
+                if (container.parentElement) {
+                  container.parentElement.scrollTop =
+                    container.parentElement.scrollHeight;
+                }
+              }
+            });
+
+            es.addEventListener(EVENT_UPDATE, function (e) {
+              onActivity();
+              var data = JSON.parse(e.data);
+              if (data.job && String(data.job.id) === "{{.Job.ID}}") {
+                const stateString = jobStateToString(data.job.state);
+                const stateClass = jobStateToClass(data.job.state);
+
+                var stateEl = document.getElementById("state");
+                if (stateEl) stateEl.innerText = stateString;
+
+                const statusIcon = document.querySelector(".job-status");
+                const statusText = document.getElementById("state");
+
+                const stateClasses = [
+                  "pending",
+                  "Pending",
+                  "in-progress",
+                  "InProgress",
+                  "completed",
+                  "Completed",
+                  "cancelled",
+                  "Cancelled",
+                  "error",
+                  "Error",
+                ];
+                if (statusIcon && statusText) {
+                  stateClasses.forEach((cls) => {
+                    statusIcon.classList.remove(cls);
+                    statusText.classList.remove(cls);
+                  });
+                  statusIcon.classList.add(stateClass);
+                  statusText.classList.add(stateClass);
+                }
+
+                if (
+                  stateString === "Completed" ||
+                  stateString === "Cancelled" ||
+                  stateString === "Error"
+                ) {
+                  var cancelBtn = document.getElementById("cancel");
+                  if (cancelBtn) cancelBtn.style.display = "none";
+                }
+
+                if (data.job.completed_at) {
+                  var completedAt = document.getElementById("completedAt");
+                  if (completedAt)
+                    completedAt.innerText = data.job.completed_at;
+                }
+                if (data.job.errored_at) {
+                  var erroredAt = document.getElementById("erroredAt");
+                  if (erroredAt) erroredAt.innerText = data.job.errored_at;
+                }
+              }
+            });
+          } catch (e) {
+            console.error("SSE connect threw", e);
+            sseState.isConnecting = false;
+            scheduleReconnect("exception");
+          }
+        }
+
+        function setupLifecycle() {
+          if (sseState.lifecycleSetup) return;
+          sseState.lifecycleSetup = true;
+
+          window.addEventListener("online", () => {
+            resetBackoff();
+            connect();
+          });
+          window.addEventListener("offline", () => {
+            cleanupES(false);
+          });
+
+          document.addEventListener("visibilitychange", () => {
+            if (document.visibilityState === "visible") {
+              resetBackoff();
+              connect();
+            }
+          });
+
+          window.addEventListener("focus", () => {
+            resetBackoff();
+            if (!sseState.es || sseState.es.readyState === EventSource.CLOSED) {
+              connect();
+            } else {
+              const inactiveMs = Date.now() - sseState.lastActivityTs;
+              if (inactiveMs > 15000) {
+                recreateConnection();
+              }
+            }
+          });
+
+          window.addEventListener("pageshow", (e) => {
+            resetBackoff();
+            connect();
+          });
+
+          window.addEventListener("pagehide", () => {
+            cleanupES(false);
+          });
+
+          window.addEventListener("beforeunload", () => {
+            cleanupES(true);
+          });
+        }
+
+        setupLifecycle();
+        connect();
+      });
+
+      function cancelJob(e) {
+        e.preventDefault();
+        const id = e.target.getAttribute("data-id");
+        fetch(`/job/${id}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        })
+          .then((response) => response.text())
+          .then((result) => {
+            console.log("Server responded:", result);
+          })
+          .catch((err) => console.error("Error:", err));
+      }
+
+      function jobStateToString(state) {
+        switch (state) {
+          case 0:
+            return "Pending";
+          case 1:
+            return "InProgress";
+          case 2:
+            return "Completed";
+          case 3:
+            return "Cancelled";
+          case 4:
+            return "Error";
+          default:
+            return "Unknown";
+        }
+      }
+
+      function jobStateToClass(state) {
+        switch (state) {
+          case 0:
+            return "pending";
+          case 1:
+            return "in-progress";
+          case 2:
+            return "completed";
+          case 3:
+            return "cancelled";
+          case 4:
+            return "error";
+          default:
+            return "pending";
+        }
+      }
+    </script>
+  </body>
+</html>
+{{ end }}

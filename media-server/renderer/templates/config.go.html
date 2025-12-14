@@ -1,0 +1,512 @@
+{{ define "config" }}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shrike Configuration</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      body {
+        overflow: hidden;
+        height: 100vh;
+      }
+
+      .container {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+      }
+
+      .config-wrapper {
+        flex: 1;
+        overflow-y: auto;
+        padding-bottom: var(--space-5);
+      }
+
+      .config-sections {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+        margin-bottom: var(--space-6);
+      }
+
+      .config-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-xl);
+        padding: var(--space-5);
+        border-left: 3px solid var(--accent-primary);
+      }
+
+      .config-card--blue {
+        border-left-color: var(--accent-blue);
+      }
+
+      .config-card--purple {
+        border-left-color: var(--accent-purple);
+      }
+
+      .config-card--cyan {
+        border-left-color: var(--accent-cyan);
+      }
+
+      .config-card--pink {
+        border-left-color: var(--accent-pink);
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: var(--space-3);
+        font-size: var(--text-base);
+      }
+
+      .section-subtitle {
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+        margin-top: calc(var(--space-1) * -1);
+        margin-bottom: var(--space-4);
+      }
+
+      .fields {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: var(--space-4);
+      }
+
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+      }
+
+      .field-inline {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        flex-wrap: wrap;
+      }
+
+      .field-row {
+        display: flex;
+        gap: var(--space-4);
+      }
+
+      .field-row > div {
+        flex: 1;
+      }
+
+      .value {
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        word-break: break-all;
+        font-size: var(--text-sm);
+        background: var(--bg-surface);
+        padding: var(--space-2) var(--space-3);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .input {
+        width: 100%;
+        padding: var(--space-3);
+        box-sizing: border-box;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-default);
+        color: var(--text-primary);
+        border-radius: var(--radius-md);
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        transition: border-color var(--transition-fast),
+          box-shadow var(--transition-fast);
+      }
+
+      .input:focus {
+        outline: none;
+        border-color: var(--accent-primary);
+        box-shadow: 0 0 0 3px var(--accent-primary-dim);
+      }
+
+      textarea.input {
+        resize: vertical;
+        max-width: 100%;
+        min-height: 100px;
+        line-height: 1.5;
+      }
+
+      select.input {
+        cursor: pointer;
+      }
+
+      .actions {
+        display: flex;
+        gap: var(--space-3);
+        flex-wrap: wrap;
+      }
+
+      .config-footer {
+        position: sticky;
+        bottom: 0;
+        background: var(--bg-primary);
+        border-top: 1px solid var(--border-subtle);
+        padding: var(--space-4) var(--space-5);
+        box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+        z-index: 10;
+      }
+
+      .btn {
+        padding: var(--space-3) var(--space-5);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        border: none;
+        font-weight: 600;
+        font-size: var(--text-sm);
+        transition: all var(--transition-fast);
+      }
+
+      .btn-primary {
+        background: var(--accent-primary);
+        color: #000;
+      }
+
+      .btn-primary:hover {
+        background: #00e6b8;
+        box-shadow: var(--shadow-glow);
+      }
+
+      .btn-secondary {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+        border: 1px solid var(--border-default);
+      }
+
+      .btn-secondary:hover {
+        background: var(--bg-active);
+        border-color: var(--border-strong);
+      }
+
+      .status {
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+        margin-top: var(--space-3);
+      }
+
+      .status.success {
+        color: var(--status-success);
+      }
+
+      .status.error {
+        color: var(--status-error);
+      }
+
+      @media screen and (max-width: 800px) {
+        .field-row {
+          flex-direction: column;
+          gap: var(--space-3);
+        }
+
+        .actions .btn {
+          flex: 1 1 auto;
+          min-width: 120px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      {{ template "topnav" . }}
+
+      <div class="config-wrapper">
+        <div class="config-card" style="margin-bottom: var(--space-4)">
+          <div class="label">Config file path</div>
+          <div class="value">{{.ConfigPath}}</div>
+        </div>
+
+        <div class="config-sections">
+        <div class="config-card config-card--blue">
+          <div class="section-title">⚙️ General</div>
+          <div class="fields">
+            <div class="field">
+              <label class="label">Database path</label>
+              <input
+                id="db-path"
+                class="input"
+                type="text"
+                value="{{.Config.DBPath}}"
+              />
+              <div class="field-inline">
+                <span class="hint">Active:</span>
+                <code
+                  class="value"
+                  id="active-db-path"
+                  style="padding: var(--space-1) var(--space-2)"
+                  >{{.ActiveDBPath}}</code
+                >
+              </div>
+            </div>
+            <div class="field">
+              <label class="label">Download path</label>
+              <input
+                id="download-path"
+                class="input"
+                type="text"
+                value="{{.Config.DownloadPath}}"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="config-card config-card--purple">
+          <div class="section-title">🧠 Ollama</div>
+          <div class="fields">
+            <div class="field">
+              <label class="label">Base URL</label>
+              <input
+                id="ollama-base-url"
+                class="input"
+                type="text"
+                value="{{.Config.OllamaBaseURL}}"
+              />
+            </div>
+            <div class="field">
+              <label class="label">Model</label>
+              <select id="ollama-model" class="input">
+                <option value="{{.Config.OllamaModel}}">
+                  {{.Config.OllamaModel}}
+                </option>
+              </select>
+            </div>
+            <div class="field">
+              <label class="label">Describe prompt</label>
+              <textarea id="describe-prompt" class="input" rows="4">
+{{.Config.DescribePrompt}}</textarea
+              >
+            </div>
+            <div class="field">
+              <label class="label">Autotag prompt</label>
+              <textarea id="autotag-prompt" class="input" rows="6">
+{{.Config.AutotagPrompt}}</textarea
+              >
+            </div>
+          </div>
+        </div>
+
+        <div class="config-card config-card--cyan">
+          <div class="section-title">🧩 ONNX Tagger</div>
+          <div class="fields">
+            <div class="field">
+              <label class="label">Model path</label>
+              <input
+                disabled
+                id="onnx-model-path"
+                class="input"
+                type="text"
+                value="{{.Config.OnnxTagger.ModelPath}}"
+              />
+            </div>
+            <div class="field">
+              <label class="label">Labels path</label>
+              <input
+                id="onnx-labels-path"
+                class="input"
+                type="text"
+                value="{{.Config.OnnxTagger.LabelsPath}}"
+              />
+            </div>
+            <div class="field">
+              <label class="label">Config path</label>
+              <input
+                id="onnx-config-path"
+                class="input"
+                type="text"
+                value="{{.Config.OnnxTagger.ConfigPath}}"
+              />
+            </div>
+            <div class="field">
+              <label class="label">ORT shared library path</label>
+              <input
+                id="onnx-ort-path"
+                class="input"
+                type="text"
+                value="{{.Config.OnnxTagger.ORTSharedLibraryPath}}"
+              />
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label class="label">General threshold</label>
+                <input
+                  id="onnx-general-thresh"
+                  class="input"
+                  type="number"
+                  step="0.01"
+                  value="{{.Config.OnnxTagger.GeneralThreshold}}"
+                />
+              </div>
+              <div class="field">
+                <label class="label">Character threshold</label>
+                <input
+                  id="onnx-char-thresh"
+                  class="input"
+                  type="number"
+                  step="0.01"
+                  value="{{.Config.OnnxTagger.CharacterThreshold}}"
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="config-card config-card--pink">
+          <div class="section-title">🎙️ Whisper</div>
+          <div class="fields">
+            <div class="field">
+              <label class="label">Faster-Whisper executable</label>
+              <input
+                disabled
+                id="faster-whisper-path"
+                class="input"
+                type="text"
+                value="{{.Config.FasterWhisperPath}}"
+              />
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      <div class="config-footer">
+        <div class="actions">
+          <button class="btn btn-primary" id="save-btn">Save</button>
+          <button class="btn btn-secondary" id="reload-btn">
+            Reload from file
+          </button>
+        </div>
+        <div id="status" class="status"></div>
+      </div>
+    </div>
+
+    <script>
+      const statusEl = document.getElementById("status");
+      const activeDbPathEl = document.getElementById("active-db-path");
+
+      function setStatus(msg, kind = "info") {
+        statusEl.textContent = msg;
+        statusEl.className = "status " + kind;
+      }
+
+      document.getElementById("save-btn").addEventListener("click", () => {
+        const dbPath = document.getElementById("db-path").value.trim();
+        if (!dbPath) {
+          setStatus("dbPath cannot be empty", "error");
+          return;
+        }
+        const payload = {
+          dbPath,
+          downloadPath: document.getElementById("download-path").value.trim(),
+          ollamaBaseUrl: document
+            .getElementById("ollama-base-url")
+            .value.trim(),
+          ollamaModel: document.getElementById("ollama-model").value.trim(),
+          describePrompt: document.getElementById("describe-prompt").value,
+          autotagPrompt: document.getElementById("autotag-prompt").value,
+          onnxModelPath: document
+            .getElementById("onnx-model-path")
+            .value.trim(),
+          onnxLabelsPath: document
+            .getElementById("onnx-labels-path")
+            .value.trim(),
+          onnxConfigPath: document
+            .getElementById("onnx-config-path")
+            .value.trim(),
+          onnxOrtSharedLibPath: document
+            .getElementById("onnx-ort-path")
+            .value.trim(),
+          onnxGeneralThreshold: parseFloat(
+            document.getElementById("onnx-general-thresh").value
+          ),
+          onnxCharacterThreshold: parseFloat(
+            document.getElementById("onnx-char-thresh").value
+          ),
+          fasterWhisperPath: document
+            .getElementById("faster-whisper-path")
+            .value.trim(),
+        };
+        setStatus("Saving...");
+        fetch("/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then((r) => r.json())
+          .then((res) => {
+            activeDbPathEl.textContent = res.activeDBPath || dbPath;
+            setStatus(
+              res.dbChanged
+                ? "Saved and switched database."
+                : res.changed
+                ? "Saved."
+                : "Saved (no change).",
+              "success"
+            );
+          })
+          .catch((err) => setStatus("Error: " + err, "error"));
+      });
+
+      document.getElementById("reload-btn").addEventListener("click", () => {
+        setStatus("Reloading...");
+        fetch("/config")
+          .then((r) => r.text())
+          .then(() => {
+            window.location.reload();
+          })
+          .catch((err) => setStatus("Error: " + err, "error"));
+      });
+
+      // Populate Ollama models select
+      (function populateOllamaModels() {
+        const select = document.getElementById("ollama-model");
+        const current = select.value.trim();
+        fetch("/ollama/models")
+          .then((r) => r.json())
+          .then((data) => {
+            const models = Array.isArray(data.models) ? data.models : [];
+            select.innerHTML = "";
+            if (models.length === 0 && current) {
+              const opt = document.createElement("option");
+              opt.value = current;
+              opt.textContent = current;
+              select.appendChild(opt);
+              return;
+            }
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "Select a model";
+            select.appendChild(placeholder);
+            for (const m of models) {
+              const opt = document.createElement("option");
+              opt.value = m;
+              opt.textContent = m;
+              select.appendChild(opt);
+            }
+            if (current) {
+              select.value = current;
+              if (select.value !== current) {
+                const opt = document.createElement("option");
+                opt.value = current;
+                opt.textContent = current + " (current)";
+                select.insertBefore(opt, select.firstChild.nextSibling);
+                select.value = current;
+              }
+            }
+          })
+          .catch(() => {});
+      })();
+    </script>
+  </body>
+</html>
+{{ end }}
