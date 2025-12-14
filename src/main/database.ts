@@ -98,7 +98,7 @@ export async function initDB(db: Database) {
   category_label TEXT,
   weight REAL,
   preview BLOB,
-  thumbnail_path_600 INTEGER,
+  thumbnail_path_600 TEXT,
   FOREIGN KEY (category_label) REFERENCES category (label)
 )`);
 
