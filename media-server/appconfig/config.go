@@ -127,15 +127,36 @@ func getConfigPath() (string, error) {
 }
 
 // Load reads the config from disk and updates the in-memory config. It returns the config and path.
+// If the config file doesn't exist, it creates one with default values.
 func Load() (Config, string, error) {
 	path, err := getConfigPath()
 	if err != nil {
 		return Config{}, "", err
 	}
+
+	// Check if config file exists
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			// Config file doesn't exist - create it with defaults
+			def := defaultConfig()
+			// Set a default database path
+			appDataDir := os.Getenv("APPDATA")
+			if appDataDir == "" {
+				return Config{}, "", fmt.Errorf("APPDATA environment variable not found")
+			}
+			def.DBPath = filepath.Join(appDataDir, "Lowkey Media Viewer", "media.db")
+
+			// Save the default config
+			savedPath, saveErr := Save(def)
+			if saveErr != nil {
+				return Config{}, path, fmt.Errorf("failed to create default config file: %v", saveErr)
+			}
+			return def, savedPath, nil
+		}
 		return Config{}, path, fmt.Errorf("failed to read config file at %s: %v", path, err)
 	}
+
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Config{}, path, fmt.Errorf("failed to parse config JSON: %v", err)

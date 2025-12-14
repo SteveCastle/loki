@@ -127,6 +127,11 @@ func switchDatabase(newDBPath string) error {
 		return fmt.Errorf("failed to ping new database: %v", err)
 	}
 
+	// Initialize schema if tables don't exist
+	if err := media.InitializeSchema(newDB); err != nil {
+		log.Printf("warning: failed to initialize database schema on new database: %v", err)
+	}
+
 	// Ensure indexes on the new database
 	if err := ensureIndexes(newDB); err != nil {
 		log.Printf("warning: failed to ensure indexes on new database: %v", err)
@@ -163,7 +168,7 @@ func switchDatabase(newDBPath string) error {
 }
 
 func initDB() (*sql.DB, error) {
-	// Load config
+	// Load config (creates default config if doesn't exist)
 	cfg, _, err := appconfig.Load()
 	if err != nil {
 		return nil, err
@@ -185,6 +190,11 @@ func initDB() (*sql.DB, error) {
 	// Test the connection
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %v", err)
+	}
+
+	// Initialize schema if tables don't exist
+	if err := media.InitializeSchema(db); err != nil {
+		log.Printf("warning: failed to initialize database schema: %v", err)
 	}
 
 	// Best-effort: ensure helpful indexes exist

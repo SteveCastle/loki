@@ -1675,3 +1675,91 @@ func SuggestPathDirs(db *sql.DB, prefix string, limit int) ([]string, error) {
 	}
 	return out, nil
 }
+
+// InitializeSchema creates the media database schema if it doesn't exist
+// This matches the schema from the Lowkey Media Viewer application
+func InitializeSchema(db *sql.DB) error {
+	if db == nil {
+		return fmt.Errorf("database connection not available")
+	}
+
+	// Create category table
+	_, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS category (
+			label TEXT PRIMARY KEY,
+			weight REAL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create category table: %w", err)
+	}
+
+	// Create tag table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS tag (
+			label TEXT PRIMARY KEY,
+			category_label TEXT,
+			weight REAL,
+			preview BLOB,
+			thumbnail_path_600 INTEGER,
+			FOREIGN KEY (category_label) REFERENCES category (label)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create tag table: %w", err)
+	}
+
+	// Create media_tag_by_category table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS media_tag_by_category (
+			media_path TEXT,
+			tag_label TEXT,
+			category_label TEXT,
+			weight REAL,
+			time_stamp REAL,
+			created_at INTEGER,
+			PRIMARY KEY(media_path, tag_label, category_label, time_stamp)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create media_tag_by_category table: %w", err)
+	}
+
+	// Create cache table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS cache (
+			"key" TEXT,
+			files TEXT
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create cache table: %w", err)
+	}
+
+	// Create media table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS media (
+			"path" TEXT,
+			description TEXT,
+			transcript TEXT,
+			preview BLOB,
+			thumbnail_path_600 TEXT,
+			thumbnail_path_1200 TEXT,
+			elo REAL,
+			views INTEGER,
+			wins INTEGER,
+			losses INTEGER,
+			"size" INTEGER,
+			hash TEXT,
+			width INTEGER,
+			height INTEGER,
+			CONSTRAINT MEDIA_PK PRIMARY KEY ("path")
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create media table: %w", err)
+	}
+
+	log.Println("Database schema initialized successfully")
+	return nil
+}

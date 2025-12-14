@@ -8,7 +8,8 @@
       "Bash(go get:*)",
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:onnxruntime.ai)"
+      "WebFetch(domain:onnxruntime.ai)",
+      "Bash(sqlite3:*)"
     ]
   }
 }
