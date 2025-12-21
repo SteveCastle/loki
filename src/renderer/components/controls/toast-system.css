@@ -147,7 +147,7 @@
   flex-shrink: 0;
 }
 
-.loading-animation.started {
+.loading-animation.in_progress {
   background: linear-gradient(180deg, #45c07a 25%, #45c07a 50%, #45c07a 75%);
   animation: loading 1s infinite ease-in-out;
 }
@@ -160,7 +160,7 @@
   background-color: #c04545;
 }
 
-.loading-animation.complete {
+.loading-animation.completed {
   background-color: #45c07a;
 }
 

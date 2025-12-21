@@ -4,12 +4,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import './toast-system.css';
 
+type JobState = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'error';
+
 interface JobRunnerJob {
   id: string;
   command: string;
   arguments: string[];
   input: string;
-  state: number; // 0=Pending, 1=InProgress, 2=Completed, 3=Cancelled, 4=Error
+  state: JobState; // 0=Pending, 1=InProgress, 2=Completed, 3=Cancelled, 4=Error
   created_at: string;
   claimed_at?: string;
   completed_at?: string;
@@ -29,23 +31,6 @@ interface JobToastProps {
   job: JobRunnerJob;
   onClear: () => void;
 }
-
-const getJobStatus = (state: number): string => {
-  switch (state) {
-    case 0:
-      return 'pending';
-    case 1:
-      return 'started';
-    case 2:
-      return 'complete';
-    case 3:
-      return 'cancelled';
-    case 4:
-      return 'error';
-    default:
-      return 'pending';
-  }
-};
 
 const getJobTitle = (command: string): string => {
   switch (command) {
@@ -79,7 +64,7 @@ const getJobTitle = (command: string): string => {
 const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
   const { libraryService } = useContext(GlobalStateContext);
   const library = useSelector(libraryService, (state) => state.context.library);
-  const status = getJobStatus(job.state);
+  const status = job.state;
   const title = getJobTitle(job.command);
 
   // Extract file path from input - look for quoted paths or file-like arguments
@@ -109,10 +94,10 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
         <div
           className={[
             'loading-animation',
-            status === 'started' ? 'started' : '',
+            status === 'in_progress' ? 'in_progress' : '',
             status === 'pending' ? 'pending' : '',
             status === 'error' ? 'error' : '',
-            status === 'complete' ? 'complete' : '',
+            status === 'completed' ? 'completed' : '',
           ].join(' ')}
         ></div>
         <div className="toast-text">
@@ -323,7 +308,7 @@ export function ToastSystem() {
       setJobs((prev) => new Map(prev).set(job.id, job));
 
       // Handle job completion
-      if (job.state === 2) {
+      if (job.state === 'completed') {
         // Completed
         // Invalidate queries for metadata jobs
         if (job.command === 'metadata' || job.command === 'ingest') {
@@ -347,7 +332,7 @@ export function ToastSystem() {
             return newJobs;
           });
         }, 3000);
-      } else if (job.state === 4) {
+      } else if (job.state === 'error') {
         // Error - also auto-remove after 5 seconds (longer to let user see the error)
         setTimeout(() => {
           setJobs((prev) => {
@@ -421,7 +406,7 @@ export function ToastSystem() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       const url =
-        job.state === 0 || job.state === 1
+        job.state === 'pending' || job.state === 'in_progress'
           ? `http://localhost:8090/job/${job.id}/cancel`
           : `http://localhost:8090/job/${job.id}/remove`;
       await fetch(url, { method: 'POST', signal: controller.signal });
