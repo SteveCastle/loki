@@ -228,154 +228,180 @@
         </div>
 
         <div class="config-sections">
-        <div class="config-card config-card--blue">
-          <div class="section-title">⚙️ General</div>
-          <div class="fields">
-            <div class="field">
-              <label class="label">Database path</label>
-              <input
-                id="db-path"
-                class="input"
-                type="text"
-                value="{{.Config.DBPath}}"
-              />
-              <div class="field-inline">
-                <span class="hint">Active:</span>
-                <code
-                  class="value"
-                  id="active-db-path"
-                  style="padding: var(--space-1) var(--space-2)"
-                  >{{.ActiveDBPath}}</code
+          <div class="config-card config-card--blue">
+            <div class="section-title">⚙️ General</div>
+            <div class="fields">
+              <div class="field">
+                <label class="label">Database path</label>
+                <input
+                  id="db-path"
+                  class="input"
+                  type="text"
+                  value="{{.Config.DBPath}}"
+                />
+                <div class="field-inline">
+                  <span class="hint">Active:</span>
+                  <code
+                    class="value"
+                    id="active-db-path"
+                    style="padding: var(--space-1) var(--space-2)"
+                    >{{.ActiveDBPath}}</code
+                  >
+                </div>
+              </div>
+              <div class="field">
+                <label class="label">Download path</label>
+                <input
+                  id="download-path"
+                  class="input"
+                  type="text"
+                  value="{{.Config.DownloadPath}}"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="config-card config-card--purple">
+            <div class="section-title">💬 Discord</div>
+            <div class="fields">
+              <div class="field">
+                <label class="label">User Token</label>
+                <input
+                  id="discord-token"
+                  class="input"
+                  type="password"
+                  value="{{.Config.DiscordToken}}"
+                  placeholder="Enter your Discord user token"
+                />
+                <div
+                  class="hint"
+                  style="
+                    font-size: 0.8em;
+                    color: var(--text-muted);
+                    margin-top: 5px;
+                  "
+                >
+                  Required for exporting media from Discord channels using dce.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="config-card config-card--purple">
+            <div class="section-title">🧠 Ollama</div>
+            <div class="fields">
+              <div class="field">
+                <label class="label">Base URL</label>
+                <input
+                  id="ollama-base-url"
+                  class="input"
+                  type="text"
+                  value="{{.Config.OllamaBaseURL}}"
+                />
+              </div>
+              <div class="field">
+                <label class="label">Model</label>
+                <select id="ollama-model" class="input">
+                  <option value="{{.Config.OllamaModel}}">
+                    {{.Config.OllamaModel}}
+                  </option>
+                </select>
+              </div>
+              <div class="field">
+                <label class="label">Describe prompt</label>
+                <textarea id="describe-prompt" class="input" rows="4">
+{{.Config.DescribePrompt}}</textarea
+                >
+              </div>
+              <div class="field">
+                <label class="label">Autotag prompt</label>
+                <textarea id="autotag-prompt" class="input" rows="6">
+{{.Config.AutotagPrompt}}</textarea
                 >
               </div>
             </div>
-            <div class="field">
-              <label class="label">Download path</label>
-              <input
-                id="download-path"
-                class="input"
-                type="text"
-                value="{{.Config.DownloadPath}}"
-              />
-            </div>
           </div>
-        </div>
 
-        <div class="config-card config-card--purple">
-          <div class="section-title">🧠 Ollama</div>
-          <div class="fields">
-            <div class="field">
-              <label class="label">Base URL</label>
-              <input
-                id="ollama-base-url"
-                class="input"
-                type="text"
-                value="{{.Config.OllamaBaseURL}}"
-              />
-            </div>
-            <div class="field">
-              <label class="label">Model</label>
-              <select id="ollama-model" class="input">
-                <option value="{{.Config.OllamaModel}}">
-                  {{.Config.OllamaModel}}
-                </option>
-              </select>
-            </div>
-            <div class="field">
-              <label class="label">Describe prompt</label>
-              <textarea id="describe-prompt" class="input" rows="4">
-{{.Config.DescribePrompt}}</textarea
-              >
-            </div>
-            <div class="field">
-              <label class="label">Autotag prompt</label>
-              <textarea id="autotag-prompt" class="input" rows="6">
-{{.Config.AutotagPrompt}}</textarea
-              >
-            </div>
-          </div>
-        </div>
-
-        <div class="config-card config-card--cyan">
-          <div class="section-title">🧩 ONNX Tagger</div>
-          <div class="fields">
-            <div class="field">
-              <label class="label">Model path</label>
-              <input
-                disabled
-                id="onnx-model-path"
-                class="input"
-                type="text"
-                value="{{.Config.OnnxTagger.ModelPath}}"
-              />
-            </div>
-            <div class="field">
-              <label class="label">Labels path</label>
-              <input
-                id="onnx-labels-path"
-                class="input"
-                type="text"
-                value="{{.Config.OnnxTagger.LabelsPath}}"
-              />
-            </div>
-            <div class="field">
-              <label class="label">Config path</label>
-              <input
-                id="onnx-config-path"
-                class="input"
-                type="text"
-                value="{{.Config.OnnxTagger.ConfigPath}}"
-              />
-            </div>
-            <div class="field">
-              <label class="label">ORT shared library path</label>
-              <input
-                id="onnx-ort-path"
-                class="input"
-                type="text"
-                value="{{.Config.OnnxTagger.ORTSharedLibraryPath}}"
-              />
-            </div>
-            <div class="field-row">
+          <div class="config-card config-card--cyan">
+            <div class="section-title">🧩 ONNX Tagger</div>
+            <div class="fields">
               <div class="field">
-                <label class="label">General threshold</label>
+                <label class="label">Model path</label>
                 <input
-                  id="onnx-general-thresh"
+                  disabled
+                  id="onnx-model-path"
                   class="input"
-                  type="number"
-                  step="0.01"
-                  value="{{.Config.OnnxTagger.GeneralThreshold}}"
+                  type="text"
+                  value="{{.Config.OnnxTagger.ModelPath}}"
                 />
               </div>
               <div class="field">
-                <label class="label">Character threshold</label>
+                <label class="label">Labels path</label>
                 <input
-                  id="onnx-char-thresh"
+                  id="onnx-labels-path"
                   class="input"
-                  type="number"
-                  step="0.01"
-                  value="{{.Config.OnnxTagger.CharacterThreshold}}"
+                  type="text"
+                  value="{{.Config.OnnxTagger.LabelsPath}}"
+                />
+              </div>
+              <div class="field">
+                <label class="label">Config path</label>
+                <input
+                  id="onnx-config-path"
+                  class="input"
+                  type="text"
+                  value="{{.Config.OnnxTagger.ConfigPath}}"
+                />
+              </div>
+              <div class="field">
+                <label class="label">ORT shared library path</label>
+                <input
+                  id="onnx-ort-path"
+                  class="input"
+                  type="text"
+                  value="{{.Config.OnnxTagger.ORTSharedLibraryPath}}"
+                />
+              </div>
+              <div class="field-row">
+                <div class="field">
+                  <label class="label">General threshold</label>
+                  <input
+                    id="onnx-general-thresh"
+                    class="input"
+                    type="number"
+                    step="0.01"
+                    value="{{.Config.OnnxTagger.GeneralThreshold}}"
+                  />
+                </div>
+                <div class="field">
+                  <label class="label">Character threshold</label>
+                  <input
+                    id="onnx-char-thresh"
+                    class="input"
+                    type="number"
+                    step="0.01"
+                    value="{{.Config.OnnxTagger.CharacterThreshold}}"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="config-card config-card--pink">
+            <div class="section-title">🎙️ Whisper</div>
+            <div class="fields">
+              <div class="field">
+                <label class="label">Faster-Whisper executable</label>
+                <input
+                  disabled
+                  id="faster-whisper-path"
+                  class="input"
+                  type="text"
+                  value="{{.Config.FasterWhisperPath}}"
                 />
               </div>
             </div>
           </div>
-        </div>
-
-        <div class="config-card config-card--pink">
-          <div class="section-title">🎙️ Whisper</div>
-          <div class="fields">
-            <div class="field">
-              <label class="label">Faster-Whisper executable</label>
-              <input
-                disabled
-                id="faster-whisper-path"
-                class="input"
-                type="text"
-                value="{{.Config.FasterWhisperPath}}"
-              />
-            </div>
-          </div>
-        </div>
         </div>
       </div>
 
@@ -391,55 +417,56 @@
     </div>
 
     <script>
-      const statusEl = document.getElementById("status");
-      const activeDbPathEl = document.getElementById("active-db-path");
+      const statusEl = document.getElementById('status');
+      const activeDbPathEl = document.getElementById('active-db-path');
 
-      function setStatus(msg, kind = "info") {
+      function setStatus(msg, kind = 'info') {
         statusEl.textContent = msg;
-        statusEl.className = "status " + kind;
+        statusEl.className = 'status ' + kind;
       }
 
-      document.getElementById("save-btn").addEventListener("click", () => {
-        const dbPath = document.getElementById("db-path").value.trim();
+      document.getElementById('save-btn').addEventListener('click', () => {
+        const dbPath = document.getElementById('db-path').value.trim();
         if (!dbPath) {
-          setStatus("dbPath cannot be empty", "error");
+          setStatus('dbPath cannot be empty', 'error');
           return;
         }
         const payload = {
           dbPath,
-          downloadPath: document.getElementById("download-path").value.trim(),
+          downloadPath: document.getElementById('download-path').value.trim(),
+          discordToken: document.getElementById('discord-token').value.trim(),
           ollamaBaseUrl: document
-            .getElementById("ollama-base-url")
+            .getElementById('ollama-base-url')
             .value.trim(),
-          ollamaModel: document.getElementById("ollama-model").value.trim(),
-          describePrompt: document.getElementById("describe-prompt").value,
-          autotagPrompt: document.getElementById("autotag-prompt").value,
+          ollamaModel: document.getElementById('ollama-model').value.trim(),
+          describePrompt: document.getElementById('describe-prompt').value,
+          autotagPrompt: document.getElementById('autotag-prompt').value,
           onnxModelPath: document
-            .getElementById("onnx-model-path")
+            .getElementById('onnx-model-path')
             .value.trim(),
           onnxLabelsPath: document
-            .getElementById("onnx-labels-path")
+            .getElementById('onnx-labels-path')
             .value.trim(),
           onnxConfigPath: document
-            .getElementById("onnx-config-path")
+            .getElementById('onnx-config-path')
             .value.trim(),
           onnxOrtSharedLibPath: document
-            .getElementById("onnx-ort-path")
+            .getElementById('onnx-ort-path')
             .value.trim(),
           onnxGeneralThreshold: parseFloat(
-            document.getElementById("onnx-general-thresh").value
+            document.getElementById('onnx-general-thresh').value
           ),
           onnxCharacterThreshold: parseFloat(
-            document.getElementById("onnx-char-thresh").value
+            document.getElementById('onnx-char-thresh').value
           ),
           fasterWhisperPath: document
-            .getElementById("faster-whisper-path")
+            .getElementById('faster-whisper-path')
             .value.trim(),
         };
-        setStatus("Saving...");
-        fetch("/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        setStatus('Saving...');
+        fetch('/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
           .then((r) => r.json())
@@ -447,48 +474,48 @@
             activeDbPathEl.textContent = res.activeDBPath || dbPath;
             setStatus(
               res.dbChanged
-                ? "Saved and switched database."
+                ? 'Saved and switched database.'
                 : res.changed
-                ? "Saved."
-                : "Saved (no change).",
-              "success"
+                ? 'Saved.'
+                : 'Saved (no change).',
+              'success'
             );
           })
-          .catch((err) => setStatus("Error: " + err, "error"));
+          .catch((err) => setStatus('Error: ' + err, 'error'));
       });
 
-      document.getElementById("reload-btn").addEventListener("click", () => {
-        setStatus("Reloading...");
-        fetch("/config")
+      document.getElementById('reload-btn').addEventListener('click', () => {
+        setStatus('Reloading...');
+        fetch('/config')
           .then((r) => r.text())
           .then(() => {
             window.location.reload();
           })
-          .catch((err) => setStatus("Error: " + err, "error"));
+          .catch((err) => setStatus('Error: ' + err, 'error'));
       });
 
       // Populate Ollama models select
       (function populateOllamaModels() {
-        const select = document.getElementById("ollama-model");
+        const select = document.getElementById('ollama-model');
         const current = select.value.trim();
-        fetch("/ollama/models")
+        fetch('/ollama/models')
           .then((r) => r.json())
           .then((data) => {
             const models = Array.isArray(data.models) ? data.models : [];
-            select.innerHTML = "";
+            select.innerHTML = '';
             if (models.length === 0 && current) {
-              const opt = document.createElement("option");
+              const opt = document.createElement('option');
               opt.value = current;
               opt.textContent = current;
               select.appendChild(opt);
               return;
             }
-            const placeholder = document.createElement("option");
-            placeholder.value = "";
-            placeholder.textContent = "Select a model";
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = 'Select a model';
             select.appendChild(placeholder);
             for (const m of models) {
-              const opt = document.createElement("option");
+              const opt = document.createElement('option');
               opt.value = m;
               opt.textContent = m;
               select.appendChild(opt);
@@ -496,9 +523,9 @@
             if (current) {
               select.value = current;
               if (select.value !== current) {
-                const opt = document.createElement("option");
+                const opt = document.createElement('option');
                 opt.value = current;
-                opt.textContent = current + " (current)";
+                opt.textContent = current + ' (current)';
                 select.insertBefore(opt, select.firstChild.nextSibling);
                 select.value = current;
               }

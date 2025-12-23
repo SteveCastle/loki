@@ -34,6 +34,9 @@ type Config struct {
 
 	// Optional path to faster-whisper executable
 	FasterWhisperPath string `json:"fasterWhisperPath"`
+
+	// Discord authentication token for media export
+	DiscordToken string `json:"discordToken"`
 }
 
 var (

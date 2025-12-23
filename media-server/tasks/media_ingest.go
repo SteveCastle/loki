@@ -118,6 +118,9 @@ func ingestTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		if isYouTubeURL(input) {
 			return ingestYouTubeTaskWithOptions(j, q, mu, opts)
 		}
+		if isDiscordURL(input) {
+			return ingestDiscordTaskWithOptions(j, q, mu, opts)
+		}
 		return ingestGalleryTaskWithOptions(j, q, mu, opts)
 	default:
 		// Treat as local path

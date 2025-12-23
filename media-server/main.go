@@ -259,11 +259,11 @@ func setupModeMiddleware(next http.Handler) http.Handler {
 		// Note: paths with trailing slash will match all sub-paths (prefix matching)
 		allowedPaths := []string{
 			"/setup",
-			"/setup/",      // Allows /setup/skip and other setup sub-routes
-			"/static/",     // Allows all static files
-			"/stream",      // SSE endpoint
+			"/setup/",        // Allows /setup/skip and other setup sub-routes
+			"/static/",       // Allows all static files
+			"/stream",        // SSE endpoint
 			"/dependencies/", // Allows /dependencies/check, /dependencies/download, etc.
-			"/health",      // Health check endpoint
+			"/health",        // Health check endpoint
 		}
 
 		for _, path := range allowedPaths {
@@ -1439,6 +1439,7 @@ type updateConfigRequest struct {
 	OnnxGeneralThreshold   float64 `json:"onnxGeneralThreshold"`
 	OnnxCharacterThreshold float64 `json:"onnxCharacterThreshold"`
 	FasterWhisperPath      string  `json:"fasterWhisperPath"`
+	DiscordToken           string  `json:"discordToken"`
 }
 
 func configHandler(deps *Dependencies) http.HandlerFunc {
@@ -1502,6 +1503,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
+			}
+			if strings.TrimSpace(req.DiscordToken) != "" {
+				newCfg.DiscordToken = strings.TrimSpace(req.DiscordToken)
 			}
 			cfgPath, err := appconfig.Save(newCfg)
 			if err != nil {
