@@ -675,9 +675,11 @@ function removeJob(jobId) {
 
 function renderJobs() {
   // Filter to show only active/recent jobs
-  const activeJobs = jobs.filter((j) => j.state === 0 || j.state === 1);
+  const activeJobs = jobs.filter(
+    (j) => j.state === 'pending' || j.state === 'in_progress'
+  );
   const recentJobs = jobs
-    .filter((j) => j.state !== 0 && j.state !== 1)
+    .filter((j) => j.state !== 'pending' && j.state !== 'in_progress')
     .slice(0, 5);
   const displayJobs = [...activeJobs, ...recentJobs].slice(0, 10);
 
@@ -695,7 +697,7 @@ function renderJobs() {
       const statusClass = getStatusClass(job.state);
       const timeAgo = formatTimeAgo(job.created_at);
       const truncatedInput = truncate(job.input || '', 50);
-      const isActive = job.state === 0 || job.state === 1;
+      const isActive = job.state === 'pending' || job.state === 'in_progress';
 
       return `
       <div class="job-item" data-id="${job.id}">
@@ -806,15 +808,15 @@ function hideFeedback() {
 // Utility functions
 function getStatusClass(state) {
   switch (state) {
-    case 0:
+    case 'pending':
       return 'pending';
-    case 1:
-      return 'in_progress';
-    case 2:
+    case 'in_progress':
+      return 'running';
+    case 'completed':
       return 'completed';
-    case 3:
+    case 'cancelled':
       return 'cancelled';
-    case 4:
+    case 'error':
       return 'error';
     default:
       return 'pending';
