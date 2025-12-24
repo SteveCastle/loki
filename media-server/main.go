@@ -728,7 +728,8 @@ func mediaSuggestHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		type respTags struct {
-			Tags []media.MediaTag `json:"tags"`
+			Tags        []media.MediaTag `json:"tags"`
+			Suggestions []string         `json:"suggestions"`
 		}
 
 		switch kind {
@@ -745,8 +746,19 @@ func mediaSuggestHandler(deps *Dependencies) http.HandlerFunc {
 				http.Error(w, "suggest error", http.StatusInternalServerError)
 				return
 			}
+
+			// Also populate simple suggestions for autocomplete (deduplicated)
+			seen := make(map[string]bool)
+			var suggestions []string
+			for _, t := range tags {
+				if !seen[t.Label] {
+					suggestions = append(suggestions, t.Label)
+					seen[t.Label] = true
+				}
+			}
+
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(respTags{Tags: tags})
+			_ = json.NewEncoder(w).Encode(respTags{Tags: tags, Suggestions: suggestions})
 			return
 		case "category":
 			suggestions, err := media.SuggestCategoryLabels(deps.DB, prefix, limit)

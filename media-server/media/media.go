@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1271,6 +1272,7 @@ func HasTag(db *sql.DB, mediaPath, tagLabel, categoryLabel string) (bool, error)
 }
 
 // SuggestPaths returns distinct media paths matching a prefix (case-insensitive for ASCII)
+// Includes both full file paths and directory paths (ending with *) if they match the query
 func SuggestPaths(db *sql.DB, prefix string, limit int) ([]string, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not available")
@@ -1278,27 +1280,100 @@ func SuggestPaths(db *sql.DB, prefix string, limit int) ([]string, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25
 	}
+
+	// Fetch a larger sample to allow for directory extraction and filtering
+	fetchLimit := limit * 5
 	like := "%" + escapeLikePattern(strings.TrimSpace(prefix)) + "%"
+
 	rows, err := db.Query(`
         SELECT DISTINCT path
         FROM media
         WHERE path LIKE ? ESCAPE '\'
         ORDER BY path
         LIMIT ?
-    `, like, limit)
+    `, like, fetchLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+
+	var filePaths []string
+	dirSet := make(map[string]struct{})
+	lowerPrefix := strings.ToLower(strings.TrimSpace(prefix))
+
 	for rows.Next() {
-		var s string
-		if err := rows.Scan(&s); err != nil {
+		var p string
+		if err := rows.Scan(&p); err != nil {
 			return nil, err
 		}
-		out = append(out, s)
+
+		// Add the file path itself
+		filePaths = append(filePaths, p)
+
+		// Extract and check directory
+		d := filepath.Dir(p)
+		if d == "." || d == "" {
+			continue
+		}
+
+		// Normalize separator logic matches SuggestPathDirs
+		sep := "/"
+		if strings.Contains(d, "\\") {
+			sep = "\\"
+		}
+
+		// If the directory name itself matches the search query (substring)
+		if strings.Contains(strings.ToLower(d), lowerPrefix) {
+			// Ensure trailing separator
+			if !strings.HasSuffix(d, sep) {
+				d += sep
+			}
+			// Append wildcard
+			d += "*"
+			dirSet[d] = struct{}{}
+		}
 	}
-	return out, nil
+
+	// Combine results - directories first, then files
+	var dirPaths []string
+	for d := range dirSet {
+		dirPaths = append(dirPaths, d)
+	}
+	sort.Strings(dirPaths)
+	// filePaths are already somewhat sorted from DB, but let's ensure consistent Go sorting
+	sort.Strings(filePaths)
+
+	// Deduplicate and apply limit
+	seen := make(map[string]struct{})
+	var limitedResults []string
+
+	// Add directories first
+	for _, s := range dirPaths {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		limitedResults = append(limitedResults, s)
+		if len(limitedResults) >= limit {
+			break
+		}
+	}
+
+	// Add files if space remains
+	if len(limitedResults) < limit {
+		for _, s := range filePaths {
+			if _, ok := seen[s]; ok {
+				continue
+			}
+			seen[s] = struct{}{}
+			limitedResults = append(limitedResults, s)
+			if len(limitedResults) >= limit {
+				break
+			}
+		}
+	}
+
+	return limitedResults, nil
 }
 
 // SuggestPathDirs returns directory suggestions based on stored paths.
