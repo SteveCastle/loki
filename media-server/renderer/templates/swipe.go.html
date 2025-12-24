@@ -30,7 +30,7 @@
 
     <title>Shrike Swipe</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap");
+      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
 
       * {
         margin: 0;
@@ -75,7 +75,7 @@
         width: 100%;
         overflow: hidden;
         background: var(--bg);
-        font-family: "JetBrains Mono", monospace;
+        font-family: 'JetBrains Mono', monospace;
         color: var(--text);
         touch-action: none;
         overscroll-behavior: none;
@@ -123,8 +123,8 @@
         background: var(--bg);
         overflow: hidden;
         transition: transform 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                    opacity 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                    filter 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+          opacity 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+          filter 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94);
         will-change: transform, opacity;
       }
 
@@ -133,23 +133,23 @@
       }
 
       /* Stack effect for adjacent items - subtle brightness/blur for depth */
-      .swipe-item[data-offset="1"] {
+      .swipe-item[data-offset='1'] {
         filter: brightness(0.65) blur(1px);
       }
 
-      .swipe-item[data-offset="-1"] {
+      .swipe-item[data-offset='-1'] {
         filter: brightness(0.8) blur(0.5px);
       }
 
       /* Smoother transitions when not dragging */
       .swipe-item:not(.dragging) {
         transition: transform 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                    opacity 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
-                    filter 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+          opacity 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94),
+          filter 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94);
       }
 
       .swipe-item::after {
-        content: "";
+        content: '';
         position: absolute;
         inset: 0;
         background: var(--overlay);
@@ -176,7 +176,7 @@
       }
 
       .swipe-item.loading::before {
-        content: "";
+        content: '';
         position: absolute;
         width: 40px;
         height: 40px;
@@ -662,27 +662,6 @@
         color: var(--text-dim);
       }
 
-      .filter-apply {
-        width: 100%;
-        padding: 16px;
-        background: var(--accent);
-        border: none;
-        border-radius: 12px;
-        color: #000;
-        font-family: inherit;
-        font-size: 15px;
-        font-weight: 600;
-        cursor: pointer;
-        margin-top: auto;
-        transition: all 0.2s;
-        box-shadow: 0 4px 12px rgba(0, 217, 165, 0.3);
-      }
-
-      .filter-apply:active {
-        transform: scale(0.98);
-        box-shadow: 0 2px 8px rgba(0, 217, 165, 0.2);
-      }
-
       /* Selected tags chips */
       .selected-tags {
         display: flex;
@@ -698,7 +677,7 @@
       }
 
       .selected-tags:empty::before {
-        content: "No tags selected";
+        content: 'No tags selected';
         color: var(--text-dim);
         font-size: 13px;
         opacity: 0.6;
@@ -1120,8 +1099,6 @@
       <div class="tag-list" id="tagList">
         <div class="tag-list-empty">Loading tags...</div>
       </div>
-
-      <button class="filter-apply" id="filterApply">Apply Filter</button>
     </div>
 
     <script>
@@ -1131,8 +1108,8 @@
       let isLoading = false;
       let isPreloading = false;
       let hasMore = true;
-      let searchQuery = "{{.SearchQuery}}";
-      let fitMode = "contain"; // contain or cover
+      let searchQuery = '{{.SearchQuery}}';
+      let fitMode = 'contain'; // contain or cover
       // Liked items are now managed via database tags (Swipe/Favorites)
       // This Set is used for UI state only
       let likedItems = new Set();
@@ -1140,7 +1117,7 @@
       // Generate a session seed for deterministic shuffle
       // This changes on each page load but stays consistent during pagination
       // Uses crypto.getRandomValues for high-quality randomness
-      const SESSION_SEED_KEY = "swipe_session_seed";
+      const SESSION_SEED_KEY = 'swipe_session_seed';
       let sessionSeed = sessionStorage.getItem(SESSION_SEED_KEY);
       if (!sessionSeed) {
         // Generate a cryptographically strong random seed
@@ -1151,22 +1128,22 @@
       }
 
       // DOM elements
-      const container = document.getElementById("swipeContainer");
-      const track = document.getElementById("swipeTrack");
-      const progressFill = document.getElementById("progressFill");
-      const swipeActions = document.getElementById("swipeActions");
-      const emptyState = document.getElementById("emptyState");
-      const swipeHint = document.getElementById("swipeHint");
-      const heartAnimation = document.getElementById("heartAnimation");
-      const filterModal = document.getElementById("filterModal");
-      const tagSearch = document.getElementById("tagSearch");
-      const tagList = document.getElementById("tagList");
-      const selectedTagsContainer = document.getElementById("selectedTags");
-      const likeBtn = document.getElementById("likeBtn");
-      const openBtn = document.getElementById("openBtn");
-      const fitBtn = document.getElementById("fitBtn");
-      const installPrompt = document.getElementById("installPrompt");
-      const installPromptClose = document.getElementById("installPromptClose");
+      const container = document.getElementById('swipeContainer');
+      const track = document.getElementById('swipeTrack');
+      const progressFill = document.getElementById('progressFill');
+      const swipeActions = document.getElementById('swipeActions');
+      const emptyState = document.getElementById('emptyState');
+      const swipeHint = document.getElementById('swipeHint');
+      const heartAnimation = document.getElementById('heartAnimation');
+      const filterModal = document.getElementById('filterModal');
+      const tagSearch = document.getElementById('tagSearch');
+      const tagList = document.getElementById('tagList');
+      const selectedTagsContainer = document.getElementById('selectedTags');
+      const likeBtn = document.getElementById('likeBtn');
+      const openBtn = document.getElementById('openBtn');
+      const fitBtn = document.getElementById('fitBtn');
+      const installPrompt = document.getElementById('installPrompt');
+      const installPromptClose = document.getElementById('installPromptClose');
 
       // Tag filter state
       let allTags = [];
@@ -1174,15 +1151,15 @@
       let filteredTags = [];
 
       // Storage key for persisting selected tags
-      const SELECTED_TAGS_KEY = "swipe_selected_tags";
+      const SELECTED_TAGS_KEY = 'swipe_selected_tags';
 
       // Build tag query from selected tags
       function buildTagQuery() {
-        if (selectedTags.size === 0) return "";
+        if (selectedTags.size === 0) return '';
         const tagQueries = Array.from(selectedTags).map(
           (tag) => `tag:"${tag}"`
         );
-        return tagQueries.join(" OR ");
+        return tagQueries.join(' OR ');
       }
 
       // Load selected tags from localStorage
@@ -1191,19 +1168,22 @@
           const stored = localStorage.getItem(SELECTED_TAGS_KEY);
           if (stored) {
             const tags = JSON.parse(stored);
-            tags.forEach(tag => selectedTags.add(tag));
+            tags.forEach((tag) => selectedTags.add(tag));
           }
         } catch (e) {
-          console.error("Failed to load selected tags:", e);
+          console.error('Failed to load selected tags:', e);
         }
       }
 
       // Save selected tags to localStorage
       function saveSelectedTags() {
         try {
-          localStorage.setItem(SELECTED_TAGS_KEY, JSON.stringify(Array.from(selectedTags)));
+          localStorage.setItem(
+            SELECTED_TAGS_KEY,
+            JSON.stringify(Array.from(selectedTags))
+          );
         } catch (e) {
-          console.error("Failed to save selected tags:", e);
+          console.error('Failed to save selected tags:', e);
         }
       }
 
@@ -1233,31 +1213,31 @@
       // iOS/Standalone detection
       const isIOS =
         /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
       const isStandalone =
         window.navigator.standalone === true ||
-        window.matchMedia("(display-mode: standalone)").matches;
+        window.matchMedia('(display-mode: standalone)').matches;
       const installPromptDismissed = localStorage.getItem(
-        "swipeInstallDismissed"
+        'swipeInstallDismissed'
       );
 
       // Show install prompt for iOS Safari users (not in standalone mode)
       if (isIOS && !isStandalone && !installPromptDismissed) {
         // Delay showing the prompt slightly for better UX
         setTimeout(() => {
-          installPrompt.classList.add("show");
+          installPrompt.classList.add('show');
         }, 2000);
       }
 
       // Mark body as standalone mode for CSS
       if (isStandalone) {
-        document.body.classList.add("standalone-mode");
+        document.body.classList.add('standalone-mode');
       }
 
       // Handle install prompt close
-      installPromptClose.addEventListener("click", () => {
-        installPrompt.classList.remove("show");
-        localStorage.setItem("swipeInstallDismissed", "true");
+      installPromptClose.addEventListener('click', () => {
+        installPrompt.classList.remove('show');
+        localStorage.setItem('swipeInstallDismissed', 'true');
       });
 
       // Touch tracking
@@ -1289,7 +1269,7 @@
 
         if (items.length > 0) {
           // Hide empty state and show content
-          emptyState.style.display = "none";
+          emptyState.style.display = 'none';
 
           // Try to restore to saved position
           let restoredIndex = 0;
@@ -1306,13 +1286,13 @@
             if (foundIndex !== -1) {
               restoredIndex = foundIndex;
               // Hide the hint since user is resuming
-              if (swipeHint) swipeHint.style.display = "none";
+              if (swipeHint) swipeHint.style.display = 'none';
             }
           }
 
           currentIndex = restoredIndex;
           renderItems();
-          swipeActions.style.display = "flex";
+          swipeActions.style.display = 'flex';
           updateProgress();
           updateLikeButton();
           savePosition(); // Save initial position
@@ -1327,9 +1307,9 @@
           checkAndPreload();
         } else {
           // Show empty state and hide content
-          emptyState.style.display = "flex";
-          swipeActions.style.display = "none";
-          swipeHint.style.display = "none";
+          emptyState.style.display = 'flex';
+          swipeActions.style.display = 'none';
+          swipeHint.style.display = 'none';
         }
       }
 
@@ -1351,7 +1331,7 @@
             seed: sessionSeed,
           });
           if (searchQuery) {
-            params.set("q", searchQuery);
+            params.set('q', searchQuery);
           }
 
           const response = await fetch(`/swipe/api?${params}`);
@@ -1360,7 +1340,7 @@
           items = items.concat(data.items || []);
           hasMore = data.has_more;
         } catch (err) {
-          console.error("Failed to load items:", err);
+          console.error('Failed to load items:', err);
         } finally {
           if (preload) {
             isPreloading = false;
@@ -1385,7 +1365,7 @@
 
       // Render current and adjacent items
       function renderItems() {
-        track.innerHTML = "";
+        track.innerHTML = '';
         scrubberVisible = false;
 
         // Render previous, current, and next items
@@ -1401,13 +1381,13 @@
           const translateY = offset * 100;
           const translateZ = offset === 0 ? 0 : -100;
           const opacity = offset === 0 ? 1 : 0.6;
-          const brightness = offset === 0 ? 1 : (offset === 1 ? 0.65 : 0.8);
-          const blur = offset === 0 ? 0 : (offset === 1 ? 1 : 0.5);
+          const brightness = offset === 0 ? 1 : offset === 1 ? 0.65 : 0.8;
+          const blur = offset === 0 ? 0 : offset === 1 ? 1 : 0.5;
 
           el.style.transform = `translateY(${translateY}%) scale(${scale}) translateZ(${translateZ}px)`;
           el.style.opacity = opacity;
           el.style.filter = `brightness(${brightness}) blur(${blur}px)`;
-          el.style.zIndex = offset === 0 ? 10 : (offset < 0 ? 5 : 0);
+          el.style.zIndex = offset === 0 ? 10 : offset < 0 ? 5 : 0;
 
           track.appendChild(el);
 
@@ -1420,8 +1400,8 @@
 
       // Create item DOM element
       function createItemElement(item, offset) {
-        const div = document.createElement("div");
-        div.className = "swipe-item loading";
+        const div = document.createElement('div');
+        div.className = 'swipe-item loading';
         div.dataset.path = item.path;
         div.dataset.offset = offset;
 
@@ -1429,21 +1409,21 @@
         let mediaEl;
 
         if (isVideo) {
-          mediaEl = document.createElement("video");
+          mediaEl = document.createElement('video');
           mediaEl.className = `swipe-media ${
-            fitMode === "cover" ? "cover" : ""
+            fitMode === 'cover' ? 'cover' : ''
           }`;
           mediaEl.muted = true;
           mediaEl.loop = true;
           mediaEl.playsInline = true;
-          mediaEl.preload = offset === 0 ? "auto" : "metadata";
+          mediaEl.preload = offset === 0 ? 'auto' : 'metadata';
 
           mediaEl.onloadeddata = () => {
-            div.classList.remove("loading");
+            div.classList.remove('loading');
             if (offset === 0) mediaEl.play().catch(() => {});
           };
           mediaEl.onerror = () => {
-            div.classList.remove("loading");
+            div.classList.remove('loading');
             div.innerHTML +=
               '<div style="position:absolute;color:var(--text-dim);font-size:12px;">Failed to load video</div>';
           };
@@ -1451,14 +1431,14 @@
           mediaEl.src = getMediaUrl(item.path);
 
           // Add video controls overlay
-          const controls = document.createElement("div");
-          controls.className = "video-controls";
+          const controls = document.createElement('div');
+          controls.className = 'video-controls';
           controls.innerHTML = '<div class="play-icon">▶</div>';
           div.appendChild(controls);
 
           // Add video scrubber
-          const scrubber = document.createElement("div");
-          scrubber.className = "video-scrubber";
+          const scrubber = document.createElement('div');
+          scrubber.className = 'video-scrubber';
           scrubber.innerHTML = `
             <div class="scrubber-time">
               <span class="scrubber-current">0:00</span>
@@ -1475,19 +1455,19 @@
           `;
           div.appendChild(scrubber);
         } else {
-          mediaEl = document.createElement("img");
+          mediaEl = document.createElement('img');
           mediaEl.className = `swipe-media ${
-            fitMode === "cover" ? "cover" : ""
+            fitMode === 'cover' ? 'cover' : ''
           }`;
-          mediaEl.loading = offset === 0 ? "eager" : "lazy";
+          mediaEl.loading = offset === 0 ? 'eager' : 'lazy';
           // Prioritize first image load
           if (offset === 0) {
-            mediaEl.fetchPriority = "high";
+            mediaEl.fetchPriority = 'high';
           }
 
-          mediaEl.onload = () => div.classList.remove("loading");
+          mediaEl.onload = () => div.classList.remove('loading');
           mediaEl.onerror = () => {
-            div.classList.remove("loading");
+            div.classList.remove('loading');
             div.innerHTML +=
               '<div style="position:absolute;color:var(--text-dim);font-size:12px;">Failed to load image</div>';
           };
@@ -1498,8 +1478,8 @@
         div.appendChild(mediaEl);
 
         // Info overlay
-        const info = document.createElement("div");
-        info.className = "swipe-info";
+        const info = document.createElement('div');
+        info.className = 'swipe-info';
         info.innerHTML = `
           <div class="swipe-info-content">
             ${
@@ -1512,17 +1492,17 @@
                     (t) =>
                       `<span class="swipe-tag">${escapeHtml(t.label)}</span>`
                   )
-                  .join("")}
+                  .join('')}
               </div>
             `
-                : ""
+                : ''
             }
             ${
               item.description
                 ? `<div class="swipe-description">${escapeHtml(
                     item.description
                   )}</div>`
-                : ""
+                : ''
             }
             <div class="swipe-path">${escapeHtml(getFileName(item.path))}</div>
           </div>
@@ -1533,7 +1513,7 @@
       }
 
       // Position persistence
-      const POSITION_STORAGE_KEY = "swipe_last_position";
+      const POSITION_STORAGE_KEY = 'swipe_last_position';
 
       function savePosition() {
         if (items.length === 0 || currentIndex >= items.length) return;
@@ -1578,8 +1558,8 @@
         currentIndex = index;
 
         // Add transition class for smooth navigation
-        track.classList.add("transitioning");
-        setTimeout(() => track.classList.remove("transitioning"), 450);
+        track.classList.add('transitioning');
+        setTimeout(() => track.classList.remove('transitioning'), 450);
 
         renderItems();
         updateProgress();
@@ -1598,7 +1578,7 @@
         checkAndPreload();
 
         // Hide hint after first swipe
-        if (swipeHint) swipeHint.style.display = "none";
+        if (swipeHint) swipeHint.style.display = 'none';
       }
 
       function goNext() {
@@ -1635,15 +1615,15 @@
           if (response.ok) {
             const data = await response.json();
             if (data.has_tag) {
-              likeBtn.classList.add("active");
+              likeBtn.classList.add('active');
               likedItems.add(currentPath);
             } else {
-              likeBtn.classList.remove("active");
+              likeBtn.classList.remove('active');
               likedItems.delete(currentPath);
             }
           }
         } catch (err) {
-          console.error("Failed to check like status:", err);
+          console.error('Failed to check like status:', err);
         }
       }
 
@@ -1653,18 +1633,18 @@
         const currentPath = items[currentIndex].path;
 
         const isCurrentlyLiked = likedItems.has(currentPath);
-        const action = isCurrentlyLiked ? "remove" : "add";
+        const action = isCurrentlyLiked ? 'remove' : 'add';
 
         try {
-          const response = await fetch("/media/tag", {
-            method: "POST",
+          const response = await fetch('/media/tag', {
+            method: 'POST',
             headers: {
-              "Content-Type": "application/json",
+              'Content-Type': 'application/json',
             },
             body: JSON.stringify({
               media_path: currentPath,
-              tag_label: "Favorites",
-              category_label: "Swipe",
+              tag_label: 'Favorites',
+              category_label: 'Swipe',
               action: action,
             }),
           });
@@ -1672,36 +1652,36 @@
           if (response.ok) {
             if (isCurrentlyLiked) {
               likedItems.delete(currentPath);
-              likeBtn.classList.remove("active");
+              likeBtn.classList.remove('active');
             } else {
               likedItems.add(currentPath);
-              likeBtn.classList.add("active");
+              likeBtn.classList.add('active');
               showHeartAnimation();
             }
           } else {
-            console.error("Failed to toggle like:", await response.text());
+            console.error('Failed to toggle like:', await response.text());
           }
         } catch (err) {
-          console.error("Failed to toggle like:", err);
+          console.error('Failed to toggle like:', err);
         }
       }
 
       // Show heart animation
       function showHeartAnimation() {
-        heartAnimation.classList.remove("show");
+        heartAnimation.classList.remove('show');
         void heartAnimation.offsetWidth; // Trigger reflow
-        heartAnimation.classList.add("show");
+        heartAnimation.classList.add('show');
       }
 
       // Toggle fit mode
       function toggleFitMode() {
-        fitMode = fitMode === "contain" ? "cover" : "contain";
-        const mediaEls = track.querySelectorAll(".swipe-media");
+        fitMode = fitMode === 'contain' ? 'cover' : 'contain';
+        const mediaEls = track.querySelectorAll('.swipe-media');
         mediaEls.forEach((el) => {
-          if (fitMode === "cover") {
-            el.classList.add("cover");
+          if (fitMode === 'cover') {
+            el.classList.add('cover');
           } else {
-            el.classList.remove("cover");
+            el.classList.remove('cover');
           }
         });
       }
@@ -1712,7 +1692,7 @@
         const currentPath = items[currentIndex].path;
         window.open(
           `/media?q=path:"${encodeURIComponent(currentPath)}"`,
-          "_blank"
+          '_blank'
         );
       }
 
@@ -1720,16 +1700,16 @@
       function toggleVideoPause() {
         const item = track.querySelector('[data-offset="0"]');
         if (!item) return;
-        const video = item.querySelector("video");
+        const video = item.querySelector('video');
         if (!video) return;
 
         if (video.paused) {
           video.play();
-          item.classList.remove("paused");
+          item.classList.remove('paused');
           hideScrubber();
         } else {
           video.pause();
-          item.classList.add("paused");
+          item.classList.add('paused');
           showScrubber();
         }
       }
@@ -1741,24 +1721,24 @@
       let scrubStartX = 0;
 
       function formatTime(seconds) {
-        if (!isFinite(seconds) || isNaN(seconds)) return "0:00";
+        if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
         const mins = Math.floor(seconds / 60);
         const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs.toString().padStart(2, "0")}`;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
       }
 
       function showScrubber() {
         const item = track.querySelector('[data-offset="0"]');
         if (!item) return;
-        const scrubber = item.querySelector(".video-scrubber");
+        const scrubber = item.querySelector('.video-scrubber');
         if (!scrubber) return;
 
-        scrubber.classList.add("show");
+        scrubber.classList.add('show');
         scrubberVisible = true;
 
         // Auto-hide after 3 seconds if video is playing
         clearTimeout(scrubberHideTimeout);
-        const video = item.querySelector("video");
+        const video = item.querySelector('video');
         if (video && !video.paused) {
           scrubberHideTimeout = setTimeout(hideScrubber, 3000);
         }
@@ -1768,10 +1748,10 @@
         if (isScrubbing) return;
         const item = track.querySelector('[data-offset="0"]');
         if (!item) return;
-        const scrubber = item.querySelector(".video-scrubber");
+        const scrubber = item.querySelector('.video-scrubber');
         if (!scrubber) return;
 
-        scrubber.classList.remove("show");
+        scrubber.classList.remove('show');
         scrubberVisible = false;
         clearTimeout(scrubberHideTimeout);
       }
@@ -1779,15 +1759,15 @@
       function updateScrubberProgress() {
         const item = track.querySelector('[data-offset="0"]');
         if (!item) return;
-        const video = item.querySelector("video");
-        const scrubber = item.querySelector(".video-scrubber");
+        const video = item.querySelector('video');
+        const scrubber = item.querySelector('.video-scrubber');
         if (!video || !scrubber) return;
 
-        const progress = scrubber.querySelector(".scrubber-progress");
-        const handle = scrubber.querySelector(".scrubber-handle");
-        const currentTime = scrubber.querySelector(".scrubber-current");
-        const duration = scrubber.querySelector(".scrubber-duration");
-        const buffered = scrubber.querySelector(".scrubber-buffered");
+        const progress = scrubber.querySelector('.scrubber-progress');
+        const handle = scrubber.querySelector('.scrubber-handle');
+        const currentTime = scrubber.querySelector('.scrubber-current');
+        const duration = scrubber.querySelector('.scrubber-duration');
+        const buffered = scrubber.querySelector('.scrubber-buffered');
 
         if (video.duration) {
           const percent = (video.currentTime / video.duration) * 100;
@@ -1806,20 +1786,20 @@
       }
 
       function setupVideoListeners(item) {
-        const video = item.querySelector("video");
+        const video = item.querySelector('video');
         if (!video) return;
 
-        video.addEventListener("timeupdate", updateScrubberProgress);
-        video.addEventListener("loadedmetadata", updateScrubberProgress);
+        video.addEventListener('timeupdate', updateScrubberProgress);
+        video.addEventListener('loadedmetadata', updateScrubberProgress);
       }
 
       function handleScrubStart(e) {
-        const scrubberTrack = e.target.closest(".scrubber-track");
+        const scrubberTrack = e.target.closest('.scrubber-track');
         if (!scrubberTrack) return;
 
         e.stopPropagation();
         isScrubbing = true;
-        scrubberTrack.classList.add("active");
+        scrubberTrack.classList.add('active');
         clearTimeout(scrubberHideTimeout);
 
         const touch = e.touches ? e.touches[0] : e;
@@ -1834,9 +1814,9 @@
         const item = track.querySelector('[data-offset="0"]');
         if (!item) return;
 
-        const scrubberTrack = item.querySelector(".scrubber-track");
-        const video = item.querySelector("video");
-        const preview = item.querySelector(".scrubber-preview");
+        const scrubberTrack = item.querySelector('.scrubber-track');
+        const video = item.querySelector('video');
+        const preview = item.querySelector('.scrubber-preview');
         if (!scrubberTrack || !video || !video.duration) return;
 
         e.preventDefault();
@@ -1866,14 +1846,14 @@
 
         const item = track.querySelector('[data-offset="0"]');
         if (item) {
-          const scrubberTrack = item.querySelector(".scrubber-track");
+          const scrubberTrack = item.querySelector('.scrubber-track');
           if (scrubberTrack) {
-            scrubberTrack.classList.remove("active");
+            scrubberTrack.classList.remove('active');
           }
         }
 
         // Auto-hide after scrubbing if video is playing
-        const video = item?.querySelector("video");
+        const video = item?.querySelector('video');
         if (video && !video.paused) {
           scrubberHideTimeout = setTimeout(hideScrubber, 2000);
         }
@@ -1896,8 +1876,8 @@
       function applyMediaTransform(mediaEl) {
         if (!mediaEl) return;
         mediaEl.style.transform = `translate(${currentTranslateX}px, ${currentTranslateY}px) scale(${currentScale})`;
-        mediaEl.style.transformOrigin = "center center";
-        mediaEl.style.transition = "none";
+        mediaEl.style.transformOrigin = 'center center';
+        mediaEl.style.transition = 'none';
       }
 
       function resetMediaTransform() {
@@ -1906,11 +1886,11 @@
         currentTranslateY = 0;
         const item = track.querySelector('[data-offset="0"]');
         if (item) {
-          const mediaEl = item.querySelector(".swipe-media");
+          const mediaEl = item.querySelector('.swipe-media');
           if (mediaEl) {
-            mediaEl.style.transform = "";
-            mediaEl.style.transformOrigin = "";
-            mediaEl.style.transition = "";
+            mediaEl.style.transform = '';
+            mediaEl.style.transformOrigin = '';
+            mediaEl.style.transition = '';
           }
         }
       }
@@ -1921,21 +1901,21 @@
       function onTouchStart(e) {
         // Ignore touches on UI elements
         if (
-          e.target.closest(".swipe-actions") ||
-          e.target.closest(".swipe-header") ||
-          e.target.closest(".filter-modal") ||
-          e.target.closest(".install-prompt")
+          e.target.closest('.swipe-actions') ||
+          e.target.closest('.swipe-header') ||
+          e.target.closest('.filter-modal') ||
+          e.target.closest('.install-prompt')
         )
           return;
 
         // Handle scrubber touches separately
-        if (e.target.closest(".scrubber-track")) {
+        if (e.target.closest('.scrubber-track')) {
           handleScrubStart(e);
           return;
         }
 
         // Don't start swipe if touching scrubber area
-        if (e.target.closest(".video-scrubber")) {
+        if (e.target.closest('.video-scrubber')) {
           return;
         }
 
@@ -1944,7 +1924,7 @@
           e.preventDefault();
           isMultiTouch = true;
           isDragging = false;
-          track.classList.remove("dragging");
+          track.classList.remove('dragging');
 
           const touch1 = e.touches[0];
           const touch2 = e.touches[1];
@@ -1969,11 +1949,11 @@
           lastTouchTime = touchStartTime;
           velocityY = 0;
           isDragging = true;
-          track.classList.add("dragging");
+          track.classList.add('dragging');
 
           // Add dragging class to items for instant response
-          const itemEls = track.querySelectorAll(".swipe-item");
-          itemEls.forEach((el) => el.classList.add("dragging"));
+          const itemEls = track.querySelectorAll('.swipe-item');
+          itemEls.forEach((el) => el.classList.add('dragging'));
 
           // Check for double tap
           const now = Date.now();
@@ -1985,8 +1965,8 @@
               toggleLike();
             }
             isDragging = false;
-            track.classList.remove("dragging");
-            itemEls.forEach((el) => el.classList.remove("dragging"));
+            track.classList.remove('dragging');
+            itemEls.forEach((el) => el.classList.remove('dragging'));
           }
           lastTapTime = now;
         }
@@ -2005,7 +1985,7 @@
 
           const item = track.querySelector('[data-offset="0"]');
           if (!item) return;
-          const mediaEl = item.querySelector(".swipe-media");
+          const mediaEl = item.querySelector('.swipe-media');
           if (!mediaEl) return;
 
           const touch1 = e.touches[0];
@@ -2074,7 +2054,7 @@
         }
 
         // Move all items with depth effects
-        const itemEls = track.querySelectorAll(".swipe-item");
+        const itemEls = track.querySelectorAll('.swipe-item');
         itemEls.forEach((el) => {
           const baseOffset = parseInt(el.dataset.offset);
           const translateY = baseOffset * 100 + dragPercent;
@@ -2101,7 +2081,9 @@
             scale = 0.9 + progress * 0.1;
             opacity = 0.6 + progress * 0.4;
             translateZ = -100 + progress * 100;
-            brightness = (baseOffset === 1 ? 0.65 : 0.8) + progress * (1 - (baseOffset === 1 ? 0.65 : 0.8));
+            brightness =
+              (baseOffset === 1 ? 0.65 : 0.8) +
+              progress * (1 - (baseOffset === 1 ? 0.65 : 0.8));
             blur = (baseOffset === 1 ? 1 : 0.5) * (1 - progress);
           } else {
             // Other items maintain their state
@@ -2146,7 +2128,7 @@
         if (!isDragging) return;
 
         isDragging = false;
-        track.classList.remove("dragging");
+        track.classList.remove('dragging');
 
         const deltaY = touchCurrentY - touchStartY;
         const deltaX = e.changedTouches
@@ -2171,23 +2153,23 @@
           (hasDistance && deltaY > distanceThreshold);
 
         // Remove dragging class from items
-        const itemEls = track.querySelectorAll(".swipe-item");
-        itemEls.forEach((el) => el.classList.remove("dragging"));
+        const itemEls = track.querySelectorAll('.swipe-item');
+        itemEls.forEach((el) => el.classList.remove('dragging'));
 
         if (shouldGoNext && currentIndex < items.length - 1) {
           // Swiped up with velocity or distance - go to next
-          track.classList.add("transitioning");
-          setTimeout(() => track.classList.remove("transitioning"), 450);
+          track.classList.add('transitioning');
+          setTimeout(() => track.classList.remove('transitioning'), 450);
           goNext();
         } else if (shouldGoPrev && currentIndex > 0) {
           // Swiped down with velocity or distance - go to previous
-          track.classList.add("transitioning");
-          setTimeout(() => track.classList.remove("transitioning"), 450);
+          track.classList.add('transitioning');
+          setTimeout(() => track.classList.remove('transitioning'), 450);
           goPrev();
         } else {
           // Snap back with bounce effect
-          track.classList.add("snapping");
-          setTimeout(() => track.classList.remove("snapping"), 400);
+          track.classList.add('snapping');
+          setTimeout(() => track.classList.remove('snapping'), 400);
 
           itemEls.forEach((el) => {
             const baseOffset = parseInt(el.dataset.offset);
@@ -2195,8 +2177,9 @@
             const opacity = baseOffset === 0 ? 1 : 0.6;
             const translateY = baseOffset * 100;
             const translateZ = baseOffset === 0 ? 0 : -100;
-            const brightness = baseOffset === 0 ? 1 : (baseOffset === 1 ? 0.65 : 0.8);
-            const blur = baseOffset === 0 ? 0 : (baseOffset === 1 ? 1 : 0.5);
+            const brightness =
+              baseOffset === 0 ? 1 : baseOffset === 1 ? 0.65 : 0.8;
+            const blur = baseOffset === 0 ? 0 : baseOffset === 1 ? 1 : 0.5;
 
             el.style.transform = `translateY(${translateY}%) scale(${scale}) translateZ(${translateZ}px)`;
             el.style.opacity = opacity;
@@ -2206,7 +2189,7 @@
           // Check for tap on video (small movement)
           if (Math.abs(deltaY) < 10 && Math.abs(deltaX) < 10) {
             const item = track.querySelector('[data-offset="0"]');
-            const video = item?.querySelector("video");
+            const video = item?.querySelector('video');
             if (video) {
               // Toggle scrubber visibility on tap, or toggle pause if scrubber visible
               if (scrubberVisible) {
@@ -2227,29 +2210,29 @@
       // Keyboard navigation
       function onKeyDown(e) {
         // Check if filter modal is open
-        if (filterModal.classList.contains("show")) {
-          if (e.key === "Escape") {
-            filterModal.classList.remove("show");
+        if (filterModal.classList.contains('show')) {
+          if (e.key === 'Escape') {
+            filterModal.classList.remove('show');
           }
           return; // Don't handle other keys when modal is open
         }
 
         switch (e.key) {
-          case "ArrowUp":
-          case "ArrowLeft":
+          case 'ArrowUp':
+          case 'ArrowLeft':
             e.preventDefault();
             goPrev();
             break;
-          case "ArrowDown":
-          case "ArrowRight":
-          case " ":
+          case 'ArrowDown':
+          case 'ArrowRight':
+          case ' ':
             e.preventDefault();
             goNext();
             break;
-          case "l":
+          case 'l':
             toggleLike();
             break;
-          case "f":
+          case 'f':
             toggleFitMode();
             break;
         }
@@ -2258,7 +2241,7 @@
       // Tag filtering functions
       async function loadAllTags() {
         try {
-          const response = await fetch("/media/suggest?kind=tag&prefix=");
+          const response = await fetch('/media/suggest?kind=tag&prefix=');
           const data = await response.json();
           // New format: { tags: [{label: "...", category: "..."}] }
           allTags = (data.tags || []).map((tag) => ({
@@ -2268,7 +2251,7 @@
           filteredTags = [...allTags];
           renderTagList();
         } catch (err) {
-          console.error("Failed to load tags:", err);
+          console.error('Failed to load tags:', err);
           tagList.innerHTML =
             '<div class="tag-list-empty">Failed to load tags</div>';
         }
@@ -2276,7 +2259,7 @@
 
       function renderSelectedTags() {
         if (selectedTags.size === 0) {
-          selectedTagsContainer.innerHTML = "";
+          selectedTagsContainer.innerHTML = '';
           return;
         }
 
@@ -2290,27 +2273,26 @@
               )}')">✕</button>
             </div>`
           )
-          .join("");
+          .join('');
 
         const clearAll =
           selectedTags.size > 1
             ? '<div class="clear-all-tags" onclick="clearAllTags()">Clear all</div>'
-            : "";
+            : '';
 
         selectedTagsContainer.innerHTML = chips + clearAll;
       }
 
       function renderTagList() {
         if (filteredTags.length === 0) {
-          tagList.innerHTML =
-            '<div class="tag-list-empty">No tags found</div>';
+          tagList.innerHTML = '<div class="tag-list-empty">No tags found</div>';
           return;
         }
 
         // Group tags by category
         const tagsByCategory = {};
         filteredTags.forEach((tag) => {
-          const category = tag.category || "Other";
+          const category = tag.category || 'Other';
           if (!tagsByCategory[category]) {
             tagsByCategory[category] = [];
           }
@@ -2321,14 +2303,14 @@
         const categories = Object.keys(tagsByCategory).sort();
 
         // Render grouped tags with proper section structure
-        let html = "";
+        let html = '';
         categories.forEach((category) => {
           html += `<div class="tag-category-section">
             <div class="tag-category-header">${escapeHtml(category)}</div>
             <div class="tag-category-items">`;
 
           tagsByCategory[category].forEach((tag) => {
-            const selected = selectedTags.has(tag.label) ? "selected" : "";
+            const selected = selectedTags.has(tag.label) ? 'selected' : '';
             html += `<div class="tag-item ${selected}" onclick="toggleTag('${escapeAttr(
               tag.label
             )}')">
@@ -2351,6 +2333,7 @@
         saveSelectedTags();
         renderSelectedTags();
         renderTagList();
+        applyFilter();
       }
 
       function removeTag(tag) {
@@ -2358,6 +2341,7 @@
         saveSelectedTags();
         renderSelectedTags();
         renderTagList();
+        applyFilter();
       }
 
       function clearAllTags() {
@@ -2365,6 +2349,7 @@
         saveSelectedTags();
         renderSelectedTags();
         renderTagList();
+        applyFilter();
       }
 
       function filterTagList(searchTerm) {
@@ -2382,32 +2367,32 @@
       }
 
       // Filter modal
-      document.getElementById("filterBtn").addEventListener("click", () => {
-        filterModal.classList.add("show");
-        tagSearch.value = ""; // Clear search input
+      document.getElementById('filterBtn').addEventListener('click', () => {
+        filterModal.classList.add('show');
+        tagSearch.value = ''; // Clear search input
         loadAllTags();
         renderSelectedTags();
         // Don't auto-focus search to avoid keyboard pop-up on mobile
       });
 
-      document.getElementById("filterClose").addEventListener("click", () => {
-        filterModal.classList.remove("show");
+      document.getElementById('filterClose').addEventListener('click', () => {
+        filterModal.classList.remove('show');
       });
 
-      tagSearch.addEventListener("input", (e) => {
+      tagSearch.addEventListener('input', (e) => {
         filterTagList(e.target.value);
       });
 
-      tagSearch.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
+      tagSearch.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
           e.preventDefault();
-          applyFilter();
-        } else if (e.key === "Escape") {
-          filterModal.classList.remove("show");
+          applyFilter(true);
+        } else if (e.key === 'Escape') {
+          filterModal.classList.remove('show');
         }
       });
 
-      function applyFilter() {
+      function applyFilter(shouldClose = false) {
         const newQuery = buildTagQuery();
         saveSelectedTags();
         if (newQuery !== searchQuery) {
@@ -2420,12 +2405,10 @@
           sessionStorage.setItem(SESSION_SEED_KEY, sessionSeed);
           init();
         }
-        filterModal.classList.remove("show");
+        if (shouldClose) {
+          filterModal.classList.remove('show');
+        }
       }
-
-      document
-        .getElementById("filterApply")
-        .addEventListener("click", applyFilter);
 
       // Make functions global for onclick handlers
       window.toggleTag = toggleTag;
@@ -2433,28 +2416,28 @@
       window.clearAllTags = clearAllTags;
 
       // Action buttons
-      likeBtn.addEventListener("click", toggleLike);
-      openBtn.addEventListener("click", openInBrowser);
-      fitBtn.addEventListener("click", toggleFitMode);
+      likeBtn.addEventListener('click', toggleLike);
+      openBtn.addEventListener('click', openInBrowser);
+      fitBtn.addEventListener('click', toggleFitMode);
 
       // Utility functions
       function isVideoFile(path) {
-        const ext = path.split(".").pop().toLowerCase();
+        const ext = path.split('.').pop().toLowerCase();
         return [
-          "mp4",
-          "webm",
-          "ogg",
-          "avi",
-          "mov",
-          "wmv",
-          "flv",
-          "mkv",
-          "m4v",
+          'mp4',
+          'webm',
+          'ogg',
+          'avi',
+          'mov',
+          'wmv',
+          'flv',
+          'mkv',
+          'm4v',
         ].includes(ext);
       }
 
       function getMediaUrl(path) {
-        if (path.startsWith("http://") || path.startsWith("https://")) {
+        if (path.startsWith('http://') || path.startsWith('https://')) {
           return path;
         }
         return `/media/file?path=${encodeURIComponent(path)}`;
@@ -2465,62 +2448,61 @@
       }
 
       function escapeHtml(text) {
-        if (!text) return "";
-        const div = document.createElement("div");
+        if (!text) return '';
+        const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
       }
 
       function escapeAttr(text) {
-        if (!text) return "";
+        if (!text) return '';
         return String(text)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
       }
 
-
       // Event listeners
-      container.addEventListener("touchstart", onTouchStart, {
+      container.addEventListener('touchstart', onTouchStart, {
         passive: false,
       });
-      container.addEventListener("touchmove", onTouchMove, { passive: false });
-      container.addEventListener("touchend", onTouchEnd);
-      document.addEventListener("keydown", onKeyDown);
+      container.addEventListener('touchmove', onTouchMove, { passive: false });
+      container.addEventListener('touchend', onTouchEnd);
+      document.addEventListener('keydown', onKeyDown);
 
       // Mouse support for scrubber (desktop)
-      container.addEventListener("mousedown", (e) => {
-        if (e.target.closest(".scrubber-track")) {
+      container.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.scrubber-track')) {
           handleScrubStart(e);
         }
       });
-      document.addEventListener("mousemove", (e) => {
+      document.addEventListener('mousemove', (e) => {
         if (isScrubbing) {
           handleScrubMove(e);
         }
       });
-      document.addEventListener("mouseup", (e) => {
+      document.addEventListener('mouseup', (e) => {
         if (isScrubbing) {
           handleScrubEnd(e);
         }
       });
 
       // Click on video to toggle scrubber (desktop)
-      container.addEventListener("click", (e) => {
+      container.addEventListener('click', (e) => {
         if (
-          e.target.closest(".swipe-actions") ||
-          e.target.closest(".swipe-header") ||
-          e.target.closest(".filter-modal") ||
-          e.target.closest(".video-scrubber") ||
-          e.target.closest(".install-prompt")
+          e.target.closest('.swipe-actions') ||
+          e.target.closest('.swipe-header') ||
+          e.target.closest('.filter-modal') ||
+          e.target.closest('.video-scrubber') ||
+          e.target.closest('.install-prompt')
         ) {
           return;
         }
 
         const item = track.querySelector('[data-offset="0"]');
-        const video = item?.querySelector("video");
+        const video = item?.querySelector('video');
         if (video) {
           if (scrubberVisible) {
             toggleVideoPause();
@@ -2537,9 +2519,9 @@
       // Mouse wheel support for desktop
       let wheelTimeout;
       container.addEventListener(
-        "wheel",
+        'wheel',
         (e) => {
-          if (e.target.closest(".filter-modal")) return;
+          if (e.target.closest('.filter-modal')) return;
           e.preventDefault();
 
           clearTimeout(wheelTimeout);
