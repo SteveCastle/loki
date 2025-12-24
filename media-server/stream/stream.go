@@ -72,7 +72,7 @@ func GetConnectionStats() map[string]interface{} {
 	return map[string]interface{}{
 		"active_connections":   atomic.LoadInt64(&manager.activeCount),
 		"total_messages":       atomic.LoadInt64(&manager.totalMessages),
-		"max_connections":      MaxConcurrentConnections,
+		"max_connections":      int64(MaxConcurrentConnections),
 		"dropped_broadcasts":   atomic.LoadInt64(&manager.droppedBroadcasts),
 		"dropped_client_msgs":  atomic.LoadInt64(&manager.droppedClientMsgs),
 		"rejected_connections": atomic.LoadInt64(&manager.rejectedConns),
