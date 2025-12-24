@@ -343,8 +343,9 @@
         </p>
         <div class="setup-info">
           <p>
-            Some dependencies are missing. Please install them below to continue.
-            You can download and install all required dependencies from this page.
+            Some dependencies are missing. Please install them below to
+            continue. You can download and install all required dependencies
+            from this page.
           </p>
         </div>
       </div>
@@ -359,9 +360,7 @@
         >
           Download All Missing
         </button>
-        <button class="btn-skip" onclick="skipSetup()">
-          Skip Setup
-        </button>
+        <button class="btn-skip" onclick="skipSetup()">Skip Setup</button>
       </div>
 
       <div class="dependencies-grid">
@@ -456,35 +455,35 @@
       let eventSource = null;
 
       function connectSSE() {
-        eventSource = new EventSource("/stream");
+        eventSource = new EventSource('/stream');
 
-        eventSource.addEventListener("update", (event) => {
+        eventSource.addEventListener('update', (event) => {
           const data = JSON.parse(event.data);
-          if (data.job && data.job.command === "download-dependency") {
+          if (data.job && data.job.command === 'download-dependency') {
             updateDependencyCard(data.job);
           }
         });
 
-        eventSource.addEventListener("message", (event) => {
+        eventSource.addEventListener('message', (event) => {
           const data = JSON.parse(event.data);
-          if (data.type && data.type.startsWith("stdout-")) {
-            const jobID = data.type.replace("stdout-", "");
+          if (data.type && data.type.startsWith('stdout-')) {
+            const jobID = data.type.replace('stdout-', '');
             const card = document.querySelector(`[data-job-id="${jobID}"]`);
             if (card) {
-              const progressDiv = card.querySelector(".download-progress");
+              const progressDiv = card.querySelector('.download-progress');
               const outputDiv = progressDiv.querySelector(
-                ".download-progress-content"
+                '.download-progress-content'
               );
               if (data.data) {
-                outputDiv.textContent += data.data + "\n";
+                outputDiv.textContent += data.data + '\n';
                 outputDiv.scrollTop = outputDiv.scrollHeight;
               }
             }
           }
         });
 
-        eventSource.addEventListener("error", (event) => {
-          console.error("SSE error:", event);
+        eventSource.addEventListener('error', (event) => {
+          console.error('SSE error:', event);
         });
       }
 
@@ -493,93 +492,113 @@
         const card = document.querySelector(`[data-dep-id="${depID}"]`);
         if (!card) return;
 
-        const statusBadge = card.querySelector(".status-badge");
-        const actionsDiv = card.querySelector(".dep-actions");
-        const progressDiv = card.querySelector(".download-progress");
+        const statusBadge = card.querySelector('.status-badge');
+        const actionsDiv = card.querySelector('.dep-actions');
+        const progressDiv = card.querySelector('.download-progress');
 
-        card.setAttribute("data-job-id", job.id);
+        card.setAttribute('data-job-id', job.id);
 
-        if (job.state === "pending" || job.state === "in_progress") {
-          statusBadge.textContent = "downloading";
-          statusBadge.className = "status-badge status-downloading";
-          progressDiv.style.display = "block";
+        const state = job.state;
+        if (
+          state === 0 ||
+          state === 'pending' ||
+          state === 'Pending' ||
+          state === 1 ||
+          state === 'in_progress' ||
+          state === 'InProgress'
+        ) {
+          statusBadge.textContent = 'downloading';
+          statusBadge.className = 'status-badge status-downloading';
+          progressDiv.style.display = 'block';
 
           actionsDiv.innerHTML = `
             <button class="btn btn-primary" disabled>Downloading...</button>
             <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
           `;
-        } else if (job.state === "completed") {
-          statusBadge.textContent = "installed";
-          statusBadge.className = "status-badge status-installed";
-          progressDiv.style.display = "none";
+        } else if (
+          state === 2 ||
+          state === 'completed' ||
+          state === 'Completed'
+        ) {
+          statusBadge.textContent = 'installed';
+          statusBadge.className = 'status-badge status-installed';
+          progressDiv.style.display = 'none';
 
           actionsDiv.innerHTML = `
             <button class="btn btn-success" disabled>Installed</button>
             <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
           `;
 
-          showStatusMessage(`${depID} installed successfully!`, "success");
+          showStatusMessage(`${depID} installed successfully!`, 'success');
 
           // Check if all dependencies are now satisfied
           checkAllDependencies();
           checkSetupStatus();
-        } else if (job.state === "error" || job.state === "cancelled") {
-          statusBadge.textContent = "not_installed";
-          statusBadge.className = "status-badge status-not_installed";
-          progressDiv.style.display = "none";
+        } else if (
+          state === 4 ||
+          state === 'error' ||
+          state === 'Error' ||
+          state === 3 ||
+          state === 'cancelled' ||
+          state === 'Cancelled'
+        ) {
+          statusBadge.textContent = 'not_installed';
+          statusBadge.className = 'status-badge status-not_installed';
+          progressDiv.style.display = 'none';
 
           actionsDiv.innerHTML = `
             <button class="btn btn-primary" onclick="downloadDependency('${depID}')">Download</button>
             <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
           `;
 
-          showStatusMessage(`Download failed for ${depID}`, "error");
+          showStatusMessage(`Download failed for ${depID}`, 'error');
         }
       }
 
       function showStatusMessage(message, type) {
-        const statusDiv = document.getElementById("status-message");
+        const statusDiv = document.getElementById('status-message');
         statusDiv.textContent = message;
         statusDiv.className = `status-message ${type} show`;
         setTimeout(() => {
-          statusDiv.className = "status-message";
+          statusDiv.className = 'status-message';
         }, 5000);
       }
 
       function downloadDependency(depID) {
         const card = document.querySelector(`[data-dep-id="${depID}"]`);
-        const statusBadge = card.querySelector(".status-badge");
-        const progressDiv = card.querySelector(".download-progress");
-        const actionsDiv = card.querySelector(".dep-actions");
+        const statusBadge = card.querySelector('.status-badge');
+        const progressDiv = card.querySelector('.download-progress');
+        const actionsDiv = card.querySelector('.dep-actions');
 
-        fetch("/dependencies/download", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        fetch('/dependencies/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ dependency_id: depID }),
         })
           .then((r) => {
-            if (!r.ok) throw new Error("Download request failed");
+            if (!r.ok) throw new Error('Download request failed');
             return r.json();
           })
           .then((data) => {
-            card.setAttribute("data-job-id", data.job_id);
-            statusBadge.textContent = "downloading";
-            statusBadge.className = "status-badge status-downloading";
-            progressDiv.style.display = "block";
-            progressDiv.querySelector(".download-progress-content").textContent =
-              "";
+            card.setAttribute('data-job-id', data.job_id);
+            statusBadge.textContent = 'downloading';
+            statusBadge.className = 'status-badge status-downloading';
+            progressDiv.style.display = 'block';
+            progressDiv.querySelector(
+              '.download-progress-content'
+            ).textContent = '';
 
             actionsDiv.innerHTML = `
               <button class="btn btn-primary" disabled>Downloading...</button>
               <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
             `;
 
-            showStatusMessage(`Download started for ${depID}`, "success");
+            showStatusMessage(`Download started for ${depID}`, 'success');
           })
           .catch((err) => {
             showStatusMessage(
               `Failed to start download: ${err.message}`,
-              "error"
+              'error'
             );
           });
       }
@@ -587,13 +606,13 @@
       function checkDependency(depID) {
         fetch(`/dependencies/check?id=${depID}`)
           .then((r) => {
-            if (!r.ok) throw new Error("Check request failed");
+            if (!r.ok) throw new Error('Check request failed');
             return r.json();
           })
           .then((data) => {
             showStatusMessage(
-              `Status: ${data.status}, Version: ${data.version || "unknown"}`,
-              "success"
+              `Status: ${data.status}, Version: ${data.version || 'unknown'}`,
+              'success'
             );
             setTimeout(() => {
               window.location.reload();
@@ -602,28 +621,28 @@
           .catch((err) => {
             showStatusMessage(
               `Failed to check status: ${err.message}`,
-              "error"
+              'error'
             );
           });
       }
 
       function checkAllDependencies() {
-        const cards = document.querySelectorAll(".dependency-card");
+        const cards = document.querySelectorAll('.dependency-card');
         let allInstalled = true;
 
         cards.forEach((card) => {
-          const statusBadge = card.querySelector(".status-badge");
+          const statusBadge = card.querySelector('.status-badge');
           const status = statusBadge.textContent.trim();
           if (
-            status !== "installed" &&
-            status !== "downloading" &&
-            status !== "outdated"
+            status !== 'installed' &&
+            status !== 'downloading' &&
+            status !== 'outdated'
           ) {
             allInstalled = false;
           }
         });
 
-        const continueButton = document.getElementById("continue-button");
+        const continueButton = document.getElementById('continue-button');
         if (allInstalled) {
           continueButton.disabled = false;
         }
@@ -631,10 +650,10 @@
 
       function checkSetupStatus() {
         // Check with backend if setup mode should be disabled
-        fetch("/setup/status")
+        fetch('/setup/status')
           .then((r) => {
             if (!r.ok) {
-              console.error("Failed to check setup status");
+              console.error('Failed to check setup status');
               return;
             }
             return r.json();
@@ -642,45 +661,45 @@
           .then((data) => {
             if (data && data.can_continue) {
               // Backend says all dependencies are satisfied
-              const continueButton = document.getElementById("continue-button");
+              const continueButton = document.getElementById('continue-button');
               continueButton.disabled = false;
-              console.log("Setup status: All dependencies satisfied");
+              console.log('Setup status: All dependencies satisfied');
             }
           })
           .catch((err) => {
-            console.error("Error checking setup status:", err);
+            console.error('Error checking setup status:', err);
           });
       }
 
       function continueToApp() {
-        const continueButton = document.getElementById("continue-button");
+        const continueButton = document.getElementById('continue-button');
         continueButton.disabled = true;
-        continueButton.textContent = "Checking...";
+        continueButton.textContent = 'Checking...';
 
         // Check setup status to verify all dependencies are installed
-        fetch("/setup/status")
+        fetch('/setup/status')
           .then((r) => {
-            if (!r.ok) throw new Error("Failed to check setup status");
+            if (!r.ok) throw new Error('Failed to check setup status');
             return r.json();
           })
           .then((data) => {
             if (data.can_continue) {
               // All dependencies satisfied, redirect to app
               showStatusMessage(
-                "All dependencies ready! Redirecting...",
-                "success"
+                'All dependencies ready! Redirecting...',
+                'success'
               );
               setTimeout(() => {
-                window.location.href = "/";
+                window.location.href = '/';
               }, 500);
             } else {
               // Still missing dependencies
               showStatusMessage(
-                "Some dependencies are still missing. Please install them first.",
-                "error"
+                'Some dependencies are still missing. Please install them first.',
+                'error'
               );
               continueButton.disabled = true;
-              continueButton.textContent = "Continue to Shrike";
+              continueButton.textContent = 'Continue to Shrike';
               // Reload to refresh status
               setTimeout(() => {
                 window.location.reload();
@@ -690,29 +709,31 @@
           .catch((err) => {
             showStatusMessage(
               `Failed to verify setup status: ${err.message}`,
-              "error"
+              'error'
             );
             continueButton.disabled = false;
-            continueButton.textContent = "Continue to Shrike";
+            continueButton.textContent = 'Continue to Shrike';
           });
       }
 
       function downloadAllDependencies() {
-        const cards = document.querySelectorAll(".dependency-card");
-        const downloadAllButton = document.getElementById("download-all-button");
+        const cards = document.querySelectorAll('.dependency-card');
+        const downloadAllButton = document.getElementById(
+          'download-all-button'
+        );
         let downloadedCount = 0;
         let delayCounter = 0;
 
         downloadAllButton.disabled = true;
-        downloadAllButton.textContent = "Downloading...";
+        downloadAllButton.textContent = 'Downloading...';
 
         cards.forEach((card) => {
-          const statusBadge = card.querySelector(".status-badge");
+          const statusBadge = card.querySelector('.status-badge');
           const status = statusBadge.textContent.trim();
-          const depID = card.getAttribute("data-dep-id");
+          const depID = card.getAttribute('data-dep-id');
 
           // Only download if not installed or outdated
-          if (status === "not_installed" || status === "outdated") {
+          if (status === 'not_installed' || status === 'outdated') {
             downloadedCount++;
             setTimeout(() => {
               downloadDependency(depID);
@@ -723,20 +744,20 @@
 
         if (downloadedCount === 0) {
           showStatusMessage(
-            "All dependencies are already installed or downloading",
-            "success"
+            'All dependencies are already installed or downloading',
+            'success'
           );
           downloadAllButton.disabled = false;
-          downloadAllButton.textContent = "Download All Missing";
+          downloadAllButton.textContent = 'Download All Missing';
         } else {
           showStatusMessage(
             `Started downloading ${downloadedCount} dependencies`,
-            "success"
+            'success'
           );
           // Re-enable button after some time
           setTimeout(() => {
             downloadAllButton.disabled = false;
-            downloadAllButton.textContent = "Download All Missing";
+            downloadAllButton.textContent = 'Download All Missing';
           }, (delayCounter + 2) * 500);
         }
       }
@@ -744,41 +765,41 @@
       function skipSetup() {
         if (
           confirm(
-            "Are you sure you want to skip setup? Some features may not work without dependencies."
+            'Are you sure you want to skip setup? Some features may not work without dependencies.'
           )
         ) {
-          fetch("/setup/skip", {
-            method: "POST",
+          fetch('/setup/skip', {
+            method: 'POST',
           })
             .then((r) => {
-              if (!r.ok) throw new Error("Failed to skip setup");
+              if (!r.ok) throw new Error('Failed to skip setup');
               return r.json();
             })
             .then(() => {
-              showStatusMessage("Setup skipped. Redirecting...", "success");
+              showStatusMessage('Setup skipped. Redirecting...', 'success');
               setTimeout(() => {
-                window.location.href = "/";
+                window.location.href = '/';
               }, 1000);
             })
             .catch((err) => {
               showStatusMessage(
                 `Failed to skip setup: ${err.message}`,
-                "error"
+                'error'
               );
             });
         }
       }
 
-      document.addEventListener("DOMContentLoaded", () => {
+      document.addEventListener('DOMContentLoaded', () => {
         connectSSE();
 
-        document.querySelectorAll(".dependency-card").forEach((card) => {
-          const jobID = card.getAttribute("data-job-id");
+        document.querySelectorAll('.dependency-card').forEach((card) => {
+          const jobID = card.getAttribute('data-job-id');
           if (jobID) {
-            const progressDiv = card.querySelector(".download-progress");
-            const statusBadge = card.querySelector(".status-badge");
-            if (statusBadge.textContent === "downloading") {
-              progressDiv.style.display = "block";
+            const progressDiv = card.querySelector('.download-progress');
+            const statusBadge = card.querySelector('.status-badge');
+            if (statusBadge.textContent === 'downloading') {
+              progressDiv.style.display = 'block';
             }
           }
         });

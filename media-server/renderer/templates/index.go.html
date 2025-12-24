@@ -989,6 +989,12 @@
           return 'pending';
         if (state === 1 || state === 'in_progress' || state === 'InProgress')
           return 'in_progress';
+        if (state === 2 || state === 'completed' || state === 'Completed')
+          return 'completed';
+        if (state === 3 || state === 'cancelled' || state === 'Cancelled')
+          return 'cancelled';
+        if (state === 4 || state === 'error' || state === 'Error')
+          return 'error';
         return null;
       }
 

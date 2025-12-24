@@ -877,7 +877,15 @@
 
         card.setAttribute('data-job-id', job.id);
 
-        if (job.state === 'pending' || job.state === 'in_progress') {
+        const state = job.state;
+        if (
+          state === 0 ||
+          state === 'pending' ||
+          state === 'Pending' ||
+          state === 1 ||
+          state === 'in_progress' ||
+          state === 'InProgress'
+        ) {
           statusBadge.textContent = 'downloading';
           statusBadge.className = 'status-badge status-downloading';
           if (progressDiv) progressDiv.style.display = 'block';
@@ -885,7 +893,11 @@
             <button class="btn btn-primary" disabled>Downloading...</button>
             <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
           `;
-        } else if (job.state === 'completed') {
+        } else if (
+          state === 2 ||
+          state === 'completed' ||
+          state === 'Completed'
+        ) {
           statusBadge.textContent = 'installed';
           statusBadge.className = 'status-badge status-installed';
           if (progressDiv) progressDiv.style.display = 'none';
@@ -894,7 +906,14 @@
             <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
           `;
           showDependencyStatus(`${depID} installed successfully!`, 'success');
-        } else if (job.state === 'error' || job.state === 'cancelled') {
+        } else if (
+          state === 4 ||
+          state === 'error' ||
+          state === 'Error' ||
+          state === 3 ||
+          state === 'cancelled' ||
+          state === 'Cancelled'
+        ) {
           statusBadge.textContent = 'not_installed';
           statusBadge.className = 'status-badge status-not_installed';
           if (progressDiv) progressDiv.style.display = 'none';
