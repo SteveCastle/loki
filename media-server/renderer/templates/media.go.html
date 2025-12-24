@@ -70,7 +70,7 @@
         padding: var(--space-2);
       }
 
-      .media-cell.checkbox input[type="checkbox"] {
+      .media-cell.checkbox input[type='checkbox'] {
         transform: scale(1.2);
         cursor: pointer;
         accent-color: var(--accent-primary);
@@ -177,7 +177,7 @@
       }
 
       .loading::before {
-        content: "";
+        content: '';
         display: inline-block;
         width: 16px;
         height: 16px;
@@ -234,7 +234,7 @@
       }
 
       .typeahead-section::before {
-        content: "";
+        content: '';
         flex: 0 0 auto;
         width: 12px;
         height: 1px;
@@ -242,7 +242,7 @@
       }
 
       .typeahead-section::after {
-        content: "";
+        content: '';
         flex: 1;
         height: 1px;
         background: var(--border-subtle);
@@ -770,7 +770,7 @@
         z-index: 2;
       }
 
-      .grid-select input[type="checkbox"] {
+      .grid-select input[type='checkbox'] {
         transform: scale(1.2);
         cursor: pointer;
         accent-color: var(--accent-primary);
@@ -884,7 +884,7 @@
         color: var(--text-dim);
       }
 
-      .selection-label input[type="checkbox"] {
+      .selection-label input[type='checkbox'] {
         width: 16px;
         height: 16px;
         cursor: inherit;
@@ -1121,7 +1121,7 @@
         }
 
         .media-cell:before {
-          content: attr(data-label) ": ";
+          content: attr(data-label) ': ';
           font-weight: 600;
           color: var(--text-muted);
           margin-right: var(--space-3);
@@ -1178,30 +1178,30 @@
         }
 
         /* Larger, easier-to-tap checkboxes */
-        .media-cell.checkbox input[type="checkbox"],
-        .grid-select input[type="checkbox"],
+        .media-cell.checkbox input[type='checkbox'],
+        .grid-select input[type='checkbox'],
         #select-all,
         #grid-select-all {
           transform: scale(1.25);
         }
 
         /* Metadata options responsive */
-        #metadata-options div[style*="display: flex"] {
+        #metadata-options div[style*='display: flex'] {
           flex-direction: column !important;
           align-items: stretch !important;
         }
 
-        #metadata-options div[style*="display: flex"] label {
+        #metadata-options div[style*='display: flex'] label {
           min-width: auto !important;
         }
 
         #metadata-options select,
-        #metadata-options input[type="text"] {
+        #metadata-options input[type='text'] {
           width: 100% !important;
           min-width: auto !important;
         }
 
-        #metadata-options div[style*="gap: 15px"] {
+        #metadata-options div[style*='gap: 15px'] {
           gap: var(--space-3) !important;
         }
       }
@@ -1675,10 +1675,10 @@
               class="media-cell path"
               data-label="Path"
               data-media-path="{{htmlAttr .Path}}"
-              onclick="openLocalPath(event, '{{htmlAttr .Path}}')"
+              onclick="openLocalPath(event, this)"
               onmouseenter="showMediaPreview(event, this.dataset.mediaPath)"
               onmouseleave="hideMediaPreview()"
-              style="cursor: pointer;"
+              style="cursor: pointer"
             >
               {{.Path}}
             </div>
@@ -1743,28 +1743,28 @@
     </div>
 
     <script>
-      let currentOffset = Number("{{.Offset}}") || 0;
+      let currentOffset = Number('{{.Offset}}') || 0;
       let isLoading = false;
       let hasMoreItems =
-        "{{.HasMore}}" === "true" ||
-        "{{.HasMore}}" === "1" ||
-        "{{.HasMore}}" === "True";
-      let currentSearchQuery = "{{.SearchQuery}}";
+        '{{.HasMore}}' === 'true' ||
+        '{{.HasMore}}' === '1' ||
+        '{{.HasMore}}' === 'True';
+      let currentSearchQuery = '{{.SearchQuery}}';
 
       // Restore last search query if no query parameter provided
-      const LAST_SEARCH_KEY = "media_last_search_query";
+      const LAST_SEARCH_KEY = 'media_last_search_query';
       if (!currentSearchQuery) {
         const savedQuery = localStorage.getItem(LAST_SEARCH_KEY);
         if (savedQuery) {
           // Redirect to apply the saved query
           const queryParams = new URLSearchParams();
-          queryParams.set("q", savedQuery);
+          queryParams.set('q', savedQuery);
           window.location.href = `/media?${queryParams}`;
         }
       }
 
       // View mode state
-      let currentViewMode = localStorage.getItem("mediaViewMode") || "table";
+      let currentViewMode = localStorage.getItem('mediaViewMode') || 'table';
       let gridInitialized = false;
       let gridObserver = null;
 
@@ -1773,7 +1773,7 @@
 
       function updateSelection() {
         selectedItems.clear();
-        const allCheckboxes = document.querySelectorAll(".media-checkbox");
+        const allCheckboxes = document.querySelectorAll('.media-checkbox');
         allCheckboxes.forEach((cb) => {
           if (cb.checked) {
             selectedItems.add(cb.value);
@@ -1786,12 +1786,12 @@
         });
 
         // Update grid item selected styling
-        document.querySelectorAll("#media-grid .grid-item").forEach((el) => {
-          const path = el.getAttribute("data-path");
+        document.querySelectorAll('#media-grid .grid-item').forEach((el) => {
+          const path = el.getAttribute('data-path');
           if (selectedItems.has(path)) {
-            el.classList.add("selected");
+            el.classList.add('selected');
           } else {
-            el.classList.remove("selected");
+            el.classList.remove('selected');
           }
         });
 
@@ -1806,8 +1806,8 @@
 
         // Update all select-all checkboxes (unified bar + table header)
         const selectAllCheckboxes = [
-          document.getElementById("select-all-unified"),
-          document.getElementById("select-all"),
+          document.getElementById('select-all-unified'),
+          document.getElementById('select-all'),
         ];
 
         selectAllCheckboxes.forEach((el) => {
@@ -1831,19 +1831,19 @@
         updateBulkActionsCount();
 
         // Show/hide bulk actions panel
-        const bulkActions = document.getElementById("bulk-actions");
+        const bulkActions = document.getElementById('bulk-actions');
         if (count > 0 || isApplyToQueryEnabled()) {
-          bulkActions.classList.add("show");
+          bulkActions.classList.add('show');
         } else {
-          bulkActions.classList.remove("show");
+          bulkActions.classList.remove('show');
         }
       }
 
       function updateApplyToQueryState(allSelected) {
         const applyCheckbox = document.getElementById(
-          "apply-to-query-checkbox"
+          'apply-to-query-checkbox'
         );
-        const applyLabel = document.getElementById("apply-to-query-label");
+        const applyLabel = document.getElementById('apply-to-query-label');
 
         if (applyCheckbox) {
           if (allSelected && currentSearchQuery) {
@@ -1857,34 +1857,34 @@
         // Update label styling
         if (applyLabel) {
           if (allSelected && currentSearchQuery) {
-            applyLabel.classList.remove("disabled");
+            applyLabel.classList.remove('disabled');
           } else {
-            applyLabel.classList.add("disabled");
+            applyLabel.classList.add('disabled');
           }
         }
       }
 
       function updateBulkActionsCount() {
-        const selectionCountEl = document.getElementById("selection-count");
+        const selectionCountEl = document.getElementById('selection-count');
         const count = selectedItems.size;
 
         if (isApplyToQueryEnabled() && currentSearchQuery) {
           if (selectionCountEl) {
-            selectionCountEl.textContent = "All matching query";
-            selectionCountEl.classList.add("active");
+            selectionCountEl.textContent = 'All matching query';
+            selectionCountEl.classList.add('active');
           }
         } else {
           const text =
-            count === 1 ? "1 item selected" : `${count} items selected`;
+            count === 1 ? '1 item selected' : `${count} items selected`;
           if (selectionCountEl) {
-            selectionCountEl.textContent = count > 0 ? text : "0 items";
-            selectionCountEl.classList.toggle("active", count > 0);
+            selectionCountEl.textContent = count > 0 ? text : '0 items';
+            selectionCountEl.classList.toggle('active', count > 0);
           }
         }
       }
 
       function toggleSelectAll(checkbox) {
-        const mediaCheckboxes = document.querySelectorAll(".media-checkbox");
+        const mediaCheckboxes = document.querySelectorAll('.media-checkbox');
         mediaCheckboxes.forEach((cb) => {
           cb.checked = checkbox.checked;
         });
@@ -1893,7 +1893,7 @@
 
       function clearSelection() {
         const checkboxes = document.querySelectorAll(
-          ".media-checkbox, #select-all, #select-all-unified, .apply-to-query"
+          '.media-checkbox, #select-all, #select-all-unified, .apply-to-query'
         );
         checkboxes.forEach((cb) => {
           cb.checked = false;
@@ -1904,53 +1904,53 @@
 
       // Show/hide options based on task selection
       document
-        .getElementById("task-select")
-        .addEventListener("change", function () {
-          const metadataOptions = document.getElementById("metadata-options");
-          const moveOptions = document.getElementById("move-options");
+        .getElementById('task-select')
+        .addEventListener('change', function () {
+          const metadataOptions = document.getElementById('metadata-options');
+          const moveOptions = document.getElementById('move-options');
           const loraDatasetOptions = document.getElementById(
-            "lora-dataset-options"
+            'lora-dataset-options'
           );
 
           // Hide all options first
-          metadataOptions.style.display = "none";
-          moveOptions.style.display = "none";
-          loraDatasetOptions.style.display = "none";
+          metadataOptions.style.display = 'none';
+          moveOptions.style.display = 'none';
+          loraDatasetOptions.style.display = 'none';
 
           // Show relevant options
-          if (this.value === "metadata") {
-            metadataOptions.style.display = "flex";
-          } else if (this.value === "move") {
-            moveOptions.style.display = "flex";
-          } else if (this.value === "lora-dataset") {
-            loraDatasetOptions.style.display = "flex";
+          if (this.value === 'metadata') {
+            metadataOptions.style.display = 'flex';
+          } else if (this.value === 'move') {
+            moveOptions.style.display = 'flex';
+          } else if (this.value === 'lora-dataset') {
+            loraDatasetOptions.style.display = 'flex';
           }
         });
 
       // Handle bulk actions form submission
       document
-        .getElementById("bulk-actions-form")
-        .addEventListener("submit", function (e) {
+        .getElementById('bulk-actions-form')
+        .addEventListener('submit', function (e) {
           e.preventDefault();
 
-          const taskSelect = document.getElementById("task-select");
+          const taskSelect = document.getElementById('task-select');
           const selectedTask = taskSelect.value;
           const overwriteCheckbox =
-            document.getElementById("overwrite-checkbox");
-          const executeButton = document.getElementById("execute-button");
+            document.getElementById('overwrite-checkbox');
+          const executeButton = document.getElementById('execute-button');
           const applyToQuery = isApplyToQueryEnabled();
 
           if (!selectedTask) {
-            alert("Please select a task to execute");
+            alert('Please select a task to execute');
             return;
           }
 
           const applyAllowedTasks = [
-            "metadata",
-            "autotag",
-            "move",
-            "remove",
-            "lora-dataset",
+            'metadata',
+            'autotag',
+            'move',
+            'remove',
+            'lora-dataset',
           ];
           if (
             selectedItems.size === 0 &&
@@ -1971,37 +1971,37 @@
             args = [],
             input;
 
-          if (selectedTask === "remove") {
-            command = "remove";
+          if (selectedTask === 'remove') {
+            command = 'remove';
             args = [];
             if (applyToQuery && currentSearchQuery) {
               try {
                 const encQuery = btoa(
                   unescape(encodeURIComponent(currentSearchQuery))
                 );
-                args.push("--query64=" + encQuery);
+                args.push('--query64=' + encQuery);
               } catch (e) {
-                args.push("--query", currentSearchQuery);
+                args.push('--query', currentSearchQuery);
               }
-              input = "";
+              input = '';
             } else {
-              input = Array.from(selectedItems).join("\n");
+              input = Array.from(selectedItems).join('\n');
             }
-          } else if (selectedTask === "move") {
-            command = "move";
+          } else if (selectedTask === 'move') {
+            command = 'move';
             args = [];
 
             // Get target directory from text input
             const targetDirectoryInput = document.getElementById(
-              "target-directory-path"
+              'target-directory-path'
             );
-            const pathPrefixInput = document.getElementById("path-prefix");
+            const pathPrefixInput = document.getElementById('path-prefix');
 
             const targetPath = targetDirectoryInput.value.trim();
 
             // Validate target path
             if (!targetPath) {
-              alert("Please enter a target directory path");
+              alert('Please enter a target directory path');
               return;
             }
 
@@ -2011,7 +2011,7 @@
             // Add path prefix if specified
             const pathPrefix = pathPrefixInput.value.trim();
             if (pathPrefix) {
-              args.push("--prefix", pathPrefix);
+              args.push('--prefix', pathPrefix);
             }
 
             // If applying to current search, pass the query and no explicit paths
@@ -2020,62 +2020,62 @@
                 const encQuery = btoa(
                   unescape(encodeURIComponent(currentSearchQuery))
                 );
-                args.push("--query64=" + encQuery);
+                args.push('--query64=' + encQuery);
               } catch (e) {
-                args.push("--query", currentSearchQuery);
+                args.push('--query', currentSearchQuery);
               }
-              input = "";
+              input = '';
             } else {
               // Create newline-separated list of files
-              input = Array.from(selectedItems).join("\n");
+              input = Array.from(selectedItems).join('\n');
             }
-          } else if (selectedTask === "metadata") {
-            command = "metadata";
+          } else if (selectedTask === 'metadata') {
+            command = 'metadata';
             args = [];
 
             // Get selected metadata types
             const metadataTypes = [];
-            if (document.getElementById("metadata-description").checked) {
-              metadataTypes.push("description");
+            if (document.getElementById('metadata-description').checked) {
+              metadataTypes.push('description');
             }
-            if (document.getElementById("metadata-transcript").checked) {
-              metadataTypes.push("transcript");
+            if (document.getElementById('metadata-transcript').checked) {
+              metadataTypes.push('transcript');
             }
-            if (document.getElementById("metadata-hash").checked) {
-              metadataTypes.push("hash");
+            if (document.getElementById('metadata-hash').checked) {
+              metadataTypes.push('hash');
             }
-            if (document.getElementById("metadata-dimensions").checked) {
-              metadataTypes.push("dimensions");
+            if (document.getElementById('metadata-dimensions').checked) {
+              metadataTypes.push('dimensions');
             }
-            if (document.getElementById("metadata-autotag").checked) {
-              metadataTypes.push("autotag");
+            if (document.getElementById('metadata-autotag').checked) {
+              metadataTypes.push('autotag');
             }
 
             // Validate that at least one metadata type is selected
             if (metadataTypes.length === 0) {
-              alert("Please select at least one metadata type to generate");
+              alert('Please select at least one metadata type to generate');
               return;
             }
 
             // Add metadata types as comma-separated list
-            args.push("--type", metadataTypes.join(","));
+            args.push('--type', metadataTypes.join(','));
 
             // Add apply scope
             const applyScope =
-              document.getElementById("apply-scope-select").value;
-            args.push("--apply", applyScope);
+              document.getElementById('apply-scope-select').value;
+            args.push('--apply', applyScope);
 
             // Add AI model
             const ollamaModel = document
-              .getElementById("ollama-model")
+              .getElementById('ollama-model')
               .value.trim();
             if (ollamaModel) {
-              args.push("--model", ollamaModel);
+              args.push('--model', ollamaModel);
             }
 
             // Add overwrite flag if checked
             if (overwriteCheckbox.checked) {
-              args.push("--overwrite");
+              args.push('--overwrite');
             }
 
             // If applying to current search, pass the query and no explicit paths
@@ -2084,68 +2084,68 @@
                 const encQuery = btoa(
                   unescape(encodeURIComponent(currentSearchQuery))
                 );
-                args.push("--query64=" + encQuery);
+                args.push('--query64=' + encQuery);
               } catch (e) {
                 // Fallback to plain query if encoding fails
-                args.push("--query", currentSearchQuery);
+                args.push('--query', currentSearchQuery);
               }
-              input = "";
+              input = '';
             } else {
-              input = Array.from(selectedItems).join("\n");
+              input = Array.from(selectedItems).join('\n');
             }
-          } else if (selectedTask === "autotag") {
-            command = "autotag";
+          } else if (selectedTask === 'autotag') {
+            command = 'autotag';
             args = [];
             if (applyToQuery && currentSearchQuery) {
               try {
                 const encQuery = btoa(
                   unescape(encodeURIComponent(currentSearchQuery))
                 );
-                args.push("--query64=" + encQuery);
+                args.push('--query64=' + encQuery);
               } catch (e) {
-                args.push("--query", currentSearchQuery);
+                args.push('--query', currentSearchQuery);
               }
-              input = "";
+              input = '';
             } else {
               // Pass comma-separated list to support multi-file in one task
-              input = Array.from(selectedItems).join(",");
+              input = Array.from(selectedItems).join(',');
             }
-          } else if (selectedTask === "lora-dataset") {
-            command = "lora-dataset";
+          } else if (selectedTask === 'lora-dataset') {
+            command = 'lora-dataset';
             args = [];
 
             // Get LoRA dataset options
             const loraTargetDir = document
-              .getElementById("lora-target-directory")
+              .getElementById('lora-target-directory')
               .value.trim();
-            const loraName = document.getElementById("lora-name").value.trim();
+            const loraName = document.getElementById('lora-name').value.trim();
             const loraConceptPrefix = document
-              .getElementById("lora-concept-prefix")
+              .getElementById('lora-concept-prefix')
               .value.trim();
             const loraModel = document
-              .getElementById("lora-ollama-model")
+              .getElementById('lora-ollama-model')
               .value.trim();
 
             // Validate required fields
             if (!loraTargetDir) {
-              alert("Please enter a target directory for the LoRA dataset");
+              alert('Please enter a target directory for the LoRA dataset');
               return;
             }
             if (!loraName) {
-              alert("Please enter a LoRA name");
+              alert('Please enter a LoRA name');
               return;
             }
 
             // Add arguments
-            args.push("--target", loraTargetDir);
-            args.push("--name", loraName);
+            args.push('--target', loraTargetDir);
+            args.push('--name', loraName);
 
             if (loraConceptPrefix) {
-              args.push("--prefix", loraConceptPrefix);
+              args.push('--prefix', loraConceptPrefix);
             }
 
             if (loraModel) {
-              args.push("--model", loraModel);
+              args.push('--model', loraModel);
             }
 
             // If applying to current search, pass the query
@@ -2154,22 +2154,22 @@
                 const encQuery = btoa(
                   unescape(encodeURIComponent(currentSearchQuery))
                 );
-                args.push("--query64=" + encQuery);
+                args.push('--query64=' + encQuery);
               } catch (e) {
-                args.push("--query", currentSearchQuery);
+                args.push('--query', currentSearchQuery);
               }
-              input = "";
+              input = '';
             } else {
-              input = Array.from(selectedItems).join("\n");
+              input = Array.from(selectedItems).join('\n');
             }
           }
 
           // Disable the button
           executeButton.disabled = true;
-          executeButton.textContent = "Executing...";
+          executeButton.textContent = 'Executing...';
 
           // Create the job - properly quote the input to treat it as a single argument
-          let formattedInput = "";
+          let formattedInput = '';
           if (input) {
             // Escape any quotes in the input and wrap the entire input in quotes
             const escapedInput = input.replace(/"/g, '\\"');
@@ -2177,19 +2177,19 @@
           }
 
           const jobData = {
-            input: `${command} ${args.join(" ")} ${formattedInput}`,
+            input: `${command} ${args.join(' ')} ${formattedInput}`,
           };
 
-          fetch("/create", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
+          fetch('/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(jobData),
           })
             .then((response) => {
               if (response.ok) {
                 return response.json();
               }
-              throw new Error("Failed to create job");
+              throw new Error('Failed to create job');
             })
             .then((result) => {
               // Create a toast for this job that will track its status
@@ -2197,12 +2197,12 @@
               clearSelection();
             })
             .catch((error) => {
-              console.error("Error creating job:", error);
-              alert("Error creating job. Please try again.");
+              console.error('Error creating job:', error);
+              alert('Error creating job. Please try again.');
             })
             .finally(() => {
               executeButton.disabled = false;
-              executeButton.textContent = "Execute";
+              executeButton.textContent = 'Execute';
             });
         });
 
@@ -2218,20 +2218,20 @@
       const videoLoadTimeout = 180000; // 180 seconds for videos (large files from localhost)
 
       function isImageFile(path) {
-        if (!path || typeof path !== "string") return false;
+        if (!path || typeof path !== 'string') return false;
         const imageExtensions = [
-          ".jpg",
-          ".jpeg",
-          ".png",
-          ".gif",
-          ".bmp",
-          ".webp",
-          ".svg",
-          ".tiff",
-          ".ico",
+          '.jpg',
+          '.jpeg',
+          '.png',
+          '.gif',
+          '.bmp',
+          '.webp',
+          '.svg',
+          '.tiff',
+          '.ico',
         ];
         try {
-          const lastDotIndex = path.lastIndexOf(".");
+          const lastDotIndex = path.lastIndexOf('.');
           if (lastDotIndex === -1 || lastDotIndex === path.length - 1)
             return false;
           const ext = path.toLowerCase().substring(lastDotIndex);
@@ -2242,20 +2242,20 @@
       }
 
       function isVideoFile(path) {
-        if (!path || typeof path !== "string") return false;
+        if (!path || typeof path !== 'string') return false;
         const videoExtensions = [
-          ".mp4",
-          ".webm",
-          ".ogg",
-          ".avi",
-          ".mov",
-          ".wmv",
-          ".flv",
-          ".mkv",
-          ".m4v",
+          '.mp4',
+          '.webm',
+          '.ogg',
+          '.avi',
+          '.mov',
+          '.wmv',
+          '.flv',
+          '.mkv',
+          '.m4v',
         ];
         try {
-          const lastDotIndex = path.lastIndexOf(".");
+          const lastDotIndex = path.lastIndexOf('.');
           if (lastDotIndex === -1 || lastDotIndex === path.length - 1)
             return false;
           const ext = path.toLowerCase().substring(lastDotIndex);
@@ -2266,22 +2266,22 @@
       }
 
       function isRemoteUrl(path) {
-        return path.startsWith("http://") || path.startsWith("https://");
+        return path.startsWith('http://') || path.startsWith('https://');
       }
 
       function getMediaUrl(path) {
         // Validate path
-        if (!path || typeof path !== "string") {
-          throw new Error("Invalid path");
+        if (!path || typeof path !== 'string') {
+          throw new Error('Invalid path');
         }
 
         // Trim and validate path length
         path = path.trim();
         if (path.length === 0) {
-          throw new Error("Empty path");
+          throw new Error('Empty path');
         }
         if (path.length > 1000) {
-          throw new Error("Path too long");
+          throw new Error('Path too long');
         }
 
         if (isRemoteUrl(path)) {
@@ -2292,7 +2292,7 @@
         try {
           return `/media/file?path=${encodeURIComponent(path)}`;
         } catch (e) {
-          throw new Error("Failed to encode path");
+          throw new Error('Failed to encode path');
         }
       }
 
@@ -2308,8 +2308,8 @@
         // Validate media path
         if (
           !mediaPath ||
-          typeof mediaPath !== "string" ||
-          mediaPath.trim() === ""
+          typeof mediaPath !== 'string' ||
+          mediaPath.trim() === ''
         ) {
           return;
         }
@@ -2321,10 +2321,10 @@
           return;
         }
 
-        const preview = document.getElementById("media-preview");
-        const header = document.getElementById("preview-header");
-        const content = document.getElementById("preview-content");
-        const footer = document.getElementById("preview-footer");
+        const preview = document.getElementById('media-preview');
+        const header = document.getElementById('preview-header');
+        const content = document.getElementById('preview-content');
+        const footer = document.getElementById('preview-footer');
 
         previewTimeout = setTimeout(() => {
           // Increment preview ID to track this request
@@ -2333,12 +2333,12 @@
 
           // Clean up previous media element if any
           if (currentMediaElement) {
-            if (currentMediaElement.tagName === "VIDEO") {
+            if (currentMediaElement.tagName === 'VIDEO') {
               currentMediaElement.pause();
-              currentMediaElement.src = "";
+              currentMediaElement.src = '';
               currentMediaElement.load();
-            } else if (currentMediaElement.tagName === "IMG") {
-              currentMediaElement.src = "";
+            } else if (currentMediaElement.tagName === 'IMG') {
+              currentMediaElement.src = '';
             }
             currentMediaElement = null;
           }
@@ -2357,12 +2357,12 @@
             top = event.clientY - 310;
           }
 
-          preview.style.left = Math.max(10, left) + "px";
-          preview.style.top = Math.max(10, top) + "px";
+          preview.style.left = Math.max(10, left) + 'px';
+          preview.style.top = Math.max(10, top) + 'px';
 
           // Show preview
-          preview.style.display = "block";
-          setTimeout(() => preview.classList.add("show"), 10);
+          preview.style.display = 'block';
+          setTimeout(() => preview.classList.add('show'), 10);
 
           // Set header with safe file name extraction
           const fileName = extractFileName(mediaPath);
@@ -2379,7 +2379,7 @@
             content.innerHTML = `<div class="media-preview-error">Invalid path<br>${escapeHtml(
               e.message
             )}</div>`;
-            footer.textContent = "Path error";
+            footer.textContent = 'Path error';
             return;
           }
 
@@ -2394,7 +2394,7 @@
                 clearTimeout(loadingTimeoutId);
                 loadingTimeoutId = null;
               }
-              content.innerHTML = "";
+              content.innerHTML = '';
               content.appendChild(img);
               footer.textContent = `Image • ${img.naturalWidth}×${img.naturalHeight}`;
             };
@@ -2407,10 +2407,10 @@
                 loadingTimeoutId = null;
               }
               // Check if this was an intentional abort (src set to empty)
-              if (img.src === "" || img.src === window.location.href) return;
+              if (img.src === '' || img.src === window.location.href) return;
               content.innerHTML =
                 '<div class="media-preview-error">Failed to load image<br>Check if file exists and is accessible</div>';
-              footer.textContent = "Error loading media";
+              footer.textContent = 'Error loading media';
             };
 
             // Set a timeout for loading - generous for large local files
@@ -2418,23 +2418,23 @@
               // Only timeout if this is still the active preview and not loaded
               if (thisPreviewId !== currentPreviewId) return;
               if (!img.complete && img.naturalWidth === 0) {
-                img.src = ""; // Cancel loading
+                img.src = ''; // Cancel loading
                 content.innerHTML =
                   '<div class="media-preview-error">Loading timeout<br>File may be too large or inaccessible</div>';
-                footer.textContent = "Loading timeout";
+                footer.textContent = 'Loading timeout';
               }
               loadingTimeoutId = null;
             }, imageLoadTimeout);
 
             img.src = mediaUrl;
           } else if (isVideoFile(mediaPath)) {
-            const video = document.createElement("video");
+            const video = document.createElement('video');
             currentMediaElement = video;
             video.muted = true;
             video.autoplay = true;
             video.loop = true;
             video.controls = false;
-            video.preload = "metadata";
+            video.preload = 'metadata';
 
             video.onloadedmetadata = function () {
               // Only update if this is still the active preview
@@ -2443,7 +2443,7 @@
                 clearTimeout(loadingTimeoutId);
                 loadingTimeoutId = null;
               }
-              content.innerHTML = "";
+              content.innerHTML = '';
               content.appendChild(video);
               const duration = Math.round(video.duration);
               footer.textContent = `Video • ${video.videoWidth}×${video.videoHeight} • ${duration}s`;
@@ -2458,11 +2458,11 @@
                 clearTimeout(loadingTimeoutId);
                 loadingTimeoutId = null;
               }
-              content.innerHTML = "";
+              content.innerHTML = '';
               content.appendChild(video);
               const duration = video.duration
                 ? Math.round(video.duration)
-                : "?";
+                : '?';
               footer.textContent = `Video • ${video.videoWidth}×${video.videoHeight} • ${duration}s`;
             };
 
@@ -2474,10 +2474,10 @@
                 loadingTimeoutId = null;
               }
               // Check if this was an intentional abort (src set to empty)
-              if (video.src === "" || !video.src) return;
+              if (video.src === '' || !video.src) return;
               content.innerHTML =
                 '<div class="media-preview-error">Failed to load video<br>Check if file exists and is accessible</div>';
-              footer.textContent = "Error loading media";
+              footer.textContent = 'Error loading media';
             };
 
             // Set a timeout for loading - very generous for large video files
@@ -2487,10 +2487,10 @@
               // readyState: 0=HAVE_NOTHING, 1=HAVE_METADATA, 2=HAVE_CURRENT_DATA, 3=HAVE_FUTURE_DATA, 4=HAVE_ENOUGH_DATA
               // Only timeout if we haven't even started loading metadata
               if (video.readyState < 1) {
-                video.src = ""; // Cancel loading
+                video.src = ''; // Cancel loading
                 content.innerHTML =
                   '<div class="media-preview-error">Loading timeout<br>File may be too large or inaccessible</div>';
-                footer.textContent = "Loading timeout";
+                footer.textContent = 'Loading timeout';
               }
               loadingTimeoutId = null;
             }, videoLoadTimeout);
@@ -2508,10 +2508,10 @@
           const fileName = parts[parts.length - 1];
           // Limit filename length for display
           return fileName.length > 50
-            ? fileName.substring(0, 47) + "..."
+            ? fileName.substring(0, 47) + '...'
             : fileName;
         } catch (e) {
-          return "Unknown File";
+          return 'Unknown File';
         }
       }
 
@@ -2528,21 +2528,21 @@
         currentPreviewId++;
 
         hideTimeout = setTimeout(() => {
-          const preview = document.getElementById("media-preview");
-          preview.classList.remove("show");
+          const preview = document.getElementById('media-preview');
+          preview.classList.remove('show');
           setTimeout(() => {
-            preview.style.display = "none";
+            preview.style.display = 'none';
             // Clean up any media elements to stop playback and free memory
-            const content = document.getElementById("preview-content");
-            const videos = content.querySelectorAll("video");
+            const content = document.getElementById('preview-content');
+            const videos = content.querySelectorAll('video');
             videos.forEach((video) => {
               video.pause();
-              video.src = "";
+              video.src = '';
               video.load(); // Reset video element
             });
-            const images = content.querySelectorAll("img");
+            const images = content.querySelectorAll('img');
             images.forEach((img) => {
-              img.src = ""; // Cancel any pending image loads
+              img.src = ''; // Cancel any pending image loads
             });
             // Clear the current media element reference
             currentMediaElement = null;
@@ -2552,29 +2552,29 @@
 
       // Add event listeners to preview element to prevent hiding when hovering over it
       document
-        .getElementById("media-preview")
-        .addEventListener("mouseenter", () => {
+        .getElementById('media-preview')
+        .addEventListener('mouseenter', () => {
           clearTimeout(hideTimeout);
           // Don't cancel the loading timeout here - let the media continue loading
         });
 
       document
-        .getElementById("media-preview")
-        .addEventListener("mouseleave", hideMediaPreview);
+        .getElementById('media-preview')
+        .addEventListener('mouseleave', hideMediaPreview);
 
       function formatBytes(bytes) {
-        if (bytes === 0) return "0 B";
+        if (bytes === 0) return '0 B';
         const k = 1024;
-        const sizes = ["B", "KB", "MB", "GB", "TB"];
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
       }
 
       function loadMoreItems() {
         if (isLoading || !hasMoreItems) return;
 
         isLoading = true;
-        document.getElementById("loading").style.display = "block";
+        document.getElementById('loading').style.display = 'block';
 
         const queryParams = new URLSearchParams({
           offset: currentOffset,
@@ -2582,20 +2582,20 @@
         });
 
         if (currentSearchQuery) {
-          queryParams.set("q", currentSearchQuery);
+          queryParams.set('q', currentSearchQuery);
         }
 
         fetch(`/media/api?${queryParams}`)
           .then((response) => response.json())
           .then((data) => {
-            const mediaList = document.getElementById("media-list");
+            const mediaList = document.getElementById('media-list');
 
             data.items.forEach((item) => {
-              const row = document.createElement("div");
-              row.className = "media-row";
+              const row = document.createElement('div');
+              row.className = 'media-row';
 
               // Build tags HTML
-              let tagsHtml = "-";
+              let tagsHtml = '-';
               if (item.tags && item.tags.length > 0) {
                 tagsHtml = item.tags
                   .map(
@@ -2604,7 +2604,7 @@
                         tag.category
                       )}</span>:${escapeHtml(tag.label)}</span>`
                   )
-                  .join("");
+                  .join('');
               }
 
               row.innerHTML = `
@@ -2615,28 +2615,26 @@
                 </div>
                 <div class="media-cell path" data-label="Path" data-media-path="${escapeHtml(
                   item.path
-                )}" onclick="openLocalPath(event, '${escapeAttr(
-                item.path
-              )}')" onmouseenter="showMediaPreview(event, this.dataset.mediaPath)" onmouseleave="hideMediaPreview()" style="cursor: pointer;">${escapeHtml(
+                )}" onclick="openLocalPath(event, this)" onmouseenter="showMediaPreview(event, this.dataset.mediaPath)" onmouseleave="hideMediaPreview()" style="cursor: pointer;">${escapeHtml(
                 item.path
               )}</div>
                 <div class="media-cell description" data-label="Description">${escapeHtml(
-                  item.description || "-"
+                  item.description || '-'
                 )}</div>
                 <div class="media-cell dimensions" data-label="Width">${
-                  item.width || "-"
+                  item.width || '-'
                 }</div>
                 <div class="media-cell dimensions" data-label="Height">${
-                  item.height || "-"
+                  item.height || '-'
                 }</div>
                 <div class="media-cell size" data-label="Size">${
-                  item.size ? formatBytes(item.size) : "Unknown"
+                  item.size ? formatBytes(item.size) : 'Unknown'
                 }</div>
                 <div class="media-cell exists" data-label="Exists">${
-                  item.exists ? "✅" : "❌"
+                  item.exists ? '✅' : '❌'
                 }</div>
                 <div class="media-cell hash" data-label="Hash">${escapeHtml(
-                  item.hash || "-"
+                  item.hash || '-'
                 )}</div>
                 <div class="media-cell tags" data-label="Tags">${tagsHtml}</div>
               `;
@@ -2650,63 +2648,64 @@
             hasMoreItems = data.has_more;
 
             if (!hasMoreItems) {
-              document.getElementById("end-of-list").style.display = "block";
+              document.getElementById('end-of-list').style.display = 'block';
             }
           })
           .catch((error) => {
-            console.error("Error loading more items:", error);
+            console.error('Error loading more items:', error);
           })
           .finally(() => {
             isLoading = false;
-            document.getElementById("loading").style.display = "none";
+            document.getElementById('loading').style.display = 'none';
           });
       }
 
       function escapeHtml(text) {
         if (text == null || text === undefined) {
-          return "";
+          return '';
         }
-        const div = document.createElement("div");
+        const div = document.createElement('div');
         div.textContent = String(text);
         return div.innerHTML;
       }
 
       // Open local path using OS default application
-      function openLocalPath(event, path) {
+      function openLocalPath(event, element) {
         event.preventDefault();
         event.stopPropagation();
+        const path = element.getAttribute('data-media-path');
         if (!path) return;
 
-        fetch("/open", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        fetch('/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: path }),
         })
           .then((response) => {
             if (!response.ok) {
-              console.error("Failed to open path:", path);
+              console.error('Failed to open path:', path);
             }
           })
-          .catch((err) => console.error("Error opening path:", err));
+          .catch((err) => console.error('Error opening path:', err));
       }
 
       // Escape for use in HTML attribute values (also escapes quotes)
       function escapeAttr(text) {
         if (text == null || text === undefined) {
-          return "";
+          return '';
         }
         return String(text)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
       }
 
       function performSearch(query) {
         const queryParams = new URLSearchParams();
         if (query) {
-          queryParams.set("q", query);
+          queryParams.set('q', query);
           // Save the query to localStorage for next visit
           localStorage.setItem(LAST_SEARCH_KEY, query);
         } else {
@@ -2720,19 +2719,19 @@
 
       // Search form handling
       document
-        .getElementById("search-form")
-        .addEventListener("submit", function (e) {
+        .getElementById('search-form')
+        .addEventListener('submit', function (e) {
           e.preventDefault();
-          const query = document.getElementById("search-input").value.trim();
+          const query = document.getElementById('search-input').value.trim();
           performSearch(query);
         });
 
       // Clear search button
       document
-        .getElementById("clear-search")
-        .addEventListener("click", function () {
-          document.getElementById("search-input").value = "";
-          performSearch("");
+        .getElementById('clear-search')
+        .addEventListener('click', function () {
+          document.getElementById('search-input').value = '';
+          performSearch('');
         });
 
       // Infinite scroll implementation
@@ -2750,7 +2749,7 @@
 
       // Throttled scroll event listener
       let scrollTimeout;
-      window.addEventListener("scroll", function () {
+      window.addEventListener('scroll', function () {
         if (scrollTimeout) {
           clearTimeout(scrollTimeout);
         }
@@ -2758,17 +2757,17 @@
       });
 
       // Load initial items if the page is not tall enough to scroll
-      document.addEventListener("DOMContentLoaded", function () {
+      document.addEventListener('DOMContentLoaded', function () {
         // View toggle buttons
-        const tableBtn = document.getElementById("view-table");
-        const gridBtn = document.getElementById("view-grid");
-        tableBtn.addEventListener("click", () => setViewMode("table"));
-        gridBtn.addEventListener("click", () => setViewMode("grid"));
+        const tableBtn = document.getElementById('view-table');
+        const gridBtn = document.getElementById('view-grid');
+        tableBtn.addEventListener('click', () => setViewMode('table'));
+        gridBtn.addEventListener('click', () => setViewMode('grid'));
         initViewMode();
 
         // Keep global apply-to-query checkboxes in sync and update count display
-        document.querySelectorAll(".apply-to-query").forEach((cb) => {
-          cb.addEventListener("change", function () {
+        document.querySelectorAll('.apply-to-query').forEach((cb) => {
+          cb.addEventListener('change', function () {
             setApplyToQueryEnabled(this.checked);
             updateBulkActionsCount();
           });
@@ -2785,8 +2784,8 @@
       });
 
       // EventSource for real-time updates (robust, lifecycle-aware)
-      document.addEventListener("DOMContentLoaded", function () {
-        const STREAM_URL = "/stream";
+      document.addEventListener('DOMContentLoaded', function () {
+        const STREAM_URL = '/stream';
 
         const sseState = {
           es: null,
@@ -2827,7 +2826,7 @@
           sseState.heartbeatTimer = setInterval(() => {
             const inactiveMs = Date.now() - sseState.lastActivityTs;
             if (inactiveMs > 45000) {
-              console.warn("Media SSE idle too long; recreating connection");
+              console.warn('Media SSE idle too long; recreating connection');
               recreateConnection();
             }
           }, 15000);
@@ -2844,7 +2843,7 @@
           if (sseState.isExplicitlyClosed) return;
           if (sseState.reconnectTimer) return;
           const delay = withJitter(sseState.backoffMs);
-          console.log(`Media SSE reconnect in ${delay}ms (${reason || ""})`);
+          console.log(`Media SSE reconnect in ${delay}ms (${reason || ''})`);
           sseState.reconnectTimer = setTimeout(() => {
             sseState.reconnectTimer = null;
             connect();
@@ -2878,17 +2877,17 @@
           if (sseState.es && sseState.es.readyState !== EventSource.CLOSED)
             return;
           if (!navigator.onLine) {
-            scheduleReconnect("offline");
+            scheduleReconnect('offline');
             return;
           }
-          if (document.visibilityState === "hidden") {
-            scheduleReconnect("hidden");
+          if (document.visibilityState === 'hidden') {
+            scheduleReconnect('hidden');
             return;
           }
 
           sseState.isConnecting = true;
           try {
-            console.log("Media SSE connecting...");
+            console.log('Media SSE connecting...');
             const es = new EventSource(STREAM_URL);
             sseState.es = es;
 
@@ -2898,7 +2897,7 @@
                 sseState.es &&
                 sseState.es.readyState === EventSource.CONNECTING
               ) {
-                console.warn("Media SSE stuck CONNECTING; recreating");
+                console.warn('Media SSE stuck CONNECTING; recreating');
                 recreateConnection();
               }
             }, 20000);
@@ -2908,22 +2907,22 @@
               clearConnectingTimer();
               onActivity();
               startHeartbeat();
-              console.log("Media SSE connected");
+              console.log('Media SSE connected');
             };
 
             es.onerror = (error) => {
-              console.warn("Media SSE error", error);
+              console.warn('Media SSE error', error);
               onActivity();
               if (!sseState.es) return;
               if (sseState.es.readyState === EventSource.CLOSED) {
                 cleanupES(false);
-                scheduleReconnect("closed");
+                scheduleReconnect('closed');
               } else if (sseState.es.readyState === EventSource.CONNECTING) {
-                scheduleReconnect("connecting");
+                scheduleReconnect('connecting');
               }
             };
 
-            es.addEventListener("update", (event) => {
+            es.addEventListener('update', (event) => {
               onActivity();
               const jobUpdate = JSON.parse(event.data);
               const job = jobUpdate.job;
@@ -2939,9 +2938,9 @@
               }
             });
           } catch (e) {
-            console.error("Media SSE connect threw", e);
+            console.error('Media SSE connect threw', e);
             sseState.isConnecting = false;
-            scheduleReconnect("exception");
+            scheduleReconnect('exception');
           }
         }
 
@@ -2949,23 +2948,23 @@
           if (sseState.lifecycleSetup) return;
           sseState.lifecycleSetup = true;
 
-          window.addEventListener("online", () => {
+          window.addEventListener('online', () => {
             resetBackoff();
             connect();
           });
-          window.addEventListener("offline", () => {
+          window.addEventListener('offline', () => {
             cleanupES(false);
           });
 
-          document.addEventListener("visibilitychange", () => {
-            if (document.visibilityState === "visible") {
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
               resetBackoff();
               connect();
             }
           });
 
           // Window focus: ensure we are connected or refresh stale connection
-          window.addEventListener("focus", () => {
+          window.addEventListener('focus', () => {
             resetBackoff();
             if (!sseState.es || sseState.es.readyState === EventSource.CLOSED) {
               connect();
@@ -2977,16 +2976,16 @@
             }
           });
 
-          window.addEventListener("pageshow", () => {
+          window.addEventListener('pageshow', () => {
             resetBackoff();
             connect();
           });
 
-          window.addEventListener("pagehide", () => {
+          window.addEventListener('pagehide', () => {
             cleanupES(false);
           });
 
-          window.addEventListener("beforeunload", () => {
+          window.addEventListener('beforeunload', () => {
             cleanupES(true);
           });
         }
@@ -3001,28 +3000,28 @@
       }
 
       function setViewMode(mode) {
-        currentViewMode = mode === "grid" ? "grid" : "table";
-        localStorage.setItem("mediaViewMode", currentViewMode);
-        const tableEl = document.getElementById("media-table");
-        const gridEl = document.getElementById("media-grid");
-        const tableBtn = document.getElementById("view-table");
-        const gridBtn = document.getElementById("view-grid");
-        if (currentViewMode === "grid") {
-          tableEl.style.display = "none";
-          gridEl.style.display = "grid";
-          tableBtn.classList.remove("active");
-          gridBtn.classList.add("active");
+        currentViewMode = mode === 'grid' ? 'grid' : 'table';
+        localStorage.setItem('mediaViewMode', currentViewMode);
+        const tableEl = document.getElementById('media-table');
+        const gridEl = document.getElementById('media-grid');
+        const tableBtn = document.getElementById('view-table');
+        const gridBtn = document.getElementById('view-grid');
+        if (currentViewMode === 'grid') {
+          tableEl.style.display = 'none';
+          gridEl.style.display = 'grid';
+          tableBtn.classList.remove('active');
+          gridBtn.classList.add('active');
           ensureGridInitialized();
         } else {
-          tableEl.style.display = "block";
-          gridEl.style.display = "none";
-          gridBtn.classList.remove("active");
-          tableBtn.classList.add("active");
+          tableEl.style.display = 'block';
+          gridEl.style.display = 'none';
+          gridBtn.classList.remove('active');
+          tableBtn.classList.add('active');
         }
       }
 
       function getApplyToQueryCheckboxes() {
-        return document.querySelectorAll(".apply-to-query");
+        return document.querySelectorAll('.apply-to-query');
       }
 
       function isApplyToQueryEnabled() {
@@ -3043,11 +3042,11 @@
 
         // Build initial grid items from current table rows
         const rows = document.querySelectorAll(
-          "#media-list .media-row .media-cell.path"
+          '#media-list .media-row .media-cell.path'
         );
         rows.forEach((cell) => {
           const path =
-            cell.getAttribute("data-media-path") || cell.textContent.trim();
+            cell.getAttribute('data-media-path') || cell.textContent.trim();
           appendGridItem(path);
         });
 
@@ -3061,11 +3060,11 @@
               }
             });
           },
-          { root: null, rootMargin: "100px", threshold: 0.01 }
+          { root: null, rootMargin: '100px', threshold: 0.01 }
         );
 
         // Observe all current items
-        document.querySelectorAll("#media-grid .grid-item").forEach((el) => {
+        document.querySelectorAll('#media-grid .grid-item').forEach((el) => {
           gridObserver.observe(el);
         });
 
@@ -3075,33 +3074,33 @@
 
       function appendGridItem(path) {
         if (!path) return;
-        const grid = document.getElementById("media-grid");
-        const item = document.createElement("div");
-        item.className = "grid-item";
-        item.setAttribute("data-path", path);
-        item.setAttribute("data-loaded", "0");
-        const selectWrap = document.createElement("div");
-        selectWrap.className = "grid-select";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.className = "media-checkbox";
+        const grid = document.getElementById('media-grid');
+        const item = document.createElement('div');
+        item.className = 'grid-item';
+        item.setAttribute('data-path', path);
+        item.setAttribute('data-loaded', '0');
+        const selectWrap = document.createElement('div');
+        selectWrap.className = 'grid-select';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'media-checkbox';
         cb.value = path;
-        cb.addEventListener("click", (e) => e.stopPropagation());
-        cb.addEventListener("change", (e) => {
+        cb.addEventListener('click', (e) => e.stopPropagation());
+        cb.addEventListener('change', (e) => {
           e.stopPropagation();
           updateSelection();
         });
         selectWrap.appendChild(cb);
         item.appendChild(selectWrap);
-        const badge = document.createElement("div");
-        badge.className = "grid-badge";
-        badge.textContent = isVideoFile(path) ? "Video" : "Image";
+        const badge = document.createElement('div');
+        badge.className = 'grid-badge';
+        badge.textContent = isVideoFile(path) ? 'Video' : 'Image';
         item.appendChild(badge);
-        item.addEventListener("click", () => openLightbox(path));
+        item.addEventListener('click', () => openLightbox(path));
         // If already selected, reflect state
         if (selectedItems.has(path)) {
           cb.checked = true;
-          item.classList.add("selected");
+          item.classList.add('selected');
         }
         grid.appendChild(item);
         if (gridObserver) {
@@ -3110,8 +3109,8 @@
       }
 
       function loadGridMedia(itemEl) {
-        if (!itemEl || itemEl.getAttribute("data-loaded") === "1") return;
-        const path = itemEl.getAttribute("data-path");
+        if (!itemEl || itemEl.getAttribute('data-loaded') === '1') return;
+        const path = itemEl.getAttribute('data-path');
         let url;
         try {
           url = getMediaUrl(path);
@@ -3120,29 +3119,29 @@
         }
         if (isImageFile(path)) {
           const img = new Image();
-          img.className = "grid-thumb";
-          img.loading = "lazy";
+          img.className = 'grid-thumb';
+          img.loading = 'lazy';
           img.src = url;
-          img.alt = "";
+          img.alt = '';
           itemEl.appendChild(img);
         } else if (isVideoFile(path)) {
-          const video = document.createElement("video");
-          video.className = "grid-thumb";
+          const video = document.createElement('video');
+          video.className = 'grid-thumb';
           video.muted = true;
           video.playsInline = true;
           video.autoplay = false;
           video.controls = false;
-          video.preload = "metadata";
+          video.preload = 'metadata';
           video.src = url;
           itemEl.appendChild(video);
         }
-        itemEl.setAttribute("data-loaded", "1");
+        itemEl.setAttribute('data-loaded', '1');
       }
 
       // Lightbox
-      const lightbox = document.getElementById("lightbox");
-      const lightboxContent = document.getElementById("lightbox-content");
-      const lightboxClose = document.getElementById("lightbox-close");
+      const lightbox = document.getElementById('lightbox');
+      const lightboxContent = document.getElementById('lightbox-content');
+      const lightboxClose = document.getElementById('lightbox-close');
 
       function openLightbox(path) {
         while (lightboxContent.firstChild)
@@ -3156,77 +3155,77 @@
         if (isImageFile(path)) {
           const img = new Image();
           img.src = url;
-          img.alt = "";
+          img.alt = '';
           lightboxContent.appendChild(img);
         } else if (isVideoFile(path)) {
-          const video = document.createElement("video");
+          const video = document.createElement('video');
           video.src = url;
           video.controls = true; // show controls in fullscreen
           video.muted = true; // keep muted by default
           video.autoplay = true;
           video.playsInline = true;
-          video.preload = "auto";
+          video.preload = 'auto';
           lightboxContent.appendChild(video);
         }
-        lightbox.classList.add("show");
-        lightbox.setAttribute("aria-hidden", "false");
+        lightbox.classList.add('show');
+        lightbox.setAttribute('aria-hidden', 'false');
       }
 
       function closeLightbox() {
-        const vids = lightboxContent.querySelectorAll("video");
+        const vids = lightboxContent.querySelectorAll('video');
         vids.forEach((v) => {
           v.pause();
-          v.src = "";
+          v.src = '';
           v.load();
         });
         while (lightboxContent.firstChild)
           lightboxContent.removeChild(lightboxContent.firstChild);
-        lightbox.classList.remove("show");
-        lightbox.setAttribute("aria-hidden", "true");
+        lightbox.classList.remove('show');
+        lightbox.setAttribute('aria-hidden', 'true');
       }
 
-      lightbox.addEventListener("click", (e) => {
+      lightbox.addEventListener('click', (e) => {
         if (e.target === lightbox) closeLightbox();
       });
-      lightboxClose.addEventListener("click", closeLightbox);
-      document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && lightbox.classList.contains("show"))
+      lightboxClose.addEventListener('click', closeLightbox);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && lightbox.classList.contains('show'))
           closeLightbox();
       });
 
       function handleJobCompletion(job) {
         const mediaAffectingCommands = [
-          "remove",
-          "metadata",
-          "ingest",
-          "cleanup",
-          "move",
-          "autotag",
+          'remove',
+          'metadata',
+          'ingest',
+          'cleanup',
+          'move',
+          'autotag',
         ]; // include autotag
 
         if (!mediaAffectingCommands.includes(job.command)) {
           return; // Job doesn't affect media
         }
 
-        console.log("Media-affecting job completed:", job);
+        console.log('Media-affecting job completed:', job);
 
         switch (job.command) {
-          case "remove":
+          case 'remove':
             handleRemoveJobCompletion(job);
             break;
-          case "metadata":
+          case 'metadata':
             handleMetadataJobCompletion(job);
             break;
-          case "ingest":
+          case 'ingest':
             handleIngestJobCompletion(job);
             break;
-          case "cleanup":
+          case 'cleanup':
             handleCleanupJobCompletion(job);
             break;
-          case "move":
+          case 'move':
             handleMoveJobCompletion(job);
             break;
-          case "autotag":
+          case 'autotag':
             // For autotag, refresh affected rows to show new tags
             handleMetadataJobCompletion(job);
             break;
@@ -3239,15 +3238,15 @@
         if (!input) return;
 
         const paths = input
-          .split("\n")
+          .split('\n')
           .map((path) => path.trim())
           .filter((path) => path);
 
         // Remove rows from the current view
         paths.forEach((path) => {
-          const rows = document.querySelectorAll(".media-row");
+          const rows = document.querySelectorAll('.media-row');
           rows.forEach((row) => {
-            const pathCell = row.querySelector(".media-cell.path");
+            const pathCell = row.querySelector('.media-cell.path');
             if (pathCell && pathCell.textContent.trim() === path) {
               row.remove();
               // Also remove from selected items if it was selected
@@ -3267,7 +3266,7 @@
 
         // Parse paths from input (newline separated)
         const paths = input
-          .split("\n")
+          .split('\n')
           .map((path) => path.trim())
           .filter((path) => path);
 
@@ -3281,7 +3280,7 @@
         if (!currentSearchQuery) {
           if (
             confirm(
-              "New media items have been ingested. Would you like to refresh the list?"
+              'New media items have been ingested. Would you like to refresh the list?'
             )
           ) {
             window.location.reload();
@@ -3293,7 +3292,7 @@
         // For cleanup jobs, some items might have been removed
         if (
           confirm(
-            "Database cleanup completed. Would you like to refresh the list to see changes?"
+            'Database cleanup completed. Would you like to refresh the list to see changes?'
           )
         ) {
           window.location.reload();
@@ -3307,15 +3306,15 @@
 
         // Parse paths from input (newline separated for move jobs)
         const originalPaths = input
-          .split("\n")
+          .split('\n')
           .map((path) => path.trim())
           .filter((path) => path);
 
         // Remove the original rows since the paths have changed
         originalPaths.forEach((path) => {
-          const rows = document.querySelectorAll(".media-row");
+          const rows = document.querySelectorAll('.media-row');
           rows.forEach((row) => {
-            const pathCell = row.querySelector(".media-cell.path");
+            const pathCell = row.querySelector('.media-cell.path');
             if (pathCell && pathCell.textContent.trim() === path) {
               row.remove();
               // Also remove from selected items if it was selected
@@ -3330,7 +3329,7 @@
         // Suggest refreshing to see the moved items at their new paths
         if (
           confirm(
-            "Files have been moved successfully. Would you like to refresh the list to see the updated paths?"
+            'Files have been moved successfully. Would you like to refresh the list to see the updated paths?'
           )
         ) {
           window.location.reload();
@@ -3341,9 +3340,9 @@
         // For each path, find the row and refresh it with updated data
         paths.forEach((path) => {
           // Find the row for this path
-          const rows = document.querySelectorAll(".media-row");
+          const rows = document.querySelectorAll('.media-row');
           const targetRow = Array.from(rows).find((row) => {
-            const pathCell = row.querySelector(".media-cell.path");
+            const pathCell = row.querySelector('.media-cell.path');
             return pathCell && pathCell.textContent.trim() === path;
           });
 
@@ -3366,37 +3365,37 @@
             }
           })
           .catch((error) => {
-            console.error("Error refreshing media row:", error);
+            console.error('Error refreshing media row:', error);
           });
       }
 
       function updateRowWithNewData(rowElement, item) {
         // Find and update specific cells
         const descriptionCell = rowElement.querySelector(
-          ".media-cell.description"
+          '.media-cell.description'
         );
         if (descriptionCell) {
-          descriptionCell.textContent = item.description || "-";
+          descriptionCell.textContent = item.description || '-';
         }
 
         const widthCells = rowElement.querySelectorAll(
-          ".media-cell.dimensions"
+          '.media-cell.dimensions'
         );
         if (widthCells.length >= 1) {
-          widthCells[0].textContent = item.width || "-";
+          widthCells[0].textContent = item.width || '-';
         }
         if (widthCells.length >= 2) {
-          widthCells[1].textContent = item.height || "-";
+          widthCells[1].textContent = item.height || '-';
         }
 
-        const hashCell = rowElement.querySelector(".media-cell.hash");
+        const hashCell = rowElement.querySelector('.media-cell.hash');
         if (hashCell) {
-          hashCell.textContent = item.hash || "-";
+          hashCell.textContent = item.hash || '-';
         }
 
-        const tagsCell = rowElement.querySelector(".media-cell.tags");
+        const tagsCell = rowElement.querySelector('.media-cell.tags');
         if (tagsCell) {
-          let tagsHtml = "-";
+          let tagsHtml = '-';
           if (item.tags && item.tags.length > 0) {
             tagsHtml = item.tags
               .map(
@@ -3405,15 +3404,15 @@
                     tag.category
                   )}</span>:${escapeHtml(tag.label)}</span>`
               )
-              .join("");
+              .join('');
           }
           tagsCell.innerHTML = tagsHtml;
         }
 
         // Add a subtle animation to indicate the row was updated
-        rowElement.style.backgroundColor = "#2a4a3a";
+        rowElement.style.backgroundColor = '#2a4a3a';
         setTimeout(() => {
-          rowElement.style.backgroundColor = "";
+          rowElement.style.backgroundColor = '';
         }, 2000);
       }
 
@@ -3421,51 +3420,51 @@
       // Toast Notification System
       // -----------------------------
       const ToastManager = (function () {
-        const container = document.getElementById("toast-container");
+        const container = document.getElementById('toast-container');
         const toasts = new Map(); // jobId -> toast element
 
         // Human-readable job names
         const JOB_NAMES = {
-          remove: "Remove from Database",
-          metadata: "Generate Metadata",
-          autotag: "Auto-Tag Media",
-          move: "Move Files",
-          ingest: "Import Media",
-          cleanup: "Clean Up Database",
-          "lora-dataset": "Create LoRA Dataset",
+          remove: 'Remove from Database',
+          metadata: 'Generate Metadata',
+          autotag: 'Auto-Tag Media',
+          move: 'Move Files',
+          ingest: 'Import Media',
+          cleanup: 'Clean Up Database',
+          'lora-dataset': 'Create LoRA Dataset',
         };
 
         // Status messages
         const STATUS_MESSAGES = {
-          pending: "Waiting to start...",
-          running: "Processing your request...",
-          success: "Completed successfully!",
-          error: "Something went wrong.",
+          pending: 'Waiting to start...',
+          running: 'Processing your request...',
+          success: 'Completed successfully!',
+          error: 'Something went wrong.',
         };
 
         function getJobName(command) {
-          return JOB_NAMES[command] || command || "Task";
+          return JOB_NAMES[command] || command || 'Task';
         }
 
         function getStatusIcon(status) {
           switch (status) {
-            case "pending":
-              return "⏳";
-            case "in_progress":
-              return "⚡";
-            case "success":
-              return "✓";
-            case "error":
-              return "✕";
+            case 'pending':
+              return '⏳';
+            case 'in_progress':
+              return '⚡';
+            case 'success':
+              return '✓';
+            case 'error':
+              return '✕';
             default:
-              return "•";
+              return '•';
           }
         }
 
         function formatTime(date) {
           return date.toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
+            hour: '2-digit',
+            minute: '2-digit',
           });
         }
 
@@ -3480,35 +3479,35 @@
           const count = getItemCount(job);
           const itemText = count
             ? count === 1
-              ? "1 item"
+              ? '1 item'
               : `${count} items`
             : null;
 
           switch (status) {
-            case "pending":
+            case 'pending':
               return itemText
                 ? `Queued ${itemText} for processing...`
-                : "Waiting in queue...";
-            case "in_progress":
+                : 'Waiting in queue...';
+            case 'in_progress':
               return itemText
                 ? `Processing ${itemText}...`
-                : "Working on it...";
-            case "success":
+                : 'Working on it...';
+            case 'success':
               return itemText
                 ? `Successfully processed ${itemText}!`
-                : "Task completed successfully!";
-            case "error":
-              return "The task encountered an error. Click to view details.";
+                : 'Task completed successfully!';
+            case 'error':
+              return 'The task encountered an error. Click to view details.';
             default:
-              return STATUS_MESSAGES[status] || "";
+              return STATUS_MESSAGES[status] || '';
           }
         }
 
-        function createToast(jobId, command, status = "pending") {
-          const job = { id: jobId, command, input: "" };
-          const toast = document.createElement("div");
-          toast.className = "toast";
-          toast.setAttribute("data-job-id", jobId);
+        function createToast(jobId, command, status = 'pending') {
+          const job = { id: jobId, command, input: '' };
+          const toast = document.createElement('div');
+          toast.className = 'toast';
+          toast.setAttribute('data-job-id', jobId);
 
           const name = getJobName(command);
           const icon = getStatusIcon(status);
@@ -3527,7 +3526,7 @@
               <div class="toast-message">${message}</div>
               <div class="toast-progress-container">
                 <div class="toast-progress-bar ${
-                  status === "in_progress" ? "indeterminate" : ""
+                  status === 'in_progress' ? 'indeterminate' : ''
                 }"></div>
               </div>
             </div>
@@ -3538,7 +3537,7 @@
           `;
 
           // Close button handler
-          toast.querySelector(".toast-close").addEventListener("click", (e) => {
+          toast.querySelector('.toast-close').addEventListener('click', (e) => {
             e.stopPropagation();
             removeToast(jobId);
           });
@@ -3551,7 +3550,7 @@
             return; // Already tracking this job
           }
 
-          const toast = createToast(jobId, command, "in_progress");
+          const toast = createToast(jobId, command, 'in_progress');
           container.appendChild(toast);
           toasts.set(jobId, { element: toast, command, startTime: Date.now() });
 
@@ -3568,7 +3567,7 @@
             // Create a toast for them anyway so user sees the status
             if (job.state === 1) {
               // InProgress
-              const toast = createToast(jobId, job.command, "in_progress");
+              const toast = createToast(jobId, job.command, 'in_progress');
               container.appendChild(toast);
               toasts.set(jobId, {
                 element: toast,
@@ -3580,60 +3579,60 @@
           }
 
           const { element } = toastData;
-          let status = "in_progress";
+          let status = 'in_progress';
 
           // Map job states: 0=Pending, 1=InProgress, 2=Completed, 3=Cancelled, 4=Error
           switch (job.state) {
             case 0:
-              status = "pending";
+              status = 'pending';
               break;
             case 1:
-              status = "in_progress";
+              status = 'in_progress';
               break;
             case 2:
-              status = "success";
+              status = 'success';
               break;
             case 3:
-              status = "pending"; // Cancelled - treat as pending for display
+              status = 'pending'; // Cancelled - treat as pending for display
               break;
             case 4:
-              status = "error";
+              status = 'error';
               break;
           }
 
           // Update icon
-          const iconEl = element.querySelector(".toast-status-icon");
+          const iconEl = element.querySelector('.toast-status-icon');
           if (iconEl) {
             iconEl.className = `toast-status-icon ${status}`;
             iconEl.textContent = getStatusIcon(status);
           }
 
           // Update message
-          const messageEl = element.querySelector(".toast-message");
+          const messageEl = element.querySelector('.toast-message');
           if (messageEl) {
             messageEl.textContent = getMessage(job, status);
           }
 
           // Update progress bar
-          const progressBar = element.querySelector(".toast-progress-bar");
+          const progressBar = element.querySelector('.toast-progress-bar');
           if (progressBar) {
-            progressBar.className = "toast-progress-bar";
-            if (status === "in_progress") {
-              progressBar.classList.add("indeterminate");
-            } else if (status === "success") {
-              progressBar.classList.add("complete");
-            } else if (status === "error") {
-              progressBar.classList.add("error");
+            progressBar.className = 'toast-progress-bar';
+            if (status === 'in_progress') {
+              progressBar.classList.add('indeterminate');
+            } else if (status === 'success') {
+              progressBar.classList.add('complete');
+            } else if (status === 'error') {
+              progressBar.classList.add('error');
             }
           }
 
           // Auto-dismiss successful toasts after 5 seconds
-          if (status === "success") {
+          if (status === 'success') {
             setTimeout(() => removeToast(jobId), 5000);
           }
 
           // Auto-dismiss error toasts after 10 seconds (give user time to click)
-          if (status === "error") {
+          if (status === 'error') {
             setTimeout(() => removeToast(jobId), 10000);
           }
         }
@@ -3643,7 +3642,7 @@
           if (!toastData) return;
 
           const { element } = toastData;
-          element.classList.add("exiting");
+          element.classList.add('exiting');
 
           setTimeout(() => {
             if (element.parentNode) {
@@ -3654,20 +3653,20 @@
         }
 
         // Simple notification (non-job related)
-        function notify(message, type = "info") {
-          const tempId = "notify-" + Date.now();
-          const toast = document.createElement("div");
-          toast.className = "toast";
-          toast.setAttribute("data-job-id", tempId);
+        function notify(message, type = 'info') {
+          const tempId = 'notify-' + Date.now();
+          const toast = document.createElement('div');
+          toast.className = 'toast';
+          toast.setAttribute('data-job-id', tempId);
 
-          let icon = "ℹ";
-          let status = "in_progress";
-          if (type === "success") {
-            icon = "✓";
-            status = "success";
-          } else if (type === "error") {
-            icon = "✕";
-            status = "error";
+          let icon = 'ℹ';
+          let status = 'in_progress';
+          if (type === 'success') {
+            icon = '✓';
+            status = 'success';
+          } else if (type === 'error') {
+            icon = '✕';
+            status = 'error';
           }
 
           toast.innerHTML = `
@@ -3683,8 +3682,8 @@
             </div>
           `;
 
-          toast.querySelector(".toast-close").addEventListener("click", () => {
-            toast.classList.add("exiting");
+          toast.querySelector('.toast-close').addEventListener('click', () => {
+            toast.classList.add('exiting');
             setTimeout(() => {
               if (toast.parentNode) toast.parentNode.removeChild(toast);
             }, 300);
@@ -3694,7 +3693,7 @@
 
           // Auto-dismiss after 5 seconds
           setTimeout(() => {
-            toast.classList.add("exiting");
+            toast.classList.add('exiting');
             setTimeout(() => {
               if (toast.parentNode) toast.parentNode.removeChild(toast);
             }, 300);
@@ -3711,20 +3710,20 @@
       })();
 
       // Backward-compatible showNotification
-      function showNotification(message, type = "info") {
+      function showNotification(message, type = 'info') {
         ToastManager.notify(message, type);
       }
 
       function htmlToNode(html) {
-        const template = document.createElement("template");
+        const template = document.createElement('template');
         template.innerHTML = html.trim();
         const nNodes = template.content.childNodes.length;
         if (nNodes !== 1) {
           throw new Error(
             `html parameter must represent a single node; got ${nNodes}. ` +
-              "Note that leading or trailing spaces around an element in your " +
+              'Note that leading or trailing spaces around an element in your ' +
               'HTML, like " <img/> ", get parsed as text nodes neighbouring ' +
-              "the element; call .trim() on your input to avoid this."
+              'the element; call .trim() on your input to avoid this.'
           );
         }
         return template.content.firstChild;
@@ -3734,11 +3733,11 @@
       // Typeahead search with recent searches
       // -----------------------------
       (function initTypeahead() {
-        const input = document.getElementById("search-input");
-        const dropdown = document.getElementById("typeahead-dropdown");
+        const input = document.getElementById('search-input');
+        const dropdown = document.getElementById('typeahead-dropdown');
         if (!input || !dropdown) return;
 
-        const RECENT_STORAGE_KEY = "shrike_recent_searches";
+        const RECENT_STORAGE_KEY = 'shrike_recent_searches';
         const MAX_RECENT_SEARCHES = 10;
 
         let items = [];
@@ -3792,9 +3791,9 @@
         }
 
         // Hook into search form submission to save searches
-        const searchForm = document.getElementById("search-form");
+        const searchForm = document.getElementById('search-form');
         if (searchForm) {
-          searchForm.addEventListener("submit", () => {
+          searchForm.addEventListener('submit', () => {
             const query = input.value.trim();
             if (query) {
               addRecentSearch(query);
@@ -3803,8 +3802,8 @@
         }
 
         function hideDropdown() {
-          dropdown.style.display = "none";
-          dropdown.innerHTML = "";
+          dropdown.style.display = 'none';
+          dropdown.innerHTML = '';
           items = [];
           activeIndex = -1;
         }
@@ -3820,18 +3819,18 @@
 
           // Build combined items array for keyboard navigation
           items = [];
-          let html = "";
+          let html = '';
 
           // Recent searches section
           if (hasRecent) {
             html += '<div class="typeahead-section">Recent Searches</div>';
             recentItems.forEach((it) => {
               const idx = items.length;
-              items.push({ text: it.text, kind: "recent", isRecent: true });
+              items.push({ text: it.text, kind: 'recent', isRecent: true });
               const cls =
                 idx === activeIndex
-                  ? "typeahead-item recent active"
-                  : "typeahead-item recent";
+                  ? 'typeahead-item recent active'
+                  : 'typeahead-item recent';
               html += `<div class="${cls}" data-index="${idx}">
                 <span><span class="recent-icon">↺</span>${escapeHtml(
                   it.text
@@ -3853,16 +3852,16 @@
               items.push({ text: it.text, kind: it.kind, hint: it.hint });
               const cls =
                 idx === activeIndex
-                  ? "typeahead-item active"
-                  : "typeahead-item";
+                  ? 'typeahead-item active'
+                  : 'typeahead-item';
               const hint = it.hint
                 ? `<span class="hint">${escapeHtml(it.hint)}</span>`
-                : "";
+                : '';
               // Pick icon based on kind
-              let icon = "→";
-              if (it.kind === "filter") icon = "⚙";
-              else if (it.kind === "value") icon = "◇";
-              else if (it.kind === "key") icon = ":";
+              let icon = '→';
+              if (it.kind === 'filter') icon = '⚙';
+              else if (it.kind === 'value') icon = '◇';
+              else if (it.kind === 'key') icon = ':';
               html += `<div class="${cls}" data-index="${idx}"><span><span class="suggest-icon">${icon}</span>${escapeHtml(
                 it.text
               )}</span>${hint}</div>`;
@@ -3875,19 +3874,19 @@
               '<div class="typeahead-clear-all" data-clear-all="true">Clear search history</div>';
           }
 
-          dropdown.style.display = "block";
+          dropdown.style.display = 'block';
           dropdown.innerHTML = html;
 
           // Event handling
-          Array.from(dropdown.querySelectorAll(".typeahead-item")).forEach(
+          Array.from(dropdown.querySelectorAll('.typeahead-item')).forEach(
             (el) => {
-              el.addEventListener("mousedown", (e) => {
+              el.addEventListener('mousedown', (e) => {
                 // Check if clicking the remove button (use closest for robustness)
-                const removeBtn = e.target.closest(".remove-btn");
+                const removeBtn = e.target.closest('.remove-btn');
                 if (removeBtn) {
                   e.preventDefault();
                   e.stopPropagation();
-                  const queryToRemove = removeBtn.getAttribute("data-remove");
+                  const queryToRemove = removeBtn.getAttribute('data-remove');
                   if (queryToRemove) {
                     removeRecentSearch(queryToRemove);
                     // Refresh the dropdown
@@ -3896,15 +3895,15 @@
                   return;
                 }
                 e.preventDefault();
-                const idx = Number(el.getAttribute("data-index"));
+                const idx = Number(el.getAttribute('data-index'));
                 if (!Number.isNaN(idx)) applySuggestion(items[idx]);
               });
             }
           );
 
-          const clearAllBtn = dropdown.querySelector(".typeahead-clear-all");
+          const clearAllBtn = dropdown.querySelector('.typeahead-clear-all');
           if (clearAllBtn) {
-            clearAllBtn.addEventListener("mousedown", (e) => {
+            clearAllBtn.addEventListener('mousedown', (e) => {
               e.preventDefault();
               clearAllRecentSearches();
               hideDropdown();
@@ -3916,7 +3915,7 @@
           const inputValue = input.value.trim();
           const recent = getRecentSearches();
 
-          if (inputValue === "") {
+          if (inputValue === '') {
             // Show only recent searches when input is empty
             if (recent.length === 0) {
               // No recent searches, show filter suggestions
@@ -3948,7 +3947,7 @@
           renderDropdown(
             recentItems,
             suggestionItems,
-            input.value.trim() === ""
+            input.value.trim() === ''
           );
         }
 
@@ -3961,7 +3960,7 @@
           for (let i = 0; i < caret; i++) {
             const c = value[i];
             if (c === '"') inQuotes = !inQuotes;
-            if (!inQuotes && c === " " && i + 1 <= caret) start = i + 1;
+            if (!inQuotes && c === ' ' && i + 1 <= caret) start = i + 1;
           }
           // find token end (exclusive)
           inQuotes = false;
@@ -3969,7 +3968,7 @@
           for (let i = start; i < value.length; i++) {
             const c = value[i];
             if (c === '"') inQuotes = !inQuotes;
-            if (!inQuotes && c === " ") {
+            if (!inQuotes && c === ' ') {
               end = i;
               break;
             }
@@ -3977,42 +3976,42 @@
           const token = value.slice(start, caret);
           const fullToken = value.slice(start, end);
           // Identify key/value
-          let negate = fullToken.startsWith("NOT ");
+          let negate = fullToken.startsWith('NOT ');
           const noNot = negate ? fullToken.slice(4) : fullToken;
-          let key = "";
-          let stage = "key"; // key | value | logic
+          let key = '';
+          let stage = 'key'; // key | value | logic
           if (token.length === 0) {
             const prev = value.slice(0, start);
-            stage = prev.trimEnd().endsWith(":") ? "value" : "key";
+            stage = prev.trimEnd().endsWith(':') ? 'value' : 'key';
           }
-          const colonIdxInToken = noNot.indexOf(":");
+          const colonIdxInToken = noNot.indexOf(':');
           if (colonIdxInToken >= 0) {
             key = noNot.slice(0, colonIdxInToken).trim().toLowerCase();
-            stage = "value";
+            stage = 'value';
           } else {
             key = noNot.trim().toLowerCase();
-            stage = "key";
+            stage = 'key';
           }
           // valuePrefix chars after key: and optional opening quote, and absolute start for replacement
-          let valuePrefix = "";
+          let valuePrefix = '';
           let valueStartAbs = end;
           let hasOpeningQuote = false;
           let hasClosingQuote = false;
-          if (stage === "value") {
+          if (stage === 'value') {
             // find colon absolute index between start..end outside quotes
             let q = false;
             let colonAbs = -1;
             for (let i = start; i < end; i++) {
               const c = value[i];
               if (c === '"') q = !q;
-              if (!q && c === ":") {
+              if (!q && c === ':') {
                 colonAbs = i;
                 break;
               }
             }
             if (colonAbs >= 0) {
               valueStartAbs = colonAbs + 1;
-              while (valueStartAbs < end && value[valueStartAbs] === " ")
+              while (valueStartAbs < end && value[valueStartAbs] === ' ')
                 valueStartAbs++;
               // Check for opening quote and include it in replacement range
               if (valueStartAbs < end && value[valueStartAbs] === '"') {
@@ -4047,12 +4046,12 @@
 
         function shouldQuoteValueForKey(key) {
           return (
-            key === "tag" ||
-            key === "category" ||
-            key === "path" ||
-            key === "pathdir" ||
-            key === "description" ||
-            key === "hash"
+            key === 'tag' ||
+            key === 'category' ||
+            key === 'path' ||
+            key === 'pathdir' ||
+            key === 'description' ||
+            key === 'hash'
           );
         }
 
@@ -4065,7 +4064,7 @@
           // Get matching recent searches
           const allRecent = getRecentSearches();
           let matchingRecent = [];
-          if (inputTrimmed !== "") {
+          if (inputTrimmed !== '') {
             const lowerInput = inputTrimmed.toLowerCase();
             matchingRecent = allRecent
               .filter(
@@ -4076,26 +4075,26 @@
           }
 
           // Stage: key suggestions
-          if (info.stage === "key") {
+          if (info.stage === 'key') {
             fetch(`/media/suggest?kind=filters`)
               .then((r) => r.json())
               .then((data) => {
                 if (reqId !== lastReqId) return;
-                const pref = info.key || "";
+                const pref = info.key || '';
                 const arr = (data.suggestions || []).filter((s) =>
                   s.startsWith(pref)
                 );
                 // Also suggest AND/OR if token empty
                 if (
-                  (info.token.trim() === "" && value.trim() !== "") ||
-                  info.token.toUpperCase() === "A" ||
-                  info.token.toUpperCase() === "O"
+                  (info.token.trim() === '' && value.trim() !== '') ||
+                  info.token.toUpperCase() === 'A' ||
+                  info.token.toUpperCase() === 'O'
                 ) {
-                  arr.unshift("AND", "OR");
+                  arr.unshift('AND', 'OR');
                 }
                 const suggestionItems = arr.map((s) => ({
                   text: s,
-                  kind: "key",
+                  kind: 'key',
                 }));
                 const recentItems = matchingRecent.map((s) => ({ text: s }));
                 activeIndex = -1;
@@ -4107,26 +4106,26 @@
 
           // Stage: value suggestions depending on key
           const k = info.key;
-          if (k === "exists") {
-            const vals = ["true", "false"];
+          if (k === 'exists') {
+            const vals = ['true', 'false'];
             const pref = info.valuePrefix.toLowerCase();
             const arr = vals.filter((v) => v.startsWith(pref));
             const suggestionItems = arr.map((s) => ({
               text: s,
-              kind: "value",
+              kind: 'value',
             }));
             const recentItems = matchingRecent.map((s) => ({ text: s }));
             activeIndex = -1;
             renderDropdown(recentItems, suggestionItems, false);
             return;
           }
-          if (k === "tags") {
-            const vals = ["none"];
+          if (k === 'tags') {
+            const vals = ['none'];
             const pref = info.valuePrefix.toLowerCase();
             const arr = vals.filter((v) => v.startsWith(pref));
             const suggestionItems = arr.map((s) => ({
               text: s,
-              kind: "value",
+              kind: 'value',
             }));
             const recentItems = matchingRecent.map((s) => ({ text: s }));
             activeIndex = -1;
@@ -4134,18 +4133,18 @@
             return;
           }
           if (
-            k === "size" ||
-            k === "width" ||
-            k === "height" ||
-            k === "tagcount"
+            k === 'size' ||
+            k === 'width' ||
+            k === 'height' ||
+            k === 'tagcount'
           ) {
-            const ops = [">=", "<=", ">", "<"];
+            const ops = ['>=', '<=', '>', '<'];
             const pref = info.valuePrefix;
             const arr = ops.filter((o) => o.startsWith(pref));
             const suggestionItems = arr.map((s) => ({
               text: s,
-              kind: "value",
-              hint: "operator",
+              kind: 'value',
+              hint: 'operator',
             }));
             const recentItems = matchingRecent.map((s) => ({ text: s }));
             activeIndex = -1;
@@ -4153,10 +4152,10 @@
             return;
           }
           let kind = null;
-          if (k === "tag") kind = "tag";
-          else if (k === "category") kind = "category";
-          else if (k === "path") kind = "path";
-          else if (k === "pathdir") kind = "pathdir";
+          if (k === 'tag') kind = 'tag';
+          else if (k === 'category') kind = 'category';
+          else if (k === 'path') kind = 'path';
+          else if (k === 'pathdir') kind = 'pathdir';
           if (!kind) {
             // No API suggestions, but might have matching recent
             if (matchingRecent.length > 0) {
@@ -4168,7 +4167,7 @@
             }
             return;
           }
-          const encPrefix = encodeURIComponent(info.valuePrefix || "");
+          const encPrefix = encodeURIComponent(info.valuePrefix || '');
           fetch(`/media/suggest?kind=${kind}&prefix=${encPrefix}`)
             .then((r) => r.json())
             .then((data) => {
@@ -4176,7 +4175,7 @@
               const arr = data.suggestions || [];
               const suggestionItems = arr.map((s) => ({
                 text: s,
-                kind: "value",
+                kind: 'value',
               }));
               const recentItems = matchingRecent.map((s) => ({ text: s }));
               activeIndex = -1;
@@ -4202,21 +4201,21 @@
           const value = input.value;
           let insertText = sug.text;
 
-          if (info.stage === "key") {
-            insertText = (info.negate ? "NOT " : "") + insertText + ":";
+          if (info.stage === 'key') {
+            insertText = (info.negate ? 'NOT ' : '') + insertText + ':';
             const before = value.slice(0, info.start);
             const after = value.slice(info.end);
             input.value = before + insertText + after;
             const newCaret = (before + insertText).length;
             input.setSelectionRange(newCaret, newCaret);
-          } else if (info.stage === "value") {
+          } else if (info.stage === 'value') {
             const needsQuote =
               shouldQuoteValueForKey(info.key) ||
               /\s/.test(insertText) ||
-              info.key === "tag" ||
-              info.key === "path" ||
-              info.key === "pathdir" ||
-              info.key === "category";
+              info.key === 'tag' ||
+              info.key === 'path' ||
+              info.key === 'pathdir' ||
+              info.key === 'category';
 
             // Determine where to start replacing
             // If there's an opening quote, preserve it by starting replacement after it
@@ -4228,7 +4227,7 @@
             // Build the replacement text
             if (needsQuote) {
               // Add opening quote only if there isn't one already
-              const openQuote = info.hasOpeningQuote ? "" : '"';
+              const openQuote = info.hasOpeningQuote ? '' : '"';
               // Always add closing quote (we'll handle existing closing quote in replaceEnd)
               insertText = openQuote + insertText + '"';
             }
@@ -4253,36 +4252,36 @@
           input.focus();
         }
 
-        input.addEventListener("keydown", (e) => {
-          if (dropdown.style.display === "block") {
-            if (e.key === "ArrowDown") {
+        input.addEventListener('keydown', (e) => {
+          if (dropdown.style.display === 'block') {
+            if (e.key === 'ArrowDown') {
               e.preventDefault();
               moveActive(1);
               return;
             }
-            if (e.key === "ArrowUp") {
+            if (e.key === 'ArrowUp') {
               e.preventDefault();
               moveActive(-1);
               return;
             }
-            if (e.key === "Enter" || e.key === "Tab") {
+            if (e.key === 'Enter' || e.key === 'Tab') {
               if (activeIndex >= 0 && items[activeIndex]) {
                 e.preventDefault();
                 applySuggestion(items[activeIndex]);
                 return;
               }
             }
-            if (e.key === "Escape") {
+            if (e.key === 'Escape') {
               hideDropdown();
               return;
             }
           }
         });
 
-        input.addEventListener("input", () => {
+        input.addEventListener('input', () => {
           clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
-            if (input.value.trim() === "") {
+            if (input.value.trim() === '') {
               showRecentSearches();
             } else {
               buildSuggestions();
@@ -4290,12 +4289,12 @@
           }, 150);
         });
 
-        input.addEventListener("focus", () => {
+        input.addEventListener('focus', () => {
           clearTimeout(debounceTimer);
           debounceTimer = setTimeout(showRecentSearches, 100);
         });
 
-        input.addEventListener("blur", () => {
+        input.addEventListener('blur', () => {
           setTimeout(() => hideDropdown(), 150);
         });
       })();
