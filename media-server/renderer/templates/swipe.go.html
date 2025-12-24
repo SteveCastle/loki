@@ -1118,14 +1118,13 @@
       // This changes on each page load but stays consistent during pagination
       // Uses crypto.getRandomValues for high-quality randomness
       const SESSION_SEED_KEY = 'swipe_session_seed';
-      let sessionSeed = sessionStorage.getItem(SESSION_SEED_KEY);
-      if (!sessionSeed) {
-        // Generate a cryptographically strong random seed
-        const randomArray = new Uint32Array(1);
-        crypto.getRandomValues(randomArray);
-        sessionSeed = randomArray[0].toString();
-        sessionStorage.setItem(SESSION_SEED_KEY, sessionSeed);
-      }
+      let sessionSeed;
+
+      // Always generate a new seed on page load for fresh randomization
+      const randomArray = new Uint32Array(1);
+      crypto.getRandomValues(randomArray);
+      sessionSeed = randomArray[0].toString();
+      sessionStorage.setItem(SESSION_SEED_KEY, sessionSeed);
 
       // DOM elements
       const container = document.getElementById('swipeContainer');
@@ -1262,59 +1261,61 @@
 
       // Initialize
       async function init() {
-        const savedPath = getSavedPosition();
+        // Do NOT restore saved position to ensure fresh start every time
+        // const savedPath = getSavedPosition();
 
         // Load first item immediately for fast initial render
-        await loadMore(1);
+        // We do this via a separate specific call that renders immediately
+        await loadInitial();
+      }
 
-        if (items.length > 0) {
-          // Hide empty state and show content
-          emptyState.style.display = 'none';
+      // Specialized function for initial load to render ASAP
+      async function loadInitial() {
+        if (isLoading) return;
+        isLoading = true;
 
-          // Try to restore to saved position
-          let restoredIndex = 0;
-          if (savedPath) {
-            // Look for the saved path in loaded items
-            let foundIndex = items.findIndex((item) => item.path === savedPath);
-
-            // If not found, keep loading until we find it or run out
-            while (foundIndex === -1 && hasMore && items.length < 200) {
-              await loadMore(20);
-              foundIndex = items.findIndex((item) => item.path === savedPath);
-            }
-
-            if (foundIndex !== -1) {
-              restoredIndex = foundIndex;
-              // Hide the hint since user is resuming
-              if (swipeHint) swipeHint.style.display = 'none';
-            }
+        try {
+          const params = new URLSearchParams({
+            offset: 0,
+            limit: 1, // Get just ONE item for maximum speed
+            seed: sessionSeed,
+          });
+          if (searchQuery) {
+            params.set('q', searchQuery);
           }
 
-          currentIndex = restoredIndex;
-          renderItems();
-          swipeActions.style.display = 'flex';
-          updateProgress();
-          updateLikeButton();
-          savePosition(); // Save initial position
+          const response = await fetch(`/swipe/api?${params}`);
+          const data = await response.json();
+          const newItems = data.items || [];
 
-          // Load next batch in background for smoother experience
-          // Increased batch size for better buffering
-          if (!savedPath && hasMore) {
-            loadMore(20, true);
+          if (newItems.length > 0) {
+            items = newItems;
+            hasMore = data.has_more;
+
+            // RENDER IMMEDIATELY
+            emptyState.style.display = 'none';
+            renderItems();
+            swipeActions.style.display = 'flex';
+            updateProgress();
+            updateLikeButton();
+
+            // Now start fetching the rest in the background
+            isLoading = false; // Reset flag to allow next load
+            loadMore(30, true); // Preload next batch
+          } else {
+            emptyState.style.display = 'flex';
+            swipeActions.style.display = 'none';
+            swipeHint.style.display = 'none';
+            isLoading = false;
           }
-
-          // Trigger intelligent preloading
-          checkAndPreload();
-        } else {
-          // Show empty state and hide content
-          emptyState.style.display = 'flex';
-          swipeActions.style.display = 'none';
-          swipeHint.style.display = 'none';
+        } catch (err) {
+          console.error('Failed to load initial item:', err);
+          isLoading = false;
         }
       }
 
       // Load more items from API
-      async function loadMore(limit = 15, preload = false) {
+      async function loadMore(limit = 30, preload = false) {
         // Use separate flag for preloading to allow background loading
         if (preload) {
           if (isPreloading || !hasMore) return;
@@ -1356,10 +1357,10 @@
 
         const itemsRemaining = items.length - currentIndex;
 
-        // Aggressive preloading: load when 3 items remain
+        // Aggressive preloading: load when 5 items remain (increased from 3)
         // Tighter trigger for smoother experience
-        if (itemsRemaining <= 3) {
-          loadMore(15, true);
+        if (itemsRemaining <= 5) {
+          loadMore(30, true);
         }
       }
 
@@ -1368,8 +1369,8 @@
         track.innerHTML = '';
         scrubberVisible = false;
 
-        // Render previous, current, and next items
-        [-1, 0, 1].forEach((offset) => {
+        // Render previous, current, next, and next-next items (for preloading)
+        [-1, 0, 1, 2].forEach((offset) => {
           const index = currentIndex + offset;
           if (index < 0 || index >= items.length) return;
 
@@ -1387,7 +1388,8 @@
           el.style.transform = `translateY(${translateY}%) scale(${scale}) translateZ(${translateZ}px)`;
           el.style.opacity = opacity;
           el.style.filter = `brightness(${brightness}) blur(${blur}px)`;
-          el.style.zIndex = offset === 0 ? 10 : offset < 0 ? 5 : 0;
+          // Ensure correct stacking order: Current (10) > Previous (5) > Next (4) > Next-Next (3)
+          el.style.zIndex = offset === 0 ? 10 : offset < 0 ? 5 : 5 - offset;
 
           track.appendChild(el);
 
@@ -1416,7 +1418,8 @@
           mediaEl.muted = true;
           mediaEl.loop = true;
           mediaEl.playsInline = true;
-          mediaEl.preload = offset === 0 ? 'auto' : 'metadata';
+          // Preload current AND next item for instant swipe
+          mediaEl.preload = offset <= 1 ? 'auto' : 'metadata';
 
           mediaEl.onloadeddata = () => {
             div.classList.remove('loading');
@@ -1459,9 +1462,9 @@
           mediaEl.className = `swipe-media ${
             fitMode === 'cover' ? 'cover' : ''
           }`;
-          mediaEl.loading = offset === 0 ? 'eager' : 'lazy';
-          // Prioritize first image load
-          if (offset === 0) {
+          mediaEl.loading = offset <= 1 ? 'eager' : 'lazy';
+          // Prioritize first and second image load
+          if (offset <= 1) {
             mediaEl.fetchPriority = 'high';
           }
 
@@ -2401,9 +2404,13 @@
           currentIndex = 0;
           hasMore = true;
           // Generate new session seed for the new filter
-          sessionSeed = Date.now().toString();
+          const randomArray = new Uint32Array(1);
+          crypto.getRandomValues(randomArray);
+          sessionSeed = randomArray[0].toString();
           sessionStorage.setItem(SESSION_SEED_KEY, sessionSeed);
-          init();
+
+          // Use loadInitial to render fast
+          loadInitial();
         }
         if (shouldClose) {
           filterModal.classList.remove('show');

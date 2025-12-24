@@ -219,10 +219,10 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 	// Order by a hash of the path with session seed to get pseudo-random but consistent ordering
 	// Uses SQLite's built-in functions for a deterministic shuffle
 	// The seed changes per page load but remains consistent during pagination within a session
-	// Improved algorithm: uses two primes for better mixing and distribution
-	// 2654435761 is a large prime, 1640531527 is the golden ratio as a 32-bit integer
-	// Combines addition and multiplication for better bit distribution than simple addition alone
-	orderBy := fmt.Sprintf(` ORDER BY (((m.rowid + %d) * 2654435761 + %d * 1640531527) %% 2147483647)`, seed, seed)
+	// Simplified randomization: purely random every request
+	// This means items may repeat and the order is not stable across pagination pages
+	// but provides the most "shuffle-like" experience
+	orderBy := ` ORDER BY RANDOM()`
 
 	var whereClause string
 	var args []interface{}
@@ -341,16 +341,15 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string, whereArgs []interface{}, orderBy string, offset, limit int, filter Node) ([]MediaItem, bool, error) {
 	const batchSize = 100
 	var allMatchingItems []MediaItem
-	var dbOffset = 0
 
-	for len(allMatchingItems) < offset+limit {
-		limitClause := ` LIMIT ? OFFSET ?`
+	for len(allMatchingItems) < limit {
+		limitClause := ` LIMIT ?`
 		var query string
 		var args []interface{}
 
 		// whereClause should always be non-empty here since GetRandomItems adds the has-tags filter
 		query = baseQuery + " " + whereClause + orderBy + limitClause
-		args = append(whereArgs, batchSize, dbOffset)
+		args = append(whereArgs, batchSize)
 
 		rows, err := db.Query(query, args...)
 		if err != nil {
@@ -410,22 +409,22 @@ func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string
 			}
 		}
 
-		dbOffset += batchSize
+		// For random mode, we don't offset the DB query, but we might want to ensure we don't just return the same items
+		// if the batch loop runs multiple times (though RANDOM() helps).
+		// dbOffset += batchSize // Removed for pure random mode
 
 		if len(batchItems) < batchSize {
 			break
 		}
 	}
 
+	// For random mode, we don't really care about offsets into the result set, we just want 'limit' items.
+	// We'll take the first 'limit' items from what we found.
 	totalMatching := len(allMatchingItems)
-	hasMore := totalMatching > offset+limit
+	hasMore := totalMatching >= limit // Simplified hasMore logic for random mode
 
-	startIdx := offset
-	if startIdx > totalMatching {
-		startIdx = totalMatching
-	}
-
-	endIdx := startIdx + limit
+	startIdx := 0
+	endIdx := limit
 	if endIdx > totalMatching {
 		endIdx = totalMatching
 	}
@@ -473,15 +472,33 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, b
 		return getItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
 	}
 
-	// Standard pagination when no exists conditions
-	limitClause := ` LIMIT ? OFFSET ?`
+	// Simplified random pagination:
+	// Since order is random every time, we can't use standard OFFSET efficiently for stability.
+	// However, the user requested "random every time, don't care about order stability".
+	// So standard LIMIT/OFFSET with RANDOM() works, but getting deep into pages might show duplicates
+	// from previous pages if the seed changed (which it does every request now effectively).
+	// To support infinite scroll where we just want *more random items*, we can ignore OFFSET
+	// in the SQL sense if we want pure random sampling, but to respect the API contract
+	// we'll keep using LIMIT and OFFSET but just know it's unstable.
+	limitClause := ` LIMIT ?`
 	var query string
 
-	// Construct full query
+	// Construct full query - NO OFFSET for pure random sampling to avoid performance hit of large offsets
+	// and because offset doesn't mean much with random order every request.
+	// But wait, if we don't use offset, we get the SAME random items if the seed was fixed?
+	// No, ORDER BY RANDOM() re-evaluates.
+	// Actually, if we want "next batch", and we use ORDER BY RANDOM(), using OFFSET is slow and meaningless
+	// because the set changes.
+	// Better approach for "infinite random feed": Just get LIMIT items. The client appends them.
+	// We might see duplicates. That's acceptable per instructions.
 	query = baseQuery + " " + whereClause + orderBy + limitClause
-	args = append(args, limit+1, offset)
+	args = append(args, limit+1)
 
-	rows, err := db.Query(query, args...) // Query one extra to check if there are more
+	// Note: We ignored 'offset' parameter in the SQL query intentionally for pure random feed behavior
+	// This ensures every fetch returns a fresh set of random items regardless of "page number"
+	// The +1 is to check for hasMore, though in random mode hasMore is effectively "always true" if count > 0
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, false, err
 	}
