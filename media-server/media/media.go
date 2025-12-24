@@ -1847,6 +1847,19 @@ func InitializeSchema(db *sql.DB) error {
 		return fmt.Errorf("failed to create media table: %w", err)
 	}
 
+	// Create users table
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			created_at INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
 	log.Println("Database schema initialized successfully")
 	return nil
 }
