@@ -1999,6 +1999,7 @@ func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 			Value:    token,
 			Path:     "/",
 			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
 			Expires:  time.Now().Add(24 * time.Hour),
 		})
 
@@ -2014,6 +2015,7 @@ func logoutHandler(deps *Dependencies) http.HandlerFunc {
 			Value:    "",
 			Path:     "/",
 			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
 			Expires:  time.Unix(0, 0),
 			MaxAge:   -1,
 		})
