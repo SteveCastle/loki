@@ -272,15 +272,15 @@
       // Escape HTML special characters
       function escapeHtml(text) {
         return text
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
       }
 
       // Linkify URLs and local paths in terminal output
       function linkifyText(text) {
-        if (!text) return "";
+        if (!text) return '';
 
         // Combined pattern to match URLs and Windows paths in a single pass
         // This prevents double-matching and maintains proper order
@@ -290,7 +290,7 @@
           /(https?:\/\/[^\s<>"']+)|([A-Za-z]:\\[\w\s.\-\\()\[\]{}@#$%&!~`'+]+)/g;
 
         let lastIndex = 0;
-        let result = "";
+        let result = '';
         let match;
 
         while ((match = combinedPattern.exec(text)) !== null) {
@@ -328,28 +328,28 @@
       // Open local path using OS default application
       function openLocalPath(event, element) {
         event.preventDefault();
-        const path = element.getAttribute("data-path");
+        const path = element.getAttribute('data-path');
         if (!path) return;
 
-        fetch("/open", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+        fetch('/open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path: path }),
         })
           .then((response) => {
             if (!response.ok) {
-              console.error("Failed to open path:", path);
+              console.error('Failed to open path:', path);
             }
           })
-          .catch((err) => console.error("Error opening path:", err));
+          .catch((err) => console.error('Error opening path:', err));
       }
 
       // Apply linkification to all existing terminal lines on load
       function linkifyExistingLines() {
         document
-          .querySelectorAll(".terminal-line[data-raw]")
+          .querySelectorAll('.terminal-line[data-raw]')
           .forEach((line) => {
-            const rawText = line.getAttribute("data-raw");
+            const rawText = line.getAttribute('data-raw');
             if (rawText) {
               line.innerHTML = linkifyText(rawText);
             }
@@ -358,13 +358,13 @@
     </script>
 
     <script>
-      document.addEventListener("DOMContentLoaded", function () {
+      document.addEventListener('DOMContentLoaded', function () {
         // Linkify existing terminal content
         linkifyExistingLines();
 
-        const STREAM_URL = "/stream";
-        const EVENT_STDOUT = "stdout-{{.Job.ID}}";
-        const EVENT_UPDATE = "update";
+        const STREAM_URL = '/stream';
+        const EVENT_STDOUT = 'stdout-{{.Job.ID}}';
+        const EVENT_UPDATE = 'update';
 
         const sseState = {
           es: null,
@@ -405,7 +405,7 @@
           sseState.heartbeatTimer = setInterval(() => {
             const inactiveMs = Date.now() - sseState.lastActivityTs;
             if (inactiveMs > 45000) {
-              console.warn("SSE idle too long; recreating connection");
+              console.warn('SSE idle too long; recreating connection');
               recreateConnection();
             }
           }, 15000);
@@ -422,7 +422,7 @@
           if (sseState.isExplicitlyClosed) return;
           if (sseState.reconnectTimer) return;
           const delay = withJitter(sseState.backoffMs);
-          console.log(`SSE reconnect in ${delay}ms (${reason || ""})`);
+          console.log(`SSE reconnect in ${delay}ms (${reason || ''})`);
           sseState.reconnectTimer = setTimeout(() => {
             sseState.reconnectTimer = null;
             connect();
@@ -456,17 +456,17 @@
           if (sseState.es && sseState.es.readyState !== EventSource.CLOSED)
             return;
           if (!navigator.onLine) {
-            scheduleReconnect("offline");
+            scheduleReconnect('offline');
             return;
           }
-          if (document.visibilityState === "hidden") {
-            scheduleReconnect("hidden");
+          if (document.visibilityState === 'hidden') {
+            scheduleReconnect('hidden');
             return;
           }
 
           sseState.isConnecting = true;
           try {
-            console.log("SSE connecting...");
+            console.log('SSE connecting...');
             const es = new EventSource(STREAM_URL);
             sseState.es = es;
 
@@ -476,7 +476,7 @@
                 sseState.es &&
                 sseState.es.readyState === EventSource.CONNECTING
               ) {
-                console.warn("SSE stuck CONNECTING; recreating");
+                console.warn('SSE stuck CONNECTING; recreating');
                 recreateConnection();
               }
             }, 20000);
@@ -486,18 +486,18 @@
               clearConnectingTimer();
               onActivity();
               startHeartbeat();
-              console.log("SSE connected");
+              console.log('SSE connected');
             };
 
             es.onerror = (error) => {
-              console.warn("SSE error", error);
+              console.warn('SSE error', error);
               onActivity();
               if (!sseState.es) return;
               if (sseState.es.readyState === EventSource.CLOSED) {
                 cleanupES(false);
-                scheduleReconnect("closed");
+                scheduleReconnect('closed');
               } else if (sseState.es.readyState === EventSource.CONNECTING) {
-                scheduleReconnect("connecting");
+                scheduleReconnect('connecting');
               }
             };
 
@@ -505,10 +505,10 @@
               onActivity();
               var data = JSON.parse(e.data);
               if (data.line) {
-                var container = document.querySelector(".terminal-content");
+                var container = document.querySelector('.terminal-content');
                 if (!container) return;
-                var newLine = document.createElement("div");
-                newLine.className = "terminal-line";
+                var newLine = document.createElement('div');
+                newLine.className = 'terminal-line';
                 newLine.innerHTML = linkifyText(data.line);
                 container.appendChild(newLine);
                 if (container.parentElement) {
@@ -521,27 +521,27 @@
             es.addEventListener(EVENT_UPDATE, function (e) {
               onActivity();
               var data = JSON.parse(e.data);
-              if (data.job && String(data.job.id) === "{{.Job.ID}}") {
+              if (data.job && String(data.job.id) === '{{.Job.ID}}') {
                 const stateString = jobStateToString(data.job.state);
                 const stateClass = jobStateToClass(data.job.state);
 
-                var stateEl = document.getElementById("state");
+                var stateEl = document.getElementById('state');
                 if (stateEl) stateEl.innerText = stateString;
 
-                const statusIcon = document.querySelector(".job-status");
-                const statusText = document.getElementById("state");
+                const statusIcon = document.querySelector('.job-status');
+                const statusText = document.getElementById('state');
 
                 const stateClasses = [
-                  "pending",
-                  "Pending",
-                  "in-progress",
-                  "InProgress",
-                  "completed",
-                  "Completed",
-                  "cancelled",
-                  "Cancelled",
-                  "error",
-                  "Error",
+                  'pending',
+                  'Pending',
+                  'in-progress',
+                  'InProgress',
+                  'completed',
+                  'Completed',
+                  'cancelled',
+                  'Cancelled',
+                  'error',
+                  'Error',
                 ];
                 if (statusIcon && statusText) {
                   stateClasses.forEach((cls) => {
@@ -553,29 +553,29 @@
                 }
 
                 if (
-                  stateString === "Completed" ||
-                  stateString === "Cancelled" ||
-                  stateString === "Error"
+                  stateString === 'Completed' ||
+                  stateString === 'Cancelled' ||
+                  stateString === 'Error'
                 ) {
-                  var cancelBtn = document.getElementById("cancel");
-                  if (cancelBtn) cancelBtn.style.display = "none";
+                  var cancelBtn = document.getElementById('cancel');
+                  if (cancelBtn) cancelBtn.style.display = 'none';
                 }
 
                 if (data.job.completed_at) {
-                  var completedAt = document.getElementById("completedAt");
+                  var completedAt = document.getElementById('completedAt');
                   if (completedAt)
                     completedAt.innerText = data.job.completed_at;
                 }
                 if (data.job.errored_at) {
-                  var erroredAt = document.getElementById("erroredAt");
+                  var erroredAt = document.getElementById('erroredAt');
                   if (erroredAt) erroredAt.innerText = data.job.errored_at;
                 }
               }
             });
           } catch (e) {
-            console.error("SSE connect threw", e);
+            console.error('SSE connect threw', e);
             sseState.isConnecting = false;
-            scheduleReconnect("exception");
+            scheduleReconnect('exception');
           }
         }
 
@@ -583,22 +583,22 @@
           if (sseState.lifecycleSetup) return;
           sseState.lifecycleSetup = true;
 
-          window.addEventListener("online", () => {
+          window.addEventListener('online', () => {
             resetBackoff();
             connect();
           });
-          window.addEventListener("offline", () => {
+          window.addEventListener('offline', () => {
             cleanupES(false);
           });
 
-          document.addEventListener("visibilitychange", () => {
-            if (document.visibilityState === "visible") {
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
               resetBackoff();
               connect();
             }
           });
 
-          window.addEventListener("focus", () => {
+          window.addEventListener('focus', () => {
             resetBackoff();
             if (!sseState.es || sseState.es.readyState === EventSource.CLOSED) {
               connect();
@@ -610,16 +610,16 @@
             }
           });
 
-          window.addEventListener("pageshow", (e) => {
+          window.addEventListener('pageshow', (e) => {
             resetBackoff();
             connect();
           });
 
-          window.addEventListener("pagehide", () => {
+          window.addEventListener('pagehide', () => {
             cleanupES(false);
           });
 
-          window.addEventListener("beforeunload", () => {
+          window.addEventListener('beforeunload', () => {
             cleanupES(true);
           });
         }
@@ -630,38 +630,43 @@
 
       function cancelJob(e) {
         e.preventDefault();
-        const id = e.target.getAttribute("data-id");
+        const id = e.target.getAttribute('data-id');
         fetch(`/job/${id}/cancel`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
         })
           .then((response) => response.text())
           .then((result) => {
-            console.log("Server responded:", result);
+            console.log('Server responded:', result);
           })
-          .catch((err) => console.error("Error:", err));
+          .catch((err) => console.error('Error:', err));
       }
 
       function jobStateToString(state) {
         // Handle both numeric and string states
         switch (state) {
           case 0:
-          case "pending":
-            return "Pending";
+          case 'pending':
+          case 'Pending':
+            return 'Pending';
           case 1:
-          case "inprogress":
-            return "InProgress";
+          case 'in_progress':
+          case 'InProgress':
+            return 'InProgress';
           case 2:
-          case "completed":
-            return "Completed";
+          case 'completed':
+          case 'Completed':
+            return 'Completed';
           case 3:
-          case "cancelled":
-            return "Cancelled";
+          case 'cancelled':
+          case 'Cancelled':
+            return 'Cancelled';
           case 4:
-          case "error":
-            return "Error";
+          case 'error':
+          case 'Error':
+            return 'Error';
           default:
-            return "Unknown";
+            return 'Unknown';
         }
       }
 
@@ -669,22 +674,27 @@
         // Handle both numeric and string states
         switch (state) {
           case 0:
-          case "pending":
-            return "Pending";
+          case 'pending':
+          case 'Pending':
+            return 'Pending';
           case 1:
-          case "inprogress":
-            return "InProgress";
+          case 'in_progress':
+          case 'InProgress':
+            return 'InProgress';
           case 2:
-          case "completed":
-            return "Completed";
+          case 'completed':
+          case 'Completed':
+            return 'Completed';
           case 3:
-          case "cancelled":
-            return "Cancelled";
+          case 'cancelled':
+          case 'Cancelled':
+            return 'Cancelled';
           case 4:
-          case "error":
-            return "Error";
+          case 'error':
+          case 'Error':
+            return 'Error';
           default:
-            return "Pending";
+            return 'Pending';
         }
       }
     </script>
