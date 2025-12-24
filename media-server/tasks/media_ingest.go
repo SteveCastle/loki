@@ -51,7 +51,7 @@ func queueFollowUpTasks(q *jobqueue.Queue, jobID string, files []string, opts In
 	for _, filePath := range files {
 		// Queue transcript metadata task
 		if opts.Transcript {
-			_, err := q.AddJob("metadata", []string{"-t", "transcript", "-a", "all"}, filePath, nil)
+			_, err := q.AddJob("", "metadata", []string{"-t", "transcript", "-a", "all"}, filePath, nil)
 			if err != nil {
 				q.PushJobStdout(jobID, "Warning: failed to queue transcript task for "+filePath+": "+err.Error())
 			} else {
@@ -61,7 +61,7 @@ func queueFollowUpTasks(q *jobqueue.Queue, jobID string, files []string, opts In
 
 		// Queue description metadata task
 		if opts.Description {
-			_, err := q.AddJob("metadata", []string{"-t", "description", "-a", "all"}, filePath, nil)
+			_, err := q.AddJob("", "metadata", []string{"-t", "description", "-a", "all"}, filePath, nil)
 			if err != nil {
 				q.PushJobStdout(jobID, "Warning: failed to queue description task for "+filePath+": "+err.Error())
 			} else {
@@ -71,7 +71,7 @@ func queueFollowUpTasks(q *jobqueue.Queue, jobID string, files []string, opts In
 
 		// Queue file metadata (hash, dimensions) task
 		if opts.FileMeta {
-			_, err := q.AddJob("metadata", []string{"-t", "hash,dimensions", "-a", "all"}, filePath, nil)
+			_, err := q.AddJob("", "metadata", []string{"-t", "hash,dimensions", "-a", "all"}, filePath, nil)
 			if err != nil {
 				q.PushJobStdout(jobID, "Warning: failed to queue file metadata task for "+filePath+": "+err.Error())
 			} else {
@@ -81,7 +81,7 @@ func queueFollowUpTasks(q *jobqueue.Queue, jobID string, files []string, opts In
 
 		// Queue ONNX autotag task
 		if opts.AutoTag {
-			_, err := q.AddJob("autotag", nil, filePath, nil)
+			_, err := q.AddJob("", "autotag", nil, filePath, nil)
 			if err != nil {
 				q.PushJobStdout(jobID, "Warning: failed to queue autotag task for "+filePath+": "+err.Error())
 			} else {

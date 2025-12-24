@@ -99,18 +99,19 @@ func (s *JobState) UnmarshalJSON(data []byte) error {
 
 // Job represents an individual task in the queue.
 type Job struct {
-	ID           string             `json:"id"` // Unique identifier for the job
-	Command      string             `json:"command"`
-	Arguments    []string           `json:"arguments"`
-	Input        string             `json:"input"`
-	Host         string             `json:"host"`
-	Stdout       []string           `json:"-"`
-	StdoutRaw    io.Reader          `json:"-"` // Raw stdout stream
-	StdIn        io.Reader          `json:"-"`
-	Dependencies []string           `json:"dependencies"` // IDs of jobs that must complete before this one
-	State        JobState           `json:"state"`
-	Ctx          context.Context    `json:"-"`
-	Cancel       context.CancelFunc `json:"-"`
+	ID            string             `json:"id"` // Unique identifier for the job
+	Command       string             `json:"command"`
+	Arguments     []string           `json:"arguments"`
+	Input         string             `json:"input"`
+	OriginalInput string             `json:"original_input"`
+	Host          string             `json:"host"`
+	Stdout        []string           `json:"-"`
+	StdoutRaw     io.Reader          `json:"-"` // Raw stdout stream
+	StdIn         io.Reader          `json:"-"`
+	Dependencies  []string           `json:"dependencies"` // IDs of jobs that must complete before this one
+	State         JobState           `json:"state"`
+	Ctx           context.Context    `json:"-"`
+	Cancel        context.CancelFunc `json:"-"`
 
 	// Timestamps for various states
 	CreatedAt   time.Time `json:"created_at"`
@@ -119,11 +120,16 @@ type Job struct {
 	ErroredAt   time.Time `json:"errored_at"`
 }
 
+type WorkflowTask struct {
+	ID           string   `json:"id"` // Internal ID for linking dependencies
+	Command      string   `json:"command"`
+	Arguments    []string `json:"arguments"`
+	Input        string   `json:"input"`
+	Dependencies []string `json:"dependencies"` // IDs of other tasks in this workflow
+}
+
 type Workflow struct {
-	Command   string `json:"command"`
-	Arguments []string
-	Input     string     `json:"input"`
-	Children  []Workflow `json:"children"`
+	Tasks []WorkflowTask `json:"tasks"`
 }
 
 // Queue is a thread-safe structure that manages Jobs with dependencies.
@@ -178,6 +184,7 @@ func (q *Queue) createJobsTable() error {
 		command TEXT NOT NULL,
 		arguments TEXT, -- JSON array
 		input TEXT,
+		original_input TEXT,
 		host TEXT,
 		stdout TEXT, -- JSON array
 		dependencies TEXT, -- JSON array
@@ -196,6 +203,7 @@ func (q *Queue) createJobsTable() error {
 
 	// Try to add host column if it doesn't exist (migration)
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN host TEXT")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN original_input TEXT")
 
 	return nil
 }
@@ -222,15 +230,16 @@ func (q *Queue) saveJobToDB(job *Job) error {
 
 	query := `
 	INSERT OR REPLACE INTO jobs (
-		id, command, arguments, input, host, stdout, dependencies, state,
+		id, command, arguments, input, original_input, host, stdout, dependencies, state,
 		created_at, claimed_at, completed_at, errored_at, job_order_position
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := q.Db.Exec(query,
 		job.ID,
 		job.Command,
 		string(argumentsJSON),
 		job.Input,
+		job.OriginalInput,
 		job.Host,
 		string(stdoutJSON),
 		string(dependenciesJSON),
@@ -252,7 +261,7 @@ func (q *Queue) loadJobsFromDB() error {
 	}
 
 	query := `
-	SELECT id, command, arguments, input, COALESCE(host, ''), stdout, dependencies, state,
+	SELECT id, command, arguments, input, COALESCE(original_input, ''), COALESCE(host, ''), stdout, dependencies, state,
 		   created_at, claimed_at, completed_at, errored_at, job_order_position
 	FROM jobs
 	ORDER BY job_order_position`
@@ -276,6 +285,7 @@ func (q *Queue) loadJobsFromDB() error {
 			&job.Command,
 			&argumentsJSON,
 			&job.Input,
+			&job.OriginalInput,
 			&job.Host,
 			&stdoutJSON,
 			&dependenciesJSON,
@@ -313,11 +323,6 @@ func (q *Queue) loadJobsFromDB() error {
 			job.State = StatePending
 			job.ClaimedAt = time.Time{} // Reset claimed time
 			resumedJobs = append(resumedJobs, job.ID)
-		} else if job.State == StateInProgress {
-			// This branch is unreachable due to above logic resetting it,
-			// but if we were to keep it running, we'd update RunningCounts here.
-			// Since we reset to Pending, we don't increment RunningCounts yet.
-			// They will be picked up by ClaimJob.
 		}
 
 		// Recreate context and cancel function
@@ -373,11 +378,13 @@ func (q *Queue) SaveAllJobsToDB() error {
 }
 
 // AddJob adds a new job to the queue with the given dependencies.
-// It generates a UUID for the job and returns it.
-func (q *Queue) AddJob(command string, arguments []string, input string, dependencies []string) (string, error) {
+// It generates a UUID for the job if not provided and returns it.
+func (q *Queue) AddJob(id string, command string, arguments []string, input string, dependencies []string) (string, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	id := uuid.NewString()
+	if id == "" {
+		id = uuid.NewString()
+	}
 	if _, exists := q.Jobs[id]; exists {
 		// Extremely unlikely to happen due to UUID uniqueness,
 		// but we check for completeness.
@@ -386,16 +393,17 @@ func (q *Queue) AddJob(command string, arguments []string, input string, depende
 
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &Job{
-		ID:           id,
-		Input:        input,
-		Command:      command,
-		Arguments:    arguments,
-		Dependencies: dependencies,
-		State:        StatePending,
-		Ctx:          ctx,
-		Cancel:       cancel,
-		CreatedAt:    time.Now(),
-		Host:         getHost(command, input),
+		ID:            id,
+		Input:         input,
+		OriginalInput: input,
+		Command:       command,
+		Arguments:     arguments,
+		Dependencies:  dependencies,
+		State:         StatePending,
+		Ctx:           ctx,
+		Cancel:        cancel,
+		CreatedAt:     time.Now(),
+		Host:          getHost(command, input),
 	}
 	q.Jobs[id] = job
 	q.JobOrder = append(q.JobOrder, id)
@@ -415,21 +423,28 @@ func (q *Queue) AddJob(command string, arguments []string, input string, depende
 	return id, nil
 }
 
-// Recurses through the workflow and adds each job from the bottom up, adding dependencies as it goes.
-// Dpes not acquire lock, so must be called from a function that does.
-func (q *Queue) AddWorkflow(w Workflow) (string, error) {
-	// Add all the children and accumulate thier ids for the dependencies
+// Adds each job from the workflow.
+// Does not acquire lock, so must be called from a function that does.
+func (q *Queue) AddWorkflow(w Workflow) ([]string, error) {
+	var jobIDs []string
 
-	dependencies := []string{}
+	for _, task := range w.Tasks {
+		// Ensure dependencies exist (basic check, could be improved)
+		// Since we process a list, we assume the client sends a valid DAG or at least valid IDs.
+		// If IDs are not provided by client, they should be generated there or here.
+		// However, for DAG dependencies to work, IDs must be known.
+		// So we assume the client provides IDs for tasks that are dependencies.
+		// Or we could generate them here if not provided, but linking them up requires knowing which is which.
+		// Let's assume the Workflow struct comes with pre-linked IDs if there are deps.
+		// If ID is empty, AddJob will generate one, but then nothing can depend on it unless we return it.
 
-	for _, child := range w.Children {
-		id, err := q.AddWorkflow(child)
+		id, err := q.AddJob(task.ID, task.Command, task.Arguments, task.Input, task.Dependencies)
 		if err != nil {
-			return "", err
+			return jobIDs, err
 		}
-		dependencies = append(dependencies, id)
+		jobIDs = append(jobIDs, id)
 	}
-	return q.AddJob(w.Command, w.Arguments, w.Input, dependencies)
+	return jobIDs, nil
 }
 
 func (q *Queue) CopyJob(id string) (string, error) {
@@ -457,6 +472,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	newJob.ErroredAt = time.Time{}
 	newJob.Cancel = cancel
 	newJob.Ctx = ctx
+	newJob.OriginalInput = job.OriginalInput
 	// Host is copied from original job
 
 	q.Jobs[newID] = &newJob
@@ -496,6 +512,21 @@ func (q *Queue) ClaimJob() (*Job, error) {
 			job.State = StateInProgress
 			job.ClaimedAt = time.Now()
 			q.RunningCounts[job.Host]++
+
+			// Construct effective input from OriginalInput and parent outputs
+			var inputBuilder strings.Builder
+			inputBuilder.WriteString(job.OriginalInput)
+			for _, depID := range job.Dependencies {
+				if depJob, ok := q.Jobs[depID]; ok {
+					for _, line := range depJob.Stdout {
+						if inputBuilder.Len() > 0 {
+							inputBuilder.WriteString("\n")
+						}
+						inputBuilder.WriteString(line)
+					}
+				}
+			}
+			job.Input = inputBuilder.String()
 
 			// Save to database
 			if err := q.saveJobToDB(job); err != nil {

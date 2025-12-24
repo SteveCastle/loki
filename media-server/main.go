@@ -315,14 +315,22 @@ func homeHandler(deps *Dependencies) http.HandlerFunc {
 				return
 			}
 			workflow := jobqueue.Workflow{
-				Command:   c.Command,
-				Arguments: c.Arguments[:len(c.Arguments)-1],
-				Input:     c.Arguments[len(c.Arguments)-1],
+				Tasks: []jobqueue.WorkflowTask{
+					{
+						Command:   c.Command,
+						Arguments: c.Arguments[:len(c.Arguments)-1],
+						Input:     c.Arguments[len(c.Arguments)-1],
+					},
+				},
 			}
-			id, err := deps.Queue.AddWorkflow(workflow)
+			ids, err := deps.Queue.AddWorkflow(workflow)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
+			}
+			id := ""
+			if len(ids) > 0 {
+				id = ids[0]
 			}
 
 			// Send successful response for legacy POST
@@ -413,9 +421,13 @@ func createJobHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		id, err := deps.Queue.AddWorkflow(jobqueue.Workflow{
-			Command:   cmd,
-			Arguments: args,
-			Input:     input,
+			Tasks: []jobqueue.WorkflowTask{
+				{
+					Command:   cmd,
+					Arguments: args,
+					Input:     input,
+				},
+			},
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -424,7 +436,11 @@ func createJobHandler(deps *Dependencies) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+		jobID := ""
+		if len(id) > 0 {
+			jobID = id[0]
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": jobID})
 	}
 }
 
@@ -999,6 +1015,51 @@ func tasksHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func editorHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := renderer.Templates().ExecuteTemplate(w, "editor", nil); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+type WorkflowRequest struct {
+	Tasks []jobqueue.WorkflowTask `json:"tasks"`
+}
+
+func workflowHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req WorkflowRequest
+		if err := readJSONBody(r, &req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+
+		workflow := jobqueue.Workflow{
+			Tasks: req.Tasks,
+		}
+
+		ids, err := deps.Queue.AddWorkflow(workflow)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"ids": ids})
+	}
+}
+
 // -----------------------------------------------------------------------------
 // Ollama models handler – lists available models via `ollama ls`
 // -----------------------------------------------------------------------------
@@ -1379,6 +1440,7 @@ func downloadDependencyHandler(dependencies *Dependencies) http.HandlerFunc {
 
 		// Create download job
 		jobID, err := dependencies.Queue.AddJob(
+			"",
 			"download-dependency",
 			[]string{},
 			req.DependencyID,
@@ -1918,6 +1980,8 @@ func main() {
 	mux.HandleFunc("/setup/skip", renderer.ApplyMiddlewares(skipSetupHandler()))
 	mux.HandleFunc("/setup/status", renderer.ApplyMiddlewares(checkSetupStatusHandler()))
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler()))
+	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps)))
+	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps)))
 
 	// Serve embedded static files
 	mux.Handle("/static/",

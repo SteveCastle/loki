@@ -45,13 +45,13 @@ func TestHostAssignment(t *testing.T) {
 	q := setupTestQueue(t)
 	defer q.Db.Close()
 
-	id1, _ := q.AddJob("ingest", nil, "http://test.com/1", nil)
+	id1, _ := q.AddJob("", "ingest", nil, "http://test.com/1", nil)
 	job1 := q.GetJob(id1)
 	if job1.Host != "test.com" {
 		t.Errorf("Job host = %q; want %q", job1.Host, "test.com")
 	}
 
-	id2, _ := q.AddJob("other", nil, "http://test.com/1", nil)
+	id2, _ := q.AddJob("", "other", nil, "http://test.com/1", nil)
 	job2 := q.GetJob(id2)
 	if job2.Host != "localhost" {
 		t.Errorf("Job host = %q; want %q", job2.Host, "localhost")
@@ -65,11 +65,11 @@ func TestConcurrencyLimits(t *testing.T) {
 	// Default limit is 1 for all hosts including localhost
 
 	// Add 2 jobs for Host A
-	idA1, _ := q.AddJob("ingest", nil, "http://host-a.com/1", nil)
-	idA2, _ := q.AddJob("ingest", nil, "http://host-a.com/2", nil)
+	idA1, _ := q.AddJob("", "ingest", nil, "http://host-a.com/1", nil)
+	idA2, _ := q.AddJob("", "ingest", nil, "http://host-a.com/2", nil)
 
 	// Add 1 job for Host B
-	idB1, _ := q.AddJob("ingest", nil, "http://host-b.com/1", nil)
+	idB1, _ := q.AddJob("", "ingest", nil, "http://host-b.com/1", nil)
 
 	// Claim first job (Host A)
 	job, err := q.ClaimJob()
@@ -126,8 +126,8 @@ func TestLocalhostConcurrency(t *testing.T) {
 
 	// Localhost limit is also 1 now
 
-	idL1, _ := q.AddJob("metadata", nil, "/path/1", nil)
-	idL2, _ := q.AddJob("metadata", nil, "/path/2", nil)
+	idL1, _ := q.AddJob("", "metadata", nil, "/path/1", nil)
+	idL2, _ := q.AddJob("", "metadata", nil, "/path/2", nil)
 
 	// Claim L1
 	job, _ := q.ClaimJob()
@@ -155,8 +155,8 @@ func TestErrorReleasesLock(t *testing.T) {
 	q := setupTestQueue(t)
 	defer q.Db.Close()
 
-	id1, _ := q.AddJob("ingest", nil, "http://host.com/1", nil)
-	id2, _ := q.AddJob("ingest", nil, "http://host.com/2", nil)
+	id1, _ := q.AddJob("", "ingest", nil, "http://host.com/1", nil)
+	id2, _ := q.AddJob("", "ingest", nil, "http://host.com/2", nil)
 
 	job, _ := q.ClaimJob() // Claim 1
 	if job.ID != id1 {
@@ -177,8 +177,8 @@ func TestCancelReleasesLock(t *testing.T) {
 	q := setupTestQueue(t)
 	defer q.Db.Close()
 
-	id1, _ := q.AddJob("ingest", nil, "http://host.com/1", nil)
-	id2, _ := q.AddJob("ingest", nil, "http://host.com/2", nil)
+	id1, _ := q.AddJob("", "ingest", nil, "http://host.com/1", nil)
+	id2, _ := q.AddJob("", "ingest", nil, "http://host.com/2", nil)
 
 	job, _ := q.ClaimJob() // Claim 1
 	if job.ID != id1 {
@@ -199,8 +199,8 @@ func TestRemoveReleasesLock(t *testing.T) {
 	q := setupTestQueue(t)
 	defer q.Db.Close()
 
-	id1, _ := q.AddJob("ingest", nil, "http://host.com/1", nil)
-	id2, _ := q.AddJob("ingest", nil, "http://host.com/2", nil)
+	id1, _ := q.AddJob("", "ingest", nil, "http://host.com/1", nil)
+	id2, _ := q.AddJob("", "ingest", nil, "http://host.com/2", nil)
 
 	job, _ := q.ClaimJob() // Claim 1
 	if job.ID != id1 {
@@ -216,4 +216,3 @@ func TestRemoveReleasesLock(t *testing.T) {
 		t.Errorf("Expected 2, got %v", job)
 	}
 }
-
