@@ -77,8 +77,24 @@ func CORS(next http.Handler) http.HandlerFunc {
 	}
 }
 
-func ApplyMiddlewares(handler http.HandlerFunc) http.HandlerFunc {
-	return Logger(CORS(handler))
+// AuthRole defines the required access level for a route.
+type AuthRole int
+
+const (
+	RolePublic AuthRole = iota
+	RoleAdmin
+)
+
+// AuthMiddleware is a function that takes a handler and a required role, returning a protected handler.
+// This is set from main.go to avoid circular dependencies.
+var AuthMiddleware func(http.Handler, AuthRole) http.Handler
+
+func ApplyMiddlewares(handler http.HandlerFunc, role AuthRole) http.HandlerFunc {
+	var h http.Handler = handler
+	if role != RolePublic && AuthMiddleware != nil {
+		h = AuthMiddleware(h, role)
+	}
+	return Logger(CORS(h))
 }
 
 func enableCors(w *http.ResponseWriter) {

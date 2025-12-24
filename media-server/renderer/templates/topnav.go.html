@@ -18,39 +18,65 @@
   <a href="/config" class="nav-link">
     <span>Config</span>
   </a>
-  <a href="/dependencies" class="nav-link">
-    <span>Dependencies</span>
-  </a>
-  <div style="margin-left: auto; display: flex; align-items: center; gap: 12px; padding-right: 12px;">
-    <span id="nav-username" style="font-size: 13px; color: var(--text-muted); font-weight: 500;"></span>
-    <button id="nav-logout" style="display: none; background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary); padding: 4px 10px; border-radius: var(--radius-md); cursor: pointer; font-size: 12px; transition: all 0.2s;">Logout</button>
+  <div
+    class="nav-user-section"
+    style="
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-right: 12px;
+    "
+  >
+    <span
+      id="nav-username"
+      style="font-size: 13px; color: var(--text-muted); font-weight: 500"
+    ></span>
+    <button
+      id="nav-logout"
+      style="
+        display: none;
+        background: transparent;
+        border: 1px solid var(--border-default);
+        color: var(--text-secondary);
+        padding: 4px 10px;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-size: 12px;
+        transition: all 0.2s;
+      "
+    >
+      Logout
+    </button>
   </div>
 </nav>
 <script>
   (function () {
     var path = window.location.pathname;
-    var links = document.querySelectorAll(".nav .nav-link");
+    var links = document.querySelectorAll('.nav .nav-link');
     links.forEach(function (link) {
-      var href = link.getAttribute("href");
-      if (href === "/" && path === "/") {
-        link.classList.add("active");
-      } else if (href !== "/" && path.startsWith(href)) {
-        link.classList.add("active");
+      var href = link.getAttribute('href');
+      if (href === '/' && path === '/') {
+        link.classList.add('active');
+      } else if (href !== '/' && path.startsWith(href)) {
+        link.classList.add('active');
       }
     });
 
     // Auth status
     fetch('/auth/status')
-      .then(r => r.json())
-      .then(data => {
+      .then((r) => r.json())
+      .then((data) => {
         if (data.loggedIn) {
           document.getElementById('nav-username').textContent = data.username;
           const logoutBtn = document.getElementById('nav-logout');
           logoutBtn.style.display = 'block';
           logoutBtn.onclick = () => {
-            fetch('/auth/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+            fetch('/auth/logout', { method: 'POST' }).then(
+              () => (window.location.href = '/login')
+            );
           };
-          
+
           // Hover effect for logout button
           logoutBtn.onmouseover = () => {
             logoutBtn.style.borderColor = 'var(--status-error)';

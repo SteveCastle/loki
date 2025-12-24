@@ -204,6 +204,222 @@
         color: var(--status-error);
       }
 
+      .tabs {
+        display: flex;
+        gap: var(--space-2);
+        border-bottom: 1px solid var(--border-subtle);
+        margin-bottom: var(--space-5);
+        padding-bottom: 0;
+      }
+
+      .tab-button {
+        padding: var(--space-3) var(--space-4);
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+        color: var(--text-muted);
+        font-size: var(--text-base);
+        font-weight: 500;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        margin-bottom: -1px;
+      }
+
+      .tab-button:hover {
+        color: var(--text-primary);
+      }
+
+      .tab-button.active {
+        color: var(--accent-primary);
+        border-bottom-color: var(--accent-primary);
+      }
+
+      .tab-content {
+        display: none;
+      }
+
+      .tab-content.active {
+        display: block;
+      }
+
+      .config-file-link {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        text-decoration: none;
+        margin-bottom: var(--space-4);
+        padding: var(--space-2) var(--space-3);
+        border-radius: var(--radius-md);
+        transition: all var(--transition-fast);
+      }
+
+      .config-file-link:hover {
+        color: var(--accent-primary);
+        background: var(--bg-surface);
+      }
+
+      .config-file-link::before {
+        content: '📄';
+        font-size: 1em;
+      }
+
+      .dependencies-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+        gap: var(--space-5);
+      }
+
+      .dependency-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-xl);
+        padding: var(--space-5);
+        border-left: 3px solid var(--accent-cyan);
+        transition: all 0.2s ease;
+      }
+
+      .dependency-card:hover {
+        border-color: var(--accent-cyan);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+
+      .dep-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: var(--space-3);
+      }
+
+      .dep-name {
+        font-size: var(--text-lg);
+        font-weight: 600;
+        color: var(--text-primary);
+        margin: 0;
+      }
+
+      .status-badge {
+        padding: var(--space-1) var(--space-3);
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .status-installed {
+        background: rgba(34, 197, 94, 0.15);
+        color: rgb(34, 197, 94);
+      }
+
+      .status-not_installed {
+        background: rgba(239, 68, 68, 0.15);
+        color: rgb(239, 68, 68);
+      }
+
+      .status-outdated {
+        background: rgba(234, 179, 8, 0.15);
+        color: rgb(234, 179, 8);
+      }
+
+      .status-downloading {
+        background: rgba(59, 130, 246, 0.15);
+        color: rgb(59, 130, 246);
+      }
+
+      .dep-description {
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+        margin-bottom: var(--space-4);
+        line-height: 1.6;
+      }
+
+      .dep-info {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        margin-bottom: var(--space-4);
+        padding: var(--space-3);
+        background: var(--bg-surface);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .info-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: var(--text-sm);
+      }
+
+      .info-label {
+        color: var(--text-muted);
+        font-weight: 500;
+      }
+
+      .info-value {
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        font-size: var(--text-xs);
+      }
+
+      .dep-actions {
+        display: flex;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+      }
+
+      .btn-success {
+        background: rgba(34, 197, 94, 0.15);
+        color: rgb(34, 197, 94);
+        cursor: not-allowed;
+      }
+
+      .btn-tertiary {
+        background: var(--bg-surface);
+        color: var(--text-primary);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .btn-tertiary:hover:not(:disabled) {
+        background: var(--bg-card);
+        border-color: var(--accent-cyan);
+      }
+
+      .download-progress {
+        display: none;
+        margin-bottom: var(--space-4);
+        padding: var(--space-3);
+        background: var(--bg-surface);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .status-message {
+        padding: var(--space-3);
+        border-radius: var(--radius-md);
+        margin-bottom: var(--space-4);
+        display: none;
+      }
+
+      .status-message.show {
+        display: block;
+      }
+
+      .status-message.success {
+        background: rgba(34, 197, 94, 0.15);
+        color: rgb(34, 197, 94);
+        border: 1px solid rgba(34, 197, 94, 0.3);
+      }
+
+      .status-message.error {
+        background: rgba(239, 68, 68, 0.15);
+        color: rgb(239, 68, 68);
+        border: 1px solid rgba(239, 68, 68, 0.3);
+      }
+
       @media screen and (max-width: 800px) {
         .field-row {
           flex-direction: column;
@@ -214,6 +430,10 @@
           flex: 1 1 auto;
           min-width: 120px;
         }
+
+        .dependencies-grid {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
@@ -222,206 +442,256 @@
       {{ template "topnav" . }}
 
       <div class="config-wrapper">
-        <div class="config-card" style="margin-bottom: var(--space-4)">
-          <div class="label">Config file path</div>
-          <div class="value">{{.ConfigPath}}</div>
+        <a href="#" class="config-file-link" id="config-file-link">
+          Config file: {{.ConfigPath}}
+        </a>
+
+        <div class="tabs">
+          <button class="tab-button active" data-tab="configuration">
+            Configuration
+          </button>
+          <button class="tab-button" data-tab="dependencies">
+            Dependencies
+          </button>
         </div>
 
-        <div class="config-sections">
-          <div class="config-card config-card--blue">
-            <div class="section-title">⚙️ General</div>
-            <div class="fields">
-              <div class="field">
-                <label class="label">Database path</label>
-                <input
-                  id="db-path"
-                  class="input"
-                  type="text"
-                  value="{{.Config.DBPath}}"
-                />
-                <div class="field-inline">
-                  <span class="hint">Active:</span>
-                  <code
-                    class="value"
-                    id="active-db-path"
-                    style="padding: var(--space-1) var(--space-2)"
-                    >{{.ActiveDBPath}}</code
+        <div id="tab-configuration" class="tab-content active">
+          <div class="config-sections">
+            <div class="config-card config-card--blue">
+              <div class="section-title">⚙️ General</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Database path</label>
+                  <input
+                    id="db-path"
+                    class="input"
+                    type="text"
+                    value="{{.Config.DBPath}}"
+                  />
+                  <div class="field-inline">
+                    <span class="hint">Active:</span>
+                    <code
+                      class="value"
+                      id="active-db-path"
+                      style="padding: var(--space-1) var(--space-2)"
+                      >{{.ActiveDBPath}}</code
+                    >
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="label">Download path</label>
+                  <input
+                    id="download-path"
+                    class="input"
+                    type="text"
+                    value="{{.Config.DownloadPath}}"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="config-card config-card--purple">
+              <div class="section-title">💬 Discord</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">User Token</label>
+                  <input
+                    id="discord-token"
+                    class="input"
+                    type="password"
+                    value="{{.Config.DiscordToken}}"
+                    placeholder="Enter your Discord user token"
+                  />
+                  <div
+                    class="hint"
+                    style="
+                      font-size: 0.8em;
+                      color: var(--text-muted);
+                      margin-top: 5px;
+                    "
+                  >
+                    Required for exporting media from Discord channels using
+                    dce.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-card config-card--purple">
+              <div class="section-title">🧠 Ollama</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Base URL</label>
+                  <input
+                    id="ollama-base-url"
+                    class="input"
+                    type="text"
+                    value="{{.Config.OllamaBaseURL}}"
+                  />
+                </div>
+                <div class="field">
+                  <label class="label">Model</label>
+                  <select id="ollama-model" class="input">
+                    <option value="{{.Config.OllamaModel}}">
+                      {{.Config.OllamaModel}}
+                    </option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label class="label">Describe prompt</label>
+                  <textarea id="describe-prompt" class="input" rows="4">
+{{.Config.DescribePrompt}}</textarea
+                  >
+                </div>
+                <div class="field">
+                  <label class="label">Autotag prompt</label>
+                  <textarea id="autotag-prompt" class="input" rows="6">
+{{.Config.AutotagPrompt}}</textarea
                   >
                 </div>
               </div>
-              <div class="field">
-                <label class="label">Download path</label>
-                <input
-                  id="download-path"
-                  class="input"
-                  type="text"
-                  value="{{.Config.DownloadPath}}"
-                />
-              </div>
             </div>
-          </div>
 
-          <div class="config-card config-card--purple">
-            <div class="section-title">💬 Discord</div>
-            <div class="fields">
-              <div class="field">
-                <label class="label">User Token</label>
-                <input
-                  id="discord-token"
-                  class="input"
-                  type="password"
-                  value="{{.Config.DiscordToken}}"
-                  placeholder="Enter your Discord user token"
-                />
-                <div
-                  class="hint"
-                  style="
-                    font-size: 0.8em;
-                    color: var(--text-muted);
-                    margin-top: 5px;
-                  "
-                >
-                  Required for exporting media from Discord channels using dce.
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="config-card config-card--purple">
-            <div class="section-title">🧠 Ollama</div>
-            <div class="fields">
-              <div class="field">
-                <label class="label">Base URL</label>
-                <input
-                  id="ollama-base-url"
-                  class="input"
-                  type="text"
-                  value="{{.Config.OllamaBaseURL}}"
-                />
-              </div>
-              <div class="field">
-                <label class="label">Model</label>
-                <select id="ollama-model" class="input">
-                  <option value="{{.Config.OllamaModel}}">
-                    {{.Config.OllamaModel}}
-                  </option>
-                </select>
-              </div>
-              <div class="field">
-                <label class="label">Describe prompt</label>
-                <textarea id="describe-prompt" class="input" rows="4">
-{{.Config.DescribePrompt}}</textarea
-                >
-              </div>
-              <div class="field">
-                <label class="label">Autotag prompt</label>
-                <textarea id="autotag-prompt" class="input" rows="6">
-{{.Config.AutotagPrompt}}</textarea
-                >
-              </div>
-            </div>
-          </div>
-
-          <div class="config-card config-card--cyan">
-            <div class="section-title">🧩 ONNX Tagger</div>
-            <div class="fields">
-              <div class="field">
-                <label class="label">Model path</label>
-                <input
-                  disabled
-                  id="onnx-model-path"
-                  class="input"
-                  type="text"
-                  value="{{.Config.OnnxTagger.ModelPath}}"
-                />
-              </div>
-              <div class="field">
-                <label class="label">Labels path</label>
-                <input
-                  id="onnx-labels-path"
-                  class="input"
-                  type="text"
-                  value="{{.Config.OnnxTagger.LabelsPath}}"
-                />
-              </div>
-              <div class="field">
-                <label class="label">Config path</label>
-                <input
-                  id="onnx-config-path"
-                  class="input"
-                  type="text"
-                  value="{{.Config.OnnxTagger.ConfigPath}}"
-                />
-              </div>
-              <div class="field">
-                <label class="label">ORT shared library path</label>
-                <input
-                  id="onnx-ort-path"
-                  class="input"
-                  type="text"
-                  value="{{.Config.OnnxTagger.ORTSharedLibraryPath}}"
-                />
-              </div>
-              <div class="field-row">
+            <div class="config-card config-card--cyan">
+              <div class="section-title">🧩 ONNX Tagger</div>
+              <div class="fields">
                 <div class="field">
-                  <label class="label">General threshold</label>
+                  <label class="label">Model path</label>
                   <input
-                    id="onnx-general-thresh"
+                    disabled
+                    id="onnx-model-path"
                     class="input"
-                    type="number"
-                    step="0.01"
-                    value="{{.Config.OnnxTagger.GeneralThreshold}}"
+                    type="text"
+                    value="{{.Config.OnnxTagger.ModelPath}}"
                   />
                 </div>
                 <div class="field">
-                  <label class="label">Character threshold</label>
+                  <label class="label">Labels path</label>
                   <input
-                    id="onnx-char-thresh"
+                    id="onnx-labels-path"
                     class="input"
-                    type="number"
-                    step="0.01"
-                    value="{{.Config.OnnxTagger.CharacterThreshold}}"
+                    type="text"
+                    value="{{.Config.OnnxTagger.LabelsPath}}"
                   />
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="config-card config-card--pink">
-            <div class="section-title">🎙️ Whisper</div>
-            <div class="fields">
-              <div class="field">
-                <label class="label">Faster-Whisper executable</label>
-                <input
-                  disabled
-                  id="faster-whisper-path"
-                  class="input"
-                  type="text"
-                  value="{{.Config.FasterWhisperPath}}"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div class="config-card config-card--pink">
-            <div class="section-title">👥 User Management</div>
-            <div class="fields">
-              <div class="field">
-                <label class="label">Create User</label>
+                <div class="field">
+                  <label class="label">Config path</label>
+                  <input
+                    id="onnx-config-path"
+                    class="input"
+                    type="text"
+                    value="{{.Config.OnnxTagger.ConfigPath}}"
+                  />
+                </div>
+                <div class="field">
+                  <label class="label">ORT shared library path</label>
+                  <input
+                    id="onnx-ort-path"
+                    class="input"
+                    type="text"
+                    value="{{.Config.OnnxTagger.ORTSharedLibraryPath}}"
+                  />
+                </div>
                 <div class="field-row">
-                  <input id="new-username" class="input" type="text" placeholder="Username" />
-                  <input id="new-password" class="input" type="password" placeholder="Password" />
-                  <button class="btn btn-secondary" id="create-user-btn">Create</button>
+                  <div class="field">
+                    <label class="label">General threshold</label>
+                    <input
+                      id="onnx-general-thresh"
+                      class="input"
+                      type="number"
+                      step="0.01"
+                      value="{{.Config.OnnxTagger.GeneralThreshold}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">Character threshold</label>
+                    <input
+                      id="onnx-char-thresh"
+                      class="input"
+                      type="number"
+                      step="0.01"
+                      value="{{.Config.OnnxTagger.CharacterThreshold}}"
+                    />
+                  </div>
                 </div>
               </div>
-              <div class="field">
-                <label class="label">Existing Users</label>
-                <div class="value" style="background: transparent; border: none; padding: 0;">
-                  <ul id="user-list" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2);">
-                    <!-- Users populated via JS -->
-                  </ul>
+            </div>
+
+            <div class="config-card config-card--pink">
+              <div class="section-title">🎙️ Whisper</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Faster-Whisper executable</label>
+                  <input
+                    disabled
+                    id="faster-whisper-path"
+                    class="input"
+                    type="text"
+                    value="{{.Config.FasterWhisperPath}}"
+                  />
                 </div>
               </div>
+            </div>
+
+            <div class="config-card config-card--pink">
+              <div class="section-title">👥 User Management</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Create User</label>
+                  <div class="field-row">
+                    <input
+                      id="new-username"
+                      class="input"
+                      type="text"
+                      placeholder="Username"
+                    />
+                    <input
+                      id="new-password"
+                      class="input"
+                      type="password"
+                      placeholder="Password"
+                    />
+                    <button class="btn btn-secondary" id="create-user-btn">
+                      Create
+                    </button>
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="label">Existing Users</label>
+                  <div
+                    class="value"
+                    style="background: transparent; border: none; padding: 0"
+                  >
+                    <ul
+                      id="user-list"
+                      style="
+                        list-style: none;
+                        padding: 0;
+                        margin: 0;
+                        display: flex;
+                        flex-direction: column;
+                        gap: var(--space-2);
+                      "
+                    >
+                      <!-- Users populated via JS -->
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-dependencies" class="tab-content">
+          <div id="dependencies-content" style="min-height: 400px">
+            <div
+              style="
+                text-align: center;
+                padding: var(--space-6);
+                color: var(--text-muted);
+              "
+            >
+              Loading dependencies...
             </div>
           </div>
         </div>
@@ -441,10 +711,290 @@
     <script>
       const statusEl = document.getElementById('status');
       const activeDbPathEl = document.getElementById('active-db-path');
+      const configPath = '{{.ConfigPath}}';
 
       function setStatus(msg, kind = 'info') {
         statusEl.textContent = msg;
         statusEl.className = 'status ' + kind;
+      }
+
+      // Tab switching
+      document.querySelectorAll('.tab-button').forEach((button) => {
+        button.addEventListener('click', () => {
+          const tabName = button.dataset.tab;
+
+          // Update buttons
+          document
+            .querySelectorAll('.tab-button')
+            .forEach((btn) => btn.classList.remove('active'));
+          button.classList.add('active');
+
+          // Update content
+          document
+            .querySelectorAll('.tab-content')
+            .forEach((content) => content.classList.remove('active'));
+          document.getElementById(`tab-${tabName}`).classList.add('active');
+
+          // Load dependencies if switching to dependencies tab
+          if (tabName === 'dependencies' && !window.dependenciesLoaded) {
+            loadDependencies();
+          }
+        });
+      });
+
+      // Config file link
+      document
+        .getElementById('config-file-link')
+        .addEventListener('click', (e) => {
+          e.preventDefault();
+          fetch('/open', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: configPath }),
+          }).catch((err) => {
+            console.error('Failed to open config file:', err);
+            setStatus('Failed to open config file', 'error');
+          });
+        });
+
+      // Dependencies loading and management
+      let eventSource = null;
+      window.dependenciesLoaded = false;
+
+      function loadDependencies() {
+        const contentEl = document.getElementById('dependencies-content');
+        contentEl.innerHTML =
+          '<div style="text-align: center; padding: var(--space-6); color: var(--text-muted);">Loading dependencies...</div>';
+
+        fetch('/dependencies')
+          .then((r) => r.text())
+          .then((html) => {
+            // Extract the dependencies grid content from the HTML response
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            // Look for the dependencies grid in the parsed document
+            const grid = doc.querySelector('.dependencies-grid');
+
+            if (grid) {
+              contentEl.innerHTML = grid.outerHTML;
+              // Re-attach event listeners for dependency buttons
+              attachDependencyListeners();
+              connectDependenciesSSE();
+
+              // Initialize any cards that already have active jobs
+              document.querySelectorAll('.dependency-card').forEach((card) => {
+                const jobID = card.getAttribute('data-job-id');
+                if (jobID) {
+                  const progressDiv = card.querySelector('.download-progress');
+                  const statusBadge = card.querySelector('.status-badge');
+                  if (
+                    statusBadge &&
+                    statusBadge.textContent.trim() === 'downloading' &&
+                    progressDiv
+                  ) {
+                    progressDiv.style.display = 'block';
+                  }
+                }
+              });
+            } else {
+              contentEl.innerHTML =
+                '<div style="text-align: center; padding: var(--space-6); color: var(--text-muted);">No dependencies found</div>';
+            }
+            window.dependenciesLoaded = true;
+          })
+          .catch((err) => {
+            contentEl.innerHTML = `<div style="text-align: center; padding: var(--space-6); color: var(--status-error);">Error loading dependencies: ${err.message}</div>`;
+            console.error('Failed to load dependencies:', err);
+          });
+      }
+
+      function attachDependencyListeners() {
+        document
+          .querySelectorAll('[onclick*="downloadDependency"]')
+          .forEach((btn) => {
+            const onclick = btn.getAttribute('onclick');
+            const match = onclick.match(/downloadDependency\('([^']+)'\)/);
+            if (match) {
+              btn.onclick = () => downloadDependency(match[1]);
+            }
+          });
+
+        document
+          .querySelectorAll('[onclick*="checkDependency"]')
+          .forEach((btn) => {
+            const onclick = btn.getAttribute('onclick');
+            const match = onclick.match(/checkDependency\('([^']+)'\)/);
+            if (match) {
+              btn.onclick = () => checkDependency(match[1]);
+            }
+          });
+      }
+
+      function connectDependenciesSSE() {
+        if (eventSource) return;
+        eventSource = new EventSource('/stream');
+
+        eventSource.addEventListener('update', (event) => {
+          const data = JSON.parse(event.data);
+          if (data.job && data.job.command === 'download-dependency') {
+            updateDependencyCard(data.job);
+          }
+        });
+
+        eventSource.addEventListener('message', (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type && data.type.startsWith('stdout-')) {
+            const jobID = data.type.replace('stdout-', '');
+            const card = document.querySelector(`[data-job-id="${jobID}"]`);
+            if (card) {
+              const progressDiv = card.querySelector('.download-progress');
+              if (progressDiv) {
+                const outputDiv = progressDiv.querySelector('div');
+                progressDiv.style.display = 'block';
+                if (data.data) {
+                  outputDiv.textContent += data.data + '\n';
+                  outputDiv.scrollTop = outputDiv.scrollHeight;
+                }
+              }
+            }
+          }
+        });
+
+        eventSource.addEventListener('error', () => {
+          // SSE errors are expected when connection closes
+        });
+      }
+
+      function updateDependencyCard(job) {
+        const depID = job.input;
+        const card = document.querySelector(`[data-dep-id="${depID}"]`);
+        if (!card) return;
+
+        const statusBadge = card.querySelector('.status-badge');
+        const actionsDiv = card.querySelector('.dep-actions');
+        const progressDiv = card.querySelector('.download-progress');
+
+        card.setAttribute('data-job-id', job.id);
+
+        if (job.state === 'pending' || job.state === 'in_progress') {
+          statusBadge.textContent = 'downloading';
+          statusBadge.className = 'status-badge status-downloading';
+          if (progressDiv) progressDiv.style.display = 'block';
+          actionsDiv.innerHTML = `
+            <button class="btn btn-primary" disabled>Downloading...</button>
+            <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
+          `;
+        } else if (job.state === 'completed') {
+          statusBadge.textContent = 'installed';
+          statusBadge.className = 'status-badge status-installed';
+          if (progressDiv) progressDiv.style.display = 'none';
+          actionsDiv.innerHTML = `
+            <button class="btn btn-success" disabled>Installed</button>
+            <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
+          `;
+          showDependencyStatus(`${depID} installed successfully!`, 'success');
+        } else if (job.state === 'error' || job.state === 'cancelled') {
+          statusBadge.textContent = 'not_installed';
+          statusBadge.className = 'status-badge status-not_installed';
+          if (progressDiv) progressDiv.style.display = 'none';
+          actionsDiv.innerHTML = `
+            <button class="btn btn-primary" onclick="downloadDependency('${depID}')">Download</button>
+            <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
+          `;
+          showDependencyStatus(`Download failed for ${depID}`, 'error');
+        }
+        attachDependencyListeners();
+      }
+
+      function showDependencyStatus(message, type) {
+        const statusDiv = document.getElementById('dependency-status-message');
+        if (!statusDiv) {
+          const newDiv = document.createElement('div');
+          newDiv.id = 'dependency-status-message';
+          newDiv.className = 'status-message';
+          document
+            .getElementById('dependencies-content')
+            .insertBefore(
+              newDiv,
+              document.getElementById('dependencies-content').firstChild
+            );
+          newDiv.textContent = message;
+          newDiv.className = `status-message ${type} show`;
+          setTimeout(() => {
+            newDiv.className = 'status-message';
+          }, 5000);
+        } else {
+          statusDiv.textContent = message;
+          statusDiv.className = `status-message ${type} show`;
+          setTimeout(() => {
+            statusDiv.className = 'status-message';
+          }, 5000);
+        }
+      }
+
+      function downloadDependency(depID) {
+        const card = document.querySelector(`[data-dep-id="${depID}"]`);
+        if (!card) return;
+
+        const statusBadge = card.querySelector('.status-badge');
+        const progressDiv = card.querySelector('.download-progress');
+        const actionsDiv = card.querySelector('.dep-actions');
+
+        fetch('/dependencies/download', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dependency_id: depID }),
+        })
+          .then((r) => {
+            if (!r.ok) throw new Error('Download request failed');
+            return r.json();
+          })
+          .then((data) => {
+            card.setAttribute('data-job-id', data.job_id);
+            statusBadge.textContent = 'downloading';
+            statusBadge.className = 'status-badge status-downloading';
+            if (progressDiv) {
+              progressDiv.style.display = 'block';
+              const outputDiv = progressDiv.querySelector('div');
+              if (outputDiv) outputDiv.textContent = '';
+            }
+            actionsDiv.innerHTML = `
+              <button class="btn btn-primary" disabled>Downloading...</button>
+              <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
+            `;
+            attachDependencyListeners();
+            showDependencyStatus(`Download started for ${depID}`, 'success');
+          })
+          .catch((err) => {
+            showDependencyStatus(
+              `Failed to start download: ${err.message}`,
+              'error'
+            );
+          });
+      }
+
+      function checkDependency(depID) {
+        fetch(`/dependencies/check?id=${depID}`)
+          .then((r) => {
+            if (!r.ok) throw new Error('Check request failed');
+            return r.json();
+          })
+          .then((data) => {
+            showDependencyStatus(
+              `Status: ${data.status}, Version: ${data.version || 'unknown'}`,
+              'success'
+            );
+            setTimeout(() => {
+              loadDependencies();
+            }, 1500);
+          })
+          .catch((err) => {
+            showDependencyStatus(
+              `Failed to check status: ${err.message}`,
+              'error'
+            );
+          });
       }
 
       document.getElementById('save-btn').addEventListener('click', () => {
@@ -562,13 +1112,14 @@
 
       function loadUsers() {
         fetch('/auth/users')
-          .then(r => r.json())
-          .then(data => {
+          .then((r) => r.json())
+          .then((data) => {
             if (!data.users) return;
             userListEl.innerHTML = '';
-            data.users.forEach(user => {
+            data.users.forEach((user) => {
               const li = document.createElement('li');
-              li.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);';
+              li.style.cssText =
+                'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);';
               li.innerHTML = `
                 <span>${user.username}</span>
                 <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px; color: var(--status-error); border-color: var(--status-error);" onclick="deleteUser('${user.username}')">Delete</button>
@@ -576,22 +1127,28 @@
               userListEl.appendChild(li);
             });
           })
-          .catch(err => console.error('Failed to load users', err));
+          .catch((err) => console.error('Failed to load users', err));
       }
 
       function deleteUser(username) {
-        if (!confirm('Are you sure you want to delete user ' + username + '?')) return;
-        fetch('/auth/users?username=' + encodeURIComponent(username), { method: 'DELETE' })
-          .then(r => r.json())
-          .then(res => {
+        if (!confirm('Are you sure you want to delete user ' + username + '?'))
+          return;
+        fetch('/auth/users?username=' + encodeURIComponent(username), {
+          method: 'DELETE',
+        })
+          .then((r) => r.json())
+          .then((res) => {
             if (res.status === 'deleted') {
               setStatus('User deleted', 'success');
               loadUsers();
             } else {
-              setStatus('Failed to delete user: ' + (res.error || 'Unknown error'), 'error');
+              setStatus(
+                'Failed to delete user: ' + (res.error || 'Unknown error'),
+                'error'
+              );
             }
           })
-          .catch(err => setStatus('Error deleting user: ' + err, 'error'));
+          .catch((err) => setStatus('Error deleting user: ' + err, 'error'));
       }
 
       createUserBtn.addEventListener('click', () => {
@@ -603,22 +1160,22 @@
         }
 
         fetch('/auth/users', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
         })
-        .then(async r => {
+          .then(async (r) => {
             if (r.ok) return r.json();
             const text = await r.text();
             throw new Error(text || r.statusText);
-        })
-        .then(res => {
+          })
+          .then((res) => {
             setStatus('User created', 'success');
             document.getElementById('new-username').value = '';
             document.getElementById('new-password').value = '';
             loadUsers();
-        })
-        .catch(err => setStatus('Error creating user: ' + err, 'error'));
+          })
+          .catch((err) => setStatus('Error creating user: ' + err, 'error'));
       });
 
       // Initial load

@@ -221,8 +221,8 @@ func TestApplyMiddlewares(t *testing.T) {
 		w.Write([]byte("OK"))
 	})
 
-	// Apply all middlewares
-	handler := ApplyMiddlewares(innerHandler)
+	// Apply all middlewares without protection
+	handler := ApplyMiddlewares(innerHandler, RolePublic)
 
 	// Create test request
 	req := httptest.NewRequest("GET", "/test", nil)
@@ -245,6 +245,90 @@ func TestApplyMiddlewares(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("Response code = %d; want %d", rec.Code, http.StatusOK)
 	}
+}
+
+// TestApplyMiddlewaresWithAuth tests ApplyMiddlewares with auth protection
+func TestApplyMiddlewaresWithAuth(t *testing.T) {
+	innerCalled := false
+	innerHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		innerCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Setup a mock auth middleware
+	authCalled := false
+	AuthMiddleware = func(next http.Handler, role AuthRole) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authCalled = true
+			if r.Header.Get("X-Auth") == "valid" {
+				next.ServeHTTP(w, r)
+			} else {
+				w.WriteHeader(http.StatusUnauthorized)
+			}
+		})
+	}
+	defer func() { AuthMiddleware = nil }() // Clean up
+
+	t.Run("Protected route - authorized", func(t *testing.T) {
+		innerCalled = false
+		authCalled = false
+		handler := ApplyMiddlewares(innerHandler, RoleAdmin)
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("X-Auth", "valid")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if !authCalled {
+			t.Error("Auth middleware was not called for protected route")
+		}
+		if !innerCalled {
+			t.Error("Inner handler was not called for authorized request")
+		}
+		if rec.Code != http.StatusOK {
+			t.Errorf("Code = %d; want %d", rec.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("Protected route - unauthorized", func(t *testing.T) {
+		innerCalled = false
+		authCalled = false
+		handler := ApplyMiddlewares(innerHandler, RoleAdmin)
+		req := httptest.NewRequest("GET", "/test", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if !authCalled {
+			t.Error("Auth middleware was not called for protected route")
+		}
+		if innerCalled {
+			t.Error("Inner handler was called for unauthorized request")
+		}
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Code = %d; want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("Unprotected route", func(t *testing.T) {
+		innerCalled = false
+		authCalled = false
+		handler := ApplyMiddlewares(innerHandler, RolePublic)
+		req := httptest.NewRequest("GET", "/test", nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if authCalled {
+			t.Error("Auth middleware was called for unprotected route")
+		}
+		if !innerCalled {
+			t.Error("Inner handler was not called for unprotected route")
+		}
+		if rec.Code != http.StatusOK {
+			t.Errorf("Code = %d; want %d", rec.Code, http.StatusOK)
+		}
+	})
 }
 
 // TestEnableCors tests the enableCors helper function
@@ -285,8 +369,8 @@ func TestMiddlewareChainOrder(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// Apply middlewares
-	handler := ApplyMiddlewares(innerHandler)
+	// Apply middlewares without protection
+	handler := ApplyMiddlewares(innerHandler, RolePublic)
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	rec := httptest.NewRecorder()
