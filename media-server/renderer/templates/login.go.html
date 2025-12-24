@@ -1,0 +1,159 @@
+{{ define "login" }}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shrike – Login</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: var(--bg-primary);
+            margin: 0;
+            font-family: var(--font-sans);
+        }
+        .login-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-xl);
+            padding: var(--space-6);
+            width: 100%;
+            max-width: 400px;
+            box-shadow: var(--shadow-lg);
+        }
+        .login-header {
+            text-align: center;
+            margin-bottom: var(--space-5);
+        }
+        .login-header h1 {
+            margin: 0;
+            font-size: var(--text-xl);
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .login-header p {
+            color: var(--text-secondary);
+            margin: var(--space-2) 0 0;
+            font-size: var(--text-sm);
+        }
+        .form-group {
+            margin-bottom: var(--space-4);
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: var(--space-2);
+            color: var(--text-primary);
+            font-weight: 500;
+            font-size: var(--text-sm);
+        }
+        .input {
+            width: 100%;
+            padding: var(--space-3);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-default);
+            background: var(--bg-surface);
+            color: var(--text-primary);
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        .input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px var(--accent-primary-dim);
+        }
+        .btn {
+            width: 100%;
+            padding: var(--space-3);
+            border-radius: var(--radius-lg);
+            border: none;
+            background: var(--accent-primary);
+            color: #000;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            font-family: inherit;
+            font-size: var(--text-base);
+        }
+        .btn:hover {
+            opacity: 0.9;
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .error-message {
+            color: var(--status-error);
+            font-size: var(--text-sm);
+            margin-top: var(--space-3);
+            text-align: center;
+            display: none;
+            padding: var(--space-2);
+            background: var(--status-error-dim);
+            border-radius: var(--radius-md);
+        }
+    </style>
+</head>
+<body>
+    <div class="login-card">
+        <div class="login-header">
+            <h1>Welcome Back</h1>
+            <p>Please sign in to continue</p>
+        </div>
+        <form id="loginForm">
+            <div class="form-group">
+                <label for="username">Username</label>
+                <input type="text" id="username" class="input" required autofocus />
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" class="input" required />
+            </div>
+            <button type="submit" class="btn">Sign In</button>
+            <div id="error" class="error-message"></div>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('error');
+            const btn = e.target.querySelector('button');
+
+            errorEl.style.display = 'none';
+            btn.disabled = true;
+            btn.textContent = 'Signing in...';
+
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (res.ok) {
+                    // Check if there was a redirect param
+                    const params = new URLSearchParams(window.location.search);
+                    const redirect = params.get('redirect') || '/';
+                    window.location.href = redirect;
+                } else {
+                    const data = await res.json();
+                    throw new Error(data.error || 'Login failed');
+                }
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+                btn.disabled = false;
+                btn.textContent = 'Sign In';
+            }
+        });
+    </script>
+</body>
+</html>
+{{ end }}
+

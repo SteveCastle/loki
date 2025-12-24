@@ -402,6 +402,28 @@
               </div>
             </div>
           </div>
+
+          <div class="config-card config-card--pink">
+            <div class="section-title">👥 User Management</div>
+            <div class="fields">
+              <div class="field">
+                <label class="label">Create User</label>
+                <div class="field-row">
+                  <input id="new-username" class="input" type="text" placeholder="Username" />
+                  <input id="new-password" class="input" type="password" placeholder="Password" />
+                  <button class="btn btn-secondary" id="create-user-btn">Create</button>
+                </div>
+              </div>
+              <div class="field">
+                <label class="label">Existing Users</label>
+                <div class="value" style="background: transparent; border: none; padding: 0;">
+                  <ul id="user-list" style="list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2);">
+                    <!-- Users populated via JS -->
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -533,6 +555,74 @@
           })
           .catch(() => {});
       })();
+
+      // User Management
+      const userListEl = document.getElementById('user-list');
+      const createUserBtn = document.getElementById('create-user-btn');
+
+      function loadUsers() {
+        fetch('/auth/users')
+          .then(r => r.json())
+          .then(data => {
+            if (!data.users) return;
+            userListEl.innerHTML = '';
+            data.users.forEach(user => {
+              const li = document.createElement('li');
+              li.style.cssText = 'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);';
+              li.innerHTML = `
+                <span>${user.username}</span>
+                <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px; color: var(--status-error); border-color: var(--status-error);" onclick="deleteUser('${user.username}')">Delete</button>
+              `;
+              userListEl.appendChild(li);
+            });
+          })
+          .catch(err => console.error('Failed to load users', err));
+      }
+
+      function deleteUser(username) {
+        if (!confirm('Are you sure you want to delete user ' + username + '?')) return;
+        fetch('/auth/users?username=' + encodeURIComponent(username), { method: 'DELETE' })
+          .then(r => r.json())
+          .then(res => {
+            if (res.status === 'deleted') {
+              setStatus('User deleted', 'success');
+              loadUsers();
+            } else {
+              setStatus('Failed to delete user: ' + (res.error || 'Unknown error'), 'error');
+            }
+          })
+          .catch(err => setStatus('Error deleting user: ' + err, 'error'));
+      }
+
+      createUserBtn.addEventListener('click', () => {
+        const username = document.getElementById('new-username').value.trim();
+        const password = document.getElementById('new-password').value;
+        if (!username || !password) {
+          setStatus('Username and password required', 'error');
+          return;
+        }
+
+        fetch('/auth/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        })
+        .then(async r => {
+            if (r.ok) return r.json();
+            const text = await r.text();
+            throw new Error(text || r.statusText);
+        })
+        .then(res => {
+            setStatus('User created', 'success');
+            document.getElementById('new-username').value = '';
+            document.getElementById('new-password').value = '';
+            loadUsers();
+        })
+        .catch(err => setStatus('Error creating user: ' + err, 'error'));
+      });
+
+      // Initial load
+      loadUsers();
     </script>
   </body>
 </html>

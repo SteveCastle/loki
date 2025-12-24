@@ -21,6 +21,10 @@
   <a href="/dependencies" class="nav-link">
     <span>Dependencies</span>
   </a>
+  <div style="margin-left: auto; display: flex; align-items: center; gap: 12px; padding-right: 12px;">
+    <span id="nav-username" style="font-size: 13px; color: var(--text-muted); font-weight: 500;"></span>
+    <button id="nav-logout" style="display: none; background: transparent; border: 1px solid var(--border-default); color: var(--text-secondary); padding: 4px 10px; border-radius: var(--radius-md); cursor: pointer; font-size: 12px; transition: all 0.2s;">Logout</button>
+  </div>
 </nav>
 <script>
   (function () {
@@ -34,6 +38,31 @@
         link.classList.add("active");
       }
     });
+
+    // Auth status
+    fetch('/auth/status')
+      .then(r => r.json())
+      .then(data => {
+        if (data.loggedIn) {
+          document.getElementById('nav-username').textContent = data.username;
+          const logoutBtn = document.getElementById('nav-logout');
+          logoutBtn.style.display = 'block';
+          logoutBtn.onclick = () => {
+            fetch('/auth/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+          };
+          
+          // Hover effect for logout button
+          logoutBtn.onmouseover = () => {
+            logoutBtn.style.borderColor = 'var(--status-error)';
+            logoutBtn.style.color = 'var(--status-error)';
+          };
+          logoutBtn.onmouseout = () => {
+            logoutBtn.style.borderColor = 'var(--border-default)';
+            logoutBtn.style.color = 'var(--text-secondary)';
+          };
+        }
+      })
+      .catch(() => {});
   })();
 </script>
 {{ end }}

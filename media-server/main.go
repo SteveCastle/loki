@@ -29,6 +29,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/stevecastle/shrike/appconfig"
+	"github.com/stevecastle/shrike/auth"
 	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
@@ -79,6 +80,7 @@ var setupModeMutex sync.RWMutex
 type Dependencies struct {
 	Queue *jobqueue.Queue
 	DB    *sql.DB
+	Auth  *auth.AuthService
 }
 
 // -----------------------------------------------------------------------------
@@ -1908,6 +1910,197 @@ func ParseCommand(input string) []string {
 }
 
 // -----------------------------------------------------------------------------
+// Authentication Handlers
+// -----------------------------------------------------------------------------
+
+func authMiddleware(deps *Dependencies, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allowed public paths
+		publicPaths := []string{
+			"/auth/login", // API endpoint
+			"/login",      // UI page
+			"/static/",
+			"/health",
+		}
+
+		for _, path := range publicPaths {
+			if r.URL.Path == path {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if strings.HasSuffix(path, "/") && strings.HasPrefix(r.URL.Path, path) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Check cookie
+		cookie, err := r.Cookie("auth_token")
+		if err != nil {
+			if r.Header.Get("Accept") == "application/json" {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			} else {
+				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.Path), http.StatusFound)
+			}
+			return
+		}
+
+		// Verify token
+		_, err = deps.Auth.VerifyToken(cookie.Value)
+		if err != nil {
+			if r.Header.Get("Accept") == "application/json" {
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			} else {
+				http.Redirect(w, r, "/login", http.StatusFound)
+			}
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func loginPageHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := renderer.Templates().ExecuteTemplate(w, "login", nil); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var creds struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		token, err := deps.Auth.Login(creds.Username, creds.Password)
+		if err != nil {
+			http.Error(w, `{"error":"Invalid credentials"}`, http.StatusUnauthorized)
+			return
+		}
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     "auth_token",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Expires:  time.Now().Add(24 * time.Hour),
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	}
+}
+
+func logoutHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     "auth_token",
+			Value:    "",
+			Path:     "/",
+			HttpOnly: true,
+			Expires:  time.Unix(0, 0),
+			MaxAge:   -1,
+		})
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"status":"ok"}`))
+		} else {
+			http.Redirect(w, r, "/login", http.StatusFound)
+		}
+	}
+}
+
+func authStatusHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("auth_token")
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"loggedIn":false}`))
+			return
+		}
+
+		claims, err := deps.Auth.VerifyToken(cookie.Value)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"loggedIn":false}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"loggedIn": true,
+			"username": claims.Username,
+		})
+	}
+}
+
+func userManagementHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			users, err := deps.Auth.ListUsers()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{"users": users})
+
+		case http.MethodPost:
+			var req struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "Invalid JSON", http.StatusBadRequest)
+				return
+			}
+			if req.Username == "" || req.Password == "" {
+				http.Error(w, "Username and password required", http.StatusBadRequest)
+				return
+			}
+			if err := deps.Auth.Register(req.Username, req.Password); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"status":"created"}`))
+
+		case http.MethodDelete:
+			username := r.URL.Query().Get("username")
+			if username == "" {
+				http.Error(w, "Username required", http.StatusBadRequest)
+				return
+			}
+			if err := deps.Auth.DeleteUser(username); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Write([]byte(`{"status":"deleted"}`))
+
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// -----------------------------------------------------------------------------
 // main – start server then hand control to the system-tray UI.
 // -----------------------------------------------------------------------------
 
@@ -1925,10 +2118,17 @@ func main() {
 	log.Printf("Job queue initialized. Current jobs: %d", len(queue.GetJobs()))
 	currentRunners = runners.New(queue)
 
+	// ––– auth service –––
+	authService := auth.NewAuthService(db, currentConfig.JWTSecret)
+	if err := authService.CreateDefaultUser(); err != nil {
+		log.Printf("Failed to create default user: %v", err)
+	}
+
 	// ––– create dependencies struct –––
 	deps = &Dependencies{
 		Queue: queue,
 		DB:    db,
+		Auth:  authService,
 	}
 
 	// ––– check for missing dependencies –––
@@ -1983,13 +2183,20 @@ func main() {
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps)))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps)))
 
+	// Auth routes
+	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps)))
+	mux.HandleFunc("/auth/login", renderer.ApplyMiddlewares(loginAPIHandler(deps)))
+	mux.HandleFunc("/auth/logout", renderer.ApplyMiddlewares(logoutHandler(deps)))
+	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps)))
+	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps)))
+
 	// Serve embedded static files
 	mux.Handle("/static/",
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
 	srv = &http.Server{
 		Addr:    ":8090",
-		Handler: setupModeMiddleware(mux),
+		Handler: setupModeMiddleware(authMiddleware(deps, mux)),
 	}
 
 	// start HTTP server in background
