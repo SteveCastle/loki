@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -101,6 +103,7 @@ type Job struct {
 	Command      string             `json:"command"`
 	Arguments    []string           `json:"arguments"`
 	Input        string             `json:"input"`
+	Host         string             `json:"host"`
 	Stdout       []string           `json:"-"`
 	StdoutRaw    io.Reader          `json:"-"` // Raw stdout stream
 	StdIn        io.Reader          `json:"-"`
@@ -125,27 +128,33 @@ type Workflow struct {
 
 // Queue is a thread-safe structure that manages Jobs with dependencies.
 type Queue struct {
-	mu       sync.Mutex
-	Jobs     map[string]*Job
-	JobOrder []string // Keep track of the order in which jobs are added
-	Signal   chan string
-	Db       *sql.DB // Database connection for persistence
+	mu            sync.Mutex
+	Jobs          map[string]*Job
+	JobOrder      []string // Keep track of the order in which jobs are added
+	Signal        chan string
+	Db            *sql.DB // Database connection for persistence
+	HostLimits    map[string]int
+	RunningCounts map[string]int
 }
 
 // NewQueue initializes and returns a new Queue.
 func NewQueue() *Queue {
 	return &Queue{
-		Jobs:   make(map[string]*Job),
-		Signal: make(chan string, 100),
+		Jobs:          make(map[string]*Job),
+		Signal:        make(chan string, 100),
+		HostLimits:    make(map[string]int),
+		RunningCounts: make(map[string]int),
 	}
 }
 
 // NewQueueWithDB initializes and returns a new Queue with database support.
 func NewQueueWithDB(db *sql.DB) *Queue {
 	q := &Queue{
-		Jobs:   make(map[string]*Job),
-		Signal: make(chan string, 100),
-		Db:     db,
+		Jobs:          make(map[string]*Job),
+		Signal:        make(chan string, 100),
+		Db:            db,
+		HostLimits:    make(map[string]int),
+		RunningCounts: make(map[string]int),
 	}
 
 	// Create the jobs table if it doesn't exist
@@ -169,6 +178,7 @@ func (q *Queue) createJobsTable() error {
 		command TEXT NOT NULL,
 		arguments TEXT, -- JSON array
 		input TEXT,
+		host TEXT,
 		stdout TEXT, -- JSON array
 		dependencies TEXT, -- JSON array
 		state INTEGER NOT NULL,
@@ -180,7 +190,14 @@ func (q *Queue) createJobsTable() error {
 	)`
 
 	_, err := q.Db.Exec(query)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Try to add host column if it doesn't exist (migration)
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN host TEXT")
+
+	return nil
 }
 
 // saveJobToDB saves a single job to the database
@@ -205,15 +222,16 @@ func (q *Queue) saveJobToDB(job *Job) error {
 
 	query := `
 	INSERT OR REPLACE INTO jobs (
-		id, command, arguments, input, stdout, dependencies, state,
+		id, command, arguments, input, host, stdout, dependencies, state,
 		created_at, claimed_at, completed_at, errored_at, job_order_position
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := q.Db.Exec(query,
 		job.ID,
 		job.Command,
 		string(argumentsJSON),
 		job.Input,
+		job.Host,
 		string(stdoutJSON),
 		string(dependenciesJSON),
 		int(job.State),
@@ -234,7 +252,7 @@ func (q *Queue) loadJobsFromDB() error {
 	}
 
 	query := `
-	SELECT id, command, arguments, input, stdout, dependencies, state,
+	SELECT id, command, arguments, input, COALESCE(host, ''), stdout, dependencies, state,
 		   created_at, claimed_at, completed_at, errored_at, job_order_position
 	FROM jobs
 	ORDER BY job_order_position`
@@ -258,6 +276,7 @@ func (q *Queue) loadJobsFromDB() error {
 			&job.Command,
 			&argumentsJSON,
 			&job.Input,
+			&job.Host,
 			&stdoutJSON,
 			&dependenciesJSON,
 			&state,
@@ -285,11 +304,20 @@ func (q *Queue) loadJobsFromDB() error {
 
 		job.State = JobState(state)
 
+		if job.Host == "" {
+			job.Host = getHost(job.Command, job.Input)
+		}
+
 		// If job was in progress, reset it to pending so it can be resumed
 		if job.State == StateInProgress {
 			job.State = StatePending
 			job.ClaimedAt = time.Time{} // Reset claimed time
 			resumedJobs = append(resumedJobs, job.ID)
+		} else if job.State == StateInProgress {
+			// This branch is unreachable due to above logic resetting it,
+			// but if we were to keep it running, we'd update RunningCounts here.
+			// Since we reset to Pending, we don't increment RunningCounts yet.
+			// They will be picked up by ClaimJob.
 		}
 
 		// Recreate context and cancel function
@@ -367,6 +395,7 @@ func (q *Queue) AddJob(command string, arguments []string, input string, depende
 		Ctx:          ctx,
 		Cancel:       cancel,
 		CreatedAt:    time.Now(),
+		Host:         getHost(command, input),
 	}
 	q.Jobs[id] = job
 	q.JobOrder = append(q.JobOrder, id)
@@ -428,6 +457,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	newJob.ErroredAt = time.Time{}
 	newJob.Cancel = cancel
 	newJob.Ctx = ctx
+	// Host is copied from original job
 
 	q.Jobs[newID] = &newJob
 	q.JobOrder = append(q.JobOrder, newID)
@@ -457,8 +487,15 @@ func (q *Queue) ClaimJob() (*Job, error) {
 	for _, jobID := range q.JobOrder {
 		job := q.Jobs[jobID]
 		if job.State == StatePending && q.canClaim(job) {
+			// Check host limits
+			limit := q.getHostLimitLocked(job.Host)
+			if q.RunningCounts[job.Host] >= limit {
+				continue
+			}
+
 			job.State = StateInProgress
 			job.ClaimedAt = time.Now()
+			q.RunningCounts[job.Host]++
 
 			// Save to database
 			if err := q.saveJobToDB(job); err != nil {
@@ -509,6 +546,7 @@ func (q *Queue) ErrorJob(id string) error {
 
 	job.State = StateError
 	job.ErroredAt = time.Now()
+	q.RunningCounts[job.Host]--
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -536,6 +574,11 @@ func (q *Queue) CancelJob(id string) error {
 		return errors.New("job is not pending, or in progree, cannot cancel")
 	}
 	job.Cancel()
+
+	if job.State == StateInProgress {
+		q.RunningCounts[job.Host]--
+	}
+
 	job.State = StateCancelled
 
 	// Save to database
@@ -592,6 +635,7 @@ func (q *Queue) CompleteJob(id string) error {
 
 	job.State = StateCompleted
 	job.CompletedAt = time.Now()
+	q.RunningCounts[job.Host]--
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -631,10 +675,15 @@ func (q *Queue) GetJob(id string) *Job {
 func (q *Queue) RemoveJob(id string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	_, exists := q.Jobs[id]
+	job, exists := q.Jobs[id]
 	if !exists {
 		return errors.New("job not found")
 	}
+
+	if job.State == StateInProgress {
+		q.RunningCounts[job.Host]--
+	}
+
 	delete(q.Jobs, id)
 	for i, jobId := range q.JobOrder {
 		if jobId == id {
@@ -747,4 +796,30 @@ func serializeStdout(line string, id string) error {
 	//Type should be in the format `stdout-<job-id>`
 	stream.Broadcast(stream.Message{Type: "stdout-" + id, Msg: string(j)})
 	return nil
+}
+
+// Helper methods
+
+func getHost(command, input string) string {
+	if command == "ingest" {
+		u, err := url.Parse(input)
+		if err == nil && u.Host != "" {
+			return strings.TrimPrefix(u.Hostname(), "www.")
+		}
+	}
+	return "localhost"
+}
+
+func (q *Queue) getHostLimitLocked(host string) int {
+	if limit, ok := q.HostLimits[host]; ok {
+		return limit
+	}
+	// Default limit for all hosts (including localhost)
+	return 1
+}
+
+func (q *Queue) SetHostLimit(host string, limit int) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.HostLimits[host] = limit
 }

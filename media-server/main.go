@@ -154,7 +154,7 @@ func switchDatabase(newDBPath string) error {
 
 	// Start new runners for the new queue
 	log.Println("Starting new runners for new queue...")
-	currentRunners = runners.New(newQueue, 1)
+	currentRunners = runners.New(newQueue)
 	log.Printf("New runners started. Current jobs in new queue: %d", len(newQueue.GetJobs()))
 
 	// Close the old DB last
@@ -1861,7 +1861,7 @@ func main() {
 	log.Println("Initializing job queue with database persistence...")
 	queue := jobqueue.NewQueueWithDB(db)
 	log.Printf("Job queue initialized. Current jobs: %d", len(queue.GetJobs()))
-	currentRunners = runners.New(queue, 1)
+	currentRunners = runners.New(queue)
 
 	// ––– create dependencies struct –––
 	deps = &Dependencies{
