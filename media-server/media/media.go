@@ -8,8 +8,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,20 +97,6 @@ type APIResponse struct {
 	HasMore bool        `json:"has_more"`
 }
 
-// SearchCondition represents a single search condition
-type SearchCondition struct {
-	Column   string
-	Operator string
-	Value    string
-	Negate   bool
-}
-
-// SearchQuery represents a complete search query with conditions and logic
-type SearchQuery struct {
-	Conditions []SearchCondition
-	Logic      []string // AND, OR between conditions
-}
-
 // formatBytes converts bytes to human readable format
 func FormatBytes(bytes int64) string {
 	if bytes == 0 {
@@ -177,271 +161,6 @@ func CheckFilesExistConcurrent(paths []string) map[string]bool {
 	return existenceMap
 }
 
-// parseSearchQuery parses a search query string into structured conditions
-// Format examples:
-//
-//	path:"video.mp4" AND size:>1000000
-//	description:"cat" OR path:"*.jpg" AND NOT size:<100
-//	size:>1000000 AND size:<10000000
-//	tag:"landscape" AND category:"nature"
-//	NOT tag:"portrait" AND category:"animals"
-//	exists:true AND tag:"landscape"
-//	exists:false OR size:>1000000
-//	pathdir:"/some/directory/" (searches only in directory, not subdirectories)
-func parseSearchQuery(query string) (*SearchQuery, error) {
-	if strings.TrimSpace(query) == "" {
-		return nil, nil
-	}
-
-	sq := &SearchQuery{}
-
-	// Basic regex to match conditions and logic operators
-	conditionRegex := regexp.MustCompile(`(NOT\s+)?(\w+):((?:"[^"]*")|(?:[^\s]+))`)
-	logicRegex := regexp.MustCompile(`\s+(AND|OR)\s+`)
-
-	// Find all conditions
-	matches := conditionRegex.FindAllStringSubmatch(query, -1)
-	if len(matches) == 0 {
-		return nil, fmt.Errorf("no valid conditions found")
-	}
-
-	// Find all logic operators
-	logicMatches := logicRegex.FindAllString(query, -1)
-
-	for _, match := range matches {
-		condition := SearchCondition{
-			Negate: strings.TrimSpace(match[1]) == "NOT",
-			Column: strings.ToLower(match[2]),
-			Value:  strings.Trim(match[3], `"`),
-		}
-
-		// Special handling for pathdir operator - always use LIKE for directory matching
-		if condition.Column == "pathdir" {
-			condition.Operator = "PATHDIR"
-			// Detect and normalize path separator
-			pathSep := "/"
-			if strings.Contains(condition.Value, "\\") {
-				pathSep = "\\"
-			}
-
-			// Ensure the path ends with the correct separator
-			if !strings.HasSuffix(condition.Value, pathSep) {
-				condition.Value += pathSep
-			}
-
-			// Store the separator in the value for later use
-			// We'll use a special marker to indicate the separator
-			if pathSep == "\\" {
-				condition.Value = "WIN:" + condition.Value
-			} else {
-				condition.Value = "UNIX:" + condition.Value
-			}
-		} else {
-			// Determine operator for other columns
-			if strings.HasPrefix(condition.Value, ">") {
-				condition.Operator = ">"
-				condition.Value = condition.Value[1:]
-			} else if strings.HasPrefix(condition.Value, "<") {
-				condition.Operator = "<"
-				condition.Value = condition.Value[1:]
-			} else if strings.HasPrefix(condition.Value, ">=") {
-				condition.Operator = ">="
-				condition.Value = condition.Value[2:]
-			} else if strings.HasPrefix(condition.Value, "<=") {
-				condition.Operator = "<="
-				condition.Value = condition.Value[2:]
-			} else if strings.Contains(condition.Value, "*") || strings.Contains(condition.Value, "%") {
-				condition.Operator = "LIKE"
-				condition.Value = strings.ReplaceAll(condition.Value, "*", "%")
-			} else {
-				condition.Operator = "="
-			}
-		}
-
-		sq.Conditions = append(sq.Conditions, condition)
-	}
-
-	// Parse logic operators
-	for _, logic := range logicMatches {
-		sq.Logic = append(sq.Logic, strings.TrimSpace(logic))
-	}
-
-	return sq, nil
-}
-
-// buildWhereClause converts SearchQuery to SQL WHERE clause and any needed JOINs
-// Returns: whereClause, sqlArgs, needsTagJoin, existsConditions
-func buildWhereClause(sq *SearchQuery) (string, []interface{}, bool, []SearchCondition) {
-	if sq == nil || len(sq.Conditions) == 0 {
-		return "", nil, false, nil
-	}
-
-	var clauses []string
-	var args []interface{}
-	var needsTagJoin bool
-	var existsConditions []SearchCondition
-
-	for i, condition := range sq.Conditions {
-		var clause string
-		var columnName string
-
-		// Handle exists conditions separately - don't add to SQL
-		if condition.Column == "exists" {
-			existsConditions = append(existsConditions, condition)
-			continue
-		}
-
-		// Map column names to database columns or handle special cases
-		switch condition.Column {
-		case "path":
-			columnName = "m.path"
-		case "tags":
-			// Support querying media with no tags via tags:none
-			val := strings.ToLower(strings.TrimSpace(condition.Value))
-			if val == "none" {
-				if condition.Negate {
-					// NOT tags:none => items having at least one tag
-					clause = "EXISTS (\n\t\t\t\t\tSELECT 1 FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path\n\t\t\t\t)"
-				} else {
-					// tags:none => items with zero tags
-					clause = "NOT EXISTS (\n\t\t\t\t\tSELECT 1 FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path\n\t\t\t\t)"
-				}
-			} else {
-				// Unknown tags:* value, skip condition
-				continue
-			}
-		case "pathdir":
-			// Special handling for pathdir - search in directory but not subdirectories
-			// Extract path separator from prefixed format
-			var pathSep string
-			var actualPath string
-
-			if strings.HasPrefix(condition.Value, "WIN:") {
-				pathSep = "\\"
-				actualPath = condition.Value[4:] // Remove "WIN:" prefix
-			} else if strings.HasPrefix(condition.Value, "UNIX:") {
-				pathSep = "/"
-				actualPath = condition.Value[5:] // Remove "UNIX:" prefix
-			} else {
-				// Fallback - shouldn't happen with proper parsing
-				pathSep = "/"
-				actualPath = condition.Value
-			}
-
-			if condition.Negate {
-				// For NOT pathdir, exclude items in the specified directory
-				clause = "NOT (m.path LIKE ? AND m.path NOT LIKE ?)"
-				args = append(args, actualPath+"%", actualPath+"%"+pathSep+"%")
-			} else {
-				// For pathdir, include items in the specified directory but not subdirectories
-				clause = "(m.path LIKE ? AND m.path NOT LIKE ?)"
-				args = append(args, actualPath+"%", actualPath+"%"+pathSep+"%")
-			}
-		case "description":
-			columnName = "m.description"
-		case "size":
-			columnName = "m.size"
-		case "hash":
-			columnName = "m.hash"
-		case "width":
-			columnName = "m.width"
-		case "height":
-			columnName = "m.height"
-		case "tagcount":
-			// Filter by number of tags associated with a media item
-			// Build a correlated subquery counting tags for this media path
-			op := condition.Operator
-			if op == "LIKE" {
-				// LIKE doesn't make sense for numeric comparison; treat as equality
-				op = "="
-			}
-			countExpr := `(SELECT COUNT(*) FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path)`
-			// Parse numeric value
-			if val, err := strconv.ParseInt(condition.Value, 10, 64); err == nil {
-				clause = fmt.Sprintf("%s %s ?", countExpr, op)
-				args = append(args, val)
-				if condition.Negate {
-					clause = "NOT (" + clause + ")"
-				}
-			} else {
-				// Invalid numeric, skip this condition
-				continue
-			}
-		case "tag":
-			if condition.Negate {
-				// For NOT tag searches, use NOT EXISTS subquery
-				clause = fmt.Sprintf(`NOT EXISTS (
-					SELECT 1 FROM media_tag_by_category mtbc 
-					WHERE mtbc.media_path = m.path AND mtbc.tag_label %s ?
-				)`, condition.Operator)
-			} else {
-				// For positive tag searches, we'll need a JOIN
-				needsTagJoin = true
-				clause = fmt.Sprintf("mtbc.tag_label %s ?", condition.Operator)
-			}
-			args = append(args, condition.Value)
-		case "category":
-			if condition.Negate {
-				// For NOT category searches, use NOT EXISTS subquery
-				clause = fmt.Sprintf(`NOT EXISTS (
-					SELECT 1 FROM media_tag_by_category mtbc 
-					WHERE mtbc.media_path = m.path AND mtbc.category_label %s ?
-				)`, condition.Operator)
-			} else {
-				// For positive category searches, we'll need a JOIN
-				needsTagJoin = true
-				clause = fmt.Sprintf("mtbc.category_label %s ?", condition.Operator)
-			}
-			args = append(args, condition.Value)
-		default:
-			continue // Skip unknown columns
-		}
-
-		// Handle regular media table columns (excluding pathdir which is handled above)
-		if condition.Column == "path" || condition.Column == "description" || condition.Column == "size" || condition.Column == "hash" || condition.Column == "width" || condition.Column == "height" {
-			// Handle nullable columns
-			if condition.Column == "description" || condition.Column == "hash" || condition.Column == "width" || condition.Column == "height" {
-				if condition.Operator == "=" && condition.Value == "" {
-					clause = fmt.Sprintf("%s IS NULL", columnName)
-				} else {
-					clause = fmt.Sprintf("%s IS NOT NULL AND %s %s ?", columnName, columnName, condition.Operator)
-					args = append(args, condition.Value)
-				}
-			} else {
-				clause = fmt.Sprintf("%s %s ?", columnName, condition.Operator)
-
-				// Convert numeric values to integers
-				if condition.Column == "size" || condition.Column == "width" || condition.Column == "height" {
-					if val, err := strconv.ParseInt(condition.Value, 10, 64); err == nil {
-						args = append(args, val)
-					} else {
-						continue // Skip invalid numeric values
-					}
-				} else {
-					args = append(args, condition.Value)
-				}
-			}
-
-			if condition.Negate {
-				clause = "NOT (" + clause + ")"
-			}
-		}
-
-		clauses = append(clauses, clause)
-
-		// Add logic operator if not the last condition
-		if i < len(sq.Conditions)-1 && i < len(sq.Logic) {
-			clauses = append(clauses, sq.Logic[i])
-		}
-	}
-
-	if len(clauses) == 0 {
-		return "", nil, false, existsConditions
-	}
-
-	return "WHERE " + strings.Join(clauses, " "), args, needsTagJoin, existsConditions
-}
-
 // GetTags fetches all tags for a list of media paths
 func GetTags(db *sql.DB, mediaPaths []string) (map[string][]MediaTag, error) {
 	if len(mediaPaths) == 0 {
@@ -457,8 +176,8 @@ func GetTags(db *sql.DB, mediaPaths []string) (map[string][]MediaTag, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT media_path, tag_label, category_label 
-		FROM media_tag_by_category 
+		SELECT media_path, tag_label, category_label
+		FROM media_tag_by_category
 		WHERE media_path IN (%s)
 		ORDER BY media_path, category_label, tag_label
 	`, strings.Join(placeholders, ","))
@@ -487,34 +206,6 @@ func GetTags(db *sql.DB, mediaPaths []string) (map[string][]MediaTag, error) {
 	return tagMap, nil
 }
 
-// evaluateExistsConditions checks if an item matches the exists conditions
-func evaluateExistsConditions(item MediaItem, conditions []SearchCondition) bool {
-	if len(conditions) == 0 {
-		return true // No exists conditions, so item matches
-	}
-
-	for _, condition := range conditions {
-		if condition.Column != "exists" {
-			continue
-		}
-
-		// Parse the expected exists value
-		expectedExists := strings.ToLower(condition.Value) == "true"
-
-		// Apply negation if present
-		if condition.Negate {
-			expectedExists = !expectedExists
-		}
-
-		// Check if item matches the condition
-		if item.Exists != expectedExists {
-			return false // At least one condition doesn't match
-		}
-	}
-
-	return true // All exists conditions match
-}
-
 // GetRandomItems fetches media items in a randomized order with pagination and optional search
 // The randomization is seeded per-session to maintain consistency during scrolling
 // This function is designed for the TikTok-like swipe view
@@ -524,7 +215,6 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 	// This provides consistent pagination while appearing random
 	// You can later modify this to use different algorithms (trending, recent, AI-curated, etc.)
 	baseQuery := `SELECT DISTINCT m.path, m.description, m.size, m.hash, m.width, m.height FROM media m`
-	var joinClause string
 	// Order by a hash of the path with session seed to get pseudo-random but consistent ordering
 	// Uses SQLite's built-in functions for a deterministic shuffle
 	// The seed changes per page load but remains consistent during pagination within a session
@@ -533,15 +223,29 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 	// Combines addition and multiplication for better bit distribution than simple addition alone
 	orderBy := fmt.Sprintf(` ORDER BY (((m.rowid + %d) * 2654435761 + %d * 1640531527) %% 2147483647)`, seed, seed)
 
+	var whereClause string
+	var args []interface{}
+	var rootNode Node
+
 	// Parse search query if provided
-	sq, err := parseSearchQuery(searchQuery)
-	if err != nil {
-		log.Printf("Search query parsing failed: %v", err)
-		sq = nil
+	if strings.TrimSpace(searchQuery) != "" {
+		parser := NewParser(searchQuery)
+		var err error
+		rootNode, err = parser.Parse()
+		if err != nil {
+			log.Printf("Search query parsing failed: %v", err)
+			rootNode = nil
+		}
 	}
 
-	// Build WHERE clause and check if we need tag joins
-	whereClause, whereArgs, needsTagJoin, existsConditions := buildWhereClause(sq)
+	// Build WHERE clause
+	if rootNode != nil {
+		sqlPart, sqlArgs := rootNode.ToSQL()
+		if sqlPart != "" {
+			whereClause = "WHERE " + sqlPart
+			args = sqlArgs
+		}
+	}
 
 	// Always require items to have at least one tag
 	hasTagsFilter := `EXISTS (SELECT 1 FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path)`
@@ -551,29 +255,18 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 		whereClause = whereClause + " AND " + hasTagsFilter
 	}
 
-	// Add JOIN if needed for tag/category searches
-	if needsTagJoin {
-		joinClause = ` JOIN media_tag_by_category mtbc ON m.path = mtbc.media_path`
-	}
-
 	// If there are exists conditions, we need to implement existence-aware pagination
-	if len(existsConditions) > 0 {
-		return getRandomItemsWithExistenceFilter(db, baseQuery, joinClause, whereClause, whereArgs, orderBy, offset, limit, existsConditions)
+	if rootNode != nil && rootNode.HasExists() {
+		return getRandomItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
 	}
 
 	// Standard pagination when no exists conditions
 	limitClause := ` LIMIT ? OFFSET ?`
 	var query string
-	var args []interface{}
 
 	// Construct full query
-	if whereClause != "" {
-		query = baseQuery + joinClause + " " + whereClause + orderBy + limitClause
-		args = append(whereArgs, limit+1, offset)
-	} else {
-		query = baseQuery + orderBy + limitClause
-		args = []interface{}{limit + 1, offset}
-	}
+	query = baseQuery + " " + whereClause + orderBy + limitClause
+	args = append(args, limit+1, offset)
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -644,7 +337,7 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 
 // getRandomItemsWithExistenceFilter handles randomized pagination when exists conditions are present
 // Note: whereClause passed to this function should already include the "has tags" filter from GetRandomItems
-func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, joinClause, whereClause string, whereArgs []interface{}, orderBy string, offset, limit int, existsConditions []SearchCondition) ([]MediaItem, bool, error) {
+func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string, whereArgs []interface{}, orderBy string, offset, limit int, filter Node) ([]MediaItem, bool, error) {
 	const batchSize = 100
 	var allMatchingItems []MediaItem
 	var dbOffset = 0
@@ -655,13 +348,8 @@ func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, joinClause, whereC
 		var args []interface{}
 
 		// whereClause should always be non-empty here since GetRandomItems adds the has-tags filter
-		if whereClause != "" {
-			query = baseQuery + joinClause + " " + whereClause + orderBy + limitClause
-			args = append(whereArgs, batchSize, dbOffset)
-		} else {
-			query = baseQuery + orderBy + limitClause
-			args = []interface{}{batchSize, dbOffset}
-		}
+		query = baseQuery + " " + whereClause + orderBy + limitClause
+		args = append(whereArgs, batchSize, dbOffset)
 
 		rows, err := db.Query(query, args...)
 		if err != nil {
@@ -716,7 +404,7 @@ func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, joinClause, whereC
 		}
 
 		for _, item := range batchItems {
-			if evaluateExistsConditions(item, existsConditions) {
+			if filter.Evaluate(item) {
 				allMatchingItems = append(allMatchingItems, item)
 			}
 		}
@@ -752,43 +440,45 @@ func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, joinClause, whereC
 // GetItems fetches media items from the database with pagination and search
 func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, bool, error) {
 	baseQuery := `SELECT DISTINCT m.path, m.description, m.size, m.hash, m.width, m.height FROM media m`
-	var joinClause string
 	orderBy := ` ORDER BY m.path`
 
+	var whereClause string
+	var args []interface{}
+	var rootNode Node
+
 	// Parse search query if provided
-	sq, err := parseSearchQuery(searchQuery)
-	if err != nil {
-		// If parsing fails, ignore search and return all results
-		log.Printf("Search query parsing failed: %v", err)
-		sq = nil
+	if strings.TrimSpace(searchQuery) != "" {
+		parser := NewParser(searchQuery)
+		var err error
+		rootNode, err = parser.Parse()
+		if err != nil {
+			// If parsing fails, ignore search and return all results
+			log.Printf("Search query parsing failed: %v", err)
+			rootNode = nil
+		}
 	}
 
-	// Build WHERE clause and check if we need tag joins
-	whereClause, whereArgs, needsTagJoin, existsConditions := buildWhereClause(sq)
-
-	// Add JOIN if needed for tag/category searches
-	if needsTagJoin {
-		joinClause = ` JOIN media_tag_by_category mtbc ON m.path = mtbc.media_path`
+	// Build WHERE clause
+	if rootNode != nil {
+		sqlPart, sqlArgs := rootNode.ToSQL()
+		if sqlPart != "" {
+			whereClause = "WHERE " + sqlPart
+			args = sqlArgs
+		}
 	}
 
 	// If there are exists conditions, we need to implement existence-aware pagination
-	if len(existsConditions) > 0 {
-		return getItemsWithExistenceFilter(db, baseQuery, joinClause, whereClause, whereArgs, orderBy, offset, limit, existsConditions)
+	if rootNode != nil && rootNode.HasExists() {
+		return getItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
 	}
 
 	// Standard pagination when no exists conditions
 	limitClause := ` LIMIT ? OFFSET ?`
 	var query string
-	var args []interface{}
 
 	// Construct full query
-	if whereClause != "" {
-		query = baseQuery + joinClause + " " + whereClause + orderBy + limitClause
-		args = append(whereArgs, limit+1, offset)
-	} else {
-		query = baseQuery + orderBy + limitClause
-		args = []interface{}{limit + 1, offset}
-	}
+	query = baseQuery + " " + whereClause + orderBy + limitClause
+	args = append(args, limit+1, offset)
 
 	rows, err := db.Query(query, args...) // Query one extra to check if there are more
 	if err != nil {
@@ -893,7 +583,7 @@ func GetItemByPath(db *sql.DB, path string) (*MediaItem, error) {
 }
 
 // getItemsWithExistenceFilter handles pagination when exists conditions are present
-func getItemsWithExistenceFilter(db *sql.DB, baseQuery, joinClause, whereClause string, whereArgs []interface{}, orderBy string, offset, limit int, existsConditions []SearchCondition) ([]MediaItem, bool, error) {
+func getItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string, whereArgs []interface{}, orderBy string, offset, limit int, filter Node) ([]MediaItem, bool, error) {
 	const batchSize = 100 // Fetch items in batches
 	var allMatchingItems []MediaItem
 	var dbOffset = 0
@@ -906,7 +596,7 @@ func getItemsWithExistenceFilter(db *sql.DB, baseQuery, joinClause, whereClause 
 		var args []interface{}
 
 		if whereClause != "" {
-			query = baseQuery + joinClause + " " + whereClause + orderBy + limitClause
+			query = baseQuery + " " + whereClause + orderBy + limitClause
 			args = append(whereArgs, batchSize, dbOffset)
 		} else {
 			query = baseQuery + orderBy + limitClause
@@ -971,7 +661,7 @@ func getItemsWithExistenceFilter(db *sql.DB, baseQuery, joinClause, whereClause 
 
 		// Filter batch items by exists conditions
 		for _, item := range batchItems {
-			if evaluateExistsConditions(item, existsConditions) {
+			if filter.Evaluate(item) {
 				allMatchingItems = append(allMatchingItems, item)
 			}
 		}
@@ -1087,7 +777,7 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 
 		// First, remove related records from media_tag_by_category table
 		tagQuery := fmt.Sprintf(`
-			DELETE FROM media_tag_by_category 
+			DELETE FROM media_tag_by_category
 			WHERE media_path IN (%s)
 		`, strings.Join(placeholders, ","))
 
@@ -1105,7 +795,7 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 
 		// Then remove the main media records
 		mediaQuery := fmt.Sprintf(`
-			DELETE FROM media 
+			DELETE FROM media
 			WHERE path IN (%s)
 		`, strings.Join(placeholders, ","))
 
@@ -1688,38 +1378,44 @@ func SuggestPathDirs(db *sql.DB, prefix string, limit int) ([]string, error) {
 // This only fetches paths in a single query (no tags, no file existence checks, no pagination overhead)
 func GetPathsByQuery(db *sql.DB, searchQuery string) ([]string, error) {
 	baseQuery := `SELECT DISTINCT m.path FROM media m`
-	var joinClause string
 	orderBy := ` ORDER BY m.path`
 
+	var whereClause string
+	var args []interface{}
+	var rootNode Node
+
 	// Parse search query if provided
-	sq, err := parseSearchQuery(searchQuery)
-	if err != nil {
-		log.Printf("Search query parsing failed: %v", err)
-		sq = nil
+	if strings.TrimSpace(searchQuery) != "" {
+		parser := NewParser(searchQuery)
+		var err error
+		rootNode, err = parser.Parse()
+		if err != nil {
+			log.Printf("Search query parsing failed: %v", err)
+			rootNode = nil
+		}
 	}
 
-	// Build WHERE clause and check if we need tag joins
-	whereClause, whereArgs, needsTagJoin, existsConditions := buildWhereClause(sq)
+	// Build WHERE clause
+	if rootNode != nil {
+		sqlPart, sqlArgs := rootNode.ToSQL()
+		if sqlPart != "" {
+			whereClause = "WHERE " + sqlPart
+			args = sqlArgs
+		}
+	}
 
 	// If there are exists conditions, we need to fall back to the slower path
 	// since exists conditions require checking file system
-	if len(existsConditions) > 0 {
+	if rootNode != nil && rootNode.HasExists() {
 		// Fall back to paginated approach for exists conditions
 		return getPathsByQueryWithExistence(db, searchQuery)
 	}
 
-	// Add JOIN if needed for tag/category searches
-	if needsTagJoin {
-		joinClause = ` JOIN media_tag_by_category mtbc ON m.path = mtbc.media_path`
-	}
-
 	// Construct full query (no pagination - get all at once)
 	var query string
-	var args []interface{}
 
 	if whereClause != "" {
-		query = baseQuery + joinClause + " " + whereClause + orderBy
-		args = whereArgs
+		query = baseQuery + " " + whereClause + orderBy
 	} else {
 		query = baseQuery + orderBy
 	}
