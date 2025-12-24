@@ -543,7 +543,13 @@ export default function HotKeyController() {
   );
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    const mainKey = e.key.toLowerCase();
+    let mainKey = e.key.toLowerCase();
+
+    // Use e.code for digits to ensure consistent behavior across different keyboard layouts
+    // and when modifiers like Shift are pressed
+    if (e.code.startsWith('Digit')) {
+      mainKey = e.code.slice(5);
+    }
 
     // Handle modifier keys separately for toggle actions
     if (['shift', 'control'].includes(mainKey)) {
