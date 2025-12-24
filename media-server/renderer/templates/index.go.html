@@ -28,6 +28,12 @@
         margin-bottom: var(--space-4);
       }
 
+      .active-jobs-meta {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+      }
+
       .active-jobs-header h2 {
         margin: 0;
         font-size: var(--text-sm);
@@ -368,7 +374,6 @@
       }
 
       .task-card .btn:hover {
-        background: var(--bg-active);
         border-color: var(--border-strong);
       }
 
@@ -506,8 +511,23 @@
           grid-template-columns: 1fr;
         }
 
+        .task-card--wide {
+          grid-column: auto;
+        }
+
         .active-jobs-panel {
           margin-bottom: var(--space-4);
+        }
+
+        .active-jobs-header {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: var(--space-2);
+        }
+
+        .active-jobs-meta {
+          width: 100%;
+          justify-content: space-between;
         }
 
         .task-card {
@@ -527,7 +547,7 @@
             <span class="pulse-dot idle" id="activityIndicator"></span>
             Active Jobs
           </h2>
-          <div style="display: flex; align-items: center; gap: var(--space-3)">
+          <div class="active-jobs-meta">
             <span class="jobs-count" id="jobsCount">0 jobs</span>
             <div class="connection-status" id="connectionStatus">
               <span class="dot"></span>
@@ -544,7 +564,10 @@
 
       <div class="card-grid">
         <!-- All Metadata Card -->
-        <div class="task-card task-card--allmetadata task-card--wide" id="card-allmetadata">
+        <div
+          class="task-card task-card--allmetadata task-card--wide"
+          id="card-allmetadata"
+        >
           <div class="card-status" id="status-allmetadata">
             <span class="status-dot"></span>
             <span class="status-text">Running</span>
@@ -554,7 +577,8 @@
             <div class="card-titles">
               <h3>Generate All Metadata</h3>
               <p class="card-description">
-                Run all metadata tasks at once (hash, dimensions, descriptions, transcripts, auto-tags)
+                Run all metadata tasks at once (hash, dimensions, descriptions,
+                transcripts, auto-tags)
               </p>
             </div>
           </div>
@@ -721,7 +745,6 @@
             <div id="fileinfoStatus" class="status-message"></div>
           </div>
         </div>
-
       </div>
 
       <div class="footer-link">
@@ -889,7 +912,8 @@
 
       function createFileInfoJob() {
         const query = 'hash:""';
-        const args = '--type hash,dimensions --apply all --query64=' + b64(query);
+        const args =
+          '--type hash,dimensions --apply all --query64=' + b64(query);
         postCreate(`metadata ${args}`)
           .then((res) => {
             showStatus(
@@ -909,7 +933,8 @@
       }
 
       function createAllMetadataJob() {
-        const args = '--type hash,dimensions,description,transcript,autotag --apply all';
+        const args =
+          '--type hash,dimensions,description,transcript,autotag --apply all';
         postCreate(`metadata ${args}`)
           .then((res) => {
             showStatus(
@@ -940,9 +965,17 @@
         if (cmd === 'cleanup') return 'cleanup';
         if (cmd === 'metadata') {
           // Check for specific single-type jobs first
-          if (args.includes('--type transcript') && !args.includes(',')) return 'transcript';
-          if (args.includes('--type description') && !args.includes(',')) return 'description';
-          if (args.includes('--type hash') && !args.includes('description') && !args.includes('transcript') && !args.includes('autotag')) return 'fileinfo';
+          if (args.includes('--type transcript') && !args.includes(','))
+            return 'transcript';
+          if (args.includes('--type description') && !args.includes(','))
+            return 'description';
+          if (
+            args.includes('--type hash') &&
+            !args.includes('description') &&
+            !args.includes('transcript') &&
+            !args.includes('autotag')
+          )
+            return 'fileinfo';
           // Multi-type metadata jobs go to allmetadata
           if (args.includes(',')) return 'allmetadata';
         }

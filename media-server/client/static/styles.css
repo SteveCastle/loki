@@ -51,9 +51,9 @@
   --status-pending-dim: rgba(245, 158, 11, 0.15);
 
   /* Typography */
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", "SF Mono", Consolas, monospace;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
 
   /* Font Sizes */
   --text-xs: 0.75rem;
@@ -405,12 +405,6 @@ button {
   transition: all var(--transition-fast);
 }
 
-button:hover:not(:disabled) {
-  background: #3a3a3e;
-  border-color: var(--border-strong);
-  color: var(--text-primary);
-}
-
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -420,11 +414,11 @@ button:disabled {
    Form Elements
    ---------------------------------------- */
 .input,
-input[type="text"],
-input[type="number"],
-input[type="email"],
-input[type="password"],
-input[type="url"],
+input[type='text'],
+input[type='number'],
+input[type='email'],
+input[type='password'],
+input[type='url'],
 textarea,
 select {
   width: 100%;
@@ -462,7 +456,7 @@ label {
   cursor: pointer;
 }
 
-input[type="checkbox"] {
+input[type='checkbox'] {
   width: auto;
   accent-color: var(--accent-primary);
   cursor: pointer;
@@ -1087,5 +1081,13 @@ body,
 
   .panel {
     padding: var(--space-4);
+  }
+
+  .nav-user-section {
+    width: 100%;
+    margin-left: 0;
+    margin-top: var(--space-2);
+    padding-right: 0;
+    justify-content: center;
   }
 }

@@ -1913,25 +1913,11 @@ func ParseCommand(input string) []string {
 // Authentication Handlers
 // -----------------------------------------------------------------------------
 
-func authMiddleware(deps *Dependencies, next http.Handler) http.Handler {
+func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer.AuthRole) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allowed public paths
-		publicPaths := []string{
-			"/auth/login", // API endpoint
-			"/login",      // UI page
-			"/static/",
-			"/health",
-		}
-
-		for _, path := range publicPaths {
-			if r.URL.Path == path {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if strings.HasSuffix(path, "/") && strings.HasPrefix(r.URL.Path, path) {
-				next.ServeHTTP(w, r)
-				return
-			}
+		if requiredRole == renderer.RolePublic {
+			next.ServeHTTP(w, r)
+			return
 		}
 
 		// Check cookie
@@ -1940,7 +1926,7 @@ func authMiddleware(deps *Dependencies, next http.Handler) http.Handler {
 			if r.Header.Get("Accept") == "application/json" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
-				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.Path), http.StatusFound)
+				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 			}
 			return
 		}
@@ -1951,11 +1937,13 @@ func authMiddleware(deps *Dependencies, next http.Handler) http.Handler {
 			if r.Header.Get("Accept") == "application/json" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
-				http.Redirect(w, r, "/login", http.StatusFound)
+				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 			}
 			return
 		}
 
+		// For now, assume all authenticated users have Admin role
+		// In the future, we would check the role from the token/claims
 		next.ServeHTTP(w, r)
 	})
 }
@@ -2133,6 +2121,11 @@ func main() {
 		Auth:  authService,
 	}
 
+	// Initialize renderer auth middleware
+	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
+		return authMiddleware(deps, next, role)
+	}
+
 	// ––– check for missing dependencies –––
 	log.Println("Checking dependencies...")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2151,46 +2144,46 @@ func main() {
 
 	// ––– routes –––
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", renderer.ApplyMiddlewares(homeHandler(deps)))
-	mux.HandleFunc("/jobs", renderer.ApplyMiddlewares(jobsHandler(deps)))
-	mux.HandleFunc("/jobs/list", renderer.ApplyMiddlewares(jobsListHandler(deps)))
-	mux.HandleFunc("/job/{id}", renderer.ApplyMiddlewares(detailHandler(deps)))
-	mux.HandleFunc("/job/{id}/cancel", renderer.ApplyMiddlewares(cancelHandler(deps)))
-	mux.HandleFunc("/job/{id}/copy", renderer.ApplyMiddlewares(copyHandler(deps)))
-	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps)))
-	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps)))
+	mux.HandleFunc("/", renderer.ApplyMiddlewares(homeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/jobs", renderer.ApplyMiddlewares(jobsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/jobs/list", renderer.ApplyMiddlewares(jobsListHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}", renderer.ApplyMiddlewares(detailHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}/cancel", renderer.ApplyMiddlewares(cancelHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}/copy", renderer.ApplyMiddlewares(copyHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/stream", stream.StreamHandler)
 	mux.HandleFunc("/health", healthHandler(deps))
-	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps)))
-	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps)))
-	mux.HandleFunc("/media/api", renderer.ApplyMiddlewares(mediaAPIHandler(deps)))
-	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps)))
-	mux.HandleFunc("/media/suggest", renderer.ApplyMiddlewares(mediaSuggestHandler(deps)))
-	mux.HandleFunc("/media/tag", renderer.ApplyMiddlewares(mediaTagHandler(deps)))
-	mux.HandleFunc("/media/has-tag", renderer.ApplyMiddlewares(mediaHasTagHandler(deps)))
-	mux.HandleFunc("/swipe", renderer.ApplyMiddlewares(swipeHandler(deps)))
-	mux.HandleFunc("/swipe/api", renderer.ApplyMiddlewares(swipeAPIHandler(deps)))
+	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/api", renderer.ApplyMiddlewares(mediaAPIHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/suggest", renderer.ApplyMiddlewares(mediaSuggestHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/tag", renderer.ApplyMiddlewares(mediaTagHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/has-tag", renderer.ApplyMiddlewares(mediaHasTagHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/swipe", renderer.ApplyMiddlewares(swipeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/swipe/api", renderer.ApplyMiddlewares(swipeAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/swipe/manifest.json", swipeManifestHandler())
-	mux.HandleFunc("/config", renderer.ApplyMiddlewares(configHandler(deps)))
-	mux.HandleFunc("/stats", renderer.ApplyMiddlewares(statsHandler(deps)))
-	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps)))
-	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps)))
-	mux.HandleFunc("/dependencies", renderer.ApplyMiddlewares(dependenciesHandler(deps)))
-	mux.HandleFunc("/dependencies/check", renderer.ApplyMiddlewares(checkDependencyHandler(deps)))
-	mux.HandleFunc("/dependencies/download", renderer.ApplyMiddlewares(downloadDependencyHandler(deps)))
-	mux.HandleFunc("/setup", renderer.ApplyMiddlewares(setupHandler(deps)))
-	mux.HandleFunc("/setup/skip", renderer.ApplyMiddlewares(skipSetupHandler()))
-	mux.HandleFunc("/setup/status", renderer.ApplyMiddlewares(checkSetupStatusHandler()))
-	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler()))
-	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps)))
-	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps)))
+	mux.HandleFunc("/config", renderer.ApplyMiddlewares(configHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/stats", renderer.ApplyMiddlewares(statsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/dependencies", renderer.ApplyMiddlewares(dependenciesHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/dependencies/check", renderer.ApplyMiddlewares(checkDependencyHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/dependencies/download", renderer.ApplyMiddlewares(downloadDependencyHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/setup", renderer.ApplyMiddlewares(setupHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/setup/skip", renderer.ApplyMiddlewares(skipSetupHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/setup/status", renderer.ApplyMiddlewares(checkSetupStatusHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))
 
 	// Auth routes
-	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps)))
-	mux.HandleFunc("/auth/login", renderer.ApplyMiddlewares(loginAPIHandler(deps)))
-	mux.HandleFunc("/auth/logout", renderer.ApplyMiddlewares(logoutHandler(deps)))
-	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps)))
-	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps)))
+	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps), renderer.RolePublic))
+	mux.HandleFunc("/auth/login", renderer.ApplyMiddlewares(loginAPIHandler(deps), renderer.RolePublic))
+	mux.HandleFunc("/auth/logout", renderer.ApplyMiddlewares(logoutHandler(deps), renderer.RolePublic))
+	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps), renderer.RolePublic))
+	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps), renderer.RolePublic))
 
 	// Serve embedded static files
 	mux.Handle("/static/",
@@ -2198,7 +2191,7 @@ func main() {
 
 	srv = &http.Server{
 		Addr:    ":8090",
-		Handler: setupModeMiddleware(authMiddleware(deps, mux)),
+		Handler: setupModeMiddleware(mux),
 	}
 
 	// start HTTP server in background

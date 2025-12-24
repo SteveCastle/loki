@@ -1,159 +1,193 @@
 {{ define "login" }}
 <!DOCTYPE html>
 <html lang="en">
-<head>
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Shrike – Login</title>
     <link rel="stylesheet" href="/static/styles.css" />
     <style>
-        body {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            background: var(--bg-primary);
-            margin: 0;
-            font-family: var(--font-sans);
-        }
-        .login-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-xl);
-            padding: var(--space-6);
-            width: 100%;
-            max-width: 400px;
-            box-shadow: var(--shadow-lg);
-        }
-        .login-header {
-            text-align: center;
-            margin-bottom: var(--space-5);
-        }
-        .login-header h1 {
-            margin: 0;
-            font-size: var(--text-xl);
-            font-weight: 700;
-            color: var(--text-primary);
-        }
-        .login-header p {
-            color: var(--text-secondary);
-            margin: var(--space-2) 0 0;
-            font-size: var(--text-sm);
-        }
-        .form-group {
-            margin-bottom: var(--space-4);
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: var(--space-2);
-            color: var(--text-primary);
-            font-weight: 500;
-            font-size: var(--text-sm);
-        }
-        .input {
-            width: 100%;
-            padding: var(--space-3);
-            border-radius: var(--radius-lg);
-            border: 1px solid var(--border-default);
-            background: var(--bg-surface);
-            color: var(--text-primary);
-            box-sizing: border-box;
-            font-family: inherit;
-        }
-        .input:focus {
-            outline: none;
-            border-color: var(--accent-primary);
-            box-shadow: 0 0 0 2px var(--accent-primary-dim);
-        }
-        .btn {
-            width: 100%;
-            padding: var(--space-3);
-            border-radius: var(--radius-lg);
-            border: none;
-            background: var(--accent-primary);
-            color: #000;
-            font-weight: 700;
-            cursor: pointer;
-            transition: opacity 0.2s;
-            font-family: inherit;
-            font-size: var(--text-base);
-        }
-        .btn:hover {
-            opacity: 0.9;
-        }
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-        .error-message {
-            color: var(--status-error);
-            font-size: var(--text-sm);
-            margin-top: var(--space-3);
-            text-align: center;
-            display: none;
-            padding: var(--space-2);
-            background: var(--status-error-dim);
-            border-radius: var(--radius-md);
-        }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #0f1016 0%, #18162e 100%);
+        margin: 0;
+        font-family: var(--font-sans);
+        position: relative;
+        overflow: hidden;
+      }
+
+      body::before {
+        content: '';
+        position: absolute;
+        width: 600px;
+        height: 600px;
+        background: radial-gradient(
+          circle,
+          rgba(120, 110, 255, 0.15) 0%,
+          rgba(0, 0, 0, 0) 70%
+        );
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: -1;
+        pointer-events: none;
+      }
+
+      .login-card {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-top: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 24px;
+        padding: 48px;
+        width: 100%;
+        max-width: 380px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+      }
+      .login-header {
+        text-align: center;
+        margin-bottom: 32px;
+      }
+      .login-header h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+        color: #fff;
+        letter-spacing: -0.5px;
+      }
+      .login-header p {
+        color: rgba(255, 255, 255, 0.6);
+        margin: 8px 0 0;
+        font-size: 14px;
+      }
+      .form-group {
+        margin-bottom: 20px;
+      }
+      .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        color: rgba(255, 255, 255, 0.8);
+        font-weight: 500;
+        font-size: 13px;
+      }
+      .input {
+        width: 100%;
+        padding: 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(0, 0, 0, 0.2);
+        color: #fff;
+        box-sizing: border-box;
+        font-family: inherit;
+        font-size: 15px;
+        transition: all 0.2s ease;
+      }
+      .input:focus {
+        outline: none;
+        border-color: rgba(139, 92, 246, 0.5);
+        background: rgba(0, 0, 0, 0.3);
+        box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.15);
+      }
+      .btn {
+        width: 100%;
+        padding: 14px;
+        border-radius: 12px;
+        border: none;
+        background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-family: inherit;
+        font-size: 15px;
+        margin-top: 12px;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 20px rgba(139, 92, 246, 0.35);
+        filter: brightness(1.1);
+      }
+      .btn:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+        transform: none;
+      }
+      .error-message {
+        color: #f87171;
+        font-size: 13px;
+        margin-top: 16px;
+        text-align: center;
+        display: none;
+        padding: 10px;
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid rgba(239, 68, 68, 0.2);
+        border-radius: 8px;
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="login-card">
-        <div class="login-header">
-            <h1>Welcome Back</h1>
-            <p>Please sign in to continue</p>
+      <div class="login-header">
+        <h1>Lowkey Media Server</h1>
+        <p>Please sign in to continue</p>
+      </div>
+      <form id="loginForm">
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input type="text" id="username" class="input" required autofocus />
         </div>
-        <form id="loginForm">
-            <div class="form-group">
-                <label for="username">Username</label>
-                <input type="text" id="username" class="input" required autofocus />
-            </div>
-            <div class="form-group">
-                <label for="password">Password</label>
-                <input type="password" id="password" class="input" required />
-            </div>
-            <button type="submit" class="btn">Sign In</button>
-            <div id="error" class="error-message"></div>
-        </form>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" class="input" required />
+        </div>
+        <button type="submit" class="btn">Sign In</button>
+        <div id="error" class="error-message"></div>
+      </form>
     </div>
 
     <script>
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const errorEl = document.getElementById('error');
-            const btn = e.target.querySelector('button');
+      document
+        .getElementById('loginForm')
+        .addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const username = document.getElementById('username').value;
+          const password = document.getElementById('password').value;
+          const errorEl = document.getElementById('error');
+          const btn = e.target.querySelector('button');
 
-            errorEl.style.display = 'none';
-            btn.disabled = true;
-            btn.textContent = 'Signing in...';
+          errorEl.style.display = 'none';
+          btn.disabled = true;
+          btn.textContent = 'Signing in...';
 
-            try {
-                const res = await fetch('/auth/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
+          try {
+            const res = await fetch('/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username, password }),
+            });
 
-                if (res.ok) {
-                    // Check if there was a redirect param
-                    const params = new URLSearchParams(window.location.search);
-                    const redirect = params.get('redirect') || '/';
-                    window.location.href = redirect;
-                } else {
-                    const data = await res.json();
-                    throw new Error(data.error || 'Login failed');
-                }
-            } catch (err) {
-                errorEl.textContent = err.message;
-                errorEl.style.display = 'block';
-                btn.disabled = false;
-                btn.textContent = 'Sign In';
+            if (res.ok) {
+              // Check if there was a redirect param
+              const params = new URLSearchParams(window.location.search);
+              const redirect = params.get('redirect') || '/';
+              window.location.href = redirect;
+            } else {
+              const data = await res.json();
+              throw new Error(data.error || 'Login failed');
             }
+          } catch (err) {
+            errorEl.textContent = err.message;
+            errorEl.style.display = 'block';
+            btn.disabled = false;
+            btn.textContent = 'Sign In';
+          }
         });
     </script>
-</body>
+  </body>
 </html>
 {{ end }}
-
