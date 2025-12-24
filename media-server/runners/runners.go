@@ -10,23 +10,21 @@ import (
 
 // Runners manages a pool of concurrent job runners.
 type Runners struct {
-	queue         *jobqueue.Queue
-	maxConcurrent int
-	mu            sync.Mutex
-	running       int
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
+	queue   *jobqueue.Queue
+	mu      sync.Mutex
+	running int
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 }
 
-// New creates a new Runners instance with a given concurrency level.
-func New(queue *jobqueue.Queue, maxConcurrent int) *Runners {
+// New creates a new Runners instance.
+func New(queue *jobqueue.Queue) *Runners {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Runners{
-		queue:         queue,
-		maxConcurrent: maxConcurrent,
-		ctx:           ctx,
-		cancel:        cancel,
+		queue:  queue,
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
 	// Start a goroutine to listen to the signal channel.
@@ -101,11 +99,6 @@ func (r *Runners) runJob(j *jobqueue.Job) {
 
 // tryFetchJobAndRun tries to fetch a new job if capacity allows.
 func (r *Runners) tryFetchJobAndRun() {
-	if r.running >= r.maxConcurrent {
-		// Already at capacity.
-		return
-	}
-
 	job, err := r.queue.ClaimJob()
 	if err != nil || job == nil {
 		// No job available or error encountered.
