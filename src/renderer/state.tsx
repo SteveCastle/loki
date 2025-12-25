@@ -392,6 +392,7 @@ const getInitialContext = (): LibraryState => {
     ['applyTag8', '8'],
     ['applyTag9', '9'],
     ['togglePlayPause', ' '],
+    ['layoutMode', 'grid'],
   ] as [string, any][]);
 
   return {
@@ -460,6 +461,7 @@ const getInitialContext = (): LibraryState => {
       autoPlayVideoLoops: batched['autoPlayVideoLoops'] as number | false,
       volume: batched['volume'] as number,
       alwaysOnTop: batched['alwaysOnTop'] as boolean,
+      layoutMode: batched['layoutMode'] as 'grid' | 'masonry',
     },
     hotKeys: {
       incrementCursor: batched['incrementCursor'] as string,
