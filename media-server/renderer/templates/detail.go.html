@@ -74,19 +74,27 @@
         height: 60vh;
         overflow-y: auto;
         margin-bottom: var(--space-5);
+        position: relative;
       }
 
-      .terminal-content {
+      .terminal-viewport {
         padding: var(--space-4);
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
       }
 
       .terminal-line {
-        white-space: pre-wrap;
-        word-wrap: break-word;
-        line-height: 1.5;
+        white-space: pre;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        height: 24px;
+        line-height: 24px;
         color: var(--text-secondary);
         font-family: var(--font-mono);
         font-size: var(--text-sm);
+        padding: 0 var(--space-4);
       }
 
       .terminal-line a {
@@ -259,12 +267,9 @@
     <div class="detail-container">
       {{ template "topnav" . }} {{ template "detailHeader" .Job }}
 
-      <div class="terminal">
-        <div class="terminal-content">
-          {{range $index, $line := .Job.Stdout }}
-          <div class="terminal-line" data-raw="{{$line}}"></div>
-          {{end}}
-        </div>
+      <div class="terminal" id="terminal-scroller">
+        <div id="terminal-phantom"></div>
+        <div id="terminal-viewport" class="terminal-viewport"></div>
       </div>
     </div>
 
@@ -344,23 +349,135 @@
           .catch((err) => console.error('Error opening path:', err));
       }
 
-      // Apply linkification to all existing terminal lines on load
-      function linkifyExistingLines() {
-        document
-          .querySelectorAll('.terminal-line[data-raw]')
-          .forEach((line) => {
-            const rawText = line.getAttribute('data-raw');
-            if (rawText) {
-              line.innerHTML = linkifyText(rawText);
-            }
+      class VirtualTerminal {
+        constructor(containerId, phantomId, viewportId, lines, rowHeight = 24) {
+          this.scroller = document.getElementById(containerId);
+          this.phantom = document.getElementById(phantomId);
+          this.viewport = document.getElementById(viewportId);
+          this.lines = lines || [];
+          this.rowHeight = rowHeight;
+          this.visibleCount = 0;
+          this.buffer = 20; // Extra lines above/below
+          this.autoScroll = true;
+
+          // Padding inside the scroller affects the math
+          // We need to account for it in the viewport transform
+          // In CSS .terminal-viewport has top: 0, which is relative to the scroller content box
+          // but we want the transform to push it down relative to the start of the phantom content.
+
+          this.scroller.addEventListener('scroll', () => this.onScroll());
+
+          // Initial setup
+          this.updateHeight();
+          this.calcVisible();
+          this.render();
+
+          // Scroll to bottom initially
+          if (this.lines.length > 0) {
+            this.scrollToBottom();
+          }
+
+          // Handle resize
+          window.addEventListener('resize', () => {
+            this.calcVisible();
+            this.render();
           });
+        }
+
+        scrollToBottom() {
+          this.scroller.scrollTop = this.scroller.scrollHeight;
+          this.autoScroll = true;
+        }
+
+        calcVisible() {
+          // Calculate how many items fit in the viewport
+          this.visibleCount = Math.ceil(
+            this.scroller.clientHeight / this.rowHeight
+          );
+        }
+
+        updateHeight() {
+          // Set the height of the phantom element to force the scrollbar
+          // Add some padding for the bottom to look nice
+          this.phantom.style.height = `${this.lines.length * this.rowHeight}px`;
+        }
+
+        onScroll() {
+          const scrollTop = this.scroller.scrollTop;
+          const clientHeight = this.scroller.clientHeight;
+          const scrollHeight = this.scroller.scrollHeight;
+
+          // Determine if we should auto-scroll (are we near the bottom?)
+          // Tolerance of 20px
+          this.autoScroll = scrollHeight - scrollTop - clientHeight < 50;
+
+          this.render();
+        }
+
+        appendLine(line) {
+          this.lines.push(line);
+          this.updateHeight();
+
+          if (this.autoScroll) {
+            this.scrollToBottom();
+            this.render();
+          } else {
+            // Even if not scrolling, if we are near the updated area we might need render?
+            // Usually not necessary unless we are deleting/inserting in middle.
+            // But if the user scrolled up, and we append, the phantom height grows,
+            // but scrollTop stays same, so view stays stable.
+          }
+        }
+
+        render() {
+          const scrollTop = this.scroller.scrollTop;
+          const startIndex = Math.floor(scrollTop / this.rowHeight);
+
+          const renderStart = Math.max(0, startIndex - this.buffer);
+          const renderEnd = Math.min(
+            this.lines.length,
+            startIndex + this.visibleCount + this.buffer
+          );
+
+          const offsetY = renderStart * this.rowHeight;
+
+          // Optimization: avoid DOM thrashing if range hasn't changed significantly?
+          // For simplicity, just rebuild. HTML string building is fast.
+
+          let html = '';
+          for (let i = renderStart; i < renderEnd; i++) {
+            html += `<div class="terminal-line">${linkifyText(
+              this.lines[i]
+            )}</div>`;
+          }
+
+          this.viewport.innerHTML = html;
+          // The padding of the container (var(--space-4) = usually 16px) is handled by the absolute positioning
+          // of the viewport?
+          // Actually, we replaced .terminal-content with .terminal-viewport.
+          // .terminal-viewport has absolute positioning.
+          // We need to offset it by the scrolled amount + padding if needed.
+          // The phantom creates the scroll height. The viewport sits at top:0.
+          // We translate the viewport down to where the content should be.
+          // But we must add the container padding if we want it to align with the top padding.
+          // Let's assume padding is handled by the viewport's internal padding or the container's padding?
+          // If container has padding, scrollHeight includes it?
+          // Let's assume .terminal has padding? No, it has no padding in CSS now.
+          // .terminal-viewport has padding.
+
+          // To position correctly within the scrollable area (which is defined by phantom),
+          // we just translate Y.
+          this.viewport.style.transform = `translateY(${offsetY}px)`;
+        }
       }
     </script>
 
     <script>
       document.addEventListener('DOMContentLoaded', function () {
-        // Linkify existing terminal content
-        linkifyExistingLines();
+        // Initialize virtual terminal with server-side data
+        const initialLines = {{ json .Job.Stdout }} || [];
+        // rowHeight 24px matches CSS (24px height)
+        const term = new VirtualTerminal('terminal-scroller', 'terminal-phantom', 'terminal-viewport', initialLines, 24);
 
         const STREAM_URL = '/stream';
         const EVENT_STDOUT = 'stdout-{{.Job.ID}}';
@@ -505,15 +622,8 @@
               onActivity();
               var data = JSON.parse(e.data);
               if (data.line) {
-                var container = document.querySelector('.terminal-content');
-                if (!container) return;
-                var newLine = document.createElement('div');
-                newLine.className = 'terminal-line';
-                newLine.innerHTML = linkifyText(data.line);
-                container.appendChild(newLine);
-                if (container.parentElement) {
-                  container.parentElement.scrollTop =
-                    container.parentElement.scrollHeight;
+                if (term) {
+                    term.appendLine(data.line);
                 }
               }
             });

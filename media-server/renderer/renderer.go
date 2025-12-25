@@ -2,6 +2,7 @@ package renderer
 
 import (
 	"embed"
+	"encoding/json"
 	"html"
 	"html/template"
 	"log"
@@ -35,12 +36,22 @@ func htmlAttr(s string) string {
 	return html.EscapeString(s)
 }
 
+// jsonFunc marshals an object to JSON for use in templates
+func jsonFunc(v interface{}) (template.JS, error) {
+	a, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return template.JS(a), nil
+}
+
 // initTemplates initializes the templates. Called only once.
 func initTemplates() *template.Template {
 	tmpl, err := template.New("").
 		Funcs(template.FuncMap{
 			"formatTime": formatTime,
 			"htmlAttr":   htmlAttr,
+			"json":       jsonFunc,
 		}).
 		ParseFS(templatesFS, templateGlob)
 	if err != nil {

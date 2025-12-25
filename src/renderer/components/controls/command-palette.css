@@ -340,30 +340,19 @@
 }
 
 /* Stored Items View Styles */
-.CommandPalette .storedItemsContainer {
+.CommandPalette .storedItemsContainer,
+.CommandPalette .scrollableTabContent {
   max-height: 300px;
   width: 100%;
   overflow-y: auto;
   overflow-x: hidden;
   padding-right: 4px;
+  scrollbar-width: none; /* Firefox */
 }
 
-.CommandPalette .storedItemsContainer::-webkit-scrollbar {
-  width: 4px;
-}
-
-.CommandPalette .storedItemsContainer::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-}
-
-.CommandPalette .storedItemsContainer::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.3);
-  border-radius: 2px;
-}
-
-.CommandPalette .storedItemsContainer::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.5);
+.CommandPalette .storedItemsContainer::-webkit-scrollbar,
+.CommandPalette .scrollableTabContent::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Edge */
 }
 
 .CommandPalette .storedItemsSection {
@@ -470,4 +459,3 @@
   position: absolute;
   left: -12px;
 }
-
