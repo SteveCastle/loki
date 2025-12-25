@@ -69,13 +69,37 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
 
   // Extract file path from input - look for quoted paths or file-like arguments
   const extractFilePath = (input: string): string | null => {
+    if (!input) return null;
+
     // Match quoted paths first (most reliable)
-    const quotedMatch = input.match(/"([^"]+)"/);
+    // Supports both double and single quotes
+    const quotedMatch = input.match(/["']([^"']+)["']/);
     if (quotedMatch) {
       return quotedMatch[1];
     }
 
-    // Fallback: look for path-like strings (contain / or \ or have file extensions)
+    const trimmedInput = input.trim();
+
+    // If the whole string looks like a path and contains spaces,
+    // it's likely a single path passed as input (common for ingest/metadata jobs)
+    const hasPathSeparator =
+      trimmedInput.includes('/') || trimmedInput.includes('\\');
+    const hasDriveLetter = /^[a-zA-Z]:/.test(trimmedInput);
+    const hasMediaExtension =
+      /\.(mp4|mkv|avi|mov|m4v|webm|mp3|wav|flac|aac|ogg|m4a|opus|jpg|jpeg|jfif|webp|png|gif|vtt|srt|ass)$/i.test(
+        trimmedInput
+      );
+
+    if (hasPathSeparator || hasDriveLetter || hasMediaExtension) {
+      // If it doesn't look like a complex command with flags, treat the whole thing as a path
+      const hasFlags = /\s--?[a-zA-Z0-9]/.test(trimmedInput);
+      if (!hasFlags) {
+        return trimmedInput;
+      }
+    }
+
+    // Fallback: look for path-like strings (original logic, but slightly improved)
+    // We try to match as much as possible that looks like a path
     const pathMatch = input.match(
       /([^\s]+(?:\/|\\)[^\s]*|[^\s]*\.[a-zA-Z0-9]{2,4})/
     );
