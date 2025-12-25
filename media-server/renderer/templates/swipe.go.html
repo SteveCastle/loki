@@ -1114,6 +1114,9 @@
       // This Set is used for UI state only
       let likedItems = new Set();
 
+      // Request cancellation
+      let fetchController = null;
+
       // Generate a session seed for deterministic shuffle
       // This changes on each page load but stays consistent during pagination
       // Uses crypto.getRandomValues for high-quality randomness
@@ -1274,6 +1277,12 @@
         if (isLoading) return;
         isLoading = true;
 
+        if (fetchController) {
+          fetchController.abort();
+        }
+        const controller = new AbortController();
+        fetchController = controller;
+
         try {
           const params = new URLSearchParams({
             offset: 0,
@@ -1284,7 +1293,9 @@
             params.set('q', searchQuery);
           }
 
-          const response = await fetch(`/swipe/api?${params}`);
+          const response = await fetch(`/swipe/api?${params}`, {
+            signal: controller.signal,
+          });
           const data = await response.json();
           const newItems = data.items || [];
 
@@ -1309,8 +1320,13 @@
             isLoading = false;
           }
         } catch (err) {
+          if (err.name === 'AbortError') return;
           console.error('Failed to load initial item:', err);
           isLoading = false;
+        } finally {
+          if (fetchController === controller) {
+            fetchController = null;
+          }
         }
       }
 
@@ -1325,6 +1341,9 @@
           isLoading = true;
         }
 
+        const controller = new AbortController();
+        fetchController = controller;
+
         try {
           const params = new URLSearchParams({
             offset: items.length,
@@ -1335,14 +1354,20 @@
             params.set('q', searchQuery);
           }
 
-          const response = await fetch(`/swipe/api?${params}`);
+          const response = await fetch(`/swipe/api?${params}`, {
+            signal: controller.signal,
+          });
           const data = await response.json();
 
           items = items.concat(data.items || []);
           hasMore = data.has_more;
         } catch (err) {
+          if (err.name === 'AbortError') return;
           console.error('Failed to load items:', err);
         } finally {
+          if (fetchController === controller) {
+            fetchController = null;
+          }
           if (preload) {
             isPreloading = false;
           } else {
@@ -2399,6 +2424,14 @@
         const newQuery = buildTagQuery();
         saveSelectedTags();
         if (newQuery !== searchQuery) {
+          // Abort any pending requests
+          if (fetchController) {
+            fetchController.abort();
+            fetchController = null;
+          }
+          isLoading = false;
+          isPreloading = false;
+
           searchQuery = newQuery;
           items = [];
           currentIndex = 0;
