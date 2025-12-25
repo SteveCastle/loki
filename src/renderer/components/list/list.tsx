@@ -30,6 +30,7 @@ export function List() {
         filters: state.context.settings.filters,
         sortBy: state.context.settings.sortBy,
         gridSize: state.context.settings.gridSize as [number, number],
+        layoutMode: state.context.settings.layoutMode || 'grid',
       };
     },
     (a, b) =>
@@ -39,7 +40,8 @@ export function List() {
       a.filters === b.filters &&
       a.sortBy === b.sortBy &&
       a.gridSize[0] === b.gridSize[0] &&
-      a.gridSize[1] === b.gridSize[1]
+      a.gridSize[1] === b.gridSize[1] &&
+      a.layoutMode === b.layoutMode
   );
 
   const items = useMemo(() => {
@@ -126,6 +128,22 @@ export function List() {
       }
     };
   }, []);
+
+  if (base.layoutMode === 'masonry') {
+    return (
+      <MasonryGrid
+        items={items}
+        columns={columns}
+        initialScrollOffset={initialScrollPositionRef.current}
+        cursor={cursor}
+        scrollToCursorEventId={scrollToCursorEventId}
+        libraryService={libraryService}
+        onScroll={handleScroll}
+        onDidInitialScroll={() => setInitialLoad(false)}
+        shouldDoInitialScroll={initialLoad}
+      />
+    );
+  }
 
   return (
     <VirtualGrid
@@ -338,6 +356,237 @@ function VirtualGrid({
                 />
               ) : null;
             })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+type MasonryGridProps = {
+  items: ReturnType<typeof filter>;
+  columns: number;
+  initialScrollOffset: number;
+  cursor: number | null;
+  scrollToCursorEventId: string | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  libraryService: any;
+  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+  onDidInitialScroll: () => void;
+  shouldDoInitialScroll: boolean;
+};
+
+function MasonryGrid({
+  items,
+  columns,
+  initialScrollOffset,
+  cursor,
+  scrollToCursorEventId,
+  libraryService,
+  onScroll,
+  onDidInitialScroll,
+  shouldDoInitialScroll,
+}: MasonryGridProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+
+  // Resize observer to get container width
+  useEffect(() => {
+    if (!parentRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(parentRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  const layout = useMemo(() => {
+    if (containerWidth === 0) return { height: 0, items: [] };
+    const columnWidth = containerWidth / columns;
+    const colHeights = new Array(columns).fill(0);
+    const itemPositions = items.map((item, index) => {
+      const minColIndex = colHeights.indexOf(Math.min(...colHeights));
+      const x = minColIndex * columnWidth;
+      const y = colHeights[minColIndex];
+
+      let itemHeight = 200; // Default
+      if (item.width && item.height) {
+        itemHeight = columnWidth / (item.width / item.height);
+      }
+      colHeights[minColIndex] += itemHeight;
+
+      return { index, x, y, width: columnWidth, height: itemHeight, item };
+    });
+    return { height: Math.max(...colHeights), items: itemPositions };
+  }, [items, columns, containerWidth]);
+
+  const visibleItems = useMemo(() => {
+    // Determine viewport height
+    const viewportHeight =
+      parentRef.current?.clientHeight || window.innerHeight;
+    const overscan = 500;
+    const start = Math.max(0, scrollTop - overscan);
+    const end = scrollTop + viewportHeight + overscan;
+
+    return layout.items.filter((p) => p.y + p.height > start && p.y < end);
+  }, [layout.items, scrollTop]);
+
+  const handleScrollLocal = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      setScrollTop(e.currentTarget.scrollTop);
+      onScroll(e);
+    },
+    [onScroll]
+  );
+
+  // Initial scroll restore
+  const didInitialScrollRef = useRef(false);
+  useEffect(() => {
+    if (!parentRef.current) return;
+    if (containerWidth === 0) return;
+
+    if (!didInitialScrollRef.current && shouldDoInitialScroll) {
+      parentRef.current.scrollTop = initialScrollOffset;
+      setScrollTop(initialScrollOffset);
+      didInitialScrollRef.current = true;
+      onDidInitialScroll();
+    }
+  }, [
+    initialScrollOffset,
+    onDidInitialScroll,
+    shouldDoInitialScroll,
+    containerWidth,
+  ]);
+
+  // Scroll to cursor logic
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
+
+  useEffect(() => {
+    if (containerWidth === 0) return;
+    if (!scrollToCursorEventId) return;
+
+    const currentCursor = cursorRef.current;
+    if (currentCursor != null && layout.items[currentCursor]) {
+      const itemY = layout.items[currentCursor].y;
+      if (parentRef.current) {
+        parentRef.current.scrollTo({ top: itemY, behavior: 'auto' });
+        setScrollTop(itemY);
+      }
+    }
+
+    libraryService.send('CLEAR_SCROLL_TO_CURSOR');
+  }, [scrollToCursorEventId, libraryService, layout.items, containerWidth]);
+
+  // Auto-scroll logic (copied from VirtualGrid)
+  const { isDragging, offset, type } = useDragLayer((monitor) => ({
+    isDragging: monitor.isDragging(),
+    offset: monitor.getClientOffset(),
+    type: monitor.getItemType(),
+  }));
+
+  const mapRange = useCallback(
+    (
+      value: number,
+      low1: number,
+      high1: number,
+      low2: number,
+      high2: number
+    ) => {
+      return low2 + ((high2 - low2) * (value - low1)) / (high1 - low1);
+    },
+    []
+  );
+
+  const getScrollSpeed = useCallback(
+    (yOffset: number, containerHeight: number) => {
+      let scrollSpeed = 0;
+      const threshold = PERFORMANCE_CONSTANTS.SCROLL_SPEED_THRESHOLD;
+      const minSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MIN;
+      const maxSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MAX;
+
+      if (yOffset < threshold) {
+        scrollSpeed = mapRange(yOffset, 0, threshold, minSpeed, 0);
+      } else if (
+        yOffset > containerHeight - threshold &&
+        yOffset < containerHeight
+      ) {
+        scrollSpeed = mapRange(
+          yOffset,
+          containerHeight - threshold,
+          containerHeight,
+          0,
+          maxSpeed
+        );
+      }
+
+      return scrollSpeed;
+    },
+    [mapRange]
+  );
+
+  useEffect(() => {
+    let animationFrameId: number;
+    const containerHeight = parentRef.current?.clientHeight;
+
+    const scroll = () => {
+      if (
+        isDragging &&
+        type === 'MEDIA' &&
+        offset &&
+        parentRef.current &&
+        containerHeight
+      ) {
+        const mousePosition = offset.y;
+        const scrollSpeed = getScrollSpeed(mousePosition, containerHeight);
+        parentRef.current.scrollBy(0, scrollSpeed);
+        setScrollTop(parentRef.current.scrollTop); // Update state to trigger render
+        animationFrameId = requestAnimationFrame(scroll);
+      } else {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(scroll);
+
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isDragging, offset, type, getScrollSpeed]);
+
+  return (
+    <div className="List" ref={parentRef} onScroll={handleScrollLocal}>
+      <div
+        className="ListContainer"
+        style={{
+          height: `${layout.height}px`,
+          position: 'relative',
+          width: '100%',
+        }}
+      >
+        {visibleItems.map((p) => (
+          <div
+            className="ListRow"
+            key={
+              p.item?.path +
+              (p.item?.timeStamp != null ? String(p.item?.timeStamp) : 'null')
+            }
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: `${p.width}px`,
+              height: `${p.height}px`,
+              transform: `translate3d(${p.x}px, ${p.y}px, 0)`,
+            }}
+          >
+            <ListItem
+              scaleMode={'cover'}
+              height={p.height}
+              item={p.item}
+              idx={p.index}
+            />
           </div>
         ))}
       </div>

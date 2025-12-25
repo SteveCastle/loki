@@ -50,7 +50,10 @@ export type SettingKey =
   | 'autoPlay'
   | 'autoPlayTime'
   | 'autoPlayVideoLoops'
-  | 'alwaysOnTop';
+  | 'alwaysOnTop'
+  | 'layoutMode';
+
+export type LayoutModeOption = 'grid' | 'masonry';
 
 export type Settings = {
   scaleMode: ScaleModeOption;
@@ -80,6 +83,7 @@ export type Settings = {
   autoPlayTime: number | false;
   autoPlayVideoLoops: number | false;
   alwaysOnTop: boolean;
+  layoutMode: LayoutModeOption;
 };
 
 export const SCALE_MODES = {
@@ -467,6 +471,22 @@ export const ALWAYS_ON_TOP = {
   },
 };
 
+export const LAYOUT_MODE = {
+  title: 'Layout Mode',
+  reload: false,
+  display: 'general',
+  options: {
+    grid: {
+      label: 'Grid',
+      value: 'grid',
+    },
+    masonry: {
+      label: 'Masonry',
+      value: 'masonry',
+    },
+  },
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -506,4 +526,5 @@ export const SETTINGS: SettingsObject = {
   autoPlayTime: AUTO_PLAY_TIME,
   autoPlayVideoLoops: AUTO_PLAY_VIDEO_LOOPS,
   alwaysOnTop: ALWAYS_ON_TOP,
+  layoutMode: LAYOUT_MODE,
 };
