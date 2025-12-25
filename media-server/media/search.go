@@ -305,15 +305,30 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 	case "path":
 		return "m.path " + op + " ?", []interface{}{val}
 	case "description":
+		if strings.EqualFold(val, "null") && op == "=" {
+			return "m.description IS NULL", nil
+		}
 		return "m.description " + op + " ?", []interface{}{val}
 	case "size":
+		if strings.EqualFold(val, "null") && op == "=" {
+			return "m.size IS NULL", nil
+		}
 		// Handle size conversion if needed? Assuming bytes
 		return "m.size " + op + " ?", []interface{}{val}
 	case "hash":
+		if strings.EqualFold(val, "null") && op == "=" {
+			return "m.hash IS NULL", nil
+		}
 		return "m.hash " + op + " ?", []interface{}{val}
 	case "width":
+		if strings.EqualFold(val, "null") && op == "=" {
+			return "m.width IS NULL", nil
+		}
 		return "m.width " + op + " ?", []interface{}{val}
 	case "height":
+		if strings.EqualFold(val, "null") && op == "=" {
+			return "m.height IS NULL", nil
+		}
 		return "m.height " + op + " ?", []interface{}{val}
 	case "tags":
 		if strings.ToLower(val) == "none" {
@@ -358,23 +373,43 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 	case "path":
 		return compareString(item.Path, n.Operator, n.Value)
 	case "description":
+		if strings.EqualFold(n.Value, "null") && n.Operator == "=" {
+			return !item.Description.Valid
+		}
 		if !item.Description.Valid {
 			return false
 		}
 		return compareString(item.Description.String, n.Operator, n.Value)
 	case "size":
+		if strings.EqualFold(n.Value, "null") && n.Operator == "=" {
+			return !item.Size.Valid
+		}
 		if !item.Size.Valid {
 			return false
 		}
 		v, _ := strconv.ParseInt(n.Value, 10, 64)
 		return compareInt(item.Size.Int64, n.Operator, v)
+	case "hash":
+		if strings.EqualFold(n.Value, "null") && n.Operator == "=" {
+			return !item.Hash.Valid
+		}
+		if !item.Hash.Valid {
+			return false
+		}
+		return compareString(item.Hash.String, n.Operator, n.Value)
 	case "width":
+		if strings.EqualFold(n.Value, "null") && n.Operator == "=" {
+			return !item.Width.Valid
+		}
 		if !item.Width.Valid {
 			return false
 		}
 		v, _ := strconv.ParseInt(n.Value, 10, 64)
 		return compareInt(item.Width.Int64, n.Operator, v)
 	case "height":
+		if strings.EqualFold(n.Value, "null") && n.Operator == "=" {
+			return !item.Height.Valid
+		}
 		if !item.Height.Valid {
 			return false
 		}
