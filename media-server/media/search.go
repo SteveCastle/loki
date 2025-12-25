@@ -265,6 +265,26 @@ func (p *Parser) parsePredicate() (Node, error) {
 
 	// Value
 	valToken := p.lexer.scan()
+
+	// Handle case where colon is followed by an operator (e.g. tagcount:>2)
+	// This supports syntax like "key:>value" by converting it to "key > value"
+	if operator == "=" {
+		switch valToken.Type {
+		case TokenGT:
+			operator = ">"
+			valToken = p.lexer.scan()
+		case TokenLT:
+			operator = "<"
+			valToken = p.lexer.scan()
+		case TokenGTE:
+			operator = ">="
+			valToken = p.lexer.scan()
+		case TokenLTE:
+			operator = "<="
+			valToken = p.lexer.scan()
+		}
+	}
+
 	if valToken.Type != TokenIdentifier && valToken.Type != TokenString {
 		// Allow identifiers, strings, numbers
 		// Note: TokenInt/Float are not explicitly in our enum but scanner returns them
@@ -313,6 +333,10 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 		if strings.EqualFold(val, "null") && op == "=" {
 			return "m.size IS NULL", nil
 		}
+		// Try to parse as int for better SQL binding
+		if iVal, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return "m.size " + op + " ?", []interface{}{iVal}
+		}
 		// Handle size conversion if needed? Assuming bytes
 		return "m.size " + op + " ?", []interface{}{val}
 	case "hash":
@@ -324,10 +348,16 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 		if strings.EqualFold(val, "null") && op == "=" {
 			return "m.width IS NULL", nil
 		}
+		if iVal, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return "m.width " + op + " ?", []interface{}{iVal}
+		}
 		return "m.width " + op + " ?", []interface{}{val}
 	case "height":
 		if strings.EqualFold(val, "null") && op == "=" {
 			return "m.height IS NULL", nil
+		}
+		if iVal, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return "m.height " + op + " ?", []interface{}{iVal}
 		}
 		return "m.height " + op + " ?", []interface{}{val}
 	case "tags":
@@ -350,6 +380,9 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 		return "(m.path LIKE ? AND m.path NOT LIKE ?)", []interface{}{val + "%", val + "%" + pathSep + "%"}
 	case "tagcount":
 		// (SELECT COUNT(*) ...) op ?
+		if iVal, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return "(SELECT COUNT(*) FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path) " + op + " ?", []interface{}{iVal}
+		}
 		return "(SELECT COUNT(*) FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path) " + op + " ?", []interface{}{val}
 	case "tag":
 		// EXISTS (...)
