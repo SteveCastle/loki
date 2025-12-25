@@ -1750,6 +1750,7 @@
         '{{.HasMore}}' === '1' ||
         '{{.HasMore}}' === 'True';
       let currentSearchQuery = '{{.SearchQuery}}';
+      let totalItemsCount = Number('{{.TotalCount}}') || 0;
 
       // Restore last search query if no query parameter provided
       const LAST_SEARCH_KEY = 'media_last_search_query';
@@ -1870,15 +1871,32 @@
 
         if (isApplyToQueryEnabled() && currentSearchQuery) {
           if (selectionCountEl) {
-            selectionCountEl.textContent = 'All matching query';
+            let text = 'All matching query';
+            if (totalItemsCount > 0) {
+              text += ` (${totalItemsCount})`;
+            }
+            selectionCountEl.textContent = text;
             selectionCountEl.classList.add('active');
           }
         } else {
-          const text =
-            count === 1 ? '1 item selected' : `${count} items selected`;
           if (selectionCountEl) {
-            selectionCountEl.textContent = count > 0 ? text : '0 items';
-            selectionCountEl.classList.toggle('active', count > 0);
+            if (count === 0) {
+              if (totalItemsCount > 0) {
+                selectionCountEl.textContent = `${totalItemsCount} items`;
+                selectionCountEl.classList.add('active');
+              } else {
+                selectionCountEl.textContent = '0 items';
+                selectionCountEl.classList.remove('active');
+              }
+            } else {
+              if (totalItemsCount > 0) {
+                selectionCountEl.textContent = `${count} / ${totalItemsCount} selected`;
+              } else {
+                selectionCountEl.textContent =
+                  count === 1 ? '1 item selected' : `${count} items selected`;
+              }
+              selectionCountEl.classList.add('active');
+            }
           }
         }
       }
@@ -2646,6 +2664,12 @@
 
             currentOffset += data.items.length;
             hasMoreItems = data.has_more;
+
+            // Update total count if provided
+            if (data.total_count !== undefined && data.total_count !== -1) {
+              totalItemsCount = data.total_count;
+              updateBulkActionsCount();
+            }
 
             if (!hasMoreItems) {
               document.getElementById('end-of-list').style.display = 'block';
@@ -3749,6 +3773,7 @@
       // -----------------------------
       // Typeahead search with recent searches
       // -----------------------------
+      updateBulkActionsCount();
       (function initTypeahead() {
         const input = document.getElementById('search-input');
         const dropdown = document.getElementById('typeahead-dropdown');

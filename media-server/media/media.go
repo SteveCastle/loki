@@ -88,14 +88,16 @@ type TemplateData struct {
 	MediaItems         []MediaItem `json:"media_items"`
 	Offset             int         `json:"offset"`
 	HasMore            bool        `json:"has_more"`
+	TotalCount         int         `json:"total_count"`
 	SearchQuery        string      `json:"search_query"`
 	DefaultOllamaModel string      `json:"default_ollama_model"`
 }
 
 // APIResponse represents the JSON response for the API endpoint
 type APIResponse struct {
-	Items   []MediaItem `json:"items"`
-	HasMore bool        `json:"has_more"`
+	Items      []MediaItem `json:"items"`
+	HasMore    bool        `json:"has_more"`
+	TotalCount int         `json:"total_count"`
 }
 
 // formatBytes converts bytes to human readable format
@@ -438,7 +440,7 @@ func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string
 }
 
 // GetItems fetches media items from the database with pagination and search
-func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, bool, error) {
+func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, int, bool, error) {
 	baseQuery := `SELECT DISTINCT m.path, m.description, m.size, m.hash, m.width, m.height FROM media m`
 	orderBy := ` ORDER BY m.path`
 
@@ -469,7 +471,16 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, b
 
 	// If there are exists conditions, we need to implement existence-aware pagination
 	if rootNode != nil && rootNode.HasExists() {
-		return getItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
+		items, hasMore, err := getItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
+		return items, -1, hasMore, err
+	}
+
+	// Calculate total count for standard queries
+	countQuery := "SELECT COUNT(*) FROM media m " + whereClause
+	var totalCount int
+	if err := db.QueryRow(countQuery, args...).Scan(&totalCount); err != nil {
+		log.Printf("Error calculating total count: %v", err)
+		totalCount = -1
 	}
 
 	// Standard pagination for stable sorting
@@ -478,11 +489,13 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, b
 
 	// Construct full query
 	query = baseQuery + " " + whereClause + orderBy + limitClause
-	args = append(args, limit+1, offset)
+	// Copy args for the main query since we used them for count query
+	queryArgs := append([]interface{}{}, args...)
+	queryArgs = append(queryArgs, limit+1, offset)
 
-	rows, err := db.Query(query, args...)
+	rows, err := db.Query(query, queryArgs...)
 	if err != nil {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	defer rows.Close()
 
@@ -492,7 +505,7 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, b
 		var item MediaItem
 		err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height)
 		if err != nil {
-			return nil, false, err
+			return nil, 0, false, err
 		}
 
 		// Handle nullable size field
@@ -540,7 +553,7 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, b
 		}
 	}
 
-	return items, hasMore, nil
+	return items, totalCount, hasMore, nil
 }
 
 // GetItemByPath fetches a single media item by its path
@@ -1518,7 +1531,7 @@ func getPathsByQueryWithExistence(db *sql.DB, searchQuery string) ([]string, err
 	offset := 0
 	var paths []string
 	for {
-		items, hasMore, err := GetItems(db, offset, batchSize, searchQuery)
+		items, _, hasMore, err := GetItems(db, offset, batchSize, searchQuery)
 		if err != nil {
 			return nil, err
 		}

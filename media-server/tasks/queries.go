@@ -174,7 +174,7 @@ func getMediaPathsByQuery(db *sql.DB, query string) ([]string, error) {
 	offset := 0
 	var paths []string
 	for {
-		items, hasMore, err := media.GetItems(db, offset, pageSize, query)
+		items, _, hasMore, err := media.GetItems(db, offset, pageSize, query)
 		if err != nil {
 			return nil, err
 		}
