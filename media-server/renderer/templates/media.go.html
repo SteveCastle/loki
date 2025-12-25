@@ -3021,6 +3021,34 @@
 
         setupLifecycle();
         connect();
+
+        // Check for running jobs on load
+        fetch('/jobs/list')
+          .then((res) => res.json())
+          .then((jobs) => {
+            if (Array.isArray(jobs)) {
+              jobs.forEach((job) => {
+                const state = job.state;
+                // 0=Pending, 1=InProgress
+                if (
+                  state === 0 ||
+                  state === 1 ||
+                  state === 'pending' ||
+                  state === 'in_progress' ||
+                  state === 'Pending' ||
+                  state === 'InProgress'
+                ) {
+                  // Use a small timeout to ensure ToastManager is ready if needed
+                  setTimeout(() => {
+                    if (typeof ToastManager !== 'undefined') {
+                      ToastManager.update(job);
+                    }
+                  }, 0);
+                }
+              });
+            }
+          })
+          .catch((err) => console.error('Failed to load initial jobs', err));
       });
 
       // Grid helpers
@@ -3596,12 +3624,19 @@
             // Create a toast for them anyway so user sees the status
             const state = job.state;
             if (
+              state === 0 ||
               state === 1 ||
+              state === 'pending' ||
               state === 'in_progress' ||
+              state === 'Pending' ||
               state === 'InProgress'
             ) {
-              // InProgress
-              const toast = createToast(jobId, job.command, 'in_progress');
+              let status = 'in_progress';
+              if (state === 0 || state === 'pending' || state === 'Pending') {
+                status = 'pending';
+              }
+
+              const toast = createToast(jobId, job.command, status);
               container.appendChild(toast);
               toasts.set(jobId, {
                 element: toast,

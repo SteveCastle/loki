@@ -492,12 +492,14 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
         case 'generalOptions':
           return (
             <div className="tabContent">
-              <p>v2.6.8</p> {/* Consider making version dynamic */}
-              <SettingsList
-                filterType="general"
-                battleMode={battleMode}
-                currentItem={currentItem}
-              />
+              <div className="scrollableTabContent">
+                <p>v2.6.8</p> {/* Consider making version dynamic */}
+                <SettingsList
+                  filterType="general"
+                  battleMode={battleMode}
+                  currentItem={currentItem}
+                />
+              </div>
             </div>
           );
         case 'autoPlayOptions':
