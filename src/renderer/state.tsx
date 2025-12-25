@@ -20,6 +20,8 @@ export type Item = {
   timeStamp?: number;
   elo?: number | null;
   description?: string;
+  height?: number | null;
+  width?: number | null;
 };
 
 type PersistedLibraryData = {
