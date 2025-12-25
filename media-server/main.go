@@ -596,7 +596,7 @@ func mediaHandler(deps *Dependencies) http.HandlerFunc {
 		// Get search query from URL parameter
 		searchQuery := r.URL.Query().Get("q")
 
-		items, hasMore, err := media.GetItems(deps.DB, 0, initialLimit, searchQuery)
+		items, totalCount, hasMore, err := media.GetItems(deps.DB, 0, initialLimit, searchQuery)
 		if err != nil {
 			log.Printf("Error fetching media items: %v", err)
 			http.Error(w, "Error fetching media items", http.StatusInternalServerError)
@@ -607,6 +607,7 @@ func mediaHandler(deps *Dependencies) http.HandlerFunc {
 			MediaItems:         items,
 			Offset:             len(items),
 			HasMore:            hasMore,
+			TotalCount:         totalCount,
 			SearchQuery:        searchQuery,
 			DefaultOllamaModel: currentConfig.OllamaModel,
 		}
@@ -659,8 +660,9 @@ func mediaAPIHandler(deps *Dependencies) http.HandlerFunc {
 			}
 
 			response := media.APIResponse{
-				Items:   items,
-				HasMore: false,
+				Items:      items,
+				HasMore:    false,
+				TotalCount: len(items),
 			}
 
 			w.Header().Set("Content-Type", "application/json")
@@ -686,7 +688,7 @@ func mediaAPIHandler(deps *Dependencies) http.HandlerFunc {
 			}
 		}
 
-		items, hasMore, err := media.GetItems(deps.DB, offset, limit, searchQuery)
+		items, totalCount, hasMore, err := media.GetItems(deps.DB, offset, limit, searchQuery)
 		if err != nil {
 			log.Printf("Error fetching media items: %v", err)
 			http.Error(w, "Error fetching media items", http.StatusInternalServerError)
@@ -694,8 +696,9 @@ func mediaAPIHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		response := media.APIResponse{
-			Items:   items,
-			HasMore: hasMore,
+			Items:      items,
+			HasMore:    hasMore,
+			TotalCount: totalCount,
 		}
 
 		w.Header().Set("Content-Type", "application/json")
