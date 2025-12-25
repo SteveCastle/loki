@@ -472,31 +472,13 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, b
 		return getItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
 	}
 
-	// Simplified random pagination:
-	// Since order is random every time, we can't use standard OFFSET efficiently for stability.
-	// However, the user requested "random every time, don't care about order stability".
-	// So standard LIMIT/OFFSET with RANDOM() works, but getting deep into pages might show duplicates
-	// from previous pages if the seed changed (which it does every request now effectively).
-	// To support infinite scroll where we just want *more random items*, we can ignore OFFSET
-	// in the SQL sense if we want pure random sampling, but to respect the API contract
-	// we'll keep using LIMIT and OFFSET but just know it's unstable.
-	limitClause := ` LIMIT ?`
+	// Standard pagination for stable sorting
+	limitClause := ` LIMIT ? OFFSET ?`
 	var query string
 
-	// Construct full query - NO OFFSET for pure random sampling to avoid performance hit of large offsets
-	// and because offset doesn't mean much with random order every request.
-	// But wait, if we don't use offset, we get the SAME random items if the seed was fixed?
-	// No, ORDER BY RANDOM() re-evaluates.
-	// Actually, if we want "next batch", and we use ORDER BY RANDOM(), using OFFSET is slow and meaningless
-	// because the set changes.
-	// Better approach for "infinite random feed": Just get LIMIT items. The client appends them.
-	// We might see duplicates. That's acceptable per instructions.
+	// Construct full query
 	query = baseQuery + " " + whereClause + orderBy + limitClause
-	args = append(args, limit+1)
-
-	// Note: We ignored 'offset' parameter in the SQL query intentionally for pure random feed behavior
-	// This ensures every fetch returns a fresh set of random items regardless of "page number"
-	// The +1 is to check for hasMore, though in random mode hasMore is effectively "always true" if count > 0
+	args = append(args, limit+1, offset)
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
