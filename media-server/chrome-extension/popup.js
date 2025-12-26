@@ -796,11 +796,7 @@ function connectSSE() {
   updateServerStatus('connecting');
 
   try {
-    // Note: EventSource doesn't support custom headers, so we pass token as query param
-    const sseUrl = authToken
-      ? `${API_BASE}/stream?token=${encodeURIComponent(authToken)}`
-      : `${API_BASE}/stream`;
-    eventSource = new EventSource(sseUrl);
+    eventSource = new EventSource(`${API_BASE}/stream`);
 
     eventSource.onopen = () => {
       isConnecting = false;
