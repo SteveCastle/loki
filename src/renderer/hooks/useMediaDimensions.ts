@@ -12,16 +12,6 @@ const defaultDimensions: MediaDimensions = {
   orientation: 'unknown',
 };
 
-type VideoRef = React.RefObject<HTMLVideoElement>;
-
-function isVideoRef(ref: any): ref is VideoRef {
-  return (
-    typeof ref === 'object' &&
-    ref !== null &&
-    ref.current instanceof HTMLVideoElement
-  );
-}
-
 function useMediaDimensions(
   ref: React.RefObject<HTMLImageElement | HTMLVideoElement>
 ): MediaDimensions {
@@ -33,18 +23,24 @@ function useMediaDimensions(
 
     const updateDimensions = () => {
       if (!ref.current) return;
-      let width = 1;
-      let height = 1;
-      if (ref && ref.current && isVideoRef(ref)) {
+      let width = 0;
+      let height = 0;
+
+      if (ref.current instanceof HTMLVideoElement) {
+        // For video, use videoWidth/videoHeight (intrinsic dimensions)
         width = ref.current.videoWidth;
         height = ref.current.videoHeight;
-      } else {
-        width = ref.current.getBoundingClientRect().width;
-        height = ref.current.getBoundingClientRect().height;
+      } else if (ref.current instanceof HTMLImageElement) {
+        // For images, use naturalWidth/naturalHeight (intrinsic dimensions)
+        width = ref.current.naturalWidth;
+        height = ref.current.naturalHeight;
       }
-      const orientation = width > height ? 'landscape' : 'portrait';
 
-      setDimensions({ width, height, orientation });
+      // Only update if we have valid dimensions
+      if (width > 0 && height > 0) {
+        const orientation = width > height ? 'landscape' : 'portrait';
+        setDimensions({ width, height, orientation });
+      }
     };
 
     const loadHandler = () => {
@@ -52,11 +48,23 @@ function useMediaDimensions(
       ref.current?.addEventListener('resize', updateDimensions);
     };
 
+    // Check if already loaded (for cached images)
+    if (ref.current instanceof HTMLImageElement && ref.current.complete) {
+      updateDimensions();
+    } else if (
+      ref.current instanceof HTMLVideoElement &&
+      ref.current.readyState >= 1
+    ) {
+      updateDimensions();
+    }
+
     ref.current.addEventListener('load', loadHandler);
     ref.current.addEventListener('loadeddata', loadHandler);
+    ref.current.addEventListener('loadedmetadata', loadHandler);
     return () => {
       ref.current?.removeEventListener('load', loadHandler);
       ref.current?.removeEventListener('loadeddata', loadHandler);
+      ref.current?.removeEventListener('loadedmetadata', loadHandler);
       ref.current?.removeEventListener('resize', updateDimensions);
     };
   }, [ref]);
