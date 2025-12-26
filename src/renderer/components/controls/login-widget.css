@@ -1,0 +1,79 @@
+.LoginWidget {
+  width: 100%;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.LoginWidget.logged-in {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.LoginWidget .status {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.LoginWidget .indicator {
+  color: #00c896;
+  font-size: 8px;
+}
+
+.LoginWidget .login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.LoginWidget .input-group input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 2px;
+  font-size: 11px;
+  box-sizing: border-box;
+}
+
+.LoginWidget .input-group input:focus {
+  border-color: #00c896;
+  outline: none;
+}
+
+.LoginWidget button {
+  background: rgba(0, 150, 136, 0.3);
+  color: white;
+  border: 1px solid rgba(0, 150, 136, 0.4);
+  padding: 4px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.LoginWidget button:hover:not(:disabled) {
+  background: rgba(0, 150, 136, 0.5);
+}
+
+.LoginWidget button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.LoginWidget .error-message {
+  color: #ff6b6b;
+  font-size: 10px;
+}

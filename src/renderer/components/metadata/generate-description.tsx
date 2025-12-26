@@ -1,4 +1,5 @@
 import { useContext, useEffect, useState } from 'react';
+import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import './generate-description.css';
 
@@ -14,6 +15,10 @@ export default function GenerateDescription({
   variant = 'centered',
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken
+  );
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
     null
   );
@@ -24,8 +29,15 @@ export default function GenerateDescription({
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+        const headers: HeadersInit = {};
+        if (authToken) {
+          headers['Authorization'] = `Bearer ${authToken}`;
+        }
+
         const response = await fetch('http://localhost:8090/health', {
           method: 'GET',
+          headers,
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
@@ -36,7 +48,7 @@ export default function GenerateDescription({
     };
 
     checkJobServer();
-  }, []);
+  }, [authToken]);
 
   // No SSE subscription here; ToastSystem handles job progress globally
 
@@ -45,11 +57,17 @@ export default function GenerateDescription({
       setIsSubmitting(true);
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
       const response = await fetch('http://localhost:8090/create', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           input: `metadata --type description --apply all --overwrite "${path}"`,
         }),

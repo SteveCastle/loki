@@ -1,4 +1,5 @@
 import { useContext, useEffect, useState } from 'react';
+import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import './generate-tags.css';
 
@@ -8,6 +9,10 @@ type Props = {
 
 export default function GenerateTags({ path }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken
+  );
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
     null
   );
@@ -15,8 +20,14 @@ export default function GenerateTags({ path }: Props) {
   useEffect(() => {
     const checkJobServer = async () => {
       try {
+        const headers: HeadersInit = {};
+        if (authToken) {
+          headers['Authorization'] = `Bearer ${authToken}`;
+        }
+
         const response = await fetch('http://localhost:8090/health', {
           method: 'GET',
+          headers,
           signal: AbortSignal.timeout(3000), // 3 second timeout
         });
         setJobServerAvailable(response.ok);
@@ -26,15 +37,21 @@ export default function GenerateTags({ path }: Props) {
     };
 
     checkJobServer();
-  }, []);
+  }, [authToken]);
 
   const handleGenerateTags = async () => {
     try {
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
       const response = await fetch('http://localhost:8090/create', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           input: `autotag "${path}"`,
         }),

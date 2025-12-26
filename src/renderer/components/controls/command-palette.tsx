@@ -22,6 +22,7 @@ import Setting from './setting';
 import DbPathWidget from './db-path';
 import GridSizePicker from './gridsize-picker';
 import CacheSetting from './cache-setting';
+import LoginWidget from './login-widget';
 
 // Assets (Icons)
 import soundIcon from '../../../../assets/sound-high.svg';
@@ -484,6 +485,7 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
             <div className="tabContent">
               <DbPathWidget />
               <CacheSetting />
+              <LoginWidget />
             </div>
           );
         case 'hotKeyOptions':

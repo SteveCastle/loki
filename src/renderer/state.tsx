@@ -108,6 +108,7 @@ type LibraryState = {
   userMovedCursorDuringStreaming: boolean;
   // When set to a new unique ID, signals the list to scroll to the current cursor
   scrollToCursorEventId: string | null;
+  authToken: string | null;
 };
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
@@ -393,6 +394,7 @@ const getInitialContext = (): LibraryState => {
     ['applyTag9', '9'],
     ['togglePlayPause', ' '],
     ['layoutMode', 'grid'],
+    ['authToken', null],
   ] as [string, any][]);
 
   return {
@@ -402,6 +404,7 @@ const getInitialContext = (): LibraryState => {
     libraryLoadId: '',
     initSessionId: '',
     textFilter: '',
+    authToken: batched['authToken'] as string | null,
     activeCategory: batched['activeCategory'] as string,
     storedCategories: batched['storedCategories'] as { [key: string]: string },
     storedTags: batched['storedTags'] as { [key: string]: string[] },
@@ -528,6 +531,7 @@ const getInitialContext = (): LibraryState => {
     savedSortByDuringStreaming: null,
     userMovedCursorDuringStreaming: false,
     scrollToCursorEventId: null,
+    authToken: window.electron.store.get('authToken', null) as string | null,
   };
 };
 
@@ -553,6 +557,15 @@ const libraryMachine = createMachine(
       // jobQueue: removed - jobs now handled by external job runner service
       settings: {
         on: {
+          SET_AUTH_TOKEN: {
+            actions: assign<LibraryState, AnyEventObject>({
+              authToken: (context, event) => {
+                const token = event.token;
+                window.electron.store.set('authToken', token);
+                return token;
+              },
+            }),
+          },
           CHANGE_SETTING: {
             actions: assign<LibraryState, AnyEventObject>({
               settings: (context, event) => {
