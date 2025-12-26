@@ -2116,43 +2116,13 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
-// streamAuthHandler wraps the stream handler with authentication that supports
-// token via query parameter (required for EventSource which doesn't support custom headers)
-func streamAuthHandler(deps *Dependencies) http.HandlerFunc {
+// streamHandler wraps the stream handler with CORS headers (public endpoint)
+func streamHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers for SSE
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Cache-Control, Authorization")
-
-		// Check Authorization header first (Bearer token)
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if _, err := deps.Auth.VerifyToken(tokenString); err == nil {
-				stream.StreamHandler(w, r)
-				return
-			}
-		}
-
-		// Check token query parameter (for EventSource which doesn't support custom headers)
-		tokenParam := r.URL.Query().Get("token")
-		if tokenParam != "" {
-			if _, err := deps.Auth.VerifyToken(tokenParam); err == nil {
-				stream.StreamHandler(w, r)
-				return
-			}
-		}
-
-		// Check cookie
-		cookie, err := r.Cookie("auth_token")
-		if err == nil {
-			if _, err := deps.Auth.VerifyToken(cookie.Value); err == nil {
-				stream.StreamHandler(w, r)
-				return
-			}
-		}
-
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		w.Header().Set("Access-Control-Allow-Headers", "Cache-Control")
+		stream.StreamHandler(w, r)
 	}
 }
 
@@ -2268,7 +2238,7 @@ func main() {
 	mux.HandleFunc("/job/{id}/copy", renderer.ApplyMiddlewares(copyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/stream", streamAuthHandler(deps))
+	mux.HandleFunc("/stream", streamHandler())
 	mux.HandleFunc("/health", healthHandler(deps))
 	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))

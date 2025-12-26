@@ -212,6 +212,10 @@ const ActionToast: React.FC<ActionToastProps> = ({ toast, onClear }) => {
 export function ToastSystem() {
   const queryClient = useQueryClient();
   const { libraryService } = useContext(GlobalStateContext);
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken
+  );
   const [jobs, setJobs] = useState<Map<string, JobRunnerJob>>(new Map());
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
@@ -232,8 +236,15 @@ export function ToastSystem() {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+        const headers: HeadersInit = {};
+        if (authToken) {
+          headers['Authorization'] = `Bearer ${authToken}`;
+        }
+
         const response = await fetch('http://localhost:8090/health', {
           method: 'GET',
+          headers,
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
@@ -257,7 +268,7 @@ export function ToastSystem() {
     }, 30000);
 
     return () => clearInterval(interval);
-  }, [jobServerAvailable, isOnline]);
+  }, [jobServerAvailable, isOnline, authToken]);
 
   // Track online/offline to prevent futile reconnect loops when offline
   useEffect(() => {
@@ -433,7 +444,13 @@ export function ToastSystem() {
         job.state === 'pending' || job.state === 'in_progress'
           ? `http://localhost:8090/job/${job.id}/cancel`
           : `http://localhost:8090/job/${job.id}/remove`;
-      await fetch(url, { method: 'POST', signal: controller.signal });
+
+      const headers: HeadersInit = {};
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+
+      await fetch(url, { method: 'POST', headers, signal: controller.signal });
       clearTimeout(timeoutId);
     } catch (error) {
       console.error('Failed to clear job:', error);
