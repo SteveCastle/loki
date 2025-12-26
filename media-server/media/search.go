@@ -116,6 +116,7 @@ type Node interface {
 	ToSQL() (string, []interface{})
 	Evaluate(item MediaItem) bool
 	HasExists() bool
+	HasDuplicates() bool
 }
 
 // Parser parses tokens into an AST
@@ -384,6 +385,13 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 			return "(SELECT COUNT(*) FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path) " + op + " ?", []interface{}{iVal}
 		}
 		return "(SELECT COUNT(*) FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path) " + op + " ?", []interface{}{val}
+	case "duplicates":
+		// Use IN with a pre-computed subquery for efficiency (runs once, not per-row)
+		// This finds all hashes that have COUNT(*) matching the condition, then filters to those hashes
+		if iVal, err := strconv.ParseInt(val, 10, 64); err == nil {
+			return "m.hash IN (SELECT hash FROM media WHERE hash IS NOT NULL AND hash <> '' GROUP BY hash HAVING COUNT(*) " + op + " ?)", []interface{}{iVal}
+		}
+		return "m.hash IN (SELECT hash FROM media WHERE hash IS NOT NULL AND hash <> '' GROUP BY hash HAVING COUNT(*) " + op + " ?)", []interface{}{val}
 	case "tag":
 		// EXISTS (...)
 		return fmt.Sprintf("EXISTS (SELECT 1 FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path AND mtbc.tag_label %s ?)", op), []interface{}{val}
@@ -471,6 +479,11 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 	case "tagcount":
 		v, _ := strconv.ParseInt(n.Value, 10, 64)
 		return compareInt(int64(len(item.Tags)), n.Operator, v)
+	case "duplicates":
+		// For in-memory evaluation, we need DuplicateCount to be populated
+		// This is set by the caller when fetching items with duplicate counts
+		v, _ := strconv.ParseInt(n.Value, 10, 64)
+		return compareInt(item.DuplicateCount, n.Operator, v)
 	case "pathdir":
 		dir := filepath.Dir(item.Path)
 		target := filepath.Clean(n.Value)
@@ -485,6 +498,10 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 
 func (n *ConditionNode) HasExists() bool {
 	return n.Column == "exists"
+}
+
+func (n *ConditionNode) HasDuplicates() bool {
+	return n.Column == "duplicates"
 }
 
 // Helper functions for comparison
@@ -538,6 +555,10 @@ func (n *AndNode) HasExists() bool {
 	return n.Left.HasExists() || n.Right.HasExists()
 }
 
+func (n *AndNode) HasDuplicates() bool {
+	return n.Left.HasDuplicates() || n.Right.HasDuplicates()
+}
+
 type OrNode struct {
 	Left, Right Node
 }
@@ -556,6 +577,10 @@ func (n *OrNode) HasExists() bool {
 	return n.Left.HasExists() || n.Right.HasExists()
 }
 
+func (n *OrNode) HasDuplicates() bool {
+	return n.Left.HasDuplicates() || n.Right.HasDuplicates()
+}
+
 type NotNode struct {
 	Child Node
 }
@@ -571,4 +596,8 @@ func (n *NotNode) Evaluate(item MediaItem) bool {
 
 func (n *NotNode) HasExists() bool {
 	return n.Child.HasExists()
+}
+
+func (n *NotNode) HasDuplicates() bool {
+	return n.Child.HasDuplicates()
 }
