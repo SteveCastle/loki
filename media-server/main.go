@@ -1935,6 +1935,16 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			return
 		}
 
+		// Check Authorization header first (Bearer token)
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			if _, err := deps.Auth.VerifyToken(tokenString); err == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		// Check cookie
 		cookie, err := r.Cookie("auth_token")
 		if err != nil {
@@ -1977,6 +1987,17 @@ func loginPageHandler(deps *Dependencies) http.HandlerFunc {
 
 func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers for all requests (including preflight)
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:1212") // Allow renderer
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		if r.Method != http.MethodPost {
 			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
 			return
@@ -2007,12 +2028,27 @@ func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 		})
 
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		// Return token in response body as well for API clients
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "ok",
+			"token":  token,
+		})
 	}
 }
 
 func logoutHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:1212")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
 		http.SetCookie(w, &http.Cookie{
 			Name:     "auth_token",
 			Value:    "",
@@ -2033,6 +2069,31 @@ func logoutHandler(deps *Dependencies) http.HandlerFunc {
 
 func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:1212")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Check Authorization header first (Bearer token)
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			if claims, err := deps.Auth.VerifyToken(tokenString); err == nil {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"loggedIn": true,
+					"username": claims.Username,
+				})
+				return
+			}
+		}
+
 		cookie, err := r.Cookie("auth_token")
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
@@ -2052,6 +2113,46 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 			"loggedIn": true,
 			"username": claims.Username,
 		})
+	}
+}
+
+// streamAuthHandler wraps the stream handler with authentication that supports
+// token via query parameter (required for EventSource which doesn't support custom headers)
+func streamAuthHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers for SSE
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Headers", "Cache-Control, Authorization")
+
+		// Check Authorization header first (Bearer token)
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			if _, err := deps.Auth.VerifyToken(tokenString); err == nil {
+				stream.StreamHandler(w, r)
+				return
+			}
+		}
+
+		// Check token query parameter (for EventSource which doesn't support custom headers)
+		tokenParam := r.URL.Query().Get("token")
+		if tokenParam != "" {
+			if _, err := deps.Auth.VerifyToken(tokenParam); err == nil {
+				stream.StreamHandler(w, r)
+				return
+			}
+		}
+
+		// Check cookie
+		cookie, err := r.Cookie("auth_token")
+		if err == nil {
+			if _, err := deps.Auth.VerifyToken(cookie.Value); err == nil {
+				stream.StreamHandler(w, r)
+				return
+			}
+		}
+
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	}
 }
 
@@ -2167,7 +2268,7 @@ func main() {
 	mux.HandleFunc("/job/{id}/copy", renderer.ApplyMiddlewares(copyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/stream", stream.StreamHandler)
+	mux.HandleFunc("/stream", streamAuthHandler(deps))
 	mux.HandleFunc("/health", healthHandler(deps))
 	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))

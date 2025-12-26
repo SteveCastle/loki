@@ -10,6 +10,7 @@ let argsHistory = {}; // Per-command argument history
 let currentArgsPerCommand = {}; // Current/last-used args for each command
 let previousCommand = null; // Track command to save args when switching
 let selectedDropdownIndex = -1;
+let authToken = null; // JWT token for authentication
 
 // DOM Elements
 const elements = {
@@ -25,6 +26,15 @@ const elements = {
   jobsList: null,
   refreshBtn: null,
   clearAllBtn: null,
+  // Login elements
+  loginOverlay: null,
+  mainContainer: null,
+  loginForm: null,
+  loginUsername: null,
+  loginPassword: null,
+  loginBtn: null,
+  loginError: null,
+  logoutBtn: null,
 };
 
 // Initialize on DOM load
@@ -44,7 +54,209 @@ async function init() {
   elements.jobsList = document.getElementById('jobsList');
   elements.refreshBtn = document.getElementById('refreshBtn');
   elements.clearAllBtn = document.getElementById('clearAllBtn');
+  // Login elements
+  elements.loginOverlay = document.getElementById('loginOverlay');
+  elements.mainContainer = document.getElementById('mainContainer');
+  elements.loginForm = document.getElementById('loginForm');
+  elements.loginUsername = document.getElementById('loginUsername');
+  elements.loginPassword = document.getElementById('loginPassword');
+  elements.loginBtn = document.getElementById('loginBtn');
+  elements.loginError = document.getElementById('loginError');
+  elements.logoutBtn = document.getElementById('logoutBtn');
 
+  // Load auth token
+  await loadAuthToken();
+
+  // Check authentication status
+  const isAuthenticated = await checkAuthStatus();
+
+  if (isAuthenticated) {
+    showMainContent();
+    await initializeApp();
+  } else {
+    showLoginForm();
+  }
+
+  // Set up login form event listener
+  elements.loginForm.addEventListener('submit', handleLogin);
+  elements.logoutBtn.addEventListener('click', handleLogout);
+}
+
+// Authentication functions
+async function loadAuthToken() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['authToken'], (result) => {
+      authToken = result.authToken || null;
+      resolve();
+    });
+  });
+}
+
+function saveAuthToken(token) {
+  authToken = token;
+  chrome.storage.local.set({ authToken: token });
+}
+
+function clearAuthToken() {
+  authToken = null;
+  chrome.storage.local.remove('authToken');
+}
+
+async function checkAuthStatus() {
+  if (!authToken) return false;
+
+  try {
+    const response = await fetch(`${API_BASE}/auth/status`, {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+
+    if (!response.ok) return false;
+
+    const data = await response.json();
+    return data.loggedIn === true;
+  } catch (err) {
+    console.error('Auth status check failed:', err);
+    return false;
+  }
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+
+  const username = elements.loginUsername.value.trim();
+  const password = elements.loginPassword.value;
+
+  if (!username || !password) {
+    showLoginError('Please enter username and password');
+    return;
+  }
+
+  setLoginLoading(true);
+  hideLoginError();
+
+  try {
+    const response = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      try {
+        const data = JSON.parse(text);
+        throw new Error(data.error || 'Invalid credentials');
+      } catch {
+        throw new Error('Invalid credentials');
+      }
+    }
+
+    const data = await response.json();
+
+    if (data.token) {
+      saveAuthToken(data.token);
+      showMainContent();
+      await initializeApp();
+    } else {
+      throw new Error('No token received');
+    }
+  } catch (err) {
+    console.error('Login error:', err);
+    showLoginError(err.message || 'Login failed');
+  } finally {
+    setLoginLoading(false);
+  }
+}
+
+async function handleLogout() {
+  try {
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+  } catch (err) {
+    console.error('Logout request failed:', err);
+  }
+
+  // Clear local state regardless of server response
+  clearAuthToken();
+
+  // Disconnect SSE
+  if (eventSource) {
+    eventSource.close();
+    eventSource = null;
+  }
+
+  // Reset state
+  jobs = [];
+  tasks = [];
+
+  // Show login form
+  showLoginForm();
+}
+
+function showLoginForm() {
+  elements.loginOverlay.style.display = 'flex';
+  elements.mainContainer.style.display = 'none';
+  elements.loginUsername.value = '';
+  elements.loginPassword.value = '';
+  hideLoginError();
+  // Focus username field
+  setTimeout(() => elements.loginUsername.focus(), 100);
+}
+
+function showMainContent() {
+  elements.loginOverlay.style.display = 'none';
+  elements.mainContainer.style.display = 'flex';
+}
+
+function showLoginError(message) {
+  elements.loginError.textContent = message;
+  elements.loginError.style.display = 'block';
+}
+
+function hideLoginError() {
+  elements.loginError.style.display = 'none';
+}
+
+function setLoginLoading(loading) {
+  elements.loginBtn.disabled = loading;
+  elements.loginBtn.querySelector('.btn-text').style.display = loading
+    ? 'none'
+    : 'inline';
+  elements.loginBtn.querySelector('.btn-loading').style.display = loading
+    ? 'inline-flex'
+    : 'none';
+}
+
+// Make authenticated fetch request
+async function authFetch(url, options = {}) {
+  const headers = {
+    ...options.headers,
+  };
+
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
+  const response = await fetch(url, { ...options, headers });
+
+  // Handle 401 Unauthorized - show login form
+  if (response.status === 401) {
+    clearAuthToken();
+    showLoginForm();
+    throw new Error('Session expired. Please log in again.');
+  }
+
+  return response;
+}
+
+// Initialize app after successful authentication
+async function initializeApp() {
   // Fetch available tasks first
   await fetchTasks();
 
@@ -133,7 +345,7 @@ async function populateCurrentUrl() {
 // Fetch available tasks from server
 async function fetchTasks() {
   try {
-    const response = await fetch(`${API_BASE}/tasks`);
+    const response = await authFetch(`${API_BASE}/tasks`);
     if (!response.ok) throw new Error('Failed to fetch tasks');
 
     const data = await response.json();
@@ -473,7 +685,7 @@ async function createTask() {
   hideFeedback();
 
   try {
-    const response = await fetch(`${API_BASE}/create`, {
+    const response = await authFetch(`${API_BASE}/create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ input }),
@@ -503,7 +715,7 @@ async function createTask() {
 // Fetch current jobs
 async function fetchJobs() {
   try {
-    const response = await fetch(`${API_BASE}/jobs/list`);
+    const response = await authFetch(`${API_BASE}/jobs/list`);
     if (!response.ok) throw new Error('Failed to fetch jobs');
 
     const fetchedJobs = await response.json();
@@ -554,7 +766,7 @@ function refreshJobs() {
 // Clear all non-running jobs
 async function clearAllJobs() {
   try {
-    const response = await fetch(`${API_BASE}/jobs/clear`, {
+    const response = await authFetch(`${API_BASE}/jobs/clear`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -584,7 +796,11 @@ function connectSSE() {
   updateServerStatus('connecting');
 
   try {
-    eventSource = new EventSource(`${API_BASE}/stream`);
+    // Note: EventSource doesn't support custom headers, so we pass token as query param
+    const sseUrl = authToken
+      ? `${API_BASE}/stream?token=${encodeURIComponent(authToken)}`
+      : `${API_BASE}/stream`;
+    eventSource = new EventSource(sseUrl);
 
     eventSource.onopen = () => {
       isConnecting = false;
@@ -724,7 +940,7 @@ function renderJobs() {
 // Cancel a job
 async function cancelJob(jobId) {
   try {
-    const response = await fetch(`${API_BASE}/job/${jobId}/cancel`, {
+    const response = await authFetch(`${API_BASE}/job/${jobId}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -741,7 +957,7 @@ async function cancelJob(jobId) {
 // Remove a job from the server
 async function removeJobFromServer(jobId) {
   try {
-    const response = await fetch(`${API_BASE}/job/${jobId}/remove`, {
+    const response = await authFetch(`${API_BASE}/job/${jobId}/remove`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });

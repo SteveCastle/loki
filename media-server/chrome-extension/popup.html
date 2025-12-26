@@ -7,7 +7,92 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <div class="container">
+    <!-- Login Overlay -->
+    <div id="loginOverlay" class="login-overlay" style="display: none">
+      <div class="login-container">
+        <div class="login-header">
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M12 2L2 7L12 12L22 7L12 2Z"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M2 17L12 22L22 17"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M2 12L12 17L22 12"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <h1>Shrike</h1>
+          <p>Sign in to continue</p>
+        </div>
+
+        <form id="loginForm" class="login-form">
+          <div class="form-group">
+            <label for="loginUsername">Username</label>
+            <input
+              type="text"
+              id="loginUsername"
+              class="text-input"
+              placeholder="Enter username"
+              autocomplete="username"
+              required
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="loginPassword">Password</label>
+            <input
+              type="password"
+              id="loginPassword"
+              class="text-input"
+              placeholder="Enter password"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+
+          <div id="loginError" class="login-error" style="display: none"></div>
+
+          <button type="submit" id="loginBtn" class="btn btn-primary">
+            <span class="btn-text">Sign In</span>
+            <span class="btn-loading" style="display: none">
+              <svg class="spinner" viewBox="0 0 24 24">
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  fill="none"
+                  stroke-dasharray="31.4 31.4"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <div class="container" id="mainContainer">
       <header class="header">
         <div class="logo">
           <svg
@@ -41,8 +126,28 @@
           </svg>
           <span>Shrike</span>
         </div>
-        <div class="status-indicator" id="serverStatus" title="Server status">
-          <span class="status-dot"></span>
+        <div class="header-right">
+          <button
+            id="logoutBtn"
+            class="btn btn-icon btn-logout"
+            title="Sign Out"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+          </button>
+          <div class="status-indicator" id="serverStatus" title="Server status">
+            <span class="status-dot"></span>
+          </div>
         </div>
       </header>
 

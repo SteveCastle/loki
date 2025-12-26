@@ -31,7 +31,7 @@ body {
   width: 360px;
   min-height: 400px;
   max-height: 550px;
-  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 13px;
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -530,7 +530,7 @@ label {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: "Consolas", "Monaco", monospace;
+  font-family: 'Consolas', 'Monaco', monospace;
   font-size: 11px;
 }
 
@@ -587,4 +587,83 @@ label {
 .form-group label {
   display: flex;
   align-items: center;
+}
+
+/* Login Overlay */
+.login-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-primary);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.login-container {
+  width: 100%;
+  max-width: 320px;
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.login-header svg {
+  color: var(--accent);
+  margin-bottom: 12px;
+}
+
+.login-header h1 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.login-header p {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.login-form .form-group {
+  margin-bottom: 16px;
+}
+
+.login-form .form-group label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.login-error {
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: var(--radius);
+  color: var(--error);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Header right section */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-logout {
+  color: var(--text-muted);
+}
+
+.btn-logout:hover {
+  color: var(--error);
+  border-color: var(--error);
 }
