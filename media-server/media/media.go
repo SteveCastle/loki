@@ -16,15 +16,16 @@ import (
 
 // MediaItem represents a row from the media table
 type MediaItem struct {
-	Path          string         `json:"path"`
-	Description   sql.NullString `json:"description"`
-	Size          sql.NullInt64  `json:"size"`
-	Hash          sql.NullString `json:"hash"`
-	Width         sql.NullInt64  `json:"width"`
-	Height        sql.NullInt64  `json:"height"`
-	FormattedSize string         `json:"-"`
-	Tags          []MediaTag     `json:"tags"`
-	Exists        bool           `json:"exists"`
+	Path           string         `json:"path"`
+	Description    sql.NullString `json:"description"`
+	Size           sql.NullInt64  `json:"size"`
+	Hash           sql.NullString `json:"hash"`
+	Width          sql.NullInt64  `json:"width"`
+	Height         sql.NullInt64  `json:"height"`
+	FormattedSize  string         `json:"-"`
+	Tags           []MediaTag     `json:"tags"`
+	Exists         bool           `json:"exists"`
+	DuplicateCount int64          `json:"duplicateCount"`
 }
 
 // MediaTag represents a tag with its category
@@ -248,6 +249,10 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 			whereClause = "WHERE " + sqlPart
 			args = sqlArgs
 		}
+		// If duplicates condition is used, order by hash first to cluster duplicates together
+		if rootNode.HasDuplicates() {
+			orderBy = ` ORDER BY m.hash, RANDOM()`
+		}
 	}
 
 	// Always require items to have at least one tag
@@ -466,6 +471,10 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, i
 		if sqlPart != "" {
 			whereClause = "WHERE " + sqlPart
 			args = sqlArgs
+		}
+		// If duplicates condition is used, order by hash first to cluster duplicates together
+		if rootNode.HasDuplicates() {
+			orderBy = ` ORDER BY m.hash, m.path`
 		}
 	}
 
@@ -1488,6 +1497,10 @@ func GetPathsByQuery(db *sql.DB, searchQuery string) ([]string, error) {
 		if sqlPart != "" {
 			whereClause = "WHERE " + sqlPart
 			args = sqlArgs
+		}
+		// If duplicates condition is used, order by hash first to cluster duplicates together
+		if rootNode.HasDuplicates() {
+			orderBy = ` ORDER BY m.hash, m.path`
 		}
 	}
 
