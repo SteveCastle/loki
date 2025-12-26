@@ -376,6 +376,11 @@ type MasonryGridProps = {
   shouldDoInitialScroll: boolean;
 };
 
+// Generate a unique key for an item (path + optional timestamp for video clips)
+function getItemKey(item: { path: string; timeStamp?: number }): string {
+  return item.timeStamp != null ? `${item.path}::${item.timeStamp}` : item.path;
+}
+
 function MasonryGrid({
   items,
   columns,
@@ -390,6 +395,25 @@ function MasonryGrid({
   const parentRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
+
+  // Cache for dynamically loaded dimensions (for items without pre-calculated sizes)
+  const [loadedDimensions, setLoadedDimensions] = useState<
+    Map<string, { width: number; height: number }>
+  >(new Map());
+
+  // Callback for ListItem to report dimensions when media loads
+  const handleDimensionsLoaded = useCallback(
+    (itemKey: string, width: number, height: number) => {
+      setLoadedDimensions((prev) => {
+        // Only update if we don't have dimensions for this item yet
+        if (prev.has(itemKey)) return prev;
+        const next = new Map(prev);
+        next.set(itemKey, { width, height });
+        return next;
+      });
+    },
+    []
+  );
 
   // Resize observer to get container width
   useEffect(() => {
@@ -412,16 +436,26 @@ function MasonryGrid({
       const x = minColIndex * columnWidth;
       const y = colHeights[minColIndex];
 
-      let itemHeight = 200; // Default
+      let itemHeight = 200; // Default fallback
+
+      // First try to use pre-calculated dimensions from item
       if (item.width && item.height) {
         itemHeight = columnWidth / (item.width / item.height);
+      } else {
+        // Fall back to dynamically loaded dimensions
+        const itemKey = getItemKey(item);
+        const cached = loadedDimensions.get(itemKey);
+        if (cached && cached.width && cached.height) {
+          itemHeight = columnWidth / (cached.width / cached.height);
+        }
       }
+
       colHeights[minColIndex] += itemHeight;
 
       return { index, x, y, width: columnWidth, height: itemHeight, item };
     });
     return { height: Math.max(...colHeights), items: itemPositions };
-  }, [items, columns, containerWidth]);
+  }, [items, columns, containerWidth, loadedDimensions]);
 
   const visibleItems = useMemo(() => {
     // Determine viewport height
@@ -565,30 +599,40 @@ function MasonryGrid({
           width: '100%',
         }}
       >
-        {visibleItems.map((p) => (
-          <div
-            className="ListRow"
-            key={
-              p.item?.path +
-              (p.item?.timeStamp != null ? String(p.item?.timeStamp) : 'null')
-            }
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              width: `${p.width}px`,
-              height: `${p.height}px`,
-              transform: `translate3d(${p.x}px, ${p.y}px, 0)`,
-            }}
-          >
-            <ListItem
-              scaleMode={'cover'}
-              height={p.height}
-              item={p.item}
-              idx={p.index}
-            />
-          </div>
-        ))}
+        {visibleItems.map((p) => {
+          // Determine if this item needs dimension loading
+          const itemKey = getItemKey(p.item);
+          const needsDimensionLoad =
+            !p.item.width && !p.item.height && !loadedDimensions.has(itemKey);
+
+          return (
+            <div
+              className="ListRow"
+              key={
+                p.item?.path +
+                (p.item?.timeStamp != null ? String(p.item?.timeStamp) : 'null')
+              }
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: `${p.width}px`,
+                height: `${p.height}px`,
+                transform: `translate3d(${p.x}px, ${p.y}px, 0)`,
+              }}
+            >
+              <ListItem
+                scaleMode={'cover'}
+                height={p.height}
+                item={p.item}
+                idx={p.index}
+                onDimensionsLoaded={
+                  needsDimensionLoad ? handleDimensionsLoaded : undefined
+                }
+              />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

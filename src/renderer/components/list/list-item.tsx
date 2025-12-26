@@ -1,4 +1,10 @@
-import React, { useContext, useRef, useCallback, useMemo } from 'react';
+import React, {
+  useContext,
+  useRef,
+  useCallback,
+  useMemo,
+  useEffect,
+} from 'react';
 import { useSelector } from '@xstate/react';
 import { useDrag } from 'react-dnd';
 import { GlobalStateContext } from '../../state';
@@ -18,6 +24,7 @@ type Props = {
   idx: number;
   scaleMode: ScaleModeOption;
   height: number;
+  onDimensionsLoaded?: (itemKey: string, width: number, height: number) => void;
 };
 
 const GetPlayer = React.memo(
@@ -29,8 +36,16 @@ const GetPlayer = React.memo(
     orientation: 'portrait' | 'landscape' | 'unknown';
     imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
     startTime?: number;
+    onImageLoad?: React.ReactEventHandler<HTMLImageElement>;
   }) => {
-    const { path, mediaRef, orientation, imageCache, startTime = 0 } = props;
+    const {
+      path,
+      mediaRef,
+      orientation,
+      imageCache,
+      startTime = 0,
+      onImageLoad,
+    } = props;
 
     if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
       return (
@@ -66,6 +81,7 @@ const GetPlayer = React.memo(
           mediaRef={mediaRef as React.RefObject<HTMLImageElement>}
           orientation={orientation}
           cache={imageCache}
+          handleLoad={onImageLoad}
         />
       );
     }
@@ -75,7 +91,7 @@ const GetPlayer = React.memo(
 
 GetPlayer.displayName = 'GetPlayer';
 
-function ListItemComponent({ item, idx, height }: Props) {
+function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   const mediaRef = useRef<
     HTMLImageElement | HTMLVideoElement | HTMLAudioElement
   >(null);
@@ -101,8 +117,56 @@ function ListItemComponent({ item, idx, height }: Props) {
   const imageCache = useSelector(libraryService, (state) => {
     return state.context.settings.listImageCache;
   });
-  const { orientation } = useMediaDimensions(
+  const {
+    orientation,
+    width: naturalWidth,
+    height: naturalHeight,
+  } = useMediaDimensions(
     mediaRef as React.RefObject<HTMLImageElement | HTMLVideoElement>
+  );
+
+  // Track if we've already reported dimensions to avoid duplicates
+  const hasReportedRef = useRef(false);
+
+  // Report dimensions when media loads (for masonry layout)
+  // This effect handles videos and fallback cases
+  useEffect(() => {
+    if (
+      onDimensionsLoaded &&
+      !hasReportedRef.current &&
+      naturalWidth > 0 &&
+      naturalHeight > 0
+    ) {
+      const itemKey =
+        item.timeStamp != null ? `${item.path}::${item.timeStamp}` : item.path;
+      onDimensionsLoaded(itemKey, naturalWidth, naturalHeight);
+      hasReportedRef.current = true;
+    }
+  }, [
+    onDimensionsLoaded,
+    naturalWidth,
+    naturalHeight,
+    item.path,
+    item.timeStamp,
+  ]);
+
+  // Direct callback for when image loads - more reliable than useMediaDimensions
+  // because it fires exactly when the <img> element triggers its load event
+  const handleImageLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLImageElement>) => {
+      if (onDimensionsLoaded && !hasReportedRef.current) {
+        const img = e.currentTarget;
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          const itemKey =
+            item.timeStamp != null
+              ? `${item.path}::${item.timeStamp}`
+              : item.path;
+          onDimensionsLoaded(itemKey, img.naturalWidth, img.naturalHeight);
+          hasReportedRef.current = true;
+        }
+      }
+    },
+    [onDimensionsLoaded, item.path, item.timeStamp]
   );
   const [, drag] = useDrag(
     () => ({
@@ -186,6 +250,7 @@ function ListItemComponent({ item, idx, height }: Props) {
           orientation={orientation}
           imageCache={imageCache}
           startTime={item.timeStamp}
+          onImageLoad={onDimensionsLoaded ? handleImageLoad : undefined}
         />
       </div>
       {showTags === 'all' || showTags === 'list' ? (
