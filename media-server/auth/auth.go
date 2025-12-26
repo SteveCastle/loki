@@ -89,7 +89,7 @@ func (s *AuthService) Login(username, password string) (string, error) {
 	}
 
 	// Generate Token
-	expirationTime := time.Now().Add(24 * time.Hour)
+	expirationTime := time.Now().Add(24 * time.Hour * 365)
 	claims := &Claims{
 		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -154,4 +154,3 @@ func (s *AuthService) DeleteUser(username string) error {
 	_, err := s.db.Exec("DELETE FROM users WHERE username = ?", username)
 	return err
 }
-
