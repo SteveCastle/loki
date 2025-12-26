@@ -394,7 +394,7 @@ function MasonryGrid({
 }: MasonryGridProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
+  const [scrollTop, setScrollTop] = useState(initialScrollOffset);
 
   // Cache for dynamically loaded dimensions (for items without pre-calculated sizes)
   const [loadedDimensions, setLoadedDimensions] = useState<
@@ -476,15 +476,24 @@ function MasonryGrid({
     [onScroll]
   );
 
-  // Initial scroll restore
+  // Initial scroll: restore the previous scroll position for stable view switching
   const didInitialScrollRef = useRef(false);
   useEffect(() => {
     if (!parentRef.current) return;
     if (containerWidth === 0) return;
 
     if (!didInitialScrollRef.current && shouldDoInitialScroll) {
-      parentRef.current.scrollTop = initialScrollOffset;
-      setScrollTop(initialScrollOffset);
+      // Restore scroll position - clamp to valid range
+      const maxScroll = Math.max(
+        0,
+        layout.height - parentRef.current.clientHeight
+      );
+      const clampedOffset = Math.max(
+        0,
+        Math.min(initialScrollOffset, maxScroll)
+      );
+      parentRef.current.scrollTop = clampedOffset;
+      setScrollTop(clampedOffset);
       didInitialScrollRef.current = true;
       onDidInitialScroll();
     }
@@ -493,27 +502,33 @@ function MasonryGrid({
     onDidInitialScroll,
     shouldDoInitialScroll,
     containerWidth,
+    layout.height,
   ]);
 
-  // Scroll to cursor logic
-  const cursorRef = useRef(cursor);
-  cursorRef.current = cursor;
-
+  // Scroll to cursor when explicitly requested via scrollToCursorEventId
   useEffect(() => {
     if (containerWidth === 0) return;
+    if (layout.items.length === 0) return;
     if (!scrollToCursorEventId) return;
 
-    const currentCursor = cursorRef.current;
-    if (currentCursor != null && layout.items[currentCursor]) {
-      const itemY = layout.items[currentCursor].y;
-      if (parentRef.current) {
-        parentRef.current.scrollTo({ top: itemY, behavior: 'auto' });
-        setScrollTop(itemY);
+    // Scroll to cursor item position
+    if (cursor != null && cursor >= 0 && cursor < layout.items.length) {
+      const itemPos = layout.items[cursor];
+      if (itemPos && parentRef.current) {
+        const targetScrollTop = Math.max(0, itemPos.y);
+        parentRef.current.scrollTop = targetScrollTop;
+        setScrollTop(targetScrollTop);
       }
     }
 
     libraryService.send('CLEAR_SCROLL_TO_CURSOR');
-  }, [scrollToCursorEventId, libraryService, layout.items, containerWidth]);
+  }, [
+    scrollToCursorEventId,
+    libraryService,
+    layout.items,
+    containerWidth,
+    cursor,
+  ]);
 
   // Auto-scroll logic (copied from VirtualGrid)
   const { isDragging, offset, type } = useDragLayer((monitor) => ({
