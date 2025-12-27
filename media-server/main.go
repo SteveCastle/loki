@@ -1985,10 +1985,22 @@ func loginPageHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+// getAllowedOrigin determines the allowed CORS origin based on the request
+// Supports browser extensions (chrome-extension://, moz-extension://) and Electron renderer
+func getAllowedOrigin(r *http.Request) string {
+	origin := r.Header.Get("Origin")
+	// Allow browser extensions
+	if strings.HasPrefix(origin, "chrome-extension://") || strings.HasPrefix(origin, "moz-extension://") {
+		return origin
+	}
+	// Default to Electron renderer origin
+	return "http://localhost:1212"
+}
+
 func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers for all requests (including preflight)
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:1212") // Allow renderer
+		w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -2039,7 +2051,7 @@ func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 func logoutHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:1212")
+		w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -2070,7 +2082,7 @@ func logoutHandler(deps *Dependencies) http.HandlerFunc {
 func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Set CORS headers
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:1212")
+		w.Header().Set("Access-Control-Allow-Origin", getAllowedOrigin(r))
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
