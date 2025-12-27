@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -80,7 +81,7 @@ func Logger(next http.Handler) http.HandlerFunc {
 
 func CORS(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		enableCors(&w)
+		enableCors(&w, r)
 		if r.Method == http.MethodOptions {
 			return
 		}
@@ -108,14 +109,18 @@ func ApplyMiddlewares(handler http.HandlerFunc, role AuthRole) http.HandlerFunc 
 	return Logger(CORS(h))
 }
 
-func enableCors(w *http.ResponseWriter) {
+func enableCors(w *http.ResponseWriter, r *http.Request) {
 	h := (*w).Header()
 	// To use credentials, Access-Control-Allow-Origin cannot be "*"
 	// It must be the exact origin of the requesting page.
-	// Since we are running electron renderer on localhost:1212 (dev) or file:// (prod),
-	// we should probably check the Origin header and echo it back if it's allowed.
-	// For now, let's hardcode localhost:1212 which is the typical dev server port for electron-react-boilerplate.
-	h.Set("Access-Control-Allow-Origin", "http://localhost:1212")
+	// Support browser extensions (chrome-extension://, moz-extension://) and Electron renderer
+	origin := r.Header.Get("Origin")
+	if strings.HasPrefix(origin, "chrome-extension://") || strings.HasPrefix(origin, "moz-extension://") {
+		h.Set("Access-Control-Allow-Origin", origin)
+	} else {
+		// Default to Electron renderer origin
+		h.Set("Access-Control-Allow-Origin", "http://localhost:1212")
+	}
 	h.Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 	h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 	h.Set("Access-Control-Allow-Credentials", "true")
