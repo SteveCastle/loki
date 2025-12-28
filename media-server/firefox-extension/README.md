@@ -1,11 +1,11 @@
-# Shrike Firefox Extension
+# Lowkey Media Server Firefox Extension
 
-A Firefox extension for creating Shrike tasks directly from your browser. Quickly send the current page URL to your Shrike job server with custom commands and arguments.
+A Firefox extension for creating Lowkey Media Server tasks directly from your browser. Quickly send the current page URL to your Lowkey Media Server job server with custom commands and arguments.
 
 ## Features
 
 - **One-Click Task Creation**: Create tasks with the current page URL pre-filled
-- **Command Selection**: Choose from all available Shrike commands (gallery-dl, yt-dlp, ffmpeg, ingest, etc.)
+- **Command Selection**: Choose from all available Lowkey Media Server commands (gallery-dl, yt-dlp, ffmpeg, ingest, etc.)
 - **Custom Arguments**: Add optional arguments for fine-grained control
 - **Live Job Status**: Real-time updates on running jobs via Server-Sent Events (SSE)
 - **Persistent Preferences**: Your last used command and arguments are saved
@@ -13,7 +13,7 @@ A Firefox extension for creating Shrike tasks directly from your browser. Quickl
 ## Prerequisites
 
 - Firefox 91.0 or later
-- Shrike server running on `http://localhost:8090`
+- Lowkey Media Server running on `http://localhost:8090`
 
 ## Installation
 
@@ -34,7 +34,7 @@ This method is ideal for testing or development. The extension will be removed w
 
 3. **Pin the Extension** (optional):
    - Click the puzzle piece icon in the Firefox toolbar
-   - Find "Shrike" and click the gear icon → "Pin to Toolbar"
+   - Find "Lowkey Media Server" and click the gear icon → "Pin to Toolbar"
 
 ### Option 2: Permanent Installation (Unsigned - Developer Mode)
 
@@ -54,13 +54,13 @@ For permanent installation without Mozilla signing, you need to use Firefox Deve
 
    ```bash
    cd firefox-extension
-   zip -r shrike-firefox.xpi *
+   zip -r lowkeymediaserver-firefox.xpi *
    ```
 
 4. **Install the XPI**:
    - Open `about:addons`
    - Click the gear icon → "Install Add-on From File..."
-   - Select the `shrike-firefox.xpi` file
+   - Select the `lowkeymediaserver-firefox.xpi` file
 
 ### Option 3: Install as Signed Add-on (Production)
 
@@ -75,12 +75,12 @@ For distribution or use in standard Firefox, you need to sign the extension:
 ### Creating a Task
 
 1. Navigate to any web page you want to process
-2. Click the Shrike extension icon in your toolbar
+2. Click the Lowkey Media Server extension icon in your toolbar
 3. Select a command from the dropdown:
    - **gallery-dl**: Download images/galleries from websites
    - **yt-dlp**: Download videos from YouTube, Vimeo, etc.
    - **ffmpeg**: Process media files
-   - **ingest**: Add media to the Shrike database
+   - **ingest**: Add media to the Lowkey Media Server database
    - **metadata**: Generate descriptions, hashes, etc.
    - And more...
 4. Add optional arguments (e.g., `--format best` for yt-dlp)
@@ -97,7 +97,7 @@ For distribution or use in standard Firefox, you need to sign the extension:
   - 🟡 Yellow: Cancelled
   - 🔴 Red: Error
 - Click the refresh button to reconnect if disconnected
-- Click "Open Shrike Web UI →" for the full job management interface
+- Click "Open Lowkey Media Server Web UI →" for the full job management interface
 
 ### Examples
 
@@ -136,7 +136,7 @@ cd firefox-extension
 node generate-icons.js
 ```
 
-This creates placeholder icons with the Shrike logo.
+This creates placeholder icons with the Lowkey Media Server logo.
 
 ### Method 2: Manual Creation
 
@@ -161,13 +161,13 @@ The extension connects to `http://localhost:8090` by default. If you need to cha
 
 ### Extension shows "Disconnected"
 
-- Ensure the Shrike server is running (`shrike.exe`)
+- Ensure the Lowkey Media Server is running (`lowkeymediaserver.exe`)
 - Check that port 8090 is accessible
 - Try clicking the refresh button
 
 ### "Failed to create task" error
 
-- Verify the Shrike server is running
+- Verify the Lowkey Media Server is running
 - Check the browser console (F12 → Console) for detailed error messages
 - Ensure the URL/input is valid for the selected command
 
@@ -217,12 +217,12 @@ firefox-extension/
 
 1. Edit the source files as needed
 2. Go to `about:debugging#/runtime/this-firefox`
-3. Click "Reload" on the Shrike extension
+3. Click "Reload" on the Lowkey Media Server extension
 4. Test your changes
 
 ### API Reference
 
-The extension uses these Shrike API endpoints:
+The extension uses these Lowkey Media Server API endpoints:
 
 - `POST /create` - Create a new job
 - `GET /stream` - SSE for job updates
@@ -231,8 +231,8 @@ The extension uses these Shrike API endpoints:
 - `POST /job/{id}/cancel` - Cancel a job
 - `POST /job/{id}/remove` - Remove a job
 
-See the main Shrike `API_DOCUMENTATION.md` for full details.
+See the main Lowkey Media Server `API_DOCUMENTATION.md` for full details.
 
 ## License
 
-This extension is part of the Shrike project. See the main repository LICENSE file.
+This extension is part of the Lowkey Media Server project. See the main repository LICENSE file.

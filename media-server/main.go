@@ -98,7 +98,7 @@ func init() {
 	var err error
 	staticFS, err = fs.Sub(embeddedStatic, "client/static")
 	if err != nil {
-		panic("shrike: fs.Sub failed: " + err.Error())
+		panic("lowkeymediaserver: fs.Sub failed: " + err.Error())
 	}
 }
 
@@ -966,7 +966,7 @@ func swipeAPIHandler(deps *Dependencies) http.HandlerFunc {
 func swipeManifestHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		manifest := map[string]interface{}{
-			"name":             "Shrike Swipe",
+			"name":             "Lowkey Media Server Swipe",
 			"short_name":       "Swipe",
 			"description":      "Swipe through your media library",
 			"start_url":        "/swipe",
@@ -1753,7 +1753,7 @@ func proxyRemoteMedia(w http.ResponseWriter, r *http.Request, remoteURL string) 
 	}
 
 	// Set User-Agent to identify our requests
-	req.Header.Set("User-Agent", "Shrike-Media-Browser/1.0")
+	req.Header.Set("User-Agent", "Lowkey-Media-Server/1.0")
 
 	// Make the request
 	resp, err := client.Do(req)
@@ -2295,7 +2295,7 @@ func main() {
 	// start HTTP server in background
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("shrike-server: %v", err)
+			log.Fatalf("lowkeymediaserver: %v", err)
 		}
 	}()
 
@@ -2309,12 +2309,12 @@ func main() {
 
 func onReady() {
 	systray.SetTemplateIcon(iconData, iconData)
-	systray.SetTitle("Shrike Job Server")
-	systray.SetTooltip("Shrike – click to open UI")
+	systray.SetTitle("Lowkey Media Server")
+	systray.SetTooltip("Lowkey Media Server – click to open UI")
 
 	openItem := systray.AddMenuItem("Open Web UI", "Launch the browser")
 	systray.AddSeparator()
-	quitItem := systray.AddMenuItem("Quit", "Shut down Shrike")
+	quitItem := systray.AddMenuItem("Quit", "Shut down Lowkey Media Server")
 
 	// open UI once at startup - if in setup mode, go to setup page
 	setupModeMutex.RLock()
@@ -2340,7 +2340,7 @@ func onReady() {
 }
 
 func onExit() {
-	log.Println("Shutting down Shrike server...")
+	log.Println("Shutting down Lowkey Media Server...")
 
 	// Shutdown runners first to stop processing new jobs
 	if currentRunners != nil {
@@ -2373,5 +2373,5 @@ func onExit() {
 		log.Println("HTTP server shutdown complete")
 	}
 
-	log.Println("Shrike server shutdown complete")
+	log.Println("Lowkey Media Server shutdown complete")
 }

@@ -4,7 +4,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Shrike Media Browser</title>
+    <title>Lowkey Media Server Media Browser</title>
     <link rel="stylesheet" href="/static/styles.css" />
     <style>
       .media-container {
@@ -174,19 +174,6 @@
         padding: var(--space-8) var(--space-5);
         color: var(--text-muted);
         font-size: var(--text-sm);
-      }
-
-      .loading::before {
-        content: '';
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        border: 2px solid var(--border-default);
-        border-top-color: var(--accent-primary);
-        border-radius: 50%;
-        animation: spin 0.8s linear infinite;
-        margin-right: var(--space-3);
-        vertical-align: middle;
       }
 
       .end-of-list {
@@ -3915,7 +3902,7 @@
         const dropdown = document.getElementById('typeahead-dropdown');
         if (!input || !dropdown) return;
 
-        const RECENT_STORAGE_KEY = 'shrike_recent_searches';
+        const RECENT_STORAGE_KEY = 'lowkeymediaserver_recent_searches';
         const MAX_RECENT_SEARCHES = 10;
 
         let items = [];

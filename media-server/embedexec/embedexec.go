@@ -58,7 +58,7 @@ func extractSingle(name string) (string, func(), error) {
 		return "", nil, fmt.Errorf("read embedded exe: %w", err)
 	}
 
-	tmpDir := filepath.Join(os.Getenv("ProgramData"), "Shrike", "tmp")
+	tmpDir := filepath.Join(os.Getenv("ProgramData"), "Lowkey Media Server", "tmp")
 	if err := os.MkdirAll(tmpDir, 0o700); err != nil {
 		return "", nil, fmt.Errorf("prep tmp dir: %w", err)
 	}
@@ -87,8 +87,8 @@ func extractTree(name string) (string, func(), error) {
 		return "", nil, fmt.Errorf("invalid embedded path %q", name)
 	}
 
-	// tmp base e.g. C:\ProgramData\Shrike\tmp\ffmpeg-*   (unique)
-	tmpBase := filepath.Join(os.Getenv("ProgramData"), "Shrike", "tmp")
+	// tmp base e.g. C:\ProgramData\Lowkey Media Server\tmp\ffmpeg-*   (unique)
+	tmpBase := filepath.Join(os.Getenv("ProgramData"), "Lowkey Media Server", "tmp")
 	if err := os.MkdirAll(tmpBase, 0o700); err != nil {
 		return "", nil, fmt.Errorf("prep tmp dir: %w", err)
 	}

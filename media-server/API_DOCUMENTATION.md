@@ -1,6 +1,6 @@
-# Shrike HTTP API Documentation
+# Lowkey Media Server HTTP API Documentation
 
-Shrike is a job management system with web UI that handles media processing tasks and provides real-time streaming updates via Server-Sent Events (SSE).
+Lowkey Media Server is a job management system with web UI that handles media processing tasks and provides real-time streaming updates via Server-Sent Events (SSE).
 
 ## Server Information
 

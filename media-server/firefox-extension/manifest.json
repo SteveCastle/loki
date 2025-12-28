@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
-  "name": "Shrike",
+  "name": "Lowkey Media Server",
   "version": "1.0.0",
-  "description": "Create Shrike tasks from the current page URL with custom arguments",
+  "description": "Create Lowkey Media Server tasks from the current page URL with custom arguments",
   "browser_specific_settings": {
     "gecko": {
       "id": "shrike@localhost",
@@ -17,7 +17,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Shrike - Create Task"
+    "default_title": "Lowkey Media Server - Create Task"
   },
   "icons": {
     "16": "icons/icon16.png",
