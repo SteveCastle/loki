@@ -112,7 +112,7 @@ export default function GenerateTranscript({
             <strong>Job Service Required</strong>
             <p>
               To generate transcripts and run other long-running tasks, you need
-              to install and run the Shrike job service.
+              to install and run the Lowkey Media Server job service.
             </p>
             <p>
               Start the service at <code>localhost:8090</code> to enable this

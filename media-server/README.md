@@ -1,8 +1,8 @@
-# Shrike Media Server
+# Lowkey Media Server
 
-**⚠️ Alpha Software Warning:** Shrike Media Server is in the alpha phase of development. The server binds to port 8090 and exposes your media library over HTTP with **no authentication**. If you don't want your media accessible on your network, ensure the port is blocked by your firewall or only run Shrike on trusted networks.
+**⚠️ Alpha Software Warning:** Lowkey Media Server is in the alpha phase of development. The server binds to port 8090 and exposes your media library over HTTP with **no authentication**. If you don't want your media accessible on your network, ensure the port is blocked by your firewall or only run Lowkey Media Server on trusted networks.
 
-Shrike Media Server is a companion for the Lowkey Media Viewer. It allows for managing long-running offline tasks like media tagging, transcript generation, media conversion, file serving, and media ingestion.
+Lowkey Media Server is a companion for the Lowkey Media Viewer. It allows for managing long-running offline tasks like media tagging, transcript generation, media conversion, file serving, and media ingestion.
 
 <img width="1628" height="494" alt="Screenshot 2025-09-20 083904" src="https://github.com/user-attachments/assets/e814d2a5-7088-46b2-9a8c-d537b989b018" />
 
@@ -54,7 +54,7 @@ Shrike Media Server is a companion for the Lowkey Media Viewer. It allows for ma
 
 ## Installation (End Users)
 
-1. **Run the shrike.exe binary.** This will start the background server and create an icon in your Windows system tray for launching the WebUI.
+1. **Run the lowkeymediaserver.exe binary.** This will start the background server and create an icon in your Windows system tray for launching the WebUI.
 
    <img width="408" height="247" alt="Screenshot 2025-09-20 080659" src="https://github.com/user-attachments/assets/4b8a0141-08d4-4fb9-9c42-78db5dbd25ad" />
 
@@ -76,7 +76,7 @@ Shrike Media Server is a companion for the Lowkey Media Viewer. It allows for ma
 
 #### 1. Install Go
 
-Shrike requires **Go 1.24.0** or later.
+Lowkey Media Server requires **Go 1.24.0** or later.
 
 **Windows (Recommended):**
 
@@ -149,16 +149,16 @@ go mod verify
 
 ```powershell
 # Standard build
-go build -o shrike.exe .
+go build -o lowkeymediaserver.exe .
 
 # Build with optimizations (smaller binary, no debug info)
-go build -ldflags="-s -w" -o shrike.exe .
+go build -ldflags="-s -w" -o lowkeymediaserver.exe .
 ```
 
 #### 5. Run the Server
 
 ```powershell
-.\shrike.exe
+.\lowkeymediaserver.exe
 ```
 
 The server will start on `http://localhost:8090` and a system tray icon will appear.
@@ -187,7 +187,7 @@ go test -v ./media/...
 ### Project Structure
 
 ```
-shrike/
+lowkeymediaserver/
 ├── main.go                 # Application entry point, HTTP handlers, system tray
 ├── go.mod                  # Go module definition
 ├── go.sum                  # Dependency checksums
@@ -263,7 +263,7 @@ shrike/
 
 ### Embedded Binaries
 
-Shrike embeds several third-party executables that are extracted to `%ProgramData%\Shrike\tmp\` at runtime:
+Lowkey Media Server embeds several third-party executables that are extracted to `%ProgramData%\Lowkey Media Server\tmp\` at runtime:
 
 | Binary                   | Purpose                         |
 | ------------------------ | ------------------------------- |
@@ -328,7 +328,7 @@ Configuration is stored at: `%APPDATA%\Lowkey Media Viewer\config.json`
    - Get `onnxruntime-win-x64-*.zip`
    - Extract `onnxruntime.dll` from `lib/` folder
 
-3. Configure paths in the Shrike Config tab
+3. Configure paths in the Lowkey Media Server Config tab
 
 ---
 
@@ -348,7 +348,7 @@ Access the web interface at: `http://localhost:8090`
 
 ### System Tray
 
-Right-click the Shrike icon in the system tray:
+Right-click the Lowkey Media Server icon in the system tray:
 
 - **Open Web UI**: Launch browser to web interface
 - **Quit**: Shutdown the server
@@ -385,7 +385,7 @@ See [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) for detailed HTTP API referen
 
 ## Chrome Extension
 
-A Chrome extension is included for quickly sending URLs to Shrike.
+A Chrome extension is included for quickly sending URLs to Lowkey Media Server.
 
 ### Installation
 
@@ -397,7 +397,7 @@ A Chrome extension is included for quickly sending URLs to Shrike.
 ### Usage
 
 1. Navigate to a page you want to download
-2. Click the Shrike extension icon
+2. Click the Lowkey Media Server extension icon
 3. Select the download method (yt-dlp, gallery-dl, etc.)
 4. Job is created automatically
 

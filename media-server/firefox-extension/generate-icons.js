@@ -1,7 +1,7 @@
 /**
- * Shrike Chrome Extension Icon Generator
+ * Lowkey Media Server Firefox Extension Icon Generator
  *
- * This script generates PNG icons for the Chrome extension.
+ * This script generates PNG icons for the Firefox extension.
  * Run with: node generate-icons.js
  *
  * Note: This creates simple placeholder icons. For production,
@@ -126,7 +126,7 @@ if (!fs.existsSync(iconsDir)) {
   fs.mkdirSync(iconsDir, { recursive: true });
 }
 
-console.log("Generating Shrike extension icons...");
+console.log("Generating Lowkey Media Server extension icons...");
 
 sizes.forEach((size) => {
   const filename = `icon${size}.png`;

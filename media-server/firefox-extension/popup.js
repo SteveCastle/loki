@@ -1,4 +1,4 @@
-// Shrike Firefox Extension
+// Lowkey Media Server Firefox Extension
 const API_BASE = 'http://localhost:8090';
 
 // State
@@ -986,7 +986,7 @@ function updateServerStatus(connected) {
     elements.serverStatus.title = 'Connecting...';
   } else if (connected) {
     elements.serverStatus.className = 'status-indicator connected';
-    elements.serverStatus.title = 'Connected to Shrike server';
+    elements.serverStatus.title = 'Connected to Lowkey Media Server';
   } else {
     elements.serverStatus.className = 'status-indicator';
     elements.serverStatus.title = 'Disconnected from server';

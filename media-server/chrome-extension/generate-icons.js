@@ -1,5 +1,5 @@
 /**
- * Shrike Chrome Extension Icon Generator
+ * Lowkey Media Server Chrome Extension Icon Generator
  *
  * This script generates PNG icons for the Chrome extension.
  * Run with: node generate-icons.js
@@ -126,7 +126,7 @@ if (!fs.existsSync(iconsDir)) {
   fs.mkdirSync(iconsDir, { recursive: true });
 }
 
-console.log("Generating Shrike extension icons...");
+console.log("Generating Lowkey Media Server extension icons...");
 
 sizes.forEach((size) => {
   const filename = `icon${size}.png`;
