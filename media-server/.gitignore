@@ -1,5 +1,7 @@
 shrike.exe
+shrike
 *.exe
-bin
+bin_linux
+bin_windows
 gallery-dl
 *.zip

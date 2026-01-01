@@ -120,7 +120,7 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			args = append(args, `--model=`+cfg.OnnxTagger.ModelPath)
 		}
 
-		ortPath, err := deps.GetFilePath("onnx-bundle", "onnxruntime.dll")
+		ortPath, err := deps.GetFilePath("onnx-bundle", deps.GetOnnxRuntimeLibName())
 		if err == nil && ortPath != "" {
 			args = append(args, `--ort=`+ortPath)
 		} else if strings.TrimSpace(cfg.OnnxTagger.ORTSharedLibraryPath) != "" {

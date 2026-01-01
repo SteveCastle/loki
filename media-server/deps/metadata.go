@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/stevecastle/shrike/platform"
 )
 
 // FileInfo represents information about an installed file.
@@ -23,7 +25,7 @@ type DependencyMetadata struct {
 	LastChecked      time.Time           `json:"lastChecked"`
 	LastUpdated      time.Time           `json:"lastUpdated"`
 	Files            map[string]FileInfo `json:"files"` // Track installed files
-	JobID            string              `json:"jobId"`  // Active download job ID
+	JobID            string              `json:"jobId"` // Active download job ID
 }
 
 // MetadataStore manages dependency metadata persistence.
@@ -56,11 +58,7 @@ func GetMetadataStore() *MetadataStore {
 
 // getMetadataPath returns the path to the metadata file.
 func getMetadataPath() string {
-	appData := os.Getenv("APPDATA")
-	if appData == "" {
-		appData = "."
-	}
-	return filepath.Join(appData, "Lowkey Media Viewer", "dependencies.json")
+	return filepath.Join(platform.GetDataDir(), "dependencies.json")
 }
 
 // LoadMetadata loads the metadata store from disk.

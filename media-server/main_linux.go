@@ -1,5 +1,5 @@
-//go:build windows
-// +build windows
+//go:build linux
+// +build linux
 
 package main
 
@@ -16,15 +16,16 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/getlantern/systray"
 	"github.com/pkg/browser"
 	_ "modernc.org/sqlite"
 
@@ -39,13 +40,6 @@ import (
 	"github.com/stevecastle/shrike/stream"
 	"github.com/stevecastle/shrike/tasks"
 )
-
-// -----------------------------------------------------------------------------
-// Embedded tray-icon (.ico) file – place your icon at assets/logo.ico.
-// -----------------------------------------------------------------------------
-
-//go:embed assets/logo.ico
-var iconData []byte
 
 // -----------------------------------------------------------------------------
 // Embed static assets under client/static; ** must recurse all sub-paths.
@@ -2346,53 +2340,41 @@ func main() {
 		Handler: setupModeMiddleware(mux),
 	}
 
+	// Set up signal handling for graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
 	// start HTTP server in background
 	go func() {
+		log.Println("HTTP server starting on http://localhost:8090")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("lowkeymediaserver: %v", err)
 		}
 	}()
 
-	// run tray icon (blocks until Quit)
-	systray.Run(onReady, onExit)
-}
+	// Optionally open browser (only if DISPLAY is set or running under a desktop environment)
+	if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
+		setupModeMutex.RLock()
+		inSetupMode := setupMode
+		setupModeMutex.RUnlock()
 
-// -----------------------------------------------------------------------------
-// systray lifecycle hooks
-// -----------------------------------------------------------------------------
-
-func onReady() {
-	systray.SetTemplateIcon(iconData, iconData)
-	systray.SetTitle("Lowkey Media Server")
-	systray.SetTooltip("Lowkey Media Server – click to open UI")
-
-	openItem := systray.AddMenuItem("Open Web UI", "Launch the browser")
-	systray.AddSeparator()
-	quitItem := systray.AddMenuItem("Quit", "Shut down Lowkey Media Server")
-
-	// open UI once at startup - if in setup mode, go to setup page
-	setupModeMutex.RLock()
-	inSetupMode := setupMode
-	setupModeMutex.RUnlock()
-
-	startURL := "http://localhost:8090/"
-	if inSetupMode {
-		startURL = "http://localhost:8090/setup"
-	}
-	_ = browser.OpenURL(startURL)
-
-	// event loop
-	for {
-		select {
-		case <-openItem.ClickedCh:
-			_ = browser.OpenURL("http://localhost:8090/")
-		case <-quitItem.ClickedCh:
-			systray.Quit()
-			return
+		startURL := "http://localhost:8090/"
+		if inSetupMode {
+			startURL = "http://localhost:8090/setup"
 		}
+		_ = browser.OpenURL(startURL)
+	} else {
+		log.Println("No display detected. Access the web UI at http://localhost:8090")
 	}
+
+	// Wait for shutdown signal
+	sig := <-sigChan
+	log.Printf("Received signal %v, shutting down...", sig)
+	onExit()
 }
 
+// onExit is called when the application is shutting down.
+// This is compatible with the Windows version which calls it from systray.
 func onExit() {
 	log.Println("Shutting down Lowkey Media Server...")
 

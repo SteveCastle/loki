@@ -23,11 +23,11 @@ func init() {
 		ID:            "faster-whisper",
 		Name:          "Faster Whisper",
 		Description:   "High-performance audio transcription engine for generating video subtitles",
-		TargetDir:     filepath.Join(os.Getenv("APPDATA"), "Lowkey Media Viewer", "whisper"),
+		TargetDir:     GetDepsDir("whisper"),
 		Check:         checkWhisper,
 		Download:      downloadWhisper,
 		LatestVersion: LatestFasterWhisperVersion,
-		DownloadURL:   "https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.1_windows.7z",
+		DownloadURL:   GetWhisperDownloadURL(),
 		ExpectedSize:  200 * 1024 * 1024, // 200MB (approximate)
 	})
 }
@@ -35,8 +35,8 @@ func init() {
 // checkWhisper verifies if Faster Whisper executable exists and can run.
 func checkWhisper(ctx context.Context) (bool, string, error) {
 	// Always use default installation location
-	targetDir := filepath.Join(os.Getenv("APPDATA"), "Lowkey Media Viewer", "whisper")
-	exePath := filepath.Join(targetDir, "faster-whisper-xxl.exe")
+	targetDir := GetDepsDir("whisper")
+	exePath := filepath.Join(targetDir, GetWhisperExecutableName())
 
 	// Check if file exists
 	if _, err := os.Stat(exePath); os.IsNotExist(err) {
@@ -96,7 +96,7 @@ func downloadWhisper(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	if arch != "amd64" {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Unsupported architecture: %s", arch))
-		q.PushJobStdout(j.ID, "Faster Whisper is only available for Windows x64")
+		q.PushJobStdout(j.ID, "Faster Whisper is only available for x64 systems")
 		return fmt.Errorf("unsupported architecture: %s", arch)
 	}
 
@@ -131,9 +131,10 @@ func downloadWhisper(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, "✓ Extraction complete")
 
 	// Verify the executable
-	exePath := filepath.Join(dep.TargetDir, "faster-whisper-xxl.exe")
+	exeName := GetWhisperExecutableName()
+	exePath := filepath.Join(dep.TargetDir, exeName)
 	if _, err := os.Stat(exePath); os.IsNotExist(err) {
-		q.PushJobStdout(j.ID, "Warning: faster-whisper-xxl.exe not found in expected location")
+		q.PushJobStdout(j.ID, fmt.Sprintf("Warning: %s not found in expected location", exeName))
 		q.PushJobStdout(j.ID, fmt.Sprintf("Expected: %s", exePath))
 	} else {
 		q.PushJobStdout(j.ID, fmt.Sprintf("✓ Found executable at: %s", exePath))
@@ -148,7 +149,7 @@ func downloadWhisper(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		LastChecked:      time.Now(),
 		LastUpdated:      time.Now(),
 		Files: map[string]FileInfo{
-			"faster-whisper-xxl.exe": {Path: exePath},
+			exeName: {Path: exePath},
 		},
 	})
 	metadata.Save()
