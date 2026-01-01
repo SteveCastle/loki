@@ -10,6 +10,17 @@ import {
   clampVolume,
 } from 'settings';
 import filter from './filter';
+import {
+  initSessionStore,
+  getSessionValue,
+  setSessionValue,
+  setSessionValues,
+  clearSessionKeys,
+  flushSession,
+  hasPersistedLibrary as checkHasPersistedLibrary,
+  hasPersistedTextFilter as checkHasPersistedTextFilter,
+  hasPersistedTags as checkHasPersistedTags,
+} from './hooks/useSessionStore';
 // Job management removed - now handled by external job runner service
 
 export type Item = {
@@ -22,30 +33,6 @@ export type Item = {
   description?: string;
   height?: number | null;
   width?: number | null;
-};
-
-type PersistedLibraryData = {
-  library: Item[];
-  initialFile: string;
-};
-
-type PersistedCursorData = {
-  cursor: number;
-  scrollPosition?: number;
-};
-
-type PersistedQueryData = {
-  dbQuery: {
-    tags: string[];
-  };
-  mostRecentTag: string;
-  mostRecentCategory: string;
-  textFilter: string;
-};
-
-type PersistedPreviousData = {
-  previousLibrary: Item[];
-  previousCursor: number;
 };
 
 type Props = {
@@ -114,14 +101,10 @@ type LibraryState = {
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
     const library = event.data.library;
-    // Update library data
-    window.electron.store.set('persistedLibrary', {
-      library,
-      initialFile: context.initialFile,
-    });
-    // Update cursor separately
-    window.electron.store.set('persistedCursor', {
-      cursor: event.data.cursor,
+    // Update library and cursor data using session store (async, debounced)
+    setSessionValues({
+      library: { library, initialFile: context.initialFile },
+      cursor: { cursor: event.data.cursor },
     });
     return library;
   },
@@ -137,19 +120,11 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
     const previousLibrary = context.library;
     const previousCursor = context.cursor;
 
-    // Update library data
-    window.electron.store.set('persistedLibrary', {
-      library,
-      initialFile: context.initialFile,
-    });
-    // Update cursor separately
-    window.electron.store.set('persistedCursor', {
-      cursor: event.data.cursor,
-    });
-    // Update previous state separately
-    window.electron.store.set('persistedPrevious', {
-      previousLibrary,
-      previousCursor,
+    // Update all session data using session store (async, debounced, batched)
+    setSessionValues({
+      library: { library, initialFile: context.initialFile },
+      cursor: { cursor: event.data.cursor },
+      previous: { previousLibrary, previousCursor },
     });
 
     return library;
@@ -165,23 +140,21 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
 });
 
 const clearPersistedLibrary = () => {
-  window.electron.store.set('persistedLibrary', null);
-  window.electron.store.set('persistedCursor', null);
-  window.electron.store.set('persistedQuery', null);
-  window.electron.store.set('persistedPrevious', null);
+  // Clear all session data using the new session store
+  clearSessionKeys(['library', 'cursor', 'query', 'previous']);
 };
 
 const updatePersistedCursor = (context: LibraryState, cursor: number) => {
-  // Only update cursor - much faster!
-  window.electron.store.set('persistedCursor', {
+  // Only update cursor - uses session store with debouncing for high performance
+  setSessionValue('cursor', {
     cursor,
     scrollPosition: context.scrollPosition,
   });
 };
 
 const updatePersistedState = (context: LibraryState) => {
-  // Update query state separately
-  window.electron.store.set('persistedQuery', {
+  // Update query state using session store (async, debounced)
+  setSessionValue('query', {
     dbQuery: context.dbQuery,
     mostRecentTag: context.mostRecentTag,
     mostRecentCategory: context.mostRecentCategory,
@@ -236,42 +209,18 @@ const setDB = assign<LibraryState, AnyEventObject>({
 
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
 const missingDb = (context: LibraryState) => !context.dbPath;
-const hasPersistedLibrary = (context: LibraryState): boolean => {
-  const persistedData = window.electron.store.get(
-    'persistedLibrary',
-    null
-  ) as PersistedLibraryData | null;
-  return !!(
-    persistedData &&
-    persistedData.library &&
-    Array.isArray(persistedData.library) &&
-    persistedData.library.length > 0
-  );
+
+// These guards now use the session store cache (sync read from in-memory cache)
+const hasPersistedLibrary = (_context: LibraryState): boolean => {
+  return checkHasPersistedLibrary();
 };
 
-const hasPersistedTextFilter = (context: LibraryState): boolean => {
-  const persistedData = window.electron.store.get(
-    'persistedQuery',
-    null
-  ) as PersistedQueryData | null;
-  return !!(
-    persistedData &&
-    persistedData.textFilter &&
-    persistedData.textFilter.length > 0
-  );
+const hasPersistedTextFilter = (_context: LibraryState): boolean => {
+  return checkHasPersistedTextFilter();
 };
 
-const hasPersistedTags = (context: LibraryState): boolean => {
-  const persistedData = window.electron.store.get(
-    'persistedQuery',
-    null
-  ) as PersistedQueryData | null;
-  return !!(
-    persistedData &&
-    persistedData.dbQuery &&
-    persistedData.dbQuery.tags &&
-    persistedData.dbQuery.tags.length > 0
-  );
+const hasPersistedTags = (_context: LibraryState): boolean => {
+  return checkHasPersistedTags();
 };
 
 const willHaveTag = (context: LibraryState, event: AnyEventObject) => {
@@ -531,7 +480,6 @@ const getInitialContext = (): LibraryState => {
     savedSortByDuringStreaming: null,
     userMovedCursorDuringStreaming: false,
     scrollToCursorEventId: null,
-    authToken: window.electron.store.get('authToken', null) as string | null,
   };
 };
 
@@ -1295,75 +1243,46 @@ const libraryMachine = createMachine(
           loadingFromPersisted: {
             entry: assign<LibraryState, AnyEventObject>({
               library: (context) => {
-                const persistedData = window.electron.store.get(
-                  'persistedLibrary',
-                  null
-                ) as PersistedLibraryData | null;
+                // Use session store cache (sync read from memory)
+                const persistedData = getSessionValue('library');
                 return persistedData ? persistedData.library : [];
               },
               initialFile: (context) => {
-                const persistedData = window.electron.store.get(
-                  'persistedLibrary',
-                  null
-                ) as PersistedLibraryData | null;
+                const persistedData = getSessionValue('library');
                 return persistedData
                   ? persistedData.initialFile
                   : context.initialFile;
               },
-              cursor: (context) => {
-                const cursorData = window.electron.store.get(
-                  'persistedCursor',
-                  null
-                ) as PersistedCursorData | null;
+              cursor: () => {
+                const cursorData = getSessionValue('cursor');
                 return cursorData ? cursorData.cursor : 0;
               },
-              scrollPosition: (context) => {
-                const cursorData = window.electron.store.get(
-                  'persistedCursor',
-                  null
-                ) as PersistedCursorData | null;
+              scrollPosition: () => {
+                const cursorData = getSessionValue('cursor');
                 return cursorData?.scrollPosition ?? 0;
               },
-              previousLibrary: (context) => {
-                const previousData = window.electron.store.get(
-                  'persistedPrevious',
-                  null
-                ) as PersistedPreviousData | null;
+              previousLibrary: () => {
+                const previousData = getSessionValue('previous');
                 return previousData ? previousData.previousLibrary : [];
               },
-              previousCursor: (context) => {
-                const previousData = window.electron.store.get(
-                  'persistedPrevious',
-                  null
-                ) as PersistedPreviousData | null;
+              previousCursor: () => {
+                const previousData = getSessionValue('previous');
                 return previousData ? previousData.previousCursor : 0;
               },
-              dbQuery: (context) => {
-                const queryData = window.electron.store.get(
-                  'persistedQuery',
-                  null
-                ) as PersistedQueryData | null;
+              dbQuery: () => {
+                const queryData = getSessionValue('query');
                 return queryData ? queryData.dbQuery : { tags: [] };
               },
-              mostRecentTag: (context) => {
-                const queryData = window.electron.store.get(
-                  'persistedQuery',
-                  null
-                ) as PersistedQueryData | null;
+              mostRecentTag: () => {
+                const queryData = getSessionValue('query');
                 return queryData ? queryData.mostRecentTag : '';
               },
-              mostRecentCategory: (context) => {
-                const queryData = window.electron.store.get(
-                  'persistedQuery',
-                  null
-                ) as PersistedQueryData | null;
+              mostRecentCategory: () => {
+                const queryData = getSessionValue('query');
                 return queryData ? queryData.mostRecentCategory : '';
               },
-              textFilter: (context) => {
-                const queryData = window.electron.store.get(
-                  'persistedQuery',
-                  null
-                ) as PersistedQueryData | null;
+              textFilter: () => {
+                const queryData = getSessionValue('query');
                 return queryData ? queryData.textFilter : '';
               },
               libraryLoadId: () => uniqueId(),
@@ -1378,17 +1297,11 @@ const libraryMachine = createMachine(
             entry: assign<LibraryState, AnyEventObject>({
               library: (context) => {
                 const library = context.previousLibrary;
-                // Persist the restored library using separate keys
-                window.electron.store.set('persistedLibrary', {
-                  library,
-                  initialFile: context.initialFile,
-                });
-                window.electron.store.set('persistedCursor', {
-                  cursor: context.previousCursor,
-                });
-                window.electron.store.set('persistedPrevious', {
-                  previousLibrary: [],
-                  previousCursor: 0,
+                // Persist the restored library using session store (batched)
+                setSessionValues({
+                  library: { library, initialFile: context.initialFile },
+                  cursor: { cursor: context.previousCursor },
+                  previous: { previousLibrary: [], previousCursor: 0 },
                 });
                 updatePersistedState(context);
                 return library;
@@ -1523,8 +1436,8 @@ const libraryMachine = createMachine(
                         dbQuery: { tags: [event.data.tag] },
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      window.electron.store.set('persistedLibrary', null);
-                      window.electron.store.set('persistedCursor', null);
+                      // Invalidate persisted library snapshot using session store
+                      clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
@@ -1544,8 +1457,8 @@ const libraryMachine = createMachine(
                       textFilter: event.data.textFilter,
                     });
                     // Invalidate persisted library snapshot to avoid query/library mismatch
-                    window.electron.store.set('persistedLibrary', null);
-                    window.electron.store.set('persistedCursor', null);
+                    // Invalidate persisted library snapshot using session store
+                    clearSessionKeys(['library', 'cursor']);
                   },
                 ],
               },
@@ -1758,8 +1671,8 @@ const libraryMachine = createMachine(
                         dbQuery: { tags: Object.keys(activeTags) },
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      window.electron.store.set('persistedLibrary', null);
-                      window.electron.store.set('persistedCursor', null);
+                      // Invalidate persisted library snapshot using session store
+                      clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
@@ -1783,8 +1696,8 @@ const libraryMachine = createMachine(
                         dbQuery: { tags: [] },
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      window.electron.store.set('persistedLibrary', null);
-                      window.electron.store.set('persistedCursor', null);
+                      // Invalidate persisted library snapshot using session store
+                      clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
@@ -1806,8 +1719,8 @@ const libraryMachine = createMachine(
                         textFilter: event.data.textFilter,
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      window.electron.store.set('persistedLibrary', null);
-                      window.electron.store.set('persistedCursor', null);
+                      // Invalidate persisted library snapshot using session store
+                      clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
@@ -1827,8 +1740,8 @@ const libraryMachine = createMachine(
                         textFilter: event.data.textFilter,
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      window.electron.store.set('persistedLibrary', null);
-                      window.electron.store.set('persistedCursor', null);
+                      // Invalidate persisted library snapshot using session store
+                      clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
@@ -2051,8 +1964,8 @@ const libraryMachine = createMachine(
                       dbQuery: { tags: [] },
                     });
                     // Invalidate persisted library snapshot to avoid query/library mismatch
-                    window.electron.store.set('persistedLibrary', null);
-                    window.electron.store.set('persistedCursor', null);
+                    // Invalidate persisted library snapshot using session store
+                    clearSessionKeys(['library', 'cursor']);
                   },
                 ],
               },
@@ -2073,8 +1986,8 @@ const libraryMachine = createMachine(
                       textFilter: event.data.textFilter,
                     });
                     // Invalidate persisted library snapshot to avoid query/library mismatch
-                    window.electron.store.set('persistedLibrary', null);
-                    window.electron.store.set('persistedCursor', null);
+                    // Invalidate persisted library snapshot using session store
+                    clearSessionKeys(['library', 'cursor']);
                   },
                 ],
               },
@@ -2221,8 +2134,8 @@ const libraryMachine = createMachine(
                         dbQuery: { tags: Object.keys(activeTags) },
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      window.electron.store.set('persistedLibrary', null);
-                      window.electron.store.set('persistedCursor', null);
+                      // Invalidate persisted library snapshot using session store
+                      clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
@@ -2246,8 +2159,8 @@ const libraryMachine = createMachine(
                         dbQuery: { tags: [] },
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      window.electron.store.set('persistedLibrary', null);
-                      window.electron.store.set('persistedCursor', null);
+                      // Invalidate persisted library snapshot using session store
+                      clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
@@ -2371,7 +2284,27 @@ export const GlobalStateContext = createContext({
   libraryService: {} as InterpreterFrom<typeof libraryMachine>,
 });
 
-export const GlobalStateProvider = (props: Props) => {
+// Track session store initialization
+let sessionStoreReady = false;
+let sessionStoreInitPromise: Promise<void> | null = null;
+
+/**
+ * Initialize session store before state machine starts.
+ * This should be called early in app startup (e.g., in App.tsx).
+ */
+export async function initializeSessionStore(): Promise<void> {
+  if (sessionStoreReady) return;
+  if (sessionStoreInitPromise) return sessionStoreInitPromise;
+
+  sessionStoreInitPromise = initSessionStore().then(() => {
+    sessionStoreReady = true;
+  });
+
+  return sessionStoreInitPromise;
+}
+
+// Inner component that only renders after session store is ready
+const GlobalStateProviderInner = (props: Props) => {
   const libraryService = useInterpret(libraryMachine);
 
   React.useEffect(() => {
@@ -2398,10 +2331,11 @@ export const GlobalStateProvider = (props: Props) => {
   React.useEffect(() => {
     const handleBeforeUnload = () => {
       const { scrollPosition, cursor } = libraryService.getSnapshot().context;
-      window.electron.store.set('persistedCursor', {
-        cursor,
-        scrollPosition,
-      });
+      // Update session store and flush to ensure data is written
+      setSessionValue('cursor', { cursor, scrollPosition });
+      // Note: flushSession is async but beforeunload doesn't wait.
+      // The session store on main process will handle this via 'before-quit' event.
+      flushSession();
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
@@ -2414,4 +2348,23 @@ export const GlobalStateProvider = (props: Props) => {
       {props.children}
     </GlobalStateContext.Provider>
   );
+};
+
+export const GlobalStateProvider = (props: Props) => {
+  const [isReady, setIsReady] = React.useState(sessionStoreReady);
+
+  // Initialize session store on mount if not already done
+  React.useEffect(() => {
+    if (!sessionStoreReady) {
+      initializeSessionStore().then(() => setIsReady(true));
+    }
+  }, []);
+
+  // Don't render until session store is initialized
+  // This ensures the state machine reads from populated cache
+  if (!isReady) {
+    return null;
+  }
+
+  return <GlobalStateProviderInner {...props} />;
 };
