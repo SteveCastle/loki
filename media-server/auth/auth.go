@@ -10,10 +10,14 @@ import (
 )
 
 var (
-	ErrUserNotFound = errors.New("user not found")
-	ErrInvalidCreds = errors.New("invalid credentials")
-	ErrUserExists   = errors.New("username already exists")
+	ErrUserNotFound  = errors.New("user not found")
+	ErrInvalidCreds  = errors.New("invalid credentials")
+	ErrUserExists    = errors.New("username already exists")
+	ErrSetupRequired = errors.New("setup required: please create a new user")
 )
+
+const DefaultAdminUsername = "admin"
+const DefaultAdminPassword = "admin"
 
 type User struct {
 	ID           int64  `json:"id"`
@@ -39,7 +43,7 @@ func NewAuthService(db *sql.DB, secret string) *AuthService {
 	}
 }
 
-// CreateDefaultUser creates an admin user if no users exist
+// CreateDefaultUser creates a temporary admin user if no users exist
 func (s *AuthService) CreateDefaultUser() error {
 	var count int
 	err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
@@ -48,12 +52,49 @@ func (s *AuthService) CreateDefaultUser() error {
 	}
 
 	if count == 0 {
-		return s.Register("admin", "admin")
+		return s.registerInternal(DefaultAdminUsername, DefaultAdminPassword)
 	}
 	return nil
 }
 
-func (s *AuthService) Register(username, password string) error {
+// IsSetupRequired returns true if only the default admin user exists
+// This means the user needs to create a real account
+func (s *AuthService) IsSetupRequired() (bool, error) {
+	var count int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	if err != nil {
+		return false, err
+	}
+
+	if count != 1 {
+		return false, nil
+	}
+
+	// Check if the only user is the default admin
+	var username string
+	err = s.db.QueryRow("SELECT username FROM users LIMIT 1").Scan(&username)
+	if err != nil {
+		return false, err
+	}
+
+	return username == DefaultAdminUsername, nil
+}
+
+// HasDefaultAdminUser returns true if the default admin user still exists
+func (s *AuthService) HasDefaultAdminUser() bool {
+	var exists int
+	err := s.db.QueryRow("SELECT 1 FROM users WHERE username = ?", DefaultAdminUsername).Scan(&exists)
+	return err == nil
+}
+
+// DeleteDefaultAdmin removes the default admin user if it exists
+func (s *AuthService) DeleteDefaultAdmin() error {
+	_, err := s.db.Exec("DELETE FROM users WHERE username = ?", DefaultAdminUsername)
+	return err
+}
+
+// registerInternal creates a user without deleting the default admin
+func (s *AuthService) registerInternal(username, password string) error {
 	// Check if user exists
 	var exists int
 	err := s.db.QueryRow("SELECT 1 FROM users WHERE username = ?", username).Scan(&exists)
@@ -72,6 +113,29 @@ func (s *AuthService) Register(username, password string) error {
 	_, err = s.db.Exec("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
 		username, string(hash), time.Now().Unix())
 	return err
+}
+
+// Register creates a new user and deletes the default admin if it exists
+func (s *AuthService) Register(username, password string) error {
+	// Don't allow registering with the default admin username
+	if username == DefaultAdminUsername {
+		return errors.New("cannot use reserved username 'admin'")
+	}
+
+	// Register the new user
+	if err := s.registerInternal(username, password); err != nil {
+		return err
+	}
+
+	// If the default admin user exists, delete it now that we have a real user
+	if s.HasDefaultAdminUser() {
+		if err := s.DeleteDefaultAdmin(); err != nil {
+			// Log but don't fail - the user was created successfully
+			// The admin will be cleaned up on next registration attempt
+		}
+	}
+
+	return nil
 }
 
 func (s *AuthService) Login(username, password string) (string, error) {

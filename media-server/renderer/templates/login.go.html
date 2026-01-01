@@ -128,14 +128,47 @@
         border: 1px solid rgba(239, 68, 68, 0.2);
         border-radius: 8px;
       }
+      .success-message {
+        color: #4ade80;
+        font-size: 13px;
+        margin-top: 16px;
+        text-align: center;
+        display: none;
+        padding: 10px;
+        background: rgba(74, 222, 128, 0.1);
+        border: 1px solid rgba(74, 222, 128, 0.2);
+        border-radius: 8px;
+      }
+      .setup-info {
+        background: rgba(139, 92, 246, 0.1);
+        border: 1px solid rgba(139, 92, 246, 0.2);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 24px;
+        text-align: center;
+      }
+      .setup-info p {
+        color: rgba(255, 255, 255, 0.8);
+        margin: 0;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .setup-info strong {
+        color: #a78bfa;
+      }
+      .hidden {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
     <div class="login-card">
       <div class="login-header">
         <h1>Lowkey Media Server</h1>
-        <p>Please sign in to continue</p>
+        <p id="headerSubtitle">Please sign in to continue</p>
       </div>
+
+      <!-- Login Form -->
       <form id="loginForm">
         <div class="form-group">
           <label for="username">Username</label>
@@ -148,45 +181,191 @@
         <button type="submit" class="btn">Sign In</button>
         <div id="error" class="error-message"></div>
       </form>
+
+      <!-- Setup Form (create new user) -->
+      <form id="setupForm" class="hidden">
+        <div class="setup-info">
+          <p>
+            You're using the default admin account.<br />
+            Please create a <strong>new user account</strong> to continue.
+          </p>
+        </div>
+        <div class="form-group">
+          <label for="newUsername">New Username</label>
+          <input
+            type="text"
+            id="newUsername"
+            class="input"
+            required
+            placeholder="Choose a username"
+          />
+        </div>
+        <div class="form-group">
+          <label for="newPassword">New Password</label>
+          <input
+            type="password"
+            id="newPassword"
+            class="input"
+            required
+            placeholder="Choose a password"
+          />
+        </div>
+        <div class="form-group">
+          <label for="confirmPassword">Confirm Password</label>
+          <input
+            type="password"
+            id="confirmPassword"
+            class="input"
+            required
+            placeholder="Confirm password"
+          />
+        </div>
+        <button type="submit" class="btn">Create Account & Sign In</button>
+        <div id="setupError" class="error-message"></div>
+        <div id="setupSuccess" class="success-message"></div>
+      </form>
     </div>
 
     <script>
-      document
-        .getElementById('loginForm')
-        .addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const username = document.getElementById('username').value;
-          const password = document.getElementById('password').value;
-          const errorEl = document.getElementById('error');
-          const btn = e.target.querySelector('button');
+      const loginForm = document.getElementById('loginForm');
+      const setupForm = document.getElementById('setupForm');
+      const headerSubtitle = document.getElementById('headerSubtitle');
 
-          errorEl.style.display = 'none';
-          btn.disabled = true;
-          btn.textContent = 'Signing in...';
+      // Check if we're in setup mode from URL params
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('setup') === 'true') {
+        showSetupForm();
+      }
 
-          try {
-            const res = await fetch('/auth/login', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ username, password }),
-            });
+      function showSetupForm() {
+        loginForm.classList.add('hidden');
+        setupForm.classList.remove('hidden');
+        headerSubtitle.textContent = 'Create your account';
+        document.getElementById('newUsername').focus();
+      }
 
-            if (res.ok) {
-              // Check if there was a redirect param
-              const params = new URLSearchParams(window.location.search);
-              const redirect = params.get('redirect') || '/';
-              window.location.href = redirect;
-            } else {
-              const data = await res.json();
-              throw new Error(data.error || 'Login failed');
+      function showLoginForm() {
+        setupForm.classList.add('hidden');
+        loginForm.classList.remove('hidden');
+        headerSubtitle.textContent = 'Please sign in to continue';
+      }
+
+      // Login form handler
+      loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        const errorEl = document.getElementById('error');
+        const btn = e.target.querySelector('button');
+
+        errorEl.style.display = 'none';
+        btn.disabled = true;
+        btn.textContent = 'Signing in...';
+
+        try {
+          const res = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+
+          const data = await res.json();
+
+          if (res.ok) {
+            // Check if setup is required
+            if (data.setup_required) {
+              showSetupForm();
+              btn.disabled = false;
+              btn.textContent = 'Sign In';
+              return;
             }
-          } catch (err) {
-            errorEl.textContent = err.message;
-            errorEl.style.display = 'block';
-            btn.disabled = false;
-            btn.textContent = 'Sign In';
+            // Normal login - redirect
+            const redirect = params.get('redirect') || '/';
+            window.location.href = redirect;
+          } else {
+            throw new Error(data.error || 'Login failed');
           }
-        });
+        } catch (err) {
+          errorEl.textContent = err.message;
+          errorEl.style.display = 'block';
+          btn.disabled = false;
+          btn.textContent = 'Sign In';
+        }
+      });
+
+      // Setup form handler
+      setupForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = document.getElementById('newUsername').value.trim();
+        const password = document.getElementById('newPassword').value;
+        const confirmPassword =
+          document.getElementById('confirmPassword').value;
+        const errorEl = document.getElementById('setupError');
+        const successEl = document.getElementById('setupSuccess');
+        const btn = e.target.querySelector('button');
+
+        errorEl.style.display = 'none';
+        successEl.style.display = 'none';
+
+        // Validate
+        if (username.length < 3) {
+          errorEl.textContent = 'Username must be at least 3 characters';
+          errorEl.style.display = 'block';
+          return;
+        }
+        if (password.length < 4) {
+          errorEl.textContent = 'Password must be at least 4 characters';
+          errorEl.style.display = 'block';
+          return;
+        }
+        if (password !== confirmPassword) {
+          errorEl.textContent = 'Passwords do not match';
+          errorEl.style.display = 'block';
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Creating account...';
+
+        try {
+          // Create the new user
+          const createRes = await fetch('/auth/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+
+          if (!createRes.ok) {
+            const text = await createRes.text();
+            throw new Error(text || 'Failed to create user');
+          }
+
+          successEl.textContent = 'Account created! Signing you in...';
+          successEl.style.display = 'block';
+
+          // Now log in with the new credentials
+          const loginRes = await fetch('/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+
+          if (loginRes.ok) {
+            const redirect = params.get('redirect') || '/';
+            window.location.href = redirect;
+          } else {
+            throw new Error(
+              'Account created but login failed. Please sign in manually.'
+            );
+          }
+        } catch (err) {
+          errorEl.textContent = err.message;
+          errorEl.style.display = 'block';
+          successEl.style.display = 'none';
+          btn.disabled = false;
+          btn.textContent = 'Create Account & Sign In';
+        }
+      });
     </script>
   </body>
 </html>
