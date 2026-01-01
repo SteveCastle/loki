@@ -1063,6 +1063,17 @@
           .then((r) => r.json())
           .then((res) => {
             activeDbPathEl.textContent = res.activeDBPath || dbPath;
+            if (res.logoutRequired) {
+              setStatus(
+                'Database switched. Redirecting to login...',
+                'success'
+              );
+              setTimeout(() => {
+                window.location.href =
+                  '/login?redirect=' + encodeURIComponent('/config');
+              }, 1000);
+              return;
+            }
             setStatus(
               res.dbChanged
                 ? 'Saved and switched database.'

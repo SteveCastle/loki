@@ -58,9 +58,38 @@ func defaultDownloadPath() string {
 	return filepath.Join(home, "media")
 }
 
+// DefaultDBPath returns the default database path.
+func DefaultDBPath() string {
+	appDataDir := os.Getenv("APPDATA")
+	if appDataDir == "" {
+		// Fallback for non-Windows or missing APPDATA
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "media.db"
+		}
+		return filepath.Join(home, ".lowkey-media-server", "media.db")
+	}
+	return filepath.Join(appDataDir, "Lowkey Media Viewer", "media.db")
+}
+
+// DefaultConfigDir returns the default config directory path.
+func DefaultConfigDir() string {
+	appDataDir := os.Getenv("APPDATA")
+	if appDataDir == "" {
+		// Fallback for non-Windows or missing APPDATA
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "."
+		}
+		return filepath.Join(home, ".lowkey-media-server")
+	}
+	return filepath.Join(appDataDir, "Lowkey Media Viewer")
+}
+
 // defaultConfig returns a Config populated with sensible defaults.
 func defaultConfig() Config {
 	return Config{
+		DBPath:         DefaultDBPath(),
 		DownloadPath:   defaultDownloadPath(),
 		OllamaBaseURL:  "http://localhost:11434",
 		OllamaModel:    "llama3.2-vision",
@@ -128,19 +157,23 @@ func deepMergeJSON(dst, src map[string]json.RawMessage) {
 
 // getConfigPath returns the full path to the config.json file.
 func getConfigPath() (string, error) {
-	appDataDir := os.Getenv("APPDATA")
-	if appDataDir == "" {
-		return "", fmt.Errorf("APPDATA environment variable not found")
-	}
-	return filepath.Join(appDataDir, "Lowkey Media Viewer", "config.json"), nil
+	configDir := DefaultConfigDir()
+	return filepath.Join(configDir, "config.json"), nil
 }
 
 // Load reads the config from disk and updates the in-memory config. It returns the config and path.
 // If the config file doesn't exist, it creates one with default values.
+// This function safely handles missing directories and creates them as needed.
 func Load() (Config, string, error) {
 	path, err := getConfigPath()
 	if err != nil {
 		return Config{}, "", err
+	}
+
+	// Ensure config directory exists
+	configDir := filepath.Dir(path)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return Config{}, "", fmt.Errorf("failed to create config directory %s: %v", configDir, err)
 	}
 
 	// Check if config file exists
@@ -149,18 +182,19 @@ func Load() (Config, string, error) {
 		if os.IsNotExist(err) {
 			// Config file doesn't exist - create it with defaults
 			def := defaultConfig()
-			// Set a default database path
-			appDataDir := os.Getenv("APPDATA")
-			if appDataDir == "" {
-				return Config{}, "", fmt.Errorf("APPDATA environment variable not found")
+
+			// Ensure the database directory exists
+			dbDir := filepath.Dir(def.DBPath)
+			if err := os.MkdirAll(dbDir, 0755); err != nil {
+				return Config{}, "", fmt.Errorf("failed to create database directory %s: %v", dbDir, err)
 			}
-			def.DBPath = filepath.Join(appDataDir, "Lowkey Media Viewer", "media.db")
 
 			// Save the default config
 			savedPath, saveErr := Save(def)
 			if saveErr != nil {
 				return Config{}, path, fmt.Errorf("failed to create default config file: %v", saveErr)
 			}
+			Set(def)
 			return def, savedPath, nil
 		}
 		return Config{}, path, fmt.Errorf("failed to read config file at %s: %v", path, err)
@@ -170,8 +204,15 @@ func Load() (Config, string, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Config{}, path, fmt.Errorf("failed to parse config JSON: %v", err)
 	}
-	// Merge defaults for any missing optional fields
+
+	// Merge defaults for any missing fields
 	def := defaultConfig()
+	needsSave := false
+
+	if c.DBPath == "" {
+		c.DBPath = def.DBPath
+		needsSave = true
+	}
 	if c.DownloadPath == "" {
 		c.DownloadPath = def.DownloadPath
 	}
@@ -195,14 +236,23 @@ func Load() (Config, string, error) {
 	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = uuid.New().String()
-		// We should save this back to disk so it persists
-		// We'll defer saving until needed or let the main loop handle it, 
-		// but typically we want it to be stable. 
-		// However, Load() signature is complex. 
-		// For now, let's just set it in memory. 
-		// If the user saves config, it will be written.
-		// If they restart without saving, they get a new token (logging everyone out), which is acceptable security-wise.
+		needsSave = true
 	}
+
+	// Ensure the database directory exists
+	dbDir := filepath.Dir(c.DBPath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return Config{}, path, fmt.Errorf("failed to create database directory %s: %v", dbDir, err)
+	}
+
+	// Save config if we had to fill in critical missing fields
+	if needsSave {
+		if _, saveErr := Save(c); saveErr != nil {
+			// Log but don't fail - we can continue with the in-memory config
+			fmt.Printf("Warning: failed to save updated config: %v\n", saveErr)
+		}
+	}
+
 	Set(c)
 	return c, path, nil
 }

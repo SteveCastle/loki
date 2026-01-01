@@ -159,6 +159,13 @@ func switchDatabase(newDBPath string) error {
 	currentRunners = runners.New(newQueue)
 	log.Printf("New runners started. Current jobs in new queue: %d", len(newQueue.GetJobs()))
 
+	// Recreate auth service with the new database connection
+	log.Println("Recreating auth service for new database...")
+	deps.Auth = auth.NewAuthService(newDB, currentConfig.JWTSecret)
+	if err := deps.Auth.CreateDefaultUser(); err != nil {
+		log.Printf("Failed to create default user on new database: %v", err)
+	}
+
 	// Close the old DB last
 	if oldDB != nil {
 		log.Println("Closing old database connection...")
@@ -1598,6 +1605,17 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 					http.Error(w, "failed to switch database: "+err.Error(), http.StatusInternalServerError)
 					return
 				}
+				// Clear the auth cookie to force re-login after DB switch
+				http.SetCookie(w, &http.Cookie{
+					Name:     "auth_token",
+					Value:    "",
+					Path:     "/",
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+					Expires:  time.Unix(0, 0),
+					MaxAge:   -1,
+				})
+				log.Println("Auth session cleared due to database switch")
 			}
 			currentConfig = newCfg
 
@@ -1606,11 +1624,12 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":       "ok",
-				"configPath":   cfgPath,
-				"activeDBPath": currentConfig.DBPath,
-				"changed":      changed,
-				"dbChanged":    dbChanged,
+				"status":         "ok",
+				"configPath":     cfgPath,
+				"activeDBPath":   currentConfig.DBPath,
+				"changed":        changed,
+				"dbChanged":      dbChanged,
+				"logoutRequired": dbChanged,
 			})
 		default:
 			http.Error(w, "Use GET or POST", http.StatusMethodNotAllowed)
@@ -1939,7 +1958,21 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		authHeader := r.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if _, err := deps.Auth.VerifyToken(tokenString); err == nil {
+			if claims, err := deps.Auth.VerifyToken(tokenString); err == nil {
+				// Check if user setup is required (logged in as default admin)
+				if claims.Username == auth.DefaultAdminUsername {
+					setupRequired, _ := deps.Auth.IsSetupRequired()
+					if setupRequired {
+						if r.Header.Get("Accept") == "application/json" {
+							w.Header().Set("Content-Type", "application/json")
+							w.WriteHeader(http.StatusForbidden)
+							w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
+						} else {
+							http.Redirect(w, r, "/login?setup=true", http.StatusFound)
+						}
+						return
+					}
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -1957,7 +1990,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 		}
 
 		// Verify token
-		_, err = deps.Auth.VerifyToken(cookie.Value)
+		claims, err := deps.Auth.VerifyToken(cookie.Value)
 		if err != nil {
 			if r.Header.Get("Accept") == "application/json" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -1965,6 +1998,21 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
 			}
 			return
+		}
+
+		// Check if user setup is required (logged in as default admin)
+		if claims.Username == auth.DefaultAdminUsername {
+			setupRequired, _ := deps.Auth.IsSetupRequired()
+			if setupRequired {
+				if r.Header.Get("Accept") == "application/json" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusForbidden)
+					w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
+				} else {
+					http.Redirect(w, r, "/login?setup=true", http.StatusFound)
+				}
+				return
+			}
 		}
 
 		// For now, assume all authenticated users have Admin role
@@ -2039,11 +2087,18 @@ func loginAPIHandler(deps *Dependencies) http.HandlerFunc {
 			Expires:  time.Now().Add(24 * time.Hour),
 		})
 
+		// Check if setup is required (logged in as default admin)
+		setupRequired := false
+		if creds.Username == auth.DefaultAdminUsername {
+			setupRequired, _ = deps.Auth.IsSetupRequired()
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		// Return token in response body as well for API clients
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status": "ok",
-			"token":  token,
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":         "ok",
+			"token":          token,
+			"setup_required": setupRequired,
 		})
 	}
 }
