@@ -536,9 +536,9 @@ func callOllamaVision(ctx context.Context, imagePath, model string) (string, err
 
 func generateTranscriptWithFasterWhisper(ctx context.Context, filePath string) (string, error) {
 	// Try to get the path from the dependency system first
-	exePath, err := deps.GetFilePath("faster-whisper", "faster-whisper-xxl.exe")
+	exePath, err := deps.GetFilePath("faster-whisper", deps.GetWhisperExecutableName())
 	if err != nil {
-		// Fall back to config if dependency system doesn't have it\
+		// Fall back to config if dependency system doesn't have it
 		fmt.Printf("error getting faster-whisper path: %v\n", err)
 		exePath = appconfig.Get().FasterWhisperPath
 		if strings.TrimSpace(exePath) == "" {

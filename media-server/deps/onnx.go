@@ -1,7 +1,9 @@
 package deps
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,14 +18,15 @@ import (
 	"time"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 func init() {
 	Register(&Dependency{
 		ID:            "onnx-bundle",
 		Name:          "ONNX Tagger Models",
-		Description:   "ML models, labels, config, and runtime DLL for AI-powered image tagging",
-		TargetDir:     filepath.Join(os.Getenv("APPDATA"), "Lowkey Media Viewer", "onnx"),
+		Description:   "ML models, labels, config, and runtime library for AI-powered image tagging",
+		TargetDir:     GetDepsDir("onnx"),
 		Check:         checkONNX,
 		Download:      downloadONNX,
 		LatestVersion: "wd-eva02-large-v3",
@@ -35,14 +38,14 @@ func init() {
 // checkONNX verifies if all ONNX tagger files exist and returns version info.
 func checkONNX(ctx context.Context) (bool, string, error) {
 	// Always use default installation location
-	targetDir := filepath.Join(os.Getenv("APPDATA"), "Lowkey Media Viewer", "onnx")
+	targetDir := GetDepsDir("onnx")
 
 	// Check all required files
 	requiredFiles := map[string]string{
 		"model":   filepath.Join(targetDir, "model.onnx"),
 		"labels":  filepath.Join(targetDir, "selected_tags.csv"),
 		"config":  filepath.Join(targetDir, "config.json"),
-		"runtime": filepath.Join(targetDir, "onnxruntime.dll"),
+		"runtime": filepath.Join(targetDir, GetOnnxRuntimeLibName()),
 	}
 
 	for name, path := range requiredFiles {
@@ -117,45 +120,64 @@ func downloadONNX(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		q.PushJobStdout(j.ID, fmt.Sprintf("✓ Downloaded %s", file.filename))
 	}
 
-	// Download ONNX Runtime DLL
+	// Download ONNX Runtime library
 	q.PushJobStdout(j.ID, "")
 	q.PushJobStdout(j.ID, "Downloading ONNX Runtime...")
-	onnxRuntimeDLLPath := filepath.Join(dep.TargetDir, "onnxruntime.dll")
+	onnxRuntimeLibName := GetOnnxRuntimeLibName()
+	onnxRuntimeLibPath := filepath.Join(dep.TargetDir, onnxRuntimeLibName)
 
 	// Determine architecture and download URL
 	arch := runtime.GOARCH
 	onnxVersion := "1.23.1" // Version 1.20.1+ required for ONNX opset 22 support (models using ONNX 1.17+)
 	var onnxRuntimeURL string
-	tempZip := filepath.Join(dep.TargetDir, "onnxruntime.zip")
 
-	if arch == "amd64" {
-		onnxRuntimeURL = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-win-x64-%s.zip", onnxVersion, onnxVersion)
-	} else if arch == "arm64" {
-		onnxRuntimeURL = fmt.Sprintf("https://github.com/microsoft/onnxruntime/releases/download/v%s/onnxruntime-win-arm64-%s.zip", onnxVersion, onnxVersion)
-	} else {
+	if arch != "amd64" && arch != "arm64" {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Warning: Unsupported architecture %s, skipping ONNX Runtime download", arch))
-		q.PushJobStdout(j.ID, "Please manually download onnxruntime.dll from https://github.com/microsoft/onnxruntime/releases")
+		q.PushJobStdout(j.ID, "Please manually download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases")
 		goto skipOnnxRuntime
 	}
 
-	// Download ONNX Runtime zip file
+	onnxRuntimeURL = GetOnnxRuntimeDownloadURL(onnxVersion, arch)
+
+	// Download ONNX Runtime archive
 	q.PushJobStdout(j.ID, fmt.Sprintf("Downloading ONNX Runtime %s...", onnxVersion))
-	if err := downloadFile(j.Ctx, tempZip, onnxRuntimeURL, j.ID, q); err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Failed to download ONNX Runtime: %v", err))
-		q.PushJobStdout(j.ID, "Please manually download onnxruntime.dll from https://github.com/microsoft/onnxruntime/releases")
-		goto skipOnnxRuntime
+
+	if IsOnnxRuntimeArchiveZip() {
+		// Windows: Download and extract from ZIP
+		tempZip := filepath.Join(dep.TargetDir, "onnxruntime.zip")
+		if err := downloadFile(j.Ctx, tempZip, onnxRuntimeURL, j.ID, q); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Failed to download ONNX Runtime: %v", err))
+			q.PushJobStdout(j.ID, "Please manually download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases")
+			goto skipOnnxRuntime
+		}
+
+		// Extract the library from the zip
+		q.PushJobStdout(j.ID, "Extracting ONNX Runtime library...")
+		if err := extractOnnxRuntimeFromZip(tempZip, onnxRuntimeLibPath, onnxRuntimeLibName, j.ID, q); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Failed to extract ONNX Runtime: %v", err))
+			q.PushJobStdout(j.ID, "Please manually download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases")
+			goto skipOnnxRuntime
+		}
+		os.Remove(tempZip)
+	} else {
+		// Linux: Download and extract from tar.gz
+		tempTgz := filepath.Join(dep.TargetDir, "onnxruntime.tgz")
+		if err := downloadFile(j.Ctx, tempTgz, onnxRuntimeURL, j.ID, q); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Failed to download ONNX Runtime: %v", err))
+			q.PushJobStdout(j.ID, "Please manually download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases")
+			goto skipOnnxRuntime
+		}
+
+		// Extract the library from the tar.gz
+		q.PushJobStdout(j.ID, "Extracting ONNX Runtime library...")
+		if err := extractOnnxRuntimeFromTarGz(tempTgz, onnxRuntimeLibPath, onnxRuntimeLibName, j.ID, q); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Failed to extract ONNX Runtime: %v", err))
+			q.PushJobStdout(j.ID, "Please manually download ONNX Runtime from https://github.com/microsoft/onnxruntime/releases")
+			goto skipOnnxRuntime
+		}
+		os.Remove(tempTgz)
 	}
 
-	// Extract the DLL from the zip
-	q.PushJobStdout(j.ID, "Extracting ONNX Runtime DLL...")
-	if err := extractOnnxRuntimeDLL(tempZip, onnxRuntimeDLLPath, j.ID, q); err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Failed to extract ONNX Runtime DLL: %v", err))
-		q.PushJobStdout(j.ID, "Please manually download onnxruntime.dll from https://github.com/microsoft/onnxruntime/releases")
-		goto skipOnnxRuntime
-	}
-
-	// Clean up zip file
-	os.Remove(tempZip)
 	q.PushJobStdout(j.ID, "✓ Downloaded and extracted ONNX Runtime")
 
 skipOnnxRuntime:
@@ -172,7 +194,7 @@ skipOnnxRuntime:
 			"model.onnx":        {Path: filepath.Join(dep.TargetDir, "model.onnx")},
 			"selected_tags.csv": {Path: filepath.Join(dep.TargetDir, "selected_tags.csv")},
 			"config.json":       {Path: filepath.Join(dep.TargetDir, "config.json")},
-			"onnxruntime.dll":   {Path: onnxRuntimeDLLPath},
+			onnxRuntimeLibName:  {Path: onnxRuntimeLibPath},
 		},
 	})
 	metadata.Save()
@@ -268,8 +290,8 @@ func formatSize(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-// extractOnnxRuntimeDLL extracts onnxruntime.dll from a zip archive.
-func extractOnnxRuntimeDLL(zipPath, outputPath string, jobID string, q *jobqueue.Queue) error {
+// extractOnnxRuntimeFromZip extracts the ONNX Runtime library from a ZIP archive (Windows).
+func extractOnnxRuntimeFromZip(zipPath, outputPath, libName string, jobID string, q *jobqueue.Queue) error {
 	// Open the zip file
 	reader, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -277,25 +299,25 @@ func extractOnnxRuntimeDLL(zipPath, outputPath string, jobID string, q *jobqueue
 	}
 	defer reader.Close()
 
-	// Search for onnxruntime.dll in the zip
-	var dllFile *zip.File
+	// Search for the library file in the zip
+	var libFile *zip.File
 	for _, file := range reader.File {
-		if strings.HasSuffix(strings.ToLower(file.Name), "onnxruntime.dll") {
-			dllFile = file
+		if strings.HasSuffix(strings.ToLower(file.Name), strings.ToLower(libName)) {
+			libFile = file
 			break
 		}
 	}
 
-	if dllFile == nil {
-		return fmt.Errorf("onnxruntime.dll not found in archive")
+	if libFile == nil {
+		return fmt.Errorf("%s not found in archive", libName)
 	}
 
-	q.PushJobStdout(jobID, fmt.Sprintf("Found DLL at: %s", dllFile.Name))
+	q.PushJobStdout(jobID, fmt.Sprintf("Found library at: %s", libFile.Name))
 
-	// Open the DLL file from the zip
-	rc, err := dllFile.Open()
+	// Open the library file from the zip
+	rc, err := libFile.Open()
 	if err != nil {
-		return fmt.Errorf("failed to open DLL in zip: %w", err)
+		return fmt.Errorf("failed to open library in zip: %w", err)
 	}
 	defer rc.Close()
 
@@ -306,12 +328,71 @@ func extractOnnxRuntimeDLL(zipPath, outputPath string, jobID string, q *jobqueue
 	}
 	defer outFile.Close()
 
-	// Copy the DLL
+	// Copy the library
 	copied, err := io.Copy(outFile, rc)
 	if err != nil {
-		return fmt.Errorf("failed to extract DLL: %w", err)
+		return fmt.Errorf("failed to extract library: %w", err)
 	}
 
 	q.PushJobStdout(jobID, fmt.Sprintf("Extracted %s (%s)", filepath.Base(outputPath), formatSize(copied)))
 	return nil
+}
+
+// extractOnnxRuntimeFromTarGz extracts the ONNX Runtime library from a tar.gz archive (Linux).
+func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID string, q *jobqueue.Queue) error {
+	// Open the tar.gz file
+	file, err := os.Open(tgzPath)
+	if err != nil {
+		return fmt.Errorf("failed to open tar.gz: %w", err)
+	}
+	defer file.Close()
+
+	// Create gzip reader
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	// Create tar reader
+	tarReader := tar.NewReader(gzReader)
+
+	// Search for the library file in the tar
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar: %w", err)
+		}
+
+		// Check if this is the library we're looking for
+		if strings.HasSuffix(header.Name, libName) {
+			q.PushJobStdout(jobID, fmt.Sprintf("Found library at: %s", header.Name))
+
+			// Create output file
+			outFile, err := os.Create(outputPath)
+			if err != nil {
+				return fmt.Errorf("failed to create output file: %w", err)
+			}
+			defer outFile.Close()
+
+			// Copy the library
+			copied, err := io.Copy(outFile, tarReader)
+			if err != nil {
+				return fmt.Errorf("failed to extract library: %w", err)
+			}
+
+			// Set executable permissions on Linux
+			if err := platform.EnsureExecutable(outputPath); err != nil {
+				return fmt.Errorf("failed to set executable permissions: %w", err)
+			}
+
+			q.PushJobStdout(jobID, fmt.Sprintf("Extracted %s (%s)", filepath.Base(outputPath), formatSize(copied)))
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%s not found in archive", libName)
 }

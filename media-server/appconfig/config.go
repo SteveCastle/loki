@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // Config holds application configuration including database path, LLM prompts, and AI model paths.
@@ -59,31 +60,15 @@ func defaultDownloadPath() string {
 }
 
 // DefaultDBPath returns the default database path.
+// Uses the platform-specific data directory.
 func DefaultDBPath() string {
-	appDataDir := os.Getenv("APPDATA")
-	if appDataDir == "" {
-		// Fallback for non-Windows or missing APPDATA
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "media.db"
-		}
-		return filepath.Join(home, ".lowkey-media-server", "media.db")
-	}
-	return filepath.Join(appDataDir, "Lowkey Media Viewer", "media.db")
+	return filepath.Join(platform.GetDataDir(), "media.db")
 }
 
 // DefaultConfigDir returns the default config directory path.
+// Uses the platform-specific data directory.
 func DefaultConfigDir() string {
-	appDataDir := os.Getenv("APPDATA")
-	if appDataDir == "" {
-		// Fallback for non-Windows or missing APPDATA
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "."
-		}
-		return filepath.Join(home, ".lowkey-media-server")
-	}
-	return filepath.Join(appDataDir, "Lowkey Media Viewer")
+	return platform.GetDataDir()
 }
 
 // defaultConfig returns a Config populated with sensible defaults.
