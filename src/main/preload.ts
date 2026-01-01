@@ -159,6 +159,7 @@ contextBridge.exposeInMainWorld('electron', {
     return mod.modifyTranscript(input);
   },
   userHome: path.join(process.env.HOME || '', '.lowkey', 'dream.sqlite'),
+  // Config store (synchronous, for settings/config that rarely change)
   store: {
     get(key: string, defaultValue: any) {
       return ipcRenderer.sendSync('electron-store-get', key, defaultValue);
@@ -168,6 +169,30 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getMany(pairs: [string, any][]) {
       return ipcRenderer.sendSync('electron-store-get-many', pairs);
+    },
+  },
+  // Session store (async, for frequently-changing ephemeral data like library state)
+  sessionStore: {
+    async get(key: 'library' | 'cursor' | 'query' | 'previous') {
+      return ipcRenderer.invoke('session-store-get', key);
+    },
+    async getAll() {
+      return ipcRenderer.invoke('session-store-get-all');
+    },
+    async set(key: 'library' | 'cursor' | 'query' | 'previous', value: any) {
+      return ipcRenderer.invoke('session-store-set', key, value);
+    },
+    async setMany(updates: Record<string, any>) {
+      return ipcRenderer.invoke('session-store-set-many', updates);
+    },
+    async clear() {
+      return ipcRenderer.invoke('session-store-clear');
+    },
+    async clearKeys(keys: Array<'library' | 'cursor' | 'query' | 'previous'>) {
+      return ipcRenderer.invoke('session-store-clear-keys', keys);
+    },
+    async flush() {
+      return ipcRenderer.invoke('session-store-flush');
     },
   },
   url: {

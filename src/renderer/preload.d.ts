@@ -2,6 +2,51 @@ import { Channels } from 'main/preload';
 import type { VttCue } from 'main/parse-vtt';
 import { FilterModeOption } from 'settings';
 
+// Session store data types
+type SessionKey = 'library' | 'cursor' | 'query' | 'previous';
+
+interface SessionLibraryData {
+  library: Array<{
+    path: string;
+    tagLabel?: string;
+    mtimeMs: number;
+    weight?: number;
+    timeStamp?: number;
+    elo?: number | null;
+    description?: string;
+    height?: number | null;
+    width?: number | null;
+  }>;
+  initialFile: string;
+}
+
+interface SessionCursorData {
+  cursor: number;
+  scrollPosition?: number;
+}
+
+interface SessionQueryData {
+  dbQuery: {
+    tags: string[];
+  };
+  mostRecentTag: string;
+  mostRecentCategory: string;
+  textFilter: string;
+}
+
+interface SessionPreviousData {
+  previousLibrary: SessionLibraryData['library'];
+  previousCursor: number;
+}
+
+interface SessionData {
+  library: SessionLibraryData | null;
+  cursor: SessionCursorData | null;
+  query: SessionQueryData | null;
+  previous: SessionPreviousData | null;
+  version?: number;
+}
+
 declare global {
   interface Window {
     appArgs: {
@@ -12,10 +57,21 @@ declare global {
     };
     electron: {
       userHome: string;
+      // Config store (synchronous, for settings that rarely change)
       store: {
         get(key: string, defaultValue: any): unknown;
         set(property: string, val: unknown): void;
         getMany(pairs: [string, any][]): Record<string, unknown>;
+      };
+      // Session store (async, for frequently-changing ephemeral data)
+      sessionStore: {
+        get(key: SessionKey): Promise<SessionData[typeof key]>;
+        getAll(): Promise<SessionData>;
+        set(key: SessionKey, value: any): Promise<void>;
+        setMany(updates: Partial<SessionData>): Promise<void>;
+        clear(): Promise<void>;
+        clearKeys(keys: SessionKey[]): Promise<void>;
+        flush(): Promise<void>;
       };
       url: {
         format: typeof import('url').format;

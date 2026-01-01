@@ -16,6 +16,10 @@ import invariant from 'tiny-invariant';
 import Store from 'electron-store';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
+import {
+  registerSessionStoreHandlers,
+  setupSessionStoreLifecycle,
+} from './sessionStore';
 
 import type { Database } from './database';
 
@@ -95,8 +99,12 @@ ipcMain.on('set-always-on-top', async (event, args) => {
   }
 });
 
-// Electron Store Provider
+// Electron Store Provider (for settings/config)
 const store = new Store();
+
+// Session Store Provider (for ephemeral session data like library, cursor, etc.)
+registerSessionStoreHandlers();
+setupSessionStoreLifecycle();
 ipcMain.on('electron-store-get', async (event, key, defaultValue) => {
   event.returnValue = store.get(key, defaultValue);
 });
