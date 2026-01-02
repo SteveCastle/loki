@@ -4,24 +4,19 @@ const API_BASE = 'http://localhost:8090';
 // State
 let eventSource = null;
 let jobs = [];
-let tasks = []; // Available tasks from server
 let isConnecting = false;
-let argsHistory = {}; // Per-command argument history
-let currentArgsPerCommand = {}; // Current/last-used args for each command
-let previousCommand = null; // Track command to save args when switching
-let selectedDropdownIndex = -1;
-let authToken = null; // JWT token for authentication
+let authToken = null;
+let currentUrl = '';
 
 // DOM Elements
 const elements = {
   serverStatus: null,
-  command: null,
-  args: null,
-  argsWrapper: null,
-  argsDropdown: null,
-  clearArgsHistory: null,
-  url: null,
-  createBtn: null,
+  urlDisplay: null,
+  optTranscript: null,
+  optDescription: null,
+  optFileMeta: null,
+  optAutoTag: null,
+  ingestBtn: null,
   feedback: null,
   jobsList: null,
   refreshBtn: null,
@@ -43,13 +38,12 @@ document.addEventListener('DOMContentLoaded', init);
 async function init() {
   // Cache DOM elements
   elements.serverStatus = document.getElementById('serverStatus');
-  elements.command = document.getElementById('command');
-  elements.args = document.getElementById('args');
-  elements.argsWrapper = document.querySelector('.args-wrapper');
-  elements.argsDropdown = document.getElementById('argsDropdown');
-  elements.clearArgsHistory = document.getElementById('clearArgsHistory');
-  elements.url = document.getElementById('url');
-  elements.createBtn = document.getElementById('createBtn');
+  elements.urlDisplay = document.getElementById('urlDisplay');
+  elements.optTranscript = document.getElementById('optTranscript');
+  elements.optDescription = document.getElementById('optDescription');
+  elements.optFileMeta = document.getElementById('optFileMeta');
+  elements.optAutoTag = document.getElementById('optAutoTag');
+  elements.ingestBtn = document.getElementById('ingestBtn');
   elements.feedback = document.getElementById('feedback');
   elements.jobsList = document.getElementById('jobsList');
   elements.refreshBtn = document.getElementById('refreshBtn');
@@ -194,7 +188,6 @@ async function handleLogout() {
 
   // Reset state
   jobs = [];
-  tasks = [];
 
   // Show login form
   showLoginForm();
@@ -258,45 +251,25 @@ async function authFetch(url, options = {}) {
 
 // Initialize app after successful authentication
 async function initializeApp() {
-  // Fetch available tasks first
-  await fetchTasks();
-
-  // Load saved preferences (after tasks are loaded so we can restore selection)
+  // Load saved preferences
   await loadPreferences();
 
   // Get current tab URL
   await populateCurrentUrl();
 
   // Set up event listeners
-  elements.createBtn.addEventListener('click', createTask);
+  elements.ingestBtn.addEventListener('click', createIngestTask);
   elements.refreshBtn.addEventListener('click', refreshJobs);
   elements.clearAllBtn.addEventListener('click', clearAllJobs);
-  elements.command.addEventListener('change', handleCommandChange);
-  elements.clearArgsHistory.addEventListener('click', clearCurrentArgsHistory);
 
-  // Args input events for autocomplete
-  elements.args.addEventListener('focus', showArgsDropdown);
-  elements.args.addEventListener('blur', handleArgsBlur);
-  elements.args.addEventListener('input', handleArgsInput);
-  elements.args.addEventListener('keydown', handleArgsKeydown);
-
-  // Allow Enter key to submit from URL field
-  elements.url.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') createTask();
-  });
+  // Save preferences when options change
+  elements.optTranscript.addEventListener('change', savePreferences);
+  elements.optDescription.addEventListener('change', savePreferences);
+  elements.optFileMeta.addEventListener('change', savePreferences);
+  elements.optAutoTag.addEventListener('change', savePreferences);
 
   // Set up event delegation for job actions
   elements.jobsList.addEventListener('click', handleJobClick);
-
-  // Close dropdown when clicking outside
-  document.addEventListener('click', (e) => {
-    if (
-      !elements.args.contains(e.target) &&
-      !elements.argsDropdown.contains(e.target)
-    ) {
-      hideArgsDropdown();
-    }
-  });
 
   // Connect to SSE and fetch initial jobs
   connectSSE();
@@ -305,7 +278,6 @@ async function initializeApp() {
 
 // Handle clicks on job items using event delegation
 function handleJobClick(e) {
-  // Find the closest element with a data-action attribute
   const target = e.target.closest('[data-action]');
   if (!target) return;
 
@@ -336,353 +308,103 @@ async function populateCurrentUrl() {
       currentWindow: true,
     });
     if (tabs[0]?.url) {
-      elements.url.value = tabs[0].url;
+      currentUrl = tabs[0].url;
+      elements.urlDisplay.textContent = truncateUrl(tabs[0].url);
+      elements.urlDisplay.title = tabs[0].url;
+    } else {
+      elements.urlDisplay.textContent = 'No URL available';
+      elements.urlDisplay.classList.add('url-error');
     }
   } catch (err) {
     console.error('Failed to get current tab URL:', err);
+    elements.urlDisplay.textContent = 'Failed to get URL';
+    elements.urlDisplay.classList.add('url-error');
   }
 }
 
-// Fetch available tasks from server
-async function fetchTasks() {
+// Truncate URL for display
+function truncateUrl(url) {
+  if (url.length <= 60) return url;
   try {
-    const response = await authFetch(`${API_BASE}/tasks`);
-    if (!response.ok) throw new Error('Failed to fetch tasks');
-
-    const data = await response.json();
-    if (Array.isArray(data.tasks)) {
-      tasks = data.tasks;
-      populateCommandDropdown();
-      updateServerStatus(true);
-    }
-  } catch (err) {
-    console.error('Fetch tasks error:', err);
-    // Fall back to a minimal set if server is unavailable
-    tasks = [
-      { id: 'gallery-dl', name: 'gallery-dl' },
-      { id: 'yt-dlp', name: 'yt-dlp' },
-    ];
-    populateCommandDropdown();
-    updateServerStatus(false);
+    const urlObj = new URL(url);
+    const path = urlObj.pathname + urlObj.search;
+    const truncatedPath =
+      path.length > 40 ? path.slice(0, 20) + '...' + path.slice(-17) : path;
+    return urlObj.host + truncatedPath;
+  } catch {
+    return url.slice(0, 30) + '...' + url.slice(-27);
   }
-}
-
-// Populate the command dropdown with tasks
-function populateCommandDropdown() {
-  elements.command.innerHTML = tasks
-    .map(
-      (task) =>
-        `<option value="${escapeHtml(task.id)}">${escapeHtml(
-          task.name
-        )}</option>`
-    )
-    .join('');
 }
 
 // Save/load preferences
 function savePreferences() {
-  // Save current args for the current command before saving
-  const command = elements.command.value;
-  currentArgsPerCommand[command] = elements.args.value;
-
   browser.storage.local.set({
-    lastCommand: command,
-    argsHistory: argsHistory,
-    currentArgsPerCommand: currentArgsPerCommand,
+    ingestOptions: {
+      transcript: elements.optTranscript.checked,
+      description: elements.optDescription.checked,
+      fileMeta: elements.optFileMeta.checked,
+      autoTag: elements.optAutoTag.checked,
+    },
+  });
+  updateCheckboxStyles();
+}
+
+// Update checkbox parent styles for Firefox compatibility
+function updateCheckboxStyles() {
+  const checkboxes = [
+    elements.optTranscript,
+    elements.optDescription,
+    elements.optFileMeta,
+    elements.optAutoTag,
+  ];
+  checkboxes.forEach((checkbox) => {
+    const parent = checkbox.closest('.checkbox-item');
+    if (parent) {
+      parent.classList.toggle('checked', checkbox.checked);
+    }
   });
 }
 
 async function loadPreferences() {
   try {
-    const result = await browser.storage.local.get([
-      'lastCommand',
-      'argsHistory',
-      'currentArgsPerCommand',
-    ]);
-
-    if (result.argsHistory) {
-      argsHistory = result.argsHistory;
+    const result = await browser.storage.local.get(['ingestOptions']);
+    if (result.ingestOptions) {
+      elements.optTranscript.checked = result.ingestOptions.transcript || false;
+      elements.optDescription.checked =
+        result.ingestOptions.description || false;
+      elements.optFileMeta.checked = result.ingestOptions.fileMeta || false;
+      elements.optAutoTag.checked = result.ingestOptions.autoTag || false;
     }
-    if (result.currentArgsPerCommand) {
-      currentArgsPerCommand = result.currentArgsPerCommand;
-    }
-    if (result.lastCommand) {
-      elements.command.value = result.lastCommand;
-      // Check if the saved command actually exists in the dropdown
-      // (it might have been removed from the server)
-      if (elements.command.value !== result.lastCommand) {
-        // Command doesn't exist anymore, use first available
-        previousCommand = elements.command.value;
-      } else {
-        // Restore the args for the last command
-        elements.args.value = currentArgsPerCommand[result.lastCommand] || '';
-        previousCommand = result.lastCommand;
-      }
-    } else {
-      // Default to first option if no saved command
-      previousCommand = elements.command.value;
-    }
-    updateClearHistoryButton();
+    updateCheckboxStyles();
   } catch (err) {
     console.error('Failed to load preferences:', err);
-    previousCommand = elements.command.value;
-    updateClearHistoryButton();
   }
 }
 
-// Handle command change
-function handleCommandChange() {
-  // Save the args for the previous command before switching
-  if (previousCommand) {
-    currentArgsPerCommand[previousCommand] = elements.args.value;
-  }
-
-  const newCommand = elements.command.value;
-
-  // Load args for the new command
-  elements.args.value = currentArgsPerCommand[newCommand] || '';
-
-  // Update previous command for next switch
-  previousCommand = newCommand;
-
-  updateClearHistoryButton();
-  savePreferences();
+// Build arguments array from checkbox selections
+function buildIngestArgs() {
+  const args = [];
+  if (elements.optTranscript.checked) args.push('--transcript');
+  if (elements.optDescription.checked) args.push('--description');
+  if (elements.optFileMeta.checked) args.push('--filemeta');
+  if (elements.optAutoTag.checked) args.push('--autotag');
+  return args;
 }
 
-// Args history management
-function addArgsToHistory(command, args) {
-  if (!args || args.trim() === '') return;
-
-  const trimmedArgs = args.trim();
-
-  if (!argsHistory[command]) {
-    argsHistory[command] = [];
-  }
-
-  // Remove if already exists (to move to front)
-  argsHistory[command] = argsHistory[command].filter((a) => a !== trimmedArgs);
-
-  // Add to front
-  argsHistory[command].unshift(trimmedArgs);
-
-  // Keep only last 10 entries per command
-  if (argsHistory[command].length > 10) {
-    argsHistory[command] = argsHistory[command].slice(0, 10);
-  }
-
-  savePreferences();
-  updateClearHistoryButton();
-}
-
-function removeArgFromHistory(command, arg) {
-  if (!argsHistory[command]) return;
-
-  argsHistory[command] = argsHistory[command].filter((a) => a !== arg);
-
-  if (argsHistory[command].length === 0) {
-    delete argsHistory[command];
-  }
-
-  savePreferences();
-  updateClearHistoryButton();
-  renderArgsDropdown();
-}
-
-function clearCurrentArgsHistory() {
-  const command = elements.command.value;
-  delete argsHistory[command];
-  delete currentArgsPerCommand[command];
-  elements.args.value = '';
-  savePreferences();
-  updateClearHistoryButton();
-  hideArgsDropdown();
-}
-
-function updateClearHistoryButton() {
-  const command = elements.command.value;
-  const hasHistory = argsHistory[command] && argsHistory[command].length > 0;
-  elements.clearArgsHistory.style.display = hasHistory ? 'inline-flex' : 'none';
-}
-
-// Args dropdown functions
-function showArgsDropdown() {
-  renderArgsDropdown();
-  const command = elements.command.value;
-  const history = argsHistory[command] || [];
-
-  if (history.length > 0) {
-    elements.argsDropdown.style.display = 'block';
-    elements.argsWrapper.classList.add('dropdown-open');
-    selectedDropdownIndex = -1;
-  }
-}
-
-function hideArgsDropdown() {
-  elements.argsDropdown.style.display = 'none';
-  elements.argsWrapper.classList.remove('dropdown-open');
-  selectedDropdownIndex = -1;
-}
-
-function handleArgsBlur(e) {
-  // Save args when leaving the field
-  savePreferences();
-
-  // Delay hide to allow click on dropdown items
-  setTimeout(() => {
-    if (!elements.argsDropdown.contains(document.activeElement)) {
-      hideArgsDropdown();
-    }
-  }, 150);
-}
-
-function handleArgsInput() {
-  renderArgsDropdown();
-  const history = getFilteredHistory();
-
-  if (history.length > 0) {
-    elements.argsDropdown.style.display = 'block';
-    elements.argsWrapper.classList.add('dropdown-open');
-  } else {
-    hideArgsDropdown();
-  }
-}
-
-function handleArgsKeydown(e) {
-  const history = getFilteredHistory();
-
-  if (elements.argsDropdown.style.display === 'none' || history.length === 0) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      createTask();
-    }
+// Create ingest task
+async function createIngestTask() {
+  if (!currentUrl) {
+    showFeedback('No URL available', 'error');
     return;
   }
 
-  switch (e.key) {
-    case 'ArrowDown':
-      e.preventDefault();
-      selectedDropdownIndex = Math.min(
-        selectedDropdownIndex + 1,
-        history.length - 1
-      );
-      updateDropdownSelection();
-      break;
-    case 'ArrowUp':
-      e.preventDefault();
-      selectedDropdownIndex = Math.max(selectedDropdownIndex - 1, -1);
-      updateDropdownSelection();
-      break;
-    case 'Enter':
-      e.preventDefault();
-      if (
-        selectedDropdownIndex >= 0 &&
-        selectedDropdownIndex < history.length
-      ) {
-        selectArg(history[selectedDropdownIndex]);
-      } else {
-        createTask();
-      }
-      break;
-    case 'Escape':
-      hideArgsDropdown();
-      break;
+  // Build the input string: ingest [args] url
+  const args = buildIngestArgs();
+  let input = 'ingest';
+  if (args.length > 0) {
+    input += ' ' + args.join(' ');
   }
-}
-
-function getFilteredHistory() {
-  const command = elements.command.value;
-  const currentInput = elements.args.value.toLowerCase().trim();
-  const history = argsHistory[command] || [];
-
-  if (!currentInput) {
-    return history;
-  }
-
-  return history.filter((arg) => arg.toLowerCase().includes(currentInput));
-}
-
-function renderArgsDropdown() {
-  const history = getFilteredHistory();
-
-  if (history.length === 0) {
-    elements.argsDropdown.innerHTML =
-      '<div class="args-dropdown-empty">No saved arguments</div>';
-    return;
-  }
-
-  elements.argsDropdown.innerHTML = history
-    .map(
-      (arg, index) => `
-    <div class="args-dropdown-item${
-      index === selectedDropdownIndex ? ' selected' : ''
-    }" data-arg="${escapeHtml(arg)}">
-      <span class="arg-text" title="${escapeHtml(arg)}">${escapeHtml(
-        arg
-      )}</span>
-      <span class="remove-arg" data-remove-arg="${escapeHtml(
-        arg
-      )}" title="Remove">✕</span>
-    </div>
-  `
-    )
-    .join('');
-
-  // Add click handlers
-  elements.argsDropdown
-    .querySelectorAll('.args-dropdown-item')
-    .forEach((item) => {
-      item.addEventListener('mousedown', (e) => {
-        // Prevent the blur event from firing before we can handle the click
-        e.preventDefault();
-
-        // Check if clicking the remove button
-        if (e.target.classList.contains('remove-arg')) {
-          const arg = e.target.getAttribute('data-remove-arg');
-          removeArgFromHistory(elements.command.value, arg);
-          return;
-        }
-
-        const arg = item.getAttribute('data-arg');
-        selectArg(arg);
-      });
-    });
-}
-
-function updateDropdownSelection() {
-  const items = elements.argsDropdown.querySelectorAll('.args-dropdown-item');
-  items.forEach((item, index) => {
-    item.classList.toggle('selected', index === selectedDropdownIndex);
-  });
-
-  // Scroll selected item into view
-  if (selectedDropdownIndex >= 0 && items[selectedDropdownIndex]) {
-    items[selectedDropdownIndex].scrollIntoView({ block: 'nearest' });
-  }
-}
-
-function selectArg(arg) {
-  elements.args.value = arg;
-  hideArgsDropdown();
-  elements.args.focus();
-}
-
-// Create task
-async function createTask() {
-  const command = elements.command.value;
-  const args = elements.args.value.trim();
-  const url = elements.url.value.trim();
-
-  if (!url) {
-    showFeedback('Please enter a URL or input', 'error');
-    return;
-  }
-
-  // Build the input string: command [args] url
-  let input = command;
-  if (args) {
-    input += ` ${args}`;
-  }
-  input += ` ${url}`;
+  input += ' ' + currentUrl;
 
   // Disable button and show loading
   setLoading(true);
@@ -701,10 +423,7 @@ async function createTask() {
     }
 
     const data = await response.json();
-    showFeedback(`Task created: ${data.id.slice(0, 8)}...`, 'success');
-
-    // Save args to history on successful task creation
-    addArgsToHistory(command, args);
+    showFeedback(`Ingesting: ${data.id.slice(0, 8)}...`, 'success');
 
     // Refresh jobs list
     fetchJobs();
@@ -725,9 +444,7 @@ async function fetchJobs() {
     const fetchedJobs = await response.json();
     updateServerStatus(true);
 
-    // Update jobs array with fetched jobs
     if (Array.isArray(fetchedJobs)) {
-      // Merge with existing jobs, preferring fetched data
       fetchedJobs.forEach((job) => {
         const existingIndex = jobs.findIndex((j) => j.id === job.id);
         if (existingIndex >= 0) {
@@ -755,7 +472,6 @@ async function fetchJobs() {
 
 // Refresh jobs
 function refreshJobs() {
-  // Reconnect SSE to get fresh state
   if (eventSource) {
     eventSource.close();
   }
@@ -763,8 +479,6 @@ function refreshJobs() {
   renderJobs();
   connectSSE();
   fetchJobs();
-  // Also refresh tasks in case new ones were registered
-  fetchTasks();
 }
 
 // Clear all non-running jobs
@@ -779,7 +493,6 @@ async function clearAllJobs() {
       throw new Error('Failed to clear jobs');
     }
 
-    // Refresh the jobs list
     fetchJobs();
   } catch (err) {
     console.error('Clear all jobs error:', err);
@@ -813,7 +526,6 @@ function connectSSE() {
       isConnecting = false;
       updateServerStatus(false);
 
-      // Close and attempt reconnect after delay
       if (eventSource) {
         eventSource.close();
         eventSource = null;
@@ -822,7 +534,6 @@ function connectSSE() {
       setTimeout(connectSSE, 5000);
     };
 
-    // Job creation event
     eventSource.addEventListener('create', (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -834,7 +545,6 @@ function connectSSE() {
       }
     });
 
-    // Job update event
     eventSource.addEventListener('update', (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -846,7 +556,6 @@ function connectSSE() {
       }
     });
 
-    // Job deletion event
     eventSource.addEventListener('delete', (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -873,7 +582,6 @@ function addOrUpdateJob(job) {
     jobs.unshift(job);
   }
 
-  // Keep only last 20 jobs in the extension
   if (jobs.length > 20) {
     jobs = jobs.slice(0, 20);
   }
@@ -887,7 +595,6 @@ function removeJob(jobId) {
 }
 
 function renderJobs() {
-  // Filter to show only active/recent jobs
   const activeJobs = jobs.filter(
     (j) => j.state === 'pending' || j.state === 'in_progress'
   );
@@ -966,7 +673,6 @@ async function removeJobFromServer(jobId) {
       throw new Error('Failed to remove job');
     }
 
-    // Remove from local list
     removeJob(jobId);
   } catch (err) {
     console.error('Remove job error:', err);
@@ -994,11 +700,11 @@ function updateServerStatus(connected) {
 }
 
 function setLoading(loading) {
-  elements.createBtn.disabled = loading;
-  elements.createBtn.querySelector('.btn-text').style.display = loading
+  elements.ingestBtn.disabled = loading;
+  elements.ingestBtn.querySelector('.btn-text').style.display = loading
     ? 'none'
     : 'inline';
-  elements.createBtn.querySelector('.btn-loading').style.display = loading
+  elements.ingestBtn.querySelector('.btn-loading').style.display = loading
     ? 'inline-flex'
     : 'none';
 }
@@ -1008,7 +714,6 @@ function showFeedback(message, type) {
   elements.feedback.className = `feedback ${type}`;
   elements.feedback.style.display = 'flex';
 
-  // Auto-hide after 5 seconds for success messages
   if (type === 'success') {
     setTimeout(hideFeedback, 5000);
   }
@@ -1058,14 +763,6 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
-}
-
-function debounce(fn, ms) {
-  let timeout;
-  return (...args) => {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => fn(...args), ms);
-  };
 }
 
 // Cleanup on popup close
