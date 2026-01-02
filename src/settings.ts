@@ -101,7 +101,7 @@ export const SCALE_MODES = {
       value: 'fit',
     },
     overscan: {
-      label: 'Overscan',
+      label: 'Zoom',
       value: 140,
       increment: 10,
     },
