@@ -274,6 +274,8 @@ func setupModeMiddleware(next http.Handler) http.Handler {
 			"/stream",        // SSE endpoint
 			"/dependencies/", // Allows /dependencies/check, /dependencies/download, etc.
 			"/health",        // Health check endpoint
+			"/login",         // Login page (needed before accessing protected setup routes)
+			"/auth/",         // Auth endpoints (login API, logout, status, etc.)
 		}
 
 		for _, path := range allowedPaths {
