@@ -128,7 +128,7 @@ func downloadONNX(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	// Determine architecture and download URL
 	arch := runtime.GOARCH
-	onnxVersion := "1.23.1" // Version 1.20.1+ required for ONNX opset 22 support (models using ONNX 1.17+)
+	onnxVersion := "1.22.0" // Version 1.22.0+ required for ONNX opset 22 support (wd-eva02-large-v3 uses opset 22)
 	var onnxRuntimeURL string
 
 	if arch != "amd64" && arch != "arm64" {
@@ -357,7 +357,12 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 	// Create tar reader
 	tarReader := tar.NewReader(gzReader)
 
-	// Search for the library file in the tar
+	// Track files we need to extract
+	var foundMainLib bool
+	var foundProviderLib bool
+	targetDir := filepath.Dir(outputPath)
+
+	// Search for the library files in the tar
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -367,19 +372,25 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 			return fmt.Errorf("failed to read tar: %w", err)
 		}
 
-		// Check if this is the library we're looking for
-		if strings.HasSuffix(header.Name, libName) {
-			q.PushJobStdout(jobID, fmt.Sprintf("Found library at: %s", header.Name))
+		// Skip directories
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+
+		// Look for the main ONNX Runtime library (e.g., lib/libonnxruntime.so.1.23.1)
+		// The actual file has "lib" prefix and version suffix
+		if strings.Contains(header.Name, "/lib/libonnxruntime.so.") && !strings.Contains(header.Name, "_providers_") {
+			q.PushJobStdout(jobID, fmt.Sprintf("Found main library at: %s", header.Name))
 
 			// Create output file
 			outFile, err := os.Create(outputPath)
 			if err != nil {
 				return fmt.Errorf("failed to create output file: %w", err)
 			}
-			defer outFile.Close()
 
 			// Copy the library
 			copied, err := io.Copy(outFile, tarReader)
+			outFile.Close()
 			if err != nil {
 				return fmt.Errorf("failed to extract library: %w", err)
 			}
@@ -390,9 +401,42 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 			}
 
 			q.PushJobStdout(jobID, fmt.Sprintf("Extracted %s (%s)", filepath.Base(outputPath), formatSize(copied)))
-			return nil
+			foundMainLib = true
+		}
+
+		// Also extract the providers shared library if present
+		if strings.Contains(header.Name, "/lib/libonnxruntime_providers_shared.so") {
+			providerPath := filepath.Join(targetDir, "libonnxruntime_providers_shared.so")
+			q.PushJobStdout(jobID, fmt.Sprintf("Found providers library at: %s", header.Name))
+
+			outFile, err := os.Create(providerPath)
+			if err != nil {
+				return fmt.Errorf("failed to create providers library: %w", err)
+			}
+
+			copied, err := io.Copy(outFile, tarReader)
+			outFile.Close()
+			if err != nil {
+				return fmt.Errorf("failed to extract providers library: %w", err)
+			}
+
+			if err := platform.EnsureExecutable(providerPath); err != nil {
+				return fmt.Errorf("failed to set executable permissions on providers library: %w", err)
+			}
+
+			q.PushJobStdout(jobID, fmt.Sprintf("Extracted %s (%s)", filepath.Base(providerPath), formatSize(copied)))
+			foundProviderLib = true
+		}
+
+		// If we found both libraries, we can stop early
+		if foundMainLib && foundProviderLib {
+			break
 		}
 	}
 
-	return fmt.Errorf("%s not found in archive", libName)
+	if !foundMainLib {
+		return fmt.Errorf("libonnxruntime.so not found in archive (looked for /lib/libonnxruntime.so.*)")
+	}
+
+	return nil
 }
