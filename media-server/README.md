@@ -46,7 +46,7 @@ Lowkey Media Server is a companion for the Lowkey Media Viewer. It allows for ma
 
 ## System Requirements
 
-- **Operating System**: Windows 10/11 (x64)
+- **Operating System**: Windows 10/11 (x64) or Linux (x64)
 - **Disk Space**: ~500MB for binaries and embedded tools
 - **RAM**: 4GB minimum, 8GB+ recommended for ML tagging
 
@@ -116,11 +116,11 @@ The SQLite package (`modernc.org/sqlite`) is a pure Go implementation and does *
 
 For full functionality, install these optional tools:
 
-| Tool                                                                 | Purpose                             | Installation                             |
-| -------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------- |
-| [Ollama](https://ollama.com/)                                        | LLM-based image descriptions        | Download and run installer               |
-| [ONNX Runtime](https://onnxruntime.ai/)                              | ML model inference for auto-tagging | Download DLL, configure path in settings |
-| [Faster Whisper](https://github.com/Purfview/whisper-standalone-win) | Video transcription                 | Download, configure path in settings     |
+| Tool                                                                 | Purpose                             | Windows Installation                     | Linux Installation                       |
+| -------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| [Ollama](https://ollama.com/)                                        | LLM-based image descriptions        | Download and run installer               | `curl -fsSL https://ollama.com/install.sh \| sh` |
+| [ONNX Runtime](https://onnxruntime.ai/)                              | ML model inference for auto-tagging | Download DLL, configure path in settings | `apt install libonnxruntime` or download .so |
+| [Faster Whisper](https://github.com/Purfview/whisper-standalone-win) | Video transcription                 | Download, configure path in settings     | Build from source or use Python version  |
 
 > **Note:** FFmpeg, yt-dlp, gallery-dl, and ExifTool are embedded in the binary and extracted at runtime.
 
@@ -128,52 +128,91 @@ For full functionality, install these optional tools:
 
 #### 1. Clone the Repository
 
-```powershell
+```bash
 git clone https://github.com/stevecastle/shrike.git
 cd shrike
 ```
 
 #### 2. Download Dependencies
 
-```powershell
+```bash
 go mod download
 ```
 
 #### 3. Verify Dependencies
 
-```powershell
+```bash
 go mod verify
 ```
 
 #### 4. Build the Executable
 
+The project uses Go build tags to handle platform-specific code. Build for your target platform:
+
+##### Building for Windows
+
 ```powershell
-# Standard build
+# Standard build (from Windows)
 go build -o lowkeymediaserver.exe .
 
 # Build with optimizations (smaller binary, no debug info)
 go build -ldflags="-s -w" -o lowkeymediaserver.exe .
 ```
 
+##### Building for Linux
+
+```bash
+# Standard build (from Linux)
+go build -o lowkeymediaserver .
+
+# Build with optimizations (smaller binary, no debug info)
+go build -ldflags="-s -w" -o lowkeymediaserver .
+```
+
+##### Cross-Compilation
+
+You can cross-compile from one platform to another using the `GOOS` and `GOARCH` environment variables:
+
+```bash
+# Build Windows executable from Linux/macOS
+GOOS=windows GOARCH=amd64 go build -o lowkeymediaserver.exe .
+
+# Build Linux executable from Windows (PowerShell)
+$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o lowkeymediaserver .
+
+# Build Linux executable from Windows (Command Prompt)
+set GOOS=linux
+set GOARCH=amd64
+go build -o lowkeymediaserver .
+```
+
+> **Note:** Cross-compilation works because the project uses pure Go dependencies (no CGO required).
+
 #### 5. Run the Server
 
+**Windows:**
 ```powershell
 .\lowkeymediaserver.exe
 ```
 
-The server will start on `http://localhost:8090` and a system tray icon will appear.
+**Linux:**
+```bash
+./lowkeymediaserver
+```
+
+The server will start on `http://localhost:8090`. On Windows, a system tray icon will appear.
 
 ### Development Mode
 
 For faster iteration during development, you can use `go run`:
 
-```powershell
+```bash
 go run .
 ```
 
 ### Running Tests
 
-```powershell
+```bash
 # Run all tests
 go test ./...
 
@@ -188,7 +227,8 @@ go test -v ./media/...
 
 ```
 lowkeymediaserver/
-├── main.go                 # Application entry point, HTTP handlers, system tray
+├── main.go                 # Windows entry point, HTTP handlers, system tray
+├── main_linux.go           # Linux entry point, HTTP handlers
 ├── go.mod                  # Go module definition
 ├── go.sum                  # Dependency checksums
 │
@@ -204,8 +244,11 @@ lowkeymediaserver/
 │       └── details.css     # Job details page styles
 │
 ├── embedexec/              # Embedded executable extraction
-│   ├── embedexec.go        # Runtime extraction of embedded binaries
-│   └── bin/                # Embedded executables (see below)
+│   ├── embedexec.go        # Common extraction logic
+│   ├── embedexec_windows.go # Windows-specific binaries
+│   ├── embedexec_linux.go  # Linux-specific binaries
+│   ├── bin_windows/        # Windows embedded executables
+│   └── bin_linux/          # Linux embedded executables
 │
 ├── jobqueue/               # Job queue implementation
 │   └── jobqueue.go         # Queue, job state, persistence
@@ -263,24 +306,32 @@ lowkeymediaserver/
 
 ### Embedded Binaries
 
-Lowkey Media Server embeds several third-party executables that are extracted to `%ProgramData%\Lowkey Media Server\tmp\` at runtime:
+Lowkey Media Server embeds several third-party executables that are extracted at runtime:
 
-| Binary                   | Purpose                         |
-| ------------------------ | ------------------------------- |
-| `ffmpeg.exe`             | Media conversion and processing |
-| `ffprobe.exe`            | Media file analysis             |
-| `ffplay.exe`             | Media playback                  |
-| `yt-dlp.exe`             | Video downloading               |
-| `gallery-dl.exe`         | Image gallery downloading       |
-| `exiftool.exe`           | Metadata extraction             |
-| `faster-whisper-xxl.exe` | Video transcription (optional)  |
-| `dedupe.exe`             | Duplicate detection             |
-| `createdump.exe`         | Crash dump creation             |
+- **Windows:** Extracted to `%ProgramData%\Lowkey Media Server\tmp\`
+- **Linux:** Extracted to `/var/tmp/lowkeymediaserver/`
 
-The embedded binaries are located in `embedexec/bin/`. To update them:
+| Binary (Windows)         | Binary (Linux)           | Purpose                         |
+| ------------------------ | ------------------------ | ------------------------------- |
+| `ffmpeg.exe`             | `ffmpeg`                 | Media conversion and processing |
+| `ffprobe.exe`            | `ffprobe`                | Media file analysis             |
+| `ffplay.exe`             | `ffplay`                 | Media playback                  |
+| `yt-dlp.exe`             | `yt-dlp`                 | Video downloading               |
+| `gallery-dl.exe`         | `gallery-dl`             | Image gallery downloading       |
+| `exiftool.exe`           | `exiftool`               | Metadata extraction             |
+| `faster-whisper-xxl.exe` | `faster-whisper-xxl`     | Video transcription (optional)  |
+| `dedupe.exe`             | `dedupe`                 | Duplicate detection             |
+| `createdump.exe`         | `createdump`             | Crash dump creation             |
 
-1. Download the new binary
-2. Replace the file in `embedexec/bin/`
+The embedded binaries are located in platform-specific directories:
+
+- **Windows:** `embedexec/bin_windows/`
+- **Linux:** `embedexec/bin_linux/`
+
+To update embedded binaries:
+
+1. Download the new binary for your platform
+2. Replace the file in the appropriate `embedexec/bin_<platform>/` folder
 3. Rebuild the project
 
 > **Note:** Including these binaries significantly increases the final executable size (~200MB+).
@@ -289,10 +340,14 @@ The embedded binaries are located in `embedexec/bin/`. To update them:
 
 ## Configuration
 
-Configuration is stored at: `%APPDATA%\Lowkey Media Viewer\config.json`
+Configuration file location:
+
+- **Windows:** `%APPDATA%\Lowkey Media Viewer\config.json`
+- **Linux:** `~/.config/lowkeymediaviewer/config.json`
 
 ### Configuration Options
 
+**Windows Example:**
 ```json
 {
   "dbPath": "C:\\path\\to\\your\\database.db",
@@ -312,6 +367,29 @@ Configuration is stored at: `%APPDATA%\Lowkey Media Viewer\config.json`
   },
 
   "fasterWhisperPath": "C:\\path\\to\\faster-whisper-xxl.exe"
+}
+```
+
+**Linux Example:**
+```json
+{
+  "dbPath": "/home/user/media/database.db",
+
+  "ollamaBaseUrl": "http://localhost:11434",
+  "ollamaModel": "llama3.2-vision",
+  "describePrompt": "Please describe this image...",
+  "autotagPrompt": "Please analyze this image and select tags...",
+
+  "onnxTagger": {
+    "modelPath": "/home/user/models/model.onnx",
+    "labelsPath": "/home/user/models/selected_tags.csv",
+    "configPath": "/home/user/models/config.json",
+    "ortSharedLibraryPath": "/usr/lib/libonnxruntime.so",
+    "generalThreshold": 0.35,
+    "characterThreshold": 0.85
+  },
+
+  "fasterWhisperPath": "/usr/local/bin/faster-whisper-xxl"
 }
 ```
 
@@ -429,11 +507,35 @@ srv = &http.Server{
 3. Ensure model is compatible (ONNX opset 11+)
 4. Check Windows Event Viewer for crash logs
 
-### System Tray Icon Not Appearing
+### System Tray Icon Not Appearing (Windows)
 
 1. Check Windows notification area settings
 2. Ensure hidden icons are visible
 3. Try restarting Windows Explorer
+
+### Linux-Specific Issues
+
+**Permission denied when running:**
+```bash
+chmod +x lowkeymediaserver
+./lowkeymediaserver
+```
+
+**Port 8090 requires root privileges:**
+On Linux, ports below 1024 require root. Port 8090 should work without root, but if you encounter permission issues:
+```bash
+# Run with elevated permissions (not recommended for production)
+sudo ./lowkeymediaserver
+
+# Or use a reverse proxy like nginx to forward from port 80/443
+```
+
+**Missing shared libraries:**
+If you encounter errors about missing libraries (e.g., libonnxruntime.so), ensure the library path is set:
+```bash
+export LD_LIBRARY_PATH=/path/to/libs:$LD_LIBRARY_PATH
+./lowkeymediaserver
+```
 
 ---
 
