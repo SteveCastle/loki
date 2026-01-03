@@ -1,0 +1,147 @@
+html,
+body {
+  background-color: rgba(29, 34, 39, 1);
+  color: #295882;
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: Arial, Helvetica, sans-serif;
+  color: whitesmoke;
+}
+h1 {
+  font-size: 3rem;
+  margin-bottom: 0.5rem;
+}
+h2 {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+}
+h3 {
+  font-size: 1.5rem;
+}
+p {
+  font-size: 1.2rem;
+  line-height: 1.6rem;
+}
+li {
+  padding: 0.2rem 0;
+}
+a {
+  text-decoration: none;
+  color: #e57dba;
+}
+
+header {
+  max-width: 680px;
+  margin: auto;
+  text-align: center;
+  margin-bottom: 50px;
+}
+video {
+  width: 100%;
+}
+main {
+  color: #cce5fd;
+  background-color: rgba(37, 44, 50, 1);
+  max-width: 680px;
+  margin: auto;
+  padding: 2rem;
+  border-radius: 8px;
+}
+.subTitle {
+  color: whitesmoke;
+  font-size: 1.5rem;
+  font-style: italic;
+  margin-top: 0.5rem;
+  margin-bottom: 2rem;
+}
+.logo {
+  margin-top: 3rem;
+  width: 100px;
+}
+
+.buyButton {
+  margin: 1rem;
+  font-family: Arial, Helvetica, sans-serif;
+  padding: 1rem 2rem;
+  border-radius: 6px;
+  background-color: #0088ff;
+  color: white;
+  font-weight: 600;
+  transition: background-color 1s ease;
+}
+
+.buyButton:hover {
+  background-color: #0266be;
+}
+
+.buttonArea {
+  padding: 1rem 0 0 0;
+  position: sticky;
+  top: 10px;
+  z-index: 999;
+}
+
+.info {
+  margin: 0.2rem;
+  color: rgb(150, 167, 185);
+  font-size: 1rem;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.version {
+  color: rgb(150, 167, 185);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 0.8rem;
+}
+
+.divider {
+  width: 100%;
+  padding: 1rem 0 0 0;
+  margin-top: 1rem;
+  border-top: 1px solid #404b56;
+}
+
+.screenshot {
+  width: 100%;
+}
+
+.os {
+  color: oldlace;
+}
+
+.jpg {
+  color: #f38dc0;
+}
+.png {
+  color: #f3d88d;
+}
+.gif {
+  color: #8df38d;
+}
+.mp4 {
+  color: #4dc9f9;
+}
+.webm {
+  color: #f38d8d;
+}
+
+.saleBanner {
+  width: 100%;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  font-size: 2rem;
+  width: 100%;
+  padding: 2rem 0;
+  text-align: center;
+  color: white;
+  background-color: #ff5e33;
+}
+
+img.fullsize {
+  width: 100%;
+}
