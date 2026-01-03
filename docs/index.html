@@ -421,6 +421,8 @@
             <li><a href="#server-getting-started">Getting Started</a>
               <ul>
                 <li><a href="#server-installation">Installation</a></li>
+                <li><a href="#server-initial-setup">Initial Setup</a></li>
+                <li><a href="#server-dependencies">Installing Dependencies</a></li>
                 <li><a href="#server-web-ui">Web Interface</a></li>
                 <li><a href="#server-browser-extension">Browser Extension</a></li>
               </ul>
@@ -452,6 +454,7 @@
                 <li><a href="#server-file-serving">File Serving</a></li>
               </ul>
             </li>
+            <li><a href="#server-swipe-app">Swipe App</a></li>
             <li><a href="#server-tasks">Available Tasks</a></li>
             <li><a href="#server-config">Configuration</a></li>
             <li><a href="#server-api">API Reference</a></li>
@@ -482,12 +485,35 @@
           <h3 id="server-installation">Installation</h3>
           <p>
             Download and run the Media Server executable. On Windows, it runs in the system tray for easy access.
-            The server automatically extracts bundled tools (ffmpeg, yt-dlp, gallery-dl, etc.) on first run.
+            On Linux, run the binary from the command line.
           </p>
+
+          <h3 id="server-initial-setup">Initial Setup</h3>
+          <p>
+            On first launch, you'll be prompted to create an initial user account. This account is used to authenticate
+            with the web interface and API.
+          </p>
+          <div class="placeholder-video">Initial Setup Demo Video</div>
+
+          <h3 id="server-dependencies">Installing Dependencies</h3>
+          <p>
+            The Media Server uses external tools for media processing. On the setup page, you can download and install
+            the required dependencies with a single click. Dependencies are extracted on demand when a task requires them.
+          </p>
+          <p>Dependencies are downloaded to:</p>
           <div class="code-block">
             <code>Windows: %ProgramData%\Lowkey Media Server\tmp\</code><br>
             <code>Linux: /var/tmp/lowkeymediaserver/</code>
           </div>
+          <p>Available dependencies include:</p>
+          <ul>
+            <li><strong>ffmpeg / ffprobe</strong> - Media processing and conversion</li>
+            <li><strong>yt-dlp</strong> - Video downloading from YouTube and other sites</li>
+            <li><strong>gallery-dl</strong> - Image gallery downloading</li>
+            <li><strong>faster-whisper</strong> - Video transcription</li>
+            <li><strong>ONNX Runtime</strong> - AI model inference for auto-tagging</li>
+          </ul>
+          <div class="placeholder-video">Dependency Setup Demo Video</div>
 
           <h3 id="server-web-ui">Web Interface</h3>
           <p>
@@ -626,6 +652,24 @@
             Stream media files directly from the server with caching headers for performance.
             Access files at <code>/media/file?path=...</code>
           </p>
+        </section>
+
+        <section id="server-swipe-app">
+          <h2>Swipe App</h2>
+          <p>
+            The Swipe App is a progressive web app (PWA) that provides a TikTok-like experience for browsing your media database.
+            Install it on your smartphone to swipe through your collection with a mobile-optimized interface.
+          </p>
+          <ul>
+            <li><strong>Installable PWA</strong> - Add to your home screen for a native app experience</li>
+            <li><strong>Swipe Navigation</strong> - Swipe up/down to browse through media</li>
+            <li><strong>Mobile Optimized</strong> - Designed for touch and vertical video viewing</li>
+            <li><strong>Tag & Filter</strong> - Browse by tags and filter your collection</li>
+          </ul>
+          <p>
+            Access the Swipe App at <code>http://[server-ip]:8090/swipe</code> on your mobile device.
+          </p>
+          <div class="placeholder-video">Swipe App Demo Video</div>
         </section>
 
         <section id="server-tasks">

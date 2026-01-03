@@ -310,10 +310,10 @@ main {
 /* Table of Contents - Sidebar */
 .toc {
   position: sticky;
-  top: 80px;
+  top: 70px;
   width: 220px;
   flex-shrink: 0;
-  max-height: calc(100vh - 100px);
+  max-height: calc(100vh - 90px);
   overflow-y: auto;
   padding: 1.25rem;
   align-self: flex-start;
@@ -391,12 +391,16 @@ main {
 
 /* Sections */
 section {
-  scroll-margin-top: 80px;
+  scroll-margin-top: 100px;
 }
 
 section:first-of-type h2:first-child {
   margin-top: 0;
   padding-top: 0;
+}
+
+h2[id], h3[id] {
+  scroll-margin-top: 100px;
 }
 
 /* Keyboard shortcuts */
