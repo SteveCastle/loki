@@ -110,7 +110,7 @@ jobs:
         run: npm install --frozen-lockfile
 
       - name: Build Electron app
-        run: npm package
+        run: npm run package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
