@@ -21,13 +21,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'yarn'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: npm install --frozen-lockfile
 
       - name: Run tests
-        run: yarn test
+        run: npm test
 
   test-go:
     name: Test Go Server
@@ -104,13 +104,13 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '18'
-          cache: 'yarn'
+          cache: 'npm'
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
+        run: npm install --frozen-lockfile
 
       - name: Build Electron app
-        run: yarn package
+        run: npm package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -179,17 +179,17 @@ jobs:
         run: |
           CURRENT_TAG="v${{ needs.version-and-tag.outputs.version }}"
           PREV_TAG="${{ steps.prev-tag.outputs.prev_tag }}"
-          
+
           echo "# What's Changed in $CURRENT_TAG" > changelog.md
           echo "" >> changelog.md
-          
+
           # Get commit messages - use HEAD if PREV_TAG is a commit hash
           if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
             git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.md
           else
             git log --pretty=format:"- %s (%h)" >> changelog.md
           fi
-          
+
           # Get contributors
           echo "" >> changelog.md
           echo "" >> changelog.md
@@ -199,7 +199,7 @@ jobs:
           else
             git log --format='%aN' | sort -u | sed 's/^/- @/' >> changelog.md
           fi
-          
+
           # Output for next step
           CHANGELOG=$(cat changelog.md)
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
@@ -214,7 +214,8 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [version-and-tag, build-electron, build-go-server, generate-changelog]
+    needs:
+      [version-and-tag, build-electron, build-go-server, generate-changelog]
     runs-on: ubuntu-latest
     if: needs.version-and-tag.outputs.tag != ''
     steps:
