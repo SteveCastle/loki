@@ -183,9 +183,10 @@ func TestCORSMiddleware(t *testing.T) {
 
 		handler.ServeHTTP(rec, req)
 
-		// Check CORS headers are set
-		if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-			t.Error("Access-Control-Allow-Origin header not set")
+		// Check CORS headers are set (default to localhost:1212 when no Origin header)
+		origin := rec.Header().Get("Access-Control-Allow-Origin")
+		if origin != "http://localhost:1212" {
+			t.Errorf("Access-Control-Allow-Origin header = %q; want %q", origin, "http://localhost:1212")
 		}
 		if rec.Header().Get("Access-Control-Allow-Methods") == "" {
 			t.Error("Access-Control-Allow-Methods header not set")
@@ -202,9 +203,10 @@ func TestCORSMiddleware(t *testing.T) {
 
 		handler.ServeHTTP(rec, req)
 
-		// CORS headers should be set
-		if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-			t.Error("Access-Control-Allow-Origin header not set for OPTIONS")
+		// CORS headers should be set (default to localhost:1212 when no Origin header)
+		origin := rec.Header().Get("Access-Control-Allow-Origin")
+		if origin != "http://localhost:1212" {
+			t.Errorf("Access-Control-Allow-Origin header = %q; want %q", origin, "http://localhost:1212")
 		}
 		// For OPTIONS, handler should return early (no body written by inner handler)
 	})
@@ -236,9 +238,10 @@ func TestApplyMiddlewares(t *testing.T) {
 		t.Errorf("Inner handler called %d times; want 1", callCount)
 	}
 
-	// Verify CORS headers
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("CORS header not set by ApplyMiddlewares")
+	// Verify CORS headers (default to localhost:1212 when no Origin header)
+	origin := rec.Header().Get("Access-Control-Allow-Origin")
+	if origin != "http://localhost:1212" {
+		t.Errorf("Access-Control-Allow-Origin header = %q; want %q", origin, "http://localhost:1212")
 	}
 
 	// Verify response
@@ -336,10 +339,10 @@ func TestEnableCors(t *testing.T) {
 	rec := httptest.NewRecorder()
 	w := http.ResponseWriter(rec)
 
-	enableCors(&w)
+	enableCors(&w, &http.Request{Header: http.Header{"Origin": []string{"http://localhost:1212"}}})
 
 	expectedHeaders := map[string]string{
-		"Access-Control-Allow-Origin":      "*",
+		"Access-Control-Allow-Origin":      "http://localhost:1212",
 		"Access-Control-Allow-Methods":     "POST, GET, OPTIONS, PUT, DELETE",
 		"Access-Control-Allow-Credentials": "true",
 		"Access-Control-Expose-Headers":    "Content-Length",
@@ -402,9 +405,10 @@ func TestCORSPOST(t *testing.T) {
 		t.Errorf("Response code = %d; want %d", rec.Code, http.StatusCreated)
 	}
 
-	// CORS headers should still be set
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("CORS header not set for POST request")
+	// CORS headers should still be set (default to localhost:1212 when no Origin header)
+	origin := rec.Header().Get("Access-Control-Allow-Origin")
+	if origin != "http://localhost:1212" {
+		t.Errorf("Access-Control-Allow-Origin header = %q; want %q", origin, "http://localhost:1212")
 	}
 }
 
