@@ -59,19 +59,7 @@
           <span>Media Viewer</span>
         </a>
         <a href="#server" class="tab-link" data-tab="server">
-          <svg class="tab-icon server-icon" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="serverGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" style="stop-color:#a855f7"/>
-                <stop offset="100%" style="stop-color:#ec4899"/>
-              </linearGradient>
-            </defs>
-            <rect width="128" height="128" rx="20" fill="url(#serverGrad)"/>
-            <circle cx="45" cy="64" r="18" stroke="white" stroke-width="6" fill="none"/>
-            <line x1="58" y1="64" x2="100" y2="64" stroke="white" stroke-width="6" stroke-linecap="round"/>
-            <line x1="75" y1="64" x2="75" y2="45" stroke="white" stroke-width="6" stroke-linecap="round"/>
-            <line x1="90" y1="64" x2="90" y2="50" stroke="white" stroke-width="6" stroke-linecap="round"/>
-          </svg>
+          <img src="server-icon.png" alt="Media Server" class="tab-icon" />
           <span>Media Server</span>
         </a>
       </nav>
@@ -402,19 +390,7 @@
     <!-- Media Server Tab -->
     <div id="server" class="tab-content">
       <section class="hero">
-        <svg class="logo server-logo" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <linearGradient id="serverGradLarge" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" style="stop-color:#a855f7"/>
-              <stop offset="100%" style="stop-color:#ec4899"/>
-            </linearGradient>
-          </defs>
-          <rect width="128" height="128" rx="20" fill="url(#serverGradLarge)"/>
-          <circle cx="45" cy="64" r="18" stroke="white" stroke-width="6" fill="none"/>
-          <line x1="58" y1="64" x2="100" y2="64" stroke="white" stroke-width="6" stroke-linecap="round"/>
-          <line x1="75" y1="64" x2="75" y2="45" stroke="white" stroke-width="6" stroke-linecap="round"/>
-          <line x1="90" y1="64" x2="90" y2="50" stroke="white" stroke-width="6" stroke-linecap="round"/>
-        </svg>
+        <img src="server-icon.png" class="logo" alt="Lowkey Media Server Logo" />
         <h1>Lowkey Media Server</h1>
         <p class="subTitle">
           A companion server for batch processing, AI tagging, transcription, and media ingestion.
@@ -423,6 +399,10 @@
           Works on <span class="os">Windows</span> and <span class="os">Linux</span>
         </p>
         <p class="info status-alpha">Alpha Release</p>
+        <p class="buttonArea">
+          <a id="serverDownloadButton" class="buyButton" href="#">Download | Free</a>
+        </p>
+        <p class="version">Version 1.0.0</p>
         <div class="header-links">
           <a href="https://github.com/SteveCastle/loki/blob/master/LICENSE" class="license-link">
             <img src="mit.svg" alt="MIT License" />
