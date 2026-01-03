@@ -36,6 +36,17 @@ yarn
 yarn package
 ```
 
+## Automated Releases
+
+This project uses GitHub Actions for automated continuous integration and releases. When changes are pushed to the `main` branch:
+
+1. All tests are run (Electron app and Go server)
+2. Binaries are built for all platforms (macOS, Windows, Linux)
+3. A new release is created with the version from `package.json`
+4. All binaries are automatically uploaded to the release
+
+To create a new release, simply update the version in `package.json` and push to `main`. See [.github/WORKFLOW.md](.github/WORKFLOW.md) for detailed documentation.
+
 ## Contributing
 
 If you would like to contribute to loki please feel free to fork and make a pull request back to the master branch. If you fork this project
