@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <script
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=UA-68258529-4"
+    ></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag("js", new Date());
+      gtag("config", "UA-68258529-4");
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="Description"
+      content="LowKey Media Viewer is a fast and simple free image and video viewer for macOS and Windows. LowKey Media Server is a companion app for batch processing, AI tagging, and media ingestion."
+    />
+    <meta property="og:url" content="https://lowkeyviewer.com" />
+    <meta property="og:type" content="product" />
+    <meta property="og:title" content="LowKey Media Suite" />
+    <meta
+      property="og:description"
+      content="A media viewer for viewing and curating images, plus a powerful media server for batch processing and AI features."
+    />
+    <meta
+      property="og:image"
+      content="https://lowkeyviewer.com/screenshot.jpg"
+    />
+    <link rel="shortcut icon" href="./favicon.ico" type="image/x-icon" />
+    <link rel="icon" href="./favicon.ico" type="image/x-icon" />
+    <link rel="stylesheet" href="./index.css" />
+    <title>LowKey Media Suite - Viewer & Server Documentation</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Lowkey Media Viewer",
+        "operatingSystem": "Windows 10, MacOS",
+        "applicationCategory": "MultimediaApplication",
+        "offers": {
+          "@type": "Offer",
+          "price": "0"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <header>
+      <nav class="tab-nav">
+        <a href="#viewer" class="tab-link active" data-tab="viewer">
+          <img src="logo.png" alt="Media Viewer" class="tab-icon" />
+          <span>Media Viewer</span>
+        </a>
+        <a href="#server" class="tab-link" data-tab="server">
+          <svg class="tab-icon server-icon" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="serverGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#a855f7"/>
+                <stop offset="100%" style="stop-color:#ec4899"/>
+              </linearGradient>
+            </defs>
+            <rect width="128" height="128" rx="20" fill="url(#serverGrad)"/>
+            <circle cx="45" cy="64" r="18" stroke="white" stroke-width="6" fill="none"/>
+            <line x1="58" y1="64" x2="100" y2="64" stroke="white" stroke-width="6" stroke-linecap="round"/>
+            <line x1="75" y1="64" x2="75" y2="45" stroke="white" stroke-width="6" stroke-linecap="round"/>
+            <line x1="90" y1="64" x2="90" y2="50" stroke="white" stroke-width="6" stroke-linecap="round"/>
+          </svg>
+          <span>Media Server</span>
+        </a>
+      </nav>
+    </header>
+
+    <!-- Media Viewer Tab -->
+    <div id="viewer" class="tab-content active">
+      <section class="hero">
+        <img src="logo.png" class="logo" alt="Lowkey Media Viewer Logo" />
+        <h1>Lowkey Media Viewer</h1>
+        <p class="subTitle">
+          A free open source viewer for viewing and curating images and videos really well and nothing more.
+        </p>
+        <p class="info">
+          Works on <span class="os">Windows</span> and <span class="os">macOS</span>
+        </p>
+        <p class="info">
+          Supports <span class="fileType jpg">.jpg</span>,
+          <span class="fileType webp">.webp</span>,
+          <span class="fileType png">.png</span>,
+          <span class="fileType gif">.gif</span>,
+          <span class="fileType mp4">.mp4</span>,
+          <span class="fileType mov">.mov</span>, and
+          <span class="fileType webm">.webm</span>
+        </p>
+        <p class="buttonArea">
+          <a id="downloadButton" class="buyButton" href="#">Download | Free</a>
+        </p>
+        <p class="version">Version 2.6.6</p>
+        <div class="header-links">
+          <a href="/v1" target="_blank" class="v1">V1 Docs</a>
+          <a href="https://github.com/SteveCastle/loki/blob/master/LICENSE" class="license-link">
+            <img src="mit.svg" alt="MIT License" />
+          </a>
+          <a href="https://github.com/SteveCastle/loki" class="github-link">
+            <img src="GitHub-Mark-Light-32px.png" alt="GitHub" />
+          </a>
+        </div>
+        <video src="./screencapture.mp4" loop autoplay muted controls></video>
+      </section>
+
+      <main>
+        <nav class="toc">
+          <h2>Table of Contents</h2>
+          <ul>
+            <li><a href="#viewer-overview">Overview</a></li>
+            <li><a href="#viewer-navigation">Basic Navigation</a>
+              <ul>
+                <li><a href="#viewer-open-file">Open a File/Directory</a></li>
+                <li><a href="#viewer-panels">Using Panels</a></li>
+                <li><a href="#viewer-command">Command Palette</a></li>
+                <li><a href="#viewer-grid">Grid Size</a></li>
+                <li><a href="#viewer-shuffle">Shuffle</a></li>
+              </ul>
+            </li>
+            <li><a href="#viewer-display">Display & Scaling</a>
+              <ul>
+                <li><a href="#viewer-scale-modes">Scale Modes</a></li>
+                <li><a href="#viewer-layouts">Grid & Masonry Layouts</a></li>
+              </ul>
+            </li>
+            <li><a href="#viewer-curation">Curation & Tagging</a>
+              <ul>
+                <li><a href="#viewer-create-tag">Creating Tags</a></li>
+                <li><a href="#viewer-apply-tag">Applying Tags</a></li>
+                <li><a href="#viewer-tag-preview">Tag Previews</a></li>
+                <li><a href="#viewer-bulk-tag">Bulk Tagging</a></li>
+                <li><a href="#viewer-reorder">Reordering</a></li>
+                <li><a href="#viewer-filtering">Filtering by Tags</a></li>
+                <li><a href="#viewer-search">Search</a></li>
+                <li><a href="#viewer-edit-tags">Edit & Delete Tags</a></li>
+              </ul>
+            </li>
+            <li><a href="#viewer-playback">Video & Audio Playback</a>
+              <ul>
+                <li><a href="#viewer-controls">Playback Controls</a></li>
+                <li><a href="#viewer-autoplay">Autoplay Settings</a></li>
+                <li><a href="#viewer-looping">Looping</a></li>
+              </ul>
+            </li>
+            <li><a href="#viewer-metadata">Metadata & Transcripts</a>
+              <ul>
+                <li><a href="#viewer-view-transcript">Viewing Transcripts</a></li>
+                <li><a href="#viewer-generate-transcript">Generating Transcripts</a></li>
+              </ul>
+            </li>
+            <li><a href="#viewer-advanced">Advanced Features</a>
+              <ul>
+                <li><a href="#viewer-battle">Battle Mode (ELO Rating)</a></li>
+                <li><a href="#viewer-duplicates">Duplicate Detection</a></li>
+                <li><a href="#viewer-hotkeys">Keyboard Shortcuts</a></li>
+              </ul>
+            </li>
+            <li><a href="#viewer-support">Contact & Support</a></li>
+          </ul>
+        </nav>
+
+        <section id="viewer-overview">
+          <h2>Overview</h2>
+          <p>
+            LowKey Media Viewer is a fast and simple image and video viewer for
+            macOS and Windows. Designed for a visually rich experience that puts your media
+            first with no distractions. Supports easy navigation with Mouse/Scrollwheel or Trackpad modes.
+          </p>
+          <ul>
+            <li>Simple, low-clutter UI with no wasted space</li>
+            <li>Folder-based navigation with recursive scanning</li>
+            <li>Powerful tagging and curation system</li>
+            <li>Transcript-based video navigation</li>
+            <li>Battle mode for ELO-based media rating</li>
+            <li>Support for common image and video formats</li>
+          </ul>
+        </section>
+
+        <section id="viewer-navigation">
+          <h2>Basic Navigation</h2>
+          <p>
+            The main design principle of Lowkey Media Viewer is that you should spend most of your time and screen real estate on your images and videos.
+          </p>
+
+          <h3 id="viewer-open-file">Open a File/Directory</h3>
+          <p>
+            When you launch Lowkey Media Viewer you will be asked to select a file.
+            Opening a file automatically loads other files in the directory into the list view.
+            You can also associate media file types with LowKey Media Viewer and open files directly.
+            Change files anytime using the file icon in the Command Palette.
+          </p>
+          <video src="./help/open-file.mp4" loop muted controls></video>
+
+          <h3 id="viewer-panels">Using Panels</h3>
+          <p>
+            There are four panels: List View (Left), Detail View (Middle), MetaData (Right), and Tagging (Bottom).
+            To open a closed panel, drag it open from the edge of the screen. To close a panel, drag the border back to the edge.
+          </p>
+          <video src="./help/panels.mp4" loop muted controls></video>
+
+          <h3 id="viewer-command">Using the Command Palette</h3>
+          <p>
+            Right-click anywhere to bring up the command palette. This is the primary location of all controls and options.
+          </p>
+          <video src="./help/command.mp4" loop muted controls></video>
+
+          <h3 id="viewer-grid">Resizing List View Grid</h3>
+          <p>
+            Modify the size of items in the list view grid using the grid tab in the command palette.
+          </p>
+          <video src="./help/grid-size.mp4" loop muted controls></video>
+
+          <h3 id="viewer-shuffle">Shuffle</h3>
+          <p>
+            Shuffle images by clicking the shuffle icon in the command palette or pressing the <kbd>X</kbd> key.
+            Use sorting options in the command palette to return to a sorted view.
+          </p>
+          <video src="./help/shuffle.mp4" loop muted controls></video>
+        </section>
+
+        <section id="viewer-display">
+          <h2>Display & Scaling</h2>
+
+          <h3 id="viewer-scale-modes">Scale Modes</h3>
+          <p>Control how media is displayed in the detail view:</p>
+          <ul>
+            <li><strong>Fit</strong> - Scale to fit within the window</li>
+            <li><strong>Cover</strong> - Fill the window (may crop edges)</li>
+            <li><strong>Actual</strong> - Display at 100% zoom</li>
+            <li><strong>Zoom</strong> - Configurable zoom levels (140%+)</li>
+          </ul>
+
+          <h3 id="viewer-layouts">Grid & Masonry Layouts</h3>
+          <p>Choose between traditional grid layout or Pinterest-style masonry layout for your thumbnail view. Toggle between layouts in the command palette under List settings.</p>
+        </section>
+
+        <section id="viewer-curation">
+          <h2>Curation & Tagging</h2>
+          <p>
+            The tagging panel lets you create collections of images and videos. Tags are saved to a local SQLite database in your home directory.
+          </p>
+
+          <h3 id="viewer-create-tag">Creating a Category and Tag</h3>
+          <p>Organize your media with categories and tags. Categories group related tags together.</p>
+          <video src="./help/create-tag.mp4" loop muted controls></video>
+
+          <h3 id="viewer-apply-tag">Tagging an Image or Video</h3>
+          <p>Apply a tag by dragging it onto an image in the detail view or list view.</p>
+          <video src="./help/apply-tag.mp4" loop muted controls></video>
+
+          <h3 id="viewer-tag-preview">Using an Image as the Tag Preview</h3>
+          <p>
+            Hold <kbd>Shift</kbd> before dragging a tag onto an image to use that image as the tag preview.
+            You can also toggle the "Apply Tag Preview" option in the Tagging panel sidebar.
+          </p>
+          <video src="./help/tag-preview.mp4" loop muted controls></video>
+
+          <h3 id="viewer-bulk-tag">Tag All Images in the Current List</h3>
+          <p>
+            Hold <kbd>Ctrl</kbd> before dragging a tag onto an image to apply it to every image in the current list.
+            Or select "Tag All Images" in the Tagging Panel Sidebar.
+          </p>
+          <video src="./help/bulk-tagging.mp4" loop muted controls></video>
+
+          <h3 id="viewer-reorder">Reordering Tags and Media</h3>
+          <p>
+            Drag tags and media to reorder them in a collection. Media can only be dragged when sorting by Weight.
+          </p>
+          <video src="./help/reorder.mp4" loop muted controls></video>
+
+          <h3 id="viewer-filtering">Selecting Tags to View</h3>
+          <p>
+            View individual tags or combinations. When selecting multiple tags, choose between:
+          </p>
+          <ul>
+            <li><strong>OR mode</strong> - Media with at least one selected tag</li>
+            <li><strong>AND mode</strong> - Media with all selected tags</li>
+            <li><strong>Exclusive mode</strong> - Selective filtering</li>
+          </ul>
+          <p>Toggle filtering mode in the Tagging Panel Sidebar.</p>
+          <video src="./help/filtering.mp4" loop muted controls></video>
+
+          <h3 id="viewer-search">Searching Tag and File Names</h3>
+          <p>
+            Use text inputs in the Tagging panel to search files by filename or search tags in your collection.
+          </p>
+          <video src="./help/search.mp4" loop muted controls></video>
+
+          <h3 id="viewer-edit-tags">Edit and Delete Tags</h3>
+          <p>
+            Edit tag names or delete tags. Editing updates all associated assignments. Deleting removes all assignments (not reversible).
+          </p>
+          <video src="./help/edit-tags.mp4" loop muted controls></video>
+        </section>
+
+        <section id="viewer-playback">
+          <h2>Video & Audio Playback</h2>
+
+          <h3 id="viewer-controls">Playback Controls</h3>
+          <p>Full video and audio playback with:</p>
+          <ul>
+            <li>Play/Pause toggle (spacebar)</li>
+            <li>Progress bar with scrubbing and hover preview</li>
+            <li>Time display (current/total)</li>
+            <li>Volume control with mute toggle</li>
+          </ul>
+
+          <h3 id="viewer-autoplay">Autoplay Settings</h3>
+          <p>Configure autoplay behavior in the command palette:</p>
+          <ul>
+            <li>Enable/disable autoplay on media selection</li>
+            <li>Set delay before playing (5-second increments)</li>
+            <li>Configure video loop count before advancing</li>
+          </ul>
+
+          <h3 id="viewer-looping">Looping</h3>
+          <p>Set custom loop durations (1s, 2s, 5s, 10s) for focused viewing of specific segments.</p>
+        </section>
+
+        <section id="viewer-metadata">
+          <h2>Metadata & Transcripts</h2>
+          <p>
+            View file metadata, Stable Diffusion parameters, gallery-dl metadata, and transcripts in the Metadata panel.
+          </p>
+
+          <h3 id="viewer-view-transcript">Viewing Transcripts</h3>
+          <p>
+            View VTT transcripts located in the same folder as the media file.
+            Transcripts must have the same filename with a .vtt extension.
+            Click cues to jump to timestamps, and enable "Follow Transcript" for auto-scrolling.
+          </p>
+          <video src="./help/view-transcript.mp4" loop muted controls></video>
+
+          <h3 id="viewer-generate-transcript">Generating Transcripts</h3>
+          <p>
+            Generate transcripts using the Whisper command if installed locally.
+            <a href="https://github.com/openai/whisper#setup" target="_blank">Learn how to install Whisper</a>.
+          </p>
+          <video src="./help/create-transcript.mp4" loop muted controls></video>
+        </section>
+
+        <section id="viewer-advanced">
+          <h2>Advanced Features</h2>
+
+          <h3 id="viewer-battle">Battle Mode (ELO Rating)</h3>
+          <p>
+            Compare two media items side-by-side and vote for your preference.
+            The ELO rating system automatically updates scores based on your choices.
+            Great for ranking and curating large collections.
+          </p>
+
+          <h3 id="viewer-duplicates">Duplicate Detection</h3>
+          <p>
+            Find and manage duplicate or similar media files.
+            Merge duplicates to consolidate entries while preserving tag assignments.
+          </p>
+
+          <h3 id="viewer-hotkeys">Keyboard Shortcuts</h3>
+          <p>Customize all keyboard shortcuts in the Hotkeys tab of the command palette.</p>
+          <table class="hotkey-table">
+            <tr><th>Action</th><th>Default Shortcut</th></tr>
+            <tr><td>Next/Previous item</td><td>Arrow keys</td></tr>
+            <tr><td>Play/Pause</td><td>Spacebar</td></tr>
+            <tr><td>Apply stored tag</td><td>1-9</td></tr>
+            <tr><td>Store tag to slot</td><td>Ctrl+1-9</td></tr>
+            <tr><td>Store category</td><td>Alt+1-9</td></tr>
+            <tr><td>Switch to category</td><td>Shift+1-9</td></tr>
+            <tr><td>Shuffle</td><td>Ctrl+S or X</td></tr>
+            <tr><td>Copy file to clipboard</td><td>Ctrl+H</td></tr>
+            <tr><td>Delete file</td><td>Ctrl+Delete</td></tr>
+            <tr><td>Fullscreen</td><td>F11 or Ctrl+Alt+F</td></tr>
+            <tr><td>Minimize</td><td>Ctrl+Shift+M</td></tr>
+          </table>
+        </section>
+
+        <section id="viewer-support">
+          <div class="divider"></div>
+          <h2>Contact & Support</h2>
+          <p>
+            Have a question or feature request? All development is driven by community feedback, and updates are free forever.
+          </p>
+          <ul>
+            <li><a href="mailto:help@lowkeyviewer.com">Help Requests: help@lowkeyviewer.com</a></li>
+            <li><a href="mailto:features@lowkeyviewer.com">Feature Requests: features@lowkeyviewer.com</a></li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <!-- Media Server Tab -->
+    <div id="server" class="tab-content">
+      <section class="hero">
+        <svg class="logo server-logo" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="serverGradLarge" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#a855f7"/>
+              <stop offset="100%" style="stop-color:#ec4899"/>
+            </linearGradient>
+          </defs>
+          <rect width="128" height="128" rx="20" fill="url(#serverGradLarge)"/>
+          <circle cx="45" cy="64" r="18" stroke="white" stroke-width="6" fill="none"/>
+          <line x1="58" y1="64" x2="100" y2="64" stroke="white" stroke-width="6" stroke-linecap="round"/>
+          <line x1="75" y1="64" x2="75" y2="45" stroke="white" stroke-width="6" stroke-linecap="round"/>
+          <line x1="90" y1="64" x2="90" y2="50" stroke="white" stroke-width="6" stroke-linecap="round"/>
+        </svg>
+        <h1>Lowkey Media Server</h1>
+        <p class="subTitle">
+          A companion server for batch processing, AI tagging, transcription, and media ingestion.
+        </p>
+        <p class="info">
+          Works on <span class="os">Windows</span> and <span class="os">Linux</span>
+        </p>
+        <p class="info status-alpha">Alpha Release</p>
+        <div class="header-links">
+          <a href="https://github.com/SteveCastle/loki/blob/master/LICENSE" class="license-link">
+            <img src="mit.svg" alt="MIT License" />
+          </a>
+          <a href="https://github.com/SteveCastle/loki/tree/master/media-server" class="github-link">
+            <img src="GitHub-Mark-Light-32px.png" alt="GitHub" />
+          </a>
+        </div>
+      </section>
+
+      <main>
+        <nav class="toc">
+          <h2>Table of Contents</h2>
+          <ul>
+            <li><a href="#server-overview">Overview</a></li>
+            <li><a href="#server-getting-started">Getting Started</a>
+              <ul>
+                <li><a href="#server-installation">Installation</a></li>
+                <li><a href="#server-web-ui">Web Interface</a></li>
+                <li><a href="#server-browser-extension">Browser Extension</a></li>
+              </ul>
+            </li>
+            <li><a href="#server-job-queue">Job Queue</a>
+              <ul>
+                <li><a href="#server-creating-jobs">Creating Jobs</a></li>
+                <li><a href="#server-monitoring">Monitoring Progress</a></li>
+                <li><a href="#server-job-management">Job Management</a></li>
+              </ul>
+            </li>
+            <li><a href="#server-ingestion">Media Ingestion</a>
+              <ul>
+                <li><a href="#server-local-ingest">Local Directories</a></li>
+                <li><a href="#server-youtube">YouTube Downloads</a></li>
+                <li><a href="#server-gallery">Gallery Downloads</a></li>
+              </ul>
+            </li>
+            <li><a href="#server-ai-features">AI & ML Features</a>
+              <ul>
+                <li><a href="#server-autotag">Auto-Tagging (ONNX)</a></li>
+                <li><a href="#server-llm-vision">LLM Vision Descriptions</a></li>
+                <li><a href="#server-transcription">Transcription</a></li>
+              </ul>
+            </li>
+            <li><a href="#server-media-browser">Media Browser</a>
+              <ul>
+                <li><a href="#server-browse">Browsing & Search</a></li>
+                <li><a href="#server-file-serving">File Serving</a></li>
+              </ul>
+            </li>
+            <li><a href="#server-tasks">Available Tasks</a></li>
+            <li><a href="#server-config">Configuration</a></li>
+            <li><a href="#server-api">API Reference</a></li>
+          </ul>
+        </nav>
+
+        <section id="server-overview">
+          <h2>Overview</h2>
+          <p>
+            Lowkey Media Server is a companion application for the Lowkey Media Viewer that manages long-running offline tasks.
+            Built in Go, it runs as an HTTP server on port 8090.
+          </p>
+          <ul>
+            <li>Job queue with persistence and real-time status updates</li>
+            <li>Media ingestion from local directories, YouTube, and gallery sites</li>
+            <li>AI-powered auto-tagging using ONNX models</li>
+            <li>LLM vision integration for image descriptions</li>
+            <li>Video transcription with Faster Whisper</li>
+            <li>Browser extensions for Chrome and Firefox</li>
+            <li>Web-based media gallery and search</li>
+          </ul>
+        </section>
+
+        <section id="server-getting-started">
+          <h2>Getting Started</h2>
+
+          <h3 id="server-installation">Installation</h3>
+          <p>
+            Download and run the Media Server executable. On Windows, it runs in the system tray for easy access.
+            The server automatically extracts bundled tools (ffmpeg, yt-dlp, gallery-dl, etc.) on first run.
+          </p>
+          <div class="code-block">
+            <code>Windows: %ProgramData%\Lowkey Media Server\tmp\</code><br>
+            <code>Linux: /var/tmp/lowkeymediaserver/</code>
+          </div>
+
+          <h3 id="server-web-ui">Web Interface</h3>
+          <p>
+            Access the web interface at <code>http://localhost:8090</code>.
+            The home page shows the job queue with all running and completed jobs.
+          </p>
+          <div class="placeholder-video">Web UI Demo Video</div>
+
+          <h3 id="server-browser-extension">Browser Extension</h3>
+          <p>
+            Install the browser extension for Chrome or Firefox to quickly create jobs from any webpage.
+          </p>
+          <ul>
+            <li><strong>Chrome</strong>: Load unpacked from <code>chrome-extension/</code> folder</li>
+            <li><strong>Firefox</strong>: Load from <code>firefox-extension/</code> folder</li>
+          </ul>
+          <p>Features:</p>
+          <ul>
+            <li>One-click task creation with current page URL</li>
+            <li>Command selection dropdown</li>
+            <li>Custom arguments support</li>
+            <li>Real-time job status updates</li>
+          </ul>
+          <div class="placeholder-video">Browser Extension Demo Video</div>
+        </section>
+
+        <section id="server-job-queue">
+          <h2>Job Queue</h2>
+          <p>
+            The job queue manages all processing tasks with persistence and real-time updates via Server-Sent Events (SSE).
+          </p>
+
+          <h3 id="server-creating-jobs">Creating Jobs</h3>
+          <p>Create jobs through the web interface, browser extension, or API. Each job specifies:</p>
+          <ul>
+            <li>Task type (ingest, autotag, metadata, etc.)</li>
+            <li>Input source (URL, file path, or directory)</li>
+            <li>Optional follow-up tasks</li>
+          </ul>
+          <div class="placeholder-video">Job Creation Demo Video</div>
+
+          <h3 id="server-monitoring">Monitoring Progress</h3>
+          <p>
+            Jobs display real-time progress with live output streaming. Job states include:
+          </p>
+          <ul>
+            <li><span class="status pending">Pending</span> - Waiting to start</li>
+            <li><span class="status in-progress">In Progress</span> - Currently running</li>
+            <li><span class="status completed">Completed</span> - Finished successfully</li>
+            <li><span class="status cancelled">Cancelled</span> - Stopped by user</li>
+            <li><span class="status error">Error</span> - Failed with error</li>
+          </ul>
+
+          <h3 id="server-job-management">Job Management</h3>
+          <p>Manage jobs with these actions:</p>
+          <ul>
+            <li><strong>Cancel</strong> - Stop a running job</li>
+            <li><strong>Copy</strong> - Duplicate a job configuration</li>
+            <li><strong>Remove</strong> - Delete a job from the queue</li>
+            <li><strong>Clear</strong> - Remove all non-running jobs</li>
+          </ul>
+        </section>
+
+        <section id="server-ingestion">
+          <h2>Media Ingestion</h2>
+          <p>
+            The ingest task scans and adds media to the database from multiple sources with optional follow-up processing.
+          </p>
+
+          <h3 id="server-local-ingest">Local Directories</h3>
+          <p>
+            Scan local directories to add media files to the database. Supports recursive scanning for nested folders.
+          </p>
+          <div class="placeholder-video">Local Ingest Demo Video</div>
+
+          <h3 id="server-youtube">YouTube Downloads</h3>
+          <p>
+            Download videos from YouTube and other sites using the bundled yt-dlp tool.
+            Videos are automatically added to the database after download.
+          </p>
+          <div class="placeholder-video">YouTube Download Demo Video</div>
+
+          <h3 id="server-gallery">Gallery Downloads</h3>
+          <p>
+            Download media from gallery sites using gallery-dl. Supports hundreds of sites including:
+          </p>
+          <ul>
+            <li>Twitter/X, Instagram, Reddit</li>
+            <li>DeviantArt, ArtStation, Pixiv</li>
+            <li>Tumblr, Flickr, and many more</li>
+          </ul>
+          <div class="placeholder-video">Gallery Download Demo Video</div>
+        </section>
+
+        <section id="server-ai-features">
+          <h2>AI & ML Features</h2>
+
+          <h3 id="server-autotag">Auto-Tagging (ONNX)</h3>
+          <p>
+            Automatically tag images using ML models (WD Tagger). Configure thresholds for general and character tags.
+          </p>
+          <ul>
+            <li>Batch processing of entire directories</li>
+            <li>Configurable confidence thresholds</li>
+            <li>Tags organized by category (Suggested, Character, etc.)</li>
+          </ul>
+          <div class="placeholder-video">Auto-Tagging Demo Video</div>
+
+          <h3 id="server-llm-vision">LLM Vision Descriptions</h3>
+          <p>
+            Generate image descriptions using Ollama with vision models (llama3.2-vision, etc.).
+            Customize prompts for different use cases.
+          </p>
+          <div class="placeholder-video">LLM Description Demo Video</div>
+
+          <h3 id="server-transcription">Transcription</h3>
+          <p>
+            Generate transcripts for videos using Faster Whisper. Transcripts are saved as VTT files
+            and can be viewed in the Media Viewer.
+          </p>
+          <div class="placeholder-video">Transcription Demo Video</div>
+        </section>
+
+        <section id="server-media-browser">
+          <h2>Media Browser</h2>
+
+          <h3 id="server-browse">Browsing & Search</h3>
+          <p>
+            Browse your media collection through the web interface at <code>/media</code>.
+            Full-text search across filenames, descriptions, and tags.
+          </p>
+          <div class="placeholder-video">Media Browser Demo Video</div>
+
+          <h3 id="server-file-serving">File Serving</h3>
+          <p>
+            Stream media files directly from the server with caching headers for performance.
+            Access files at <code>/media/file?path=...</code>
+          </p>
+        </section>
+
+        <section id="server-tasks">
+          <h2>Available Tasks</h2>
+          <table class="task-table">
+            <tr><th>Task ID</th><th>Name</th><th>Description</th></tr>
+            <tr><td><code>ingest</code></td><td>Ingest Media</td><td>Scan directories and add files to database</td></tr>
+            <tr><td><code>metadata</code></td><td>Generate Metadata</td><td>Generate descriptions, transcripts, hashes</td></tr>
+            <tr><td><code>autotag</code></td><td>Auto Tag</td><td>ML-based automatic image tagging</td></tr>
+            <tr><td><code>yt-dlp</code></td><td>yt-dlp</td><td>Download videos from YouTube, etc.</td></tr>
+            <tr><td><code>gallery-dl</code></td><td>gallery-dl</td><td>Download media from gallery sites</td></tr>
+            <tr><td><code>ffmpeg</code></td><td>ffmpeg</td><td>Process and convert media files</td></tr>
+            <tr><td><code>move</code></td><td>Move Media</td><td>Move files and update database references</td></tr>
+            <tr><td><code>remove</code></td><td>Remove Media</td><td>Remove entries from database</td></tr>
+            <tr><td><code>cleanup</code></td><td>Cleanup</td><td>Remove orphaned database entries</td></tr>
+            <tr><td><code>lora-dataset</code></td><td>LoRA Dataset</td><td>Generate datasets for ML training</td></tr>
+          </table>
+        </section>
+
+        <section id="server-config">
+          <h2>Configuration</h2>
+          <p>Configure the server through the web interface at <code>/config</code> or edit the config file directly:</p>
+          <div class="code-block">
+            <code>Windows: %APPDATA%\Lowkey Media Viewer\config.json</code><br>
+            <code>Linux: ~/.config/lowkeymediaviewer/config.json</code>
+          </div>
+          <h4>Configuration Options</h4>
+          <ul>
+            <li><strong>dbPath</strong> - Path to the SQLite database</li>
+            <li><strong>ollamaBaseUrl</strong> - Ollama server URL (default: http://localhost:11434)</li>
+            <li><strong>ollamaModel</strong> - Vision model for descriptions</li>
+            <li><strong>fasterWhisperPath</strong> - Path to Faster Whisper executable</li>
+            <li><strong>onnxTagger</strong> - ONNX model configuration for auto-tagging</li>
+          </ul>
+        </section>
+
+        <section id="server-api">
+          <h2>API Reference</h2>
+          <h4>Job Management</h4>
+          <table class="api-table">
+            <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+            <tr><td>POST</td><td><code>/create</code></td><td>Create a new job</td></tr>
+            <tr><td>GET</td><td><code>/job/{id}</code></td><td>View job details</td></tr>
+            <tr><td>POST</td><td><code>/job/{id}/cancel</code></td><td>Cancel a running job</td></tr>
+            <tr><td>POST</td><td><code>/job/{id}/copy</code></td><td>Copy job configuration</td></tr>
+            <tr><td>POST</td><td><code>/job/{id}/remove</code></td><td>Remove a job</td></tr>
+            <tr><td>POST</td><td><code>/jobs/clear</code></td><td>Clear non-running jobs</td></tr>
+          </table>
+          <h4>Media Operations</h4>
+          <table class="api-table">
+            <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+            <tr><td>GET</td><td><code>/media</code></td><td>Media gallery page</td></tr>
+            <tr><td>GET</td><td><code>/media/api</code></td><td>Media JSON API with search</td></tr>
+            <tr><td>GET</td><td><code>/media/file</code></td><td>Serve media files</td></tr>
+          </table>
+          <h4>System</h4>
+          <table class="api-table">
+            <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+            <tr><td>GET</td><td><code>/health</code></td><td>Server health and stats</td></tr>
+            <tr><td>GET</td><td><code>/stream</code></td><td>SSE stream for real-time updates</td></tr>
+            <tr><td>GET</td><td><code>/config</code></td><td>Configuration page</td></tr>
+            <tr><td>POST</td><td><code>/config</code></td><td>Update configuration</td></tr>
+          </table>
+        </section>
+
+        <section>
+          <div class="divider"></div>
+          <h2>Contact & Support</h2>
+          <p>
+            The Media Server is in alpha. Report issues and request features on GitHub or via email.
+          </p>
+          <ul>
+            <li><a href="mailto:help@lowkeyviewer.com">Help Requests: help@lowkeyviewer.com</a></li>
+            <li><a href="mailto:features@lowkeyviewer.com">Feature Requests: features@lowkeyviewer.com</a></li>
+            <li><a href="https://github.com/SteveCastle/loki/issues">GitHub Issues</a></li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      // Tab routing
+      function setActiveTab(tabId) {
+        document.querySelectorAll('.tab-link').forEach(link => {
+          link.classList.toggle('active', link.dataset.tab === tabId);
+        });
+        document.querySelectorAll('.tab-content').forEach(content => {
+          content.classList.toggle('active', content.id === tabId);
+        });
+      }
+
+      function handleRoute() {
+        const hash = window.location.hash.slice(1) || 'viewer';
+        const tabId = hash.startsWith('server') ? 'server' : 'viewer';
+        setActiveTab(tabId);
+
+        // Scroll to section if it's a subsection
+        if (hash && hash !== 'viewer' && hash !== 'server') {
+          setTimeout(() => {
+            const element = document.getElementById(hash);
+            if (element) {
+              element.scrollIntoView({ behavior: 'smooth' });
+            }
+          }, 100);
+        }
+      }
+
+      window.addEventListener('hashchange', handleRoute);
+      window.addEventListener('load', handleRoute);
+
+      // Download button
+      function trackDownload() {
+        gtag("event", "click", {
+          event_category: "download",
+          event_label: window.navigator.platform,
+        });
+      }
+
+      const el = document.getElementById("downloadButton");
+      if (window.navigator.platform === "MacIntel") {
+        el.setAttribute(
+          "href",
+          "https://github.com/SteveCastle/loki/releases/download/v2.6.5/Lowkey.Media.Viewer-2.6.5-arm64.dmg"
+        );
+        el.innerHTML = "Download | Free for Mac";
+      } else {
+        el.setAttribute(
+          "href",
+          "https://github.com/SteveCastle/loki/releases/download/v2.6.6/Lowkey.Media.Viewer.Setup.2.6.6.exe.zip"
+        );
+        el.innerHTML = "Download | Free for Windows";
+      }
+      el.addEventListener("click", trackDownload, false);
+
+      // Smooth scroll for TOC links
+      document.querySelectorAll('.toc a').forEach(link => {
+        link.addEventListener('click', (e) => {
+          const href = link.getAttribute('href');
+          if (href.startsWith('#')) {
+            e.preventDefault();
+            const target = document.getElementById(href.slice(1));
+            if (target) {
+              window.location.hash = href;
+              target.scrollIntoView({ behavior: 'smooth' });
+            }
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
