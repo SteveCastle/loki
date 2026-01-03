@@ -40,13 +40,9 @@ type Dependency struct {
 type DependencyRegistry map[string]*Dependency
 
 var (
-	registry DependencyRegistry
+	registry DependencyRegistry = make(DependencyRegistry)
 	mu       sync.RWMutex
 )
-
-func init() {
-	registry = make(DependencyRegistry)
-}
 
 // Register adds a dependency to the global registry.
 func Register(dep *Dependency) {
@@ -152,13 +148,20 @@ func GetInstallPath(depID string) (string, error) {
 	return dep.TargetDir, nil
 }
 
-// CheckAnyMissing checks if any registered dependencies are missing.
-// Returns true if at least one dependency is not installed, false otherwise.
+// CheckAnyMissing checks if any registered dependencies are missing and not ignored.
+// Returns true if at least one dependency is not installed and not ignored, false otherwise.
 func CheckAnyMissing(ctx context.Context) bool {
 	mu.RLock()
 	defer mu.RUnlock()
 
+	metadata := GetMetadataStore()
+
 	for _, dep := range registry {
+		// Skip ignored dependencies
+		if metadata.IsIgnored(dep.ID) {
+			continue
+		}
+
 		exists, _, err := dep.Check(ctx)
 		if err != nil || !exists {
 			return true

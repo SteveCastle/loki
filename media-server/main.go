@@ -1226,6 +1226,7 @@ type dependencyStatusInfo struct {
 	SizeFormatted    string
 	TargetDir        string
 	JobID            string
+	Ignored          bool
 }
 
 func dependenciesHandler(dependencies *Dependencies) http.HandlerFunc {
@@ -1264,6 +1265,9 @@ func dependenciesHandler(dependencies *Dependencies) http.HandlerFunc {
 			// Get active job ID if any
 			jobID := metadata.GetJobID(dep.ID)
 
+			// Check if ignored
+			ignored := metadata.IsIgnored(dep.ID)
+
 			sizeFormatted := formatBytes(dep.ExpectedSize)
 
 			depStatuses = append(depStatuses, dependencyStatusInfo{
@@ -1276,6 +1280,7 @@ func dependenciesHandler(dependencies *Dependencies) http.HandlerFunc {
 				SizeFormatted:    sizeFormatted,
 				TargetDir:        dep.TargetDir,
 				JobID:            jobID,
+				Ignored:          ignored,
 			})
 		}
 
@@ -1325,6 +1330,9 @@ func setupHandler(dependencies *Dependencies) http.HandlerFunc {
 			// Get active job ID if any
 			jobID := metadata.GetJobID(dep.ID)
 
+			// Check if ignored
+			ignored := metadata.IsIgnored(dep.ID)
+
 			sizeFormatted := formatBytes(dep.ExpectedSize)
 
 			depStatuses = append(depStatuses, dependencyStatusInfo{
@@ -1337,6 +1345,7 @@ func setupHandler(dependencies *Dependencies) http.HandlerFunc {
 				SizeFormatted:    sizeFormatted,
 				TargetDir:        dep.TargetDir,
 				JobID:            jobID,
+				Ignored:          ignored,
 			})
 		}
 
@@ -1487,6 +1496,49 @@ func downloadDependencyHandler(dependencies *Dependencies) http.HandlerFunc {
 		json.NewEncoder(w).Encode(map[string]string{
 			"job_id":        jobID,
 			"dependency_id": req.DependencyID,
+		})
+	}
+}
+
+func ignoreDependencyHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			DependencyID string `json:"dependency_id"`
+			Ignored      bool   `json:"ignored"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+
+		if req.DependencyID == "" {
+			http.Error(w, "dependency_id is required", http.StatusBadRequest)
+			return
+		}
+
+		// Verify dependency exists
+		if _, ok := depspkg.Get(req.DependencyID); !ok {
+			http.Error(w, "unknown dependency", http.StatusNotFound)
+			return
+		}
+
+		// Update ignored status
+		metadata := depspkg.GetMetadataStore()
+		metadata.SetIgnored(req.DependencyID, req.Ignored)
+		if err := metadata.Save(); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"dependency_id": req.DependencyID,
+			"ignored":       req.Ignored,
 		})
 	}
 }
@@ -2325,6 +2377,7 @@ func main() {
 	mux.HandleFunc("/dependencies", renderer.ApplyMiddlewares(dependenciesHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/dependencies/check", renderer.ApplyMiddlewares(checkDependencyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/dependencies/download", renderer.ApplyMiddlewares(downloadDependencyHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/dependencies/ignore", renderer.ApplyMiddlewares(ignoreDependencyHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/setup", renderer.ApplyMiddlewares(setupHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/setup/skip", renderer.ApplyMiddlewares(skipSetupHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/setup/status", renderer.ApplyMiddlewares(checkSetupStatusHandler(), renderer.RoleAdmin))

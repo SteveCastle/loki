@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/appconfig"
-	"github.com/stevecastle/shrike/embedexec"
+	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -65,14 +65,11 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		args = append(args, arg)
 	}
 
-	cmd, cleanup, err := embedexec.GetExec(ctx, "yt-dlp", args...)
+	cmd, err := deps.GetExec(ctx, "yt-dlp", "yt-dlp", args...)
 	if err != nil {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Error starting yt-dlp: %s", err))
 		q.ErrorJob(j.ID)
 		return fmt.Errorf("start yt-dlp: %w", err)
-	}
-	if cleanup != nil {
-		defer cleanup()
 	}
 
 	// Handle cancellation

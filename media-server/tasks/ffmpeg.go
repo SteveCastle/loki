@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stevecastle/shrike/embedexec"
+	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -94,14 +94,11 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		q.PushJobStdout(j.ID, "ffmpeg: running on "+base)
 
-		cmd, cleanup, err := embedexec.GetExec(ctx, "ffmpeg", finalArgs...)
+		cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", finalArgs...)
 		if err != nil {
 			q.PushJobStdout(j.ID, "ffmpeg: failed to prepare: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
-		}
-		if cleanup != nil {
-			defer cleanup()
 		}
 
 		stdout, err := cmd.StdoutPipe()

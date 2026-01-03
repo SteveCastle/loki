@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stevecastle/shrike/appconfig"
-	"github.com/stevecastle/shrike/embedexec"
+	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -190,12 +190,10 @@ func isImageFile(path string) bool {
 // convertToJPG converts an image file to JPG format using ffmpeg
 func convertToJPG(ctx context.Context, srcPath, dstPath string) error {
 	// Use ffmpeg to convert to JPG with quality 2 (high quality)
-	cmd, cleanup, err := embedexec.GetExec(ctx, "ffmpeg", "-i", srcPath, "-q:v", "2", "-y", dstPath)
+	cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", "-i", srcPath, "-q:v", "2", "-y", dstPath)
 	if err != nil {
-		// Try using system ffmpeg if embedded is not available
+		// Try using system ffmpeg if dependency is not available
 		cmd = exec.CommandContext(ctx, "ffmpeg", "-i", srcPath, "-q:v", "2", "-y", dstPath)
-	} else if cleanup != nil {
-		defer cleanup()
 	}
 
 	if err := cmd.Run(); err != nil {

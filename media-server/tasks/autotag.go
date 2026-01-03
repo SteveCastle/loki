@@ -10,7 +10,6 @@ import (
 
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
-	"github.com/stevecastle/shrike/embedexec"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -137,14 +136,11 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		q.PushJobStdout(j.ID, fmt.Sprintf("[%d/%d] Tagging: %s", idx+1, len(paths), filepath.Base(mediaPath)))
 
-		cmd, cleanup, err := embedexec.GetExec(ctx, "onnxtag", args...)
+		cmd, err := deps.GetExec(ctx, "onnxtag", "onnxtag", args...)
 		if err != nil {
 			q.PushJobStdout(j.ID, "Failed to prepare onnxtag: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
-		}
-		if cleanup != nil {
-			defer cleanup()
 		}
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {

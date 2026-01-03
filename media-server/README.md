@@ -19,7 +19,7 @@ Lowkey Media Server is a companion for the Lowkey Media Viewer. It allows for ma
   - [Prerequisites](#prerequisites)
   - [Building from Source](#building-from-source)
   - [Project Structure](#project-structure)
-  - [Embedded Binaries](#embedded-binaries)
+  - [Dependencies](#dependencies)
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [Available Tasks](#available-tasks)
@@ -122,7 +122,7 @@ For full functionality, install these optional tools:
 | [ONNX Runtime](https://onnxruntime.ai/)                              | ML model inference for auto-tagging | Download DLL, configure path in settings | `apt install libonnxruntime` or download .so |
 | [Faster Whisper](https://github.com/Purfview/whisper-standalone-win) | Video transcription                 | Download, configure path in settings     | Build from source or use Python version  |
 
-> **Note:** FFmpeg, yt-dlp, gallery-dl, and ExifTool are embedded in the binary and extracted at runtime.
+> **Note:** FFmpeg, yt-dlp, and gallery-dl are managed as downloadable dependencies via the web UI.
 
 ### Building from Source
 
@@ -243,12 +243,17 @@ lowkeymediaserver/
 │       ├── styles.css      # Main stylesheet
 │       └── details.css     # Job details page styles
 │
-├── embedexec/              # Embedded executable extraction
-│   ├── embedexec.go        # Common extraction logic
-│   ├── embedexec_windows.go # Windows-specific binaries
-│   ├── embedexec_linux.go  # Linux-specific binaries
-│   ├── bin_windows/        # Windows embedded executables
-│   └── bin_linux/          # Linux embedded executables
+├── deps/                   # Dependency management
+│   ├── deps.go             # Dependency registry and core logic
+│   ├── metadata.go         # Dependency metadata persistence
+│   ├── paths.go            # Platform-specific paths
+│   ├── exec.go             # Executable command builder
+│   ├── ffmpeg.go           # FFmpeg dependency
+│   ├── ytdlp.go            # yt-dlp dependency
+│   ├── gallerydl.go        # gallery-dl dependency
+│   ├── whisper.go          # Faster Whisper dependency
+│   ├── onnx.go             # ONNX runtime/model dependency
+│   └── ...                 # Other dependencies
 │
 ├── jobqueue/               # Job queue implementation
 │   └── jobqueue.go         # Queue, job state, persistence
@@ -304,37 +309,35 @@ lowkeymediaserver/
 └── README.md               # This file
 ```
 
-### Embedded Binaries
+### Dependencies
 
-Lowkey Media Server embeds several third-party executables that are extracted at runtime:
+Lowkey Media Server uses a dependency management system that downloads executables on-demand rather than embedding them in the binary. This keeps the main executable small and allows for easy updates.
 
-- **Windows:** Extracted to `%ProgramData%\Lowkey Media Server\tmp\`
-- **Linux:** Extracted to `/var/tmp/lowkeymediaserver/`
+Dependencies are stored in:
 
-| Binary (Windows)         | Binary (Linux)           | Purpose                         |
-| ------------------------ | ------------------------ | ------------------------------- |
-| `ffmpeg.exe`             | `ffmpeg`                 | Media conversion and processing |
-| `ffprobe.exe`            | `ffprobe`                | Media file analysis             |
-| `ffplay.exe`             | `ffplay`                 | Media playback                  |
-| `yt-dlp.exe`             | `yt-dlp`                 | Video downloading               |
-| `gallery-dl.exe`         | `gallery-dl`             | Image gallery downloading       |
-| `exiftool.exe`           | `exiftool`               | Metadata extraction             |
-| `faster-whisper-xxl.exe` | `faster-whisper-xxl`     | Video transcription (optional)  |
-| `dedupe.exe`             | `dedupe`                 | Duplicate detection             |
-| `createdump.exe`         | `createdump`             | Crash dump creation             |
+- **Windows:** `%ProgramData%\Lowkey Media Server\deps\`
+- **Linux:** `/var/lib/lowkeymediaserver/deps/`
 
-The embedded binaries are located in platform-specific directories:
+| Dependency   | Purpose                         | Source                                |
+| ------------ | ------------------------------- | ------------------------------------- |
+| `ffmpeg`     | Media conversion and processing | BtbN/FFmpeg-Builds (GitHub)           |
+| `yt-dlp`     | Video downloading               | yt-dlp/yt-dlp (GitHub)                |
+| `gallery-dl` | Image gallery downloading       | mikf/gallery-dl (GitHub)              |
+| `whisper`    | Video transcription             | Purfview/whisper-standalone-win       |
+| `onnx`       | ML model inference              | HuggingFace/SmilingWolf               |
 
-- **Windows:** `embedexec/bin_windows/`
-- **Linux:** `embedexec/bin_linux/`
+#### Managing Dependencies
 
-To update embedded binaries:
+1. Open the web interface at `http://localhost:8090`
+2. Navigate to the **Dependencies** tab
+3. Click **Download** next to any dependency you need
+4. The server will download and extract the dependency automatically
 
-1. Download the new binary for your platform
-2. Replace the file in the appropriate `embedexec/bin_<platform>/` folder
-3. Rebuild the project
+Dependencies are downloaded from official sources (GitHub releases) and verified before installation. The status of each dependency is shown in the UI.
 
-> **Note:** Including these binaries significantly increases the final executable size (~200MB+).
+#### Fallback to System PATH
+
+If a dependency is not installed via the web UI, the server will attempt to find the executable in your system PATH. This allows you to use system-installed versions of tools like FFmpeg if preferred.
 
 ---
 
