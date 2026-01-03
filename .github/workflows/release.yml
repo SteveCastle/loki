@@ -28,7 +28,6 @@ jobs:
 
       - name: Run tests
         run: yarn test
-        continue-on-error: true
 
   test-go:
     name: Test Go Server
@@ -94,12 +93,9 @@ jobs:
           echo "Tag: $TAG"
 
   build-electron:
-    name: Build Electron App
+    name: Build Electron App (Windows)
     needs: version-and-tag
-    strategy:
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -121,36 +117,16 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: electron-${{ matrix.os }}
+          name: electron-windows
           path: |
-            release/build/*.dmg
-            release/build/*.AppImage
             release/build/*.exe
             release/build/*.zip
           if-no-files-found: warn
 
   build-go-server:
-    name: Build Go Media Server
+    name: Build Go Media Server (Windows)
     needs: version-and-tag
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-          - os: ubuntu-latest
-            goos: linux
-            goarch: arm64
-          - os: ubuntu-latest
-            goos: darwin
-            goarch: amd64
-          - os: ubuntu-latest
-            goos: darwin
-            goarch: arm64
-          - os: ubuntu-latest
-            goos: windows
-            goarch: amd64
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -161,23 +137,20 @@ jobs:
           go-version: '1.24'
           cache-dependency-path: media-server/go.sum
 
-      - name: Build Go binary
+      - name: Build Go binary for Windows
         working-directory: ./media-server
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          GOOS: windows
+          GOARCH: amd64
           CGO_ENABLED: 0
         run: |
-          OUTPUT_NAME="media-server-${{ matrix.goos }}-${{ matrix.goarch }}"
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            OUTPUT_NAME="${OUTPUT_NAME}.exe"
-          fi
+          OUTPUT_NAME="media-server-windows-amd64.exe"
           go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
 
       - name: Upload Go binary
         uses: actions/upload-artifact@v4
         with:
-          name: media-server-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: media-server-windows-amd64
           path: build/media-server-*
 
   generate-changelog:
@@ -210,14 +183,22 @@ jobs:
           echo "# What's Changed in $CURRENT_TAG" > changelog.md
           echo "" >> changelog.md
           
-          # Get commit messages
-          git log --pretty=format:"- %s (%h)" $PREV_TAG..$CURRENT_TAG >> changelog.md
+          # Get commit messages - use HEAD if PREV_TAG is a commit hash
+          if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.md
+          else
+            git log --pretty=format:"- %s (%h)" >> changelog.md
+          fi
           
           # Get contributors
           echo "" >> changelog.md
           echo "" >> changelog.md
           echo "## Contributors" >> changelog.md
-          git log $PREV_TAG..$CURRENT_TAG --format='%aN' | sort -u | sed 's/^/- @/' >> changelog.md
+          if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
+            git log $PREV_TAG..HEAD --format='%aN' | sort -u | sed 's/^/- @/' >> changelog.md
+          else
+            git log --format='%aN' | sort -u | sed 's/^/- @/' >> changelog.md
+          fi
           
           # Output for next step
           CHANGELOG=$(cat changelog.md)
