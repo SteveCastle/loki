@@ -49,7 +49,7 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -81,6 +81,7 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         working-directory: media-server
         run: |
+          mkdir -p ../release/build
           GOOS=linux GOARCH=amd64 go build -o ../release/build/media-server-linux-amd64 .
           GOOS=linux GOARCH=arm64 go build -o ../release/build/media-server-linux-arm64 .
 
@@ -88,6 +89,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         working-directory: media-server
         run: |
+          mkdir -p ../release/build
           GOOS=darwin GOARCH=amd64 go build -o ../release/build/media-server-darwin-amd64 .
           GOOS=darwin GOARCH=arm64 go build -o ../release/build/media-server-darwin-arm64 .
 
@@ -95,6 +97,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         working-directory: media-server
         run: |
+          New-Item -ItemType Directory -Force -Path ../release/build
           $env:GOOS="windows"; $env:GOARCH="amd64"; go build -o ../release/build/media-server-windows-amd64.exe .
           $env:GOOS="windows"; $env:GOARCH="arm64"; go build -o ../release/build/media-server-windows-arm64.exe .
 
@@ -109,7 +112,7 @@ jobs:
     name: Create Release
     needs: build-and-release
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -139,7 +142,7 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            
+
             // Get the latest release to compare
             let comparison = '';
             try {
@@ -148,7 +151,7 @@ jobs:
                 repo,
                 per_page: 1
               });
-              
+
               if (releases.data.length > 0) {
                 const lastTag = releases.data[0].tag_name;
                 const compareResult = await github.rest.repos.compareCommits({
@@ -157,15 +160,15 @@ jobs:
                   base: lastTag,
                   head: 'main'
                 });
-                
-                comparison = compareResult.data.commits.map(commit => 
+
+                comparison = compareResult.data.commits.map(commit =>
                   `- ${commit.commit.message.split('\n')[0]} (${commit.sha.substring(0, 7)})`
                 ).join('\n');
               }
             } catch (error) {
               console.log('No previous releases found or error comparing:', error.message);
             }
-            
+
             if (!comparison) {
               // Get recent commits if no previous release
               const commits = await github.rest.repos.listCommits({
@@ -173,14 +176,14 @@ jobs:
                 repo,
                 per_page: 10
               });
-              
-              comparison = commits.data.map(commit => 
+
+              comparison = commits.data.map(commit =>
                 `- ${commit.commit.message.split('\n')[0]} (${commit.sha.substring(0, 7)})`
               ).join('\n');
             }
-            
+
             const changelog = `## What's Changed\n\n${comparison}\n\n## Assets\n\nThis release includes:\n- Electron app binaries for macOS, Linux, and Windows\n- Go media-server binaries for multiple platforms\n\n**Full Changelog**: https://github.com/${owner}/${repo}/commits/${{ steps.version.outputs.version }}`;
-            
+
             return changelog;
 
       - name: Check if release exists
@@ -190,7 +193,7 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
             const tag = '${{ steps.version.outputs.version }}';
-            
+
             try {
               const release = await github.rest.repos.getReleaseByTag({
                 owner,
@@ -216,7 +219,7 @@ jobs:
             const tag = '${{ steps.version.outputs.version }}';
             const releaseId = ${{ steps.check_release.outputs.result }};
             const changelog = process.env.CHANGELOG;
-            
+
             if (releaseId) {
               // Update existing release
               const release = await github.rest.repos.updateRelease({
@@ -255,12 +258,12 @@ jobs:
             const path = require('path');
             const { owner, repo } = context.repo;
             const releaseId = process.env.RELEASE_ID;
-            
+
             // Function to upload a file
             async function uploadAsset(filePath, name) {
               try {
                 const data = fs.readFileSync(filePath);
-                
+
                 // Delete existing asset if it exists
                 try {
                   const assets = await github.rest.repos.listReleaseAssets({
@@ -268,7 +271,7 @@ jobs:
                     repo,
                     release_id: releaseId
                   });
-                  
+
                   const existingAsset = assets.data.find(asset => asset.name === name);
                   if (existingAsset) {
                     await github.rest.repos.deleteReleaseAsset({
@@ -281,7 +284,7 @@ jobs:
                 } catch (error) {
                   console.log(`No existing asset to delete: ${name}`);
                 }
-                
+
                 await github.rest.repos.uploadReleaseAsset({
                   owner,
                   repo,
@@ -294,30 +297,30 @@ jobs:
                 console.error(`Failed to upload ${name}:`, error.message);
               }
             }
-            
+
             // Recursively find all files in artifacts directory
             function findFiles(dir) {
               const files = [];
               const items = fs.readdirSync(dir);
-              
+
               for (const item of items) {
                 const fullPath = path.join(dir, item);
                 const stat = fs.statSync(fullPath);
-                
+
                 if (stat.isDirectory()) {
                   files.push(...findFiles(fullPath));
                 } else {
                   files.push(fullPath);
                 }
               }
-              
+
               return files;
             }
-            
+
             // Upload all artifacts
             const artifactFiles = findFiles('artifacts');
             console.log(`Found ${artifactFiles.length} files to upload`);
-            
+
             for (const filePath of artifactFiles) {
               const fileName = path.basename(filePath);
               // Skip hidden files and directories
