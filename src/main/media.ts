@@ -1,7 +1,7 @@
 import { Database } from './database';
 import path from 'path';
 import crypto from 'crypto';
-const clipboardEx = require('electron-clipboard-ex');
+import * as clipboard from './clipboard';
 import type Store from 'electron-store';
 import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
@@ -337,7 +337,7 @@ const copyFileIntoClipboard =
     const filePaths = args[0];
     console.log('copying file into clipboard', filePaths);
     // Copies the file into the clipboard
-    clipboardEx.writeFilePaths(filePaths);
+    clipboard.writeFilePaths(filePaths);
     console.log('copied file into clipboard');
   };
 

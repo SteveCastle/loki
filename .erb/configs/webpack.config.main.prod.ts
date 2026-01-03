@@ -24,7 +24,6 @@ const configuration: webpack.Configuration = {
   externals: {
     sqlite3: 'commonjs sqlite3',
     sharp: 'commonjs sharp',
-    ['electron-clipboard-ex']: 'commonjs electron-clipboard-ex',
   },
   entry: {
     main: path.join(webpackPaths.srcMainPath, 'main.ts'),
