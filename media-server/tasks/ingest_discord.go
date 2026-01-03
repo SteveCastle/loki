@@ -12,7 +12,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/appconfig"
-	"github.com/stevecastle/shrike/embedexec"
+	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -80,14 +80,11 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		args = append(args, arg)
 	}
 
-	cmd, cleanup, err := embedexec.GetExec(ctx, "dce", args...)
+	cmd, err := deps.GetExec(ctx, "dce", "dce", args...)
 	if err != nil {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Error starting dce: %s", err))
 		q.ErrorJob(j.ID)
 		return fmt.Errorf("start dce: %w", err)
-	}
-	if cleanup != nil {
-		defer cleanup()
 	}
 
 	// Handle cancellation

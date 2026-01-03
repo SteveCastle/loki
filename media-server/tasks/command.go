@@ -10,9 +10,20 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stevecastle/shrike/embedexec"
+	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 )
+
+// commandToDependencyID maps command names to their dependency IDs.
+var commandToDependencyID = map[string]string{
+	"ffmpeg":     "ffmpeg",
+	"ffprobe":    "ffmpeg",
+	"ffplay":     "ffmpeg",
+	"yt-dlp":     "yt-dlp",
+	"gallery-dl": "gallery-dl",
+	"onnxtag":    "onnxtag",
+	"dce":        "dce",
+}
 
 func normalizeArg(a string) string {
 	// Heuristic for path detection
@@ -57,14 +68,18 @@ func executeCommand(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		args = append(args, j.Input)
 	}
 
-	cmd, cleanup, err := embedexec.GetExec(ctx, j.Command, args...)
+	// Look up the dependency ID for this command
+	depID, ok := commandToDependencyID[j.Command]
+	if !ok {
+		// Unknown command - try using it as both dep ID and command name
+		depID = j.Command
+	}
+
+	cmd, err := deps.GetExec(ctx, depID, j.Command, args...)
 	if err != nil {
 		_ = q.PushJobStdout(j.ID, fmt.Sprintf("Error starting job: %s", err))
 		_ = q.ErrorJob(j.ID)
 		return fmt.Errorf("start %q: %w", j.Command, err)
-	}
-	if cleanup != nil {
-		defer cleanup()
 	}
 
 	go func() {

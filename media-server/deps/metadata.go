@@ -24,8 +24,9 @@ type DependencyMetadata struct {
 	InstallPath      string              `json:"installPath"`
 	LastChecked      time.Time           `json:"lastChecked"`
 	LastUpdated      time.Time           `json:"lastUpdated"`
-	Files            map[string]FileInfo `json:"files"` // Track installed files
-	JobID            string              `json:"jobId"` // Active download job ID
+	Files            map[string]FileInfo `json:"files"`  // Track installed files
+	JobID            string              `json:"jobId"`  // Active download job ID
+	Ignored          bool                `json:"ignored"` // User chose to ignore this dependency
 }
 
 // MetadataStore manages dependency metadata persistence.
@@ -205,4 +206,36 @@ func (m *MetadataStore) GetJobID(depID string) string {
 	}
 
 	return meta.JobID
+}
+
+// SetIgnored sets or clears the ignored flag for a dependency.
+func (m *MetadataStore) SetIgnored(depID string, ignored bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	meta, ok := m.Dependencies[depID]
+	if !ok {
+		meta = DependencyMetadata{
+			Files: make(map[string]FileInfo),
+		}
+	}
+
+	meta.Ignored = ignored
+	meta.LastChecked = time.Now()
+	m.Dependencies[depID] = meta
+
+	return nil
+}
+
+// IsIgnored returns whether a dependency is marked as ignored.
+func (m *MetadataStore) IsIgnored(depID string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	meta, ok := m.Dependencies[depID]
+	if !ok {
+		return false
+	}
+
+	return meta.Ignored
 }

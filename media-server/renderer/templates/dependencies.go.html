@@ -92,6 +92,11 @@
         color: rgb(59, 130, 246);
       }
 
+      .status-ignored {
+        background: rgba(107, 114, 128, 0.15);
+        color: rgb(107, 114, 128);
+      }
+
       .dep-description {
         color: var(--text-muted);
         font-size: var(--text-sm);
@@ -185,6 +190,15 @@
         cursor: not-allowed;
       }
 
+      .btn-muted {
+        background: rgba(107, 114, 128, 0.15);
+        color: rgb(107, 114, 128);
+      }
+
+      .btn-muted:hover:not(:disabled) {
+        background: rgba(107, 114, 128, 0.25);
+      }
+
       .btn:disabled {
         opacity: 0.5;
         cursor: not-allowed;
@@ -232,10 +246,15 @@
           class="dependency-card"
           data-dep-id="{{ .ID }}"
           data-job-id="{{ .JobID }}"
+          data-ignored="{{ .Ignored }}"
         >
           <div class="dep-header">
             <h3 class="dep-name">{{ .Name }}</h3>
+            {{ if .Ignored }}
+            <span class="status-badge status-ignored">ignored</span>
+            {{ else }}
             <span class="status-badge status-{{ .Status }}">{{ .Status }}</span>
+            {{ end }}
           </div>
 
           <p class="dep-description">{{ .Description }}</p>
@@ -290,12 +309,31 @@
           </div>
 
           <div class="dep-actions">
-            {{ if eq .Status "not_installed" }}
+            {{ if .Ignored }}
             <button
               class="btn btn-primary"
               onclick="downloadDependency('{{ .ID }}')"
             >
               Download
+            </button>
+            <button
+              class="btn btn-tertiary"
+              onclick="ignoreDependency('{{ .ID }}', false)"
+            >
+              Unignore
+            </button>
+            {{ else if eq .Status "not_installed" }}
+            <button
+              class="btn btn-primary"
+              onclick="downloadDependency('{{ .ID }}')"
+            >
+              Download
+            </button>
+            <button
+              class="btn btn-muted"
+              onclick="ignoreDependency('{{ .ID }}', true)"
+            >
+              Ignore
             </button>
             {{ else if eq .Status "outdated" }}
             <button
@@ -303,6 +341,12 @@
               onclick="downloadDependency('{{ .ID }}')"
             >
               Update
+            </button>
+            <button
+              class="btn btn-muted"
+              onclick="ignoreDependency('{{ .ID }}', true)"
+            >
+              Ignore
             </button>
             {{ else if eq .Status "installed" }}
             <button class="btn btn-success" disabled>Installed</button>
@@ -492,6 +536,32 @@
           .catch((err) => {
             showStatusMessage(
               `Failed to check status: ${err.message}`,
+              'error'
+            );
+          });
+      }
+
+      function ignoreDependency(depID, ignored) {
+        fetch('/dependencies/ignore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dependency_id: depID, ignored: ignored }),
+        })
+          .then((r) => {
+            if (!r.ok) throw new Error('Ignore request failed');
+            return r.json();
+          })
+          .then((data) => {
+            const action = data.ignored ? 'ignored' : 'unignored';
+            showStatusMessage(`${depID} ${action} successfully`, 'success');
+            // Reload page to show updated status
+            setTimeout(() => {
+              window.location.reload();
+            }, 1000);
+          })
+          .catch((err) => {
+            showStatusMessage(
+              `Failed to update ignore status: ${err.message}`,
               'error'
             );
           });
