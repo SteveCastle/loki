@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -34,12 +35,12 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Run Electron app tests
-        run: yarn test || echo "No tests configured yet, continuing..."
+        run: yarn test
         continue-on-error: true
 
       - name: Run Go server tests
         working-directory: media-server
-        run: go test ./... || echo "Go tests failed, continuing for now..."
+        run: go test ./...
         continue-on-error: true
 
   build-and-release:
