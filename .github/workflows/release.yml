@@ -40,7 +40,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0'
+          go-version: '1.24'
           cache-dependency-path: media-server/go.sum
 
       - name: Run Go tests
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
-      tag: ${{ steps.create-tag.outputs.tag }}
+      tag: ${{ steps.set-tag.outputs.tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -78,7 +78,6 @@ jobs:
           fi
 
       - name: Create and push tag
-        id: create-tag
         if: steps.check-tag.outputs.exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
@@ -86,13 +85,13 @@ jobs:
           TAG="v${{ steps.get-version.outputs.version }}"
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Use existing tag
-        if: steps.check-tag.outputs.exists == 'true'
+      - name: Set tag output
+        id: set-tag
         run: |
           TAG="v${{ steps.get-version.outputs.version }}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Tag: $TAG"
 
   build-electron:
     name: Build Electron App
@@ -159,7 +158,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0'
+          go-version: '1.24'
           cache-dependency-path: media-server/go.sum
 
       - name: Build Go binary
