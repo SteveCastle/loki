@@ -8,31 +8,29 @@ import { IpcMainInvokeEvent } from 'electron';
 import { Database } from './database';
 
 const platform = os.platform();
-const isMac = platform === 'darwin';
 const isWindows = platform === 'win32';
 
 // Get platform-specific binary path
 function getBinaryPath(binaryName: string): string {
-  if (isMac) {
-    // macOS uses system-installed exiftool via wrapper script
-    return isDev
-      ? path.join(__dirname, 'resources/bin/darwin', binaryName)
-      : path.join(__dirname, '../../../bin', binaryName);
-  } else if (isWindows) {
-    // Windows uses bundled binaries
-    const exeName = `${binaryName}.exe`;
-    return isDev
-      ? path.join(__dirname, 'resources/bin/win32', exeName)
-      : path.join(__dirname, '../../../bin', exeName);
+  let platformDir;
+  let binaryFile = binaryName;
+  
+  if (platform === 'darwin') {
+    platformDir = 'darwin';
+  } else if (platform === 'win32') {
+    platformDir = 'win32';
+    binaryFile = `${binaryName}.exe`;
   } else {
-    // Linux uses system-installed binaries via wrapper scripts
-    return isDev
-      ? path.join(__dirname, 'resources/bin/linux', binaryName)
-      : path.join(__dirname, '../../../bin', binaryName);
+    // Linux
+    platformDir = 'linux';
   }
+  
+  return isDev
+    ? path.join(__dirname, 'resources/bin', platformDir, binaryFile)
+    : path.join(__dirname, '../../../bin', binaryFile);
 }
 
-const exifToolPath = getBinaryPath('exiftool');
+const ffprobePath = getBinaryPath('ffprobe');
 
 function formatFileSize(size: number): string {
   const i = size === 0 ? 0 : Math.floor(Math.log(size) / Math.log(1024));
@@ -50,14 +48,7 @@ export interface Metadata {
   description?: string;
   transcript?: string;
   hash: string;
-  stableDiffusionMetaData?: StableDiffusionMetaData;
   extendedMetadata?: ExtendedMetadata;
-}
-
-export interface StableDiffusionMetaData {
-  prompt: string;
-  negativePrompt: string;
-  model: string;
 }
 
 export interface FileMetadata {
@@ -75,71 +66,29 @@ interface ExtendedMetadata {
 }
 
 type FileMetadataInput = [string];
-type ExifData = {
-  ImageHeight: number;
-  ImageWidth: number;
-  Parameters: string;
-};
 
-type ArtObject = {
-  prompt: string;
-  negativePrompt: string;
-  steps: number;
-  sampler: string;
-  cfgScale: number;
-  seed: number;
-  size: string;
-  modelHash: string;
-  model: string;
-};
-
-function parseStableDiffusionMetaData(inputString: string): ArtObject {
-  // Split the string at 'Negative prompt:' to separate the prompt and the rest
-  const [prompt, rest] = inputString.split('Negative prompt: ');
-  // Split the rest at 'Steps:' to separate the negative prompt and the rest
-  const [negativePrompt, rest2] = rest.split('Steps: ');
-  // Split the rest at 'Sampler:' to separate the steps and the rest
-  const [steps, rest3] = rest2.split('Sampler: ');
-  // Split the rest at 'cfg_scale:' to separate the sampler and the rest
-  const [sampler, rest4] = rest3.split('CFG scale: ');
-  // Split the rest at 'Seed:' to separate the cfg_scale and the rest
-  const [cfgScale, rest5] = rest4.split('Seed: ');
-  // Split the rest at 'Size:' to separate the seed and the rest
-  const [seed, rest6] = rest5.split('Size: ');
-  // Split the rest at 'Model hash:' to separate the size and the rest
-  const [size, rest7] = rest6.split('Model hash: ');
-  // Split the rest at 'Model:' to separate the model hash and the rest
-  const [modelHash, model] = rest7.split('Model: ');
-
-  return {
-    prompt,
-    negativePrompt,
-    steps: parseInt(steps),
-    sampler,
-    cfgScale: parseFloat(cfgScale),
-    seed: parseInt(seed),
-    size,
-    modelHash,
-    model,
-  };
+interface MediaDimensions {
+  width: number;
+  height: number;
 }
 
-async function getExif(filePath: string): Promise<ExifData | null> {
+// Get media dimensions using ffprobe
+async function getMediaDimensions(filePath: string): Promise<MediaDimensions | null> {
   try {
-    // -j flag to output JSON format
-    const { stdout, stderr } = await execPromisified(
-      `${exifToolPath} -j "${filePath}"`
+    const { stdout } = await execPromisified(
+      `"${ffprobePath}" -v error -select_streams v:0 -show_entries stream=width,height -of json "${filePath}"`
     );
-
-    if (stderr) {
-      console.error(`Error: ${stderr}`);
-      return null;
+    
+    const data = JSON.parse(stdout);
+    if (data.streams && data.streams[0]) {
+      return {
+        width: data.streams[0].width || 0,
+        height: data.streams[0].height || 0
+      };
     }
-
-    const metadata = JSON.parse(stdout);
-    return metadata[0];
+    return null;
   } catch (error) {
-    console.error(`Failed to fetch metadata: ${error}`);
+    console.error(`Failed to fetch media dimensions: ${error}`);
     return null;
   }
 }
@@ -207,15 +156,14 @@ const loadFileMetaData =
       absolutePath,
     ]);
 
-    let exif;
-    let parameters;
+    // Get media dimensions using ffprobe
+    let dimensions;
     try {
-      exif = await getExif(absolutePath);
-      parameters = exif ? exif['Parameters'] : null;
+      dimensions = await getMediaDimensions(absolutePath);
     } catch (e) {
-      exif = null;
-      parameters = null;
+      dimensions = null;
     }
+    
     return {
       description: media?.description,
       transcript: media?.transcript,
@@ -223,13 +171,10 @@ const loadFileMetaData =
       fileMetadata: {
         size: formatFileSize(stats.size),
         modified: stats.mtime,
-        height: exif ? exif['ImageHeight'] : 0,
-        width: exif ? exif['ImageWidth'] : 0,
+        height: dimensions ? dimensions.height : 0,
+        width: dimensions ? dimensions.width : 0,
       },
       extendedMetadata,
-      stableDiffusionMetaData: parameters
-        ? parseStableDiffusionMetaData(parameters)
-        : undefined,
     };
   };
 
