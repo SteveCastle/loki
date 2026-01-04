@@ -338,7 +338,7 @@ func extractOnnxRuntimeFromZip(zipPath, outputPath, libName string, jobID string
 	return nil
 }
 
-// extractOnnxRuntimeFromTarGz extracts the ONNX Runtime library from a tar.gz archive (Linux).
+// extractOnnxRuntimeFromTarGz extracts the ONNX Runtime library from a tar.gz archive (Linux/macOS).
 func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID string, q *jobqueue.Queue) error {
 	// Open the tar.gz file
 	file, err := os.Open(tgzPath)
@@ -362,6 +362,10 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 	var foundProviderLib bool
 	targetDir := filepath.Dir(outputPath)
 
+	// Determine library extension based on platform
+	// Linux: .so, macOS: .dylib
+	libExt := platform.SharedLibExtension()
+
 	// Search for the library files in the tar
 	for {
 		header, err := tarReader.Next()
@@ -377,9 +381,22 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 			continue
 		}
 
-		// Look for the main ONNX Runtime library (e.g., lib/libonnxruntime.so.1.23.1)
-		// The actual file has "lib" prefix and version suffix
-		if strings.Contains(header.Name, "/lib/libonnxruntime.so.") && !strings.Contains(header.Name, "_providers_") {
+		// Look for the main ONNX Runtime library
+		// Linux: lib/libonnxruntime.so.1.23.1
+		// macOS: lib/libonnxruntime.1.23.1.dylib
+		isMainLib := false
+		if runtime.GOOS == "darwin" {
+			// macOS pattern: libonnxruntime.{version}.dylib
+			isMainLib = strings.Contains(header.Name, "/lib/libonnxruntime.") &&
+				strings.HasSuffix(header.Name, ".dylib") &&
+				!strings.Contains(header.Name, "_providers_")
+		} else {
+			// Linux pattern: libonnxruntime.so.{version}
+			isMainLib = strings.Contains(header.Name, "/lib/libonnxruntime.so.") &&
+				!strings.Contains(header.Name, "_providers_")
+		}
+
+		if isMainLib {
 			q.PushJobStdout(jobID, fmt.Sprintf("Found main library at: %s", header.Name))
 
 			// Create output file
@@ -395,7 +412,7 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 				return fmt.Errorf("failed to extract library: %w", err)
 			}
 
-			// Set executable permissions on Linux
+			// Set executable permissions
 			if err := platform.EnsureExecutable(outputPath); err != nil {
 				return fmt.Errorf("failed to set executable permissions: %w", err)
 			}
@@ -405,8 +422,11 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 		}
 
 		// Also extract the providers shared library if present
-		if strings.Contains(header.Name, "/lib/libonnxruntime_providers_shared.so") {
-			providerPath := filepath.Join(targetDir, "libonnxruntime_providers_shared.so")
+		// Linux: libonnxruntime_providers_shared.so
+		// macOS: libonnxruntime_providers_shared.dylib (may not exist)
+		providerPattern := "/lib/libonnxruntime_providers_shared" + libExt
+		if strings.Contains(header.Name, providerPattern) {
+			providerPath := filepath.Join(targetDir, "libonnxruntime_providers_shared"+libExt)
 			q.PushJobStdout(jobID, fmt.Sprintf("Found providers library at: %s", header.Name))
 
 			outFile, err := os.Create(providerPath)
@@ -429,13 +449,14 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 		}
 
 		// If we found both libraries, we can stop early
-		if foundMainLib && foundProviderLib {
+		// Note: providers library is optional on macOS
+		if foundMainLib && (foundProviderLib || runtime.GOOS == "darwin") {
 			break
 		}
 	}
 
 	if !foundMainLib {
-		return fmt.Errorf("libonnxruntime.so not found in archive (looked for /lib/libonnxruntime.so.*)")
+		return fmt.Errorf("libonnxruntime%s not found in archive", libExt)
 	}
 
 	return nil

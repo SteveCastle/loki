@@ -11,7 +11,8 @@
       "Bash(npm install:*)",
       "Bash(npm ls:*)",
       "Bash(node -e:*)",
-      "Bash(ls -la \"C:\\\\Users\\\\steph\\\\dev\\\\loki\\\\src\\\\renderer\\\\components\\\\media-viewers\"\" 2>&1 || echo \"Directory structure: \")"
+      "Bash(GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build:*)",
+      "Bash(GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build:*)"
     ]
   }
 }

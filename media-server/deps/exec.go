@@ -107,22 +107,48 @@ func GetGalleryDlPath() string {
 
 // GetDownloadURL returns the platform-specific download URL for common dependencies.
 func GetFFmpegDownloadURL() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		return "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+	case "darwin":
+		// evermeet.cx provides static FFmpeg builds for macOS (universal binary)
+		return "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip"
+	default: // linux
+		return "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
 	}
-	return "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+}
+
+// GetFFprobeDownloadURL returns the platform-specific download URL for FFprobe.
+// On macOS, FFprobe is downloaded separately from evermeet.cx
+func GetFFprobeDownloadURL() string {
+	if runtime.GOOS == "darwin" {
+		return "https://evermeet.cx/ffmpeg/getrelease/ffprobe/zip"
+	}
+	// On Windows and Linux, ffprobe is included in the FFmpeg archive
+	return ""
 }
 
 func GetYtDlpDownloadURL() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		return "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+	case "darwin":
+		// Universal macOS binary (works on both arm64 and x64)
+		return "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"
+	default: // linux
+		return "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
 	}
-	return "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp"
 }
 
 func GetGalleryDlDownloadURL() string {
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		return "https://github.com/mikf/gallery-dl/releases/latest/download/gallery-dl.exe"
+	case "darwin":
+		// No official macOS binary available - users should install via pip or homebrew
+		// Return empty string to indicate not available for direct download
+		return ""
+	default: // linux
+		return "https://github.com/mikf/gallery-dl/releases/latest/download/gallery-dl.bin"
 	}
-	return "https://github.com/mikf/gallery-dl/releases/latest/download/gallery-dl.bin"
 }
