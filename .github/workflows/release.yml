@@ -123,6 +123,42 @@ jobs:
             release/build/*.zip
           if-no-files-found: warn
 
+  build-electron-macos:
+    name: Build Electron App (macOS)
+    needs: version-and-tag
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --frozen-lockfile
+
+      - name: Build Electron app
+        run: npm run package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-macos
+          path: |
+            release/build/*.dmg
+            release/build/*.zip
+          if-no-files-found: warn
+
   build-go-server:
     name: Build Go Media Server (Windows)
     needs: version-and-tag
@@ -151,6 +187,46 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: media-server-windows-amd64
+          path: build/media-server-*
+
+  build-go-server-macos:
+    name: Build Go Media Server (macOS)
+    needs: version-and-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: media-server/go.sum
+
+      - name: Build Go binary for macOS (arm64)
+        working-directory: ./media-server
+        env:
+          GOOS: darwin
+          GOARCH: arm64
+          CGO_ENABLED: 0
+        run: |
+          OUTPUT_NAME="media-server-darwin-arm64"
+          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
+
+      - name: Build Go binary for macOS (amd64)
+        working-directory: ./media-server
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: 0
+        run: |
+          OUTPUT_NAME="media-server-darwin-amd64"
+          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
+
+      - name: Upload Go binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: media-server-darwin
           path: build/media-server-*
 
   generate-changelog:
@@ -215,7 +291,14 @@ jobs:
   create-release:
     name: Create GitHub Release
     needs:
-      [version-and-tag, build-electron, build-go-server, generate-changelog]
+      [
+        version-and-tag,
+        build-electron,
+        build-electron-macos,
+        build-go-server,
+        build-go-server-macos,
+        generate-changelog,
+      ]
     runs-on: ubuntu-latest
     if: needs.version-and-tag.outputs.tag != ''
     steps:
