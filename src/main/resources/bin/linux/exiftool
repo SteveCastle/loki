@@ -1,0 +1,14 @@
+#!/bin/sh
+# Wrapper script for exiftool on Linux
+# Tries to use system exiftool if available
+
+if command -v exiftool >/dev/null 2>&1; then
+    exec exiftool "$@"
+else
+    echo "Error: exiftool is not installed on this system." >&2
+    echo "Please install exiftool using your package manager:" >&2
+    echo "  Ubuntu/Debian: sudo apt-get install libimage-exiftool-perl" >&2
+    echo "  Fedora/RHEL: sudo dnf install perl-Image-ExifTool" >&2
+    echo "  Arch: sudo pacman -S perl-image-exiftool" >&2
+    exit 1
+fi
