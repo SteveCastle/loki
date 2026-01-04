@@ -492,8 +492,7 @@ app.on('open-file', (event, path) => {
 });
 
 app.on('ready', async () => {
-  // Custom protocol handler using Chromium's native file:// handler via net.fetch
-  // This provides: range request support, proper MIME detection, efficient streaming
+  // Custom protocol handler with full range request support for video seeking
   protocol.handle('gsm', async (request) => {
     try {
       const parsed = new URL(request.url);
@@ -508,20 +507,105 @@ app.on('ready', async () => {
         filePath = filePath.slice(1);
       }
 
-      // Normalize to forward slashes for file:// URL
-      const normalizedPath = filePath.replace(/\\/g, '/');
+      // Normalize path
+      filePath = path.normalize(filePath);
 
-      // Construct proper file:// URL
-      // Windows: file:///C:/Users/... (three slashes before drive letter)
-      // macOS/Linux: file:///Users/... (path already starts with /)
-      const fileUrl =
-        process.platform === 'win32'
-          ? `file:///${normalizedPath}`
-          : `file://${normalizedPath}`;
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        return new Response('Not Found', { status: 404 });
+      }
 
-      // Delegate to Chromium's native file handler
-      // This handles range requests, MIME types, and streaming automatically
-      return net.fetch(fileUrl);
+      // Get file stats
+      const stats = fs.statSync(filePath);
+      const fileSize = stats.size;
+
+      // Determine MIME type
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mov': 'video/quicktime',
+        '.mkv': 'video/x-matroska',
+        '.avi': 'video/x-msvideo',
+        '.m4v': 'video/x-m4v',
+        '.flv': 'video/x-flv',
+        '.mp3': 'audio/mpeg',
+        '.wav': 'audio/wav',
+        '.flac': 'audio/flac',
+        '.m4a': 'audio/mp4',
+        '.ogg': 'audio/ogg',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.jfif': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+        '.svg': 'image/svg+xml',
+      };
+      const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+      // Check for Range header (needed for video seeking)
+      const rangeHeader = request.headers.get('Range');
+
+      if (rangeHeader) {
+        // Parse range header: "bytes=start-end" or "bytes=start-"
+        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+        if (match) {
+          const start = parseInt(match[1], 10);
+          const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+          const chunkSize = end - start + 1;
+
+          // Create stream for the requested range
+          const stream = fs.createReadStream(filePath, { start, end });
+          const webStream = new ReadableStream({
+            start(controller) {
+              stream.on('data', (chunk: Buffer) => {
+                controller.enqueue(new Uint8Array(chunk));
+              });
+              stream.on('end', () => controller.close());
+              stream.on('error', (err: Error) => controller.error(err));
+            },
+            cancel() {
+              stream.destroy();
+            },
+          });
+
+          return new Response(webStream, {
+            status: 206, // Partial Content
+            headers: {
+              'Content-Type': contentType,
+              'Content-Length': chunkSize.toString(),
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+            },
+          });
+        }
+      }
+
+      // No range request - return full file
+      const stream = fs.createReadStream(filePath);
+      const webStream = new ReadableStream({
+        start(controller) {
+          stream.on('data', (chunk: Buffer) => {
+            controller.enqueue(new Uint8Array(chunk));
+          });
+          stream.on('end', () => controller.close());
+          stream.on('error', (err: Error) => controller.error(err));
+        },
+        cancel() {
+          stream.destroy();
+        },
+      });
+
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': fileSize.toString(),
+          'Accept-Ranges': 'bytes',
+        },
+      });
     } catch (error) {
       console.error('Protocol handler error:', error);
       return new Response('Internal Error', { status: 500 });
