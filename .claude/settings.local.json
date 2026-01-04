@@ -10,7 +10,8 @@
       "Bash(npm outdated:*)",
       "Bash(npm install:*)",
       "Bash(npm ls:*)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "Bash(ls -la \"C:\\\\Users\\\\steph\\\\dev\\\\loki\\\\src\\\\renderer\\\\components\\\\media-viewers\"\" 2>&1 || echo \"Directory structure: \")"
     ]
   }
 }
