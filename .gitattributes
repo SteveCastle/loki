@@ -13,3 +13,7 @@
 *.woff  binary
 *.woff2 binary
 *.mp4 binary
+# Platform-specific binaries (Windows binaries are committed, Linux/macOS use download scripts)
+src/main/resources/bin/win32/* binary
+# Shell scripts should keep LF line endings
+*.sh text eol=lf

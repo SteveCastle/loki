@@ -26,7 +26,7 @@
     "build:renderer": "cross-env NODE_ENV=production TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.renderer.prod.ts",
     "postinstall": "ts-node .erb/scripts/check-native-dep.js && electron-builder install-app-deps && cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.renderer.dev.dll.ts",
     "lint": "cross-env NODE_ENV=development eslint . --ext .js,.jsx,.ts,.tsx",
-    "package": "ts-node ./.erb/scripts/prebuild-cleanup.js && ts-node ./.erb/scripts/clean.js dist && npm run build && electron-builder build --publish never",
+    "package": "node ./.erb/scripts/check-binaries.js && ts-node ./.erb/scripts/prebuild-cleanup.js && ts-node ./.erb/scripts/clean.js dist && npm run build && electron-builder build --publish never",
     "prepare": "husky install",
     "rebuild": "electron-rebuild --parallel --types prod,dev,optional --module-dir release/app",
     "start": "ts-node ./.erb/scripts/check-port-in-use.js && npm run start:renderer",
@@ -243,11 +243,20 @@
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist",
       "binaries": [
-        "src/main/resources/bin/ffmpeg",
-        "src/main/resources/bin/ffprobe"
+        "src/main/resources/bin/darwin/ffmpeg",
+        "src/main/resources/bin/darwin/ffprobe"
       ],
       "icon": "assets/icon.png",
-      "gatekeeperAssess": false
+      "gatekeeperAssess": false,
+      "extraResources": [
+        {
+          "from": "./src/main/resources/bin/darwin/",
+          "to": "bin",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
     },
     "fileAssociations": [
       {
@@ -334,13 +343,31 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "extraResources": [
+        {
+          "from": "./src/main/resources/bin/win32/",
+          "to": "bin",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
     },
     "linux": {
       "target": [
         "AppImage"
       ],
-      "category": "Development"
+      "category": "Development",
+      "extraResources": [
+        {
+          "from": "./src/main/resources/bin/linux/",
+          "to": "bin",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
     },
     "directories": {
       "app": "release/app",
@@ -348,14 +375,7 @@
       "output": "release/build"
     },
     "extraResources": [
-      "./assets/**",
-      {
-        "from": "./src/main/resources/bin/",
-        "to": "bin",
-        "filter": [
-          "**/*"
-        ]
-      }
+      "./assets/**"
     ],
     "publish": {
       "provider": "github",

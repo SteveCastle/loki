@@ -24,7 +24,32 @@ function killElectronProcesses() {
       // Kill electron processes on Unix-like systems
       console.log('Killing any running Electron processes...');
       try {
-        execSync('pkill -f electron || true', { stdio: 'ignore' });
+        // Use pgrep to find electron binary processes (not scripts containing 'electron')
+        // Using exact match for electron binary to avoid matching this script
+        const electronPids = execSync('pgrep "^electron$" || true', { encoding: 'utf8' }).trim();
+        if (electronPids) {
+          const pids = electronPids.split('\n').filter(pid => pid.trim());
+          const currentPid = process.pid;
+          const parentPid = process.ppid;
+          
+          pids.forEach(pid => {
+            const numPid = parseInt(pid, 10);
+            // Validate PID and ensure it's not a system process or this script's process chain
+            if (Number.isInteger(numPid) && numPid > 0 && numPid !== currentPid && numPid !== parentPid && numPid !== 1) {
+              try {
+                // Check if it's actually an electron process (not this script)
+                const cmdline = execSync(`ps -p ${numPid} -o args= 2>/dev/null || true`, { encoding: 'utf8' }).trim();
+                // Only kill if it's an actual electron binary or the Lowkey Media Viewer app
+                // Using regex for precise matching
+                if (cmdline && (/\/electron(\s|$)/.test(cmdline) || cmdline.includes('Lowkey Media Viewer'))) {
+                  execSync(`kill ${numPid} 2>/dev/null || true`, { stdio: 'ignore' });
+                }
+              } catch (e) {
+                // Ignore errors - process might have already exited
+              }
+            }
+          });
+        }
       } catch (e) {
         // Ignore errors
       }
