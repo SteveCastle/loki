@@ -43,25 +43,18 @@ function writeFilePathsWindows(filePaths: string[]): void {
   const normalizedPaths = filePaths.map((p) => path.resolve(p));
 
   // Build PowerShell script that uses System.Windows.Forms.Clipboard
+  // Use semicolons for statement separation to work as single-line command
   const pathsArray = normalizedPaths
-    .map((p) => `"${p.replace(/"/g, '`"')}"`)
+    .map((p) => `'${p.replace(/'/g, "''")}'`)
     .join(',');
 
-  const psScript = `
-Add-Type -AssemblyName System.Windows.Forms
-$files = New-Object System.Collections.Specialized.StringCollection
-$paths = @(${pathsArray})
-foreach ($p in $paths) {
-    $files.Add($p) | Out-Null
-}
-[System.Windows.Forms.Clipboard]::SetFileDropList($files)
-`;
+  // Single-line PowerShell script with semicolon separators
+  const psScript = `Add-Type -AssemblyName System.Windows.Forms; $files = New-Object System.Collections.Specialized.StringCollection; @(${pathsArray}) | ForEach-Object { $files.Add($_) | Out-Null }; [System.Windows.Forms.Clipboard]::SetFileDropList($files)`;
 
   try {
-    execSync(
-      `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
-      { windowsHide: true }
-    );
+    execSync(`powershell -NoProfile -NonInteractive -Command "${psScript}"`, {
+      windowsHide: true,
+    });
   } catch (error) {
     console.error('Failed to copy files to clipboard on Windows:', error);
     throw error;
@@ -201,15 +194,12 @@ export function readFilePaths(): string[] {
 }
 
 function readFilePathsWindows(): string[] {
-  const psScript = `
-Add-Type -AssemblyName System.Windows.Forms
-$files = [System.Windows.Forms.Clipboard]::GetFileDropList()
-$files | ForEach-Object { Write-Output $_ }
-`;
+  // Single-line PowerShell script with semicolon separators
+  const psScript = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::GetFileDropList() | ForEach-Object { Write-Output $_ }`;
 
   try {
     const result = execSync(
-      `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"').replace(/\n/g, ' ')}"`,
+      `powershell -NoProfile -NonInteractive -Command "${psScript}"`,
       { windowsHide: true, encoding: 'utf8' }
     );
     return result
