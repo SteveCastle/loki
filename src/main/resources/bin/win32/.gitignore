@@ -1,0 +1,4 @@
+# Downloaded binaries (run download-binaries.sh/ps1 to get these)
+ffmpeg.exe
+ffprobe.exe
+ffplay.exe
