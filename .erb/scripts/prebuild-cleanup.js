@@ -24,7 +24,31 @@ function killElectronProcesses() {
       // Kill electron processes on Unix-like systems
       console.log('Killing any running Electron processes...');
       try {
-        execSync('pkill -f electron || true', { stdio: 'ignore' });
+        // Use pgrep to find electron processes and kill them individually
+        // This is safer than pkill as it doesn't risk killing the build process
+        const electronPids = execSync('pgrep -f "electron" || true', { encoding: 'utf8' }).trim();
+        if (electronPids) {
+          const pids = electronPids.split('\n').filter(pid => pid.trim());
+          const currentPid = process.pid;
+          const parentPid = process.ppid;
+          
+          pids.forEach(pid => {
+            const numPid = parseInt(pid, 10);
+            // Don't kill the current process, parent process, or process group leaders
+            if (numPid && numPid !== currentPid && numPid !== parentPid && numPid !== 1) {
+              try {
+                // Check if it's actually an electron process (not this script)
+                const cmdline = execSync(`ps -p ${numPid} -o args= 2>/dev/null || true`, { encoding: 'utf8' }).trim();
+                // Only kill if it's an actual electron binary or Electron app
+                if (cmdline && (cmdline.includes('/electron ') || cmdline.includes('/electron$') || cmdline.includes('Lowkey Media Viewer'))) {
+                  execSync(`kill ${numPid} 2>/dev/null || true`, { stdio: 'ignore' });
+                }
+              } catch (e) {
+                // Ignore errors - process might have already exited
+              }
+            }
+          });
+        }
       } catch (e) {
         // Ignore errors
       }
