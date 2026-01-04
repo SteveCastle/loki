@@ -94,11 +94,12 @@ func downloadFFmpeg(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	downloadURL := dep.DownloadURL
 	q.PushJobStdout(j.ID, fmt.Sprintf("Download URL: %s", downloadURL))
 
-	// Determine archive type
+	// Determine archive type based on platform
 	var archivePath string
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows", "darwin":
 		archivePath = filepath.Join(dep.TargetDir, "ffmpeg.zip")
-	} else {
+	default: // linux
 		archivePath = filepath.Join(dep.TargetDir, "ffmpeg.tar.xz")
 	}
 
@@ -111,12 +112,34 @@ func downloadFFmpeg(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	// Extract the archive
 	q.PushJobStdout(j.ID, "Extracting files...")
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		if err := extractFFmpegZip(archivePath, dep.TargetDir, j.ID, q); err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Extraction failed: %v", err))
 			return fmt.Errorf("extraction failed: %w", err)
 		}
-	} else {
+	case "darwin":
+		if err := extractFFmpegZipDarwin(archivePath, dep.TargetDir, j.ID, q); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Extraction failed: %v", err))
+			return fmt.Errorf("extraction failed: %w", err)
+		}
+		// On macOS, FFprobe is downloaded separately
+		q.PushJobStdout(j.ID, "Downloading FFprobe...")
+		ffprobeURL := GetFFprobeDownloadURL()
+		if ffprobeURL != "" {
+			ffprobeArchive := filepath.Join(dep.TargetDir, "ffprobe.zip")
+			if err := downloadFile(j.Ctx, ffprobeArchive, ffprobeURL, j.ID, q); err != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("FFprobe download failed: %v", err))
+				return fmt.Errorf("ffprobe download failed: %w", err)
+			}
+			if err := extractFFmpegZipDarwin(ffprobeArchive, dep.TargetDir, j.ID, q); err != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("FFprobe extraction failed: %v", err))
+				return fmt.Errorf("ffprobe extraction failed: %w", err)
+			}
+			os.Remove(ffprobeArchive)
+			q.PushJobStdout(j.ID, "✓ FFprobe download complete")
+		}
+	default: // linux
 		if err := extractFFmpegTarXz(archivePath, dep.TargetDir, j.ID, q); err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Extraction failed: %v", err))
 			return fmt.Errorf("extraction failed: %w", err)
@@ -220,6 +243,63 @@ func extractFFmpegZip(archivePath, destDir string, jobID string, q *jobqueue.Que
 		}
 
 		q.PushJobStdout(jobID, fmt.Sprintf("Extracted: %s", relPath))
+	}
+
+	return nil
+}
+
+// extractFFmpegZipDarwin extracts FFmpeg/FFprobe from a ZIP archive (macOS).
+// The evermeet.cx ZIP contains the executable directly at the root level.
+func extractFFmpegZipDarwin(archivePath, destDir string, jobID string, q *jobqueue.Queue) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip archive: %w", err)
+	}
+	defer reader.Close()
+
+	q.PushJobStdout(jobID, fmt.Sprintf("Found %d files in archive", len(reader.File)))
+
+	for _, file := range reader.File {
+		// Skip directories
+		if file.FileInfo().IsDir() {
+			continue
+		}
+
+		// Get the filename (basename only)
+		fileName := filepath.Base(file.Name)
+
+		// Only extract ffmpeg or ffprobe executables
+		if fileName != "ffmpeg" && fileName != "ffprobe" && fileName != "ffplay" {
+			continue
+		}
+
+		destPath := filepath.Join(destDir, fileName)
+
+		// Create the file
+		outFile, err := os.Create(destPath)
+		if err != nil {
+			return fmt.Errorf("failed to create %s: %w", destPath, err)
+		}
+
+		rc, err := file.Open()
+		if err != nil {
+			outFile.Close()
+			return fmt.Errorf("failed to open %s in archive: %w", file.Name, err)
+		}
+
+		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			return fmt.Errorf("failed to extract %s: %w", file.Name, err)
+		}
+
+		// Make executable
+		if err := os.Chmod(destPath, 0755); err != nil {
+			q.PushJobStdout(jobID, fmt.Sprintf("Warning: could not set permissions on %s: %v", fileName, err))
+		}
+
+		q.PushJobStdout(jobID, fmt.Sprintf("Extracted: %s", fileName))
 	}
 
 	return nil
