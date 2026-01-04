@@ -8,6 +8,7 @@ import {
   ipcMain,
   protocol,
   dialog,
+  net,
   IpcMainInvokeEvent,
 } from 'electron';
 import { autoUpdater } from 'electron-updater';
@@ -22,6 +23,20 @@ import {
 } from './sessionStore';
 
 import type { Database } from './database';
+
+// Register custom protocol scheme as privileged (must be done before app ready)
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'gsm',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+]);
 
 // Heavy modules (database implementation, media, taxonomy, metadata, load-files)
 // are dynamically imported when needed to speed up cold start.
@@ -477,18 +492,86 @@ app.on('open-file', (event, path) => {
 });
 
 app.on('ready', async () => {
-  protocol.registerFileProtocol('gsm', (request, callback) => {
+  protocol.handle('gsm', async (request) => {
     try {
       const parsed = new URL(request.url);
       let filePath = decodeURIComponent(parsed.pathname);
-      // Normalize leading slash on Windows (e.g. /C:/path -> C:/path)
-      if (process.platform === 'win32' && filePath.startsWith('/')) {
+
+      // On Windows, the drive letter becomes the URL host (e.g., gsm://c/Users/... )
+      // We need to reconstruct the path: host + pathname = c + /Users/... = C:/Users/...
+      if (process.platform === 'win32' && parsed.host) {
+        filePath = `${parsed.host.toUpperCase()}:${filePath}`;
+      } else if (process.platform !== 'win32' && filePath.startsWith('/')) {
+        // On non-Windows, just use pathname as-is
+      } else if (process.platform === 'win32' && filePath.startsWith('/')) {
+        // Fallback: remove leading slash if path already has drive letter (e.g., /C:/...)
         filePath = filePath.slice(1);
       }
-      return callback(filePath);
+
+      // Normalize path separators
+      filePath = path.normalize(filePath);
+
+      // Check if file exists
+      if (!fs.existsSync(filePath)) {
+        console.error('File not found:', filePath);
+        return new Response('Not Found', { status: 404 });
+      }
+
+      // Get file extension for mime type
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.mp4': 'video/mp4',
+        '.webm': 'video/webm',
+        '.mov': 'video/quicktime',
+        '.mkv': 'video/x-matroska',
+        '.avi': 'video/x-msvideo',
+        '.m4v': 'video/x-m4v',
+        '.flv': 'video/x-flv',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+        '.bmp': 'image/bmp',
+        '.svg': 'image/svg+xml',
+        '.jfif': 'image/jpeg',
+      };
+      const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+      // Get file stats for content length
+      const stats = fs.statSync(filePath);
+      const fileSize = stats.size;
+
+      // Create a readable stream and convert to web ReadableStream
+      const nodeStream = fs.createReadStream(filePath);
+      const webStream = new ReadableStream({
+        start(controller) {
+          nodeStream.on('data', (chunk: Buffer) => {
+            controller.enqueue(new Uint8Array(chunk));
+          });
+          nodeStream.on('end', () => {
+            controller.close();
+          });
+          nodeStream.on('error', (err: Error) => {
+            controller.error(err);
+          });
+        },
+        cancel() {
+          nodeStream.destroy();
+        },
+      });
+
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': fileSize.toString(),
+          'Accept-Ranges': 'bytes',
+        },
+      });
     } catch (error) {
-      console.error(error);
-      return callback('404');
+      console.error('Protocol handler error:', error);
+      return new Response('Not Found', { status: 404 });
     }
   });
 });

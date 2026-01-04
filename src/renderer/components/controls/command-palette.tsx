@@ -495,7 +495,7 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
           return (
             <div className="tabContent">
               <div className="scrollableTabContent">
-                <p>v2.6.8</p> {/* Consider making version dynamic */}
+                <p>v2.7.0</p> {/* Consider making version dynamic */}
                 <SettingsList
                   filterType="general"
                   battleMode={battleMode}

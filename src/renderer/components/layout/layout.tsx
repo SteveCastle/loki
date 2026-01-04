@@ -1,10 +1,12 @@
-import { useRef, useContext, useMemo, useState, useEffect } from 'react';
+import { useContext, useState, useEffect, useMemo } from 'react';
 import {
-  PanelGroup,
+  Group as PanelGroup,
   Panel,
-  PanelResizeHandle,
-  ImperativePanelHandle,
-  PanelProps,
+  Separator as PanelResizeHandle,
+  usePanelRef,
+  useDefaultLayout,
+  type PanelProps,
+  type PanelImperativeHandle,
 } from 'react-resizable-panels';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
@@ -16,9 +18,9 @@ import Taxonomy from '../taxonomy/taxonomy';
 import Metadata from '../metadata/metadata';
 import CommandPalette from '../controls/command-palette';
 
-function VerticalHandle({ disabled }: { disabled?: boolean }) {
+function VerticalHandle() {
   return (
-    <PanelResizeHandle className="handle vertical" disabled={disabled}>
+    <PanelResizeHandle className="handle vertical">
       <div className={'inner-handle'}></div>
     </PanelResizeHandle>
   );
@@ -33,32 +35,36 @@ function HorizontalHandle() {
 }
 
 function CollapsiblePanel({
-  panelRef,
+  imperativeRef,
   renderId,
   ...props
-}: PanelProps & { panelRef: any; renderId: number }) {
-  const [collapsed, setCollapsed] = useState(panelRef?.current?.getCollapsed());
+}: PanelProps & { imperativeRef: React.RefObject<PanelImperativeHandle | null>; renderId: number }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    if (panelRef?.current) {
-      setCollapsed(panelRef.current?.getCollapsed());
-    }
-  }, [panelRef.current, renderId]);
+    setMounted(true);
+  }, []);
 
-  function handleCollapse() {
-    setCollapsed(true);
-  }
+  useEffect(() => {
+    if (mounted && imperativeRef?.current) {
+      try {
+        setCollapsed(imperativeRef.current.isCollapsed());
+      } catch {
+        // Panel not yet registered, ignore
+      }
+    }
+  }, [mounted, renderId]);
 
   return (
     <Panel
-      minSize={10}
-      collapsedSize={0}
+      minSize="10%"
+      collapsedSize="0%"
       className="panel"
       collapsible
-      ref={panelRef}
-      onCollapse={handleCollapse}
-      onResize={() => {
-        setCollapsed(false);
+      panelRef={imperativeRef}
+      onResize={(size) => {
+        setCollapsed(size.asPercentage === 0);
       }}
       {...props}
     >
@@ -70,13 +76,6 @@ function CollapsiblePanel({
 const Layout = () => {
   const [renderID, setRenderID] = useState(0);
   const { libraryService } = useContext(GlobalStateContext);
-  const state = useSelector(
-    libraryService,
-    (state) => state,
-    (a, b) => {
-      return a.matches(b);
-    }
-  );
 
   const { library } = useSelector(
     libraryService,
@@ -125,18 +124,18 @@ const Layout = () => {
     () => ({
       getItem(name: string) {
         try {
-          const parsed = JSON.parse(
-            window.electron.store.get(name, '') as string
-          );
-          return parsed[name] || '';
+          const stored = window.electron.store.get(name, '') as string;
+          if (!stored) return null;
+          const parsed = JSON.parse(stored);
+          return JSON.stringify(parsed[name] || null);
         } catch (error) {
           console.error(error);
-          return '';
+          return null;
         }
       },
-      setItem(name: string, value: any) {
+      setItem(name: string, value: string) {
         const encoded = JSON.stringify({
-          [name]: value,
+          [name]: JSON.parse(value),
         });
         window.electron.store.set(name, encoded);
       },
@@ -144,56 +143,79 @@ const Layout = () => {
     []
   );
 
-  const detailRef = useRef<ImperativePanelHandle>(null);
-  const listRef = useRef<ImperativePanelHandle>(null);
-  const metaDataRef = useRef<ImperativePanelHandle>(null);
-  const taxonomyRef = useRef<ImperativePanelHandle>(null);
+  const mainGroupLayout = useDefaultLayout({
+    id: 'main-group',
+    storage: electronStorage,
+  });
+
+  const innerGroupLayout = useDefaultLayout({
+    id: 'inner-group',
+    storage: electronStorage,
+  });
+
+  const detailRef = usePanelRef();
+  const listRef = usePanelRef();
+  const metaDataRef = usePanelRef();
+  const taxonomyRef = usePanelRef();
 
   function handleListClick() {
     setRenderID((id) => id + 1);
-    listRef.current?.resize(0);
-    detailRef.current?.resize(100);
+    try {
+      listRef.current?.resize('0%');
+      detailRef.current?.resize('100%');
+    } catch {
+      // Panels not yet registered, ignore
+    }
   }
 
   function handleDetailClick() {
-    if (listRef.current?.getCollapsed()) {
-      setRenderID((id) => id + 1);
-      detailRef.current?.resize(0);
-      listRef.current?.resize(100);
-    } else {
-      setRenderID((id) => id + 1);
-      listRef.current?.resize(0);
-      detailRef.current?.resize(100);
+    try {
+      if (listRef.current?.isCollapsed()) {
+        setRenderID((id) => id + 1);
+        detailRef.current?.resize('0%');
+        listRef.current?.resize('100%');
+      } else {
+        setRenderID((id) => id + 1);
+        listRef.current?.resize('0%');
+        detailRef.current?.resize('100%');
+      }
+    } catch {
+      // Panels not yet registered, ignore
     }
   }
 
   useEffect(() => {
     if (library.length === 1) {
-      handleListClick();
+      // Delay to ensure panels are registered
+      const timer = setTimeout(() => {
+        handleListClick();
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [library]);
 
   return (
-    <PanelGroup
-      direction="vertical"
-      disablePointerEventsDuringResize
-      autoSaveId="panels"
-      storage={electronStorage}
-    >
+    <>
       <CommandPalette />
-      <Panel className="panel" order={0}>
-        <PanelGroup
-          direction="horizontal"
-          disablePointerEventsDuringResize
-          autoSaveId="nestedPanels"
-          storage={electronStorage}
-        >
+      <PanelGroup
+        orientation="vertical"
+        id="main-group"
+        defaultLayout={mainGroupLayout.defaultLayout}
+        onLayoutChange={mainGroupLayout.onLayoutChange}
+      >
+        <Panel className="panel" id="main-panel" defaultSize="100%">
+          <PanelGroup
+            orientation="horizontal"
+            id="inner-group"
+            defaultLayout={innerGroupLayout.defaultLayout}
+            onLayoutChange={innerGroupLayout.onLayoutChange}
+          >
           {libraryLayout === 'left' ? (
             <>
               <CollapsiblePanel
-                defaultSize={20}
-                order={0}
-                panelRef={taxonomyRef}
+                id="taxonomy-panel"
+                defaultSize="20%"
+                imperativeRef={taxonomyRef}
                 renderId={renderID}
               >
                 <Taxonomy />
@@ -202,23 +224,21 @@ const Layout = () => {
             </>
           ) : null}
           <CollapsiblePanel
+            id="list-panel"
             className="panel"
-            defaultSize={50}
-            order={1}
-            panelRef={listRef}
+            defaultSize="50%"
+            imperativeRef={listRef}
             renderId={renderID}
           >
             <div className="panel" onDoubleClick={handleListClick}>
               <List />
             </div>
           </CollapsiblePanel>
-          <VerticalHandle
-            disabled={state.matches({ library: 'loadingFromFS' })}
-          />
+          <VerticalHandle />
           <CollapsiblePanel
+            id="detail-panel"
             className="panel"
-            order={2}
-            panelRef={detailRef}
+            imperativeRef={detailRef}
             renderId={renderID}
           >
             <div
@@ -233,28 +253,29 @@ const Layout = () => {
           </CollapsiblePanel>
           <VerticalHandle />
           <CollapsiblePanel
-            order={3}
-            panelRef={metaDataRef}
+            id="metadata-panel"
+            imperativeRef={metaDataRef}
             renderId={renderID}
           >
             <Metadata />
           </CollapsiblePanel>
         </PanelGroup>
       </Panel>
-      {libraryLayout === 'bottom' ? (
-        <>
-          <HorizontalHandle />
-          <CollapsiblePanel
-            defaultSize={20}
-            order={1}
-            panelRef={taxonomyRef}
-            renderId={renderID}
-          >
-            <Taxonomy />
-          </CollapsiblePanel>
-        </>
-      ) : null}
-    </PanelGroup>
+        {libraryLayout === 'bottom' ? (
+          <>
+            <HorizontalHandle />
+            <CollapsiblePanel
+              id="taxonomy-panel-bottom"
+              defaultSize="20%"
+              imperativeRef={taxonomyRef}
+              renderId={renderID}
+            >
+              <Taxonomy />
+            </CollapsiblePanel>
+          </>
+        ) : null}
+      </PanelGroup>
+    </>
   );
 };
 

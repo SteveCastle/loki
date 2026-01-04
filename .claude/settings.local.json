@@ -5,7 +5,12 @@
       "Bash(npm test:*)",
       "Bash(go mod tidy:*)",
       "Bash(go build:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npm audit:*)",
+      "Bash(npm outdated:*)",
+      "Bash(npm install:*)",
+      "Bash(npm ls:*)",
+      "Bash(node -e:*)"
     ]
   }
 }

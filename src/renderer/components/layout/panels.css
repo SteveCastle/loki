@@ -3,10 +3,30 @@
   width: 100%;
 }
 
+/* react-resizable-panels v4 styles */
+[data-group] {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+[data-group][data-orientation='horizontal'] {
+  flex-direction: row;
+}
+
+[data-group][data-orientation='vertical'] {
+  flex-direction: column;
+}
+
+[data-panel] {
+  overflow: hidden;
+}
+
 .panel {
   display: flex;
   background-color: rgb(3, 3, 3);
   width: 100%;
+  height: 100%;
 }
 
 .panel-content {
