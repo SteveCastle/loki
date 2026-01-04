@@ -6,12 +6,33 @@ const isDev = require('electron-is-dev');
 import { promisify } from 'util';
 import { IpcMainInvokeEvent } from 'electron';
 import { Database } from './database';
-const isMac = os.platform() === 'darwin';
-const exifToolPath = isMac
-  ? 'exiftool'
-  : isDev
-  ? path.join(__dirname, 'resources/bin/exiftool')
-  : path.join(__dirname, '../../../bin/exiftool');
+
+const platform = os.platform();
+const isMac = platform === 'darwin';
+const isWindows = platform === 'win32';
+
+// Get platform-specific binary path
+function getBinaryPath(binaryName: string): string {
+  if (isMac) {
+    // macOS uses system-installed exiftool via wrapper script
+    return isDev
+      ? path.join(__dirname, 'resources/bin/darwin', binaryName)
+      : path.join(__dirname, '../../../bin', binaryName);
+  } else if (isWindows) {
+    // Windows uses bundled binaries
+    const exeName = `${binaryName}.exe`;
+    return isDev
+      ? path.join(__dirname, 'resources/bin/win32', exeName)
+      : path.join(__dirname, '../../../bin', exeName);
+  } else {
+    // Linux uses system-installed binaries via wrapper scripts
+    return isDev
+      ? path.join(__dirname, 'resources/bin/linux', binaryName)
+      : path.join(__dirname, '../../../bin', binaryName);
+  }
+}
+
+const exifToolPath = getBinaryPath('exiftool');
 
 function formatFileSize(size: number): string {
   const i = size === 0 ? 0 : Math.floor(Math.log(size) / Math.log(1024));

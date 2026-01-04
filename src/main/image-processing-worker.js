@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { promisify } = require('util');
 const execFile = promisify(require('child_process').execFile);
 const crypto = require('crypto');
@@ -12,12 +13,31 @@ try {
 }
 
 const isDev = process.env.NODE_ENV === 'development';
-const ffmpegPath = isDev
-  ? path.join(__dirname, 'resources/bin/ffmpeg')
-  : path.join(__dirname, '../../../bin/ffmpeg');
-const ffProbePath = isDev
-  ? path.join(__dirname, 'resources/bin/ffprobe')
-  : path.join(__dirname, '../../../bin/ffprobe');
+const platform = os.platform();
+const isWindows = platform === 'win32';
+
+// Get platform-specific binary path
+function getBinaryPath(binaryName) {
+  let platformDir;
+  let binaryFile = binaryName;
+  
+  if (platform === 'darwin') {
+    platformDir = 'darwin';
+  } else if (platform === 'win32') {
+    platformDir = 'win32';
+    binaryFile = `${binaryName}.exe`;
+  } else {
+    // Linux
+    platformDir = 'linux';
+  }
+  
+  return isDev
+    ? path.join(__dirname, 'resources/bin', platformDir, binaryFile)
+    : path.join(__dirname, '../../../bin', binaryFile);
+}
+
+const ffmpegPath = getBinaryPath('ffmpeg');
+const ffProbePath = getBinaryPath('ffprobe');
 
 function createHash(input) {
   return crypto.createHash('sha256').update(input).digest('hex');

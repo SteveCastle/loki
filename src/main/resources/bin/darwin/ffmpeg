@@ -1,0 +1,12 @@
+#!/bin/sh
+# Wrapper script for ffmpeg on macOS
+# Uses Homebrew-installed ffmpeg if available
+
+if command -v ffmpeg >/dev/null 2>&1; then
+    exec ffmpeg "$@"
+else
+    echo "Error: ffmpeg is not installed on this system." >&2
+    echo "Please install ffmpeg using Homebrew:" >&2
+    echo "  brew install ffmpeg" >&2
+    exit 1
+fi
