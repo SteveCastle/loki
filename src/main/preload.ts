@@ -55,7 +55,8 @@ export type Channels =
   | 'delete-file'
   | 'minimize'
   | 'load-duplicates-by-path'
-  | 'merge-duplicates-by-path';
+  | 'merge-duplicates-by-path'
+  | 'check-for-updates';
 
 const loadMediaFromDB = async (
   tags: string[],

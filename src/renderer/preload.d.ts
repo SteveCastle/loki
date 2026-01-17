@@ -2,6 +2,14 @@ import { Channels } from 'main/preload';
 import type { VttCue } from 'main/parse-vtt';
 import { FilterModeOption } from 'settings';
 
+// Update check result type
+interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  error: string | null;
+}
+
 // Session store data types
 type SessionKey = 'library' | 'cursor' | 'query' | 'previous';
 

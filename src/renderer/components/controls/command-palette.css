@@ -170,34 +170,33 @@
   text-align: center;
 }
 
-.CommandPalette .menuBarRight .patreonButton {
-  background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+.CommandPalette .menuBarRight .supportButton {
+  background: linear-gradient(135deg, #00c896, #00a67d);
   border: none;
   border-radius: 3px;
   color: white;
-  padding: 2px 8px;
+  padding: 2px 10px;
   margin: 4px;
   cursor: pointer;
   font-size: 9px;
   font-weight: 600;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
   text-transform: uppercase;
   transition: all 0.2s ease;
-  box-shadow: 0 1px 3px rgba(238, 90, 82, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  height: 16px;
-  min-width: 50px;
+  box-shadow: 0 1px 4px rgba(0, 200, 150, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  height: 18px;
+  min-width: 54px;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.8;
 }
 
-.CommandPalette .menuBarRight .patreonButton:hover {
-  background: linear-gradient(135deg, #ff5252, #e53935);
-  box-shadow: 0 2px 6px rgba(238, 90, 82, 0.4);
-  border-color: rgba(255, 255, 255, 0.2);
-  opacity: 1;
+.CommandPalette .menuBarRight .supportButton:hover {
+  background: linear-gradient(135deg, #00dba6, #00c896);
+  box-shadow: 0 2px 8px rgba(0, 200, 150, 0.5);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
 }
 
 .CommandPalette .tabContent {
@@ -460,10 +459,16 @@
   left: -12px;
 }
 
-/* Version Badge */
-.CommandPalette .versionBadge {
-  display: inline-block;
+/* Version Info Container */
+.CommandPalette .versionContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   margin-top: 12px;
+}
+
+.CommandPalette .versionBadge {
   padding: 2px 8px;
   font-size: 9px;
   font-weight: 500;
@@ -473,5 +478,45 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   text-transform: uppercase;
-  align-self: center;
+}
+
+.CommandPalette .checkUpdateBtn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.CommandPalette .checkUpdateBtn:hover {
+  color: rgba(255, 255, 255, 0.7);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.CommandPalette .updateStatus {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.CommandPalette .updateStatus.checking {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.CommandPalette .updateStatus.current {
+  color: rgba(0, 200, 150, 0.7);
+}
+
+.CommandPalette .updateStatus.available {
+  color: rgba(255, 180, 80, 0.9);
+}
+
+.CommandPalette .updateStatus.error {
+  color: rgba(255, 100, 100, 0.7);
+  font-size: 8px;
 }

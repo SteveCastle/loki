@@ -148,6 +148,68 @@ ipcMain.handle('get-user-data-path', async () => {
   return app.getPath('userData');
 });
 
+// Check for updates from GitHub releases
+ipcMain.handle('check-for-updates', async () => {
+  const currentVersion = app.getVersion();
+
+  try {
+    const response = await net.fetch(
+      'https://api.github.com/repos/stevecastle/loki/releases/latest',
+      {
+        headers: {
+          'User-Agent': 'Lowkey-Media-Viewer',
+          Accept: 'application/vnd.github.v3+json',
+        },
+      }
+    );
+
+    if (!response.ok) {
+      return {
+        currentVersion,
+        latestVersion: null,
+        updateAvailable: false,
+        error: `GitHub API error: ${response.status}`,
+      };
+    }
+
+    const data = (await response.json()) as { tag_name?: string };
+    const latestTag = data.tag_name || '';
+    // Remove 'v' prefix if present for comparison
+    const latestVersion = latestTag.replace(/^v/, '');
+
+    // Compare versions (simple semver comparison)
+    const current = currentVersion.split('.').map(Number);
+    const latest = latestVersion.split('.').map(Number);
+
+    let updateAvailable = false;
+    for (let i = 0; i < Math.max(current.length, latest.length); i++) {
+      const c = current[i] || 0;
+      const l = latest[i] || 0;
+      if (l > c) {
+        updateAvailable = true;
+        break;
+      } else if (c > l) {
+        // Current version is ahead (dev build)
+        break;
+      }
+    }
+
+    return {
+      currentVersion,
+      latestVersion,
+      updateAvailable,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      currentVersion,
+      latestVersion: null,
+      updateAvailable: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+});
+
 // Initialize a new DB
 ipcMain.handle('load-db', async (event, args) => {
   const dbPath = args[0];
