@@ -298,10 +298,10 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
           data-tooltip-id="patreon-button"
           data-tooltip-offset={20}
           data-tooltip-delay-show={500}
-          className="patreonButton"
+          className="supportButton"
           onClick={handlePatreonClick}
         >
-          Patreon
+          Support
         </button>
       </div>
     );
@@ -442,6 +442,70 @@ const StoredItemsView: React.FC<{
 });
 StoredItemsView.displayName = 'StoredItemsView';
 
+type UpdateStatus = 'idle' | 'checking' | 'checked';
+
+interface UpdateCheckResult {
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  error: string | null;
+}
+
+const VersionInfo: React.FC = React.memo(() => {
+  const [status, setStatus] = useState<UpdateStatus>('idle');
+  const [result, setResult] = useState<UpdateCheckResult | null>(null);
+
+  const handleCheckForUpdates = useCallback(async () => {
+    setStatus('checking');
+    try {
+      const updateResult = (await window.electron.ipcRenderer.invoke(
+        'check-for-updates',
+        []
+      )) as UpdateCheckResult;
+      setResult(updateResult);
+      setStatus('checked');
+    } catch {
+      setResult({
+        currentVersion: 'unknown',
+        latestVersion: null,
+        updateAvailable: false,
+        error: 'Failed to check for updates',
+      });
+      setStatus('checked');
+    }
+  }, []);
+
+  const currentVersion = result?.currentVersion || '2.7.1';
+
+  return (
+    <div className="versionContainer">
+      <span className="versionBadge">v{currentVersion}</span>
+      {status === 'idle' && (
+        <button className="checkUpdateBtn" onClick={handleCheckForUpdates}>
+          Check for updates
+        </button>
+      )}
+      {status === 'checking' && (
+        <span className="updateStatus checking">Checking…</span>
+      )}
+      {status === 'checked' && result && (
+        <>
+          {result.error ? (
+            <span className="updateStatus error">{result.error}</span>
+          ) : result.updateAvailable ? (
+            <span className="updateStatus available">
+              v{result.latestVersion} available
+            </span>
+          ) : (
+            <span className="updateStatus current">Up to date</span>
+          )}
+        </>
+      )}
+    </div>
+  );
+});
+VersionInfo.displayName = 'VersionInfo';
+
 const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
   ({
     activeTab,
@@ -500,7 +564,7 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
                   battleMode={battleMode}
                   currentItem={currentItem}
                 />
-                <span className="versionBadge">v2.7.1</span>
+                <VersionInfo />
               </div>
             </div>
           );
