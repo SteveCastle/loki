@@ -34,9 +34,16 @@ interface SessionQueryData {
   textFilter: string;
 }
 
+// State type for tracking which mode the library was loaded from
+type LibraryStateType = 'fs' | 'db' | 'search';
+
 interface SessionPreviousData {
   previousLibrary: SessionLibraryData['library'];
   previousCursor: number;
+  // State type tracking for proper restoration
+  previousStateType?: LibraryStateType | null;
+  previousTextFilter?: string;
+  previousDbQuery?: { tags: string[] };
 }
 
 interface SessionData {
