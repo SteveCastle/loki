@@ -34,9 +34,16 @@ export interface SessionQueryData {
   textFilter: string;
 }
 
+// State type for tracking which mode the library was loaded from
+type LibraryStateType = 'fs' | 'db' | 'search';
+
 export interface SessionPreviousData {
   previousLibrary: Item[];
   previousCursor: number;
+  // State type tracking for proper restoration
+  previousStateType?: LibraryStateType | null;
+  previousTextFilter?: string;
+  previousDbQuery?: { tags: string[] };
 }
 
 export interface SessionData {
@@ -303,7 +310,16 @@ export function updateQuery(
  */
 export function updatePrevious(
   previousLibrary: Item[],
-  previousCursor: number
+  previousCursor: number,
+  previousStateType?: LibraryStateType | null,
+  previousTextFilter?: string,
+  previousDbQuery?: { tags: string[] }
 ): void {
-  setSessionValue('previous', { previousLibrary, previousCursor });
+  setSessionValue('previous', {
+    previousLibrary,
+    previousCursor,
+    previousStateType,
+    previousTextFilter,
+    previousDbQuery,
+  });
 }
