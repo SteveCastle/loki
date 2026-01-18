@@ -567,6 +567,11 @@ app.on('ready', async () => {
       } else if (process.platform === 'win32' && filePath.startsWith('/')) {
         // Fallback: remove leading slash if path has drive letter (e.g., /C:/...)
         filePath = filePath.slice(1);
+      } else if (process.platform !== 'win32' && parsed.host) {
+        // On macOS/Linux, if we have a host, the path was split incorrectly
+        // (e.g., gsm://Users/runes/file.jpg -> host="Users", pathname="/runes/file.jpg")
+        // Reconstruct: /${host}${pathname} = /Users/runes/file.jpg
+        filePath = `/${parsed.host}${filePath}`;
       }
 
       // Normalize path

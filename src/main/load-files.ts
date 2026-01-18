@@ -94,6 +94,36 @@ async function listFilesFastDarwin(
   needMtime: boolean
 ) {
   return new Promise<void>((resolve) => {
+    // If not recursive, a simple directory read is faster and avoids BSD find limitations
+    if (!recursive) {
+      (async () => {
+        try {
+          const dir = await fsPromises.opendir(rootDir);
+          for await (const dirent of dir) {
+            if (dirent.isDirectory()) continue;
+            const fullPath = path.join(rootDir, dirent.name);
+            const base = dirent.name;
+            if (!filterRegex.test(base)) continue;
+            if (needMtime) {
+              try {
+                const st = await fsPromises.stat(fullPath);
+                onFile({ path: fullPath, mtimeMs: st.mtimeMs });
+              } catch {
+                onFile({ path: fullPath, mtimeMs: 0 });
+              }
+            } else {
+              onFile({ path: fullPath, mtimeMs: 0 });
+            }
+          }
+        } catch (e) {
+          // ignore
+        } finally {
+          resolve();
+        }
+      })();
+      return;
+    }
+
     const args = [rootDir, '-type', 'f', '-print0'];
     console.log('[fastest-mac] Spawning find:', { cmd: 'find', args });
     const child = spawn('find', args, {
@@ -102,7 +132,7 @@ async function listFilesFastDarwin(
     });
     console.log('[fastest-mac] child pid:', child.pid);
 
-    let buffer = Buffer.alloc(0);
+    let buffer = '';
     let filesQueued: string[] = [];
     let activeStats = 0;
     const MAX_CONC_STATS = needMtime ? 32 : 0;
@@ -139,10 +169,10 @@ async function listFilesFastDarwin(
     };
 
     child.stdout.on('data', (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
+      buffer += chunk.toString('utf8');
       let idx;
-      while ((idx = buffer.indexOf(0)) !== -1) {
-        const filePath = buffer.slice(0, idx).toString('utf8');
+      while ((idx = buffer.indexOf('\0')) !== -1) {
+        const filePath = buffer.slice(0, idx);
         buffer = buffer.slice(idx + 1);
         if (filePath) handlePath(filePath);
       }
@@ -163,7 +193,7 @@ async function listFilesFastDarwin(
     });
     child.on('close', () => {
       if (buffer.length > 0) {
-        const filePath = buffer.toString('utf8');
+        const filePath = buffer;
         if (filePath) handlePath(filePath);
       }
       finalize();
