@@ -32,6 +32,7 @@ export type Channels =
   | 'load-taxonomy'
   | 'get-tag-count'
   | 'load-file-metadata'
+  | 'load-gif-metadata'
   | 'load-tags-by-media-path'
   | 'create-tag'
   // Job-related IPC handlers removed - now handled by external job runner service
@@ -141,6 +142,11 @@ const mergeDuplicatesByPath = async (path: string) => {
   };
 };
 
+const getGifMetadata = async (filePath: string) => {
+  const result = await ipcRenderer.invoke('load-gif-metadata', [filePath]);
+  return result as { frameCount: number; duration: number } | null;
+};
+
 contextBridge.exposeInMainWorld('electron', {
   loadMediaFromDB,
   loadMediaByDescriptionSearch,
@@ -151,6 +157,7 @@ contextBridge.exposeInMainWorld('electron', {
   regenerateThumbnail,
   loadDuplicatesByPath,
   mergeDuplicatesByPath,
+  getGifMetadata,
   async loadTranscript(filePath: string) {
     const mod = await ensureTranscriptModule();
     return mod.loadTranscript(filePath);
