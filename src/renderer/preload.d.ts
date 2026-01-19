@@ -108,6 +108,10 @@ declare global {
         deleted: string[];
         copiedTags: number;
       }>;
+      getGifMetadata: (filePath: string) => Promise<{
+        frameCount: number;
+        duration: number;
+      } | null>;
       fetchTagPreview: (tag: string) => Promise<string>;
       fetchTagCount: (tag: string) => Promise<number>;
       fetchMediaPreview: (

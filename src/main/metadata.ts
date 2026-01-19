@@ -178,4 +178,50 @@ const loadFileMetaData =
     };
   };
 
-export { loadFileMetaData };
+export interface GifMetadata {
+  frameCount: number;
+  duration: number; // in milliseconds
+}
+
+// Get GIF metadata using ffprobe (frame count and total duration)
+async function getGifMetadata(filePath: string): Promise<GifMetadata | null> {
+  try {
+    // Get frame count
+    const { stdout: frameCountOutput } = await execPromisified(
+      `"${ffprobePath}" -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of json "${filePath}"`
+    );
+
+    // Get duration
+    const { stdout: durationOutput } = await execPromisified(
+      `"${ffprobePath}" -v error -show_entries format=duration -of json "${filePath}"`
+    );
+
+    const frameData = JSON.parse(frameCountOutput);
+    const durationData = JSON.parse(durationOutput);
+
+    const frameCount = frameData.streams?.[0]?.nb_read_frames
+      ? parseInt(frameData.streams[0].nb_read_frames, 10)
+      : 1;
+
+    // Duration is in seconds, convert to milliseconds
+    const durationSeconds = durationData.format?.duration
+      ? parseFloat(durationData.format.duration)
+      : 0;
+    const duration = Math.round(durationSeconds * 1000);
+
+    return { frameCount, duration };
+  } catch (error) {
+    console.error(`Failed to fetch GIF metadata: ${error}`);
+    return null;
+  }
+}
+
+type GetGifMetadataInput = [string];
+const loadGifMetadata =
+  () =>
+  async (_: IpcMainInvokeEvent, args: GetGifMetadataInput): Promise<GifMetadata | null> => {
+    const [filePath] = args;
+    return getGifMetadata(filePath);
+  };
+
+export { loadFileMetaData, loadGifMetadata };

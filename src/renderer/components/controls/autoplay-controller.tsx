@@ -20,7 +20,7 @@ export default function AutoPlayController() {
   // Time-based autoplay
   useAutoPlay(incrementCursor, settings.autoPlayTime || false);
 
-  // Loop-based autoplay for videos
+  // Loop-based autoplay for videos and animated GIFs
   useAutoPlayLoops(incrementCursor, settings.autoPlayVideoLoops || false, loopCount);
 
   return null;

@@ -4,6 +4,7 @@ import { useSelector } from '@xstate/react';
 import { GlobalStateContext, Item } from '../../state';
 import filter from 'renderer/filter';
 import { Image } from '../media-viewers/image';
+import { AnimatedGif } from '../media-viewers/animated-gif';
 import VideoControls from '../controls/video-controls';
 import { Video } from '../media-viewers/video';
 import { Audio } from '../media-viewers/audio';
@@ -41,6 +42,11 @@ function resizeToCover(
     width: newChildWidth,
     height: newChildHeight,
   };
+}
+
+function isGifFile(filePath: string): boolean {
+  const extension = filePath.split('.').pop()?.toLowerCase();
+  return extension === 'gif';
 }
 
 function getPlayer(
@@ -94,7 +100,21 @@ function getPlayer(
     );
   }
   if (getFileType(path) === FileTypes.Image) {
-    // Invariant assering that mediaRef is an image ref.
+    // Use AnimatedGif component for GIF files to enable loop tracking
+    // Single-frame GIFs will be handled like regular images by the component
+    if (isGifFile(path)) {
+      return (
+        <AnimatedGif
+          path={path}
+          coverSize={coverSize}
+          scaleMode={settings.scaleMode}
+          mediaRef={mediaRef as React.RefObject<HTMLImageElement>}
+          handleLoad={handleLoad}
+          orientation={orientation}
+          cache={imageCache}
+        />
+      );
+    }
     return (
       <Image
         path={path}

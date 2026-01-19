@@ -323,6 +323,7 @@ ipcMain.handle('load-db', async (event, args) => {
     mediaModule.regenerateThumbnail(store)
   );
   ipcMain.handle('load-file-metadata', metadataModule.loadFileMetaData(db));
+  ipcMain.handle('load-gif-metadata', metadataModule.loadGifMetadata());
 
   ipcMain.handle(
     'select-new-path',
