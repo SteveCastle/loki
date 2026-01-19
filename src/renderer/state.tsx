@@ -80,6 +80,7 @@ type LibraryState = {
     videoLength: number;
     loopLength: number;
     loopStartTime: number;
+    loopCount: number;
   };
   dbQuery: {
     tags: string[];
@@ -425,6 +426,7 @@ const getInitialContext = (): LibraryState => {
       actualVideoTime: 0,
       loopLength: 0,
       loopStartTime: 0,
+      loopCount: 0,
     },
     settings: {
       order: batched['sortOrder'] as 'asc' | 'desc',
@@ -815,6 +817,26 @@ const libraryMachine = createMachine(
               },
             }),
           },
+          VIDEO_LOOPED: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context) => {
+                return {
+                  ...context.videoPlayer,
+                  loopCount: context.videoPlayer.loopCount + 1,
+                };
+              },
+            }),
+          },
+          RESET_LOOP_COUNT: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context) => {
+                return {
+                  ...context.videoPlayer,
+                  loopCount: 0,
+                };
+              },
+            }),
+          },
         },
       },
       cursor: {
@@ -828,6 +850,10 @@ const libraryMachine = createMachine(
               },
               scrollToCursorEventId: (context, event) =>
                 event.scrollToView ? uniqueId() : context.scrollToCursorEventId,
+              videoPlayer: (context) => ({
+                ...context.videoPlayer,
+                loopCount: 0,
+              }),
             }),
           },
           CLEAR_SCROLL_TO_CURSOR: {
@@ -883,6 +909,10 @@ const libraryMachine = createMachine(
                 scrollToCursorEventId: event.scrollToView
                   ? uniqueId()
                   : context.scrollToCursorEventId,
+                videoPlayer: {
+                  ...context.videoPlayer,
+                  loopCount: 0,
+                },
               };
             }),
           },
@@ -910,6 +940,10 @@ const libraryMachine = createMachine(
                 scrollToCursorEventId: event.scrollToView
                   ? uniqueId()
                   : context.scrollToCursorEventId,
+                videoPlayer: {
+                  ...context.videoPlayer,
+                  loopCount: 0,
+                },
               };
             }),
           },

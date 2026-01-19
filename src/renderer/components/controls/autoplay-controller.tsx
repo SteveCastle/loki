@@ -8,10 +8,20 @@ export default function AutoPlayController() {
     libraryService,
     (state) => state.context.settings
   );
+  const loopCount = useSelector(
+    libraryService,
+    (state) => state.context.videoPlayer.loopCount
+  );
 
-  useAutoPlay(() => {
+  const incrementCursor = () => {
     libraryService.send('INCREMENT_CURSOR');
-  }, settings.autoPlayTime || false);
+  };
+
+  // Time-based autoplay
+  useAutoPlay(incrementCursor, settings.autoPlayTime || false);
+
+  // Loop-based autoplay for videos
+  useAutoPlayLoops(incrementCursor, settings.autoPlayVideoLoops || false, loopCount);
 
   return null;
 }
@@ -37,4 +47,26 @@ export function useAutoPlay(
 
     return () => clearInterval(interval);
   }, [autoPlayTime]);
+}
+
+export function useAutoPlayLoops(
+  callback: () => void,
+  autoPlayVideoLoops: number | false,
+  loopCount: number
+) {
+  const savedCallback = useRef(callback);
+
+  // Keep latest callback in ref
+  useEffect(() => {
+    savedCallback.current = callback;
+  }, [callback]);
+
+  // Trigger when loop count reaches threshold
+  useEffect(() => {
+    if (typeof autoPlayVideoLoops !== 'number' || autoPlayVideoLoops <= 0) return;
+
+    if (loopCount >= autoPlayVideoLoops) {
+      savedCallback.current();
+    }
+  }, [loopCount, autoPlayVideoLoops]);
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useContext, useState } from 'react';
+import React, { useEffect, useContext, useState, useRef } from 'react';
 
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
@@ -84,6 +84,7 @@ export function Video({
   );
 
   const [error, setError] = useState<boolean>(false);
+  const prevTimeRef = useRef<number>(0);
 
   useEffect(() => {
     if (mediaRef && mediaRef.current && settable) {
@@ -99,6 +100,7 @@ export function Video({
 
   useEffect(() => {
     setError(false);
+    prevTimeRef.current = 0;
   }, [path]);
   useEffect(() => {
     if (mediaRef && mediaRef.current && initialTimestamp) {
@@ -136,6 +138,21 @@ export function Video({
     const handleTimeUpdate = () => {
       if (mediaRef && mediaRef.current && settable) {
         const currentTime = mediaRef.current.currentTime;
+        const duration = mediaRef.current.duration;
+        const prevTime = prevTimeRef.current;
+
+        // Detect loop: previous time was near the end, current time is near the start
+        // Use a threshold of 1 second to account for timeupdate event timing
+        if (
+          duration > 0 &&
+          prevTime > duration - 1 &&
+          currentTime < 1
+        ) {
+          libraryService.send('VIDEO_LOOPED');
+        }
+
+        prevTimeRef.current = currentTime;
+
         libraryService.send('SET_ACTUAL_VIDEO_TIME', {
           timeStamp: currentTime,
           eventId,
