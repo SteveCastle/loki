@@ -53,8 +53,8 @@ const FileTypes = {
 
 const Extensions = {
   Image: /\.(jpg|jpeg|png|bmp|svg|jfif|pjpeg|pjp|webp)$/i,
-  Video: /\.(mp4|webm|ogg|mkv|mov|gif)$/i,
-  Audio: /\.(mp3|wav)$/i,
+  Video: /\.(mp4|webm|ogg|mkv|mov|m4v|gif)$/i,
+  Audio: /\.(mp3|wav|flac|aac|m4a|opus|wma|aiff|ape)$/i,
   Document: /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv)$/i,
 };
 
