@@ -412,8 +412,12 @@ export const loadFiles =
         : sortOrder;
     console.log('[loader] sorting', { effectiveSort, total: files.length });
     const sortedFiles = files.sort(sorts[effectiveSort]);
+    // Use case-insensitive matching for Windows compatibility
     const cursorIndex = fileName
-      ? sortedFiles.findIndex((item) => path.basename(item.path) === fileName)
+      ? sortedFiles.findIndex(
+          (item) =>
+            path.basename(item.path).toLowerCase() === fileName.toLowerCase()
+        )
       : 0;
     const cursor = cursorIndex === -1 ? 0 : cursorIndex;
 

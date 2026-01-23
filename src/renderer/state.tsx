@@ -105,6 +105,8 @@ type LibraryState = {
   // When set to a new unique ID, signals the list to scroll to the current cursor
   scrollToCursorEventId: string | null;
   authToken: string | null;
+  // Cache for masonry layout dimensions to maintain stable layout across view switches
+  masonryDimensionsCache: Record<string, { width: number; height: number }>;
 };
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
@@ -251,8 +253,19 @@ const setDB = assign<LibraryState, AnyEventObject>({
     if (!event.data) {
       return context.dbPath;
     }
+    // Clear session store when changing to a different database
+    if (event.data !== context.dbPath) {
+      clearSessionKeys(['library', 'cursor', 'query', 'previous']);
+    }
     window.electron.store.set('dbPath', event.data);
     return event.data;
+  },
+  // Clear initialFile when changing databases so init state doesn't use stale data
+  initialFile: (context, event) => {
+    if (!event.data || event.data === context.dbPath) {
+      return context.initialFile;
+    }
+    return '';
   },
 });
 
@@ -535,6 +548,7 @@ const getInitialContext = (): LibraryState => {
     savedSortByDuringStreaming: null,
     userMovedCursorDuringStreaming: false,
     scrollToCursorEventId: null,
+    masonryDimensionsCache: {},
   };
 };
 
@@ -551,6 +565,21 @@ const libraryMachine = createMachine(
             return {
               ...context.videoPlayer,
               playing: !context.videoPlayer.playing,
+            };
+          },
+        }),
+      },
+      CACHE_MASONRY_DIMENSIONS: {
+        actions: assign<LibraryState, AnyEventObject>({
+          masonryDimensionsCache: (context, event) => {
+            const { itemKey, width, height } = event;
+            // Only update if we don't already have this item cached
+            if (context.masonryDimensionsCache[itemKey]) {
+              return context.masonryDimensionsCache;
+            }
+            return {
+              ...context.masonryDimensionsCache,
+              [itemKey]: { width, height },
             };
           },
         }),
@@ -875,8 +904,8 @@ const libraryMachine = createMachine(
                   (item: Item) =>
                     item?.path &&
                     event.currentItem?.path &&
-                    path.normalize(item?.path) ===
-                      path.normalize(event.currentItem?.path)
+                    path.normalize(item?.path).toLowerCase() ===
+                      path.normalize(event.currentItem?.path).toLowerCase()
                 );
                 console.log('index of current item', event.currentItem, cursor);
                 const finalCursor = cursor > -1 ? cursor : 0;
@@ -1094,53 +1123,64 @@ const libraryMachine = createMachine(
               onDone: {
                 target: 'loadedFromFS',
                 actions: [
-                  'setLibrary',
-                  // First: restore sort and compute final cursor while pinnedPath is still available
-                  assign<LibraryState, AnyEventObject>({
-                    // Restore original sort mode and selection
-                    settings: (context) => ({
-                      ...context.settings,
-                      sortBy: (context.savedSortByDuringStreaming ||
-                        'name') as any,
-                    }),
-                    cursor: (context, event) => {
-                      const lib = (event.data?.library || []) as Item[];
-                      if (!Array.isArray(lib) || lib.length === 0) {
-                        return event.data?.cursor ?? context.cursor;
-                      }
-                      const restoredSort =
-                        (context.savedSortByDuringStreaming || 'name') as any;
+                  // Single atomic assign to prevent intermediate state observations
+                  assign<LibraryState, AnyEventObject>((context, event) => {
+                    const lib = (event.data?.library || []) as Item[];
+                    const newLibraryLoadId = uniqueId();
+                    const restoredSortBy = (context.savedSortByDuringStreaming ||
+                      'name') as Settings['sortBy'];
+
+                    // Calculate final cursor position using pinned path and restored sort
+                    let finalCursor = event.data?.cursor ?? context.cursor;
+                    if (Array.isArray(lib) && lib.length > 0) {
                       const tempLibraryLoadId = 'final-' + uniqueId();
                       const sorted = filter(
                         tempLibraryLoadId,
                         context.textFilter,
                         lib,
                         context.settings.filters,
-                        restoredSort
+                        restoredSortBy
                       );
                       const preferredPaths = [
                         context.pinnedPath || undefined,
                         context.library[context.cursor]?.path || undefined,
                       ].filter(Boolean) as string[];
+
                       for (const p of preferredPaths) {
                         const idx = sorted.findIndex(
                           (it: Item) =>
                             it?.path &&
-                            path.normalize(it.path) === path.normalize(p)
+                            path.normalize(it.path).toLowerCase() ===
+                              path.normalize(p).toLowerCase()
                         );
                         if (idx !== -1) {
-                          updatePersistedCursor(context, idx);
-                          return idx;
+                          finalCursor = idx;
+                          break;
                         }
                       }
-                      return event.data?.cursor ?? context.cursor;
-                    },
-                  }),
-                  // Second: now clear streaming flags and pinned state
-                  assign<LibraryState, AnyEventObject>({
-                    streaming: () => false,
-                    pinnedPath: () => null,
-                    userMovedCursorDuringStreaming: () => false,
+                      updatePersistedCursor(context, finalCursor);
+                    }
+
+                    // Persist library updates
+                    setSessionValues({
+                      library: { library: lib, initialFile: context.initialFile },
+                      cursor: { cursor: finalCursor },
+                    });
+
+                    // Return ALL state changes atomically
+                    return {
+                      library: lib,
+                      libraryLoadId: newLibraryLoadId,
+                      cursor: finalCursor,
+                      settings: {
+                        ...context.settings,
+                        sortBy: restoredSortBy,
+                      },
+                      streaming: false,
+                      pinnedPath: null,
+                      userMovedCursorDuringStreaming: false,
+                      savedSortByDuringStreaming: null,
+                    };
                   }),
                 ],
               },
@@ -1163,12 +1203,13 @@ const libraryMachine = createMachine(
                     );
                     const previousSelectedPath =
                       context.pinnedPath || currentView[context.cursor]?.path;
+                    // Use case-insensitive path matching to avoid duplicates on Windows
                     const existing = new Set(
-                      context.library.map((item) => item.path)
+                      context.library.map((item) => item.path.toLowerCase())
                     );
                     const incoming = (event.data?.files || []) as Item[];
                     const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path)
+                      (f) => f?.path && !existing.has(f.path.toLowerCase())
                     );
                     const updatedLibrary = context.library.concat(newItems);
 
@@ -1656,12 +1697,13 @@ const libraryMachine = createMachine(
                         const previousSelectedPath =
                           context.pinnedPath ||
                           context.library[context.cursor]?.path;
+                        // Use case-insensitive path matching to avoid duplicates on Windows
                         const existing = new Set(
-                          context.library.map((item) => item.path)
+                          context.library.map((item) => item.path.toLowerCase())
                         );
                         const incoming = (event.data?.files || []) as Item[];
                         const newItems = incoming.filter(
-                          (f) => f?.path && !existing.has(f.path)
+                          (f) => f?.path && !existing.has(f.path.toLowerCase())
                         );
                         const updatedLibrary = context.library.concat(newItems);
 
@@ -1679,8 +1721,8 @@ const libraryMachine = createMachine(
                           const newIndex = sorted.findIndex(
                             (item: Item) =>
                               item?.path &&
-                              path.normalize(item.path) ===
-                                path.normalize(previousSelectedPath)
+                              path.normalize(item.path).toLowerCase() ===
+                                path.normalize(previousSelectedPath).toLowerCase()
                           );
                           if (newIndex !== -1) {
                             updatePersistedCursor(context, newIndex);
@@ -1729,12 +1771,13 @@ const libraryMachine = createMachine(
                     const previousSelectedPath =
                       context.pinnedPath ||
                       context.library[context.cursor]?.path;
+                    // Use case-insensitive path matching to avoid duplicates on Windows
                     const existing = new Set(
-                      context.library.map((item) => item.path)
+                      context.library.map((item) => item.path.toLowerCase())
                     );
                     const incoming = (event.data?.files || []) as Item[];
                     const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path)
+                      (f) => f?.path && !existing.has(f.path.toLowerCase())
                     );
                     const updatedLibrary = context.library.concat(newItems);
 
@@ -2017,12 +2060,13 @@ const libraryMachine = createMachine(
                     const previousSelectedPath =
                       context.pinnedPath ||
                       context.library[context.cursor]?.path;
+                    // Use case-insensitive path matching to avoid duplicates on Windows
                     const existing = new Set(
-                      context.library.map((item) => item.path)
+                      context.library.map((item) => item.path.toLowerCase())
                     );
                     const incoming = (event.data?.files || []) as Item[];
                     const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path)
+                      (f) => f?.path && !existing.has(f.path.toLowerCase())
                     );
                     const updatedLibrary = context.library.concat(newItems);
                     if (previousSelectedPath) {
@@ -2039,8 +2083,8 @@ const libraryMachine = createMachine(
                       const newIndex = sorted.findIndex(
                         (item: Item) =>
                           item?.path &&
-                          path.normalize(item.path) ===
-                            path.normalize(previousSelectedPath)
+                          path.normalize(item.path).toLowerCase() ===
+                            path.normalize(previousSelectedPath).toLowerCase()
                       );
                       if (newIndex !== -1) {
                         updatePersistedCursor(context, newIndex);

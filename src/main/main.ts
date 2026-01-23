@@ -258,6 +258,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('delete-file');
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
+  ipcMain.removeHandler('load-gif-metadata');
 
   // Dynamically import heavy modules in parallel and register handlers
   const [mediaModule, taxonomyModule, metadataModule, loadFilesModule] =
@@ -555,6 +556,7 @@ app.on('open-file', (event, path) => {
 });
 
 app.on('ready', async () => {
+  mainWindow?.webContents.openDevTools();
   // Custom protocol handler with full range request support for video seeking
   protocol.handle('gsm', async (request) => {
     try {

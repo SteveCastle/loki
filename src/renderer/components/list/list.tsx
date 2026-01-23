@@ -396,23 +396,37 @@ function MasonryGrid({
   const [containerWidth, setContainerWidth] = useState(0);
   const [scrollTop, setScrollTop] = useState(initialScrollOffset);
 
-  // Cache for dynamically loaded dimensions (for items without pre-calculated sizes)
-  const [loadedDimensions, setLoadedDimensions] = useState<
+  // Local state for fast synchronous updates during current session
+  const [localDimensions, setLocalDimensions] = useState<
     Map<string, { width: number; height: number }>
-  >(new Map());
+  >(() => new Map());
+
+  // On mount, load any persisted dimensions from state machine (for view switch stability)
+  const hasLoadedPersistedRef = useRef(false);
+  useEffect(() => {
+    if (hasLoadedPersistedRef.current) return;
+    hasLoadedPersistedRef.current = true;
+
+    const persistedCache = libraryService.getSnapshot().context.masonryDimensionsCache;
+    if (persistedCache && Object.keys(persistedCache).length > 0) {
+      setLocalDimensions(new Map(Object.entries(persistedCache)));
+    }
+  }, [libraryService]);
 
   // Callback for ListItem to report dimensions when media loads
   const handleDimensionsLoaded = useCallback(
     (itemKey: string, width: number, height: number) => {
-      setLoadedDimensions((prev) => {
-        // Only update if we don't have dimensions for this item yet
+      // Update local state immediately for fast re-render
+      setLocalDimensions((prev) => {
         if (prev.has(itemKey)) return prev;
         const next = new Map(prev);
         next.set(itemKey, { width, height });
         return next;
       });
+      // Also persist to state machine for view switch stability
+      libraryService.send('CACHE_MASONRY_DIMENSIONS', { itemKey, width, height });
     },
-    []
+    [libraryService]
   );
 
   // Resize observer to get container width
@@ -442,9 +456,9 @@ function MasonryGrid({
       if (item.width && item.height) {
         itemHeight = columnWidth / (item.width / item.height);
       } else {
-        // Fall back to dynamically loaded dimensions
+        // Fall back to local dimensions cache (fast updates + initialized from persisted cache)
         const itemKey = getItemKey(item);
-        const cached = loadedDimensions.get(itemKey);
+        const cached = localDimensions.get(itemKey);
         if (cached && cached.width && cached.height) {
           itemHeight = columnWidth / (cached.width / cached.height);
         }
@@ -455,7 +469,7 @@ function MasonryGrid({
       return { index, x, y, width: columnWidth, height: itemHeight, item };
     });
     return { height: Math.max(...colHeights), items: itemPositions };
-  }, [items, columns, containerWidth, loadedDimensions]);
+  }, [items, columns, containerWidth, localDimensions]);
 
   const visibleItems = useMemo(() => {
     // Determine viewport height
@@ -618,7 +632,7 @@ function MasonryGrid({
           // Determine if this item needs dimension loading
           const itemKey = getItemKey(p.item);
           const needsDimensionLoad =
-            !p.item.width && !p.item.height && !loadedDimensions.has(itemKey);
+            !p.item.width && !p.item.height && !localDimensions.has(itemKey);
 
           return (
             <div
