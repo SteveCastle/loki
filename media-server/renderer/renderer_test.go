@@ -123,7 +123,6 @@ func TestTemplatesHasExpectedTemplates(t *testing.T) {
 		"jobRow",
 		"media",
 		"config",
-		"stats",
 		"dependencies",
 		"setup",
 		"editor",
