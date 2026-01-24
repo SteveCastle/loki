@@ -13,7 +13,8 @@
       "Bash(node -e:*)",
       "Bash(GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build:*)",
       "Bash(GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(dir:*)"
     ]
   }
 }
