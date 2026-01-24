@@ -1015,6 +1015,228 @@
           padding-top: calc(8px + var(--safe-top));
         }
       }
+
+      /* Quick Tag Menu - Mobile-first bottom sheet */
+      .tag-menu-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        z-index: 150;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.25s ease, visibility 0.25s ease;
+      }
+
+      .tag-menu-overlay.show {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      .tag-menu {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        max-height: 70vh;
+        background: rgba(20, 20, 20, 0.98);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-top-left-radius: 20px;
+        border-top-right-radius: 20px;
+        z-index: 151;
+        transform: translateY(100%);
+        transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+        display: flex;
+        flex-direction: column;
+        padding-bottom: var(--safe-bottom);
+      }
+
+      .tag-menu.show {
+        transform: translateY(0);
+      }
+
+      .tag-menu-handle {
+        width: 36px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.3);
+        border-radius: 2px;
+        margin: 10px auto 6px;
+        flex-shrink: 0;
+      }
+
+      .tag-menu-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 20px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        flex-shrink: 0;
+      }
+
+      .tag-menu-title {
+        font-size: 17px;
+        font-weight: 600;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .tag-menu-back {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+        color: var(--text);
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+      }
+
+      .tag-menu-back:active {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .tag-menu-back.hidden {
+        visibility: hidden;
+      }
+
+      .tag-menu-close {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+        color: var(--text);
+        font-size: 16px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: background 0.15s;
+      }
+
+      .tag-menu-close:active {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .tag-menu-content {
+        flex: 1;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        padding: 8px 0;
+      }
+
+      .tag-menu-list {
+        padding: 0 12px;
+      }
+
+      .tag-menu-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 16px;
+        margin: 4px 0;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 14px;
+        color: var(--text);
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.15s;
+        border: 1px solid transparent;
+      }
+
+      .tag-menu-item:active {
+        transform: scale(0.98);
+        background: rgba(0, 217, 165, 0.15);
+        border-color: rgba(0, 217, 165, 0.3);
+      }
+
+      .tag-menu-item-icon {
+        font-size: 20px;
+        opacity: 0.6;
+      }
+
+      .tag-menu-item-arrow {
+        font-size: 18px;
+        opacity: 0.4;
+      }
+
+      .tag-menu-item.has-tag {
+        background: rgba(0, 217, 165, 0.12);
+        border-color: rgba(0, 217, 165, 0.25);
+      }
+
+      .tag-menu-item.has-tag .tag-menu-item-check {
+        color: var(--accent);
+        font-size: 18px;
+      }
+
+      /* Long press indicator */
+      .long-press-indicator {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%) scale(0);
+        width: 70px;
+        height: 70px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.08);
+        border: 2px solid rgba(255, 255, 255, 0.25);
+        z-index: 100;
+        pointer-events: none;
+        opacity: 0;
+        transition: transform 0.15s ease, opacity 0.15s ease;
+      }
+
+      .long-press-indicator.active {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: 1;
+      }
+
+      .long-press-indicator::after {
+        content: '';
+        position: absolute;
+        inset: 5px;
+        border-radius: 50%;
+        border: 2px solid transparent;
+        border-top-color: rgba(255, 255, 255, 0.5);
+        animation: longPressSpinner 0.6s linear infinite;
+      }
+
+      @keyframes longPressSpinner {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Toast notification for tag added */
+      .tag-toast {
+        position: fixed;
+        bottom: calc(100px + var(--safe-bottom));
+        left: 50%;
+        transform: translateX(-50%) translateY(20px);
+        background: rgba(0, 217, 165, 0.95);
+        color: #000;
+        padding: 12px 24px;
+        border-radius: 25px;
+        font-size: 14px;
+        font-weight: 500;
+        z-index: 200;
+        opacity: 0;
+        transition: all 0.3s ease;
+        pointer-events: none;
+        white-space: nowrap;
+      }
+
+      .tag-toast.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
     </style>
   </head>
   <body>
@@ -1101,6 +1323,28 @@
       </div>
     </div>
 
+    <!-- Quick Tag Menu (Long Press) -->
+    <div class="tag-menu-overlay" id="tagMenuOverlay"></div>
+    <div class="tag-menu" id="tagMenu">
+      <div class="tag-menu-handle"></div>
+      <div class="tag-menu-header">
+        <button class="tag-menu-back hidden" id="tagMenuBack">←</button>
+        <span class="tag-menu-title" id="tagMenuTitle">Add Tag</span>
+        <button class="tag-menu-close" id="tagMenuClose">✕</button>
+      </div>
+      <div class="tag-menu-content">
+        <div class="tag-menu-list" id="tagMenuList">
+          <!-- Categories or tags will be rendered here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Long press indicator -->
+    <div class="long-press-indicator" id="longPressIndicator"></div>
+
+    <!-- Tag added toast -->
+    <div class="tag-toast" id="tagToast">Tag added</div>
+
     <script>
       // State
       let items = [];
@@ -1147,10 +1391,31 @@
       const installPrompt = document.getElementById('installPrompt');
       const installPromptClose = document.getElementById('installPromptClose');
 
+      // Quick Tag Menu (Long Press) DOM elements
+      const tagMenuOverlay = document.getElementById('tagMenuOverlay');
+      const tagMenu = document.getElementById('tagMenu');
+      const tagMenuBack = document.getElementById('tagMenuBack');
+      const tagMenuTitle = document.getElementById('tagMenuTitle');
+      const tagMenuClose = document.getElementById('tagMenuClose');
+      const tagMenuList = document.getElementById('tagMenuList');
+      const longPressIndicator = document.getElementById('longPressIndicator');
+      const tagToast = document.getElementById('tagToast');
+
       // Tag filter state
       let allTags = [];
       let selectedTags = new Set();
       let filteredTags = [];
+
+      // Long press / Quick tag menu state
+      let tagMenuCategories = [];
+      let tagMenuTags = [];
+      let tagMenuCurrentCategory = null;
+      let currentMediaTags = new Set();
+      let longPressTimer = null;
+      let longPressIndicatorTimer = null;
+      let isLongPressing = false;
+      const LONG_PRESS_DURATION = 500; // ms
+      const LONG_PRESS_INDICATOR_DELAY = 200; // ms before showing indicator
 
       // Storage key for persisting selected tags
       const SELECTED_TAGS_KEY = 'swipe_selected_tags';
@@ -1925,6 +2190,7 @@
 
       // Touch handlers
       let touchStartX = 0;
+      let touchPending = false; // Waiting to see if this is a long press or swipe
 
       function onTouchStart(e) {
         // Ignore touches on UI elements
@@ -1932,7 +2198,9 @@
           e.target.closest('.swipe-actions') ||
           e.target.closest('.swipe-header') ||
           e.target.closest('.filter-modal') ||
-          e.target.closest('.install-prompt')
+          e.target.closest('.install-prompt') ||
+          e.target.closest('.tag-menu') ||
+          e.target.closest('.tag-menu-overlay')
         )
           return;
 
@@ -1947,11 +2215,15 @@
           return;
         }
 
+        // Cancel any existing long press
+        cancelLongPress();
+
         // Multi-touch for pan and zoom
         if (e.touches.length === 2) {
           e.preventDefault();
           isMultiTouch = true;
           isDragging = false;
+          touchPending = false;
           track.classList.remove('dragging');
 
           const touch1 = e.touches[0];
@@ -1967,7 +2239,7 @@
           return;
         }
 
-        // Single touch - only start dragging if not already multi-touch
+        // Single touch - enter pending state (could become swipe or long press)
         if (e.touches.length === 1 && !isMultiTouch) {
           touchStartY = e.touches[0].clientY;
           touchStartX = e.touches[0].clientX;
@@ -1976,14 +2248,8 @@
           lastTouchY = touchStartY;
           lastTouchTime = touchStartTime;
           velocityY = 0;
-          isDragging = true;
-          track.classList.add('dragging');
 
-          // Add dragging class to items for instant response
-          const itemEls = track.querySelectorAll('.swipe-item');
-          itemEls.forEach((el) => el.classList.add('dragging'));
-
-          // Check for double tap
+          // Check for double tap first
           const now = Date.now();
           if (now - lastTapTime < 300) {
             // If zoomed in, reset zoom on double tap
@@ -1992,11 +2258,17 @@
             } else {
               toggleLike();
             }
-            isDragging = false;
-            track.classList.remove('dragging');
-            itemEls.forEach((el) => el.classList.remove('dragging'));
+            lastTapTime = now;
+            return; // Don't start any gesture on double tap
           }
           lastTapTime = now;
+
+          // Enter pending state - we don't know yet if this is a swipe or long press
+          touchPending = true;
+          isDragging = false;
+
+          // Start long press timer
+          startLongPress(touchStartX, touchStartY);
         }
       }
 
@@ -2010,6 +2282,8 @@
         // Handle multi-touch pan and zoom
         if (isMultiTouch && e.touches.length === 2) {
           e.preventDefault();
+          cancelLongPress();
+          touchPending = false;
 
           const item = track.querySelector('[data-offset="0"]');
           if (!item) return;
@@ -2048,6 +2322,26 @@
 
           applyMediaTransform(mediaEl);
           return;
+        }
+
+        // Check if we're in pending state and should transition to dragging
+        if (touchPending && e.touches.length === 1) {
+          const currentX = e.touches[0].clientX;
+          const currentY = e.touches[0].clientY;
+          const deltaX = Math.abs(currentX - touchStartX);
+          const deltaY = Math.abs(currentY - touchStartY);
+
+          // If moved more than 10px, this is a swipe - cancel long press and start dragging
+          if (deltaX > 10 || deltaY > 10) {
+            cancelLongPress();
+            touchPending = false;
+            isDragging = true;
+            track.classList.add('dragging');
+
+            // Add dragging class to items
+            const itemEls = track.querySelectorAll('.swipe-item');
+            itemEls.forEach((el) => el.classList.add('dragging'));
+          }
         }
 
         if (!isDragging) return;
@@ -2135,6 +2429,17 @@
           return;
         }
 
+        // Cancel long press timer if still running
+        cancelLongPress();
+
+        // If long press was triggered, don't process as swipe/tap
+        if (isLongPressing) {
+          isLongPressing = false;
+          touchPending = false;
+          isDragging = false;
+          return;
+        }
+
         // Handle multi-touch end
         if (isMultiTouch) {
           // If we still have touches remaining, update multi-touch state
@@ -2149,6 +2454,26 @@
           } else {
             // Multi-touch ended, reset flag
             isMultiTouch = false;
+          }
+          return;
+        }
+
+        // If still in pending state (no significant movement), this is a tap
+        if (touchPending) {
+          touchPending = false;
+          // Handle tap on video (toggle scrubber/pause)
+          const item = track.querySelector('[data-offset="0"]');
+          const video = item?.querySelector('video');
+          if (video) {
+            if (scrubberVisible) {
+              toggleVideoPause();
+            } else {
+              showScrubber();
+              clearTimeout(scrubberHideTimeout);
+              if (!video.paused) {
+                scrubberHideTimeout = setTimeout(hideScrubber, 3000);
+              }
+            }
           }
           return;
         }
@@ -2213,30 +2538,19 @@
             el.style.opacity = opacity;
             el.style.filter = `brightness(${brightness}) blur(${blur}px)`;
           });
-
-          // Check for tap on video (small movement)
-          if (Math.abs(deltaY) < 10 && Math.abs(deltaX) < 10) {
-            const item = track.querySelector('[data-offset="0"]');
-            const video = item?.querySelector('video');
-            if (video) {
-              // Toggle scrubber visibility on tap, or toggle pause if scrubber visible
-              if (scrubberVisible) {
-                toggleVideoPause();
-              } else {
-                showScrubber();
-                // Reset auto-hide timer
-                clearTimeout(scrubberHideTimeout);
-                if (!video.paused) {
-                  scrubberHideTimeout = setTimeout(hideScrubber, 3000);
-                }
-              }
-            }
-          }
         }
       }
 
       // Keyboard navigation
       function onKeyDown(e) {
+        // Check if tag menu is open
+        if (tagMenu.classList.contains('show')) {
+          if (e.key === 'Escape') {
+            closeTagMenu();
+          }
+          return; // Don't handle other keys when menu is open
+        }
+
         // Check if filter modal is open
         if (filterModal.classList.contains('show')) {
           if (e.key === 'Escape') {
@@ -2262,6 +2576,10 @@
             break;
           case 'f':
             toggleFitMode();
+            break;
+          case 't':
+            // Open tag menu with 't' key
+            openTagMenu();
             break;
         }
       }
@@ -2536,7 +2854,9 @@
           e.target.closest('.swipe-header') ||
           e.target.closest('.filter-modal') ||
           e.target.closest('.video-scrubber') ||
-          e.target.closest('.install-prompt')
+          e.target.closest('.install-prompt') ||
+          e.target.closest('.tag-menu') ||
+          e.target.closest('.tag-menu-overlay')
         ) {
           return;
         }
@@ -2561,7 +2881,7 @@
       container.addEventListener(
         'wheel',
         (e) => {
-          if (e.target.closest('.filter-modal')) return;
+          if (e.target.closest('.filter-modal') || e.target.closest('.tag-menu')) return;
           e.preventDefault();
 
           clearTimeout(wheelTimeout);
@@ -2575,6 +2895,250 @@
         },
         { passive: false }
       );
+
+      // ========================================
+      // Quick Tag Menu (Long Press)
+      // ========================================
+
+      // Long press detection
+      function startLongPress(x, y) {
+        // Position the indicator at touch point
+        longPressIndicator.style.left = x + 'px';
+        longPressIndicator.style.top = y + 'px';
+
+        // Delay showing the indicator so it doesn't flash on quick taps/swipes
+        longPressIndicatorTimer = setTimeout(() => {
+          longPressIndicator.classList.add('active');
+        }, LONG_PRESS_INDICATOR_DELAY);
+
+        longPressTimer = setTimeout(() => {
+          longPressIndicator.classList.remove('active');
+          isLongPressing = true;
+
+          // Vibrate if supported (haptic feedback)
+          if (navigator.vibrate) {
+            navigator.vibrate(50);
+          }
+
+          openTagMenu();
+        }, LONG_PRESS_DURATION);
+      }
+
+      function cancelLongPress() {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+        }
+        if (longPressIndicatorTimer) {
+          clearTimeout(longPressIndicatorTimer);
+          longPressIndicatorTimer = null;
+        }
+        longPressIndicator.classList.remove('active');
+      }
+
+      // Load tags for the menu (grouped by category)
+      async function loadTagMenuData() {
+        try {
+          const response = await fetch('/media/suggest?kind=tag&prefix=');
+          const data = await response.json();
+          const tags = data.tags || [];
+
+          // Group by category
+          const categoryMap = {};
+          tags.forEach(tag => {
+            const cat = tag.category || 'Other';
+            if (!categoryMap[cat]) {
+              categoryMap[cat] = [];
+            }
+            categoryMap[cat].push(tag.label);
+          });
+
+          tagMenuCategories = Object.keys(categoryMap).sort();
+          tagMenuTags = categoryMap;
+        } catch (err) {
+          console.error('Failed to load tag menu data:', err);
+        }
+      }
+
+      // Get tags on current media item
+      function getCurrentMediaTags() {
+        if (items.length === 0) return new Set();
+        const currentItem = items[currentIndex];
+        const tags = new Set();
+        if (currentItem.tags) {
+          currentItem.tags.forEach(t => tags.add(t.label));
+        }
+        return tags;
+      }
+
+      // Open the tag menu (show categories)
+      function openTagMenu() {
+        if (items.length === 0) return;
+
+        currentMediaTags = getCurrentMediaTags();
+        tagMenuCurrentCategory = null;
+
+        // Load tags if not already loaded
+        if (tagMenuCategories.length === 0) {
+          loadTagMenuData().then(() => {
+            renderTagMenuCategories();
+          });
+        } else {
+          renderTagMenuCategories();
+        }
+
+        tagMenuOverlay.classList.add('show');
+        tagMenu.classList.add('show');
+        tagMenuBack.classList.add('hidden');
+        tagMenuTitle.textContent = 'Add Tag';
+      }
+
+      // Close the tag menu
+      function closeTagMenu() {
+        tagMenuOverlay.classList.remove('show');
+        tagMenu.classList.remove('show');
+        tagMenuCurrentCategory = null;
+        isLongPressing = false;
+      }
+
+      // Render category list (step 1)
+      function renderTagMenuCategories() {
+        let html = '';
+        tagMenuCategories.forEach(category => {
+          // Check if any tag in this category is on the current media
+          const tagsInCategory = tagMenuTags[category] || [];
+          const hasAnyTag = tagsInCategory.some(t => currentMediaTags.has(t));
+          const itemClass = hasAnyTag ? 'tag-menu-item has-tag' : 'tag-menu-item';
+
+          html += `
+            <div class="${itemClass}" onclick="selectTagCategory('${escapeAttr(category)}')">
+              <span>${escapeHtml(category)}</span>
+              <span class="tag-menu-item-arrow">›</span>
+            </div>
+          `;
+        });
+
+        if (tagMenuCategories.length === 0) {
+          html = '<div style="padding: 40px; text-align: center; color: var(--text-dim);">No tags available</div>';
+        }
+
+        tagMenuList.innerHTML = html;
+        tagMenuBack.classList.add('hidden');
+        tagMenuTitle.textContent = 'Add Tag';
+      }
+
+      // Select a category (show tags in that category - step 2)
+      function selectTagCategory(category) {
+        tagMenuCurrentCategory = category;
+        tagMenuBack.classList.remove('hidden');
+        tagMenuTitle.textContent = category;
+
+        const tagsInCategory = tagMenuTags[category] || [];
+        let html = '';
+
+        tagsInCategory.forEach(tag => {
+          const hasTag = currentMediaTags.has(tag);
+          const itemClass = hasTag ? 'tag-menu-item has-tag' : 'tag-menu-item';
+          const checkmark = hasTag ? '<span class="tag-menu-item-check">✓</span>' : '';
+
+          html += `
+            <div class="${itemClass}" onclick="selectTagFromMenu('${escapeAttr(tag)}', '${escapeAttr(category)}')">
+              <span>${escapeHtml(tag)}</span>
+              ${checkmark}
+            </div>
+          `;
+        });
+
+        if (tagsInCategory.length === 0) {
+          html = '<div style="padding: 40px; text-align: center; color: var(--text-dim);">No tags in this category</div>';
+        }
+
+        tagMenuList.innerHTML = html;
+      }
+
+      // Select a tag (add it to the current media)
+      async function selectTagFromMenu(tagLabel, categoryLabel) {
+        if (items.length === 0) return;
+
+        const currentPath = items[currentIndex].path;
+        const hasTag = currentMediaTags.has(tagLabel);
+        const action = hasTag ? 'remove' : 'add';
+
+        try {
+          const response = await fetch('/media/tag', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              media_path: currentPath,
+              tag_label: tagLabel,
+              category_label: categoryLabel,
+              action: action,
+            }),
+          });
+
+          if (response.ok) {
+            // Update local state
+            if (hasTag) {
+              currentMediaTags.delete(tagLabel);
+              // Update the item's tags array
+              if (items[currentIndex].tags) {
+                items[currentIndex].tags = items[currentIndex].tags.filter(t => t.label !== tagLabel);
+              }
+              showTagToast(`Removed "${tagLabel}"`);
+            } else {
+              currentMediaTags.add(tagLabel);
+              // Update the item's tags array
+              if (!items[currentIndex].tags) {
+                items[currentIndex].tags = [];
+              }
+              items[currentIndex].tags.push({ label: tagLabel, category: categoryLabel });
+              showTagToast(`Added "${tagLabel}"`);
+            }
+
+            // Re-render the current category view to update checkmarks
+            selectTagCategory(tagMenuCurrentCategory);
+
+            // Update the displayed tags on the current item
+            renderItems();
+
+            // If the tag was Favorites in Swipe category, update like button
+            if (tagLabel === 'Favorites' && categoryLabel === 'Swipe') {
+              updateLikeButton();
+            }
+          } else {
+            console.error('Failed to toggle tag:', await response.text());
+            showTagToast('Failed to update tag');
+          }
+        } catch (err) {
+          console.error('Failed to toggle tag:', err);
+          showTagToast('Failed to update tag');
+        }
+      }
+
+      // Show toast notification
+      function showTagToast(message) {
+        tagToast.textContent = message;
+        tagToast.classList.add('show');
+        setTimeout(() => {
+          tagToast.classList.remove('show');
+        }, 2000);
+      }
+
+      // Tag menu event listeners
+      tagMenuOverlay.addEventListener('click', closeTagMenu);
+      tagMenuClose.addEventListener('click', closeTagMenu);
+      tagMenuBack.addEventListener('click', () => {
+        renderTagMenuCategories();
+      });
+
+      // Make functions available globally
+      window.selectTagCategory = selectTagCategory;
+      window.selectTagFromMenu = selectTagFromMenu;
+
+      // Preload tag data on init
+      loadTagMenuData();
 
       // Start
       init();
