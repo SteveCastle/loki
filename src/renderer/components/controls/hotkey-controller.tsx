@@ -531,6 +531,16 @@ export default function HotKeyController() {
       },
       up: () => {},
     },
+    refreshLibrary: {
+      down: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        libraryService.send({
+          type: 'REFRESH_LIBRARY',
+        });
+      },
+      up: () => {},
+    },
   };
   const actionByHotkey: ActionMap = Object.entries(hotKeys).reduce(
     (acc, [key, hotKey]) => {

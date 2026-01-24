@@ -404,6 +404,7 @@ const getInitialContext = (): LibraryState => {
     ['applyTag8', '8'],
     ['applyTag9', '9'],
     ['togglePlayPause', ' '],
+    ['refreshLibrary', 'r'],
     ['layoutMode', 'grid'],
     ['authToken', null],
   ] as [string, any][]);
@@ -533,6 +534,7 @@ const getInitialContext = (): LibraryState => {
       applyTag8: batched['applyTag8'] as string,
       applyTag9: batched['applyTag9'] as string,
       togglePlayPause: batched['togglePlayPause'] as string,
+      refreshLibrary: batched['refreshLibrary'] as string,
     },
     dbQuery: {
       tags: [],
@@ -1749,6 +1751,137 @@ const libraryMachine = createMachine(
                       scrollPosition: (context, event) => {
                         return event.position;
                       },
+                    }),
+                  },
+                  REFRESH_LIBRARY: {
+                    target: 'refreshing',
+                  },
+                },
+              },
+              refreshing: {
+                invoke: {
+                  src: (context) => {
+                    console.log('[refresh] starting library refresh');
+                    return window.electron.ipcRenderer.invoke('refresh-library', [
+                      {
+                        initialFile: context.initialFile,
+                        currentPaths: context.library.map((item) => item.path),
+                        recursive: context.settings.recursive,
+                      },
+                    ]);
+                  },
+                  onDone: {
+                    target: 'idle',
+                    actions: [
+                      assign<LibraryState, AnyEventObject>((context, event) => {
+                        const { added, removed } = event.data as {
+                          added: Item[];
+                          removed: string[];
+                        };
+
+                        console.log('[refresh] complete:', {
+                          added: added.length,
+                          removed: removed.length,
+                        });
+
+                        if (added.length === 0 && removed.length === 0) {
+                          // No changes, just return toast
+                          const newToast = {
+                            id: uniqueId(),
+                            type: 'info' as const,
+                            title: 'Library up to date',
+                            message: 'No new or deleted files found',
+                            timestamp: Date.now(),
+                          };
+                          return {
+                            toasts: [...context.toasts, newToast],
+                          };
+                        }
+
+                        // Build set of removed paths for filtering
+                        const removedSet = new Set(
+                          removed.map((p) => p.toLowerCase())
+                        );
+
+                        // Filter out removed files
+                        let updatedLibrary = context.library.filter(
+                          (item) => !removedSet.has(item.path.toLowerCase())
+                        );
+
+                        // Add new files
+                        const existingPaths = new Set(
+                          updatedLibrary.map((item) => item.path.toLowerCase())
+                        );
+                        const newItems = added.filter(
+                          (item) => !existingPaths.has(item.path.toLowerCase())
+                        );
+                        updatedLibrary = updatedLibrary.concat(newItems);
+
+                        // Adjust cursor if needed
+                        const currentItem = context.library[context.cursor];
+                        let newCursor = context.cursor;
+
+                        if (currentItem) {
+                          // Try to find the same item in the updated library
+                          const newIndex = updatedLibrary.findIndex(
+                            (item) =>
+                              item.path.toLowerCase() ===
+                              currentItem.path.toLowerCase()
+                          );
+                          if (newIndex !== -1) {
+                            newCursor = newIndex;
+                          } else if (newCursor >= updatedLibrary.length) {
+                            // Current item was removed and cursor is past end
+                            newCursor = Math.max(0, updatedLibrary.length - 1);
+                          }
+                        }
+
+                        // Create toast message
+                        const parts = [];
+                        if (added.length > 0)
+                          parts.push(`${added.length} added`);
+                        if (removed.length > 0)
+                          parts.push(`${removed.length} removed`);
+                        const newToast = {
+                          id: uniqueId(),
+                          type: 'success' as const,
+                          title: 'Library refreshed',
+                          message: parts.join(', '),
+                          timestamp: Date.now(),
+                        };
+
+                        // Persist the updated state
+                        setSessionValues({
+                          library: {
+                            library: updatedLibrary,
+                            initialFile: context.initialFile,
+                          },
+                          cursor: { cursor: newCursor },
+                        });
+
+                        return {
+                          library: updatedLibrary,
+                          libraryLoadId: uniqueId(),
+                          cursor: newCursor,
+                          toasts: [...context.toasts, newToast],
+                        };
+                      }),
+                    ],
+                  },
+                  onError: {
+                    target: 'idle',
+                    actions: assign<LibraryState, AnyEventObject>((context) => {
+                      console.error('[refresh] error during library refresh');
+                      const newToast = {
+                        id: uniqueId(),
+                        type: 'error' as const,
+                        title: 'Refresh failed',
+                        message: 'Could not refresh library',
+                        timestamp: Date.now(),
+                      };
+                      return {
+                        toasts: [...context.toasts, newToast],
+                      };
                     }),
                   },
                 },
