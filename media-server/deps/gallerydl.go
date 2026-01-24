@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/platform"
 )
@@ -24,6 +25,7 @@ func init() {
 		TargetDir:     GetDepsDir("gallery-dl"),
 		Check:         checkGalleryDl,
 		Download:      downloadGalleryDl,
+		DownloadFn:    downloadGalleryDlNew,
 		LatestVersion: LatestGalleryDlVersion,
 		DownloadURL:   GetGalleryDlDownloadURL(),
 		ExpectedSize:  30 * 1024 * 1024, // ~30MB
@@ -129,5 +131,79 @@ func downloadGalleryDl(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error
 	q.PushJobStdout(j.ID, "")
 	q.PushJobStdout(j.ID, "✓ gallery-dl installed successfully!")
 
+	return nil
+}
+
+// downloadGalleryDlNew downloads and installs gallery-dl using the new download system.
+func downloadGalleryDlNew(ctx context.Context, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Starting gallery-dl download..."})
+
+	dep, ok := Get("gallery-dl")
+	if !ok {
+		return fmt.Errorf("gallery-dl dependency not found in registry")
+	}
+
+	// Ensure target directory exists
+	if err := os.MkdirAll(dep.TargetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	downloadURL := dep.DownloadURL
+	if downloadURL == "" {
+		return fmt.Errorf("gallery-dl is not available for direct download on this platform")
+	}
+
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Downloading from %s", downloadURL)})
+
+	// gallery-dl is a single executable, download directly
+	exeName := GetExecutableName("gallery-dl")
+	exePath := filepath.Join(dep.TargetDir, exeName)
+
+	speedTracker := downloads.NewSpeedTracker()
+
+	err := downloads.DownloadWithRetry(ctx, exePath, downloadURL, func(downloaded, total int64) {
+		speed := speedTracker.Update(downloaded)
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(downloaded) / float64(total) * 100
+		}
+		progress(downloads.Progress{
+			Status:          downloads.StatusDownloading,
+			Message:         fmt.Sprintf("Downloading: %s / %s", downloads.FormatBytes(downloaded), downloads.FormatBytes(total)),
+			BytesDownloaded: downloaded,
+			TotalBytes:      total,
+			Percent:         percent,
+			Speed:           speed,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// Make executable on Linux/macOS
+	if err := platform.EnsureExecutable(exePath); err != nil {
+		// Non-fatal warning
+	}
+
+	// Verify the executable
+	if _, err := os.Stat(exePath); os.IsNotExist(err) {
+		return fmt.Errorf("%s not found at %s", exeName, exePath)
+	}
+
+	// Update metadata
+	metadata := GetMetadataStore()
+	metadata.Update("gallery-dl", DependencyMetadata{
+		InstalledVersion: LatestGalleryDlVersion,
+		Status:           StatusInstalled,
+		InstallPath:      dep.TargetDir,
+		LastChecked:      time.Now(),
+		LastUpdated:      time.Now(),
+		Files: map[string]FileInfo{
+			exeName: {Path: exePath},
+		},
+	})
+	metadata.Save()
+
+	progress(downloads.Progress{Status: downloads.StatusComplete, Message: "gallery-dl installed successfully!", Percent: 100})
 	return nil
 }

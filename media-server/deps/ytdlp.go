@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/platform"
 )
@@ -24,6 +25,7 @@ func init() {
 		TargetDir:     GetDepsDir("yt-dlp"),
 		Check:         checkYtDlp,
 		Download:      downloadYtDlp,
+		DownloadFn:    downloadYtDlpNew,
 		LatestVersion: LatestYtDlpVersion,
 		DownloadURL:   GetYtDlpDownloadURL(),
 		ExpectedSize:  20 * 1024 * 1024, // ~20MB
@@ -129,5 +131,75 @@ func downloadYtDlp(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, "")
 	q.PushJobStdout(j.ID, "✓ yt-dlp installed successfully!")
 
+	return nil
+}
+
+// downloadYtDlpNew downloads and installs yt-dlp using the new download system.
+func downloadYtDlpNew(ctx context.Context, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Starting yt-dlp download..."})
+
+	dep, ok := Get("yt-dlp")
+	if !ok {
+		return fmt.Errorf("yt-dlp dependency not found in registry")
+	}
+
+	// Ensure target directory exists
+	if err := os.MkdirAll(dep.TargetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	downloadURL := dep.DownloadURL
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Downloading from %s", downloadURL)})
+
+	// yt-dlp is a single executable, download directly
+	exeName := GetExecutableName("yt-dlp")
+	exePath := filepath.Join(dep.TargetDir, exeName)
+
+	speedTracker := downloads.NewSpeedTracker()
+
+	err := downloads.DownloadWithRetry(ctx, exePath, downloadURL, func(downloaded, total int64) {
+		speed := speedTracker.Update(downloaded)
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(downloaded) / float64(total) * 100
+		}
+		progress(downloads.Progress{
+			Status:          downloads.StatusDownloading,
+			Message:         fmt.Sprintf("Downloading: %s / %s", downloads.FormatBytes(downloaded), downloads.FormatBytes(total)),
+			BytesDownloaded: downloaded,
+			TotalBytes:      total,
+			Percent:         percent,
+			Speed:           speed,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// Make executable on Linux/macOS
+	if err := platform.EnsureExecutable(exePath); err != nil {
+		// Non-fatal warning
+	}
+
+	// Verify the executable
+	if _, err := os.Stat(exePath); os.IsNotExist(err) {
+		return fmt.Errorf("%s not found at %s", exeName, exePath)
+	}
+
+	// Update metadata
+	metadata := GetMetadataStore()
+	metadata.Update("yt-dlp", DependencyMetadata{
+		InstalledVersion: LatestYtDlpVersion,
+		Status:           StatusInstalled,
+		InstallPath:      dep.TargetDir,
+		LastChecked:      time.Now(),
+		LastUpdated:      time.Now(),
+		Files: map[string]FileInfo{
+			exeName: {Path: exePath},
+		},
+	})
+	metadata.Save()
+
+	progress(downloads.Progress{Status: downloads.StatusComplete, Message: "yt-dlp installed successfully!", Percent: 100})
 	return nil
 }

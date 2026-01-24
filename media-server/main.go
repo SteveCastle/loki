@@ -31,6 +31,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/auth"
 	depspkg "github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/platform"
@@ -273,6 +274,7 @@ func setupModeMiddleware(next http.Handler) http.Handler {
 			"/static/",       // Allows all static files
 			"/stream",        // SSE endpoint
 			"/dependencies/", // Allows /dependencies/check, /dependencies/download, etc.
+			"/downloads/",    // Allows /downloads/install-all, /downloads/progress, etc.
 			"/health",        // Health check endpoint
 			"/login",         // Login page (needed before accessing protected setup routes)
 			"/auth/",         // Auth endpoints (login API, logout, status, etc.)
@@ -1227,6 +1229,9 @@ type dependencyStatusInfo struct {
 	TargetDir        string
 	JobID            string
 	Ignored          bool
+	Optional         bool
+	ManualOnly       bool
+	InstallURL       string
 }
 
 func dependenciesHandler(dependencies *Dependencies) http.HandlerFunc {
@@ -1236,53 +1241,7 @@ func dependenciesHandler(dependencies *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		allDeps := depspkg.GetAll()
-		metadata := depspkg.GetMetadataStore()
-		var depStatuses []dependencyStatusInfo
-
-		for _, dep := range allDeps {
-			exists, version, err := dep.Check(r.Context())
-
-			status := depspkg.StatusNotInstalled
-			installedVersion := ""
-
-			if err == nil && exists {
-				status = depspkg.StatusInstalled
-				installedVersion = version
-
-				// Check if outdated
-				if version != dep.LatestVersion && dep.LatestVersion != "" && version != "unknown" {
-					status = depspkg.StatusOutdated
-				}
-			}
-
-			// Check metadata for current status (e.g., downloading)
-			metaStatus := metadata.GetStatus(dep.ID)
-			if metaStatus == depspkg.StatusDownloading {
-				status = depspkg.StatusDownloading
-			}
-
-			// Get active job ID if any
-			jobID := metadata.GetJobID(dep.ID)
-
-			// Check if ignored
-			ignored := metadata.IsIgnored(dep.ID)
-
-			sizeFormatted := formatBytes(dep.ExpectedSize)
-
-			depStatuses = append(depStatuses, dependencyStatusInfo{
-				ID:               dep.ID,
-				Name:             dep.Name,
-				Description:      dep.Description,
-				Status:           status,
-				InstalledVersion: installedVersion,
-				LatestVersion:    dep.LatestVersion,
-				SizeFormatted:    sizeFormatted,
-				TargetDir:        dep.TargetDir,
-				JobID:            jobID,
-				Ignored:          ignored,
-			})
-		}
+		depStatuses := checkDependenciesParallel(r.Context())
 
 		data := dependenciesTemplateData{
 			Dependencies: depStatuses,
@@ -1294,19 +1253,23 @@ func dependenciesHandler(dependencies *Dependencies) http.HandlerFunc {
 	}
 }
 
-func setupHandler(dependencies *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
-			return
-		}
+// checkDependenciesParallel checks all dependencies in parallel and returns status info
+func checkDependenciesParallel(ctx context.Context) []dependencyStatusInfo {
+	allDeps := depspkg.GetAll()
+	metadata := depspkg.GetMetadataStore()
 
-		allDeps := depspkg.GetAll()
-		metadata := depspkg.GetMetadataStore()
-		var depStatuses []dependencyStatusInfo
+	// Create a slice to hold results in order
+	depStatuses := make([]dependencyStatusInfo, len(allDeps))
 
-		for _, dep := range allDeps {
-			exists, version, err := dep.Check(r.Context())
+	// Use a WaitGroup to wait for all goroutines
+	var wg sync.WaitGroup
+
+	for i, dep := range allDeps {
+		wg.Add(1)
+		go func(idx int, d *depspkg.Dependency) {
+			defer wg.Done()
+
+			exists, version, err := d.Check(ctx)
 
 			status := depspkg.StatusNotInstalled
 			installedVersion := ""
@@ -1316,38 +1279,55 @@ func setupHandler(dependencies *Dependencies) http.HandlerFunc {
 				installedVersion = version
 
 				// Check if outdated
-				if version != dep.LatestVersion && dep.LatestVersion != "" && version != "unknown" {
+				if version != d.LatestVersion && d.LatestVersion != "" && version != "unknown" {
 					status = depspkg.StatusOutdated
 				}
 			}
 
 			// Check metadata for current status (e.g., downloading)
-			metaStatus := metadata.GetStatus(dep.ID)
+			metaStatus := metadata.GetStatus(d.ID)
 			if metaStatus == depspkg.StatusDownloading {
 				status = depspkg.StatusDownloading
 			}
 
 			// Get active job ID if any
-			jobID := metadata.GetJobID(dep.ID)
+			jobID := metadata.GetJobID(d.ID)
 
 			// Check if ignored
-			ignored := metadata.IsIgnored(dep.ID)
+			ignored := metadata.IsIgnored(d.ID)
 
-			sizeFormatted := formatBytes(dep.ExpectedSize)
+			sizeFormatted := formatBytes(d.ExpectedSize)
 
-			depStatuses = append(depStatuses, dependencyStatusInfo{
-				ID:               dep.ID,
-				Name:             dep.Name,
-				Description:      dep.Description,
+			depStatuses[idx] = dependencyStatusInfo{
+				ID:               d.ID,
+				Name:             d.Name,
+				Description:      d.Description,
 				Status:           status,
 				InstalledVersion: installedVersion,
-				LatestVersion:    dep.LatestVersion,
+				LatestVersion:    d.LatestVersion,
 				SizeFormatted:    sizeFormatted,
-				TargetDir:        dep.TargetDir,
+				TargetDir:        d.TargetDir,
 				JobID:            jobID,
 				Ignored:          ignored,
-			})
+				Optional:         d.Optional,
+				ManualOnly:       d.ManualOnly,
+				InstallURL:       d.InstallURL,
+			}
+		}(i, dep)
+	}
+
+	wg.Wait()
+	return depStatuses
+}
+
+func setupHandler(dependencies *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
+			return
 		}
+
+		depStatuses := checkDependenciesParallel(r.Context())
 
 		data := dependenciesTemplateData{
 			Dependencies: depStatuses,
@@ -1554,6 +1534,236 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// -----------------------------------------------------------------------------
+// Downloads handlers - new simplified download system
+// -----------------------------------------------------------------------------
+
+// downloadsInstallAllHandler starts installing all required dependencies
+func downloadsInstallAllHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		manager := downloads.GetManager()
+
+		// Check if already installing
+		if manager.IsInstalling() {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "already_installing",
+				"message": "Installation already in progress",
+			})
+			return
+		}
+
+		// Get all missing required dependencies that can be auto-downloaded
+		ctx := r.Context()
+		missingDeps := depspkg.GetMissingRequired(ctx)
+
+		var toInstall []downloads.DependencyDownload
+		for _, dep := range missingDeps {
+			if dep.ManualOnly || dep.DownloadFn == nil {
+				continue
+			}
+			toInstall = append(toInstall, downloads.DependencyDownload{
+				ID:         dep.ID,
+				Name:       dep.Name,
+				DownloadFn: dep.DownloadFn,
+			})
+		}
+
+		if len(toInstall) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":  "nothing_to_install",
+				"message": "No dependencies need installation",
+			})
+			return
+		}
+
+		// Start installation in background
+		go func() {
+			installCtx := context.Background()
+			err := manager.InstallAll(installCtx, toInstall, nil)
+			if err != nil {
+				log.Printf("Install all completed with errors: %v", err)
+			} else {
+				log.Println("Install all completed successfully")
+			}
+
+			// Check if we should exit setup mode
+			checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if !depspkg.CheckAnyMissing(checkCtx) {
+				setupModeMutex.Lock()
+				setupMode = false
+				setupModeMutex.Unlock()
+				log.Println("All dependencies installed - setup mode disabled")
+			}
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":     "started",
+			"message":    fmt.Sprintf("Starting installation of %d dependencies", len(toInstall)),
+			"installing": len(toInstall),
+		})
+	}
+}
+
+// downloadsInstallHandler starts installing a single dependency
+func downloadsInstallHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.ID == "" {
+			http.Error(w, "id is required", http.StatusBadRequest)
+			return
+		}
+
+		dep, ok := depspkg.Get(req.ID)
+		if !ok {
+			http.Error(w, "Unknown dependency", http.StatusNotFound)
+			return
+		}
+
+		if dep.DownloadFn == nil {
+			http.Error(w, "Dependency does not support direct download", http.StatusBadRequest)
+			return
+		}
+
+		manager := downloads.GetManager()
+
+		// Start installation in background
+		go func() {
+			installCtx := context.Background()
+			err := manager.Install(installCtx, dep.ID, dep.Name, dep.DownloadFn)
+			if err != nil {
+				log.Printf("Install %s failed: %v", dep.ID, err)
+			} else {
+				log.Printf("Install %s completed successfully", dep.ID)
+			}
+
+			// Check if we should exit setup mode
+			checkCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if !depspkg.CheckAnyMissing(checkCtx) {
+				setupModeMutex.Lock()
+				setupMode = false
+				setupModeMutex.Unlock()
+				log.Println("All dependencies installed - setup mode disabled")
+			}
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "started",
+			"message": fmt.Sprintf("Starting installation of %s", dep.Name),
+			"id":      req.ID,
+		})
+	}
+}
+
+// downloadsCancelHandler cancels a specific download
+func downloadsCancelHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if req.ID == "" {
+			http.Error(w, "id is required", http.StatusBadRequest)
+			return
+		}
+
+		manager := downloads.GetManager()
+		manager.Cancel(req.ID)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "cancelled",
+			"message": fmt.Sprintf("Cancelled download for %s", req.ID),
+			"id":      req.ID,
+		})
+	}
+}
+
+// downloadsProgressHandler returns the current download progress
+func downloadsProgressHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
+			return
+		}
+
+		manager := downloads.GetManager()
+		progress := manager.GetProgress()
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(progress)
+	}
+}
+
+// downloadsStreamHandler provides SSE stream for real-time progress
+func downloadsStreamHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set SSE headers
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			return
+		}
+
+		// Create a ticker for periodic updates
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		manager := downloads.GetManager()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				progress := manager.GetProgress()
+				data, err := json.Marshal(progress)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(w, "event: progress\ndata: %s\n\n", data)
+				flusher.Flush()
+			}
+		}
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -2381,6 +2591,13 @@ func main() {
 	mux.HandleFunc("/setup", renderer.ApplyMiddlewares(setupHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/setup/skip", renderer.ApplyMiddlewares(skipSetupHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/setup/status", renderer.ApplyMiddlewares(checkSetupStatusHandler(), renderer.RoleAdmin))
+
+	// New downloads endpoints
+	mux.HandleFunc("/downloads/install-all", renderer.ApplyMiddlewares(downloadsInstallAllHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/downloads/install", renderer.ApplyMiddlewares(downloadsInstallHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/downloads/cancel", renderer.ApplyMiddlewares(downloadsCancelHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/downloads/progress", renderer.ApplyMiddlewares(downloadsProgressHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/downloads/stream", renderer.ApplyMiddlewares(downloadsStreamHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))

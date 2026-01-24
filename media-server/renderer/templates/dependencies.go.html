@@ -8,206 +8,34 @@
     <link rel="stylesheet" href="/static/styles.css" />
     <style>
       .dependencies-container {
-        max-width: 1200px;
+        max-width: 900px;
         margin: 0 auto;
         padding: var(--space-5);
       }
 
       .page-header {
-        margin-bottom: var(--space-6);
+        margin-bottom: var(--space-5);
+        text-align: center;
       }
 
       .page-title {
-        font-size: var(--text-3xl);
+        font-size: var(--text-2xl);
         font-weight: 700;
         color: var(--text-primary);
-        margin-bottom: var(--space-2);
+        margin-bottom: var(--space-1);
       }
 
       .page-subtitle {
-        font-size: var(--text-base);
+        font-size: var(--text-sm);
         color: var(--text-muted);
       }
 
-      .dependencies-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
-        gap: var(--space-5);
-      }
-
-      .dependency-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-subtle);
-        border-radius: var(--radius-xl);
-        padding: var(--space-5);
-        border-left: 3px solid var(--accent-cyan);
-        transition: all 0.2s ease;
-      }
-
-      .dependency-card:hover {
-        border-color: var(--accent-cyan);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-      }
-
-      .dep-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        margin-bottom: var(--space-3);
-      }
-
-      .dep-name {
-        font-size: var(--text-lg);
-        font-weight: 600;
-        color: var(--text-primary);
-        margin: 0;
-      }
-
-      .status-badge {
-        padding: var(--space-1) var(--space-3);
-        border-radius: var(--radius-full);
-        font-size: var(--text-xs);
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-      }
-
-      .status-installed {
-        background: rgba(34, 197, 94, 0.15);
-        color: rgb(34, 197, 94);
-      }
-
-      .status-not_installed {
-        background: rgba(239, 68, 68, 0.15);
-        color: rgb(239, 68, 68);
-      }
-
-      .status-outdated {
-        background: rgba(234, 179, 8, 0.15);
-        color: rgb(234, 179, 8);
-      }
-
-      .status-downloading {
-        background: rgba(59, 130, 246, 0.15);
-        color: rgb(59, 130, 246);
-      }
-
-      .status-ignored {
-        background: rgba(107, 114, 128, 0.15);
-        color: rgb(107, 114, 128);
-      }
-
-      .dep-description {
-        color: var(--text-muted);
-        font-size: var(--text-sm);
-        margin-bottom: var(--space-4);
-        line-height: 1.6;
-      }
-
-      .dep-info {
-        display: flex;
-        flex-direction: column;
-        gap: var(--space-2);
-        margin-bottom: var(--space-4);
-        padding: var(--space-3);
-        background: var(--bg-surface);
-        border-radius: var(--radius-md);
-        border: 1px solid var(--border-subtle);
-      }
-
-      .info-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        font-size: var(--text-sm);
-      }
-
-      .info-label {
-        color: var(--text-muted);
-        font-weight: 500;
-      }
-
-      .info-value {
-        color: var(--text-primary);
-        font-family: var(--font-mono);
-        font-size: var(--text-xs);
-      }
-
-      .dep-actions {
-        display: flex;
-        gap: var(--space-2);
-        flex-wrap: wrap;
-      }
-
-      .btn {
-        padding: var(--space-2) var(--space-4);
-        border-radius: var(--radius-md);
-        font-size: var(--text-sm);
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        border: none;
-        flex: 1;
-        min-width: 120px;
-      }
-
-      .btn-primary {
-        background: var(--accent-cyan);
-        color: var(--bg-primary);
-      }
-
-      .btn-primary:hover:not(:disabled) {
-        background: var(--accent-cyan);
-        opacity: 0.9;
-        transform: translateY(-1px);
-      }
-
-      .btn-secondary {
-        background: var(--accent-purple);
-        color: white;
-      }
-
-      .btn-secondary:hover:not(:disabled) {
-        background: var(--accent-purple);
-        opacity: 0.9;
-        transform: translateY(-1px);
-      }
-
-      .btn-tertiary {
-        background: var(--bg-surface);
-        color: var(--text-primary);
-        border: 1px solid var(--border-subtle);
-      }
-
-      .btn-tertiary:hover:not(:disabled) {
-        background: var(--bg-card);
-        border-color: var(--accent-cyan);
-      }
-
-      .btn-success {
-        background: rgba(34, 197, 94, 0.15);
-        color: rgb(34, 197, 94);
-        cursor: not-allowed;
-      }
-
-      .btn-muted {
-        background: rgba(107, 114, 128, 0.15);
-        color: rgb(107, 114, 128);
-      }
-
-      .btn-muted:hover:not(:disabled) {
-        background: rgba(107, 114, 128, 0.25);
-      }
-
-      .btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-      }
-
+      /* Status message */
       .status-message {
         padding: var(--space-3);
         border-radius: var(--radius-md);
         margin-bottom: var(--space-4);
+        text-align: center;
         display: none;
       }
 
@@ -216,21 +44,357 @@
       }
 
       .status-message.success {
-        background: rgba(34, 197, 94, 0.15);
+        background: rgba(34, 197, 94, 0.1);
         color: rgb(34, 197, 94);
-        border: 1px solid rgba(34, 197, 94, 0.3);
       }
 
       .status-message.error {
-        background: rgba(239, 68, 68, 0.15);
+        background: rgba(239, 68, 68, 0.1);
         color: rgb(239, 68, 68);
-        border: 1px solid rgba(239, 68, 68, 0.3);
       }
 
-      @media (max-width: 800px) {
-        .dependencies-grid {
-          grid-template-columns: 1fr;
-        }
+      /* Action bar */
+      .action-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--space-4);
+        padding: var(--space-3) var(--space-4);
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+      }
+
+      .status-pills {
+        display: flex;
+        gap: var(--space-3);
+      }
+
+      .status-pill {
+        display: flex;
+        align-items: center;
+        gap: var(--space-1);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+      }
+
+      .pill-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+      }
+
+      .pill-dot.installed { background: rgb(34, 197, 94); }
+      .pill-dot.missing { background: rgb(239, 68, 68); }
+
+      .btn-install-all {
+        background: linear-gradient(135deg, var(--accent-purple), var(--accent-cyan));
+        color: white;
+        padding: var(--space-2) var(--space-4);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        border-radius: var(--radius-md);
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+
+      .btn-install-all:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(168, 85, 247, 0.3);
+      }
+
+      .btn-install-all:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* Section */
+      .section {
+        margin-bottom: var(--space-5);
+      }
+
+      .section-header {
+        font-size: var(--text-xs);
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: var(--space-3);
+        padding-left: var(--space-2);
+      }
+
+      /* Dependency list */
+      .dep-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+
+      .dep-item {
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        padding: var(--space-4);
+        transition: all 0.15s ease;
+      }
+
+      .dep-item:hover {
+        border-color: var(--accent-cyan);
+      }
+
+      .dep-item.installed {
+        border-left: 3px solid rgb(34, 197, 94);
+      }
+
+      .dep-item.not-installed {
+        border-left: 3px solid rgb(239, 68, 68);
+      }
+
+      .dep-item.downloading {
+        border-left: 3px solid rgb(59, 130, 246);
+        background: rgba(59, 130, 246, 0.03);
+      }
+
+      .dep-item.outdated {
+        border-left: 3px solid rgb(234, 179, 8);
+      }
+
+      .dep-item.optional {
+        opacity: 0.85;
+      }
+
+      .dep-item.optional.installed {
+        opacity: 1;
+      }
+
+      /* Header row */
+      .dep-header {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin-bottom: var(--space-2);
+      }
+
+      .dep-icon {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+
+      .dep-icon svg {
+        width: 16px;
+        height: 16px;
+      }
+
+      .dep-icon.installed {
+        background: rgba(34, 197, 94, 0.1);
+        color: rgb(34, 197, 94);
+      }
+
+      .dep-icon.not-installed {
+        background: rgba(239, 68, 68, 0.1);
+        color: rgb(239, 68, 68);
+      }
+
+      .dep-icon.downloading {
+        background: rgba(59, 130, 246, 0.1);
+        color: rgb(59, 130, 246);
+        animation: pulse 1.5s infinite;
+      }
+
+      .dep-icon.outdated {
+        background: rgba(234, 179, 8, 0.1);
+        color: rgb(234, 179, 8);
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
+
+      .dep-info {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .dep-name {
+        font-size: var(--text-base);
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 2px;
+      }
+
+      .dep-name .optional-badge {
+        font-size: var(--text-xs);
+        font-weight: 500;
+        color: var(--text-muted);
+        background: var(--bg-surface);
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+        margin-left: var(--space-2);
+      }
+
+      .dep-description {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .dep-actions {
+        display: flex;
+        gap: var(--space-2);
+        flex-shrink: 0;
+      }
+
+      /* Details row */
+      .dep-details {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-3);
+        margin-top: var(--space-3);
+        padding-top: var(--space-3);
+        border-top: 1px solid var(--border-subtle);
+      }
+
+      .dep-detail {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+
+      .dep-detail-label {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+
+      .dep-detail-value {
+        font-size: var(--text-sm);
+        color: var(--text-primary);
+      }
+
+      .dep-detail-value.path {
+        font-family: monospace;
+        font-size: var(--text-xs);
+        background: var(--bg-surface);
+        padding: 4px 8px;
+        border-radius: var(--radius-sm);
+        max-width: 400px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .dep-detail-value a {
+        color: var(--accent-cyan);
+        text-decoration: none;
+      }
+
+      .dep-detail-value a:hover {
+        text-decoration: underline;
+      }
+
+      /* Progress bar */
+      .dep-progress {
+        margin-top: var(--space-2);
+        display: none;
+      }
+
+      .dep-progress.show {
+        display: block;
+      }
+
+      .progress-bar-mini {
+        height: 4px;
+        background: var(--bg-surface);
+        border-radius: var(--radius-full);
+        overflow: hidden;
+      }
+
+      .progress-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent-cyan), var(--accent-purple));
+        border-radius: var(--radius-full);
+        transition: width 0.3s ease;
+      }
+
+      .progress-text {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        margin-top: var(--space-1);
+      }
+
+      /* Buttons */
+      .btn {
+        padding: var(--space-2) var(--space-3);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        border-radius: var(--radius-md);
+        border: none;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .btn-primary {
+        background: var(--accent-cyan);
+        color: var(--bg-primary);
+      }
+
+      .btn-primary:hover {
+        opacity: 0.9;
+      }
+
+      .btn-secondary {
+        background: var(--bg-surface);
+        color: var(--text-primary);
+        border: 1px solid var(--border-subtle);
+      }
+
+      .btn-secondary:hover {
+        border-color: var(--accent-cyan);
+      }
+
+      .btn-success {
+        background: rgba(34, 197, 94, 0.1);
+        color: rgb(34, 197, 94);
+      }
+
+      .btn-warning {
+        background: rgba(234, 179, 8, 0.1);
+        color: rgb(234, 179, 8);
+      }
+
+      .btn-external {
+        background: transparent;
+        color: var(--text-muted);
+        border: 1px solid var(--border-subtle);
+        text-decoration: none;
+      }
+
+      .btn-external:hover {
+        color: var(--accent-cyan);
+        border-color: var(--accent-cyan);
+      }
+
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .btn svg {
+        width: 12px;
+        height: 12px;
       }
     </style>
   </head>
@@ -238,352 +402,392 @@
     <div class="dependencies-container">
       {{ template "topnav" . }}
 
+      <div class="page-header">
+        <h1 class="page-title">Dependencies</h1>
+        <p class="page-subtitle">Manage required and optional components</p>
+      </div>
+
       <div id="status-message" class="status-message"></div>
 
-      <div class="dependencies-grid">
-        {{ range .Dependencies }}
-        <div
-          class="dependency-card"
-          data-dep-id="{{ .ID }}"
-          data-job-id="{{ .JobID }}"
-          data-ignored="{{ .Ignored }}"
-        >
-          <div class="dep-header">
-            <h3 class="dep-name">{{ .Name }}</h3>
-            {{ if .Ignored }}
-            <span class="status-badge status-ignored">ignored</span>
-            {{ else }}
-            <span class="status-badge status-{{ .Status }}">{{ .Status }}</span>
-            {{ end }}
+      <!-- Action bar -->
+      <div class="action-bar">
+        <div class="status-pills">
+          <div class="status-pill">
+            <span class="pill-dot installed"></span>
+            <span id="installed-count">0</span> installed
           </div>
-
-          <p class="dep-description">{{ .Description }}</p>
-
-          <div class="dep-info">
-            {{ if .InstalledVersion }}
-            <div class="info-row">
-              <span class="info-label">Current Version:</span>
-              <span class="info-value">{{ .InstalledVersion }}</span>
-            </div>
-            {{ end }}
-
-            <div class="info-row">
-              <span class="info-label">Latest Version:</span>
-              <span class="info-value">{{ .LatestVersion }}</span>
-            </div>
-
-            <div class="info-row">
-              <span class="info-label">Expected Size:</span>
-              <span class="info-value">{{ .SizeFormatted }}</span>
-            </div>
-
-            {{ if .TargetDir }}
-            <div class="info-row">
-              <span class="info-label">Install Location:</span>
-              <span class="info-value">{{ .TargetDir }}</span>
-            </div>
-            {{ end }}
-          </div>
-
-          <div
-            class="download-progress"
-            style="
-              display: none;
-              margin-bottom: var(--space-4);
-              padding: var(--space-3);
-              background: var(--bg-surface);
-              border-radius: var(--radius-md);
-              border: 1px solid var(--border-subtle);
-            "
-          >
-            <div
-              style="
-                font-size: var(--text-xs);
-                color: var(--text-muted);
-                margin-bottom: var(--space-2);
-                font-family: var(--font-mono);
-                max-height: 120px;
-                overflow-y: auto;
-              "
-            ></div>
-          </div>
-
-          <div class="dep-actions">
-            {{ if .Ignored }}
-            <button
-              class="btn btn-primary"
-              onclick="downloadDependency('{{ .ID }}')"
-            >
-              Download
-            </button>
-            <button
-              class="btn btn-tertiary"
-              onclick="ignoreDependency('{{ .ID }}', false)"
-            >
-              Unignore
-            </button>
-            {{ else if eq .Status "not_installed" }}
-            <button
-              class="btn btn-primary"
-              onclick="downloadDependency('{{ .ID }}')"
-            >
-              Download
-            </button>
-            <button
-              class="btn btn-muted"
-              onclick="ignoreDependency('{{ .ID }}', true)"
-            >
-              Ignore
-            </button>
-            {{ else if eq .Status "outdated" }}
-            <button
-              class="btn btn-secondary"
-              onclick="downloadDependency('{{ .ID }}')"
-            >
-              Update
-            </button>
-            <button
-              class="btn btn-muted"
-              onclick="ignoreDependency('{{ .ID }}', true)"
-            >
-              Ignore
-            </button>
-            {{ else if eq .Status "installed" }}
-            <button class="btn btn-success" disabled>Installed</button>
-            {{ else if eq .Status "downloading" }}
-            <button class="btn btn-primary" disabled>Downloading...</button>
-            {{ end }}
-
-            <button
-              class="btn btn-tertiary"
-              onclick="checkDependency('{{ .ID }}')"
-            >
-              Check Status
-            </button>
+          <div class="status-pill">
+            <span class="pill-dot missing"></span>
+            <span id="missing-count">0</span> missing
           </div>
         </div>
-        {{ end }}
+        <button id="install-all-btn" class="btn-install-all" onclick="installAll()">
+          Install Missing
+        </button>
+      </div>
+
+      <!-- All Dependencies -->
+      <div class="section">
+        <div class="section-header">All Components</div>
+        <div class="dep-list" id="dep-list">
+          {{ range .Dependencies }}
+          <div class="dep-item {{ if eq .Status "installed" }}installed{{ else if eq .Status "downloading" }}downloading{{ else if eq .Status "outdated" }}outdated{{ else }}not-installed{{ end }}{{ if .Optional }} optional{{ end }}"
+               data-dep-id="{{ .ID }}"
+               data-optional="{{ .Optional }}">
+            <div class="dep-header">
+              <div class="dep-icon {{ if eq .Status "installed" }}installed{{ else if eq .Status "downloading" }}downloading{{ else if eq .Status "outdated" }}outdated{{ else }}not-installed{{ end }}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  {{ if eq .Status "installed" }}
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                  {{ else if eq .Status "downloading" }}
+                  <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"></path>
+                  {{ else if eq .Status "outdated" }}
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="12"></line>
+                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                  {{ else }}
+                  <circle cx="12" cy="12" r="10"></circle>
+                  {{ end }}
+                </svg>
+              </div>
+              <div class="dep-info">
+                <div class="dep-name">
+                  {{ .Name }}
+                  {{ if .Optional }}<span class="optional-badge">Optional</span>{{ end }}
+                </div>
+                <div class="dep-description">{{ .Description }}</div>
+              </div>
+              <div class="dep-actions">
+                {{ if eq .Status "installed" }}
+                <button class="btn btn-secondary" onclick="reinstallDependency('{{ .ID }}')">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 4v6h6"></path>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                  </svg>
+                  Reinstall
+                </button>
+                {{ else if eq .Status "downloading" }}
+                <button class="btn btn-secondary" disabled>Installing...</button>
+                {{ else if eq .Status "outdated" }}
+                <button class="btn btn-warning" onclick="downloadDependency('{{ .ID }}')">Update</button>
+                {{ else if .ManualOnly }}
+                  {{ if .InstallURL }}
+                  <a href="{{ .InstallURL }}" target="_blank" class="btn btn-external">
+                    Get
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                      <polyline points="15 3 21 3 21 9"></polyline>
+                      <line x1="10" y1="14" x2="21" y2="3"></line>
+                    </svg>
+                  </a>
+                  {{ else }}
+                  <button class="btn btn-secondary" disabled>Manual Install</button>
+                  {{ end }}
+                {{ else }}
+                <button class="btn btn-primary" onclick="downloadDependency('{{ .ID }}')">Install</button>
+                {{ end }}
+              </div>
+            </div>
+
+            <div class="dep-progress" id="progress-{{ .ID }}">
+              <div class="progress-bar-mini">
+                <div class="progress-bar-fill" style="width: 0%"></div>
+              </div>
+              <div class="progress-text" id="progress-text-{{ .ID }}">Starting...</div>
+            </div>
+
+            <div class="dep-details">
+              <div class="dep-detail">
+                <span class="dep-detail-label">Status</span>
+                <span class="dep-detail-value" id="status-text-{{ .ID }}">
+                  {{ if eq .Status "installed" }}Installed{{ else if eq .Status "downloading" }}Installing{{ else if eq .Status "outdated" }}Update Available{{ else }}Not Installed{{ end }}
+                </span>
+              </div>
+              <div class="dep-detail">
+                <span class="dep-detail-label">Version</span>
+                <span class="dep-detail-value">
+                  {{ if .InstalledVersion }}v{{ .InstalledVersion }}{{ else }}v{{ .LatestVersion }}{{ end }}
+                  {{ if and .InstalledVersion (ne .InstalledVersion .LatestVersion) }}
+                  <span style="color: var(--text-muted);">(latest: v{{ .LatestVersion }})</span>
+                  {{ end }}
+                </span>
+              </div>
+              {{ if .TargetDir }}
+              <div class="dep-detail">
+                <span class="dep-detail-label">Location</span>
+                <span class="dep-detail-value path" title="{{ .TargetDir }}">{{ .TargetDir }}</span>
+              </div>
+              {{ end }}
+              {{ if and (not (eq .Status "installed")) .SizeFormatted }}
+              <div class="dep-detail">
+                <span class="dep-detail-label">Size</span>
+                <span class="dep-detail-value">{{ .SizeFormatted }}</span>
+              </div>
+              {{ end }}
+            </div>
+          </div>
+          {{ end }}
+        </div>
       </div>
     </div>
 
     <script>
-      // Connect to SSE stream for real-time updates
-      let eventSource = null;
+      let isInstalling = false;
+      const lastProgress = {};
+      const STALL_TIMEOUT = 120000; // 2 minutes
 
-      function connectSSE() {
-        eventSource = new EventSource('/stream');
-
-        eventSource.addEventListener('update', (event) => {
+      function connectStreams() {
+        const mainStream = new EventSource('/stream');
+        mainStream.addEventListener('update', (event) => {
           const data = JSON.parse(event.data);
           if (data.job && data.job.command === 'download-dependency') {
-            updateDependencyCard(data.job);
+            handleJobUpdate(data.job);
           }
         });
 
-        // Listen for stdout events
-        eventSource.addEventListener('message', (event) => {
-          const data = JSON.parse(event.data);
-          if (data.type && data.type.startsWith('stdout-')) {
-            const jobID = data.type.replace('stdout-', '');
-            const card = document.querySelector(`[data-job-id="${jobID}"]`);
-            if (card) {
-              const progressDiv = card.querySelector('.download-progress');
-              const outputDiv = progressDiv.querySelector('div');
-              if (data.data) {
-                outputDiv.textContent += data.data + '\n';
-                outputDiv.scrollTop = outputDiv.scrollHeight;
-              }
-            }
-          }
-        });
-
-        eventSource.addEventListener('error', (event) => {
-          console.error('SSE error:', event);
+        const progressStream = new EventSource('/downloads/stream');
+        progressStream.addEventListener('progress', (event) => {
+          const progress = JSON.parse(event.data);
+          handleProgressUpdate(progress);
         });
       }
 
-      function updateDependencyCard(job) {
-        // Find the card for this dependency
+      function handleProgressUpdate(progress) {
+        for (const dep of progress.dependencies) {
+          const item = document.querySelector(`[data-dep-id="${dep.dependency_id}"]`);
+          if (!item) continue;
+
+          const icon = item.querySelector('.dep-icon');
+          const statusText = document.getElementById(`status-text-${dep.dependency_id}`);
+          const progressDiv = document.getElementById(`progress-${dep.dependency_id}`);
+          const progressText = document.getElementById(`progress-text-${dep.dependency_id}`);
+          const actions = item.querySelector('.dep-actions');
+
+          item.classList.remove('installed', 'not-installed', 'downloading', 'outdated');
+          icon.classList.remove('installed', 'not-installed', 'downloading', 'outdated');
+
+          switch(dep.status) {
+            case 'complete':
+              delete lastProgress[dep.dependency_id];
+              item.classList.add('installed');
+              icon.classList.add('installed');
+              icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+              statusText.textContent = 'Installed';
+              progressDiv.classList.remove('show');
+              actions.innerHTML = `<button class="btn btn-secondary" onclick="reinstallDependency('${dep.dependency_id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>Reinstall</button>`;
+              break;
+            case 'downloading':
+            case 'extracting':
+              const currentBytes = dep.bytes_downloaded || 0;
+              const prevData = lastProgress[dep.dependency_id];
+              if (!prevData || prevData.bytes !== currentBytes) {
+                lastProgress[dep.dependency_id] = { bytes: currentBytes, time: Date.now() };
+              }
+
+              item.classList.add('downloading');
+              icon.classList.add('downloading');
+              icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"></path></svg>';
+              statusText.textContent = dep.status === 'extracting' ? 'Extracting...' : 'Downloading...';
+              progressDiv.classList.add('show');
+              const fill = progressDiv.querySelector('.progress-bar-fill');
+              if (fill) fill.style.width = dep.percent + '%';
+              progressText.textContent = dep.message || `${Math.round(dep.percent)}%`;
+              actions.innerHTML = '<button class="btn btn-secondary" disabled>Installing...</button>';
+              break;
+            case 'error':
+              delete lastProgress[dep.dependency_id];
+              item.classList.add('not-installed');
+              icon.classList.add('not-installed');
+              icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle></svg>';
+              statusText.textContent = dep.error || 'Failed';
+              progressDiv.classList.remove('show');
+              actions.innerHTML = `<button class="btn btn-primary" onclick="downloadDependency('${dep.dependency_id}')">Retry</button>`;
+              showStatusMessage(dep.error || 'Installation failed', 'error');
+              break;
+          }
+        }
+        updateCounts();
+      }
+
+      function handleJobUpdate(job) {
         const depID = job.input;
-        const card = document.querySelector(`[data-dep-id="${depID}"]`);
-        if (!card) return;
+        const item = document.querySelector(`[data-dep-id="${depID}"]`);
+        if (!item) return;
 
-        const statusBadge = card.querySelector('.status-badge');
-        const actionsDiv = card.querySelector('.dep-actions');
-        const progressDiv = card.querySelector('.download-progress');
+        const icon = item.querySelector('.dep-icon');
+        const statusText = document.getElementById(`status-text-${depID}`);
+        const actions = item.querySelector('.dep-actions');
 
-        // Update job ID
-        card.setAttribute('data-job-id', job.id);
+        item.classList.remove('installed', 'not-installed', 'downloading', 'outdated');
+        icon.classList.remove('installed', 'not-installed', 'downloading', 'outdated');
 
-        // Update based on job state
         const state = job.state;
-        if (
-          state === 0 ||
-          state === 'pending' ||
-          state === 'Pending' ||
-          state === 1 ||
-          state === 'in_progress' ||
-          state === 'InProgress'
-        ) {
-          statusBadge.textContent = 'downloading';
-          statusBadge.className = 'status-badge status-downloading';
-          progressDiv.style.display = 'block';
+        if (state === 0 || state === 'pending' || state === 1 || state === 'in_progress') {
+          item.classList.add('downloading');
+          icon.classList.add('downloading');
+          statusText.textContent = 'Installing...';
+          actions.innerHTML = '<button class="btn btn-secondary" disabled>Installing...</button>';
+        } else if (state === 2 || state === 'completed') {
+          item.classList.add('installed');
+          icon.classList.add('installed');
+          icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+          statusText.textContent = 'Installed';
+          actions.innerHTML = `<button class="btn btn-secondary" onclick="reinstallDependency('${depID}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>Reinstall</button>`;
+          showStatusMessage(`${depID} installed`, 'success');
+          updateCounts();
+        } else {
+          item.classList.add('not-installed');
+          icon.classList.add('not-installed');
+          statusText.textContent = 'Failed';
+          actions.innerHTML = `<button class="btn btn-primary" onclick="downloadDependency('${depID}')">Retry</button>`;
+          showStatusMessage(`${depID} failed`, 'error');
+        }
+      }
 
-          // Update buttons
-          actionsDiv.innerHTML = `
-            <button class="btn btn-primary" disabled>Downloading...</button>
-            <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
-          `;
-        } else if (
-          state === 2 ||
-          state === 'completed' ||
-          state === 'Completed'
-        ) {
-          statusBadge.textContent = 'installed';
-          statusBadge.className = 'status-badge status-installed';
-          progressDiv.style.display = 'none';
+      function downloadDependency(depID) {
+        const item = document.querySelector(`[data-dep-id="${depID}"]`);
+        if (!item) return;
 
-          actionsDiv.innerHTML = `
-            <button class="btn btn-success" disabled>Installed</button>
-            <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
-          `;
+        const icon = item.querySelector('.dep-icon');
+        const statusText = document.getElementById(`status-text-${depID}`);
+        const actions = item.querySelector('.dep-actions');
+        const progressDiv = document.getElementById(`progress-${depID}`);
 
-          showStatusMessage(`${depID} installed successfully!`, 'success');
-        } else if (
-          state === 4 ||
-          state === 'error' ||
-          state === 'Error' ||
-          state === 3 ||
-          state === 'cancelled' ||
-          state === 'Cancelled'
-        ) {
-          statusBadge.textContent = 'not_installed';
-          statusBadge.className = 'status-badge status-not_installed';
-          progressDiv.style.display = 'none';
+        item.classList.remove('installed', 'not-installed', 'outdated');
+        item.classList.add('downloading');
+        icon.classList.remove('installed', 'not-installed', 'outdated');
+        icon.classList.add('downloading');
+        icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"></path></svg>';
+        statusText.textContent = 'Starting...';
+        actions.innerHTML = '<button class="btn btn-secondary" disabled>Installing...</button>';
+        progressDiv.classList.add('show');
 
-          actionsDiv.innerHTML = `
-            <button class="btn btn-primary" onclick="downloadDependency('${depID}')">Download</button>
-            <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
-          `;
+        // Initialize stall tracking
+        lastProgress[depID] = { bytes: 0, time: Date.now() };
 
-          showStatusMessage(`Download failed for ${depID}`, 'error');
+        fetch('/downloads/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: depID }),
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status !== 'started') {
+            return fetch('/dependencies/download', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ dependency_id: depID }),
+            });
+          }
+        })
+        .catch(() => {
+          item.classList.remove('downloading');
+          item.classList.add('not-installed');
+          icon.classList.remove('downloading');
+          icon.classList.add('not-installed');
+          statusText.textContent = 'Failed to start';
+          actions.innerHTML = `<button class="btn btn-primary" onclick="downloadDependency('${depID}')">Retry</button>`;
+          progressDiv.classList.remove('show');
+          delete lastProgress[depID];
+        });
+      }
+
+      function reinstallDependency(depID) {
+        if (!confirm(`Reinstall ${depID}? This will download and install the latest version.`)) return;
+        downloadDependency(depID);
+      }
+
+      function installAll() {
+        if (isInstalling) return;
+
+        const btn = document.getElementById('install-all-btn');
+        btn.disabled = true;
+        btn.textContent = 'Installing...';
+        isInstalling = true;
+
+        fetch('/downloads/install-all', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (data.status === 'nothing_to_install') {
+            showStatusMessage('All components installed', 'success');
+            btn.textContent = 'All Installed';
+          } else if (data.status !== 'started') {
+            btn.disabled = false;
+            btn.textContent = 'Install Missing';
+            isInstalling = false;
+          }
+        })
+        .catch(() => {
+          btn.disabled = false;
+          btn.textContent = 'Install Missing';
+          isInstalling = false;
+        });
+      }
+
+      function checkStalledDownloads() {
+        const now = Date.now();
+        for (const [depId, data] of Object.entries(lastProgress)) {
+          if (now - data.time > STALL_TIMEOUT) {
+            const item = document.querySelector(`[data-dep-id="${depId}"]`);
+            if (!item || !item.classList.contains('downloading')) continue;
+
+            const icon = item.querySelector('.dep-icon');
+            const statusText = document.getElementById(`status-text-${depId}`);
+            const actions = item.querySelector('.dep-actions');
+            const progressDiv = document.getElementById(`progress-${depId}`);
+
+            item.classList.remove('downloading');
+            item.classList.add('not-installed');
+            icon.classList.remove('downloading');
+            icon.classList.add('not-installed');
+            icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle></svg>';
+            statusText.textContent = 'Timed out';
+            actions.innerHTML = `<button class="btn btn-primary" onclick="downloadDependency('${depId}')">Retry</button>`;
+            progressDiv.classList.remove('show');
+
+            delete lastProgress[depId];
+            showStatusMessage(`${depId} download timed out`, 'error');
+          }
         }
       }
 
       function showStatusMessage(message, type) {
-        const statusDiv = document.getElementById('status-message');
-        statusDiv.textContent = message;
-        statusDiv.className = `status-message ${type} show`;
-        setTimeout(() => {
-          statusDiv.className = 'status-message';
-        }, 5000);
+        const el = document.getElementById('status-message');
+        el.textContent = message;
+        el.className = `status-message ${type} show`;
+        setTimeout(() => el.className = 'status-message', 3000);
       }
 
-      function downloadDependency(depID) {
-        const card = document.querySelector(`[data-dep-id="${depID}"]`);
-        const statusBadge = card.querySelector('.status-badge');
-        const progressDiv = card.querySelector('.download-progress');
-        const actionsDiv = card.querySelector('.dep-actions');
-
-        fetch('/dependencies/download', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dependency_id: depID }),
-        })
-          .then((r) => {
-            if (!r.ok) throw new Error('Download request failed');
-            return r.json();
-          })
-          .then((data) => {
-            // Update UI immediately
-            card.setAttribute('data-job-id', data.job_id);
-            statusBadge.textContent = 'downloading';
-            statusBadge.className = 'status-badge status-downloading';
-            progressDiv.style.display = 'block';
-            progressDiv.querySelector('div').textContent = '';
-
-            actionsDiv.innerHTML = `
-              <button class="btn btn-primary" disabled>Downloading...</button>
-              <button class="btn btn-tertiary" onclick="checkDependency('${depID}')">Check Status</button>
-            `;
-
-            showStatusMessage(`Download started for ${depID}`, 'success');
-          })
-          .catch((err) => {
-            showStatusMessage(
-              `Failed to start download: ${err.message}`,
-              'error'
-            );
-          });
-      }
-
-      function checkDependency(depID) {
-        fetch(`/dependencies/check?id=${depID}`)
-          .then((r) => {
-            if (!r.ok) throw new Error('Check request failed');
-            return r.json();
-          })
-          .then((data) => {
-            showStatusMessage(
-              `Status: ${data.status}, Version: ${data.version || 'unknown'}`,
-              'success'
-            );
-            // Reload page to show updated status
-            setTimeout(() => {
-              window.location.reload();
-            }, 1500);
-          })
-          .catch((err) => {
-            showStatusMessage(
-              `Failed to check status: ${err.message}`,
-              'error'
-            );
-          });
-      }
-
-      function ignoreDependency(depID, ignored) {
-        fetch('/dependencies/ignore', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dependency_id: depID, ignored: ignored }),
-        })
-          .then((r) => {
-            if (!r.ok) throw new Error('Ignore request failed');
-            return r.json();
-          })
-          .then((data) => {
-            const action = data.ignored ? 'ignored' : 'unignored';
-            showStatusMessage(`${depID} ${action} successfully`, 'success');
-            // Reload page to show updated status
-            setTimeout(() => {
-              window.location.reload();
-            }, 1000);
-          })
-          .catch((err) => {
-            showStatusMessage(
-              `Failed to update ignore status: ${err.message}`,
-              'error'
-            );
-          });
-      }
-
-      // Initialize on page load
-      document.addEventListener('DOMContentLoaded', () => {
-        // Connect to SSE
-        connectSSE();
-
-        // Initialize any cards that already have active jobs
-        document.querySelectorAll('.dependency-card').forEach((card) => {
-          const jobID = card.getAttribute('data-job-id');
-          if (jobID) {
-            // Show progress section for active jobs
-            const progressDiv = card.querySelector('.download-progress');
-            const statusBadge = card.querySelector('.status-badge');
-            if (statusBadge.textContent === 'downloading') {
-              progressDiv.style.display = 'block';
-            }
+      function updateCounts() {
+        let installed = 0, missing = 0;
+        document.querySelectorAll('.dep-item').forEach(item => {
+          const isOpt = item.dataset.optional === 'true';
+          const isInst = item.classList.contains('installed');
+          if (!isOpt) {
+            if (isInst) installed++;
+            else missing++;
+          } else if (isInst) {
+            installed++;
           }
         });
+
+        document.getElementById('installed-count').textContent = installed;
+        document.getElementById('missing-count').textContent = missing;
+
+        const btn = document.getElementById('install-all-btn');
+        if (missing === 0 && !isInstalling) {
+          btn.disabled = true;
+          btn.textContent = 'All Installed';
+        }
+      }
+
+      document.addEventListener('DOMContentLoaded', () => {
+        connectStreams();
+        updateCounts();
+        setInterval(checkStalledDownloads, 30000);
       });
     </script>
   </body>

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/platform"
 )
@@ -23,9 +24,13 @@ func init() {
 		TargetDir:     GetDepsDir("dce"),
 		Check:         checkDce,
 		Download:      downloadDce,
+		DownloadFn:    downloadDceNew,
 		LatestVersion: LatestDceVersion,
 		DownloadURL:   getDceDownloadURL(),
 		ExpectedSize:  10 * 1024 * 1024, // ~10MB
+		Optional:      true,             // DCE is optional
+		ManualOnly:    true,             // No configured download URL
+		InstallURL:    "https://github.com/Tyrrrz/DiscordChatExporter",
 	})
 }
 
@@ -111,5 +116,75 @@ func downloadDce(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, "")
 	q.PushJobStdout(j.ID, "✓ dce installed successfully!")
 
+	return nil
+}
+
+// downloadDceNew downloads and installs dce using the new download system.
+func downloadDceNew(ctx context.Context, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Starting dce download..."})
+
+	dep, ok := Get("dce")
+	if !ok {
+		return fmt.Errorf("dce dependency not found in registry")
+	}
+
+	// Check if download URL is configured
+	if dep.DownloadURL == "" || len(dep.DownloadURL) >= 4 && dep.DownloadURL[:4] == "TODO" {
+		return fmt.Errorf("dce download URL not configured")
+	}
+
+	// Ensure target directory exists
+	if err := os.MkdirAll(dep.TargetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	downloadURL := dep.DownloadURL
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Downloading from %s", downloadURL)})
+
+	// dce is a single executable, download directly
+	exeName := GetExecutableName("dce")
+	exePath := filepath.Join(dep.TargetDir, exeName)
+
+	speedTracker := downloads.NewSpeedTracker()
+
+	err := downloads.DownloadWithRetry(ctx, exePath, downloadURL, func(downloaded, total int64) {
+		speed := speedTracker.Update(downloaded)
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(downloaded) / float64(total) * 100
+		}
+		progress(downloads.Progress{
+			Status:          downloads.StatusDownloading,
+			Message:         fmt.Sprintf("Downloading: %s / %s", downloads.FormatBytes(downloaded), downloads.FormatBytes(total)),
+			BytesDownloaded: downloaded,
+			TotalBytes:      total,
+			Percent:         percent,
+			Speed:           speed,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// Make executable on Linux/macOS
+	if err := platform.EnsureExecutable(exePath); err != nil {
+		// Non-fatal warning
+	}
+
+	// Update metadata
+	metadata := GetMetadataStore()
+	metadata.Update("dce", DependencyMetadata{
+		InstalledVersion: LatestDceVersion,
+		Status:           StatusInstalled,
+		InstallPath:      dep.TargetDir,
+		LastChecked:      time.Now(),
+		LastUpdated:      time.Now(),
+		Files: map[string]FileInfo{
+			exeName: {Path: exePath},
+		},
+	})
+	metadata.Save()
+
+	progress(downloads.Progress{Status: downloads.StatusComplete, Message: "dce installed successfully!", Percent: 100})
 	return nil
 }

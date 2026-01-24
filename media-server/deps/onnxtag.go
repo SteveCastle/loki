@@ -9,11 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/platform"
 )
 
-var LatestOnnxtagVersion = "1.0.0"
+var LatestOnnxtagVersion = "2.7.3"
 
 func init() {
 	Register(&Dependency{
@@ -23,6 +24,7 @@ func init() {
 		TargetDir:     GetDepsDir("onnxtag"),
 		Check:         checkOnnxtag,
 		Download:      downloadOnnxtag,
+		DownloadFn:    downloadOnnxtagNew,
 		LatestVersion: LatestOnnxtagVersion,
 		DownloadURL:   getOnnxtagDownloadURL(),
 		ExpectedSize:  10 * 1024 * 1024, // ~10MB
@@ -31,11 +33,11 @@ func init() {
 
 // getOnnxtagDownloadURL returns the platform-specific download URL.
 func getOnnxtagDownloadURL() string {
-	// TODO: Update with actual release URL
+	baseURL := "https://github.com/SteveCastle/loki/releases/download/v" + LatestOnnxtagVersion
 	if runtime.GOOS == "windows" {
-		return "TODO: Add Windows release URL for onnxtag"
+		return baseURL + "/onnxtag.exe"
 	}
-	return "TODO: Add Linux release URL for onnxtag"
+	return baseURL + "/onnxtag"
 }
 
 // checkOnnxtag verifies if onnxtag executable exists.
@@ -111,5 +113,70 @@ func downloadOnnxtag(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, "")
 	q.PushJobStdout(j.ID, "✓ onnxtag installed successfully!")
 
+	return nil
+}
+
+// downloadOnnxtagNew downloads and installs onnxtag using the new download system.
+func downloadOnnxtagNew(ctx context.Context, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Starting onnxtag download..."})
+
+	dep, ok := Get("onnxtag")
+	if !ok {
+		return fmt.Errorf("onnxtag dependency not found in registry")
+	}
+
+	// Ensure target directory exists
+	if err := os.MkdirAll(dep.TargetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	downloadURL := dep.DownloadURL
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Downloading from %s", downloadURL)})
+
+	// Download the executable
+	exeName := GetExecutableName("onnxtag")
+	exePath := filepath.Join(dep.TargetDir, exeName)
+
+	speedTracker := downloads.NewSpeedTracker()
+
+	err := downloads.DownloadWithRetry(ctx, exePath, downloadURL, func(downloaded, total int64) {
+		speed := speedTracker.Update(downloaded)
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(downloaded) / float64(total) * 100
+		}
+		progress(downloads.Progress{
+			Status:          downloads.StatusDownloading,
+			Message:         fmt.Sprintf("Downloading: %s / %s", downloads.FormatBytes(downloaded), downloads.FormatBytes(total)),
+			BytesDownloaded: downloaded,
+			TotalBytes:      total,
+			Percent:         percent,
+			Speed:           speed,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	// Make executable on Linux/macOS
+	if err := platform.EnsureExecutable(exePath); err != nil {
+		// Non-fatal warning
+	}
+
+	// Update metadata
+	metadata := GetMetadataStore()
+	metadata.Update("onnxtag", DependencyMetadata{
+		InstalledVersion: LatestOnnxtagVersion,
+		Status:           StatusInstalled,
+		InstallPath:      dep.TargetDir,
+		LastChecked:      time.Now(),
+		LastUpdated:      time.Now(),
+		Files: map[string]FileInfo{
+			exeName: {Path: exePath},
+		},
+	})
+	metadata.Save()
+
+	progress(downloads.Progress{Status: downloads.StatusComplete, Message: "onnxtag installed successfully!", Percent: 100})
 	return nil
 }

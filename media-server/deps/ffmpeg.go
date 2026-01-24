@@ -16,10 +16,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
-var LatestFFmpegVersion = "N-122344-g649a4e98f4-20260103"
+var LatestFFmpegVersion = "N-122535-gff63d4865b-20260124"
 
 func init() {
 	Register(&Dependency{
@@ -29,6 +30,7 @@ func init() {
 		TargetDir:     GetDepsDir("ffmpeg"),
 		Check:         checkFFmpeg,
 		Download:      downloadFFmpeg,
+		DownloadFn:    downloadFFmpegNew,
 		LatestVersion: LatestFFmpegVersion,
 		DownloadURL:   GetFFmpegDownloadURL(),
 		ExpectedSize:  150 * 1024 * 1024, // ~150MB compressed
@@ -384,6 +386,245 @@ func extractTarGz(archivePath, destDir string) error {
 			}
 			outFile.Close()
 		}
+	}
+
+	return nil
+}
+
+// downloadFFmpegNew downloads and installs FFmpeg using the new download system.
+func downloadFFmpegNew(ctx context.Context, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Starting FFmpeg download..."})
+
+	dep, ok := Get("ffmpeg")
+	if !ok {
+		return fmt.Errorf("ffmpeg dependency not found in registry")
+	}
+
+	// Ensure target directory exists
+	if err := os.MkdirAll(dep.TargetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	downloadURL := dep.DownloadURL
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Downloading from %s", downloadURL)})
+
+	// Determine archive type based on platform
+	var archivePath string
+	switch runtime.GOOS {
+	case "windows", "darwin":
+		archivePath = filepath.Join(dep.TargetDir, "ffmpeg.zip")
+	default: // linux
+		archivePath = filepath.Join(dep.TargetDir, "ffmpeg.tar.xz")
+	}
+
+	// Create speed tracker for progress reporting
+	speedTracker := downloads.NewSpeedTracker()
+
+	// Download the archive
+	err := downloads.DownloadWithRetry(ctx, archivePath, downloadURL, func(downloaded, total int64) {
+		speed := speedTracker.Update(downloaded)
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(downloaded) / float64(total) * 100
+		}
+		progress(downloads.Progress{
+			Status:          downloads.StatusDownloading,
+			Message:         fmt.Sprintf("Downloading FFmpeg: %s / %s", downloads.FormatBytes(downloaded), downloads.FormatBytes(total)),
+			BytesDownloaded: downloaded,
+			TotalBytes:      total,
+			Percent:         percent,
+			Speed:           speed,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	progress(downloads.Progress{Status: downloads.StatusExtracting, Message: "Extracting files..."})
+
+	// Extract the archive
+	switch runtime.GOOS {
+	case "windows":
+		if err := extractFFmpegZipNew(archivePath, dep.TargetDir, progress); err != nil {
+			return fmt.Errorf("extraction failed: %w", err)
+		}
+	case "darwin":
+		if err := extractFFmpegZipDarwinNew(archivePath, dep.TargetDir, progress); err != nil {
+			return fmt.Errorf("extraction failed: %w", err)
+		}
+		// On macOS, FFprobe is downloaded separately
+		progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Downloading FFprobe..."})
+		ffprobeURL := GetFFprobeDownloadURL()
+		if ffprobeURL != "" {
+			ffprobeArchive := filepath.Join(dep.TargetDir, "ffprobe.zip")
+			if err := downloads.DownloadWithRetry(ctx, ffprobeArchive, ffprobeURL, nil); err != nil {
+				return fmt.Errorf("ffprobe download failed: %w", err)
+			}
+			if err := extractFFmpegZipDarwinNew(ffprobeArchive, dep.TargetDir, progress); err != nil {
+				return fmt.Errorf("ffprobe extraction failed: %w", err)
+			}
+			os.Remove(ffprobeArchive)
+		}
+	default: // linux
+		if err := extractFFmpegTarXzNew(archivePath, dep.TargetDir, progress); err != nil {
+			return fmt.Errorf("extraction failed: %w", err)
+		}
+	}
+
+	// Clean up archive
+	os.Remove(archivePath)
+
+	// Verify executables
+	executables := []string{"ffmpeg", "ffprobe"}
+	files := make(map[string]FileInfo)
+	for _, exe := range executables {
+		exePath := filepath.Join(dep.TargetDir, GetExecutableName(exe))
+		if _, err := os.Stat(exePath); err == nil {
+			files[GetExecutableName(exe)] = FileInfo{Path: exePath}
+		}
+	}
+
+	// Update metadata
+	metadata := GetMetadataStore()
+	metadata.Update("ffmpeg", DependencyMetadata{
+		InstalledVersion: LatestFFmpegVersion,
+		Status:           StatusInstalled,
+		InstallPath:      dep.TargetDir,
+		LastChecked:      time.Now(),
+		LastUpdated:      time.Now(),
+		Files:            files,
+	})
+	metadata.Save()
+
+	progress(downloads.Progress{Status: downloads.StatusComplete, Message: "FFmpeg installed successfully!", Percent: 100})
+	return nil
+}
+
+// extractFFmpegZipNew extracts FFmpeg from a ZIP archive (Windows) with progress.
+func extractFFmpegZipNew(archivePath, destDir string, progress downloads.ProgressCallback) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip archive: %w", err)
+	}
+	defer reader.Close()
+
+	// Find the bin directory prefix
+	var binPrefix string
+	for _, file := range reader.File {
+		if strings.Contains(file.Name, "/bin/ffmpeg") {
+			parts := strings.Split(file.Name, "/bin/")
+			if len(parts) > 0 {
+				binPrefix = parts[0] + "/bin/"
+				break
+			}
+		}
+	}
+
+	if binPrefix == "" {
+		return fmt.Errorf("could not find bin directory in archive")
+	}
+
+	progress(downloads.Progress{Status: downloads.StatusExtracting, Message: fmt.Sprintf("Extracting from: %s", binPrefix)})
+
+	// Extract only the bin directory contents
+	for _, file := range reader.File {
+		if !strings.HasPrefix(file.Name, binPrefix) {
+			continue
+		}
+
+		relPath := strings.TrimPrefix(file.Name, binPrefix)
+		if relPath == "" || file.FileInfo().IsDir() {
+			continue
+		}
+
+		destPath := filepath.Join(destDir, relPath)
+
+		outFile, err := os.Create(destPath)
+		if err != nil {
+			return fmt.Errorf("failed to create %s: %w", destPath, err)
+		}
+
+		rc, err := file.Open()
+		if err != nil {
+			outFile.Close()
+			return fmt.Errorf("failed to open %s in archive: %w", file.Name, err)
+		}
+
+		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			return fmt.Errorf("failed to extract %s: %w", file.Name, err)
+		}
+
+		progress(downloads.Progress{Status: downloads.StatusExtracting, Message: fmt.Sprintf("Extracted: %s", relPath)})
+	}
+
+	return nil
+}
+
+// extractFFmpegZipDarwinNew extracts FFmpeg/FFprobe from a ZIP archive (macOS) with progress.
+func extractFFmpegZipDarwinNew(archivePath, destDir string, progress downloads.ProgressCallback) error {
+	reader, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip archive: %w", err)
+	}
+	defer reader.Close()
+
+	for _, file := range reader.File {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+
+		fileName := filepath.Base(file.Name)
+		if fileName != "ffmpeg" && fileName != "ffprobe" && fileName != "ffplay" {
+			continue
+		}
+
+		destPath := filepath.Join(destDir, fileName)
+
+		outFile, err := os.Create(destPath)
+		if err != nil {
+			return fmt.Errorf("failed to create %s: %w", destPath, err)
+		}
+
+		rc, err := file.Open()
+		if err != nil {
+			outFile.Close()
+			return fmt.Errorf("failed to open %s in archive: %w", file.Name, err)
+		}
+
+		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			return fmt.Errorf("failed to extract %s: %w", file.Name, err)
+		}
+
+		// Make executable
+		os.Chmod(destPath, 0755)
+
+		progress(downloads.Progress{Status: downloads.StatusExtracting, Message: fmt.Sprintf("Extracted: %s", fileName)})
+	}
+
+	return nil
+}
+
+// extractFFmpegTarXzNew extracts FFmpeg from a tar.xz archive (Linux) with progress.
+func extractFFmpegTarXzNew(archivePath, destDir string, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusExtracting, Message: "Extracting tar.xz archive..."})
+
+	cmd := exec.Command("tar", "-xf", archivePath, "-C", destDir, "--strip-components=2", "--wildcards", "*/bin/*")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("tar extraction failed: %w (output: %s)", err, string(output))
+	}
+
+	// Make executables executable
+	executables := []string{"ffmpeg", "ffprobe", "ffplay"}
+	for _, exe := range executables {
+		exePath := filepath.Join(destDir, exe)
+		os.Chmod(exePath, 0755)
 	}
 
 	return nil

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/bodgit/sevenzip"
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -26,6 +27,7 @@ func init() {
 		TargetDir:     GetDepsDir("whisper"),
 		Check:         checkWhisper,
 		Download:      downloadWhisper,
+		DownloadFn:    downloadWhisperNew,
 		LatestVersion: LatestFasterWhisperVersion,
 		DownloadURL:   GetWhisperDownloadURL(),
 		ExpectedSize:  200 * 1024 * 1024, // 200MB (approximate)
@@ -200,10 +202,12 @@ func extractFile(file *sevenzip.File, destDir string, jobID string, q *jobqueue.
 
 	// Strip "Faster-Whisper-XXL/" prefix from path to move files to root
 	fileName := file.Name
-	if len(fileName) > 18 && fileName[:18] == "Faster-Whisper-XXL/" {
-		fileName = fileName[19:] // Skip "Faster-Whisper-XXL/"
-	} else if len(fileName) > 18 && fileName[:18] == "Faster-Whisper-XXL\\" {
-		fileName = fileName[19:] // Skip "Faster-Whisper-XXL\"
+	const prefixSlash = "Faster-Whisper-XXL/"
+	const prefixBackslash = "Faster-Whisper-XXL\\"
+	if len(fileName) >= len(prefixSlash) && fileName[:len(prefixSlash)] == prefixSlash {
+		fileName = fileName[len(prefixSlash):]
+	} else if len(fileName) >= len(prefixBackslash) && fileName[:len(prefixBackslash)] == prefixBackslash {
+		fileName = fileName[len(prefixBackslash):]
 	}
 
 	// Skip if the filename is empty (was just the directory itself)
@@ -258,4 +262,164 @@ func formatBytesWhisper(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// downloadWhisperNew downloads and installs Faster Whisper using the new download system.
+func downloadWhisperNew(ctx context.Context, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Starting Faster Whisper download..."})
+
+	dep, ok := Get("faster-whisper")
+	if !ok {
+		return fmt.Errorf("faster-whisper dependency not found in registry")
+	}
+
+	// Ensure target directory exists
+	if err := os.MkdirAll(dep.TargetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Check architecture
+	arch := runtime.GOARCH
+	if arch != "amd64" {
+		return fmt.Errorf("unsupported architecture: %s (Faster Whisper is only available for x64 systems)", arch)
+	}
+
+	downloadURL := dep.DownloadURL
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Downloading from %s", downloadURL)})
+
+	// Download the 7z file
+	temp7z := filepath.Join(dep.TargetDir, "faster-whisper.7z")
+
+	speedTracker := downloads.NewSpeedTracker()
+
+	err := downloads.DownloadWithRetry(ctx, temp7z, downloadURL, func(downloaded, total int64) {
+		speed := speedTracker.Update(downloaded)
+		percent := float64(0)
+		if total > 0 {
+			percent = float64(downloaded) / float64(total) * 100
+		}
+		progress(downloads.Progress{
+			Status:          downloads.StatusDownloading,
+			Message:         fmt.Sprintf("Downloading: %s / %s", downloads.FormatBytes(downloaded), downloads.FormatBytes(total)),
+			BytesDownloaded: downloaded,
+			TotalBytes:      total,
+			Percent:         percent,
+			Speed:           speed,
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+
+	progress(downloads.Progress{Status: downloads.StatusExtracting, Message: "Extracting files..."})
+
+	// Extract the 7z file
+	if err := extractWhisper7zNew(temp7z, dep.TargetDir, progress); err != nil {
+		progress(downloads.Progress{Status: downloads.StatusError, Message: "Extraction failed"})
+		return fmt.Errorf("extraction failed: %w", err)
+	}
+
+	// Clean up 7z file
+	os.Remove(temp7z)
+
+	// Verify the executable
+	exeName := GetWhisperExecutableName()
+	exePath := filepath.Join(dep.TargetDir, exeName)
+	if _, err := os.Stat(exePath); os.IsNotExist(err) {
+		return fmt.Errorf("%s not found in expected location: %s", exeName, exePath)
+	}
+
+	// Update metadata
+	metadata := GetMetadataStore()
+	metadata.Update("faster-whisper", DependencyMetadata{
+		InstalledVersion: LatestFasterWhisperVersion,
+		Status:           StatusInstalled,
+		InstallPath:      dep.TargetDir,
+		LastChecked:      time.Now(),
+		LastUpdated:      time.Now(),
+		Files: map[string]FileInfo{
+			exeName: {Path: exePath},
+		},
+	})
+	metadata.Save()
+
+	progress(downloads.Progress{Status: downloads.StatusComplete, Message: "Faster Whisper installed successfully!", Percent: 100})
+	return nil
+}
+
+// extractWhisper7zNew extracts all files from the Whisper 7z archive with progress.
+func extractWhisper7zNew(archivePath, destDir string, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusExtracting, Message: "Opening 7z archive..."})
+
+	reader, err := sevenzip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open 7z archive: %w", err)
+	}
+	defer reader.Close()
+
+	progress(downloads.Progress{Status: downloads.StatusExtracting, Message: fmt.Sprintf("Found %d files in archive", len(reader.File))})
+
+	for i, file := range reader.File {
+		if err := extractFileNew(file, destDir); err != nil {
+			return fmt.Errorf("failed to extract %s: %w", file.Name, err)
+		}
+
+		if (i+1)%10 == 0 || i == len(reader.File)-1 {
+			percent := float64(i+1) / float64(len(reader.File)) * 100
+			progress(downloads.Progress{
+				Status:  downloads.StatusExtracting,
+				Message: fmt.Sprintf("Extracted %d/%d files...", i+1, len(reader.File)),
+				Percent: percent,
+			})
+		}
+	}
+
+	return nil
+}
+
+// extractFileNew extracts a single file from the 7z archive.
+func extractFileNew(file *sevenzip.File, destDir string) error {
+	info := file.FileInfo()
+
+	// Strip "Faster-Whisper-XXL/" prefix from path to move files to root
+	fileName := file.Name
+	const prefixSlash = "Faster-Whisper-XXL/"
+	const prefixBackslash = "Faster-Whisper-XXL\\"
+	if len(fileName) >= len(prefixSlash) && fileName[:len(prefixSlash)] == prefixSlash {
+		fileName = fileName[len(prefixSlash):]
+	} else if len(fileName) >= len(prefixBackslash) && fileName[:len(prefixBackslash)] == prefixBackslash {
+		fileName = fileName[len(prefixBackslash):]
+	}
+
+	if fileName == "" {
+		return nil
+	}
+
+	destPath := filepath.Join(destDir, fileName)
+
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	if info.IsDir() {
+		return os.MkdirAll(destPath, 0755)
+	}
+
+	rc, err := file.Open()
+	if err != nil {
+		return fmt.Errorf("failed to open file in archive: %w", err)
+	}
+	defer rc.Close()
+
+	outFile, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	if _, err := io.Copy(outFile, rc); err != nil {
+		return fmt.Errorf("failed to copy file contents: %w", err)
+	}
+
+	return nil
 }
