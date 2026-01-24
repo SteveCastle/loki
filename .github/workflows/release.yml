@@ -10,85 +10,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  detect-changes:
-    name: Detect Project Changes
-    runs-on: ubuntu-latest
-    outputs:
-      electron_changed: ${{ steps.changes.outputs.electron_changed }}
-      media_server_changed: ${{ steps.changes.outputs.media_server_changed }}
-      any_changed: ${{ steps.changes.outputs.any_changed }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Get previous release tag
-        id: prev-tag
-        run: |
-          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
-          if [ -z "$PREV_TAG" ]; then
-            # No previous tag, consider everything changed
-            echo "prev_tag=" >> $GITHUB_OUTPUT
-          else
-            echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
-          fi
-          echo "Previous tag: $PREV_TAG"
-
-      - name: Detect changes
-        id: changes
-        run: |
-          PREV_TAG="${{ steps.prev-tag.outputs.prev_tag }}"
-
-          if [ -z "$PREV_TAG" ]; then
-            # No previous tag, build everything
-            echo "No previous tag found, building all projects"
-            echo "electron_changed=true" >> $GITHUB_OUTPUT
-            echo "media_server_changed=true" >> $GITHUB_OUTPUT
-            echo "any_changed=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "Comparing changes since $PREV_TAG"
-
-          # Get list of changed files
-          CHANGED_FILES=$(git diff --name-only $PREV_TAG..HEAD)
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-
-          # Detect Electron app changes
-          # Electron files: src/, .erb/, package.json, package-lock.json, tsconfig.json, etc.
-          ELECTRON_CHANGED="false"
-          if echo "$CHANGED_FILES" | grep -qE '^(src/|\.erb/|release/|assets/|package\.json|package-lock\.json|tsconfig\.json|\.eslintrc\.js|webpack\.)'; then
-            ELECTRON_CHANGED="true"
-          fi
-
-          # Detect Media Server changes
-          # Media server files: media-server/
-          MEDIA_SERVER_CHANGED="false"
-          if echo "$CHANGED_FILES" | grep -qE '^media-server/'; then
-            MEDIA_SERVER_CHANGED="true"
-          fi
-
-          # Check if any project changed
-          ANY_CHANGED="false"
-          if [ "$ELECTRON_CHANGED" = "true" ] || [ "$MEDIA_SERVER_CHANGED" = "true" ]; then
-            ANY_CHANGED="true"
-          fi
-
-          echo "electron_changed=$ELECTRON_CHANGED" >> $GITHUB_OUTPUT
-          echo "media_server_changed=$MEDIA_SERVER_CHANGED" >> $GITHUB_OUTPUT
-          echo "any_changed=$ANY_CHANGED" >> $GITHUB_OUTPUT
-
-          echo "Detection results:"
-          echo "  Electron changed: $ELECTRON_CHANGED"
-          echo "  Media Server changed: $MEDIA_SERVER_CHANGED"
-          echo "  Any changed: $ANY_CHANGED"
-
   test-electron:
     name: Test Electron App
-    needs: detect-changes
-    if: needs.detect-changes.outputs.electron_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -108,8 +31,6 @@ jobs:
 
   test-go:
     name: Test Go Server
-    needs: detect-changes
-    if: needs.detect-changes.outputs.media_server_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -127,18 +48,11 @@ jobs:
 
   version-and-tag:
     name: Version and Tag
-    needs: [detect-changes, test-electron, test-go]
-    if: |
-      always() &&
-      needs.detect-changes.outputs.any_changed == 'true' &&
-      (needs.test-electron.result == 'success' || needs.test-electron.result == 'skipped') &&
-      (needs.test-go.result == 'success' || needs.test-go.result == 'skipped')
+    needs: [test-electron, test-go]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get-version.outputs.version }}
       tag: ${{ steps.set-tag.outputs.tag }}
-      electron_changed: ${{ needs.detect-changes.outputs.electron_changed }}
-      media_server_changed: ${{ needs.detect-changes.outputs.media_server_changed }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -181,7 +95,6 @@ jobs:
   build-electron:
     name: Build Electron App (Windows)
     needs: version-and-tag
-    if: needs.version-and-tag.outputs.electron_changed == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout code
@@ -213,7 +126,6 @@ jobs:
   build-electron-macos:
     name: Build Electron App (macOS)
     needs: version-and-tag
-    if: needs.version-and-tag.outputs.electron_changed == 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -251,7 +163,6 @@ jobs:
   build-electron-linux:
     name: Build Electron App (Linux)
     needs: version-and-tag
-    if: needs.version-and-tag.outputs.electron_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -283,7 +194,6 @@ jobs:
   build-go-server:
     name: Build Go Media Server (Windows)
     needs: version-and-tag
-    if: needs.version-and-tag.outputs.media_server_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -314,7 +224,6 @@ jobs:
   build-go-server-macos:
     name: Build Go Media Server (macOS)
     needs: version-and-tag
-    if: needs.version-and-tag.outputs.media_server_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -355,7 +264,6 @@ jobs:
   build-go-server-linux:
     name: Build Go Media Server (Linux)
     needs: version-and-tag
-    if: needs.version-and-tag.outputs.media_server_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -456,18 +364,7 @@ jobs:
         generate-changelog,
       ]
     runs-on: ubuntu-latest
-    if: |
-      always() &&
-      needs.version-and-tag.result == 'success' &&
-      needs.version-and-tag.outputs.tag != '' &&
-      needs.generate-changelog.result == 'success' &&
-      (needs.build-electron.result == 'success' || needs.build-electron.result == 'skipped') &&
-      (needs.build-electron-macos.result == 'success' || needs.build-electron-macos.result == 'skipped') &&
-      (needs.build-electron-linux.result == 'success' || needs.build-electron-linux.result == 'skipped') &&
-      (needs.build-go-server.result == 'success' || needs.build-go-server.result == 'skipped') &&
-      (needs.build-go-server-macos.result == 'success' || needs.build-go-server-macos.result == 'skipped') &&
-      (needs.build-go-server-linux.result == 'success' || needs.build-go-server-linux.result == 'skipped') &&
-      (needs.build-electron.result == 'success' || needs.build-go-server.result == 'success')
+    if: needs.version-and-tag.outputs.tag != ''
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
