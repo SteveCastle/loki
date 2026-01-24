@@ -506,6 +506,127 @@
         color: var(--text-primary);
       }
 
+      /* Library Stats Section */
+      .stats-panel {
+        background: linear-gradient(
+          145deg,
+          var(--bg-elevated) 0%,
+          var(--bg-surface) 100%
+        );
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-xl);
+        padding: var(--space-5);
+        margin-bottom: var(--space-6);
+        box-shadow: var(--shadow-md);
+      }
+
+      .stats-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: var(--space-4);
+      }
+
+      .stats-header h2 {
+        margin: 0;
+        font-size: var(--text-sm);
+        font-weight: 600;
+        color: var(--text-primary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: var(--space-3);
+      }
+
+      .stat-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        padding: var(--space-4);
+        position: relative;
+        overflow: hidden;
+        transition: all var(--transition-fast);
+      }
+
+      .stat-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: var(--card-accent, var(--accent-primary));
+        opacity: 0.7;
+      }
+
+      .stat-card:hover {
+        border-color: var(--border-default);
+      }
+
+      .stat-card--total { --card-accent: var(--accent-primary); }
+      .stat-card--descriptions { --card-accent: var(--status-pending); }  /* matches Generate Descriptions */
+      .stat-card--hashes { --card-accent: var(--accent-cyan); }           /* matches Generate File Info */
+      .stat-card--sizes { --card-accent: var(--accent-cyan); }            /* matches Generate File Info */
+      .stat-card--tags { --card-accent: var(--accent-blue); }             /* matches Auto-Tag with ONNX */
+
+      .stat-value {
+        font-size: var(--text-xl);
+        font-weight: 700;
+        color: var(--card-accent, var(--accent-primary));
+        line-height: 1;
+        margin-bottom: var(--space-1);
+      }
+
+      .stat-value .stat-total {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        font-weight: 500;
+      }
+
+      .stat-label {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        font-weight: 500;
+      }
+
+      .stat-progress {
+        margin-top: var(--space-3);
+        height: 3px;
+        background: var(--bg-active);
+        border-radius: var(--radius-full);
+        overflow: hidden;
+      }
+
+      .stat-progress-bar {
+        height: 100%;
+        background: var(--card-accent, var(--accent-primary));
+        border-radius: var(--radius-full);
+        transition: width var(--transition-slow);
+      }
+
+      .stats-loading {
+        text-align: center;
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+        padding: var(--space-4);
+      }
+
+      @media screen and (max-width: 800px) {
+        .stats-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      @media screen and (max-width: 500px) {
+        .stats-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
       @media screen and (max-width: 800px) {
         .card-grid {
           grid-template-columns: 1fr;
@@ -534,6 +655,124 @@
           padding: var(--space-4);
         }
       }
+
+      /* File Upload Styles */
+      .upload-zone {
+        border: 2px dashed var(--border-default);
+        border-radius: var(--radius-lg);
+        padding: var(--space-4);
+        text-align: center;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        background: var(--bg-surface);
+        margin-bottom: var(--space-3);
+      }
+
+      .upload-zone:hover,
+      .upload-zone.dragover {
+        border-color: var(--status-success);
+        background: var(--status-success-dim);
+      }
+
+      .upload-zone-icon {
+        font-size: 1.5rem;
+        margin-bottom: var(--space-2);
+      }
+
+      .upload-zone-text {
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+      }
+
+      .upload-zone-text strong {
+        color: var(--status-success);
+      }
+
+      .upload-zone input[type="file"] {
+        display: none;
+      }
+
+      .upload-divider {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin: var(--space-4) 0;
+        color: var(--text-muted);
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .upload-divider::before,
+      .upload-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: var(--border-subtle);
+      }
+
+      .upload-progress-list {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        margin-bottom: var(--space-3);
+        max-height: 150px;
+        overflow-y: auto;
+      }
+
+      .upload-progress-item {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-2) var(--space-3);
+        background: var(--bg-surface);
+        border-radius: var(--radius-md);
+        font-size: var(--text-sm);
+      }
+
+      .upload-progress-item .filename {
+        flex: 1;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--text-secondary);
+      }
+
+      .upload-progress-item .progress-bar-container {
+        width: 80px;
+        height: 6px;
+        background: var(--bg-active);
+        border-radius: var(--radius-full);
+        overflow: hidden;
+      }
+
+      .upload-progress-item .progress-bar {
+        height: 100%;
+        background: var(--status-success);
+        border-radius: var(--radius-full);
+        transition: width 0.2s ease;
+      }
+
+      .upload-progress-item .progress-text {
+        width: 40px;
+        text-align: right;
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+      }
+
+      .upload-progress-item.complete .progress-bar {
+        background: var(--status-success);
+      }
+
+      .upload-progress-item.error .progress-bar {
+        background: var(--status-error);
+      }
+
+      .upload-progress-item .status-icon {
+        font-size: var(--text-sm);
+      }
     </style>
   </head>
   <body>
@@ -559,6 +798,16 @@
           <div class="active-jobs-empty" id="emptyState">
             No active jobs — start one below!
           </div>
+        </div>
+      </div>
+
+      <!-- Library Stats Panel -->
+      <div class="stats-panel">
+        <div class="stats-header">
+          <h2>Library Stats</h2>
+        </div>
+        <div class="stats-grid" id="statsGrid">
+          <div class="stats-loading">Loading stats...</div>
         </div>
       </div>
 
@@ -601,11 +850,23 @@
             <div class="card-titles">
               <h3>Ingest Media</h3>
               <p class="card-description">
-                Scan a folder and import new media files
+                Upload files or scan a folder to import media
               </p>
             </div>
           </div>
           <div class="card-body">
+            <!-- File Upload Zone -->
+            <div class="upload-zone" id="uploadZone">
+              <div class="upload-zone-icon">📁</div>
+              <div class="upload-zone-text">
+                <strong>Drop files here</strong> or click to browse
+              </div>
+              <input type="file" id="fileInput" multiple accept="image/*,video/*" />
+            </div>
+            <div class="upload-progress-list" id="uploadProgressList"></div>
+
+            <div class="upload-divider">or scan a folder</div>
+
             <div class="row" style="margin-bottom: var(--space-3)">
               <input
                 class="input"
@@ -1417,6 +1678,195 @@
             });
           })
           .catch(() => {});
+      })();
+
+      // Load library stats asynchronously
+      (function loadStats() {
+        fetch('/api/stats')
+          .then((r) => r.json())
+          .then((data) => {
+            const grid = document.getElementById('statsGrid');
+            if (!grid) return;
+
+            const total = data.totalMedia || 0;
+
+            function progressBar(value, total) {
+              if (!total) return '';
+              const pct = (value / total) * 100;
+              return `<div class="stat-progress"><div class="stat-progress-bar" style="width: ${pct}%"></div></div>`;
+            }
+
+            grid.innerHTML = `
+              <div class="stat-card stat-card--total">
+                <div class="stat-value">${total.toLocaleString()}</div>
+                <div class="stat-label">Total media</div>
+              </div>
+              <div class="stat-card stat-card--descriptions">
+                <div class="stat-value">
+                  ${data.withDescription.toLocaleString()}
+                  <span class="stat-total">/ ${total.toLocaleString()}</span>
+                </div>
+                <div class="stat-label">With descriptions</div>
+                ${progressBar(data.withDescription, total)}
+              </div>
+              <div class="stat-card stat-card--hashes">
+                <div class="stat-value">
+                  ${data.withHash.toLocaleString()}
+                  <span class="stat-total">/ ${total.toLocaleString()}</span>
+                </div>
+                <div class="stat-label">With hashes</div>
+                ${progressBar(data.withHash, total)}
+              </div>
+              <div class="stat-card stat-card--sizes">
+                <div class="stat-value">
+                  ${data.withSize.toLocaleString()}
+                  <span class="stat-total">/ ${total.toLocaleString()}</span>
+                </div>
+                <div class="stat-label">With sizes</div>
+                ${progressBar(data.withSize, total)}
+              </div>
+              <div class="stat-card stat-card--tags">
+                <div class="stat-value">
+                  ${data.withTags.toLocaleString()}
+                  <span class="stat-total">/ ${total.toLocaleString()}</span>
+                </div>
+                <div class="stat-label">With tags</div>
+                ${progressBar(data.withTags, total)}
+              </div>
+            `;
+          })
+          .catch((err) => {
+            console.warn('Failed to load stats:', err);
+            const grid = document.getElementById('statsGrid');
+            if (grid) {
+              grid.innerHTML = '<div class="stats-loading">Failed to load stats</div>';
+            }
+          });
+      })();
+
+      // File Upload Handler
+      (function initFileUpload() {
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const progressList = document.getElementById('uploadProgressList');
+
+        if (!uploadZone || !fileInput) return;
+
+        // Click to browse
+        uploadZone.addEventListener('click', () => fileInput.click());
+
+        // File input change
+        fileInput.addEventListener('change', (e) => {
+          if (e.target.files.length > 0) {
+            uploadFiles(e.target.files);
+            fileInput.value = ''; // Reset for next selection
+          }
+        });
+
+        // Drag and drop
+        uploadZone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          uploadZone.classList.add('dragover');
+        });
+
+        uploadZone.addEventListener('dragleave', (e) => {
+          e.preventDefault();
+          uploadZone.classList.remove('dragover');
+        });
+
+        uploadZone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          uploadZone.classList.remove('dragover');
+          if (e.dataTransfer.files.length > 0) {
+            uploadFiles(e.dataTransfer.files);
+          }
+        });
+
+        function uploadFiles(files) {
+          const formData = new FormData();
+          const fileArray = Array.from(files);
+
+          // Add files to form data
+          fileArray.forEach((file) => {
+            formData.append('files', file);
+          });
+
+          // Create progress items for each file
+          progressList.innerHTML = '';
+          const progressItems = fileArray.map((file, index) => {
+            const item = document.createElement('div');
+            item.className = 'upload-progress-item';
+            item.id = `upload-item-${index}`;
+            item.innerHTML = `
+              <span class="filename" title="${file.name}">${file.name}</span>
+              <div class="progress-bar-container">
+                <div class="progress-bar" style="width: 0%"></div>
+              </div>
+              <span class="progress-text">0%</span>
+            `;
+            progressList.appendChild(item);
+            return item;
+          });
+
+          // Use XMLHttpRequest for progress tracking
+          const xhr = new XMLHttpRequest();
+
+          xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+              const percent = Math.round((e.loaded / e.total) * 100);
+              // Update all progress bars (we're uploading all files in one request)
+              progressItems.forEach((item) => {
+                item.querySelector('.progress-bar').style.width = percent + '%';
+                item.querySelector('.progress-text').textContent = percent + '%';
+              });
+            }
+          });
+
+          xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                const response = JSON.parse(xhr.responseText);
+                if (response.success) {
+                  progressItems.forEach((item) => {
+                    item.classList.add('complete');
+                    item.querySelector('.progress-bar').style.width = '100%';
+                    item.querySelector('.progress-text').textContent = '✓';
+                  });
+                  showStatus('ingestStatus', response.message + ' — files will be ingested automatically', 'success');
+                  // Clear progress after a delay
+                  setTimeout(() => {
+                    progressList.innerHTML = '';
+                  }, 3000);
+                } else {
+                  progressItems.forEach((item) => {
+                    item.classList.add('error');
+                    item.querySelector('.progress-text').textContent = '✗';
+                  });
+                  showStatus('ingestStatus', 'Upload failed: ' + (response.error || 'Unknown error'), 'error');
+                }
+              } catch (e) {
+                showStatus('ingestStatus', 'Upload failed: Invalid response', 'error');
+              }
+            } else {
+              progressItems.forEach((item) => {
+                item.classList.add('error');
+                item.querySelector('.progress-text').textContent = '✗';
+              });
+              showStatus('ingestStatus', 'Upload failed: ' + xhr.statusText, 'error');
+            }
+          });
+
+          xhr.addEventListener('error', () => {
+            progressItems.forEach((item) => {
+              item.classList.add('error');
+              item.querySelector('.progress-text').textContent = '✗';
+            });
+            showStatus('ingestStatus', 'Upload failed: Network error', 'error');
+          });
+
+          xhr.open('POST', '/api/upload');
+          xhr.send(formData);
+        }
       })();
     </script>
   </body>

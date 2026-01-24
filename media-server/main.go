@@ -1156,19 +1156,15 @@ func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
 // Stats page handler
 // -----------------------------------------------------------------------------
 
-type statsTemplateData struct {
-	TotalMedia         int
-	WithDescription    int
-	WithHash           int
-	WithSize           int
-	WithTags           int
-	WithoutDescription int
-	WithoutHash        int
-	WithoutSize        int
-	WithoutTags        int
+type statsAPIResponse struct {
+	TotalMedia      int `json:"totalMedia"`
+	WithDescription int `json:"withDescription"`
+	WithHash        int `json:"withHash"`
+	WithSize        int `json:"withSize"`
+	WithTags        int `json:"withTags"`
 }
 
-func statsHandler(deps *Dependencies) http.HandlerFunc {
+func statsAPIHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
@@ -1190,23 +1186,166 @@ func statsHandler(deps *Dependencies) http.HandlerFunc {
         `).Scan(&total, &withDesc, &withHash, &withSize, &withTags)
 		if err != nil {
 			log.Printf("stats counts error: %v", err)
+			http.Error(w, "Failed to fetch stats", http.StatusInternalServerError)
+			return
 		}
 
-		data := statsTemplateData{
-			TotalMedia:         total,
-			WithDescription:    withDesc,
-			WithHash:           withHash,
-			WithSize:           withSize,
-			WithTags:           withTags,
-			WithoutDescription: total - withDesc,
-			WithoutHash:        total - withHash,
-			WithoutSize:        total - withSize,
-			WithoutTags:        total - withTags,
+		data := statsAPIResponse{
+			TotalMedia:      total,
+			WithDescription: withDesc,
+			WithHash:        withHash,
+			WithSize:        withSize,
+			WithTags:        withTags,
 		}
 
-		if err := renderer.Templates().ExecuteTemplate(w, "stats", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(data)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// File Upload handler
+// -----------------------------------------------------------------------------
+
+type uploadResponse struct {
+	Success bool     `json:"success"`
+	Files   []string `json:"files"`
+	Message string   `json:"message,omitempty"`
+	Error   string   `json:"error,omitempty"`
+}
+
+func uploadHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
 		}
+
+		// Limit upload size to 10GB
+		r.Body = http.MaxBytesReader(w, r.Body, 10<<30)
+
+		// Parse multipart form with 32MB memory buffer
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "Failed to parse upload: " + err.Error(),
+			})
+			return
+		}
+
+		// Get upload directory from config
+		cfg := appconfig.Get()
+		uploadDir := filepath.Join(cfg.DownloadPath, "uploads")
+
+		// Ensure upload directory exists
+		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "Failed to create upload directory: " + err.Error(),
+			})
+			return
+		}
+
+		files := r.MultipartForm.File["files"]
+		if len(files) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "No files provided",
+			})
+			return
+		}
+
+		var uploadedPaths []string
+
+		for _, fileHeader := range files {
+			// Open the uploaded file
+			file, err := fileHeader.Open()
+			if err != nil {
+				log.Printf("Failed to open uploaded file %s: %v", fileHeader.Filename, err)
+				continue
+			}
+
+			// Sanitize filename and create destination path
+			filename := filepath.Base(fileHeader.Filename)
+			destPath := filepath.Join(uploadDir, filename)
+
+			// Handle duplicate filenames by adding a suffix
+			if _, err := os.Stat(destPath); err == nil {
+				ext := filepath.Ext(filename)
+				base := strings.TrimSuffix(filename, ext)
+				for i := 1; ; i++ {
+					destPath = filepath.Join(uploadDir, fmt.Sprintf("%s_%d%s", base, i, ext))
+					if _, err := os.Stat(destPath); os.IsNotExist(err) {
+						break
+					}
+				}
+			}
+
+			// Create destination file
+			dst, err := os.Create(destPath)
+			if err != nil {
+				file.Close()
+				log.Printf("Failed to create file %s: %v", destPath, err)
+				continue
+			}
+
+			// Copy the file
+			_, err = io.Copy(dst, file)
+			file.Close()
+			dst.Close()
+
+			if err != nil {
+				log.Printf("Failed to save file %s: %v", destPath, err)
+				os.Remove(destPath)
+				continue
+			}
+
+			uploadedPaths = append(uploadedPaths, destPath)
+			log.Printf("Uploaded file: %s", destPath)
+		}
+
+		if len(uploadedPaths) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "Failed to save any files",
+			})
+			return
+		}
+
+		// Auto-ingest the upload directory
+		autoIngest := r.FormValue("autoIngest") != "false"
+		if autoIngest && len(uploadedPaths) > 0 {
+			// Create an ingest job for the uploads directory
+			ids, err := deps.Queue.AddWorkflow(jobqueue.Workflow{
+				Tasks: []jobqueue.WorkflowTask{
+					{
+						Command:   "ingest",
+						Arguments: nil,
+						Input:     uploadDir,
+					},
+				},
+			})
+			if err != nil {
+				log.Printf("Failed to create ingest job: %v", err)
+			} else if len(ids) > 0 {
+				log.Printf("Created ingest job %s for uploaded files", ids[0])
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(uploadResponse{
+			Success: true,
+			Files:   uploadedPaths,
+			Message: fmt.Sprintf("Uploaded %d file(s)", len(uploadedPaths)),
+		})
 	}
 }
 
@@ -2581,7 +2720,8 @@ func main() {
 	mux.HandleFunc("/swipe/api", renderer.ApplyMiddlewares(swipeAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/swipe/manifest.json", swipeManifestHandler())
 	mux.HandleFunc("/config", renderer.ApplyMiddlewares(configHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/stats", renderer.ApplyMiddlewares(statsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/upload", renderer.ApplyMiddlewares(uploadHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/dependencies", renderer.ApplyMiddlewares(dependenciesHandler(deps), renderer.RoleAdmin))
