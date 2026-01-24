@@ -306,6 +306,17 @@ type LoadFilesInput =
   | [string, string, boolean]
   | [string, string, boolean, LoadFilesOptions];
 
+type RefreshLibraryInput = {
+  initialFile: string;
+  currentPaths: string[];
+  recursive: boolean;
+};
+
+type RefreshLibraryResult = {
+  added: File[];
+  removed: string[];
+};
+
 export const loadFiles =
   (db: Database) => async (event: IpcMainInvokeEvent, args: LoadFilesInput) => {
     const filePath = args[0] as string;
@@ -445,4 +456,96 @@ export const loadFiles =
       library: sortedFiles,
       cursor,
     };
+  };
+
+export const refreshLibrary =
+  (db: Database) =>
+  async (
+    event: IpcMainInvokeEvent,
+    args: [RefreshLibraryInput]
+  ): Promise<RefreshLibraryResult> => {
+    const { initialFile, currentPaths, recursive } = args[0];
+    const fs = require('fs');
+
+    // Determine the folder path
+    let folderPath: string;
+    try {
+      const stats = fs.lstatSync(initialFile);
+      folderPath = stats.isDirectory() ? initialFile : path.dirname(initialFile);
+    } catch (e) {
+      console.log('[refresh] error getting folder path:', e);
+      return { added: [], removed: [] };
+    }
+
+    // Build a set of current paths for fast lookup (case-insensitive on Windows)
+    const isWindows = os.platform() === 'win32';
+    const normalizePath = (p: string) =>
+      isWindows ? p.toLowerCase() : p;
+    const currentPathSet = new Set(currentPaths.map(normalizePath));
+
+    // Scan the filesystem for current files
+    const filesOnDisk: File[] = [];
+
+    console.log('[refresh] scanning folder:', folderPath, { recursive });
+
+    if (os.platform() === 'win32') {
+      await listFilesFastWindows(
+        folderPath,
+        recursive,
+        filters.all.value,
+        (file) => {
+          filesOnDisk.push(file);
+        }
+      );
+    } else if (os.platform() === 'darwin') {
+      await listFilesFastDarwin(
+        folderPath,
+        recursive,
+        filters.all.value,
+        (file) => {
+          filesOnDisk.push(file);
+        },
+        false // don't need mtime for refresh
+      );
+    } else {
+      await walkDirectory(
+        folderPath,
+        recursive,
+        filters.all.value,
+        (file) => {
+          filesOnDisk.push(file);
+        },
+        false // don't need mtime for refresh
+      );
+    }
+
+    // Build a set of paths found on disk
+    const diskPathSet = new Set(filesOnDisk.map((f) => normalizePath(f.path)));
+
+    // Find new files (on disk but not in current library)
+    const added = filesOnDisk.filter(
+      (f) => !currentPathSet.has(normalizePath(f.path))
+    );
+
+    // Find removed files (in current library but not on disk)
+    const removed = currentPaths.filter(
+      (p) => !diskPathSet.has(normalizePath(p))
+    );
+
+    console.log('[refresh] scan complete:', {
+      onDisk: filesOnDisk.length,
+      current: currentPaths.length,
+      added: added.length,
+      removed: removed.length,
+    });
+
+    // Insert new files into DB
+    if (added.length > 0) {
+      insertBulkMedia(
+        db,
+        added.map((file) => file.path)
+      );
+    }
+
+    return { added, removed };
   };

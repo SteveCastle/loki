@@ -271,6 +271,7 @@ ipcMain.handle('load-db', async (event, args) => {
 
   // Register Media Events
   ipcMain.handle('load-files', loadFilesModule.loadFiles(db));
+  ipcMain.handle('refresh-library', loadFilesModule.refreshLibrary(db));
   ipcMain.handle('load-media-by-tags', mediaModule.loadMediaByTags(db));
   ipcMain.handle(
     'load-media-by-description-search',

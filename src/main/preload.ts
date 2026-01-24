@@ -19,6 +19,7 @@ export type Channels =
   | 'load-files'
   | 'load-files-batch'
   | 'load-files-done'
+  | 'refresh-library'
   | 'select-new-path'
   | 'select-db'
   | 'load-db'
