@@ -20,9 +20,12 @@ func init() {
 		TargetDir:     "", // Ollama manages its own installation
 		Check:         checkOllama,
 		Download:      downloadOllama,
-		LatestVersion: "0.13.5",                      // Version comparison not applicable for API service
+		LatestVersion: "0.15.0",                      // Version comparison not applicable for API service
 		DownloadURL:   "https://ollama.com/download", // Official download page
 		ExpectedSize:  0,                             // N/A for API service
+		Optional:      true,                          // Ollama is optional
+		ManualOnly:    true,                          // Must be installed manually
+		InstallURL:    "https://ollama.com/download", // Link for manual installation
 	})
 }
 

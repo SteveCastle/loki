@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
@@ -29,11 +30,21 @@ type Dependency struct {
 	DownloadURL   string
 	ExpectedSize  int64
 
+	// Optional indicates if this dependency is optional (doesn't block setup)
+	Optional bool
+	// ManualOnly indicates if this dependency must be installed manually (shows link instead of auto-download)
+	ManualOnly bool
+	// InstallURL is the manual installation link for ManualOnly dependencies
+	InstallURL string
+
 	// Check function verifies if dependency exists and returns its version
 	Check func(ctx context.Context) (exists bool, version string, err error)
 
-	// Download function downloads and installs the dependency
+	// Download function downloads and installs the dependency (legacy jobqueue-based)
 	Download func(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error
+
+	// DownloadFn is the new download function signature without jobqueue dependency
+	DownloadFn func(ctx context.Context, progress downloads.ProgressCallback) error
 }
 
 // DependencyRegistry stores all registered dependencies.
@@ -162,6 +173,11 @@ func CheckAnyMissing(ctx context.Context) bool {
 			continue
 		}
 
+		// Skip optional dependencies
+		if dep.Optional {
+			continue
+		}
+
 		exists, _, err := dep.Check(ctx)
 		if err != nil || !exists {
 			return true
@@ -169,4 +185,74 @@ func CheckAnyMissing(ctx context.Context) bool {
 	}
 
 	return false
+}
+
+// GetRequired returns all non-optional dependencies.
+func GetRequired() []*Dependency {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	deps := make([]*Dependency, 0)
+	for _, d := range registry {
+		if !d.Optional {
+			deps = append(deps, d)
+		}
+	}
+	return deps
+}
+
+// GetOptional returns all optional dependencies.
+func GetOptional() []*Dependency {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	deps := make([]*Dependency, 0)
+	for _, d := range registry {
+		if d.Optional {
+			deps = append(deps, d)
+		}
+	}
+	return deps
+}
+
+// GetAutoDownloadable returns all dependencies that can be auto-downloaded (not ManualOnly).
+func GetAutoDownloadable() []*Dependency {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	deps := make([]*Dependency, 0)
+	for _, d := range registry {
+		if !d.ManualOnly {
+			deps = append(deps, d)
+		}
+	}
+	return deps
+}
+
+// GetMissingRequired returns all required dependencies that are not installed or ignored.
+func GetMissingRequired(ctx context.Context) []*Dependency {
+	mu.RLock()
+	defer mu.RUnlock()
+
+	metadata := GetMetadataStore()
+	deps := make([]*Dependency, 0)
+
+	for _, d := range registry {
+		// Skip optional dependencies
+		if d.Optional {
+			continue
+		}
+
+		// Skip ignored dependencies
+		if metadata.IsIgnored(d.ID) {
+			continue
+		}
+
+		// Check if installed
+		exists, _, err := d.Check(ctx)
+		if err != nil || !exists {
+			deps = append(deps, d)
+		}
+	}
+	return deps
 }

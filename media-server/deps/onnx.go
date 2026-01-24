@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/stevecastle/shrike/downloads"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/platform"
 )
@@ -29,6 +30,7 @@ func init() {
 		TargetDir:     GetDepsDir("onnx"),
 		Check:         checkONNX,
 		Download:      downloadONNX,
+		DownloadFn:    downloadONNXNew,
 		LatestVersion: "wd-eva02-large-v3",
 		DownloadURL:   "",                // To be configured
 		ExpectedSize:  500 * 1024 * 1024, // 500MB
@@ -451,6 +453,264 @@ func extractOnnxRuntimeFromTarGz(tgzPath, outputPath, libName string, jobID stri
 		// If we found both libraries, we can stop early
 		// Note: providers library is optional on macOS
 		if foundMainLib && (foundProviderLib || runtime.GOOS == "darwin") {
+			break
+		}
+	}
+
+	if !foundMainLib {
+		return fmt.Errorf("libonnxruntime%s not found in archive", libExt)
+	}
+
+	return nil
+}
+
+// downloadONNXNew downloads and installs the ONNX model bundle using the new download system.
+func downloadONNXNew(ctx context.Context, progress downloads.ProgressCallback) error {
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Starting ONNX bundle download..."})
+
+	dep, ok := Get("onnx-bundle")
+	if !ok {
+		return fmt.Errorf("onnx-bundle dependency not found in registry")
+	}
+
+	// Ensure target directory exists
+	if err := os.MkdirAll(dep.TargetDir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	// Download URLs for ONNX model files from HuggingFace
+	modelURL := "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/model.onnx"
+	labelsURL := "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/selected_tags.csv"
+	configURL := "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/config.json"
+
+	files := []struct {
+		url      string
+		filename string
+	}{
+		{modelURL, "model.onnx"},
+		{labelsURL, "selected_tags.csv"},
+		{configURL, "config.json"},
+	}
+
+	speedTracker := downloads.NewSpeedTracker()
+
+	// Download each file
+	for i, file := range files {
+		targetPath := filepath.Join(dep.TargetDir, file.filename)
+		progress(downloads.Progress{
+			Status:  downloads.StatusDownloading,
+			Message: fmt.Sprintf("Downloading %s (%d/%d)...", file.filename, i+1, len(files)),
+		})
+
+		err := downloads.DownloadWithRetry(ctx, targetPath, file.url, func(downloaded, total int64) {
+			speed := speedTracker.Update(downloaded)
+			percent := float64(0)
+			if total > 0 {
+				percent = float64(downloaded) / float64(total) * 100
+			}
+			progress(downloads.Progress{
+				Status:          downloads.StatusDownloading,
+				Message:         fmt.Sprintf("Downloading %s: %s / %s", file.filename, downloads.FormatBytes(downloaded), downloads.FormatBytes(total)),
+				BytesDownloaded: downloaded,
+				TotalBytes:      total,
+				Percent:         percent,
+				Speed:           speed,
+			})
+		})
+		if err != nil {
+			return fmt.Errorf("failed to download %s: %w", file.filename, err)
+		}
+	}
+
+	// Download ONNX Runtime library
+	progress(downloads.Progress{Status: downloads.StatusDownloading, Message: "Downloading ONNX Runtime..."})
+	onnxRuntimeLibName := GetOnnxRuntimeLibName()
+	onnxRuntimeLibPath := filepath.Join(dep.TargetDir, onnxRuntimeLibName)
+
+	arch := runtime.GOARCH
+	onnxVersion := "1.22.0"
+
+	if arch != "amd64" && arch != "arm64" {
+		progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Warning: Unsupported architecture %s, skipping ONNX Runtime download", arch)})
+	} else {
+		onnxRuntimeURL := GetOnnxRuntimeDownloadURL(onnxVersion, arch)
+
+		if IsOnnxRuntimeArchiveZip() {
+			// Windows: Download and extract from ZIP
+			tempZip := filepath.Join(dep.TargetDir, "onnxruntime.zip")
+			if err := downloads.DownloadWithRetry(ctx, tempZip, onnxRuntimeURL, nil); err != nil {
+				progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Failed to download ONNX Runtime: %v", err)})
+			} else {
+				progress(downloads.Progress{Status: downloads.StatusExtracting, Message: "Extracting ONNX Runtime library..."})
+				if err := extractOnnxRuntimeFromZipNew(tempZip, onnxRuntimeLibPath, onnxRuntimeLibName, progress); err != nil {
+					progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Failed to extract ONNX Runtime: %v", err)})
+				}
+				os.Remove(tempZip)
+			}
+		} else {
+			// Linux/macOS: Download and extract from tar.gz
+			tempTgz := filepath.Join(dep.TargetDir, "onnxruntime.tgz")
+			if err := downloads.DownloadWithRetry(ctx, tempTgz, onnxRuntimeURL, nil); err != nil {
+				progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Failed to download ONNX Runtime: %v", err)})
+			} else {
+				progress(downloads.Progress{Status: downloads.StatusExtracting, Message: "Extracting ONNX Runtime library..."})
+				if err := extractOnnxRuntimeFromTarGzNew(tempTgz, onnxRuntimeLibPath, onnxRuntimeLibName, dep.TargetDir, progress); err != nil {
+					progress(downloads.Progress{Status: downloads.StatusDownloading, Message: fmt.Sprintf("Failed to extract ONNX Runtime: %v", err)})
+				}
+				os.Remove(tempTgz)
+			}
+		}
+	}
+
+	// Update metadata
+	metadata := GetMetadataStore()
+	metadata.Update("onnx-bundle", DependencyMetadata{
+		InstalledVersion: "wd-eva02-large-v3",
+		Status:           StatusInstalled,
+		InstallPath:      dep.TargetDir,
+		LastChecked:      time.Now(),
+		LastUpdated:      time.Now(),
+		Files: map[string]FileInfo{
+			"model.onnx":        {Path: filepath.Join(dep.TargetDir, "model.onnx")},
+			"selected_tags.csv": {Path: filepath.Join(dep.TargetDir, "selected_tags.csv")},
+			"config.json":       {Path: filepath.Join(dep.TargetDir, "config.json")},
+			onnxRuntimeLibName:  {Path: onnxRuntimeLibPath},
+		},
+	})
+	metadata.Save()
+
+	progress(downloads.Progress{Status: downloads.StatusComplete, Message: "ONNX model bundle installed successfully!", Percent: 100})
+	return nil
+}
+
+// extractOnnxRuntimeFromZipNew extracts the ONNX Runtime library from a ZIP archive with progress.
+func extractOnnxRuntimeFromZipNew(zipPath, outputPath, libName string, progress downloads.ProgressCallback) error {
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip: %w", err)
+	}
+	defer reader.Close()
+
+	var libFile *zip.File
+	for _, file := range reader.File {
+		if strings.HasSuffix(strings.ToLower(file.Name), strings.ToLower(libName)) {
+			libFile = file
+			break
+		}
+	}
+
+	if libFile == nil {
+		return fmt.Errorf("%s not found in archive", libName)
+	}
+
+	progress(downloads.Progress{Status: downloads.StatusExtracting, Message: fmt.Sprintf("Found library at: %s", libFile.Name)})
+
+	rc, err := libFile.Open()
+	if err != nil {
+		return fmt.Errorf("failed to open library in zip: %w", err)
+	}
+	defer rc.Close()
+
+	outFile, err := os.Create(outputPath)
+	if err != nil {
+		return fmt.Errorf("failed to create output file: %w", err)
+	}
+	defer outFile.Close()
+
+	if _, err := io.Copy(outFile, rc); err != nil {
+		return fmt.Errorf("failed to extract library: %w", err)
+	}
+
+	return nil
+}
+
+// extractOnnxRuntimeFromTarGzNew extracts the ONNX Runtime library from a tar.gz archive with progress.
+func extractOnnxRuntimeFromTarGzNew(tgzPath, outputPath, libName, targetDir string, progress downloads.ProgressCallback) error {
+	file, err := os.Open(tgzPath)
+	if err != nil {
+		return fmt.Errorf("failed to open tar.gz: %w", err)
+	}
+	defer file.Close()
+
+	gzReader, err := gzip.NewReader(file)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	tarReader := tar.NewReader(gzReader)
+
+	var foundMainLib bool
+	libExt := platform.SharedLibExtension()
+
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar: %w", err)
+		}
+
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+
+		// Look for the main ONNX Runtime library
+		isMainLib := false
+		if runtime.GOOS == "darwin" {
+			isMainLib = strings.Contains(header.Name, "/lib/libonnxruntime.") &&
+				strings.HasSuffix(header.Name, ".dylib") &&
+				!strings.Contains(header.Name, "_providers_")
+		} else {
+			isMainLib = strings.Contains(header.Name, "/lib/libonnxruntime.so.") &&
+				!strings.Contains(header.Name, "_providers_")
+		}
+
+		if isMainLib {
+			progress(downloads.Progress{Status: downloads.StatusExtracting, Message: fmt.Sprintf("Found main library at: %s", header.Name)})
+
+			outFile, err := os.Create(outputPath)
+			if err != nil {
+				return fmt.Errorf("failed to create output file: %w", err)
+			}
+
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				outFile.Close()
+				return fmt.Errorf("failed to extract library: %w", err)
+			}
+			outFile.Close()
+
+			if err := platform.EnsureExecutable(outputPath); err != nil {
+				// Non-fatal
+			}
+
+			foundMainLib = true
+		}
+
+		// Also extract the providers shared library if present
+		providerPattern := "/lib/libonnxruntime_providers_shared" + libExt
+		if strings.Contains(header.Name, providerPattern) {
+			providerPath := filepath.Join(targetDir, "libonnxruntime_providers_shared"+libExt)
+			progress(downloads.Progress{Status: downloads.StatusExtracting, Message: fmt.Sprintf("Found providers library at: %s", header.Name)})
+
+			outFile, err := os.Create(providerPath)
+			if err != nil {
+				return fmt.Errorf("failed to create providers library: %w", err)
+			}
+
+			if _, err := io.Copy(outFile, tarReader); err != nil {
+				outFile.Close()
+				return fmt.Errorf("failed to extract providers library: %w", err)
+			}
+			outFile.Close()
+
+			if err := platform.EnsureExecutable(providerPath); err != nil {
+				// Non-fatal
+			}
+		}
+
+		if foundMainLib && runtime.GOOS == "darwin" {
 			break
 		}
 	}

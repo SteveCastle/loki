@@ -8,10 +8,10 @@ import (
 )
 
 // GetDepsDir returns the dependencies installation directory for a specific dependency.
-// e.g., GetDepsDir("whisper") returns ~/.local/share/lowkey-media-viewer/whisper on Linux
-// or %APPDATA%\Lowkey Media Viewer\whisper on Windows.
+// e.g., GetDepsDir("whisper") returns ~/.local/share/lowkey-media-viewer/packages/whisper on Linux
+// or %APPDATA%\Lowkey Media Viewer\packages\whisper on Windows.
 func GetDepsDir(subdir string) string {
-	return filepath.Join(platform.GetDataDir(), subdir)
+	return filepath.Join(platform.GetDataDir(), "packages", subdir)
 }
 
 // GetWhisperExecutableName returns the platform-specific Whisper executable name.

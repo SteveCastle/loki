@@ -1,0 +1,115 @@
+name: Release ONNXTAG
+
+on:
+  push:
+    tags:
+      - 'onnxtag-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        default: '1.0.0'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build onnxtag for Windows
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go build -o onnxtag.exe ./cmd/onnxtag
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnxtag-windows-amd64
+          path: onnxtag.exe
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc
+
+      - name: Build onnxtag for Linux
+        env:
+          CGO_ENABLED: 1
+        run: |
+          go build -o onnxtag ./cmd/onnxtag
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnxtag-linux-amd64
+          path: onnxtag
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: onnxtag-windows-amd64
+          path: windows
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: onnxtag-linux-amd64
+          path: linux
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from tag (onnxtag-v1.0.0 -> 1.0.0)
+            echo "version=${GITHUB_REF_NAME#onnxtag-v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: onnxtag-v${{ steps.version.outputs.version }}
+          name: ONNXTAG v${{ steps.version.outputs.version }}
+          body: |
+            ## ONNXTAG v${{ steps.version.outputs.version }}
+
+            AI-powered image tagging using ONNX models.
+
+            ### Downloads
+            - `onnxtag.exe` - Windows x64
+            - `onnxtag` - Linux x64
+
+            ### Requirements
+            - ONNX model file (e.g., wd-eva02-large-tagger-v3)
+            - ONNX Runtime library (downloaded automatically by media-server)
+          files: |
+            windows/onnxtag.exe
+            linux/onnxtag
+          draft: false
+          prerelease: false
