@@ -36,7 +36,7 @@ const GetPlayer = React.memo(
     orientation: 'portrait' | 'landscape' | 'unknown';
     imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
     startTime?: number;
-    onImageLoad?: React.ReactEventHandler<HTMLImageElement>;
+    onMediaLoad?: React.ReactEventHandler<HTMLImageElement | HTMLVideoElement>;
   }) => {
     const {
       path,
@@ -44,7 +44,7 @@ const GetPlayer = React.memo(
       orientation,
       imageCache,
       startTime = 0,
-      onImageLoad,
+      onMediaLoad,
     } = props;
 
     if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
@@ -57,6 +57,7 @@ const GetPlayer = React.memo(
           orientation={orientation}
           cache={imageCache}
           startTime={startTime}
+          handleLoad={onMediaLoad}
         />
       );
     }
@@ -81,7 +82,7 @@ const GetPlayer = React.memo(
           mediaRef={mediaRef as React.RefObject<HTMLImageElement>}
           orientation={orientation}
           cache={imageCache}
-          handleLoad={onImageLoad}
+          handleLoad={onMediaLoad}
         />
       );
     }
@@ -150,18 +151,28 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
     item.timeStamp,
   ]);
 
-  // Direct callback for when image loads - more reliable than useMediaDimensions
-  // because it fires exactly when the <img> element triggers its load event
-  const handleImageLoad = useCallback(
-    (e: React.SyntheticEvent<HTMLImageElement>) => {
+  // Direct callback for when media loads - more reliable than useMediaDimensions
+  // because it fires exactly when the element triggers its load event.
+  // Handles both <img> (onLoad) and <video> (onLoadedData) elements.
+  const handleMediaLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>) => {
       if (onDimensionsLoaded && !hasReportedRef.current) {
-        const img = e.currentTarget;
-        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        const el = e.currentTarget;
+        let w = 0;
+        let h = 0;
+        if (el instanceof HTMLImageElement) {
+          w = el.naturalWidth;
+          h = el.naturalHeight;
+        } else if (el instanceof HTMLVideoElement) {
+          w = el.videoWidth;
+          h = el.videoHeight;
+        }
+        if (w > 0 && h > 0) {
           const itemKey =
             item.timeStamp != null
               ? `${item.path}::${item.timeStamp}`
               : item.path;
-          onDimensionsLoaded(itemKey, img.naturalWidth, img.naturalHeight);
+          onDimensionsLoaded(itemKey, w, h);
           hasReportedRef.current = true;
         }
       }
@@ -250,7 +261,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
           orientation={orientation}
           imageCache={imageCache}
           startTime={item.timeStamp}
-          onImageLoad={onDimensionsLoaded ? handleImageLoad : undefined}
+          onMediaLoad={onDimensionsLoaded ? handleMediaLoad : undefined}
         />
       </div>
       {showTags === 'all' || showTags === 'list' ? (

@@ -14,7 +14,7 @@ import (
 	"github.com/stevecastle/shrike/platform"
 )
 
-var LatestOnnxtagVersion = "2.7.3"
+var LatestOnnxtagVersion = "2.7.4"
 
 func init() {
 	Register(&Dependency{

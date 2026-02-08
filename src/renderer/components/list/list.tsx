@@ -445,24 +445,34 @@ function MasonryGrid({
     if (containerWidth === 0) return { height: 0, items: [] };
     const columnWidth = containerWidth / columns;
     const colHeights = new Array(columns).fill(0);
+    const minItemHeight = 50;
+    const maxItemHeight = columnWidth * 3;
     const itemPositions = items.map((item, index) => {
       const minColIndex = colHeights.indexOf(Math.min(...colHeights));
       const x = minColIndex * columnWidth;
       const y = colHeights[minColIndex];
 
-      let itemHeight = 200; // Default fallback
+      let itemHeight = columnWidth; // Default fallback: square
 
       // First try to use pre-calculated dimensions from item
       if (item.width && item.height) {
-        itemHeight = columnWidth / (item.width / item.height);
+        itemHeight = columnWidth * (item.height / item.width);
       } else {
         // Fall back to local dimensions cache (fast updates + initialized from persisted cache)
         const itemKey = getItemKey(item);
         const cached = localDimensions.get(itemKey);
         if (cached && cached.width && cached.height) {
-          itemHeight = columnWidth / (cached.width / cached.height);
+          itemHeight = columnWidth * (cached.height / cached.width);
         }
       }
+
+      // Guard against NaN/Infinity from bad dimension data
+      if (!isFinite(itemHeight) || itemHeight <= 0) {
+        itemHeight = columnWidth;
+      }
+
+      // Clamp to reasonable bounds
+      itemHeight = Math.max(minItemHeight, Math.min(maxItemHeight, itemHeight));
 
       colHeights[minColIndex] += itemHeight;
 
@@ -632,7 +642,7 @@ function MasonryGrid({
           // Determine if this item needs dimension loading
           const itemKey = getItemKey(p.item);
           const needsDimensionLoad =
-            !p.item.width && !p.item.height && !localDimensions.has(itemKey);
+            !(p.item.width && p.item.height) && !localDimensions.has(itemKey);
 
           return (
             <div
