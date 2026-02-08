@@ -15,7 +15,8 @@
       "Bash(GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build:*)",
       "Bash(npx tsc:*)",
       "Bash(dir:*)",
-      "Bash(go test:*)"
+      "Bash(go test:*)",
+      "Bash(grep:*)"
     ]
   }
 }

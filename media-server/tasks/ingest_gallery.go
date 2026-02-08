@@ -183,6 +183,11 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Download completed: %d files added to database", len(insertedFiles)))
 
+	// Apply tags to downloaded files
+	if len(opts.Tags) > 0 {
+		applyIngestTags(q.Db, j.ID, q, insertedFiles, opts.Tags)
+	}
+
 	// Queue follow-up tasks for each inserted file
 	queueFollowUpTasks(q, j.ID, insertedFiles, opts)
 
