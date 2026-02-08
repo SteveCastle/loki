@@ -143,11 +143,7 @@ export function Video({
 
         // Detect loop: previous time was near the end, current time is near the start
         // Use a threshold of 1 second to account for timeupdate event timing
-        if (
-          duration > 0 &&
-          prevTime > duration - 1 &&
-          currentTime < 1
-        ) {
+        if (duration > 0 && prevTime > duration - 1 && currentTime < 1) {
           libraryService.send('VIDEO_LOOPED');
         }
 
@@ -224,7 +220,8 @@ export function Video({
 
             handleLoad && handleLoad(e);
           }}
-          onError={() => {
+          onError={(err) => {
+            console.log('video error:', err.currentTarget?.error?.code);
             setError(true);
           }}
           onDoubleClick={(e) => {
@@ -268,7 +265,9 @@ export function Video({
       onLoadedData={(e) => {
         handleLoad && handleLoad(e);
       }}
-      onError={() => {
+      onError={(err) => {
+        console.log('video error:', err.currentTarget?.error?.code, data);
+
         setError(true);
       }}
       onDoubleClick={(e) => {

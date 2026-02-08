@@ -1240,13 +1240,13 @@ func AddTag(db *sql.DB, mediaPath, tagLabel, categoryLabel string) error {
 
 	// Insert the tag assignment with current timestamp
 	now := time.Now()
-	timestamp := float64(now.Unix()) + float64(now.Nanosecond())/1e9
+
 	createdAt := now.Unix()
 
 	_, err = db.Exec(`
-		INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
-		VALUES (?, ?, ?, NULL, ?, ?)
-	`, mediaPath, tagLabel, categoryLabel, timestamp, createdAt)
+		INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight,  created_at)
+		VALUES (?, ?, ?, 0, ?)
+	`, mediaPath, tagLabel, categoryLabel, createdAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert tag: %w", err)
 	}
