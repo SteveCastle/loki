@@ -56,6 +56,7 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 	// --write-log outputs the downloaded file paths
 	args := []string{
 		"-d", downloadPath,
+		"--write-metadata",
 		url,
 	}
 
