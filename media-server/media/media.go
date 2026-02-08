@@ -1244,8 +1244,8 @@ func AddTag(db *sql.DB, mediaPath, tagLabel, categoryLabel string) error {
 	createdAt := now.Unix()
 
 	_, err = db.Exec(`
-		INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight,  created_at)
-		VALUES (?, ?, ?, 0, ?)
+		INSERT INTO media_tag_by_category (media_path, tag_label, category_label, time_stamp, weight,  created_at)
+		VALUES (?, ?, ?, 0, 0, ?)
 	`, mediaPath, tagLabel, categoryLabel, createdAt)
 	if err != nil {
 		return fmt.Errorf("failed to insert tag: %w", err)
