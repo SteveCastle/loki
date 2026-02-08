@@ -225,6 +225,7 @@ ipcMain.handle('load-db', async (event, args) => {
   db = new dbModule.Database(dbPath);
   await dbModule.initDB(db);
   ipcMain.removeHandler('load-media-by-tags');
+  ipcMain.removeHandler('refresh-library');
   ipcMain.removeHandler('load-media-by-description-search');
   ipcMain.removeHandler('load-tags-by-media-path');
   ipcMain.removeHandler('copy-file-into-clipboard');
