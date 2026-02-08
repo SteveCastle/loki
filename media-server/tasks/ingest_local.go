@@ -79,7 +79,7 @@ func ingestLocalTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mut
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Found %d new files to ingest", len(newFiles)))
-	if len(newFiles) == 0 {
+	if len(newFiles) == 0 && len(opts.Tags) == 0 {
 		q.PushJobStdout(j.ID, "All files already exist in database")
 		q.CompleteJob(j.ID)
 		return nil
@@ -110,6 +110,11 @@ func ingestLocalTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mut
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Ingestion completed: %d files added to database", len(insertedFiles)))
+
+	// Apply tags to ALL scanned media files (both new and existing)
+	if len(opts.Tags) > 0 {
+		applyIngestTags(q.Db, j.ID, q, mediaFiles, opts.Tags)
+	}
 
 	// Queue follow-up tasks for each inserted file
 	queueFollowUpTasks(q, j.ID, insertedFiles, opts)

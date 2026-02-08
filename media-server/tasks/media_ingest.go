@@ -1,19 +1,24 @@
 package tasks
 
 import (
+	"database/sql"
+	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/media"
 )
 
 // IngestOptions holds the optional follow-up task flags for ingestion
 type IngestOptions struct {
-	Recursive   bool // For local ingestion: scan directories recursively
-	Transcript  bool // Create transcript metadata task for each file
-	Description bool // Create description metadata task for each file
-	FileMeta    bool // Create file metadata (hash, dimensions) task for each file
-	AutoTag     bool // Create ONNX autotag task for each file
+	Recursive   bool      // For local ingestion: scan directories recursively
+	Transcript  bool      // Create transcript metadata task for each file
+	Description bool      // Create description metadata task for each file
+	FileMeta    bool      // Create file metadata (hash, dimensions) task for each file
+	AutoTag     bool      // Create ONNX autotag task for each file
+	Tags        []TagInfo // Tags to apply to each ingested file
 }
 
 // parseIngestOptions parses arguments to extract ingest options
@@ -23,23 +28,47 @@ func parseIngestOptions(args []string) (IngestOptions, []string) {
 	var remaining []string
 
 	for _, arg := range args {
-		switch strings.ToLower(arg) {
-		case "-r", "--recursive":
+		lower := strings.ToLower(arg)
+		switch {
+		case lower == "-r" || lower == "--recursive":
 			opts.Recursive = true
-		case "--transcript":
+		case lower == "--transcript":
 			opts.Transcript = true
-		case "--description":
+		case lower == "--description":
 			opts.Description = true
-		case "--filemeta", "--file-meta":
+		case lower == "--filemeta" || lower == "--file-meta":
 			opts.FileMeta = true
-		case "--autotag", "--auto-tag":
+		case lower == "--autotag" || lower == "--auto-tag":
 			opts.AutoTag = true
+		case strings.HasPrefix(lower, "--tag="):
+			value := arg[len("--tag="):]
+			label, category := parseTagArg(value)
+			if label != "" {
+				opts.Tags = append(opts.Tags, TagInfo{Label: label, Category: category})
+			}
 		default:
 			remaining = append(remaining, arg)
 		}
 	}
 
 	return opts, remaining
+}
+
+// parseTagArg parses a tag argument value in the form "label:category" or just "label".
+// Both parts are URL-decoded. The split is on the first colon.
+func parseTagArg(value string) (label, category string) {
+	parts := strings.SplitN(value, ":", 2)
+	label = parts[0]
+	if len(parts) == 2 {
+		category = parts[1]
+	}
+	if decoded, err := url.QueryUnescape(label); err == nil {
+		label = decoded
+	}
+	if decoded, err := url.QueryUnescape(category); err == nil {
+		category = decoded
+	}
+	return label, category
 }
 
 // queueFollowUpTasks creates follow-up tasks for each ingested file based on options
@@ -126,6 +155,19 @@ func ingestTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		// Treat as local path
 		return ingestLocalTaskWithOptions(j, q, mu, opts)
 	}
+}
+
+// applyIngestTags resolves tag categories and applies tags to every ingested file
+func applyIngestTags(db *sql.DB, jobID string, q *jobqueue.Queue, files []string, tags []TagInfo) {
+	resolved := resolveTagCategories(db, tags)
+	for _, filePath := range files {
+		for _, tag := range resolved {
+			if err := media.AddTag(db, filePath, tag.Label, tag.Category); err != nil {
+				q.PushJobStdout(jobID, fmt.Sprintf("Warning: failed to add tag %s:%s to %s: %v", tag.Label, tag.Category, filePath, err))
+			}
+		}
+	}
+	q.PushJobStdout(jobID, fmt.Sprintf("Applied %d tag(s) to %d file(s)", len(resolved), len(files)))
 }
 
 // isHTTPURL checks if the input looks like an HTTP(S) URL

@@ -86,6 +86,30 @@ func insertTagsForFile(db *sql.DB, filePath string, tags []TagInfo) error {
 	return nil
 }
 
+// resolveTagCategory queries the tag table for the category of an existing tag.
+// Returns "General" if the tag is not found or has no category.
+func resolveTagCategory(db *sql.DB, tagLabel string) string {
+	var category sql.NullString
+	err := db.QueryRow(`SELECT category_label FROM tag WHERE label = ?`, tagLabel).Scan(&category)
+	if err != nil || !category.Valid || category.String == "" {
+		return "General"
+	}
+	return category.String
+}
+
+// resolveTagCategories fills in empty Category fields using the database.
+// Tags with an explicit category are left unchanged.
+func resolveTagCategories(db *sql.DB, tags []TagInfo) []TagInfo {
+	resolved := make([]TagInfo, len(tags))
+	for i, t := range tags {
+		resolved[i] = t
+		if resolved[i].Category == "" {
+			resolved[i].Category = resolveTagCategory(db, t.Label)
+		}
+	}
+	return resolved
+}
+
 // EnsureTagsExist inserts any missing tags into the tag table.
 // The tag table is expected to have columns: label, category_label
 // This is a wrapper around media.EnsureTagsExist for backwards compatibility
