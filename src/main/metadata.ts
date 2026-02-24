@@ -93,11 +93,11 @@ async function getMediaDimensions(filePath: string): Promise<MediaDimensions | n
   }
 }
 
-function getExtendedMetadata(jsonPath: string): ExtendedMetadata {
+async function getExtendedMetadata(jsonPath: string): Promise<ExtendedMetadata> {
   const data: ExtendedMetadata = { tags: {} };
   const duplicateKeys = new Set();
   try {
-    const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+    const json = JSON.parse(await fs.promises.readFile(jsonPath, 'utf8'));
     if (!json.tags && !json.tag_string_general) {
       data.tags = {};
     } else if (
@@ -150,7 +150,7 @@ const loadFileMetaData =
     }
     // load json from same path as file with .json appended
     const jsonPath = absolutePath + '.json';
-    const extendedMetadata: ExtendedMetadata = getExtendedMetadata(jsonPath);
+    const extendedMetadata: ExtendedMetadata = await getExtendedMetadata(jsonPath);
 
     const media = await db.get('SELECT * FROM media WHERE path = ?', [
       absolutePath,

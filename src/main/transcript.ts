@@ -3,16 +3,14 @@ import path from 'path';
 const { exec } = require('node:child_process');
 import parseVttFile, { VttCue } from './parse-vtt';
 
-function isPathToFile(path: string) {
+async function isPathToFile(filePath: string): Promise<boolean> {
   try {
-    const stats = fs.statSync(path);
+    const stats = await fs.promises.stat(filePath);
     return stats.isFile();
   } catch (err: any) {
-    // If the error is because the file doesn't exist, return false.
     if (err.code === 'ENOENT') {
       return false;
     }
-    // For other errors, throw the error to be handled by the caller.
     throw err;
   }
 }
@@ -23,9 +21,8 @@ async function loadTranscript(filePath: string) {
     filePath.replace(/\.[^/.]+$/, '.vtt'),
     filePath + '.vtt',
   ];
-  // Test if transcriptPath is an actual file.
   for (const pathOption of pathOptions) {
-    if (isPathToFile(pathOption)) {
+    if (await isPathToFile(pathOption)) {
       actualFilePath = pathOption;
       break;
     }
@@ -34,10 +31,7 @@ async function loadTranscript(filePath: string) {
     return null;
   }
 
-  const contents = await parseVttFile(actualFilePath);
-
-  // return the metadata
-  return contents;
+  return parseVttFile(actualFilePath);
 }
 
 async function _generateTranscript(mediaPath: string) {
@@ -130,7 +124,7 @@ async function modifyTranscript(input: ModifyTranscriptInput): Promise<boolean> 
   
   let transcriptPath: string | null = null;
   for (const pathOption of pathOptions) {
-    if (isPathToFile(pathOption)) {
+    if (await isPathToFile(pathOption)) {
       transcriptPath = pathOption;
       break;
     }

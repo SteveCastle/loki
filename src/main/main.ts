@@ -24,6 +24,14 @@ import {
 
 import type { Database } from './database';
 
+// Prevent hard crashes from unhandled errors in the main process
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception in main process:', error);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection in main process:', reason);
+});
+
 // Register custom protocol scheme as privileged (must be done before app ready)
 protocol.registerSchemesAsPrivileged([
   {
@@ -217,9 +225,7 @@ ipcMain.handle('load-db', async (event, args) => {
   //create path if it doesn't exist
 
   const dir = path.dirname(dbPath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  await fs.promises.mkdir(dir, { recursive: true });
   // Lazy import database implementation to reduce cold-start cost
   const dbModule = await import('./database');
   db = new dbModule.Database(dbPath);
@@ -545,6 +551,15 @@ const createWindow = async () => {
     return { action: 'deny' };
   });
 
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(
+      `Renderer process gone: reason=${details.reason}, exitCode=${details.exitCode}`
+    );
+    if (details.reason === 'crashed' || details.reason === 'oom') {
+      mainWindow?.reload();
+    }
+  });
+
   // Auto updater initialized after first paint (see ready-to-show)
 };
 
@@ -557,132 +572,137 @@ app.on('open-file', (event, path) => {
   macPath = path;
 });
 
+const gsmMimeTypes: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.m4v': 'video/x-m4v',
+  '.flv': 'video/x-flv',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.jfif': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+};
+
 app.on('ready', async () => {
-  mainWindow?.webContents.openDevTools();
-  // Custom protocol handler with full range request support for video seeking
   protocol.handle('gsm', async (request) => {
     try {
+      // Parse URL to file path
       const parsed = new URL(request.url);
       let filePath = decodeURIComponent(parsed.pathname);
-
-      // On Windows, the drive letter becomes the URL host (e.g., gsm://c/Users/... )
-      // Reconstruct the path: host + pathname = c + /Users/... = C:/Users/...
       if (process.platform === 'win32' && parsed.host) {
         filePath = `${parsed.host.toUpperCase()}:${filePath}`;
       } else if (process.platform === 'win32' && filePath.startsWith('/')) {
-        // Fallback: remove leading slash if path has drive letter (e.g., /C:/...)
         filePath = filePath.slice(1);
       } else if (process.platform !== 'win32' && parsed.host) {
-        // On macOS/Linux, if we have a host, the path was split incorrectly
-        // (e.g., gsm://Users/runes/file.jpg -> host="Users", pathname="/runes/file.jpg")
-        // Reconstruct: /${host}${pathname} = /Users/runes/file.jpg
         filePath = `/${parsed.host}${filePath}`;
       }
-
-      // Normalize path
       filePath = path.normalize(filePath);
 
-      // Check if file exists
-      if (!fs.existsSync(filePath)) {
+      // Get file info
+      let stats: fs.Stats;
+      try {
+        stats = await fs.promises.stat(filePath);
+      } catch {
         return new Response('Not Found', { status: 404 });
       }
 
-      // Get file stats
-      const stats = fs.statSync(filePath);
       const fileSize = stats.size;
-
-      // Determine MIME type
       const ext = path.extname(filePath).toLowerCase();
-      const mimeTypes: Record<string, string> = {
-        '.mp4': 'video/mp4',
-        '.webm': 'video/webm',
-        '.mov': 'video/quicktime',
-        '.mkv': 'video/x-matroska',
-        '.avi': 'video/x-msvideo',
-        '.m4v': 'video/x-m4v',
-        '.flv': 'video/x-flv',
-        '.mp3': 'audio/mpeg',
-        '.wav': 'audio/wav',
-        '.flac': 'audio/flac',
-        '.m4a': 'audio/mp4',
-        '.ogg': 'audio/ogg',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.jfif': 'image/jpeg',
-        '.png': 'image/png',
-        '.gif': 'image/gif',
-        '.webp': 'image/webp',
-        '.bmp': 'image/bmp',
-        '.svg': 'image/svg+xml',
-      };
-      const contentType = mimeTypes[ext] || 'application/octet-stream';
-
-      // Check for Range header (needed for video seeking)
+      const contentType = gsmMimeTypes[ext] || 'application/octet-stream';
       const rangeHeader = request.headers.get('Range');
 
+      // Handle range requests (for video seeking)
       if (rangeHeader) {
-        // Parse range header: "bytes=start-end" or "bytes=start-"
         const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
         if (match) {
           const start = parseInt(match[1], 10);
           const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
-          const chunkSize = end - start + 1;
 
-          // Create stream for the requested range
-          const stream = fs.createReadStream(filePath, { start, end });
-          const webStream = new ReadableStream({
-            start(controller) {
-              stream.on('data', (chunk: Buffer) => {
-                controller.enqueue(new Uint8Array(chunk));
-              });
-              stream.on('end', () => controller.close());
-              stream.on('error', (err: Error) => controller.error(err));
-            },
-            cancel() {
-              stream.destroy();
-            },
-          });
+          if (start >= fileSize) {
+            return new Response('Range Not Satisfiable', {
+              status: 416,
+              headers: { 'Content-Range': `bytes */${fileSize}` },
+            });
+          }
 
-          return new Response(webStream, {
-            status: 206, // Partial Content
-            headers: {
-              'Content-Type': contentType,
-              'Content-Length': chunkSize.toString(),
-              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-              'Accept-Ranges': 'bytes',
-            },
-          });
+          const clampedEnd = Math.min(end, fileSize - 1);
+          const chunkSize = clampedEnd - start + 1;
+
+          const stream = fs.createReadStream(filePath, { start, end: clampedEnd });
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                stream.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+                stream.on('end', () => controller.close());
+                stream.on('error', (e) => controller.error(e));
+              },
+              cancel() {
+                stream.destroy();
+              },
+            }),
+            {
+              status: 206,
+              headers: {
+                'Content-Type': contentType,
+                'Content-Length': chunkSize.toString(),
+                'Content-Range': `bytes ${start}-${clampedEnd}/${fileSize}`,
+                'Accept-Ranges': 'bytes',
+              },
+            }
+          );
         }
       }
 
-      // No range request - return full file
+      // Full file request - just stream it
       const stream = fs.createReadStream(filePath);
-      const webStream = new ReadableStream({
-        start(controller) {
-          stream.on('data', (chunk: Buffer) => {
-            controller.enqueue(new Uint8Array(chunk));
-          });
-          stream.on('end', () => controller.close());
-          stream.on('error', (err: Error) => controller.error(err));
-        },
-        cancel() {
-          stream.destroy();
-        },
-      });
-
-      return new Response(webStream, {
-        status: 200,
-        headers: {
-          'Content-Type': contentType,
-          'Content-Length': fileSize.toString(),
-          'Accept-Ranges': 'bytes',
-        },
-      });
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            stream.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
+            stream.on('end', () => controller.close());
+            stream.on('error', (e) => controller.error(e));
+          },
+          cancel() {
+            stream.destroy();
+          },
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Content-Length': fileSize.toString(),
+            'Accept-Ranges': 'bytes',
+          },
+        }
+      );
     } catch (error) {
-      console.error('Protocol handler error:', error);
+      console.error('GSM protocol error:', error);
       return new Response('Internal Error', { status: 500 });
     }
   });
+});
+
+app.on('before-quit', async () => {
+  if (db) {
+    try {
+      await db.close();
+    } catch (err) {
+      console.error('Error closing database on quit:', err);
+    }
+    db = null;
+  }
 });
 
 app.on('window-all-closed', () => {
