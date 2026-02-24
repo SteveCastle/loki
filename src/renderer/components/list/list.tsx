@@ -60,7 +60,6 @@ export function List() {
     base.sortBy,
   ]);
 
-  console.log('rendering list');
   // Read initial scroll position synchronously on mount (not in useEffect which runs after render)
   const initialScrollPositionRef = useRef(
     libraryService.getSnapshot().context.scrollPosition
@@ -407,7 +406,8 @@ function MasonryGrid({
     if (hasLoadedPersistedRef.current) return;
     hasLoadedPersistedRef.current = true;
 
-    const persistedCache = libraryService.getSnapshot().context.masonryDimensionsCache;
+    const persistedCache =
+      libraryService.getSnapshot().context.masonryDimensionsCache;
     if (persistedCache && Object.keys(persistedCache).length > 0) {
       setLocalDimensions(new Map(Object.entries(persistedCache)));
     }
@@ -424,7 +424,11 @@ function MasonryGrid({
         return next;
       });
       // Also persist to state machine for view switch stability
-      libraryService.send('CACHE_MASONRY_DIMENSIONS', { itemKey, width, height });
+      libraryService.send('CACHE_MASONRY_DIMENSIONS', {
+        itemKey,
+        width,
+        height,
+      });
     },
     [libraryService]
   );

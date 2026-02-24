@@ -323,19 +323,19 @@ export const loadFiles =
     const sortOrder = args[1] as string;
     const recursive = args[2] as boolean;
     const options: LoadFilesOptions = (args as any)[3] || {};
-    const fs = require('fs');
-
-    // Check if the path is a directory or file
-    const stats = fs.lstatSync(filePath);
     let folderPath: string;
     let fileName: string;
 
-    if (stats.isDirectory()) {
-      // If it's a directory, use it as the folder and set cursor to 0
-      folderPath = filePath;
-      fileName = '';
-    } else {
-      // If it's a file, extract directory and filename
+    try {
+      const stats = await fsPromises.lstat(filePath);
+      if (stats.isDirectory()) {
+        folderPath = filePath;
+        fileName = '';
+      } else {
+        folderPath = path.dirname(filePath);
+        fileName = path.basename(filePath);
+      }
+    } catch {
       folderPath = path.dirname(filePath);
       fileName = path.basename(filePath);
     }
@@ -465,12 +465,9 @@ export const refreshLibrary =
     args: [RefreshLibraryInput]
   ): Promise<RefreshLibraryResult> => {
     const { initialFile, currentPaths, recursive } = args[0];
-    const fs = require('fs');
-
-    // Determine the folder path
     let folderPath: string;
     try {
-      const stats = fs.lstatSync(initialFile);
+      const stats = await fsPromises.lstat(initialFile);
       folderPath = stats.isDirectory() ? initialFile : path.dirname(initialFile);
     } catch (e) {
       console.log('[refresh] error getting folder path:', e);
