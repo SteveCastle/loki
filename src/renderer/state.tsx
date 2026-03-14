@@ -1696,9 +1696,18 @@ const libraryMachine = createMachine(
                   LOAD_FILES_BATCH: {
                     actions: assign<LibraryState, AnyEventObject>({
                       library: (context, event) => {
+                        // Use the sorted/filtered view to look up the current item,
+                        // since cursor is an index into the sorted view, not the raw library
+                        const currentView = filter(
+                          context.libraryLoadId,
+                          context.textFilter,
+                          context.library,
+                          context.settings.filters,
+                          context.settings.sortBy
+                        );
                         const previousSelectedPath =
                           context.pinnedPath ||
-                          context.library[context.cursor]?.path;
+                          currentView[context.cursor]?.path;
                         // Use case-insensitive path matching to avoid duplicates on Windows
                         const existing = new Set(
                           context.library.map((item) => item.path.toLowerCase())
@@ -1901,9 +1910,18 @@ const libraryMachine = createMachine(
               LOAD_FILES_BATCH: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
+                    // Use the sorted/filtered view to look up the current item,
+                    // since cursor is an index into the sorted view, not the raw library
+                    const currentView = filter(
+                      context.libraryLoadId,
+                      context.textFilter,
+                      context.library,
+                      context.settings.filters,
+                      context.settings.sortBy
+                    );
                     const previousSelectedPath =
                       context.pinnedPath ||
-                      context.library[context.cursor]?.path;
+                      currentView[context.cursor]?.path;
                     // Use case-insensitive path matching to avoid duplicates on Windows
                     const existing = new Set(
                       context.library.map((item) => item.path.toLowerCase())
@@ -2190,9 +2208,18 @@ const libraryMachine = createMachine(
               LOAD_FILES_BATCH: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
+                    // Use the sorted/filtered view to look up the current item,
+                    // since cursor is an index into the sorted view, not the raw library
+                    const currentView = filter(
+                      context.libraryLoadId,
+                      context.textFilter,
+                      context.library,
+                      context.settings.filters,
+                      context.settings.sortBy
+                    );
                     const previousSelectedPath =
                       context.pinnedPath ||
-                      context.library[context.cursor]?.path;
+                      currentView[context.cursor]?.path;
                     // Use case-insensitive path matching to avoid duplicates on Windows
                     const existing = new Set(
                       context.library.map((item) => item.path.toLowerCase())

@@ -8,14 +8,17 @@ import { getFileType } from '../file-types';
 import { IpcMainInvokeEvent, shell } from 'electron';
 import fs from 'fs';
 
-const MAX_CONCURRENT_PREVIEWS = 6;
+const MAX_CONCURRENT_PREVIEWS = 24;
 let activePreviewCount = 0;
 const previewQueue: Array<{
   run: () => Promise<void>;
 }> = [];
 
 function drainPreviewQueue() {
-  while (activePreviewCount < MAX_CONCURRENT_PREVIEWS && previewQueue.length > 0) {
+  while (
+    activePreviewCount < MAX_CONCURRENT_PREVIEWS &&
+    previewQueue.length > 0
+  ) {
     const next = previewQueue.shift()!;
     activePreviewCount++;
     next.run().finally(() => {
@@ -341,7 +344,9 @@ const fetchMediaPreview =
       const cache = args[1] || 'thumbnail_path_600';
       const timeStamp = args[2] || 0;
       const userHomeDirectory = require('os').homedir();
-      const defaultBasePath = path.join(path.join(userHomeDirectory, '.lowkey'));
+      const defaultBasePath = path.join(
+        path.join(userHomeDirectory, '.lowkey')
+      );
       const dbPath = store.get('dbPath', defaultBasePath) as string;
       const regenerateMediaCache = store.get(
         'regenerateMediaCache',
@@ -354,7 +359,7 @@ const fetchMediaPreview =
         cache,
         timeStamp
       );
-      await insertMedia(db, filePath);
+      // await insertMedia(db, filePath);
 
       const thumbnailExists = await checkIfMediaCacheExists(thumbnailFullPath);
       if (!thumbnailExists || regenerateMediaCache) {
@@ -584,7 +589,7 @@ const mergeDuplicatesByPath =
       const deleted: string[] = [];
       for (const dupPath of duplicatePaths) {
         try {
-            try {
+          try {
             await shell.trashItem(dupPath);
           } catch {
             console.error('Error trashing duplicate, trying unlink:', dupPath);
