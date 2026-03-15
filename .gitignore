@@ -1,7 +1,7 @@
 # Logs
 logs
 *.log
-
+*.exe
 # Runtime data
 pids
 *.pid

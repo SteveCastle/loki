@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { ScaleModeOption, clampVolume } from 'settings';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
+import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 
 import './video.css';
 import './sizing.css';
@@ -26,6 +27,8 @@ type Props = {
   onTimestampChange?: (timestamp: number) => void;
   cache?: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
   version?: number;
+  /** Delay loading by ms to prevent loading during fast scroll (0 = no delay) */
+  loadDelay?: number;
 };
 
 const fetchMediaPreview =
@@ -66,6 +69,7 @@ export function Video({
   },
   cache = false,
   version = 0,
+  loadDelay = 0,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const { timeStamp, loopLength, loopStartTime, playing } = useSelector(
@@ -78,9 +82,14 @@ export function Video({
     (state) => state.context.videoPlayer.eventId
   );
 
+  // Delay loading to prevent loading videos that are quickly scrolled past (list mode)
+  // When loadDelay is 0, load immediately (detail view)
+  const shouldLoad = useVisibilityLoader(loadDelay);
+
   const { data, isLoading } = useQuery<string, Error>(
     ['media', 'preview', path, cache, startTime, version],
-    fetchMediaPreview(path, cache, startTime)
+    fetchMediaPreview(path, cache, startTime),
+    { enabled: shouldLoad && !!cache }
   );
 
   const [error, setError] = useState<boolean>(false);
@@ -189,6 +198,19 @@ export function Video({
   }
 
   if (!cache) {
+    // Wait for visibility delay before loading video
+    if (!shouldLoad) {
+      return (
+        <div className="ThumnailLoader">
+          <div className="loading-bar">
+            <SkeletonTheme baseColor="#202020" highlightColor="#444">
+              <Skeleton />
+            </SkeletonTheme>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <>
         <video
@@ -238,7 +260,7 @@ export function Video({
     );
   }
 
-  if (isLoading || !data) {
+  if (!shouldLoad || isLoading || !data) {
     return (
       <div className="ThumnailLoader">
         <div className="loading-bar">

@@ -7,6 +7,36 @@ import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
 import { IpcMainInvokeEvent, shell } from 'electron';
 import fs from 'fs';
+
+const MAX_CONCURRENT_PREVIEWS = 24;
+let activePreviewCount = 0;
+const previewQueue: Array<{
+  run: () => Promise<void>;
+}> = [];
+
+function drainPreviewQueue() {
+  while (
+    activePreviewCount < MAX_CONCURRENT_PREVIEWS &&
+    previewQueue.length > 0
+  ) {
+    const next = previewQueue.shift()!;
+    activePreviewCount++;
+    next.run().finally(() => {
+      activePreviewCount--;
+      drainPreviewQueue();
+    });
+  }
+}
+
+function enqueuePreview<T>(fn: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    previewQueue.push({
+      run: () => fn().then(resolve, reject),
+    });
+    drainPreviewQueue();
+  });
+}
+
 type LoadMediaInput = [string[], string];
 
 function createHash(input: string) {
@@ -34,8 +64,13 @@ function getMediaCachePath(
   return thumbnailFullPath;
 }
 
-function checkIfMediaCacheExists(cachePath: string) {
-  return require('fs').existsSync(cachePath);
+async function checkIfMediaCacheExists(cachePath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(cachePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseSearchString(search: string): string[] {
@@ -303,32 +338,35 @@ const loadMediaByTags =
 type FetchMediaPreviewInput = [string, string?, timeStamp?: number];
 const fetchMediaPreview =
   (db: Database, store: Store) =>
-  async (_: IpcMainInvokeEvent, args: FetchMediaPreviewInput) => {
-    const filePath = args[0];
-    const cache = args[1] || 'thumbnail_path_600';
-    const timeStamp = args[2] || 0;
-    const userHomeDirectory = require('os').homedir();
-    const defaultBasePath = path.join(path.join(userHomeDirectory, '.lowkey'));
-    const dbPath = store.get('dbPath', defaultBasePath) as string;
-    const regenerateMediaCache = store.get(
-      'regenerateMediaCache',
-      false
-    ) as boolean;
-    // Parts of the thumbnail path. The filename is a sha256 hash of the input path.
-    const basePath = path.dirname(dbPath);
-    const thumbnailFullPath = getMediaCachePath(
-      filePath,
-      basePath,
-      cache,
-      timeStamp
-    );
-    insertMedia(db, filePath);
+  (_: IpcMainInvokeEvent, args: FetchMediaPreviewInput) => {
+    return enqueuePreview(async () => {
+      const filePath = args[0];
+      const cache = args[1] || 'thumbnail_path_600';
+      const timeStamp = args[2] || 0;
+      const userHomeDirectory = require('os').homedir();
+      const defaultBasePath = path.join(
+        path.join(userHomeDirectory, '.lowkey')
+      );
+      const dbPath = store.get('dbPath', defaultBasePath) as string;
+      const regenerateMediaCache = store.get(
+        'regenerateMediaCache',
+        false
+      ) as boolean;
+      const basePath = path.dirname(dbPath);
+      const thumbnailFullPath = getMediaCachePath(
+        filePath,
+        basePath,
+        cache,
+        timeStamp
+      );
+      // await insertMedia(db, filePath);
 
-    const thumbnailExists = checkIfMediaCacheExists(thumbnailFullPath);
-    if (!thumbnailExists || regenerateMediaCache) {
-      await asyncCreateThumbnail(filePath, basePath, cache, timeStamp);
-    }
-    return thumbnailFullPath;
+      const thumbnailExists = await checkIfMediaCacheExists(thumbnailFullPath);
+      if (!thumbnailExists || regenerateMediaCache) {
+        await asyncCreateThumbnail(filePath, basePath, cache, timeStamp);
+      }
+      return thumbnailFullPath;
+    });
   };
 
 type CopyFileIntoClipboardInput = [string];
@@ -371,33 +409,17 @@ type DeleteMediaInput = [string];
 const deleteMedia =
   (db: Database) => async (_: IpcMainInvokeEvent, args: DeleteMediaInput) => {
     const filePath = args[0];
-    shell
-      .trashItem(filePath)
-      .then(
-        () => {
-          console.log('File was moved to the trash');
-          db.run('DELETE FROM media WHERE path = ?', [filePath]);
-          db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
-            filePath,
-          ]);
-        },
-        () => {
-          console.error('Error deleting file trying unlink:');
-          fs.unlinkSync(filePath);
-          db.run('DELETE FROM media WHERE path = ?', [filePath]);
-          db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
-            filePath,
-          ]);
-        }
-      )
-      .catch(() => {
-        console.error('Error deleting file trying unlink:');
-        fs.unlinkSync(filePath);
-        db.run('DELETE FROM media WHERE path = ?', [filePath]);
-        db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
-          filePath,
-        ]);
-      });
+    try {
+      await shell.trashItem(filePath);
+      console.log('File was moved to the trash');
+    } catch {
+      console.error('Error trashing file, trying unlink:');
+      await fs.promises.unlink(filePath);
+    }
+    db.run('DELETE FROM media WHERE path = ?', [filePath]);
+    db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
+      filePath,
+    ]);
   };
 
 // Function to calculate file hash
@@ -448,16 +470,15 @@ export async function insertBulkMedia(
 // Main function
 async function insertMedia(db: Database, filePath: string): Promise<void> {
   try {
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
+    let stats: fs.Stats;
+    try {
+      stats = await fs.promises.stat(filePath);
+    } catch {
       console.error('File does not exist:', filePath);
-      // Remove path from database
       db.run('DELETE FROM media WHERE path = ?', [filePath]);
       return;
     }
 
-    // Get file stats
-    const stats = fs.statSync(filePath);
     const fileSize = stats.size;
 
     // Calculate file hash
@@ -568,40 +589,20 @@ const mergeDuplicatesByPath =
       const deleted: string[] = [];
       for (const dupPath of duplicatePaths) {
         try {
-          await shell
-            .trashItem(dupPath)
-            .then(
-              async () => {
-                await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
-                await db.run(
-                  'DELETE FROM media_tag_by_category WHERE media_path = ?',
-                  [dupPath]
-                );
-                deleted.push(dupPath);
-              },
-              async () => {
-                console.error('Error deleting file trying unlink:', dupPath);
-                fs.unlinkSync(dupPath);
-                await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
-                await db.run(
-                  'DELETE FROM media_tag_by_category WHERE media_path = ?',
-                  [dupPath]
-                );
-                deleted.push(dupPath);
-              }
-            )
-            .catch(async () => {
-              console.error('Error deleting file trying unlink:', dupPath);
-              try {
-                fs.unlinkSync(dupPath);
-              } catch (_) {}
-              await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
-              await db.run(
-                'DELETE FROM media_tag_by_category WHERE media_path = ?',
-                [dupPath]
-              );
-              deleted.push(dupPath);
-            });
+          try {
+            await shell.trashItem(dupPath);
+          } catch {
+            console.error('Error trashing duplicate, trying unlink:', dupPath);
+            try {
+              await fs.promises.unlink(dupPath);
+            } catch {}
+          }
+          await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
+          await db.run(
+            'DELETE FROM media_tag_by_category WHERE media_path = ?',
+            [dupPath]
+          );
+          deleted.push(dupPath);
         } catch (e) {
           console.error('Failed to delete duplicate', dupPath, e);
         }
@@ -652,23 +653,25 @@ const listThumbnails =
 
     const timeStamp = 0; // images ignore timestamp hashing; videos use it
 
-    const results: ThumbnailInfo[] = caches.map((cache) => {
-      const thumbnailFullPath = getMediaCachePath(
-        filePath,
-        basePath,
-        cache,
-        timeStamp
-      );
-      const exists = checkIfMediaCacheExists(thumbnailFullPath);
-      let size = 0;
-      try {
+    const results: ThumbnailInfo[] = await Promise.all(
+      caches.map(async (cache) => {
+        const thumbnailFullPath = getMediaCachePath(
+          filePath,
+          basePath,
+          cache,
+          timeStamp
+        );
+        const exists = await checkIfMediaCacheExists(thumbnailFullPath);
+        let size = 0;
         if (exists) {
-          const stat = fs.statSync(thumbnailFullPath);
-          size = stat.size || 0;
+          try {
+            const stat = await fs.promises.stat(thumbnailFullPath);
+            size = stat.size || 0;
+          } catch {}
         }
-      } catch (_) {}
-      return { cache, path: thumbnailFullPath, exists, size };
-    });
+        return { cache, path: thumbnailFullPath, exists, size };
+      })
+    );
 
     return results;
   };
@@ -691,10 +694,9 @@ const regenerateThumbnail =
       cache,
       timeStamp
     );
-    // Delete existing file if it exists to force regeneration
     try {
-      if (checkIfMediaCacheExists(thumbnailFullPath)) {
-        fs.unlinkSync(thumbnailFullPath);
+      if (await checkIfMediaCacheExists(thumbnailFullPath)) {
+        await fs.promises.unlink(thumbnailFullPath);
       }
     } catch (e) {
       console.warn('Could not delete existing thumbnail', thumbnailFullPath, e);
