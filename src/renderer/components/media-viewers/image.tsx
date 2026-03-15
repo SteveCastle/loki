@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 import type { ScaleModeOption } from '../../../settings';
+import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 import './image.css';
 import './sizing.css';
 import MediaErrorMsg from './media-error';
@@ -18,6 +19,8 @@ type Props = {
   cache?: 'thumbnail_path_1200' | 'thumbnail_path_600' | false;
   overRideCache?: boolean;
   version?: number;
+  /** Delay loading by ms to prevent loading during fast scroll (0 = no delay) */
+  loadDelay?: number;
 };
 
 const fetchMediaPreview =
@@ -37,11 +40,18 @@ function ImageComponent({
   orientation = 'unknown',
   overRideCache = false,
   version = 0,
+  loadDelay = 0,
 }: Props) {
   const [error, setError] = useState<boolean>(false);
+  
+  // Delay loading to prevent loading images that are quickly scrolled past (list mode)
+  // When loadDelay is 0, load immediately (detail view)
+  const shouldLoad = useVisibilityLoader(loadDelay);
+  
   const { data } = useQuery<string, Error>(
     ['media', 'preview', path, cache, version],
-    fetchMediaPreview(path, cache)
+    fetchMediaPreview(path, cache),
+    { enabled: shouldLoad }
   );
 
   // Reset error state if path changes.
@@ -113,7 +123,8 @@ export const Image = React.memo(ImageComponent, (prevProps, nextProps) => {
     prevProps.overRideCache === nextProps.overRideCache &&
     prevProps.coverSize?.width === nextProps.coverSize?.width &&
     prevProps.coverSize?.height === nextProps.coverSize?.height &&
-    prevProps.version === nextProps.version
+    prevProps.version === nextProps.version &&
+    prevProps.loadDelay === nextProps.loadDelay
   );
 });
 

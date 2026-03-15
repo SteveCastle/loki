@@ -27,6 +27,8 @@ type Props = {
   onDimensionsLoaded?: (itemKey: string, width: number, height: number) => void;
 };
 
+const LIST_LOAD_DELAY = 150; // ms delay before loading in list view to prevent loading during fast scroll
+
 const GetPlayer = React.memo(
   (props: {
     path: string;
@@ -58,6 +60,7 @@ const GetPlayer = React.memo(
           cache={imageCache}
           startTime={startTime}
           handleLoad={onMediaLoad}
+          loadDelay={LIST_LOAD_DELAY}
         />
       );
     }
@@ -83,6 +86,7 @@ const GetPlayer = React.memo(
           orientation={orientation}
           cache={imageCache}
           handleLoad={onMediaLoad}
+          loadDelay={LIST_LOAD_DELAY}
         />
       );
     }
