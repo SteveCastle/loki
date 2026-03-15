@@ -68,6 +68,44 @@ func httpError(w http.ResponseWriter, msg string, code int) {
 
 // ---- Media handlers ----
 
+// scanMediaItem scans a row from a media query with tag join into a map
+// matching the Electron Item type: { path, weight, mtimeMs, timeStamp, elo, tagLabel, height, width }
+func scanMediaItem(rows *sql.Rows) (map[string]any, error) {
+	var path string
+	var tagLabel, categoryLabel sql.NullString
+	var weight, timeStamp sql.NullFloat64
+	var createdAt sql.NullInt64
+	var height, width sql.NullInt64
+	var elo sql.NullFloat64
+	err := rows.Scan(&path, &tagLabel, &categoryLabel, &weight, &timeStamp, &createdAt, &height, &width, &elo)
+	if err != nil {
+		return nil, err
+	}
+	item := map[string]any{
+		"path":    path,
+		"mtimeMs": createdAt.Int64,
+	}
+	if tagLabel.Valid {
+		item["tagLabel"] = tagLabel.String
+	}
+	if weight.Valid {
+		item["weight"] = weight.Float64
+	}
+	if timeStamp.Valid {
+		item["timeStamp"] = timeStamp.Float64
+	}
+	if height.Valid {
+		item["height"] = height.Int64
+	}
+	if width.Valid {
+		item["width"] = width.Int64
+	}
+	if elo.Valid {
+		item["elo"] = elo.Float64
+	}
+	return item, nil
+}
+
 func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req mediaRequest
@@ -77,8 +115,12 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		if len(req.Tags) == 0 {
-			// No tags: return all media
-			rows, err := deps.DB.Query("SELECT path FROM media ORDER BY path")
+			// No tags: return all media with full item fields
+			rows, err := deps.DB.Query(`
+				SELECT m.path, '' AS tag_label, '' AS category_label,
+					0 AS weight, 0 AS time_stamp, 0 AS created_at,
+					m.height, m.width, m.elo
+				FROM media m ORDER BY m.path`)
 			if err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -87,9 +129,11 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 
 			var items []map[string]any
 			for rows.Next() {
-				var path string
-				rows.Scan(&path)
-				items = append(items, map[string]any{"path": path})
+				item, err := scanMediaItem(rows)
+				if err != nil {
+					continue
+				}
+				items = append(items, item)
 			}
 			if items == nil {
 				items = []map[string]any{}
@@ -98,7 +142,7 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// With tags: filter by tag assignments
+		// With tags: filter by tag assignments, return full item fields
 		mode := strings.ToUpper(req.Mode)
 		if mode == "" {
 			mode = "EXCLUSIVE"
@@ -114,24 +158,26 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 
 		var query string
 		if mode == "EXCLUSIVE" {
-			// All tags must match
 			query = fmt.Sprintf(`
-				SELECT DISTINCT m.path
-				FROM media m
-				JOIN media_tag_by_category mtbc ON m.path = mtbc.media_path
+				SELECT mtbc.media_path, mtbc.tag_label, mtbc.category_label,
+					mtbc.weight, mtbc.time_stamp, mtbc.created_at,
+					m.height, m.width, m.elo
+				FROM media_tag_by_category mtbc
+				LEFT JOIN media m ON m.path = mtbc.media_path
 				WHERE mtbc.tag_label IN (%s)
-				GROUP BY m.path
+				GROUP BY mtbc.media_path
 				HAVING COUNT(DISTINCT mtbc.tag_label) = ?
-				ORDER BY m.path`, ph)
+				ORDER BY mtbc.media_path`, ph)
 			args = append(args, len(req.Tags))
 		} else {
-			// Any tag matches
 			query = fmt.Sprintf(`
-				SELECT DISTINCT m.path
-				FROM media m
-				JOIN media_tag_by_category mtbc ON m.path = mtbc.media_path
+				SELECT mtbc.media_path, mtbc.tag_label, mtbc.category_label,
+					mtbc.weight, mtbc.time_stamp, mtbc.created_at,
+					m.height, m.width, m.elo
+				FROM media_tag_by_category mtbc
+				LEFT JOIN media m ON m.path = mtbc.media_path
 				WHERE mtbc.tag_label IN (%s)
-				ORDER BY m.path`, ph)
+				ORDER BY mtbc.media_path`, ph)
 		}
 
 		rows, err := deps.DB.Query(query, args...)
@@ -143,9 +189,11 @@ func lokiMediaHandler(deps *Dependencies) http.HandlerFunc {
 
 		var items []map[string]any
 		for rows.Next() {
-			var path string
-			rows.Scan(&path)
-			items = append(items, map[string]any{"path": path})
+			item, err := scanMediaItem(rows)
+			if err != nil {
+				continue
+			}
+			items = append(items, item)
 		}
 		if items == nil {
 			items = []map[string]any{}
@@ -162,7 +210,10 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		query := `SELECT path FROM media WHERE description LIKE ? ORDER BY path`
+		query := `SELECT m.path, '' AS tag_label, '' AS category_label,
+			0 AS weight, 0 AS time_stamp, 0 AS created_at,
+			m.height, m.width, m.elo
+			FROM media m WHERE m.description LIKE ? ORDER BY m.path`
 		rows, err := deps.DB.Query(query, "%"+req.Description+"%")
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
@@ -172,9 +223,11 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 
 		var items []map[string]any
 		for rows.Next() {
-			var path string
-			rows.Scan(&path)
-			items = append(items, map[string]any{"path": path})
+			item, err := scanMediaItem(rows)
+			if err != nil {
+				continue
+			}
+			items = append(items, item)
 		}
 		if items == nil {
 			items = []map[string]any{}
