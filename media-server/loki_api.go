@@ -619,24 +619,14 @@ func lokiTagPreviewHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		rows, err := deps.DB.Query(`
-			SELECT media_path FROM media_tag_by_category
-			WHERE tag_label = ? LIMIT 20`, req.Label)
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
+		// Return the thumbnail_path_600 from the tag table (a single string, like Electron)
+		var thumbPath sql.NullString
+		deps.DB.QueryRow(`SELECT thumbnail_path_600 FROM tag WHERE label = ?`, req.Label).Scan(&thumbPath)
+		if thumbPath.Valid && thumbPath.String != "" {
+			writeJSON(w, thumbPath.String)
+		} else {
+			writeJSON(w, nil)
 		}
-		defer rows.Close()
-		var paths []string
-		for rows.Next() {
-			var p string
-			rows.Scan(&p)
-			paths = append(paths, p)
-		}
-		if paths == nil {
-			paths = []string{}
-		}
-		writeJSON(w, paths)
 	}
 }
 
