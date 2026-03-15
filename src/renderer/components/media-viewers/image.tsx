@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 import type { ScaleModeOption } from '../../../settings';
+import { mediaUrl, fetchMediaPreview as platformFetchMediaPreview } from '../../platform';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 import './image.css';
 import './sizing.css';
@@ -26,7 +27,7 @@ type Props = {
 const fetchMediaPreview =
   (item: string, cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false) =>
   async (): Promise<string> => {
-    const path = await window.electron.fetchMediaPreview(item, cache);
+    const path = await platformFetchMediaPreview(item, cache);
     return path;
   };
 
@@ -71,17 +72,9 @@ function ImageComponent({
 
   const imgSrc = useMemo(() => {
     if (cache && !overRideCache) {
-      return window.electron.url.format({
-        protocol: 'gsm',
-        pathname: data,
-        search: version ? `?v=${version}` : undefined,
-      });
+      return mediaUrl(data, version);
     }
-    return window.electron.url.format({
-      protocol: 'gsm',
-      pathname: path,
-      search: version ? `?v=${version}` : undefined,
-    });
+    return mediaUrl(path, version);
   }, [cache, overRideCache, data, path, version]);
 
   if (error) {

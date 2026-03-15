@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { ScaleModeOption, clampVolume } from 'settings';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
+import { mediaUrl, fetchMediaPreview as platformFetchMediaPreview } from '../../platform';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 
 import './video.css';
@@ -38,7 +39,7 @@ const fetchMediaPreview =
     timeStamp: number
   ) =>
   async (): Promise<string> => {
-    const path = await window.electron.fetchMediaPreview(
+    const path = await platformFetchMediaPreview(
       item,
       cache,
       timeStamp
@@ -250,7 +251,7 @@ export function Video({
             e.preventDefault();
           }}
           muted={!playSound}
-          src={window.electron.url.format({ protocol: 'gsm', pathname: path })}
+          src={mediaUrl(path)}
           controls={showControls}
           controlsList={'nodownload nofullscreen'}
           autoPlay
@@ -296,11 +297,7 @@ export function Video({
         e.preventDefault();
       }}
       muted={!playSound}
-      src={window.electron.url.format({
-        protocol: 'gsm',
-        pathname: data,
-        search: version ? `?v=${version}` : undefined,
-      })}
+      src={mediaUrl(data, version)}
       controls={false}
       controlsList={'nodownload nofullscreen'}
       autoPlay

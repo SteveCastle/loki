@@ -4,6 +4,7 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import { GlobalStateContext } from '../../state';
 
 import type { ScaleModeOption } from '../../../settings';
+import { mediaUrl, fetchMediaPreview as platformFetchMediaPreview, getGifMetadata as platformGetGifMetadata } from '../../platform';
 import './image.css';
 import './sizing.css';
 import MediaErrorMsg from './media-error';
@@ -22,12 +23,12 @@ type Props = {
 const fetchMediaPreview =
   (item: string, cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false) =>
   async (): Promise<string> => {
-    const path = await window.electron.fetchMediaPreview(item, cache);
+    const path = await platformFetchMediaPreview(item, cache);
     return path;
   };
 
 const fetchGifMetadata = (filePath: string) => async () => {
-  const result = await window.electron.getGifMetadata(filePath);
+  const result = await platformGetGifMetadata(filePath);
   return result;
 };
 
@@ -99,17 +100,9 @@ function AnimatedGifComponent({
 
   const imgSrc = useMemo(() => {
     if (cache) {
-      return window.electron.url.format({
-        protocol: 'gsm',
-        pathname: previewData,
-        search: version ? `?v=${version}` : undefined,
-      });
+      return mediaUrl(previewData, version);
     }
-    return window.electron.url.format({
-      protocol: 'gsm',
-      pathname: path,
-      search: version ? `?v=${version}` : undefined,
-    });
+    return mediaUrl(path, version);
   }, [cache, previewData, path, version]);
 
   if (error) {

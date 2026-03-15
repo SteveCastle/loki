@@ -2,6 +2,7 @@ import React, { useEffect, useContext, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { ScaleModeOption, clampVolume } from 'settings';
+import { mediaUrl } from '../../platform';
 import './audio.css';
 import './sizing.css';
 import MediaErrorMsg from './media-error';
@@ -217,7 +218,7 @@ export function Audio({
           setError(true);
         }}
         muted={!playSound}
-        src={window.electron.url.format({ protocol: 'gsm', pathname: path })}
+        src={mediaUrl(path)}
         autoPlay={settable}
         loop={settable}
       />
