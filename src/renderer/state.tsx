@@ -10,7 +10,7 @@ import {
   clampVolume,
 } from 'settings';
 import {
-  invoke, send, on, store, appArgs,
+  invoke, send, on, store, appArgs, capabilities,
   loadMediaFromDB as platformLoadMediaFromDB,
   loadMediaByDescriptionSearch as platformLoadMediaByDescriptionSearch,
 } from './platform';
