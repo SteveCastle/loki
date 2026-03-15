@@ -34,7 +34,7 @@
     "start:preload": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.preload.dev.ts",
     "start:renderer": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack serve --config ./.erb/configs/webpack.config.renderer.dev.ts",
     "test": "npm run build && jest",
-    "build:web": "npm run build:renderer && cp -r release/app/dist/renderer/* media-server/loki-static/",
+    "build:web": "npm run build:renderer && node -e \"const fs=require('fs');const path=require('path');function cpR(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?cpR(sp,dp):fs.copyFileSync(sp,dp)}}cpR('release/app/dist/renderer','media-server/loki-static')\"",
     "test:server": "cd media-server && go test ./..."
   },
   "lint-staged": {
