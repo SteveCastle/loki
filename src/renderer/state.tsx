@@ -1058,6 +1058,7 @@ const libraryMachine = createMachine(
             always: [
               { target: 'loadingFromFS', cond: hasInitialFile },
               { target: 'loadingFromPersisted', cond: hasPersistedLibrary },
+              { target: 'loadingFromDB', cond: () => !capabilities.fileSystemAccess },
               { target: 'selecting' },
             ],
             entry: assign<LibraryState, AnyEventObject>({

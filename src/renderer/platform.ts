@@ -332,7 +332,7 @@ if (isElectron) {
 
   const urlParams = new URLSearchParams(window.location.search);
   appArgs = {
-    dbPath: urlParams.get('db') ?? undefined,
+    dbPath: urlParams.get('db') ?? 'web', // Always truthy in web mode so state machine skips file selection
     filePath: urlParams.get('file') ?? undefined,
   };
 
