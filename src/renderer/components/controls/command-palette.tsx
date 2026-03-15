@@ -42,6 +42,9 @@ import tag from '../../../../assets/tag.svg';
 // Settings & Types
 import { SETTINGS, SettingKey, clampVolume } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
 
+// Platform
+import { invoke, send, capabilities } from '../../platform';
+
 // Styles
 import './command-palette.css';
 
@@ -200,7 +203,7 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
     );
 
     const handlePatreonClick = useCallback(() => {
-      window.electron.ipcRenderer.sendMessage('open-external', [
+      send('open-external', [
         'https://www.patreon.com/lowkeyviewer',
       ]);
     }, []);
@@ -458,7 +461,7 @@ const VersionInfo: React.FC = React.memo(() => {
   const handleCheckForUpdates = useCallback(async () => {
     setStatus('checking');
     try {
-      const updateResult = (await window.electron.ipcRenderer.invoke(
+      const updateResult = (await invoke(
         'check-for-updates',
         []
       )) as UpdateCheckResult;
@@ -799,15 +802,15 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
 
   // Window Control Callbacks (using useCallback)
   const handleClose = useCallback(
-    () => window.electron.ipcRenderer.sendMessage('shutdown', []),
+    () => send('shutdown', []),
     []
   );
   const handleMinimize = useCallback(
-    () => window.electron.ipcRenderer.sendMessage('minimize', []),
+    () => send('minimize', []),
     []
   );
   const handleToggleFullscreen = useCallback(
-    () => window.electron.ipcRenderer.sendMessage('toggle-fullscreen', []),
+    () => send('toggle-fullscreen', []),
     []
   );
 

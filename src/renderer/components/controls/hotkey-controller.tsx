@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
 import filter from '../../filter';
 import { GlobalStateContext, Item } from '../../state';
+import { invoke, send } from '../../platform';
 
 type Action = {
   down: (arg: Event) => void;
@@ -91,7 +92,7 @@ export default function HotKeyController() {
   // Helper function to create assignments
   const createAssignments = async (tags: string[], itemPath: string) => {
     for (const tag of tags) {
-      await window.electron.ipcRenderer.invoke('create-assignment', [
+      await invoke('create-assignment', [
         [itemPath],
         tag,
         mostRecentCategory,
@@ -160,7 +161,7 @@ export default function HotKeyController() {
         e.stopPropagation();
         async function createAssignment() {
           console.log('creating assignment', item.path, mostRecentTag);
-          await window.electron.ipcRenderer.invoke('create-assignment', [
+          await invoke('create-assignment', [
             [item.path],
             mostRecentTag,
             mostRecentCategory,
@@ -430,7 +431,7 @@ export default function HotKeyController() {
         async function updateAssignmentWeight() {
           // New weight should be the number half way between 0 and the first item in the libraries weight.
           const newWeight = (library[0]?.weight || 1) / 2;
-          await window.electron.ipcRenderer.invoke('update-assignment-weight', [
+          await invoke('update-assignment-weight', [
             item.path,
             activeTag,
             newWeight,
@@ -451,7 +452,7 @@ export default function HotKeyController() {
         async function updateAssignmentWeight() {
           // New weight should be the number half way between 0 and the first item in the libraries weight.
           const newWeight = (library[library.length - 1]?.weight || 100) + 0.5;
-          await window.electron.ipcRenderer.invoke('update-assignment-weight', [
+          await invoke('update-assignment-weight', [
             item.path,
             activeTag,
             newWeight,
@@ -469,7 +470,7 @@ export default function HotKeyController() {
     minimize: {
       down: (e) => {
         e.preventDefault();
-        window.electron.ipcRenderer.sendMessage('minimize', []);
+        send('minimize', []);
       },
       up: () => {},
     },
@@ -479,7 +480,7 @@ export default function HotKeyController() {
         const copyContent = async (paths: string[]) => {
           try {
             console.log('ITEM PATH', paths);
-            await window.electron.ipcRenderer.invoke(
+            await invoke(
               'copy-file-into-clipboard',
               [paths]
             );
@@ -498,7 +499,7 @@ export default function HotKeyController() {
         const copyContent = async (paths: string[]) => {
           try {
             console.log('ITEM PATH', paths);
-            await window.electron.ipcRenderer.invoke(
+            await invoke(
               'copy-file-into-clipboard',
               [paths]
             );
