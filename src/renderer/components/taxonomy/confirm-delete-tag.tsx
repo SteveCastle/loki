@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import { invoke } from '../../platform';
 
 import './confirm-delete-tag.css';
 
@@ -18,7 +19,7 @@ export default function ConfirmDeleteTag({ handleClose, currentValue }: Props) {
   function handleSubmit(e: React.MouseEvent<HTMLButtonElement, MouseEvent>) {
     e.stopPropagation();
     async function submit() {
-      await window.electron.ipcRenderer.invoke('delete-tag', [currentValue]);
+      await invoke('delete-tag', [currentValue]);
       handleClose();
       queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });

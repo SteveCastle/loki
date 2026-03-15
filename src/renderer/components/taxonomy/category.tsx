@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import ConfirmDeleteCategory from './confirm-delete-category';
 import editPencil from '../../../../assets/edit-pencil.svg';
 import deleteIcon from '../../../../assets/delete.svg';
+import { invoke } from '../../platform';
 
 type Concept = {
   label: string;
@@ -31,7 +32,7 @@ const moveTag = async ({
   category: string;
 }) => {
   console.log('move', tag, category);
-  await window.electron.ipcRenderer.invoke('move-tag', [tag, category]);
+  await invoke('move-tag', [tag, category]);
 };
 
 export default function Category({

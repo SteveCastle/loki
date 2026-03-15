@@ -19,6 +19,7 @@ import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
 import './taxonomy.css';
 import Category from './category';
+import { invoke } from '../../platform';
 
 type Concept = {
   label: string;
@@ -40,7 +41,7 @@ type FilterModeIconMap = {
 };
 
 async function loadTaxonomy(): Promise<Taxonomy> {
-  const taxonomy = await window.electron.ipcRenderer.invoke(
+  const taxonomy = await invoke(
     'load-taxonomy',
     []
   );

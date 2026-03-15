@@ -11,6 +11,7 @@ import './taxonomy.css';
 import { getFileType } from 'file-types';
 import { useSelector } from '@xstate/react';
 import TagCount from './tag-count';
+import { invoke, mediaUrl, fetchTagPreview } from '../../platform';
 
 type Concept = {
   label: string;
@@ -26,8 +27,8 @@ type Props = {
   handleEditAction: (tag: string) => void;
 };
 
-const fetchTagPreview = (tag: string) => async (): Promise<string> => {
-  const path = await window.electron.fetchTagPreview(tag);
+const fetchTagPreviewFn = (tag: string) => async (): Promise<string> => {
+  const path = await fetchTagPreview(tag);
   return path;
 };
 
@@ -48,7 +49,7 @@ export default function Tag({
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
   const { data: previewImage } = useQuery<string, Error>(
     ['taxonomy', 'tag', tag.label],
-    fetchTagPreview(tag.label)
+    fetchTagPreviewFn(tag.label)
   );
 
   function getIsLeft(
@@ -103,7 +104,7 @@ export default function Tag({
           const newWeight = isLeft
             ? (previousItemWeight + targetWeight) / 2
             : (nextItemWeight + targetWeight) / 2;
-          await window.electron.ipcRenderer.invoke('update-tag-weight', [
+          await invoke('update-tag-weight', [
             droppedTag.label,
             newWeight,
           ]);
@@ -139,17 +140,11 @@ export default function Tag({
       {previewImage ? (
         getFileType(previewImage) !== 'video' ? (
           <img
-            src={window.electron.url.format({
-              protocol: 'gsm',
-              pathname: previewImage,
-            })}
+            src={mediaUrl(previewImage)}
           />
         ) : (
           <video
-            src={window.electron.url.format({
-              protocol: 'gsm',
-              pathname: previewImage,
-            })}
+            src={mediaUrl(previewImage)}
             controls={false}
             autoPlay
             loop

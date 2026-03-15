@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import { invoke } from '../../platform';
 
 import './confirm-delete-category.css';
 
@@ -21,7 +22,7 @@ export default function ConfirmDeleteCategory({
   function handleSubmit(e: React.MouseEvent<HTMLButtonElement, MouseEvent>) {
     e.stopPropagation();
     async function submit() {
-      await window.electron.ipcRenderer.invoke('delete-category', [
+      await invoke('delete-category', [
         currentValue,
       ]);
       handleClose();
