@@ -480,11 +480,15 @@ if (isElectron) {
     },
   };
 
-  loadMediaFromDB = (tags, mode = 'EXCLUSIVE') =>
-    jsonPost('/api/media', { tags, mode });
+  loadMediaFromDB = async (tags, mode = 'EXCLUSIVE') => {
+    const library = await jsonPost('/api/media', { tags, mode });
+    return { library: library || [], cursor: 0 };
+  };
 
-  loadMediaByDescriptionSearch = (description, tags, filteringMode) =>
-    jsonPost('/api/media/search', { description, tags, filteringMode });
+  loadMediaByDescriptionSearch = async (description, tags, filteringMode) => {
+    const library = await jsonPost('/api/media/search', { description, tags, filteringMode });
+    return { library: library || [], cursor: 0 };
+  };
 
   fetchMediaPreview = (path, cache, timeStamp) =>
     jsonPost('/api/media/preview', { path, cache, timeStamp });
