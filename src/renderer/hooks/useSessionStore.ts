@@ -13,6 +13,7 @@
  */
 
 import { Item } from '../state';
+import { sessionStore } from '../platform';
 
 // Session data types (mirroring main process types)
 export interface SessionLibraryData {
@@ -94,7 +95,7 @@ export async function initSessionStore(): Promise<SessionData> {
 
   initPromise = (async () => {
     try {
-      const data = await window.electron.sessionStore.getAll();
+      const data = await sessionStore.getAll();
       if (data) {
         cache.library = data.library ?? null;
         cache.cursor = data.cursor ?? null;
@@ -178,7 +179,7 @@ export function setSessionValue<K extends SessionKey>(
 
   // Schedule debounced write
   debounceTimers[key] = setTimeout(() => {
-    window.electron.sessionStore.set(key, value).catch((error) => {
+    sessionStore.set(key, value).catch((error) => {
       console.error(`[SessionStore] Failed to write ${key}:`, error);
     });
     delete debounceTimers[key];
@@ -214,7 +215,7 @@ export function setSessionValues(updates: Partial<SessionData>): void {
   }
 
   debounceTimers[batchKey] = setTimeout(() => {
-    window.electron.sessionStore.setMany(updates).catch((error) => {
+    sessionStore.setMany(updates).catch((error) => {
       console.error('[SessionStore] Failed to write batch:', error);
     });
     delete debounceTimers[batchKey];
@@ -235,7 +236,7 @@ export function clearSession(): void {
     if (timer) clearTimeout(timer);
   }
 
-  window.electron.sessionStore.clear().catch((error) => {
+  sessionStore.clear().catch((error) => {
     console.error('[SessionStore] Failed to clear:', error);
   });
 }
@@ -252,7 +253,7 @@ export function clearSessionKeys(keys: SessionKey[]): void {
     }
   }
 
-  window.electron.sessionStore.clearKeys(keys).catch((error) => {
+  sessionStore.clearKeys(keys).catch((error) => {
     console.error('[SessionStore] Failed to clear keys:', error);
   });
 }
@@ -268,8 +269,8 @@ export async function flushSession(): Promise<void> {
   }
 
   // Write current cache state
-  await window.electron.sessionStore.setMany(cache);
-  await window.electron.sessionStore.flush();
+  await sessionStore.setMany(cache);
+  await sessionStore.flush();
 }
 
 // Convenience functions for specific data types

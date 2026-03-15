@@ -2333,6 +2333,102 @@ func main() {
 	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps), renderer.RolePublic))
 
+	// ---- Loki Web Client API ----
+	mux.HandleFunc("/api/media", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			lokiMediaHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/search", renderer.ApplyMiddlewares(lokiMediaSearchHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/metadata", renderer.ApplyMiddlewares(lokiMediaMetadataHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/tags", renderer.ApplyMiddlewares(lokiMediaTagsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/description", renderer.ApplyMiddlewares(lokiUpdateDescriptionHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/preview", renderer.ApplyMiddlewares(lokiMediaPreviewHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/delete", renderer.ApplyMiddlewares(lokiMediaDeleteHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/gif-metadata", renderer.ApplyMiddlewares(lokiGifMetadataHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			lokiCreateTagHandler(deps)(w, r)
+		case http.MethodDelete:
+			lokiDeleteTagHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/rename", renderer.ApplyMiddlewares(lokiRenameTagHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/move", renderer.ApplyMiddlewares(lokiMoveTagHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/order", renderer.ApplyMiddlewares(lokiOrderTagsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/weight", renderer.ApplyMiddlewares(lokiUpdateTagWeightHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/timestamp", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			lokiUpdateTimestampHandler(deps)(w, r)
+		case http.MethodDelete:
+			lokiRemoveTimestampHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/preview", renderer.ApplyMiddlewares(lokiTagPreviewHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/count", renderer.ApplyMiddlewares(lokiTagCountHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/categories", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			lokiCreateCategoryHandler(deps)(w, r)
+		case http.MethodDelete:
+			lokiDeleteCategoryHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/categories/rename", renderer.ApplyMiddlewares(lokiRenameCategoryHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/assignments", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			lokiCreateAssignmentHandler(deps)(w, r)
+		case http.MethodDelete:
+			lokiDeleteAssignmentHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/assignments/weight", renderer.ApplyMiddlewares(lokiUpdateAssignmentWeightHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/thumbnails", renderer.ApplyMiddlewares(lokiThumbnailsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/thumbnails/regenerate", renderer.ApplyMiddlewares(lokiRegenerateThumbnailHandler(deps), renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/settings", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			lokiSettingsGetHandler(deps)(w, r)
+		case http.MethodPut:
+			lokiSettingsPutHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/session/keys", renderer.ApplyMiddlewares(lokiSessionDeleteKeysHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/session/", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			lokiSessionGetHandler(deps)(w, r)
+		case http.MethodPut:
+			lokiSessionPutHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+	mux.HandleFunc("/api/session", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			lokiSessionGetAllHandler(deps)(w, r)
+		case http.MethodPut:
+			lokiSessionPutHandler(deps)(w, r)
+		case http.MethodDelete:
+			lokiSessionDeleteHandler(deps)(w, r)
+		}
+	}, renderer.RoleAdmin))
+
+	mux.HandleFunc("/api/db/load", renderer.ApplyMiddlewares(lokiDBLoadHandler(deps), renderer.RoleAdmin))
+
+	// Loki SPA - serve webpack bundle
+	mux.HandleFunc("/app/", renderer.ApplyMiddlewares(lokiSPAHandler("loki-static"), renderer.RoleAdmin))
+
 	// Serve embedded static files
 	mux.Handle("/static/",
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
