@@ -412,47 +412,61 @@ type labelRequest struct {
 
 func lokiTaxonomyHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cats, err := deps.DB.Query("SELECT label, weight FROM category ORDER BY weight")
+		// Must return the same shape as the Electron app:
+		// { "categoryLabel": { label: string, weight: number, tags: [{label, category, weight}] } }
+		rows, err := deps.DB.Query(`
+			SELECT
+				c.label AS category_label,
+				c.weight AS category_weight,
+				COALESCE(t.label, '') AS tag_label,
+				COALESCE(t.category_label, '') AS tag_category,
+				COALESCE(t.weight, 0) AS tag_weight
+			FROM category c
+			LEFT JOIN tag t ON c.label = t.category_label
+			ORDER BY c.weight, t.weight`)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		defer cats.Close()
+		defer rows.Close()
 
-		var categories []map[string]any
-		for cats.Next() {
-			var label string
-			var weight float64
-			cats.Scan(&label, &weight)
-			categories = append(categories, map[string]any{
-				"label": label, "weight": weight,
-			})
+		type tagInfo struct {
+			Label    string  `json:"label"`
+			Category string  `json:"category"`
+			Weight   float64 `json:"weight"`
 		}
-		if categories == nil {
-			categories = []map[string]any{}
+		type categoryInfo struct {
+			Label  string    `json:"label"`
+			Weight float64   `json:"weight"`
+			Tags   []tagInfo `json:"tags"`
 		}
 
-		tags, err := deps.DB.Query("SELECT label, category_label, weight FROM tag ORDER BY weight")
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer tags.Close()
+		catMap := make(map[string]*categoryInfo)
+		catOrder := []string{}
 
-		var tagList []map[string]any
-		for tags.Next() {
-			var label, catLabel string
-			var weight float64
-			tags.Scan(&label, &catLabel, &weight)
-			tagList = append(tagList, map[string]any{
-				"label": label, "categoryLabel": catLabel, "weight": weight,
-			})
-		}
-		if tagList == nil {
-			tagList = []map[string]any{}
+		for rows.Next() {
+			var catLabel, tagLabel, tagCategory string
+			var catWeight, tagWeight float64
+			rows.Scan(&catLabel, &catWeight, &tagLabel, &tagCategory, &tagWeight)
+
+			cat, exists := catMap[catLabel]
+			if !exists {
+				cat = &categoryInfo{Label: catLabel, Weight: catWeight, Tags: []tagInfo{}}
+				catMap[catLabel] = cat
+				catOrder = append(catOrder, catLabel)
+			}
+			if tagLabel != "" {
+				cat.Tags = append(cat.Tags, tagInfo{
+					Label: tagLabel, Category: tagCategory, Weight: tagWeight,
+				})
+			}
 		}
 
-		writeJSON(w, map[string]any{"categories": categories, "tags": tagList})
+		result := make(map[string]any)
+		for _, label := range catOrder {
+			result[label] = catMap[label]
+		}
+		writeJSON(w, result)
 	}
 }
 

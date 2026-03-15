@@ -336,9 +336,24 @@ if (isElectron) {
     filePath: urlParams.get('file') ?? undefined,
   };
 
+  // Channels that are Electron-only and should silently return undefined
+  const stubbedChannels = [
+    'select-file', 'select-directory', 'select-db', 'select-new-path',
+    'load-files', 'refresh-library', 'copy-file-into-clipboard',
+    'check-for-updates', 'update-elo',
+    'load-duplicates-by-path', 'merge-duplicates-by-path',
+  ];
+
   invoke = async (channel, args) => {
+    if (stubbedChannels.includes(channel)) {
+      console.warn(`[platform] Stubbed in web mode: ${channel}`);
+      return undefined;
+    }
     const mapping = channelToEndpoint(channel);
-    if (!mapping) throw new Error(`Not implemented in web mode: ${channel}`);
+    if (!mapping) {
+      console.warn(`[platform] Not implemented in web mode: ${channel}`);
+      return undefined;
+    }
     const body = mapping.argsToBody(args ?? []);
     if (mapping.method === 'GET') {
       return authFetch(mapping.url).then(handleResponse);
