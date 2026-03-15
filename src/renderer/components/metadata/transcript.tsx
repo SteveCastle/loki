@@ -1,6 +1,7 @@
 import { useRef, useContext } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
+import { transcript as transcriptApi } from '../../platform';
 
 import { GlobalStateContext } from '../../state';
 import filter from '../../filter';
@@ -11,7 +12,7 @@ import './transcript.css';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 const loadTranscript = (path: string) => async () => {
-  const transcript = await window.electron.transcript.loadTranscript(path);
+  const transcript = await transcriptApi.loadTranscript(path);
   return transcript as VttCue[];
 };
 

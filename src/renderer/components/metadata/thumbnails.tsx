@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { listThumbnails, regenerateThumbnail } from '../../platform';
 import { getFileType, FileTypes } from '../../../file-types';
 import { Image } from '../media-viewers/image';
 import { Video } from '../media-viewers/video';
@@ -23,7 +24,7 @@ export default function Thumbnails({ path }: { path: string }) {
     async function load() {
       try {
         setLoading(true);
-        const results = await window.electron.listThumbnails(path);
+        const results = await listThumbnails(path);
         if (!cancelled) setThumbs(results);
       } catch (e) {
         console.error(e);
@@ -40,8 +41,8 @@ export default function Thumbnails({ path }: { path: string }) {
   const regenerate = async (cache: ThumbInfo['cache']) => {
     try {
       setRegening(cache);
-      await window.electron.regenerateThumbnail(path, cache);
-      const results = await window.electron.listThumbnails(path);
+      await regenerateThumbnail(path, cache);
+      const results = await listThumbnails(path);
       setThumbs(results);
       setVersion((v) => v + 1);
     } catch (e) {
@@ -55,7 +56,7 @@ export default function Thumbnails({ path }: { path: string }) {
     HTMLImageElement | HTMLVideoElement
   > = async () => {
     try {
-      const results = await window.electron.listThumbnails(path);
+      const results = await listThumbnails(path);
       setThumbs(results);
     } catch (e) {
       console.error(e);

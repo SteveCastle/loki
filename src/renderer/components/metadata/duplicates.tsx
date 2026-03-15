@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import { loadDuplicatesByPath, mergeDuplicatesByPath } from '../../platform';
 import { GlobalStateContext, Item } from '../../state';
 import { getFileType, FileTypes } from '../../../file-types';
 import { Image } from '../media-viewers/image';
@@ -61,15 +62,7 @@ export default function Duplicates({ basePath }: Props) {
     async function load() {
       try {
         setLoading(true);
-        const results = await (
-          window as unknown as {
-            electron: {
-              loadDuplicatesByPath: (
-                path: string
-              ) => Promise<{ library: { path: string }[]; cursor: number }>;
-            };
-          }
-        ).electron.loadDuplicatesByPath(basePath);
+        const results = await loadDuplicatesByPath(basePath);
         if (cancelled) return;
         const library = (results?.library || []) as { path: string }[];
         const mapped: Item[] = library.map((r) => ({
@@ -206,17 +199,7 @@ export default function Duplicates({ basePath }: Props) {
               onClick={async () => {
                 try {
                   setLoading(true);
-                  const res = await (
-                    window as unknown as {
-                      electron: {
-                        mergeDuplicatesByPath: (path: string) => Promise<{
-                          mergedInto: string;
-                          deleted: string[];
-                          copiedTags: number;
-                        }>;
-                      };
-                    }
-                  ).electron.mergeDuplicatesByPath(it.path);
+                  const res = await mergeDuplicatesByPath(it.path);
                   // Remove deleted items from the list
                   setItems((prev) =>
                     prev.filter((p) => !res.deleted.includes(p.path))
