@@ -1058,12 +1058,41 @@ const libraryMachine = createMachine(
             always: [
               { target: 'loadingFromFS', cond: hasInitialFile },
               { target: 'loadingFromPersisted', cond: hasPersistedLibrary },
-              { target: 'loadingFromDB', cond: () => !capabilities.fileSystemAccess },
+              { target: 'restoringWebSession', cond: () => !capabilities.fileSystemAccess },
               { target: 'selecting' },
             ],
             entry: assign<LibraryState, AnyEventObject>({
               initSessionId: () => uniqueId(),
             }),
+          },
+          // Web mode: restore persisted query/cursor state from session store before loading
+          restoringWebSession: {
+            entry: assign<LibraryState, AnyEventObject>({
+              dbQuery: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.dbQuery : { tags: [] };
+              },
+              mostRecentTag: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.mostRecentTag : '';
+              },
+              mostRecentCategory: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.mostRecentCategory : '';
+              },
+              textFilter: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.textFilter : '';
+              },
+              cursor: () => {
+                const cursorData = getSessionValue('cursor');
+                return cursorData ? cursorData.cursor : 0;
+              },
+            }),
+            always: [
+              { target: 'loadingFromSearch', cond: hasPersistedTextFilter },
+              { target: 'loadingFromDB' },
+            ],
           },
           selecting: {
             invoke: {
@@ -1905,10 +1934,13 @@ const libraryMachine = createMachine(
           },
           loadedFromSearch: {
             initial: 'idle',
-            entry: assign<LibraryState, AnyEventObject>({
-              libraryLoadId: () => uniqueId(),
-              currentStateType: () => 'search' as LibraryStateType,
-            }),
+            entry: [
+              assign<LibraryState, AnyEventObject>({
+                libraryLoadId: () => uniqueId(),
+                currentStateType: () => 'search' as LibraryStateType,
+              }),
+              (context) => updatePersistedState(context),
+            ],
             states: {
               idle: {},
             },
@@ -2133,6 +2165,7 @@ const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   activeCategory: (context, event) => {
                     console.log('SET_ACTIVE_CATEGORY', context, event);
+                    store.set('activeCategory', event.data.category);
                     return event.data.category;
                   },
                 }),
@@ -2208,6 +2241,7 @@ const libraryMachine = createMachine(
               assign<LibraryState, AnyEventObject>({
                 currentStateType: () => 'db' as LibraryStateType,
               }),
+              (context) => updatePersistedState(context),
             ],
             on: {
               LOAD_FILES_BATCH: {
@@ -2295,6 +2329,7 @@ const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   activeCategory: (context, event) => {
                     console.log('SET_ACTIVE_CATEGORY', context, event);
+                    store.set('activeCategory', event.data.category);
                     return event.data.category;
                   },
                 }),

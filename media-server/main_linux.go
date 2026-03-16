@@ -48,8 +48,14 @@ import (
 //go:embed client/static/**
 var embeddedStatic embed.FS
 
+//go:embed loki-static/**
+var embeddedSPA embed.FS
+
 // staticFS is the embedded filesystem rooted at client/static/.
 var staticFS fs.FS
+
+// spaFS is the embedded filesystem rooted at loki-static/.
+var spaFS fs.FS
 
 // -----------------------------------------------------------------------------
 // http server so we can shut it down cleanly from onExit.
@@ -94,6 +100,12 @@ func init() {
 	staticFS, err = fs.Sub(embeddedStatic, "client/static")
 	if err != nil {
 		panic("lowkeymediaserver: fs.Sub failed: " + err.Error())
+	}
+
+	// Carve out the loki-static subtree for the SPA.
+	spaFS, err = fs.Sub(embeddedSPA, "loki-static")
+	if err != nil {
+		panic("lowkeymediaserver: fs.Sub(loki-static) failed: " + err.Error())
 	}
 }
 
@@ -2427,7 +2439,7 @@ func main() {
 	mux.HandleFunc("/api/db/load", renderer.ApplyMiddlewares(lokiDBLoadHandler(deps), renderer.RoleAdmin))
 
 	// Loki SPA - serve webpack bundle
-	mux.HandleFunc("/app/", renderer.ApplyMiddlewares(lokiSPAHandler("loki-static"), renderer.RoleAdmin))
+	mux.HandleFunc("/app/", renderer.ApplyMiddlewares(lokiSPAHandler(spaFS), renderer.RoleAdmin))
 
 	// Serve embedded static files
 	mux.Handle("/static/",

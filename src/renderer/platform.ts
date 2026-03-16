@@ -380,22 +380,28 @@ if (isElectron) {
   on = () => () => {};
 
   mediaUrl = (path, version) => {
-    const p = new URLSearchParams({ path });
-    if (version) p.set('v', version);
-    return `/media/file?${p}`;
+    let qs = `path=${encodeURIComponent(path)}`;
+    if (version) qs += `&v=${encodeURIComponent(String(version))}`;
+    return `/media/file?${qs}`;
   };
 
-  // Settings store: server-backed with in-memory cache
+  // Settings store: localStorage-backed for persistence across reloads
+  const SETTINGS_KEY = 'loki-settings';
   let _settingsCache: Record<string, any> = {};
-  const _settingsLoaded = authFetch('/api/settings')
-    .then((r) => r.json())
-    .then((data) => {
-      _settingsCache = data;
-    })
-    .catch(() => {});
+  try {
+    const stored = localStorage.getItem(SETTINGS_KEY);
+    if (stored) _settingsCache = JSON.parse(stored);
+  } catch {}
+  const _settingsLoaded = Promise.resolve();
 
   // Expose the settings loaded promise for boot sequence
   (window as any).__settingsLoaded = _settingsLoaded;
+
+  const _persistSettings = () => {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(_settingsCache));
+    } catch {}
+  };
 
   store = {
     get: (key, defaultValue) => {
@@ -404,11 +410,7 @@ if (isElectron) {
     },
     set: (key, value) => {
       _settingsCache[key] = value;
-      authFetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ key, value }),
-      }).catch(() => {});
+      _persistSettings();
     },
     getMany: (pairs) => {
       const result: Record<string, any> = {};
@@ -420,54 +422,59 @@ if (isElectron) {
     },
   };
 
-  // Session store: server-backed with in-memory cache
+  // Session store: localStorage-backed for persistence across reloads
+  const SESSION_KEY = 'loki-session';
   let _sessionCache: Record<string, any> = {};
-  const _sessionLoaded = authFetch('/api/session')
-    .then((r) => r.json())
-    .then((data) => {
-      _sessionCache = data;
-    })
-    .catch(() => {});
+  try {
+    const stored = localStorage.getItem(SESSION_KEY);
+    if (stored) _sessionCache = JSON.parse(stored);
+  } catch {}
+
+  // Persist only lightweight session keys (skip library/previous - too large for localStorage)
+  const SESSION_PERSIST_KEYS = ['query', 'cursor'];
+  let _sessionDirty = false;
+  let _sessionTimer: ReturnType<typeof setTimeout> | null = null;
+  const _persistSession = () => {
+    try {
+      const toSave: Record<string, any> = {};
+      for (const key of SESSION_PERSIST_KEYS) {
+        if (_sessionCache[key] !== undefined) toSave[key] = _sessionCache[key];
+      }
+      localStorage.setItem(SESSION_KEY, JSON.stringify(toSave));
+      _sessionDirty = false;
+    } catch {}
+  };
+  const _schedulePersist = () => {
+    _sessionDirty = true;
+    if (_sessionTimer) clearTimeout(_sessionTimer);
+    _sessionTimer = setTimeout(_persistSession, 200);
+  };
 
   sessionStore = {
     get: async (key) => {
-      await _sessionLoaded;
       return _sessionCache[key];
     },
     set: async (key, value) => {
       _sessionCache[key] = value;
-      await authFetch(`/api/session/${key}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(value),
-      });
+      _schedulePersist();
     },
     getAll: async () => {
-      await _sessionLoaded;
       return { ..._sessionCache };
     },
     setMany: async (entries) => {
       Object.assign(_sessionCache, entries);
-      await authFetch('/api/session', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(entries),
-      });
+      _schedulePersist();
     },
     clear: async () => {
       _sessionCache = {};
-      await authFetch('/api/session', { method: 'DELETE' });
+      _persistSession();
     },
     clearKeys: async (keys) => {
       keys.forEach((k) => delete _sessionCache[k]);
-      await authFetch('/api/session/keys', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ keys }),
-      });
+      _schedulePersist();
     },
     flush: async () => {
-      // No-op: web writes are immediate
+      if (_sessionDirty) _persistSession();
     },
   };
 

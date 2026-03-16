@@ -4,13 +4,31 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
+
+func formatFileSize(bytes int64) string {
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+	)
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%d Bytes", bytes)
+	}
+}
 
 // ---- Request/Response types ----
 
@@ -31,7 +49,7 @@ type pathRequest struct {
 
 type mediaPreviewRequest struct {
 	Path      string `json:"path"`
-	Cache     string `json:"cache"`
+	Cache     any    `json:"cache"`
 	TimeStamp int    `json:"timeStamp"`
 }
 
@@ -244,16 +262,41 @@ func lokiMediaMetadataHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Try DB first
-		var width, height sql.NullInt64
-		deps.DB.QueryRow("SELECT width, height FROM media WHERE path = ?", req.Path).Scan(&width, &height)
+		var width, height, size sql.NullInt64
+		var description, transcript, hash sql.NullString
+		deps.DB.QueryRow(
+			"SELECT width, height, size, description, transcript, hash FROM media WHERE path = ?",
+			req.Path,
+		).Scan(&width, &height, &size, &description, &transcript, &hash)
 
-		resp := mediaMetadataResponse{}
+		fileMetadata := map[string]any{
+			"size":     "0 Bytes",
+			"modified": "",
+			"width":    0,
+			"height":   0,
+		}
 		if width.Valid {
-			resp.Width = int(width.Int64)
+			fileMetadata["width"] = int(width.Int64)
 		}
 		if height.Valid {
-			resp.Height = int(height.Int64)
+			fileMetadata["height"] = int(height.Int64)
+		}
+		if size.Valid {
+			fileMetadata["size"] = formatFileSize(size.Int64)
+		}
+
+		resp := map[string]any{
+			"fileMetadata": fileMetadata,
+			"hash":         "",
+		}
+		if description.Valid {
+			resp["description"] = description.String
+		}
+		if transcript.Valid {
+			resp["transcript"] = transcript.String
+		}
+		if hash.Valid {
+			resp["hash"] = hash.String
 		}
 		writeJSON(w, resp)
 	}
@@ -323,7 +366,13 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 
 		// Return the thumbnail path if it exists in DB
 		var thumbPath sql.NullString
-		cache := req.Cache
+		cacheStr, ok := req.Cache.(string)
+		if !ok || cacheStr == "" {
+			// cache is false or not a string — no thumbnail to look up
+			writeJSON(w, nil)
+			return
+		}
+		cache := cacheStr
 		// Whitelist cache column names to prevent SQL injection
 		switch cache {
 		case "thumbnail_path_100", "thumbnail_path_600", "thumbnail_path_1200":
@@ -920,15 +969,21 @@ func lokiSettingsGetHandler(deps *Dependencies) http.HandlerFunc {
 
 func lokiSettingsPutHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Key   string `json:"key"`
-			Value any    `json:"value"`
-		}
-		if err := readJSON(r, &req); err != nil {
+		// Accept either {key, value} for single setting or {key1: val1, key2: val2} for batch
+		var raw map[string]any
+		if err := readJSON(r, &raw); err != nil {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		lokiSettings[req.Key] = req.Value
+		if key, ok := raw["key"].(string); ok {
+			// Single setting: {key: "foo", value: "bar"}
+			lokiSettings[key] = raw["value"]
+		} else {
+			// Batch: {key1: val1, key2: val2, ...}
+			for k, v := range raw {
+				lokiSettings[k] = v
+			}
+		}
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1016,17 +1071,27 @@ func lokiDBLoadHandler(deps *Dependencies) http.HandlerFunc {
 
 // ---- SPA handler ----
 
-func lokiSPAHandler(staticDir string) http.HandlerFunc {
-	fs := http.FileServer(http.Dir(staticDir))
+func lokiSPAHandler(spaFS fs.FS) http.HandlerFunc {
+	fileServer := http.FileServer(http.FS(spaFS))
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Check if the file exists in the static dir
-		filePath := filepath.Join(staticDir, strings.TrimPrefix(r.URL.Path, "/app/"))
-		if _, err := os.Stat(filePath); err == nil {
+		// Check if the file exists in the embedded FS
+		reqPath := strings.TrimPrefix(r.URL.Path, "/app/")
+		if reqPath == "" {
+			reqPath = "index.html"
+		}
+		if f, err := spaFS.Open(reqPath); err == nil {
+			f.Close()
 			// Serve the static file
-			http.StripPrefix("/app/", fs).ServeHTTP(w, r)
+			http.StripPrefix("/app/", fileServer).ServeHTTP(w, r)
 			return
 		}
 		// Fallback: serve index.html for SPA routing
-		http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
+		indexData, err := fs.ReadFile(spaFS, "index.html")
+		if err != nil {
+			http.Error(w, "index.html not found", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexData)
 	}
 }

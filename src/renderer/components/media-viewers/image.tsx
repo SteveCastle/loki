@@ -49,7 +49,7 @@ function ImageComponent({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
   
-  const { data } = useQuery<string, Error>(
+  const { data, isFetched } = useQuery<string, Error>(
     ['media', 'preview', path, cache, version],
     fetchMediaPreview(path, cache),
     { enabled: shouldLoad }
@@ -71,7 +71,7 @@ function ImageComponent({
   }, [scaleMode, coverSize]);
 
   const imgSrc = useMemo(() => {
-    if (cache && !overRideCache) {
+    if (cache && !overRideCache && data) {
       return mediaUrl(data, version);
     }
     return mediaUrl(path, version);
@@ -81,7 +81,7 @@ function ImageComponent({
     return <MediaErrorMsg path={path} />;
   }
 
-  return data || !cache ? (
+  return data || !cache || isFetched ? (
     <img
       className={`Image ${scaleMode} ${orientation}`}
       style={imgStyle}

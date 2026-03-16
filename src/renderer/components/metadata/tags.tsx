@@ -22,7 +22,7 @@ const loadTagsByMediaPath = (media: Item) => async (): Promise<Metadata> => {
   let metadata: any;
   metadata = await invoke(
     'load-tags-by-media-path',
-    [media]
+    [media.path]
   );
 
   metadata = metadata || { path: media.path, tags: [] };

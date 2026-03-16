@@ -87,7 +87,7 @@ export function Video({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
 
-  const { data, isLoading } = useQuery<string, Error>(
+  const { data, isLoading, isFetched } = useQuery<string, Error>(
     ['media', 'preview', path, cache, startTime, version],
     fetchMediaPreview(path, cache, startTime),
     { enabled: shouldLoad && !!cache }
@@ -261,7 +261,7 @@ export function Video({
     );
   }
 
-  if (!shouldLoad || isLoading || !data) {
+  if (!shouldLoad || (isLoading && !isFetched)) {
     return (
       <div className="ThumnailLoader">
         <div className="loading-bar">
@@ -297,7 +297,7 @@ export function Video({
         e.preventDefault();
       }}
       muted={!playSound}
-      src={mediaUrl(data, version)}
+      src={mediaUrl(data || path, version)}
       controls={false}
       controlsList={'nodownload nofullscreen'}
       autoPlay
