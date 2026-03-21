@@ -489,9 +489,20 @@ export const LAYOUT_MODE = {
   },
 };
 
-const USE_HLS: Setting<boolean> = {
-  name: 'useHLS',
-  defaultValue: false,
+export const USE_HLS = {
+  title: 'Use HLS Streaming',
+  reload: false,
+  display: 'none',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
+    },
+  },
 };
 
 export function getNextFilterMode(

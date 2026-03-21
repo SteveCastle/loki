@@ -178,7 +178,6 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 
 		generatedPresets := []string{}
-		passthroughFailed := false
 
 		for _, preset := range presetsToRun {
 			select {
@@ -212,7 +211,6 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			if runErr != nil {
 				q.PushJobStdout(j.ID, fmt.Sprintf("hls: preset %s failed for %s: %v", preset, base, runErr))
 				if preset == "passthrough" && probeInfo.hasVideo {
-					passthroughFailed = true
 					// Fall back to transcoding at source resolution (video files only).
 					q.PushJobStdout(j.ID, fmt.Sprintf("hls: falling back to transcode at source resolution for %s", base))
 					fallbackPreset := HlsPreset{
@@ -230,7 +228,6 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 				}
 				continue
 			}
-			_ = passthroughFailed
 			generatedPresets = append(generatedPresets, preset)
 		}
 

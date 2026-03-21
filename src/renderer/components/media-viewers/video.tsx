@@ -229,6 +229,10 @@ export function Video({
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
       // Safari native HLS
       video.src = hlsUrl(path);
+      return () => {
+        video.removeAttribute('src');
+        video.load();
+      };
     }
   }, [useHLS, hlsFailed, path, mediaRef, cache]);
 
