@@ -203,6 +203,10 @@ export function Video({
       const hls = new Hls({
         enableWorker: true,
         lowLatencyMode: false,
+        // The server generates segments progressively (event playlist type).
+        // hls.js polls the playlist for new segments until #EXT-X-ENDLIST appears.
+        liveSyncDurationCount: 1, // Start playback as soon as 1 segment is available
+        liveMaxLatencyDurationCount: 5,
       });
       hlsRef.current = hls;
 

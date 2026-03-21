@@ -13,7 +13,6 @@ import (
 
 	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/platform"
-	"github.com/stevecastle/shrike/tasks"
 )
 
 var hlsValidPresets = map[string]bool{
@@ -76,8 +75,9 @@ func hlsHandler(d *Dependencies) http.HandlerFunc {
 }
 
 // hlsServeMaster handles GET /media/hls?path=... and returns master.m3u8.
-// If the cache does not exist, it generates passthrough HLS on-the-fly with
-// inflight deduplication so concurrent requests don't start duplicate ffmpeg jobs.
+// If the cache does not exist, it kicks off passthrough HLS generation in the
+// background and writes the master playlist immediately so playback can start
+// as soon as the first segment is ready (ffmpeg writes segments progressively).
 // Once the master.m3u8 exists it redirects to /media/hls/<hash>/master.m3u8 so
 // that hls.js can resolve relative playlist URLs correctly.
 func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
@@ -98,33 +98,30 @@ func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Inflight deduplication.
+	// Kick off generation (non-blocking). Dedup concurrent requests.
 	hlsInflightMu.Lock()
-	if entry, ok := hlsInflight[cacheDir]; ok {
-		hlsInflightMu.Unlock()
-		<-entry.done
-		if entry.err != nil {
-			http.Error(w, "HLS generation failed", http.StatusInternalServerError)
-			return
-		}
-	} else {
+	if _, ok := hlsInflight[cacheDir]; !ok {
 		entry := &hlsInflightEntry{done: make(chan struct{})}
 		hlsInflight[cacheDir] = entry
-		hlsInflightMu.Unlock()
 
-		genErr := generatePassthroughHLS(mediaPath, cacheDir)
-		entry.err = genErr
+		// Write master playlist and output dirs synchronously so redirect works.
+		outDir := filepath.Join(cacheDir, "passthrough")
+		os.MkdirAll(outDir, 0755)
+		masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0,NAME=\"passthrough\"\npassthrough/stream.m3u8\n"
+		os.WriteFile(masterPath, []byte(masterContent), 0644)
 
-		hlsInflightMu.Lock()
-		delete(hlsInflight, cacheDir)
-		hlsInflightMu.Unlock()
-		close(entry.done)
+		// Start ffmpeg in the background — segments appear progressively.
+		go func() {
+			genErr := generatePassthroughHLS(mediaPath, cacheDir)
+			entry.err = genErr
 
-		if genErr != nil {
-			http.Error(w, "HLS generation failed", http.StatusInternalServerError)
-			return
-		}
+			hlsInflightMu.Lock()
+			delete(hlsInflight, cacheDir)
+			hlsInflightMu.Unlock()
+			close(entry.done)
+		}()
 	}
+	hlsInflightMu.Unlock()
 
 	h := sha256.Sum256([]byte(mediaPath))
 	hash := fmt.Sprintf("%x", h)
@@ -210,8 +207,10 @@ func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 }
 
 // generatePassthroughHLS creates the passthrough HLS cache for a media file.
-// It creates the output directory, runs ffmpeg with stream-copy settings, and
-// writes a minimal master.m3u8 that references the generated stream playlist.
+// It uses "-hls_playlist_type event" so ffmpeg writes the stream.m3u8
+// progressively as each segment completes, allowing playback to start
+// before the entire file is processed. Once ffmpeg finishes, it appends
+// #EXT-X-ENDLIST to convert the playlist to VOD for full seeking.
 func generatePassthroughHLS(mediaPath, cacheDir string) error {
 	outDir := filepath.Join(cacheDir, "passthrough")
 	if err := os.MkdirAll(outDir, 0755); err != nil {
@@ -226,16 +225,34 @@ func generatePassthroughHLS(mediaPath, cacheDir string) error {
 		return fmt.Errorf("ffmpeg not found")
 	}
 
-	args := tasks.HlsBuildPassthroughArgs(mediaPath, playlistPath, segmentPattern)
+	// Use "event" playlist type so the manifest is written progressively.
+	// The standard HlsBuildPassthroughArgs uses "vod" which only writes
+	// the playlist after ALL segments are done. We override that here.
+	args := []string{
+		"-y", "-i", mediaPath,
+		"-c", "copy",
+		"-f", "hls",
+		"-hls_time", "6",
+		"-hls_segment_type", "mpegts",
+		"-hls_playlist_type", "event",
+		"-hls_segment_filename", segmentPattern,
+		playlistPath,
+	}
+
 	cmd := exec.Command(ffmpegPath, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ffmpeg failed: %w\n%s", err, string(out))
 	}
 
-	masterPath := filepath.Join(cacheDir, "master.m3u8")
-	masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0,NAME=\"passthrough\"\npassthrough/stream.m3u8\n"
-	if err := os.WriteFile(masterPath, []byte(masterContent), 0644); err != nil {
-		return fmt.Errorf("failed to write master.m3u8: %w", err)
+	// Append #EXT-X-ENDLIST to signal VOD completion so hls.js enables
+	// full seeking and stops polling for new segments.
+	playlist, err := os.ReadFile(playlistPath)
+	if err == nil && !strings.Contains(string(playlist), "#EXT-X-ENDLIST") {
+		f, err := os.OpenFile(playlistPath, os.O_APPEND|os.O_WRONLY, 0644)
+		if err == nil {
+			f.WriteString("#EXT-X-ENDLIST\n")
+			f.Close()
+		}
 	}
 
 	return nil
