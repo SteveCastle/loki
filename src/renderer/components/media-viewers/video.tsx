@@ -222,6 +222,25 @@ export function Video({
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch(() => {});
+
+        // Fetch the probed duration so the player can show total length
+        // before generation completes (hls.js reports Infinity for live streams).
+        // The duration.json is at the same base path as the master playlist.
+        const manifestUrl = hls.url;
+        if (manifestUrl) {
+          const durationUrl = manifestUrl.replace(/master\.m3u8$/, 'duration.json');
+          fetch(durationUrl)
+            .then((res) => res.ok ? res.json() : null)
+            .then((data) => {
+              if (data?.duration && video.duration === Infinity) {
+                // Store the known duration so timeupdate can report progress.
+                // We can't set video.duration directly, but we can use a data attribute
+                // that the controls/progress bar can read.
+                video.dataset.hlsDuration = String(data.duration);
+              }
+            })
+            .catch(() => {}); // Ignore errors — duration will be available once generation completes
+        }
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
@@ -325,7 +344,7 @@ export function Video({
           controls={showControls}
           controlsList={'nodownload nofullscreen'}
           autoPlay
-          loop
+          loop={!(useHLS && !hlsFailed && hlsUrl)}
         />
       </>
     );

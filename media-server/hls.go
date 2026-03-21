@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"encoding/json"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,7 +25,7 @@ var hlsValidPresets = map[string]bool{
 	"1080p":       true,
 }
 
-var hlsFilenameRe = regexp.MustCompile(`^(master|stream)\.m3u8$|^segment_\d{3,}\.ts$`)
+var hlsFilenameRe = regexp.MustCompile(`^(master|stream)\.m3u8$|^segment_\d{3,}\.ts$|^duration\.json$`)
 
 // hlsInflightMu guards the inflight map for HLS generation deduplication.
 var hlsInflightMu sync.Mutex
@@ -111,6 +113,13 @@ func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
 		masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0,NAME=\"passthrough\"\npassthrough/stream.m3u8\n"
 		os.WriteFile(masterPath, []byte(masterContent), 0644)
 
+		// Probe source duration (fast) and write duration.json so the
+		// client can show total length before generation completes.
+		if dur := probeDuration(mediaPath); dur > 0 {
+			durJSON, _ := json.Marshal(map[string]float64{"duration": dur})
+			os.WriteFile(filepath.Join(cacheDir, "duration.json"), durJSON, 0644)
+		}
+
 		// Start ffmpeg in the background — segments appear progressively.
 		go func() {
 			genErr := generatePassthroughHLS(mediaPath, cacheDir)
@@ -174,7 +183,11 @@ func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 				return
 			}
 			filePath = filepath.Join(hlsBasePath(), "hls", hash, filename)
-			contentType = "application/vnd.apple.mpegurl"
+			if strings.HasSuffix(filename, ".json") {
+				contentType = "application/json"
+			} else {
+				contentType = "application/vnd.apple.mpegurl"
+			}
 
 		case 3:
 			// <hash>/<preset>/<filename>
@@ -274,4 +287,32 @@ func generatePassthroughHLS(mediaPath, cacheDir string) error {
 	}
 
 	return nil
+}
+
+// probeDuration uses ffprobe to get the source media duration in seconds.
+func probeDuration(mediaPath string) float64 {
+	ffprobePath := depspkg.GetFFprobePath()
+	if ffprobePath == "" {
+		return 0
+	}
+	cmd := exec.Command(ffprobePath,
+		"-v", "quiet",
+		"-print_format", "json",
+		"-show_format",
+		mediaPath,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	var data struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
+	}
+	if json.Unmarshal(out, &data) != nil {
+		return 0
+	}
+	dur, _ := strconv.ParseFloat(data.Format.Duration, 64)
+	return dur
 }
