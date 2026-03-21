@@ -189,45 +189,74 @@ export function Video({
   const hlsRef = useRef<Hls | null>(null);
   const [hlsFailed, setHlsFailed] = useState(false);
   const [hlsReady, setHlsReady] = useState(false);
+  const [hlsGenerating, setHlsGenerating] = useState(false);
   const [hlsProgress, setHlsProgress] = useState<{ status: string; progress: number } | null>(null);
+  const [hlsError, setHlsError] = useState<string | null>(null);
+  const hlsManifestUrl = useRef<string | null>(null);
+  const hlsPollCancel = useRef<(() => void) | null>(null);
 
-  // Reset HLS state when path changes
+  // Reset HLS state when path changes.
   useEffect(() => {
+    hlsPollCancel.current?.();
     setHlsFailed(false);
     setHlsReady(false);
+    setHlsGenerating(false);
     setHlsProgress(null);
+    setHlsError(null);
+    hlsManifestUrl.current = null;
   }, [path]);
 
-  // Poll server for HLS generation status.
-  // This must NOT depend on mediaRef.current because the progress UI
-  // replaces the <video> element, so the ref won't be set until ready.
-  const hlsManifestUrl = useRef<string | null>(null);
-
+  // Check if stream is already cached on mount (no generation triggered).
+  const hlsActive = useHLS && !hlsFailed && hlsUrl && !cache;
   useEffect(() => {
-    if (!useHLS || hlsFailed || cache || !hlsUrl) return;
+    if (!hlsActive || hlsGenerating || hlsReady) return;
 
+    let cancelled = false;
+    // One-shot check: if server says "ready", skip the button.
+    fetch(hlsUrl!(path), { method: 'GET' })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (cancelled || !data) return;
+        if (data.status === 'ready') {
+          hlsManifestUrl.current = data.url;
+          setHlsReady(true);
+        } else if (data.status === 'processing' || data.status === 'queued') {
+          // Already generating (started by a previous session/request).
+          setHlsGenerating(true);
+          setHlsProgress({ status: data.status, progress: data.progress || 0 });
+          startPolling();
+        }
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [hlsActive, path]);
+
+  // Start polling for generation progress.
+  const startPolling = () => {
+    hlsPollCancel.current?.();
     let cancelled = false;
     let pollTimer: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
       if (cancelled) return;
       try {
-        const res = await fetch(hlsUrl(path));
+        const res = await fetch(hlsUrl!(path));
         if (!res.ok || cancelled) return;
         const data = await res.json();
-
         if (cancelled) return;
 
         if (data.status === 'ready') {
           hlsManifestUrl.current = data.url;
           setHlsProgress(null);
+          setHlsGenerating(false);
           setHlsReady(true);
         } else if (data.status === 'processing' || data.status === 'queued') {
           setHlsProgress({ status: data.status, progress: data.progress || 0 });
           pollTimer = setTimeout(poll, 1000);
         } else if (data.status === 'error') {
-          console.log('HLS generation error:', data.error);
-          setHlsFailed(true);
+          setHlsGenerating(false);
+          setHlsError(data.error || 'Generation failed');
         }
       } catch {
         if (!cancelled) pollTimer = setTimeout(poll, 2000);
@@ -235,12 +264,37 @@ export function Video({
     };
 
     poll();
-
-    return () => {
+    hlsPollCancel.current = () => {
       cancelled = true;
       clearTimeout(pollTimer);
     };
-  }, [useHLS, hlsFailed, path, cache]);
+  };
+
+  // User clicks "Generate Stream" — fire the first request to kick off generation, then poll.
+  const handleGenerateHLS = () => {
+    if (!hlsUrl) return;
+    setHlsGenerating(true);
+    setHlsError(null);
+    setHlsProgress(null);
+
+    fetch(hlsUrl(path))
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!data) return;
+        if (data.status === 'ready') {
+          hlsManifestUrl.current = data.url;
+          setHlsGenerating(false);
+          setHlsReady(true);
+        } else {
+          setHlsProgress({ status: data.status, progress: data.progress || 0 });
+          startPolling();
+        }
+      })
+      .catch(() => {
+        setHlsGenerating(false);
+        setHlsError('Network error');
+      });
+  };
 
   // Once HLS is ready and the <video> element is mounted, attach hls.js.
   useEffect(() => {
@@ -277,43 +331,76 @@ export function Video({
     };
   }, [hlsReady, mediaRef]);
 
-  // Show HLS processing/loading status.
-  // Block the normal <video> render until HLS is ready or has failed.
-  const hlsActive = useHLS && !hlsFailed && hlsUrl && !cache;
+  // HLS UI states — shown instead of the <video> element until ready.
   if (hlsActive && !hlsReady) {
-    const pct = hlsProgress ? Math.round(hlsProgress.progress * 100) : 0;
-    const label = !hlsProgress
-      ? 'Preparing stream...'
-      : hlsProgress.status === 'queued'
-      ? 'Queued...'
-      : `Processing${pct > 0 ? ` ${pct}%` : '...'}`;
+    // Generating: show progress bar.
+    if (hlsGenerating) {
+      const pct = hlsProgress ? Math.round(hlsProgress.progress * 100) : 0;
+      const label = !hlsProgress
+        ? 'Starting...'
+        : hlsProgress.status === 'queued'
+        ? 'Queued...'
+        : `Processing${pct > 0 ? ` ${pct}%` : '...'}`;
+      return (
+        <div className="Video" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', gap: '8px', color: '#aaa', fontSize: '14px',
+        }}>
+          <div>{label}</div>
+          {hlsProgress && hlsProgress.status === 'processing' && (
+            <div style={{
+              width: '200px', height: '4px', background: '#333',
+              borderRadius: '2px', overflow: 'hidden',
+            }}>
+              <div style={{
+                width: `${pct}%`, height: '100%', background: '#888',
+                transition: 'width 0.5s ease',
+              }} />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Error: show message with retry button.
+    if (hlsError) {
+      return (
+        <div className="Video" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', gap: '8px', color: '#aaa', fontSize: '14px',
+        }}>
+          <div>Stream generation failed</div>
+          <div style={{ fontSize: '12px', color: '#777' }}>{hlsError}</div>
+          <button
+            onClick={handleGenerateHLS}
+            style={{
+              marginTop: '4px', padding: '6px 16px', background: '#333',
+              color: '#ccc', border: '1px solid #555', borderRadius: '4px',
+              cursor: 'pointer', fontSize: '13px',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    // Idle: show generate button.
     return (
       <div className="Video" style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        flexDirection: 'column',
-        gap: '8px',
-        color: '#aaa',
-        fontSize: '14px',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexDirection: 'column', gap: '8px', color: '#aaa', fontSize: '14px',
       }}>
-        <div>{label}</div>
-        {hlsProgress && hlsProgress.status === 'processing' && (
-          <div style={{
-            width: '200px',
-            height: '4px',
-            background: '#333',
-            borderRadius: '2px',
-            overflow: 'hidden',
-          }}>
-            <div style={{
-              width: `${pct}%`,
-              height: '100%',
-              background: '#888',
-              transition: 'width 0.5s ease',
-            }} />
-          </div>
-        )}
+        <button
+          onClick={handleGenerateHLS}
+          style={{
+            padding: '8px 20px', background: '#333', color: '#ccc',
+            border: '1px solid #555', borderRadius: '4px',
+            cursor: 'pointer', fontSize: '13px',
+          }}
+        >
+          Generate HLS Stream
+        </button>
       </div>
     );
   }

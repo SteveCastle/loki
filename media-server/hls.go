@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/platform"
@@ -40,10 +42,14 @@ var hlsSem = make(chan struct{}, 2)
 
 type hlsInflightEntry struct {
 	done     chan struct{}
+	cancel   context.CancelFunc
 	err      error
 	progress float64 // 0.0 to 1.0
 	queued   bool    // true if waiting for a semaphore slot
 }
+
+// hlsStaleTimeout is how long ffmpeg can run without progress before being killed.
+const hlsStaleTimeout = 2 * time.Minute
 
 // hlsCacheDir returns the cache directory for a given media file's HLS output.
 func hlsCacheDir(basePath, mediaPath string) string {
@@ -159,8 +165,11 @@ func hlsStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Not cached and not in progress — start generation.
-	entry = &hlsInflightEntry{done: make(chan struct{})}
+	// Not cached and not in progress — clean up any leftover partial cache and start fresh.
+	os.RemoveAll(cacheDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	entry = &hlsInflightEntry{done: make(chan struct{}), cancel: cancel}
 	hlsInflight[cacheDir] = entry
 	hlsInflightMu.Unlock()
 
@@ -178,12 +187,14 @@ func hlsStatus(w http.ResponseWriter, r *http.Request) {
 		hlsInflightMu.Unlock()
 		log.Printf("[hls] encoding started: %s", filepath.Base(mediaPath))
 
-		genErr := generatePassthroughHLS(mediaPath, cacheDir, duration, entry)
+		genErr := generatePassthroughHLS(ctx, mediaPath, cacheDir, duration, entry)
 		<-hlsSem // Release slot.
 		entry.err = genErr
 
 		if genErr != nil {
 			log.Printf("[hls] generation failed: %s — %v", filepath.Base(mediaPath), genErr)
+			// Clean up partial output so the next request starts fresh.
+			os.RemoveAll(cacheDir)
 		} else {
 			log.Printf("[hls] generation complete: %s", filepath.Base(mediaPath))
 		}
@@ -191,6 +202,7 @@ func hlsStatus(w http.ResponseWriter, r *http.Request) {
 		hlsInflightMu.Lock()
 		delete(hlsInflight, cacheDir)
 		hlsInflightMu.Unlock()
+		cancel()
 		close(entry.done)
 	}()
 
@@ -266,8 +278,9 @@ func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 // --- Generation ---
 
 // generatePassthroughHLS runs ffmpeg to create the full VOD HLS stream.
-// It parses ffmpeg's -progress output to update entry.progress.
-func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry *hlsInflightEntry) error {
+// It uses a context for cancellation, parses ffmpeg's -progress output for
+// progress tracking, and detects stalls (no progress for hlsStaleTimeout).
+func generatePassthroughHLS(ctx context.Context, mediaPath, cacheDir string, duration float64, entry *hlsInflightEntry) error {
 	outDir := filepath.Join(cacheDir, "passthrough")
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return fmt.Errorf("failed to create HLS output dir: %w", err)
@@ -296,7 +309,7 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 
 	log.Printf("[hls] ffmpeg args: %v", args)
 
-	cmd := exec.Command(ffmpegPath, args...)
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -304,7 +317,6 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
 
-	// Capture stderr for error diagnostics.
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		log.Printf("[hls] ERROR: stderr pipe: %v", err)
@@ -318,7 +330,7 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 
 	log.Printf("[hls] ffmpeg pid %d started for %s", cmd.Process.Pid, filepath.Base(mediaPath))
 
-	// Drain stderr in background and collect it for error reporting.
+	// Drain stderr in background.
 	var stderrBuf strings.Builder
 	stderrDone := make(chan struct{})
 	go func() {
@@ -330,8 +342,33 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 		close(stderrDone)
 	}()
 
+	// Stale detection: kill ffmpeg if no progress for hlsStaleTimeout.
+	lastProgressTime := time.Now()
+	staleCancel := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-staleCancel:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				hlsInflightMu.Lock()
+				elapsed := time.Since(lastProgressTime)
+				hlsInflightMu.Unlock()
+				if elapsed > hlsStaleTimeout {
+					log.Printf("[hls] WARNING: ffmpeg stalled for %s (no progress for %v), killing",
+						filepath.Base(mediaPath), elapsed.Round(time.Second))
+					cmd.Process.Kill()
+					return
+				}
+			}
+		}
+	}()
+
 	// Parse -progress output to track progress.
-	// ffmpeg writes key=value lines, with "out_time_us" giving microseconds processed.
 	lastLoggedPct := -1
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
@@ -345,9 +382,9 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 				}
 				hlsInflightMu.Lock()
 				entry.progress = progress
+				lastProgressTime = time.Now()
 				hlsInflightMu.Unlock()
 
-				// Log every 10% milestone.
 				pct := int(progress * 10) * 10
 				if pct > lastLoggedPct {
 					lastLoggedPct = pct
@@ -357,11 +394,11 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 		}
 	}
 
+	close(staleCancel)
 	<-stderrDone
 
 	if err := cmd.Wait(); err != nil {
 		errMsg := stderrBuf.String()
-		// Log last few lines of stderr for diagnostics.
 		lines := strings.Split(strings.TrimSpace(errMsg), "\n")
 		tail := lines
 		if len(tail) > 10 {
