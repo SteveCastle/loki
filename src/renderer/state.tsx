@@ -10,7 +10,7 @@ import {
   clampVolume,
 } from 'settings';
 import {
-  invoke, send, on, store, appArgs, capabilities,
+  invoke, send, on, store, appArgs, capabilities, isElectron,
   loadMediaFromDB as platformLoadMediaFromDB,
   loadMediaByDescriptionSearch as platformLoadMediaByDescriptionSearch,
 } from './platform';
@@ -1058,7 +1058,7 @@ const libraryMachine = createMachine(
             always: [
               { target: 'loadingFromFS', cond: hasInitialFile },
               { target: 'loadingFromPersisted', cond: hasPersistedLibrary },
-              { target: 'restoringWebSession', cond: () => !capabilities.fileSystemAccess },
+              { target: 'restoringWebSession', cond: () => !isElectron },
               { target: 'selecting' },
             ],
             entry: assign<LibraryState, AnyEventObject>({
