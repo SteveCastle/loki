@@ -51,7 +51,8 @@ export type SettingKey =
   | 'autoPlayTime'
   | 'autoPlayVideoLoops'
   | 'alwaysOnTop'
-  | 'layoutMode';
+  | 'layoutMode'
+  | 'useHLS';
 
 export type LayoutModeOption = 'grid' | 'masonry';
 
@@ -84,6 +85,7 @@ export type Settings = {
   autoPlayVideoLoops: number | false;
   alwaysOnTop: boolean;
   layoutMode: LayoutModeOption;
+  useHLS: boolean;
 };
 
 export const SCALE_MODES = {
@@ -487,6 +489,11 @@ export const LAYOUT_MODE = {
   },
 };
 
+const USE_HLS: Setting<boolean> = {
+  name: 'useHLS',
+  defaultValue: false,
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -527,4 +534,5 @@ export const SETTINGS: SettingsObject = {
   autoPlayVideoLoops: AUTO_PLAY_VIDEO_LOOPS,
   alwaysOnTop: ALWAYS_ON_TOP,
   layoutMode: LAYOUT_MODE,
+  useHLS: USE_HLS,
 };

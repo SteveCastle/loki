@@ -360,6 +360,7 @@ const getInitialContext = (): LibraryState => {
     ['autoPlayVideoLoops', false],
     ['volume', 1.0],
     ['alwaysOnTop', false],
+    ['useHLS', false],
     ['incrementCursor', 'arrowright'],
     ['decrementCursor', 'arrowleft'],
     ['toggleTagPreview', 'shift'],
