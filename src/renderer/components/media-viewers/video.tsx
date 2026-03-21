@@ -5,7 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { ScaleModeOption, clampVolume } from 'settings';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
-import { mediaUrl, fetchMediaPreview as platformFetchMediaPreview } from '../../platform';
+import Hls from 'hls.js';
+import { mediaUrl, hlsUrl, fetchMediaPreview as platformFetchMediaPreview } from '../../platform';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 
 import './video.css';
@@ -30,6 +31,7 @@ type Props = {
   version?: number;
   /** Delay loading by ms to prevent loading during fast scroll (0 = no delay) */
   loadDelay?: number;
+  useHLS?: boolean;
 };
 
 const fetchMediaPreview =
@@ -71,6 +73,7 @@ export function Video({
   cache = false,
   version = 0,
   loadDelay = 0,
+  useHLS = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const { timeStamp, loopLength, loopStartTime, playing } = useSelector(
@@ -183,6 +186,52 @@ export function Video({
     }
   }, [volume]);
 
+  const hlsRef = useRef<Hls | null>(null);
+  const [hlsFailed, setHlsFailed] = useState(false);
+
+  // Reset hlsFailed when path changes
+  useEffect(() => {
+    setHlsFailed(false);
+  }, [path]);
+
+  useEffect(() => {
+    if (!useHLS || hlsFailed || !mediaRef?.current || cache || !hlsUrl) return;
+
+    const video = mediaRef.current;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+      });
+      hlsRef.current = hls;
+
+      hls.loadSource(hlsUrl(path));
+      hls.attachMedia(video);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          console.log('hls.js fatal error:', data.type, data.details);
+          hls.destroy();
+          hlsRef.current = null;
+          setHlsFailed(true);
+        }
+      });
+
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+      };
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Safari native HLS
+      video.src = hlsUrl(path);
+    }
+  }, [useHLS, hlsFailed, path, mediaRef, cache]);
+
   if (error) {
     console.log('video error:', error);
     return (
@@ -251,7 +300,7 @@ export function Video({
             e.preventDefault();
           }}
           muted={!playSound}
-          src={mediaUrl(path)}
+          src={useHLS && !hlsFailed && hlsUrl ? undefined : mediaUrl(path)}
           controls={showControls}
           controlsList={'nodownload nofullscreen'}
           autoPlay
