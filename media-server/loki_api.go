@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -326,16 +328,16 @@ func lokiMediaTagsHandler(deps *Dependencies) http.HandlerFunc {
 			var weight, timeStamp float64
 			rows.Scan(&tagLabel, &catLabel, &weight, &timeStamp)
 			tags = append(tags, map[string]any{
-				"tagLabel":      tagLabel,
-				"categoryLabel": catLabel,
-				"weight":        weight,
-				"timeStamp":     timeStamp,
+				"tag_label":      tagLabel,
+				"category_label": catLabel,
+				"weight":         weight,
+				"time_stamp":     timeStamp,
 			})
 		}
 		if tags == nil {
 			tags = []map[string]any{}
 		}
-		writeJSON(w, tags)
+		writeJSON(w, map[string]any{"tags": tags})
 	}
 }
 
@@ -386,10 +388,34 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 		).Scan(&thumbPath)
 
 		if thumbPath.Valid && thumbPath.String != "" {
-			writeJSON(w, thumbPath.String)
-		} else {
-			writeJSON(w, nil)
+			// Check if the thumbnail file actually exists on disk
+			if _, err := os.Stat(thumbPath.String); err == nil {
+				writeJSON(w, thumbPath.String)
+				return
+			}
 		}
+
+		// No thumbnail in DB or file missing — generate one asynchronously
+		dbPath := currentConfig.DBPath
+		if dbPath == "" {
+			writeJSON(w, nil)
+			return
+		}
+		basePath := filepath.Dir(dbPath)
+		go func() {
+			generated, err := generateThumbnail(req.Path, basePath, cache, req.TimeStamp)
+			if err != nil {
+				log.Printf("Thumbnail generation failed for %s: %v", req.Path, err)
+				return
+			}
+			// Store the generated path in the DB
+			deps.DB.Exec(
+				fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
+				generated, req.Path,
+			)
+			log.Printf("Generated thumbnail for %s → %s", req.Path, generated)
+		}()
+		writeJSON(w, nil)
 	}
 }
 
@@ -950,8 +976,39 @@ func lokiRegenerateThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		// Thumbnail regeneration requires ffmpeg — stub for now
-		httpError(w, "thumbnail regeneration not yet implemented in web API", http.StatusNotImplemented)
+		// Whitelist cache column names
+		cache := req.Cache
+		switch cache {
+		case "thumbnail_path_100", "thumbnail_path_600", "thumbnail_path_1200":
+			// valid
+		default:
+			cache = "thumbnail_path_600"
+		}
+
+		dbPath := currentConfig.DBPath
+		if dbPath == "" {
+			httpError(w, "no database configured", http.StatusInternalServerError)
+			return
+		}
+		basePath := filepath.Dir(dbPath)
+
+		// Delete existing thumbnail if present
+		oldPath := getThumbnailPath(req.Path, basePath, cache, req.TimeStamp)
+		os.Remove(oldPath)
+
+		generated, err := generateThumbnail(req.Path, basePath, cache, req.TimeStamp)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		// Update DB
+		deps.DB.Exec(
+			fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
+			generated, req.Path,
+		)
+
+		writeJSON(w, generated)
 	}
 }
 
