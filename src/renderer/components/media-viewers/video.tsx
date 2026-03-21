@@ -265,11 +265,14 @@ export function Video({
     };
   }, [useHLS, hlsFailed, path, mediaRef, cache]);
 
-  // Show HLS processing status
+  // Show HLS processing/loading status.
+  // Block the normal <video> render until HLS is ready or has failed.
   const hlsActive = useHLS && !hlsFailed && hlsUrl && !cache;
-  if (hlsActive && !hlsReady && hlsProgress) {
-    const pct = Math.round(hlsProgress.progress * 100);
-    const label = hlsProgress.status === 'queued'
+  if (hlsActive && !hlsReady) {
+    const pct = hlsProgress ? Math.round(hlsProgress.progress * 100) : 0;
+    const label = !hlsProgress
+      ? 'Preparing stream...'
+      : hlsProgress.status === 'queued'
       ? 'Queued...'
       : `Processing${pct > 0 ? ` ${pct}%` : '...'}`;
     return (
@@ -283,7 +286,7 @@ export function Video({
         fontSize: '14px',
       }}>
         <div>{label}</div>
-        {hlsProgress.status === 'processing' && (
+        {hlsProgress && hlsProgress.status === 'processing' && (
           <div style={{
             width: '200px',
             height: '4px',
