@@ -2407,6 +2407,10 @@ func main() {
 	mux.HandleFunc("/api/thumbnails", renderer.ApplyMiddlewares(lokiThumbnailsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/thumbnails/regenerate", renderer.ApplyMiddlewares(lokiRegenerateThumbnailHandler(deps), renderer.RoleAdmin))
 
+	// Filesystem browser (web mode)
+	mux.HandleFunc("/api/fs/list", renderer.ApplyMiddlewares(fsListHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/fs/scan", renderer.ApplyMiddlewares(fsScanHandler(deps), renderer.RoleAdmin))
+
 	mux.HandleFunc("/api/settings", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
