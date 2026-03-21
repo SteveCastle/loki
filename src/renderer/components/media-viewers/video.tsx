@@ -188,89 +188,120 @@ export function Video({
 
   const hlsRef = useRef<Hls | null>(null);
   const [hlsFailed, setHlsFailed] = useState(false);
+  const [hlsReady, setHlsReady] = useState(false);
+  const [hlsProgress, setHlsProgress] = useState<{ status: string; progress: number } | null>(null);
 
-  // Reset hlsFailed when path changes
+  // Reset HLS state when path changes
   useEffect(() => {
     setHlsFailed(false);
+    setHlsReady(false);
+    setHlsProgress(null);
   }, [path]);
 
+  // Poll server for HLS generation status, then load when ready.
   useEffect(() => {
     if (!useHLS || hlsFailed || !mediaRef?.current || cache || !hlsUrl) return;
 
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout>;
     const video = mediaRef.current;
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        // The server generates segments progressively (event playlist type).
-        // hls.js polls the playlist for new segments until #EXT-X-ENDLIST appears.
-        liveSyncDurationCount: 1, // Start playback as soon as 1 segment is available
-        liveMaxLatencyDurationCount: 5,
-        // Retry manifest/level/frag loads since segments appear progressively
-        manifestLoadingRetryDelay: 1000,
-        manifestLoadingMaxRetry: 30,
-        levelLoadingRetryDelay: 1000,
-        levelLoadingMaxRetry: 30,
-        fragLoadingRetryDelay: 1000,
-        fragLoadingMaxRetry: 10,
-      });
-      hlsRef.current = hls;
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(hlsUrl(path));
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
 
-      hls.loadSource(hlsUrl(path));
-      hls.attachMedia(video);
+        if (cancelled) return;
 
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
+        if (data.status === 'ready') {
+          setHlsProgress(null);
+          setHlsReady(true);
 
-        // Fetch the probed duration so the player can show total length
-        // before generation completes (hls.js reports Infinity for live streams).
-        // The duration.json is at the same base path as the master playlist.
-        const manifestUrl = hls.url;
-        if (manifestUrl) {
-          const durationUrl = manifestUrl.replace(/master\.m3u8$/, 'duration.json');
-          fetch(durationUrl)
-            .then((res) => res.ok ? res.json() : null)
-            .then((data) => {
-              if (data?.duration && video.duration === Infinity) {
-                // Store the known duration so timeupdate can report progress.
-                // We can't set video.duration directly, but we can use a data attribute
-                // that the controls/progress bar can read.
-                video.dataset.hlsDuration = String(data.duration);
+          // Load the HLS manifest with hls.js
+          if (Hls.isSupported()) {
+            const hls = new Hls({ enableWorker: true });
+            hlsRef.current = hls;
+            hls.loadSource(data.url);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => {
+              video.play().catch(() => {});
+            });
+            hls.on(Hls.Events.ERROR, (_event, errData) => {
+              if (errData.fatal) {
+                console.log('hls.js fatal error:', errData.type, errData.details);
+                hls.destroy();
+                hlsRef.current = null;
+                setHlsFailed(true);
               }
-            })
-            .catch(() => {}); // Ignore errors — duration will be available once generation completes
-        }
-      });
-
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          // For network errors during generation, try to recover
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-            console.log('hls.js network error, attempting recovery:', data.details);
-            hls.startLoad();
-            return;
+            });
+          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            // Safari native HLS
+            video.src = data.url;
           }
-          console.log('hls.js fatal error:', data.type, data.details);
-          hls.destroy();
-          hlsRef.current = null;
+        } else if (data.status === 'processing' || data.status === 'queued') {
+          setHlsProgress({ status: data.status, progress: data.progress || 0 });
+          pollTimer = setTimeout(poll, 1000);
+        } else if (data.status === 'error') {
+          console.log('HLS generation error:', data.error);
           setHlsFailed(true);
         }
-      });
+      } catch {
+        // Network error — retry
+        if (!cancelled) pollTimer = setTimeout(poll, 2000);
+      }
+    };
 
-      return () => {
-        hls.destroy();
+    poll();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(pollTimer);
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
         hlsRef.current = null;
-      };
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari native HLS
-      video.src = hlsUrl(path);
-      return () => {
-        video.removeAttribute('src');
-        video.load();
-      };
-    }
+      }
+    };
   }, [useHLS, hlsFailed, path, mediaRef, cache]);
+
+  // Show HLS processing status
+  const hlsActive = useHLS && !hlsFailed && hlsUrl && !cache;
+  if (hlsActive && !hlsReady && hlsProgress) {
+    const pct = Math.round(hlsProgress.progress * 100);
+    const label = hlsProgress.status === 'queued'
+      ? 'Queued...'
+      : `Processing${pct > 0 ? ` ${pct}%` : '...'}`;
+    return (
+      <div className="Video" style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'column',
+        gap: '8px',
+        color: '#aaa',
+        fontSize: '14px',
+      }}>
+        <div>{label}</div>
+        {hlsProgress.status === 'processing' && (
+          <div style={{
+            width: '200px',
+            height: '4px',
+            background: '#333',
+            borderRadius: '2px',
+            overflow: 'hidden',
+          }}>
+            <div style={{
+              width: `${pct}%`,
+              height: '100%',
+              background: '#888',
+              transition: 'width 0.5s ease',
+            }} />
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (error) {
     console.log('video error:', error);
@@ -340,11 +371,11 @@ export function Video({
             e.preventDefault();
           }}
           muted={!playSound}
-          src={useHLS && !hlsFailed && hlsUrl ? undefined : mediaUrl(path)}
+          src={hlsActive && hlsReady ? undefined : mediaUrl(path)}
           controls={showControls}
           controlsList={'nodownload nofullscreen'}
           autoPlay
-          loop={!(useHLS && !hlsFailed && hlsUrl)}
+          loop={!hlsActive}
         />
       </>
     );

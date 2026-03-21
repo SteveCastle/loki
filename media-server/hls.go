@@ -1,18 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/platform"
@@ -25,17 +25,23 @@ var hlsValidPresets = map[string]bool{
 	"1080p":       true,
 }
 
-var hlsFilenameRe = regexp.MustCompile(`^(master|stream)\.m3u8$|^segment_\d{3,}\.ts$|^duration\.json$`)
+var hlsFilenameRe = regexp.MustCompile(`^(master|stream)\.m3u8$|^segment_\d{3,}\.ts$`)
 
 // hlsInflightMu guards the inflight map for HLS generation deduplication.
 var hlsInflightMu sync.Mutex
 
-// hlsInflight tracks HLS generations currently in progress.
+// hlsInflight tracks HLS generations currently in progress or queued.
+// Key is the cache directory path.
 var hlsInflight = map[string]*hlsInflightEntry{}
 
+// hlsSem limits concurrent HLS ffmpeg processes to prevent resource starvation.
+var hlsSem = make(chan struct{}, 2)
+
 type hlsInflightEntry struct {
-	done chan struct{}
-	err  error
+	done     chan struct{}
+	err      error
+	progress float64 // 0.0 to 1.0
+	queued   bool    // true if waiting for a semaphore slot
 }
 
 // hlsCacheDir returns the cache directory for a given media file's HLS output.
@@ -62,13 +68,17 @@ func isValidHlsPreset(preset string) bool {
 	return hlsValidPresets[preset]
 }
 
-// hlsHandler dispatches GET to hlsServeMaster and DELETE to hlsCleanup.
+// --- HTTP Handlers ---
+
+// hlsHandler dispatches GET and DELETE for /media/hls.
+// GET returns JSON status: {status: "ready"|"processing"|"error", ...}
+// DELETE clears HLS cache.
 func hlsHandler(d *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		switch r.Method {
 		case http.MethodGet:
-			hlsServeMaster(w, r)
+			hlsStatus(w, r)
 		case http.MethodDelete:
 			hlsCleanup(w, r)
 		default:
@@ -77,13 +87,19 @@ func hlsHandler(d *Dependencies) http.HandlerFunc {
 	}
 }
 
-// hlsServeMaster handles GET /media/hls?path=... and returns master.m3u8.
-// If the cache does not exist, it kicks off passthrough HLS generation in the
-// background and writes the master playlist immediately so playback can start
-// as soon as the first segment is ready (ffmpeg writes segments progressively).
-// Once the master.m3u8 exists it redirects to /media/hls/<hash>/master.m3u8 so
-// that hls.js can resolve relative playlist URLs correctly.
-func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
+type hlsStatusResponse struct {
+	Status   string  `json:"status"`             // "ready", "processing", "error"
+	URL      string  `json:"url,omitempty"`       // manifest URL when ready
+	Progress float64 `json:"progress,omitempty"`  // 0.0-1.0 when processing
+	Error    string  `json:"error,omitempty"`     // error message
+	Duration float64 `json:"duration,omitempty"`  // source duration in seconds
+}
+
+// hlsStatus returns the HLS generation status for a media file.
+// If already cached: {status: "ready", url: "/media/hls/<hash>/master.m3u8"}
+// If generating: {status: "processing", progress: 0.45, duration: 120.5}
+// If not started: kicks off generation and returns processing status.
+func hlsStatus(w http.ResponseWriter, r *http.Request) {
 	mediaPath := r.URL.Query().Get("path")
 	if mediaPath == "" {
 		http.Error(w, "missing path parameter", http.StatusBadRequest)
@@ -92,76 +108,100 @@ func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
 
 	cacheDir := hlsCacheDir(hlsBasePath(), mediaPath)
 	masterPath := filepath.Join(cacheDir, "master.m3u8")
+	h := sha256.Sum256([]byte(mediaPath))
+	hash := fmt.Sprintf("%x", h)
 
-	// Fast path: already cached — redirect so relative URLs resolve correctly.
+	w.Header().Set("Content-Type", "application/json")
+
+	// Already cached — ready to play.
 	if _, err := os.Stat(masterPath); err == nil {
-		h := sha256.Sum256([]byte(mediaPath))
-		hash := fmt.Sprintf("%x", h)
-		http.Redirect(w, r, fmt.Sprintf("/media/hls/%s/master.m3u8", hash), http.StatusFound)
+		json.NewEncoder(w).Encode(hlsStatusResponse{
+			Status: "ready",
+			URL:    fmt.Sprintf("/media/hls/%s/master.m3u8", hash),
+		})
 		return
 	}
 
-	// Kick off generation (non-blocking). Dedup concurrent requests.
+	// Check if generation is in progress or queued.
 	hlsInflightMu.Lock()
-	if _, ok := hlsInflight[cacheDir]; !ok {
-		entry := &hlsInflightEntry{done: make(chan struct{})}
-		hlsInflight[cacheDir] = entry
+	entry, inflight := hlsInflight[cacheDir]
+	if inflight {
+		progress := entry.progress
+		queued := entry.queued
+		hlsInflightMu.Unlock()
 
-		// Write master playlist and output dirs synchronously so redirect works.
-		outDir := filepath.Join(cacheDir, "passthrough")
-		os.MkdirAll(outDir, 0755)
-		masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0,NAME=\"passthrough\"\npassthrough/stream.m3u8\n"
-		os.WriteFile(masterPath, []byte(masterContent), 0644)
-
-		// Probe source duration (fast) and write duration.json so the
-		// client can show total length before generation completes.
-		if dur := probeDuration(mediaPath); dur > 0 {
-			durJSON, _ := json.Marshal(map[string]float64{"duration": dur})
-			os.WriteFile(filepath.Join(cacheDir, "duration.json"), durJSON, 0644)
+		// Check if it just finished (entry.done closed).
+		select {
+		case <-entry.done:
+			if entry.err != nil {
+				json.NewEncoder(w).Encode(hlsStatusResponse{
+					Status: "error",
+					Error:  entry.err.Error(),
+				})
+			} else {
+				json.NewEncoder(w).Encode(hlsStatusResponse{
+					Status: "ready",
+					URL:    fmt.Sprintf("/media/hls/%s/master.m3u8", hash),
+				})
+			}
+		default:
+			status := "processing"
+			if queued {
+				status = "queued"
+			}
+			json.NewEncoder(w).Encode(hlsStatusResponse{
+				Status:   status,
+				Progress: progress,
+			})
 		}
-
-		// Start ffmpeg in the background — segments appear progressively.
-		go func() {
-			genErr := generatePassthroughHLS(mediaPath, cacheDir)
-			entry.err = genErr
-
-			hlsInflightMu.Lock()
-			delete(hlsInflight, cacheDir)
-			hlsInflightMu.Unlock()
-			close(entry.done)
-		}()
+		return
 	}
+
+	// Not cached and not in progress — start generation.
+	entry = &hlsInflightEntry{done: make(chan struct{})}
+	hlsInflight[cacheDir] = entry
 	hlsInflightMu.Unlock()
 
-	h := sha256.Sum256([]byte(mediaPath))
-	hash := fmt.Sprintf("%x", h)
-	http.Redirect(w, r, fmt.Sprintf("/media/hls/%s/master.m3u8", hash), http.StatusFound)
+	// Probe duration (fast) for progress calculation and client display.
+	duration := probeDuration(mediaPath)
+
+	entry.queued = true
+	go func() {
+		// Wait for a semaphore slot (limits concurrent ffmpeg processes).
+		hlsSem <- struct{}{}
+		hlsInflightMu.Lock()
+		entry.queued = false
+		hlsInflightMu.Unlock()
+
+		genErr := generatePassthroughHLS(mediaPath, cacheDir, duration, entry)
+		<-hlsSem // Release slot.
+		entry.err = genErr
+
+		hlsInflightMu.Lock()
+		delete(hlsInflight, cacheDir)
+		hlsInflightMu.Unlock()
+		close(entry.done)
+	}()
+
+	json.NewEncoder(w).Encode(hlsStatusResponse{
+		Status:   "processing",
+		Progress: 0,
+		Duration: duration,
+	})
 }
 
-// hlsCleanup handles DELETE /media/hls?path=... — clears HLS cache for one file
-// (if path is given) or for all files (if no path).
 func hlsCleanup(w http.ResponseWriter, r *http.Request) {
 	mediaPath := r.URL.Query().Get("path")
 	if mediaPath != "" {
 		cacheDir := hlsCacheDir(hlsBasePath(), mediaPath)
-		if err := os.RemoveAll(cacheDir); err != nil {
-			http.Error(w, "failed to remove cache: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		os.RemoveAll(cacheDir)
 	} else {
-		allHlsDir := filepath.Join(hlsBasePath(), "hls")
-		if err := os.RemoveAll(allHlsDir); err != nil {
-			http.Error(w, "failed to remove all HLS cache: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
+		os.RemoveAll(filepath.Join(hlsBasePath(), "hls"))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// hlsSegmentHandler handles GET /media/hls/<hash>/<preset>/<filename>.
-// It validates each path component and serves the file with the correct Content-Type.
-// If a file doesn't exist yet but generation is in progress, it waits briefly
-// for ffmpeg to produce it rather than returning an immediate 404.
+// hlsSegmentHandler serves HLS files from the cache directory.
 func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 	hexRe := regexp.MustCompile(`^[0-9a-f]+$`)
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -175,25 +215,16 @@ func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 
 		switch len(parts) {
 		case 2:
-			// <hash>/master.m3u8
-			hash := parts[0]
-			filename := parts[1]
+			hash, filename := parts[0], parts[1]
 			if !hexRe.MatchString(hash) || !isValidHlsFilename(filename) {
 				http.Error(w, "invalid path", http.StatusBadRequest)
 				return
 			}
 			filePath = filepath.Join(hlsBasePath(), "hls", hash, filename)
-			if strings.HasSuffix(filename, ".json") {
-				contentType = "application/json"
-			} else {
-				contentType = "application/vnd.apple.mpegurl"
-			}
+			contentType = "application/vnd.apple.mpegurl"
 
 		case 3:
-			// <hash>/<preset>/<filename>
-			hash := parts[0]
-			preset := parts[1]
-			filename := parts[2]
+			hash, preset, filename := parts[0], parts[1], parts[2]
 			if !hexRe.MatchString(hash) || !isValidHlsPreset(preset) || !isValidHlsFilename(filename) {
 				http.Error(w, "invalid path", http.StatusBadRequest)
 				return
@@ -209,27 +240,9 @@ func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// If the file doesn't exist yet, wait up to 30 seconds for ffmpeg to
-		// produce it (generation is async). Poll every 500ms.
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			ctx := r.Context()
-			ticker := time.NewTicker(500 * time.Millisecond)
-			defer ticker.Stop()
-			timeout := time.After(30 * time.Second)
-			found := false
-			for !found {
-				select {
-				case <-ctx.Done():
-					return
-				case <-timeout:
-					http.Error(w, "not found", http.StatusNotFound)
-					return
-				case <-ticker.C:
-					if _, err := os.Stat(filePath); err == nil {
-						found = true
-					}
-				}
-			}
+		if _, err := os.Stat(filePath); err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
 		}
 
 		w.Header().Set("Content-Type", contentType)
@@ -237,12 +250,11 @@ func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 	}
 }
 
-// generatePassthroughHLS creates the passthrough HLS cache for a media file.
-// It uses "-hls_playlist_type event" so ffmpeg writes the stream.m3u8
-// progressively as each segment completes, allowing playback to start
-// before the entire file is processed. Once ffmpeg finishes, it appends
-// #EXT-X-ENDLIST to convert the playlist to VOD for full seeking.
-func generatePassthroughHLS(mediaPath, cacheDir string) error {
+// --- Generation ---
+
+// generatePassthroughHLS runs ffmpeg to create the full VOD HLS stream.
+// It parses ffmpeg's -progress output to update entry.progress.
+func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry *hlsInflightEntry) error {
 	outDir := filepath.Join(cacheDir, "passthrough")
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return fmt.Errorf("failed to create HLS output dir: %w", err)
@@ -256,34 +268,56 @@ func generatePassthroughHLS(mediaPath, cacheDir string) error {
 		return fmt.Errorf("ffmpeg not found")
 	}
 
-	// Use "event" playlist type so the manifest is written progressively.
-	// The standard HlsBuildPassthroughArgs uses "vod" which only writes
-	// the playlist after ALL segments are done. We override that here.
 	args := []string{
 		"-y", "-i", mediaPath,
 		"-c", "copy",
 		"-f", "hls",
 		"-hls_time", "6",
 		"-hls_segment_type", "mpegts",
-		"-hls_playlist_type", "event",
+		"-hls_playlist_type", "vod",
 		"-hls_segment_filename", segmentPattern,
 		playlistPath,
+		"-progress", "pipe:1",
 	}
 
 	cmd := exec.Command(ffmpegPath, args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("ffmpeg failed: %w\n%s", err, string(out))
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("stdout pipe: %w", err)
 	}
 
-	// Append #EXT-X-ENDLIST to signal VOD completion so hls.js enables
-	// full seeking and stops polling for new segments.
-	playlist, err := os.ReadFile(playlistPath)
-	if err == nil && !strings.Contains(string(playlist), "#EXT-X-ENDLIST") {
-		f, err := os.OpenFile(playlistPath, os.O_APPEND|os.O_WRONLY, 0644)
-		if err == nil {
-			f.WriteString("#EXT-X-ENDLIST\n")
-			f.Close()
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("ffmpeg start: %w", err)
+	}
+
+	// Parse -progress output to track progress.
+	// ffmpeg writes key=value lines, with "out_time_us" giving microseconds processed.
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if duration > 0 && strings.HasPrefix(line, "out_time_us=") {
+			usStr := strings.TrimPrefix(line, "out_time_us=")
+			if us, err := strconv.ParseInt(usStr, 10, 64); err == nil && us > 0 {
+				progress := float64(us) / (duration * 1_000_000)
+				if progress > 1 {
+					progress = 1
+				}
+				hlsInflightMu.Lock()
+				entry.progress = progress
+				hlsInflightMu.Unlock()
+			}
 		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("ffmpeg failed: %w", err)
+	}
+
+	// Write master playlist now that all segments are ready.
+	masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0,NAME=\"passthrough\"\npassthrough/stream.m3u8\n"
+	masterPath := filepath.Join(cacheDir, "master.m3u8")
+	if err := os.WriteFile(masterPath, []byte(masterContent), 0644); err != nil {
+		return fmt.Errorf("failed to write master.m3u8: %w", err)
 	}
 
 	return nil

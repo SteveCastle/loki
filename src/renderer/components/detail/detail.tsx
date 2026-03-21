@@ -254,29 +254,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     handleResize();
 
     if (media instanceof HTMLVideoElement) {
-      // For HLS event streams, duration is Infinity until generation completes.
-      // Use probed duration from dataset if available, update when real duration arrives.
-      const reportedDuration = media.duration;
-      const hlsDuration = media.dataset.hlsDuration ? parseFloat(media.dataset.hlsDuration) : 0;
-      const effectiveDuration = (isFinite(reportedDuration) && reportedDuration > 0)
-        ? reportedDuration
-        : hlsDuration;
-
       libraryService.send('SET_VIDEO_LENGTH', {
-        videoLength: effectiveDuration,
+        videoLength: media.duration,
       });
-
-      // Listen for duration changes (e.g., when HLS generation completes and
-      // #EXT-X-ENDLIST is appended, hls.js reports the real duration).
-      const onDurationChange = () => {
-        if (isFinite(media.duration) && media.duration > 0) {
-          libraryService.send('SET_VIDEO_LENGTH', {
-            videoLength: media.duration,
-          });
-        }
-      };
-      media.addEventListener('durationchange', onDurationChange);
-
       libraryService.send('SET_PLAYING_STATE', {
         playing: true,
       });
