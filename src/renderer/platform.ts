@@ -6,7 +6,7 @@ export const isElectron =
   typeof (window as any).electron !== 'undefined';
 
 export const capabilities = {
-  fileSystemAccess: isElectron,
+  fileSystemAccess: true,
   clipboard: isElectron,
   windowControls: isElectron,
   autoUpdate: isElectron,
@@ -216,6 +216,11 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'POST',
       argsToBody: (args) => ({ path: args[0] }),
     },
+    'load-files': {
+      url: '/api/fs/scan',
+      method: 'POST',
+      argsToBody: (args) => ({ path: args[0], recursive: args[2] ?? false }),
+    },
   };
   return map[channel] ?? null;
 }
@@ -338,13 +343,19 @@ if (isElectron) {
 
   // Channels that are Electron-only and should silently return undefined
   const stubbedChannels = [
-    'select-file', 'select-directory', 'select-db', 'select-new-path',
-    'load-files', 'refresh-library', 'copy-file-into-clipboard',
+    'select-file', 'select-db', 'select-new-path',
+    'refresh-library', 'copy-file-into-clipboard',
     'check-for-updates', 'update-elo',
     'load-duplicates-by-path', 'merge-duplicates-by-path',
   ];
 
   invoke = async (channel, args) => {
+    // Special handling: select-directory opens file browser modal
+    if (channel === 'select-directory') {
+      const { openFileBrowser } = await import('./components/controls/file-browser-modal');
+      return openFileBrowser();
+    }
+
     if (stubbedChannels.includes(channel)) {
       console.warn(`[platform] Stubbed in web mode: ${channel}`);
       return undefined;
