@@ -198,13 +198,16 @@ export function Video({
     setHlsProgress(null);
   }, [path]);
 
-  // Poll server for HLS generation status, then load when ready.
+  // Poll server for HLS generation status.
+  // This must NOT depend on mediaRef.current because the progress UI
+  // replaces the <video> element, so the ref won't be set until ready.
+  const hlsManifestUrl = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!useHLS || hlsFailed || !mediaRef?.current || cache || !hlsUrl) return;
+    if (!useHLS || hlsFailed || cache || !hlsUrl) return;
 
     let cancelled = false;
     let pollTimer: ReturnType<typeof setTimeout>;
-    const video = mediaRef.current;
 
     const poll = async () => {
       if (cancelled) return;
@@ -216,30 +219,9 @@ export function Video({
         if (cancelled) return;
 
         if (data.status === 'ready') {
+          hlsManifestUrl.current = data.url;
           setHlsProgress(null);
           setHlsReady(true);
-
-          // Load the HLS manifest with hls.js
-          if (Hls.isSupported()) {
-            const hls = new Hls({ enableWorker: true });
-            hlsRef.current = hls;
-            hls.loadSource(data.url);
-            hls.attachMedia(video);
-            hls.on(Hls.Events.MANIFEST_PARSED, () => {
-              video.play().catch(() => {});
-            });
-            hls.on(Hls.Events.ERROR, (_event, errData) => {
-              if (errData.fatal) {
-                console.log('hls.js fatal error:', errData.type, errData.details);
-                hls.destroy();
-                hlsRef.current = null;
-                setHlsFailed(true);
-              }
-            });
-          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-            // Safari native HLS
-            video.src = data.url;
-          }
         } else if (data.status === 'processing' || data.status === 'queued') {
           setHlsProgress({ status: data.status, progress: data.progress || 0 });
           pollTimer = setTimeout(poll, 1000);
@@ -248,7 +230,6 @@ export function Video({
           setHlsFailed(true);
         }
       } catch {
-        // Network error — retry
         if (!cancelled) pollTimer = setTimeout(poll, 2000);
       }
     };
@@ -258,12 +239,43 @@ export function Video({
     return () => {
       cancelled = true;
       clearTimeout(pollTimer);
+    };
+  }, [useHLS, hlsFailed, path, cache]);
+
+  // Once HLS is ready and the <video> element is mounted, attach hls.js.
+  useEffect(() => {
+    if (!hlsReady || !mediaRef?.current || !hlsManifestUrl.current) return;
+
+    const video = mediaRef.current;
+    const url = hlsManifestUrl.current;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true });
+      hlsRef.current = hls;
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_event, errData) => {
+        if (errData.fatal) {
+          console.log('hls.js fatal error:', errData.type, errData.details);
+          hls.destroy();
+          hlsRef.current = null;
+          setHlsFailed(true);
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+    }
+
+    return () => {
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
     };
-  }, [useHLS, hlsFailed, path, mediaRef, cache]);
+  }, [hlsReady, mediaRef]);
 
   // Show HLS processing/loading status.
   // Block the normal <video> render until HLS is ready or has failed.
