@@ -1091,7 +1091,8 @@ const libraryMachine = createMachine(
             }),
             always: [
               { target: 'loadingFromSearch', cond: hasPersistedTextFilter },
-              { target: 'loadingFromDB' },
+              { target: 'loadingFromDB', cond: hasPersistedTags },
+              { target: 'selectingDirectory' },
             ],
           },
           selecting: {
