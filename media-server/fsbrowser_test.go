@@ -146,5 +146,88 @@ func TestFsListHandler_RootPathJail(t *testing.T) {
 	}
 }
 
+func TestFsScanHandler_ScanDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "a.jpg"), []byte("fake"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "b.mp4"), []byte("fake"), 0644)
+	os.WriteFile(filepath.Join(tmpDir, "c.txt"), []byte("text"), 0644)
+	sub := filepath.Join(tmpDir, "sub")
+	os.MkdirAll(sub, 0755)
+	os.WriteFile(filepath.Join(sub, "d.png"), []byte("fake"), 0644)
+
+	deps := &Dependencies{DB: setupTestDB(t)}
+	handler := fsScanHandler(deps)
+
+	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})
+	req := httptest.NewRequest(http.MethodPost, "/api/fs/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp fsScanResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if len(resp.Library) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(resp.Library), resp.Library)
+	}
+}
+
+func TestFsScanHandler_Recursive(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "a.jpg"), []byte("fake"), 0644)
+	sub := filepath.Join(tmpDir, "sub")
+	os.MkdirAll(sub, 0755)
+	os.WriteFile(filepath.Join(sub, "d.png"), []byte("fake"), 0644)
+
+	deps := &Dependencies{DB: setupTestDB(t)}
+	handler := fsScanHandler(deps)
+
+	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": true})
+	req := httptest.NewRequest(http.MethodPost, "/api/fs/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp fsScanResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+
+	if len(resp.Library) != 2 {
+		t.Fatalf("expected 2 files, got %d: %v", len(resp.Library), resp.Library)
+	}
+}
+
+func TestFsScanHandler_InsertsIntoDB(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "photo.jpg"), []byte("fake"), 0644)
+
+	deps := &Dependencies{DB: setupTestDB(t)}
+	handler := fsScanHandler(deps)
+
+	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})
+	req := httptest.NewRequest(http.MethodPost, "/api/fs/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rr.Code)
+	}
+
+	var count int
+	deps.DB.QueryRow("SELECT COUNT(*) FROM media WHERE path = ?",
+		filepath.Join(tmpDir, "photo.jpg")).Scan(&count)
+	if count != 1 {
+		t.Fatalf("expected 1 row in media table, got %d", count)
+	}
+}
+
 // Suppress unused import warnings for runtime on non-Windows builds
 var _ = runtime.GOOS

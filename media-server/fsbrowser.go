@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -210,4 +212,110 @@ func fsListHandler(deps *Dependencies) http.HandlerFunc {
 			Roots:   roots,
 		})
 	}
+}
+
+type fsScanFile struct {
+	Path    string  `json:"path"`
+	MtimeMs float64 `json:"mtimeMs"`
+}
+
+type fsScanResponse struct {
+	Library []fsScanFile `json:"library"`
+	Cursor  int          `json:"cursor"`
+}
+
+func fsScanHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Path      string `json:"path"`
+			Recursive bool   `json:"recursive"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		roots := getRootPaths()
+		if err := validatePathWithinRoots(req.Path, roots); err != nil {
+			httpError(w, err.Error(), http.StatusForbidden)
+			return
+		}
+
+		var files []fsScanFile
+
+		if req.Recursive {
+			filepath.WalkDir(req.Path, func(path string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return nil
+				}
+				// Skip symlinks to directories to prevent loops
+				if d.Type()&fs.ModeSymlink != 0 {
+					if info, err := os.Stat(path); err == nil && info.IsDir() {
+						return filepath.SkipDir
+					}
+				}
+				if !d.IsDir() && isMediaFile(d.Name()) {
+					info, err := d.Info()
+					if err != nil {
+						return nil
+					}
+					files = append(files, fsScanFile{
+						Path:    path,
+						MtimeMs: float64(info.ModTime().UnixMilli()),
+					})
+				}
+				return nil
+			})
+		} else {
+			dirEntries, err := os.ReadDir(req.Path)
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			for _, de := range dirEntries {
+				if !de.IsDir() && isMediaFile(de.Name()) {
+					info, err := de.Info()
+					if err != nil {
+						continue
+					}
+					files = append(files, fsScanFile{
+						Path:    filepath.Join(req.Path, de.Name()),
+						MtimeMs: float64(info.ModTime().UnixMilli()),
+					})
+				}
+			}
+		}
+
+		insertBulkMediaPaths(deps.DB, files)
+
+		if files == nil {
+			files = []fsScanFile{}
+		}
+
+		writeJSON(w, fsScanResponse{
+			Library: files,
+			Cursor:  0,
+		})
+	}
+}
+
+func insertBulkMediaPaths(db *sql.DB, files []fsScanFile) {
+	if len(files) == 0 {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return
+	}
+	stmt, err := tx.Prepare("INSERT INTO media (path) VALUES (?) ON CONFLICT(path) DO NOTHING")
+	if err != nil {
+		tx.Rollback()
+		return
+	}
+	defer stmt.Close()
+
+	for _, f := range files {
+		stmt.Exec(f.Path)
+	}
+	tx.Commit()
 }
