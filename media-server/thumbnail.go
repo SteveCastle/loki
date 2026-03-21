@@ -9,9 +9,64 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	depspkg "github.com/stevecastle/shrike/deps"
 )
+
+// thumbSem limits concurrent ffmpeg processes to prevent resource starvation.
+var thumbSem = make(chan struct{}, 4)
+
+// inflightMu guards the inflight map for thumbnail deduplication.
+var inflightMu sync.Mutex
+
+// inflight tracks thumbnails currently being generated.
+// Key is "mediaPath|cache|timeStamp", value is a channel that closes when done.
+var inflight = map[string]chan struct{}{}
+
+// thumbKey builds a dedup key for a thumbnail generation request.
+func thumbKey(mediaPath, cache string, timeStamp int) string {
+	return fmt.Sprintf("%s|%s|%d", mediaPath, cache, timeStamp)
+}
+
+// generateThumbnailThrottled wraps generateThumbnail with a concurrency semaphore
+// and deduplication. If the same thumbnail is already being generated, it waits
+// for that to finish instead of spawning a second ffmpeg process.
+// Returns the thumbnail path and any error.
+func generateThumbnailThrottled(mediaPath, basePath, cache string, timeStamp int) (string, error) {
+	key := thumbKey(mediaPath, cache, timeStamp)
+
+	// Check if this thumbnail is already being generated
+	inflightMu.Lock()
+	if ch, ok := inflight[key]; ok {
+		inflightMu.Unlock()
+		// Wait for the in-flight generation to finish
+		<-ch
+		// The other goroutine already generated it; check the result on disk
+		thumbPath := getThumbnailPath(mediaPath, basePath, cache, timeStamp)
+		if _, err := os.Stat(thumbPath); err == nil {
+			return thumbPath, nil
+		}
+		return "", fmt.Errorf("in-flight thumbnail generation failed for %s", mediaPath)
+	}
+	// Register ourselves as in-flight
+	done := make(chan struct{})
+	inflight[key] = done
+	inflightMu.Unlock()
+
+	defer func() {
+		inflightMu.Lock()
+		delete(inflight, key)
+		close(done)
+		inflightMu.Unlock()
+	}()
+
+	// Acquire semaphore slot (blocks if 4 ffmpeg processes already running)
+	thumbSem <- struct{}{}
+	defer func() { <-thumbSem }()
+
+	return generateThumbnail(mediaPath, basePath, cache, timeStamp)
+}
 
 // Thumbnail sizes matching the Electron app
 var cacheSizes = map[string]int{

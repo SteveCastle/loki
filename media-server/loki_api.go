@@ -403,7 +403,7 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		basePath := filepath.Dir(dbPath)
 		go func() {
-			generated, err := generateThumbnail(req.Path, basePath, cache, req.TimeStamp)
+			generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
 			if err != nil {
 				log.Printf("Thumbnail generation failed for %s: %v", req.Path, err)
 				return
@@ -996,7 +996,7 @@ func lokiRegenerateThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 		oldPath := getThumbnailPath(req.Path, basePath, cache, req.TimeStamp)
 		os.Remove(oldPath)
 
-		generated, err := generateThumbnail(req.Path, basePath, cache, req.TimeStamp)
+		generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
