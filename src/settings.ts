@@ -492,7 +492,7 @@ export const LAYOUT_MODE = {
 export const USE_HLS = {
   title: 'Use HLS Streaming',
   reload: false,
-  display: 'none',
+  display: 'general',
   options: {
     yes: {
       label: 'Yes',
