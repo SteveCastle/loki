@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
@@ -36,6 +37,7 @@ var HlsPresetDefs = map[string]HlsPreset{
 type hlsMetaInfo struct {
 	SourceMtime int64    `json:"source_mtime"`
 	Presets     []string `json:"presets"`
+	GeneratedAt int64    `json:"generated_at"`
 }
 
 // hlsTask is the main task function for HLS generation.
@@ -158,12 +160,14 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 
 		// Determine which presets to generate.
-		// Always include passthrough.
+		// Always include passthrough; skip transcoded presets for audio-only files.
 		presetsToRun := []string{"passthrough"}
-		for _, p := range requestedPresets {
-			if def, ok := HlsPresetDefs[p]; ok {
-				if probeInfo.height >= def.Height {
-					presetsToRun = append(presetsToRun, p)
+		if probeInfo.hasVideo {
+			for _, p := range requestedPresets {
+				if def, ok := HlsPresetDefs[p]; ok {
+					if probeInfo.height >= def.Height {
+						presetsToRun = append(presetsToRun, p)
+					}
 				}
 			}
 		}
@@ -207,9 +211,9 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 			if runErr != nil {
 				q.PushJobStdout(j.ID, fmt.Sprintf("hls: preset %s failed for %s: %v", preset, base, runErr))
-				if preset == "passthrough" {
+				if preset == "passthrough" && probeInfo.hasVideo {
 					passthroughFailed = true
-					// Fall back to transcoding at source resolution.
+					// Fall back to transcoding at source resolution (video files only).
 					q.PushJobStdout(j.ID, fmt.Sprintf("hls: falling back to transcode at source resolution for %s", base))
 					fallbackPreset := HlsPreset{
 						Width:    probeInfo.width,
@@ -245,6 +249,7 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		meta := hlsMetaInfo{
 			SourceMtime: srcMtime,
 			Presets:     generatedPresets,
+			GeneratedAt: time.Now().Unix(),
 		}
 		if metaBytes, err := json.Marshal(meta); err == nil {
 			_ = os.WriteFile(metaPath, metaBytes, 0644)

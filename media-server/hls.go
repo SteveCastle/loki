@@ -78,6 +78,8 @@ func hlsHandler(d *Dependencies) http.HandlerFunc {
 // hlsServeMaster handles GET /media/hls?path=... and returns master.m3u8.
 // If the cache does not exist, it generates passthrough HLS on-the-fly with
 // inflight deduplication so concurrent requests don't start duplicate ffmpeg jobs.
+// Once the master.m3u8 exists it redirects to /media/hls/<hash>/master.m3u8 so
+// that hls.js can resolve relative playlist URLs correctly.
 func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
 	mediaPath := r.URL.Query().Get("path")
 	if mediaPath == "" {
@@ -86,12 +88,13 @@ func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheDir := hlsCacheDir(hlsBasePath(), mediaPath)
-	masterPath := filepath.Join(cacheDir, "passthrough", "master.m3u8")
+	masterPath := filepath.Join(cacheDir, "master.m3u8")
 
-	// Fast path: already cached.
+	// Fast path: already cached — redirect so relative URLs resolve correctly.
 	if _, err := os.Stat(masterPath); err == nil {
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		http.ServeFile(w, r, masterPath)
+		h := sha256.Sum256([]byte(mediaPath))
+		hash := fmt.Sprintf("%x", h)
+		http.Redirect(w, r, fmt.Sprintf("/media/hls/%s/master.m3u8", hash), http.StatusFound)
 		return
 	}
 
@@ -123,8 +126,9 @@ func hlsServeMaster(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-	http.ServeFile(w, r, masterPath)
+	h := sha256.Sum256([]byte(mediaPath))
+	hash := fmt.Sprintf("%x", h)
+	http.Redirect(w, r, fmt.Sprintf("/media/hls/%s/master.m3u8", hash), http.StatusFound)
 }
 
 // hlsCleanup handles DELETE /media/hls?path=... — clears HLS cache for one file
@@ -228,8 +232,8 @@ func generatePassthroughHLS(mediaPath, cacheDir string) error {
 		return fmt.Errorf("ffmpeg failed: %w\n%s", err, string(out))
 	}
 
-	masterPath := filepath.Join(outDir, "master.m3u8")
-	masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0\nstream.m3u8\n"
+	masterPath := filepath.Join(cacheDir, "master.m3u8")
+	masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0,NAME=\"passthrough\"\npassthrough/stream.m3u8\n"
 	if err := os.WriteFile(masterPath, []byte(masterContent), 0644); err != nil {
 		return fmt.Errorf("failed to write master.m3u8: %w", err)
 	}
