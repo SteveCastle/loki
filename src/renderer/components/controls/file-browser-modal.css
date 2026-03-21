@@ -1,0 +1,145 @@
+.file-browser-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.file-browser-modal {
+  background: var(--bg-secondary, #1e1e1e);
+  border: 1px solid var(--border-color, #333);
+  border-radius: 8px;
+  width: 600px;
+  max-width: 90vw;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-primary, #e0e0e0);
+}
+
+.file-browser-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+.file-browser-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.file-browser-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-color, #333);
+}
+
+.file-browser-breadcrumb span {
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.file-browser-breadcrumb span:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.file-browser-breadcrumb .separator {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.file-browser-breadcrumb .separator:hover {
+  text-decoration: none;
+}
+
+.file-browser-entries {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.file-browser-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.file-browser-entry:hover {
+  background: var(--bg-hover, #2a2a2a);
+}
+
+.file-browser-entry .icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.file-browser-entry .name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-browser-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color, #333);
+}
+
+.file-browser-footer button {
+  padding: 6px 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary, #1e1e1e);
+  color: var(--text-primary, #e0e0e0);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.file-browser-footer button:hover {
+  background: var(--bg-hover, #2a2a2a);
+}
+
+.file-browser-footer button.primary {
+  background: var(--accent-color, #4a9eff);
+  border-color: var(--accent-color, #4a9eff);
+  color: #fff;
+}
+
+.file-browser-footer button.primary:hover {
+  opacity: 0.9;
+}
+
+.file-browser-loading {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.6;
+}
+
+.file-browser-empty {
+  padding: 24px;
+  text-align: center;
+  opacity: 0.5;
+}
