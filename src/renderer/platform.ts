@@ -234,6 +234,7 @@ export let on: (
   callback: (...args: unknown[]) => void
 ) => () => void;
 export let mediaUrl: (path: string, version?: string) => string;
+export let hlsUrl: ((path: string) => string) | null;
 
 export let appArgs: {
   dbPath?: string;
@@ -318,6 +319,7 @@ if (isElectron) {
       pathname: path,
       search: version ? `?v=${version}` : undefined,
     });
+  hlsUrl = null; // HLS not available in Electron mode (no Go server)
   appArgs = (window as any).appArgs ?? {};
   store = window.electron.store;
   sessionStore = window.electron.sessionStore;
@@ -395,6 +397,9 @@ if (isElectron) {
     if (version) qs += `&v=${encodeURIComponent(String(version))}`;
     return `/media/file?${qs}`;
   };
+
+  hlsUrl = (path) =>
+    `/media/hls?path=${encodeURIComponent(path)}`;
 
   // Settings store: localStorage-backed for persistence across reloads
   const SETTINGS_KEY = 'loki-settings';
