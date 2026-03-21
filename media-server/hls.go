@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/platform"
@@ -150,6 +151,8 @@ func hlsCleanup(w http.ResponseWriter, r *http.Request) {
 
 // hlsSegmentHandler handles GET /media/hls/<hash>/<preset>/<filename>.
 // It validates each path component and serves the file with the correct Content-Type.
+// If a file doesn't exist yet but generation is in progress, it waits briefly
+// for ffmpeg to produce it rather than returning an immediate 404.
 func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 	hexRe := regexp.MustCompile(`^[0-9a-f]+$`)
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -158,51 +161,66 @@ func hlsSegmentHandler(d *Dependencies) http.HandlerFunc {
 		path := strings.TrimPrefix(r.URL.Path, "/media/hls/")
 		parts := strings.Split(path, "/")
 
-		// Expect either <hash>/master.m3u8 (2 parts) or <hash>/<preset>/<filename> (3 parts).
-		if len(parts) == 2 {
+		var filePath string
+		var contentType string
+
+		switch len(parts) {
+		case 2:
+			// <hash>/master.m3u8
 			hash := parts[0]
 			filename := parts[1]
-			if !hexRe.MatchString(hash) {
-				http.Error(w, "invalid hash", http.StatusBadRequest)
+			if !hexRe.MatchString(hash) || !isValidHlsFilename(filename) {
+				http.Error(w, "invalid path", http.StatusBadRequest)
 				return
 			}
-			if !isValidHlsFilename(filename) {
-				http.Error(w, "invalid filename", http.StatusBadRequest)
-				return
-			}
-			filePath := filepath.Join(hlsBasePath(), "hls", hash, filename)
-			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			http.ServeFile(w, r, filePath)
-			return
-		}
+			filePath = filepath.Join(hlsBasePath(), "hls", hash, filename)
+			contentType = "application/vnd.apple.mpegurl"
 
-		if len(parts) == 3 {
+		case 3:
+			// <hash>/<preset>/<filename>
 			hash := parts[0]
 			preset := parts[1]
 			filename := parts[2]
-			if !hexRe.MatchString(hash) {
-				http.Error(w, "invalid hash", http.StatusBadRequest)
+			if !hexRe.MatchString(hash) || !isValidHlsPreset(preset) || !isValidHlsFilename(filename) {
+				http.Error(w, "invalid path", http.StatusBadRequest)
 				return
 			}
-			if !isValidHlsPreset(preset) {
-				http.Error(w, "invalid preset", http.StatusBadRequest)
-				return
-			}
-			if !isValidHlsFilename(filename) {
-				http.Error(w, "invalid filename", http.StatusBadRequest)
-				return
-			}
-			filePath := filepath.Join(hlsBasePath(), "hls", hash, preset, filename)
-			contentType := "application/vnd.apple.mpegurl"
+			filePath = filepath.Join(hlsBasePath(), "hls", hash, preset, filename)
+			contentType = "application/vnd.apple.mpegurl"
 			if strings.HasSuffix(filename, ".ts") {
 				contentType = "video/MP2T"
 			}
-			w.Header().Set("Content-Type", contentType)
-			http.ServeFile(w, r, filePath)
+
+		default:
+			http.Error(w, "invalid HLS path", http.StatusBadRequest)
 			return
 		}
 
-		http.Error(w, "invalid HLS path", http.StatusBadRequest)
+		// If the file doesn't exist yet, wait up to 30 seconds for ffmpeg to
+		// produce it (generation is async). Poll every 500ms.
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			ctx := r.Context()
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			timeout := time.After(30 * time.Second)
+			found := false
+			for !found {
+				select {
+				case <-ctx.Done():
+					return
+				case <-timeout:
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				case <-ticker.C:
+					if _, err := os.Stat(filePath); err == nil {
+						found = true
+					}
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		http.ServeFile(w, r, filePath)
 	}
 }
 

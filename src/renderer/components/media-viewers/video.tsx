@@ -207,6 +207,13 @@ export function Video({
         // hls.js polls the playlist for new segments until #EXT-X-ENDLIST appears.
         liveSyncDurationCount: 1, // Start playback as soon as 1 segment is available
         liveMaxLatencyDurationCount: 5,
+        // Retry manifest/level/frag loads since segments appear progressively
+        manifestLoadingRetryDelay: 1000,
+        manifestLoadingMaxRetry: 30,
+        levelLoadingRetryDelay: 1000,
+        levelLoadingMaxRetry: 30,
+        fragLoadingRetryDelay: 1000,
+        fragLoadingMaxRetry: 10,
       });
       hlsRef.current = hls;
 
@@ -219,6 +226,12 @@ export function Video({
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
         if (data.fatal) {
+          // For network errors during generation, try to recover
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+            console.log('hls.js network error, attempting recovery:', data.details);
+            hls.startLoad();
+            return;
+          }
           console.log('hls.js fatal error:', data.type, data.details);
           hls.destroy();
           hlsRef.current = null;
