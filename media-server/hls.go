@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -115,6 +116,7 @@ func hlsStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Already cached — ready to play.
 	if _, err := os.Stat(masterPath); err == nil {
+		log.Printf("[hls] ready (cached): %s", filepath.Base(mediaPath))
 		json.NewEncoder(w).Encode(hlsStatusResponse{
 			Status: "ready",
 			URL:    fmt.Sprintf("/media/hls/%s/master.m3u8", hash),
@@ -164,18 +166,27 @@ func hlsStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Probe duration (fast) for progress calculation and client display.
 	duration := probeDuration(mediaPath)
+	log.Printf("[hls] starting generation: %s (duration: %.1fs)", filepath.Base(mediaPath), duration)
 
 	entry.queued = true
 	go func() {
 		// Wait for a semaphore slot (limits concurrent ffmpeg processes).
+		log.Printf("[hls] queued: %s", filepath.Base(mediaPath))
 		hlsSem <- struct{}{}
 		hlsInflightMu.Lock()
 		entry.queued = false
 		hlsInflightMu.Unlock()
+		log.Printf("[hls] encoding started: %s", filepath.Base(mediaPath))
 
 		genErr := generatePassthroughHLS(mediaPath, cacheDir, duration, entry)
 		<-hlsSem // Release slot.
 		entry.err = genErr
+
+		if genErr != nil {
+			log.Printf("[hls] generation failed: %s — %v", filepath.Base(mediaPath), genErr)
+		} else {
+			log.Printf("[hls] generation complete: %s", filepath.Base(mediaPath))
+		}
 
 		hlsInflightMu.Lock()
 		delete(hlsInflight, cacheDir)
@@ -194,8 +205,10 @@ func hlsCleanup(w http.ResponseWriter, r *http.Request) {
 	mediaPath := r.URL.Query().Get("path")
 	if mediaPath != "" {
 		cacheDir := hlsCacheDir(hlsBasePath(), mediaPath)
+		log.Printf("[hls] clearing cache for: %s", filepath.Base(mediaPath))
 		os.RemoveAll(cacheDir)
 	} else {
+		log.Printf("[hls] clearing all HLS cache")
 		os.RemoveAll(filepath.Join(hlsBasePath(), "hls"))
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -265,6 +278,7 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 
 	ffmpegPath := depspkg.GetFFmpegPath()
 	if ffmpegPath == "" {
+		log.Printf("[hls] ERROR: ffmpeg not found")
 		return fmt.Errorf("ffmpeg not found")
 	}
 
@@ -280,18 +294,45 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 		"-progress", "pipe:1",
 	}
 
+	log.Printf("[hls] ffmpeg args: %v", args)
+
 	cmd := exec.Command(ffmpegPath, args...)
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		log.Printf("[hls] ERROR: stdout pipe: %v", err)
 		return fmt.Errorf("stdout pipe: %w", err)
 	}
 
+	// Capture stderr for error diagnostics.
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		log.Printf("[hls] ERROR: stderr pipe: %v", err)
+		return fmt.Errorf("stderr pipe: %w", err)
+	}
+
 	if err := cmd.Start(); err != nil {
+		log.Printf("[hls] ERROR: ffmpeg start: %v", err)
 		return fmt.Errorf("ffmpeg start: %w", err)
 	}
 
+	log.Printf("[hls] ffmpeg pid %d started for %s", cmd.Process.Pid, filepath.Base(mediaPath))
+
+	// Drain stderr in background and collect it for error reporting.
+	var stderrBuf strings.Builder
+	stderrDone := make(chan struct{})
+	go func() {
+		s := bufio.NewScanner(stderr)
+		for s.Scan() {
+			stderrBuf.WriteString(s.Text())
+			stderrBuf.WriteString("\n")
+		}
+		close(stderrDone)
+	}()
+
 	// Parse -progress output to track progress.
 	// ffmpeg writes key=value lines, with "out_time_us" giving microseconds processed.
+	lastLoggedPct := -1
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -305,21 +346,41 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 				hlsInflightMu.Lock()
 				entry.progress = progress
 				hlsInflightMu.Unlock()
+
+				// Log every 10% milestone.
+				pct := int(progress * 10) * 10
+				if pct > lastLoggedPct {
+					lastLoggedPct = pct
+					log.Printf("[hls] progress %d%% — %s", pct, filepath.Base(mediaPath))
+				}
 			}
 		}
 	}
 
+	<-stderrDone
+
 	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("ffmpeg failed: %w", err)
+		errMsg := stderrBuf.String()
+		// Log last few lines of stderr for diagnostics.
+		lines := strings.Split(strings.TrimSpace(errMsg), "\n")
+		tail := lines
+		if len(tail) > 10 {
+			tail = tail[len(tail)-10:]
+		}
+		log.Printf("[hls] ERROR: ffmpeg failed for %s: %v\n  stderr (last lines):\n  %s",
+			filepath.Base(mediaPath), err, strings.Join(tail, "\n  "))
+		return fmt.Errorf("ffmpeg failed: %w\n%s", err, strings.Join(tail, "\n"))
 	}
 
 	// Write master playlist now that all segments are ready.
 	masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH=0,NAME=\"passthrough\"\npassthrough/stream.m3u8\n"
 	masterPath := filepath.Join(cacheDir, "master.m3u8")
 	if err := os.WriteFile(masterPath, []byte(masterContent), 0644); err != nil {
+		log.Printf("[hls] ERROR: failed to write master.m3u8: %v", err)
 		return fmt.Errorf("failed to write master.m3u8: %w", err)
 	}
 
+	log.Printf("[hls] master.m3u8 written: %s", masterPath)
 	return nil
 }
 
@@ -327,6 +388,7 @@ func generatePassthroughHLS(mediaPath, cacheDir string, duration float64, entry 
 func probeDuration(mediaPath string) float64 {
 	ffprobePath := depspkg.GetFFprobePath()
 	if ffprobePath == "" {
+		log.Printf("[hls] WARNING: ffprobe not found, cannot determine duration")
 		return 0
 	}
 	cmd := exec.Command(ffprobePath,
@@ -337,6 +399,7 @@ func probeDuration(mediaPath string) float64 {
 	)
 	out, err := cmd.Output()
 	if err != nil {
+		log.Printf("[hls] WARNING: ffprobe failed for %s: %v", filepath.Base(mediaPath), err)
 		return 0
 	}
 	var data struct {
@@ -345,6 +408,7 @@ func probeDuration(mediaPath string) float64 {
 		} `json:"format"`
 	}
 	if json.Unmarshal(out, &data) != nil {
+		log.Printf("[hls] WARNING: ffprobe output parse failed for %s", filepath.Base(mediaPath))
 		return 0
 	}
 	dur, _ := strconv.ParseFloat(data.Format.Duration, 64)
