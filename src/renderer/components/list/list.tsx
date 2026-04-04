@@ -136,6 +136,7 @@ export function List() {
         initialScrollOffset={initialScrollPositionRef.current}
         cursor={cursor}
         scrollToCursorEventId={scrollToCursorEventId}
+        libraryLoadId={base.libraryLoadId}
         libraryService={libraryService}
         onScroll={handleScroll}
         onDidInitialScroll={() => setInitialLoad(false)}
@@ -153,6 +154,7 @@ export function List() {
       initialScrollOffset={initialScrollPositionRef.current}
       cursor={cursor}
       scrollToCursorEventId={scrollToCursorEventId}
+      libraryLoadId={base.libraryLoadId}
       libraryService={libraryService}
       onScroll={handleScroll}
       onDidInitialScroll={() => setInitialLoad(false)}
@@ -169,6 +171,7 @@ type VirtualGridProps = {
   initialScrollOffset: number;
   cursor: number | null;
   scrollToCursorEventId: string | null;
+  libraryLoadId: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   libraryService: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
@@ -184,6 +187,7 @@ function VirtualGrid({
   initialScrollOffset,
   cursor,
   scrollToCursorEventId,
+  libraryLoadId,
   libraryService,
   onScroll,
   onDidInitialScroll,
@@ -222,6 +226,15 @@ function VirtualGrid({
     shouldDoInitialScroll,
     rowVirtualizer,
   ]);
+
+  // Reset scroll to top when library content changes
+  const prevLibraryLoadIdRef = useRef(libraryLoadId);
+  useEffect(() => {
+    if (libraryLoadId !== prevLibraryLoadIdRef.current) {
+      prevLibraryLoadIdRef.current = libraryLoadId;
+      rowVirtualizer.scrollToOffset(0);
+    }
+  }, [libraryLoadId, rowVirtualizer]);
 
   // Scroll to cursor when explicitly requested via scrollToCursorEventId
   // Use refs to avoid effect re-running on every render
@@ -368,6 +381,7 @@ type MasonryGridProps = {
   initialScrollOffset: number;
   cursor: number | null;
   scrollToCursorEventId: string | null;
+  libraryLoadId: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   libraryService: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
@@ -386,6 +400,7 @@ function MasonryGrid({
   initialScrollOffset,
   cursor,
   scrollToCursorEventId,
+  libraryLoadId,
   libraryService,
   onScroll,
   onDidInitialScroll,
@@ -532,6 +547,18 @@ function MasonryGrid({
     containerWidth,
     layout.height,
   ]);
+
+  // Reset scroll to top when library content changes
+  const prevLibraryLoadIdRef = useRef(libraryLoadId);
+  useEffect(() => {
+    if (libraryLoadId !== prevLibraryLoadIdRef.current) {
+      prevLibraryLoadIdRef.current = libraryLoadId;
+      if (parentRef.current) {
+        parentRef.current.scrollTop = 0;
+        setScrollTop(0);
+      }
+    }
+  }, [libraryLoadId]);
 
   // Scroll to cursor when explicitly requested via scrollToCursorEventId
   useEffect(() => {

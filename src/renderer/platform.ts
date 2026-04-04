@@ -447,7 +447,7 @@ if (isElectron) {
   } catch {}
 
   // Persist only lightweight session keys (skip library/previous - too large for localStorage)
-  const SESSION_PERSIST_KEYS = ['query', 'cursor'];
+  const SESSION_PERSIST_KEYS = ['query', 'cursor', 'searchHistory'];
   let _sessionDirty = false;
   let _sessionTimer: ReturnType<typeof setTimeout> | null = null;
   const _persistSession = () => {

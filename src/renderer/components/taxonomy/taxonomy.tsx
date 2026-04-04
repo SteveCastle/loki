@@ -20,6 +20,7 @@ import NewCategoryModal from './new-category-modal';
 import './taxonomy.css';
 import Category from './category';
 import { invoke } from '../../platform';
+import QueryInput from '../query-input/QueryInput';
 
 type Concept = {
   label: string;
@@ -88,19 +89,6 @@ export default function Taxonomy() {
       type: 'SET_TEXT_FILTER',
       data: { textFilter: text },
     });
-  }
-
-  function handleSubmitSearch() {
-    if (newTextFilter.trim()) {
-      setTextFilter(newTextFilter.trim());
-    }
-  }
-
-  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    e.stopPropagation();
-    if (e.key === 'Enter' && newTextFilter.trim()) {
-      handleSubmitSearch();
-    }
   }
 
   // If textFilter changes, update the input field
@@ -199,37 +187,20 @@ export default function Taxonomy() {
         }}
       >
         <div className="search">
-          <div className="textSearch">
-            <input
-              type="text"
-              placeholder="Search Content"
-              value={newTextFilter}
-              onKeyDown={handleSearchKeyDown}
-              onKeyUp={(e) => {
-                e.stopPropagation();
-              }}
-              onChange={(e) => setNewTextFilter(e.currentTarget.value)}
-              disabled={isDisabled}
-            />
-            <button
-              className="submit-search"
-              onClick={handleSubmitSearch}
-              disabled={!newTextFilter.trim() || isDisabled}
-              title="Search"
-            >
-              →
-            </button>
-            <button
-              className="clear-search"
-              onClick={() => {
-                setNewTextFilter('');
-                setTextFilter('');
-                setEditingTag(null);
-              }}
-            >
-              <img src={clear} />
-            </button>
-          </div>
+          <QueryInput
+            value={newTextFilter}
+            onChange={setNewTextFilter}
+            onSubmit={(text) => {
+              setNewTextFilter(text);
+              setTextFilter(text);
+            }}
+            onClear={() => {
+              setNewTextFilter('');
+              setTextFilter('');
+              setEditingTag(null);
+            }}
+            disabled={isDisabled}
+          />
           <div className="textSearch">
             <input
               type="text"
