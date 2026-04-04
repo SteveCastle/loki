@@ -40,7 +40,7 @@ const fetchMediaPreview =
     cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
     timeStamp: number
   ) =>
-  async (): Promise<string> => {
+  async (): Promise<string | null> => {
     const path = await platformFetchMediaPreview(
       item,
       cache,
@@ -90,7 +90,7 @@ export function Video({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
 
-  const { data, isLoading, isFetched } = useQuery<string, Error>(
+  const { data, isLoading, isFetched } = useQuery<string | null, Error>(
     ['media', 'preview', path, cache, startTime, version],
     fetchMediaPreview(path, cache, startTime),
     { enabled: shouldLoad && !!cache }
@@ -213,7 +213,8 @@ export function Video({
 
     let cancelled = false;
     // One-shot check: if server says "ready", skip the button.
-    fetch(hlsUrl!(path), { method: 'GET' })
+    // Use check=true so the server does NOT start encoding — only reports cached/inflight status.
+    fetch(hlsUrl!(path) + '&check=true', { method: 'GET' })
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
         if (cancelled || !data) return;
@@ -415,7 +416,7 @@ export function Video({
         handleLoad={handleLoad}
         orientation={orientation}
         cache={cache}
-        overRideCache={true}
+        overRideCache={!cache}
       />
     );
   }
@@ -483,7 +484,10 @@ export function Video({
     );
   }
 
-  if (!shouldLoad || (isLoading && !isFetched)) {
+  if (!shouldLoad || (isLoading && !isFetched) || !data) {
+    // In cached mode: show skeleton while loading, while fetching,
+    // or when thumbnail is not yet available — never fall back to
+    // the original file path which may be on slow network storage.
     return (
       <div className="ThumnailLoader">
         <div className="loading-bar">
@@ -519,7 +523,7 @@ export function Video({
         e.preventDefault();
       }}
       muted={!playSound}
-      src={mediaUrl(data || path, version)}
+      src={mediaUrl(data, version)}
       controls={false}
       controlsList={'nodownload nofullscreen'}
       autoPlay

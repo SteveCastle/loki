@@ -26,7 +26,7 @@ type Props = {
 
 const fetchMediaPreview =
   (item: string, cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false) =>
-  async (): Promise<string> => {
+  async (): Promise<string | null> => {
     const path = await platformFetchMediaPreview(item, cache);
     return path;
   };
@@ -49,7 +49,7 @@ function ImageComponent({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
   
-  const { data, isFetched } = useQuery<string, Error>(
+  const { data, isFetched } = useQuery<string | null, Error>(
     ['media', 'preview', path, cache, version],
     fetchMediaPreview(path, cache),
     { enabled: shouldLoad }
@@ -71,8 +71,10 @@ function ImageComponent({
   }, [scaleMode, coverSize]);
 
   const imgSrc = useMemo(() => {
-    if (cache && !overRideCache && data) {
-      return mediaUrl(data, version);
+    if (cache && !overRideCache) {
+      // In cached mode, only use the cached thumbnail path — never fall back
+      // to the original file path, which may be on slow network storage.
+      return data ? mediaUrl(data, version) : null;
     }
     return mediaUrl(path, version);
   }, [cache, overRideCache, data, path, version]);
@@ -82,20 +84,32 @@ function ImageComponent({
   }
 
   return data || !cache || isFetched ? (
-    <img
-      className={`Image ${scaleMode} ${orientation}`}
-      style={imgStyle}
-      ref={mediaRef}
-      onLoad={(e) => {
-        handleLoad && handleLoad(e);
-      }}
-      onError={() => {
-        setError(true);
-        console.log('failed to load image');
-      }}
-      src={imgSrc}
-      alt="detail"
-    />
+    imgSrc ? (
+      <img
+        className={`Image ${scaleMode} ${orientation}`}
+        style={imgStyle}
+        ref={mediaRef}
+        onLoad={(e) => {
+          handleLoad && handleLoad(e);
+        }}
+        onError={() => {
+          setError(true);
+          console.log('failed to load image');
+        }}
+        src={imgSrc}
+        alt="detail"
+      />
+    ) : (
+      // Cached mode but thumbnail not yet available — show skeleton
+      // instead of falling back to original file on network storage
+      <div className="ThumnailLoader">
+        <div className="loading-bar">
+          <SkeletonTheme baseColor="#202020" highlightColor="#444">
+            <Skeleton />
+          </SkeletonTheme>
+        </div>
+      </div>
+    )
   ) : (
     <div className="ThumnailLoader">
       <div className="loading-bar">

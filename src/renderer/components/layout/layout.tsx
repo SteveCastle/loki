@@ -63,7 +63,7 @@ function CollapsiblePanel({
       collapsedSize="0%"
       className="panel"
       collapsible
-      panelRef={imperativeRef}
+      panelRef={imperativeRef as React.Ref<PanelImperativeHandle>}
       onResize={(size) => {
         setCollapsed(size.asPercentage === 0);
       }}

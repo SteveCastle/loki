@@ -29,7 +29,7 @@ type Props = {
 
 const fetchTagPreviewFn = (tag: string) => async (): Promise<string> => {
   const path = await fetchTagPreview(tag);
-  return path;
+  return path ?? '';
 };
 
 export default function Tag({

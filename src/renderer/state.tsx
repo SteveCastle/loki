@@ -489,6 +489,7 @@ const getInitialContext = (): LibraryState => {
       volume: batched['volume'] as number,
       alwaysOnTop: batched['alwaysOnTop'] as boolean,
       layoutMode: batched['layoutMode'] as 'grid' | 'masonry',
+      useHLS: batched['useHLS'] as boolean,
     },
     hotKeys: {
       incrementCursor: batched['incrementCursor'] as string,
@@ -1002,7 +1003,7 @@ const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   dbPath: () => {
                     store.set('dbPath', appArgs?.dbPath);
-                    return appArgs?.dbPath;
+                    return appArgs?.dbPath ?? '';
                   },
                 }),
               },

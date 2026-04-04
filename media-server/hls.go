@@ -38,7 +38,7 @@ var hlsInflightMu sync.Mutex
 var hlsInflight = map[string]*hlsInflightEntry{}
 
 // hlsSem limits concurrent HLS ffmpeg processes to prevent resource starvation.
-var hlsSem = make(chan struct{}, 2)
+var hlsSem = make(chan struct{}, 1)
 
 type hlsInflightEntry struct {
 	done     chan struct{}
@@ -105,13 +105,16 @@ type hlsStatusResponse struct {
 // hlsStatus returns the HLS generation status for a media file.
 // If already cached: {status: "ready", url: "/media/hls/<hash>/master.m3u8"}
 // If generating: {status: "processing", progress: 0.45, duration: 120.5}
-// If not started: kicks off generation and returns processing status.
+// If not started and check=true: {status: "idle"} (no generation triggered).
+// If not started and check is absent: kicks off generation and returns processing status.
 func hlsStatus(w http.ResponseWriter, r *http.Request) {
 	mediaPath := r.URL.Query().Get("path")
 	if mediaPath == "" {
 		http.Error(w, "missing path parameter", http.StatusBadRequest)
 		return
 	}
+
+	checkOnly := r.URL.Query().Get("check") == "true"
 
 	cacheDir := hlsCacheDir(hlsBasePath(), mediaPath)
 	masterPath := filepath.Join(cacheDir, "master.m3u8")
@@ -164,8 +167,15 @@ func hlsStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	// Not cached and not in progress.
+	// If check-only, report idle without starting generation.
+	if checkOnly {
+		hlsInflightMu.Unlock()
+		json.NewEncoder(w).Encode(hlsStatusResponse{Status: "idle"})
+		return
+	}
 
-	// Not cached and not in progress — clean up any leftover partial cache and start fresh.
+	// Clean up any leftover partial cache and start fresh.
 	os.RemoveAll(cacheDir)
 
 	ctx, cancel := context.WithCancel(context.Background())

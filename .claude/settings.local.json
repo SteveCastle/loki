@@ -16,7 +16,12 @@
       "Bash(npx tsc:*)",
       "Bash(dir:*)",
       "Bash(go test:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(powershell:*)",
+      "Bash(npx jest:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }

@@ -233,7 +233,7 @@ export let on: (
   channel: string,
   callback: (...args: unknown[]) => void
 ) => () => void;
-export let mediaUrl: (path: string, version?: string) => string;
+export let mediaUrl: (path: string, version?: string | number) => string;
 export let hlsUrl: ((path: string) => string) | null;
 
 export let appArgs: {
@@ -268,13 +268,13 @@ export let transcript: {
 export let loadMediaFromDB: (
   tags: string[],
   mode?: string
-) => Promise<any[]>;
+) => Promise<any>;
 
 export let loadMediaByDescriptionSearch: (
   description: string,
   tags?: string[],
   filteringMode?: string
-) => Promise<any[]>;
+) => Promise<any>;
 
 export let fetchMediaPreview: (
   path: string,

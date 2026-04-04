@@ -22,7 +22,7 @@ type Props = {
 
 const fetchMediaPreview =
   (item: string, cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false) =>
-  async (): Promise<string> => {
+  async (): Promise<string | null> => {
     const path = await platformFetchMediaPreview(item, cache);
     return path;
   };
@@ -46,7 +46,7 @@ function AnimatedGifComponent({
   const [error, setError] = useState<boolean>(false);
   const loopStartTimeRef = useRef<number>(0);
 
-  const { data: previewData } = useQuery<string, Error>(
+  const { data: previewData } = useQuery<string | null, Error>(
     ['media', 'preview', path, cache, version],
     fetchMediaPreview(path, cache)
   );
@@ -100,7 +100,7 @@ function AnimatedGifComponent({
 
   const imgSrc = useMemo(() => {
     if (cache) {
-      return mediaUrl(previewData, version);
+      return previewData ? mediaUrl(previewData, version) : undefined;
     }
     return mediaUrl(path, version);
   }, [cache, previewData, path, version]);

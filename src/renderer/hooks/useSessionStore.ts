@@ -70,6 +70,7 @@ let initPromise: Promise<void> | null = null;
 
 // Debounce timers for each key
 const debounceTimers: Partial<Record<SessionKey, NodeJS.Timeout>> = {};
+let batchTimer: NodeJS.Timeout | null = null;
 
 // Debounce durations (ms)
 const DEBOUNCE_TIMES: Record<SessionKey, number> = {
@@ -208,17 +209,16 @@ export function setSessionValues(updates: Partial<SessionData>): void {
     }
   }
 
-  // Use a combined timer key
-  const batchKey = 'batch' as any;
-  if (debounceTimers[batchKey]) {
-    clearTimeout(debounceTimers[batchKey]);
+  // Use a combined batch timer
+  if (batchTimer) {
+    clearTimeout(batchTimer);
   }
 
-  debounceTimers[batchKey] = setTimeout(() => {
+  batchTimer = setTimeout(() => {
     sessionStore.setMany(updates).catch((error) => {
       console.error('[SessionStore] Failed to write batch:', error);
     });
-    delete debounceTimers[batchKey];
+    batchTimer = null;
   }, maxDebounce);
 }
 

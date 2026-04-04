@@ -43,12 +43,17 @@ function formatFileSize(size: number): string {
 const stat = promisify(fs.stat);
 const execPromisified = promisify(exec);
 
+export interface StableDiffusionMetaData {
+  [key: string]: string | number | boolean | undefined;
+}
+
 export interface Metadata {
   fileMetadata: FileMetadata;
   description?: string;
   transcript?: string;
   hash: string;
   extendedMetadata?: ExtendedMetadata;
+  stableDiffusionMetaData?: StableDiffusionMetaData;
 }
 
 export interface FileMetadata {
@@ -146,6 +151,7 @@ const loadFileMetaData =
           height: 0,
           width: 0,
         },
+        hash: '',
       };
     }
     // load json from same path as file with .json appended

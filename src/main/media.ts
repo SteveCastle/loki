@@ -335,7 +335,7 @@ const loadMediaByTags =
     }
   };
 
-type FetchMediaPreviewInput = [string, string?, timeStamp?: number];
+type FetchMediaPreviewInput = [filePath: string, cache?: string, timeStamp?: number];
 const fetchMediaPreview =
   (db: Database, store: Store) =>
   (_: IpcMainInvokeEvent, args: FetchMediaPreviewInput) => {
@@ -375,7 +375,7 @@ const copyFileIntoClipboard =
     const filePaths = args[0];
     console.log('copying file into clipboard', filePaths);
     // Copies the file into the clipboard
-    clipboard.writeFilePaths(filePaths);
+    clipboard.writeFilePaths([filePaths]);
     console.log('copied file into clipboard');
   };
 
