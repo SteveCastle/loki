@@ -34,6 +34,8 @@
     "start:preload": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.preload.dev.ts",
     "start:renderer": "cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack serve --config ./.erb/configs/webpack.config.renderer.dev.ts",
     "test": "npm run build && jest",
+    "build:web": "npm run build:renderer && node -e \"const fs=require('fs');const path=require('path');function cpR(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?cpR(sp,dp):fs.copyFileSync(sp,dp)}}cpR('release/app/dist/renderer','media-server/loki-static')\"",
+    "build:server": "node scripts/build-server.js",
     "test:server": "cd media-server && go test ./..."
   },
   "lint-staged": {
@@ -108,6 +110,7 @@
     "electron-log": "^5.4.3",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.6.2",
+    "hls.js": "^1.6.15",
     "js-base64": "^3.7.8",
     "lodash": "^4.17.21",
     "lodash.memoize": "^4.1.2",

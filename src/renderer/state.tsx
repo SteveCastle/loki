@@ -9,6 +9,11 @@ import {
   Settings,
   clampVolume,
 } from 'settings';
+import {
+  invoke, send, on, store, appArgs, capabilities, isElectron,
+  loadMediaFromDB as platformLoadMediaFromDB,
+  loadMediaByDescriptionSearch as platformLoadMediaByDescriptionSearch,
+} from './platform';
 import filter from './filter';
 import {
   initSessionStore,
@@ -257,7 +262,7 @@ const setDB = assign<LibraryState, AnyEventObject>({
     if (event.data !== context.dbPath) {
       clearSessionKeys(['library', 'cursor', 'query', 'previous']);
     }
-    window.electron.store.set('dbPath', event.data);
+    store.set('dbPath', event.data);
     return event.data;
   },
   // Clear initialFile when changing databases so init state doesn't use stale data
@@ -326,7 +331,7 @@ const willHaveNoTag = (context: LibraryState, event: AnyEventObject) => {
 
 // Memoize context initialization to prevent unnecessary re-computations
 const getInitialContext = (): LibraryState => {
-  const batched = (window.electron.store as any).getMany([
+  const batched = store.getMany([
     ['dbPath', null],
     ['activeCategory', ''],
     ['storedCategories', {}],
@@ -355,6 +360,7 @@ const getInitialContext = (): LibraryState => {
     ['autoPlayVideoLoops', false],
     ['volume', 1.0],
     ['alwaysOnTop', false],
+    ['useHLS', false],
     ['incrementCursor', 'arrowright'],
     ['decrementCursor', 'arrowleft'],
     ['toggleTagPreview', 'shift'],
@@ -410,7 +416,7 @@ const getInitialContext = (): LibraryState => {
   ] as [string, any][]);
 
   return {
-    initialFile: window.appArgs?.filePath || '',
+    initialFile: appArgs?.filePath || '',
     dbPath: batched['dbPath'] as string,
     library: [],
     libraryLoadId: '',
@@ -483,6 +489,7 @@ const getInitialContext = (): LibraryState => {
       volume: batched['volume'] as number,
       alwaysOnTop: batched['alwaysOnTop'] as boolean,
       layoutMode: batched['layoutMode'] as 'grid' | 'masonry',
+      useHLS: batched['useHLS'] as boolean,
     },
     hotKeys: {
       incrementCursor: batched['incrementCursor'] as string,
@@ -595,7 +602,7 @@ const libraryMachine = createMachine(
             actions: assign<LibraryState, AnyEventObject>({
               authToken: (context, event) => {
                 const token = event.token;
-                window.electron.store.set('authToken', token);
+                store.set('authToken', token);
                 return token;
               },
             }),
@@ -615,10 +622,10 @@ const libraryMachine = createMachine(
                     processedData[key] = clampVolume(processedData[key]);
                   }
 
-                  window.electron.store.set(key, processedData[key]);
+                  store.set(key, processedData[key]);
                   // Handle alwaysOnTop setting specially
                   if (key === 'alwaysOnTop') {
-                    window.electron.ipcRenderer.sendMessage(
+                    send(
                       'set-always-on-top',
                       [processedData[key]]
                     );
@@ -648,7 +655,7 @@ const libraryMachine = createMachine(
               hotKeys: (context, event) => {
                 console.log('CHANGE_HOTKEY', context, event);
                 for (const key in event.data) {
-                  window.electron.store.set(key, event.data[key]);
+                  store.set(key, event.data[key]);
                 }
                 return {
                   ...context.hotKeys,
@@ -663,7 +670,7 @@ const libraryMachine = createMachine(
                 storedCategories: (context, event) => {
                   console.log('STORE_CATEGORY', context, event);
                   const { category, position } = event.data;
-                  window.electron.store.set(`storedCategories`, {
+                  store.set(`storedCategories`, {
                     ...context.storedCategories,
                     [position]: category,
                   });
@@ -694,7 +701,7 @@ const libraryMachine = createMachine(
                 storedTags: (context, event) => {
                   console.log('STORE_TAG', context, event);
                   const { tags, position } = event.data;
-                  window.electron.store.set(`storedTags`, {
+                  store.set(`storedTags`, {
                     ...context.storedTags,
                     [position]: tags,
                   });
@@ -995,8 +1002,8 @@ const libraryMachine = createMachine(
                 target: 'loadingDB',
                 actions: assign<LibraryState, AnyEventObject>({
                   dbPath: () => {
-                    window.electron.store.set('dbPath', window.appArgs?.dbPath);
-                    return window.appArgs?.dbPath;
+                    store.set('dbPath', appArgs?.dbPath);
+                    return appArgs?.dbPath ?? '';
                   },
                 }),
               },
@@ -1020,7 +1027,7 @@ const libraryMachine = createMachine(
               src: (context, event) => {
                 console.log('selecting DB', context, event);
                 const currentDB = context.dbPath;
-                return window.electron.ipcRenderer.invoke('select-db', [
+                return invoke('select-db', [
                   currentDB,
                 ]);
               },
@@ -1037,7 +1044,7 @@ const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 console.log('loading DB', context, event);
-                return window.electron.ipcRenderer.invoke('load-db', [
+                return invoke('load-db', [
                   context.dbPath,
                 ]);
               },
@@ -1053,18 +1060,49 @@ const libraryMachine = createMachine(
             always: [
               { target: 'loadingFromFS', cond: hasInitialFile },
               { target: 'loadingFromPersisted', cond: hasPersistedLibrary },
+              { target: 'restoringWebSession', cond: () => !isElectron },
               { target: 'selecting' },
             ],
             entry: assign<LibraryState, AnyEventObject>({
               initSessionId: () => uniqueId(),
             }),
           },
+          // Web mode: restore persisted query/cursor state from session store before loading
+          restoringWebSession: {
+            entry: assign<LibraryState, AnyEventObject>({
+              dbQuery: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.dbQuery : { tags: [] };
+              },
+              mostRecentTag: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.mostRecentTag : '';
+              },
+              mostRecentCategory: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.mostRecentCategory : '';
+              },
+              textFilter: () => {
+                const queryData = getSessionValue('query');
+                return queryData ? queryData.textFilter : '';
+              },
+              cursor: () => {
+                const cursorData = getSessionValue('cursor');
+                return cursorData ? cursorData.cursor : 0;
+              },
+            }),
+            always: [
+              { target: 'loadingFromSearch', cond: hasPersistedTextFilter },
+              { target: 'loadingFromDB', cond: hasPersistedTags },
+              { target: 'selectingDirectory' },
+            ],
+          },
           selecting: {
             invoke: {
               src: (context, event) => {
                 const currentFile = context.initialFile;
                 console.log('selecting', context, event);
-                return window.electron.ipcRenderer.invoke('select-file', [
+                return invoke('select-file', [
                   currentFile,
                 ]);
               },
@@ -1082,7 +1120,7 @@ const libraryMachine = createMachine(
               src: (context, event) => {
                 const currentFile = context.initialFile;
                 console.log('selecting directory', context, event);
-                return window.electron.ipcRenderer.invoke('select-directory', [
+                return invoke('select-directory', [
                   currentFile,
                 ]);
               },
@@ -1114,7 +1152,7 @@ const libraryMachine = createMachine(
               src: (context, event) => {
                 console.log('loadingFromFS', context, event);
                 const { recursive } = context.settings;
-                return window.electron.ipcRenderer.invoke('load-files', [
+                return invoke('load-files', [
                   context.initialFile,
                   // Ask main to sort with original sort once complete
                   context.savedSortByDuringStreaming || 'name',
@@ -1252,7 +1290,7 @@ const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   activeCategory: (context, event) => {
                     console.log('SET_ACTIVE_CATEGORY', context, event);
-                    window.electron.store.set(
+                    store.set(
                       'activeCategory',
                       event.data.category
                     );
@@ -1290,7 +1328,7 @@ const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 console.log('loading from DB', context, event);
-                return window.electron.loadMediaFromDB(
+                return platformLoadMediaFromDB(
                   context.dbQuery.tags,
                   context.settings.filteringMode
                 );
@@ -1313,7 +1351,7 @@ const libraryMachine = createMachine(
                   context.dbQuery.tags,
                   context.settings.filteringMode
                 );
-                return window.electron.loadMediaByDescriptionSearch(
+                return platformLoadMediaByDescriptionSearch(
                   context.textFilter,
                   context.dbQuery.tags,
                   context.settings.filteringMode
@@ -1337,7 +1375,7 @@ const libraryMachine = createMachine(
                   context.dbQuery.tags,
                   context.settings.filteringMode
                 );
-                return window.electron.loadMediaByDescriptionSearch(
+                return platformLoadMediaByDescriptionSearch(
                   context.textFilter,
                   context.dbQuery.tags,
                   context.settings.filteringMode
@@ -1356,7 +1394,7 @@ const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 console.log('switchingTag', context, event);
-                return window.electron.loadMediaFromDB(
+                return platformLoadMediaFromDB(
                   context.dbQuery.tags,
                   context.settings.filteringMode
                 );
@@ -1522,7 +1560,7 @@ const libraryMachine = createMachine(
                   activeCategory: (context, event) => {
                     console.log('SET_ACTIVE_CATEGORY', context, event);
 
-                    window.electron.store.set(
+                    store.set(
                       'activeCategory',
                       event.data.category
                     );
@@ -1543,7 +1581,7 @@ const libraryMachine = createMachine(
                     library: (context, event) => {
                       console.log('DELETE_FILE', context, event);
                       try {
-                        window.electron.ipcRenderer.invoke('delete-file', [
+                        invoke('delete-file', [
                           event.data.path,
                         ]);
                       } catch (e) {
@@ -1600,7 +1638,7 @@ const libraryMachine = createMachine(
                         processedData[key] = clampVolume(processedData[key]);
                       }
 
-                      window.electron.store.set(key, processedData[key]);
+                      store.set(key, processedData[key]);
                     }
                     return {
                       ...context.settings,
@@ -1771,7 +1809,7 @@ const libraryMachine = createMachine(
                 invoke: {
                   src: (context) => {
                     console.log('[refresh] starting library refresh');
-                    return window.electron.ipcRenderer.invoke('refresh-library', [
+                    return invoke('refresh-library', [
                       {
                         initialFile: context.initialFile,
                         currentPaths: context.library.map((item) => item.path),
@@ -1899,10 +1937,13 @@ const libraryMachine = createMachine(
           },
           loadedFromSearch: {
             initial: 'idle',
-            entry: assign<LibraryState, AnyEventObject>({
-              libraryLoadId: () => uniqueId(),
-              currentStateType: () => 'search' as LibraryStateType,
-            }),
+            entry: [
+              assign<LibraryState, AnyEventObject>({
+                libraryLoadId: () => uniqueId(),
+                currentStateType: () => 'search' as LibraryStateType,
+              }),
+              (context) => updatePersistedState(context),
+            ],
             states: {
               idle: {},
             },
@@ -2082,7 +2123,7 @@ const libraryMachine = createMachine(
                     library: (context, event) => {
                       console.log('DELETE_FILE', context, event);
                       try {
-                        window.electron.ipcRenderer.invoke('delete-file', [
+                        invoke('delete-file', [
                           event.data.path,
                         ]);
                       } catch (e) {
@@ -2127,7 +2168,7 @@ const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   activeCategory: (context, event) => {
                     console.log('SET_ACTIVE_CATEGORY', context, event);
-                    window.electron;
+                    store.set('activeCategory', event.data.category);
                     return event.data.category;
                   },
                 }),
@@ -2203,6 +2244,7 @@ const libraryMachine = createMachine(
               assign<LibraryState, AnyEventObject>({
                 currentStateType: () => 'db' as LibraryStateType,
               }),
+              (context) => updatePersistedState(context),
             ],
             on: {
               LOAD_FILES_BATCH: {
@@ -2290,7 +2332,7 @@ const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   activeCategory: (context, event) => {
                     console.log('SET_ACTIVE_CATEGORY', context, event);
-                    window.electron;
+                    store.set('activeCategory', event.data.category);
                     return event.data.category;
                   },
                 }),
@@ -2387,7 +2429,7 @@ const libraryMachine = createMachine(
                     library: (context, event) => {
                       console.log('DELETE_FILE', context, event);
                       try {
-                        window.electron.ipcRenderer.invoke('delete-file', [
+                        invoke('delete-file', [
                           event.data.path,
                         ]);
                       } catch (e) {
@@ -2608,7 +2650,7 @@ const libraryMachine = createMachine(
             invoke: {
               src: (context, event) => {
                 console.log('selectingFilePath', context, event);
-                return window.electron.ipcRenderer.invoke('select-new-path', [
+                return invoke('select-new-path', [
                   event.path,
                   event.updateAll,
                 ]);
@@ -2670,7 +2712,7 @@ const GlobalStateProviderInner = (props: Props) => {
   const libraryService = useInterpret(libraryMachine);
 
   React.useEffect(() => {
-    const offBatch = window.electron.ipcRenderer.on(
+    const offBatch = on(
       'load-files-batch',
       (...args: unknown[]) => {
         const batch = (args[0] as { path: string; mtimeMs: number }[]) || [];
@@ -2680,7 +2722,7 @@ const GlobalStateProviderInner = (props: Props) => {
         });
       }
     );
-    const offDone = window.electron.ipcRenderer.on('load-files-done', () => {
+    const offDone = on('load-files-done', () => {
       libraryService.send({ type: 'LOAD_FILES_DONE' });
     });
     return () => {

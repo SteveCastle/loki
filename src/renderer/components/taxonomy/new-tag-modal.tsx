@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import { invoke } from '../../platform';
 
 import './new-modal.css';
 
@@ -24,12 +25,12 @@ export default function NewTagModal({
   function handleSubmit() {
     async function submit() {
       if (currentValue) {
-        await window.electron.ipcRenderer.invoke('rename-tag', [
+        await invoke('rename-tag', [
           currentValue,
           newLabel,
         ]);
       } else {
-        await window.electron.ipcRenderer.invoke('create-tag', [
+        await invoke('create-tag', [
           newLabel,
           categoryLabel,
           0,

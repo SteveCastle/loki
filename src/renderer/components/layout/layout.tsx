@@ -10,6 +10,7 @@ import {
 } from 'react-resizable-panels';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
+import { store } from '../../platform';
 import { Detail } from '../detail/detail';
 import filter from 'renderer/filter';
 import { List } from '../list/list';
@@ -62,7 +63,7 @@ function CollapsiblePanel({
       collapsedSize="0%"
       className="panel"
       collapsible
-      panelRef={imperativeRef}
+      panelRef={imperativeRef as React.Ref<PanelImperativeHandle>}
       onResize={(size) => {
         setCollapsed(size.asPercentage === 0);
       }}
@@ -124,7 +125,7 @@ const Layout = () => {
     () => ({
       getItem(name: string) {
         try {
-          const stored = window.electron.store.get(name, '') as string;
+          const stored = store.get(name, '') as string;
           if (!stored) return null;
           const parsed = JSON.parse(stored);
           return JSON.stringify(parsed[name] || null);
@@ -137,7 +138,7 @@ const Layout = () => {
         const encoded = JSON.stringify({
           [name]: JSON.parse(value),
         });
-        window.electron.store.set(name, encoded);
+        store.set(name, encoded);
       },
     }),
     []

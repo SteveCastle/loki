@@ -1,5 +1,6 @@
 import { Metadata } from 'main/metadata';
 import { useEffect, useRef, useState } from 'react';
+import { invoke } from '../../platform';
 import './description.css';
 import { debounce } from 'lodash';
 import { useQueryClient } from '@tanstack/react-query';
@@ -17,7 +18,7 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
 
   const updateDescription = async (newValue: string) => {
     console.log('updateDescription', path, newValue);
-    await window.electron.ipcRenderer.invoke('update-description', [
+    await invoke('update-description', [
       path,
       newValue,
     ]);

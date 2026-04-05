@@ -7,31 +7,47 @@ import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
 import { IpcMainInvokeEvent, shell } from 'electron';
 import fs from 'fs';
+import { isNetworkPath } from './network-drive-cache';
 
-const MAX_CONCURRENT_PREVIEWS = 24;
-let activePreviewCount = 0;
+const MAX_CONCURRENT_LOCAL = 12;
+const MAX_CONCURRENT_NETWORK = 3;
+let activeLocalCount = 0;
+let activeNetworkCount = 0;
 const previewQueue: Array<{
   run: () => Promise<void>;
+  network: boolean;
 }> = [];
 
 function drainPreviewQueue() {
-  while (
-    activePreviewCount < MAX_CONCURRENT_PREVIEWS &&
-    previewQueue.length > 0
-  ) {
-    const next = previewQueue.shift()!;
-    activePreviewCount++;
-    next.run().finally(() => {
-      activePreviewCount--;
-      drainPreviewQueue();
-    });
+  let i = 0;
+  while (i < previewQueue.length) {
+    const item = previewQueue[i];
+    const hasCapacity = item.network
+      ? activeNetworkCount < MAX_CONCURRENT_NETWORK
+      : activeLocalCount < MAX_CONCURRENT_LOCAL;
+
+    if (hasCapacity) {
+      previewQueue.splice(i, 1);
+      if (item.network) activeNetworkCount++;
+      else activeLocalCount++;
+
+      item.run().finally(() => {
+        if (item.network) activeNetworkCount--;
+        else activeLocalCount--;
+        drainPreviewQueue();
+      });
+    } else {
+      i++;
+    }
   }
 }
 
-function enqueuePreview<T>(fn: () => Promise<T>): Promise<T> {
+function enqueuePreview<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+  const network = isNetworkPath(filePath);
   return new Promise<T>((resolve, reject) => {
     previewQueue.push({
       run: () => fn().then(resolve, reject),
+      network,
     });
     drainPreviewQueue();
   });
@@ -335,12 +351,12 @@ const loadMediaByTags =
     }
   };
 
-type FetchMediaPreviewInput = [string, string?, timeStamp?: number];
+type FetchMediaPreviewInput = [filePath: string, cache?: string, timeStamp?: number];
 const fetchMediaPreview =
   (db: Database, store: Store) =>
   (_: IpcMainInvokeEvent, args: FetchMediaPreviewInput) => {
-    return enqueuePreview(async () => {
-      const filePath = args[0];
+    const filePath = args[0];
+    return enqueuePreview(filePath, async () => {
       const cache = args[1] || 'thumbnail_path_600';
       const timeStamp = args[2] || 0;
       const userHomeDirectory = require('os').homedir();
@@ -375,7 +391,7 @@ const copyFileIntoClipboard =
     const filePaths = args[0];
     console.log('copying file into clipboard', filePaths);
     // Copies the file into the clipboard
-    clipboard.writeFilePaths(filePaths);
+    clipboard.writeFilePaths([filePaths]);
     console.log('copied file into clipboard');
   };
 

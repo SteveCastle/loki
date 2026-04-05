@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
 import type { ScaleModeOption } from '../../../settings';
+import { mediaUrl, fetchMediaPreview as platformFetchMediaPreview } from '../../platform';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 import './image.css';
 import './sizing.css';
@@ -25,8 +26,8 @@ type Props = {
 
 const fetchMediaPreview =
   (item: string, cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false) =>
-  async (): Promise<string> => {
-    const path = await window.electron.fetchMediaPreview(item, cache);
+  async (): Promise<string | null> => {
+    const path = await platformFetchMediaPreview(item, cache);
     return path;
   };
 
@@ -48,7 +49,7 @@ function ImageComponent({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
   
-  const { data } = useQuery<string, Error>(
+  const { data, isFetched } = useQuery<string | null, Error>(
     ['media', 'preview', path, cache, version],
     fetchMediaPreview(path, cache),
     { enabled: shouldLoad }
@@ -71,38 +72,44 @@ function ImageComponent({
 
   const imgSrc = useMemo(() => {
     if (cache && !overRideCache) {
-      return window.electron.url.format({
-        protocol: 'gsm',
-        pathname: data,
-        search: version ? `?v=${version}` : undefined,
-      });
+      // In cached mode, only use the cached thumbnail path — never fall back
+      // to the original file path, which may be on slow network storage.
+      return data ? mediaUrl(data, version) : null;
     }
-    return window.electron.url.format({
-      protocol: 'gsm',
-      pathname: path,
-      search: version ? `?v=${version}` : undefined,
-    });
+    return mediaUrl(path, version);
   }, [cache, overRideCache, data, path, version]);
 
   if (error) {
     return <MediaErrorMsg path={path} />;
   }
 
-  return data || !cache ? (
-    <img
-      className={`Image ${scaleMode} ${orientation}`}
-      style={imgStyle}
-      ref={mediaRef}
-      onLoad={(e) => {
-        handleLoad && handleLoad(e);
-      }}
-      onError={() => {
-        setError(true);
-        console.log('failed to load image');
-      }}
-      src={imgSrc}
-      alt="detail"
-    />
+  return data || !cache || isFetched ? (
+    imgSrc ? (
+      <img
+        className={`Image ${scaleMode} ${orientation}`}
+        style={imgStyle}
+        ref={mediaRef}
+        onLoad={(e) => {
+          handleLoad && handleLoad(e);
+        }}
+        onError={() => {
+          setError(true);
+          console.log('failed to load image');
+        }}
+        src={imgSrc}
+        alt="detail"
+      />
+    ) : (
+      // Cached mode but thumbnail not yet available — show skeleton
+      // instead of falling back to original file on network storage
+      <div className="ThumnailLoader">
+        <div className="loading-bar">
+          <SkeletonTheme baseColor="#202020" highlightColor="#444">
+            <Skeleton />
+          </SkeletonTheme>
+        </div>
+      </div>
+    )
   ) : (
     <div className="ThumnailLoader">
       <div className="loading-bar">

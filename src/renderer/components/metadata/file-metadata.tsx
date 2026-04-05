@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Metadata } from '../../../main/metadata';
+import { invoke } from '../../platform';
 
 import './file-metadata.css';
 import InfoTable from './info-table';
@@ -12,7 +13,7 @@ import { GlobalStateContext } from '../../state';
 
 const loadFileMetadata = (path: string) => async (): Promise<Metadata> => {
   let metadata: any;
-  metadata = await window.electron.ipcRenderer.invoke('load-file-metadata', [
+  metadata = await invoke('load-file-metadata', [
     path,
   ]);
 
@@ -119,7 +120,7 @@ export default function FileMetadata({ item }: { item: any }) {
                       className="tag"
                       onClick={() => {
                         async function createAssignment() {
-                          await window.electron.ipcRenderer.invoke(
+                          await invoke(
                             'create-assignment',
                             [[item.path], tag, category, 0, false]
                           );

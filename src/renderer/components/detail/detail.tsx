@@ -78,6 +78,7 @@ function getPlayer(
         showControls={settings.showControls}
         orientation={orientation}
         startTime={startTime}
+        useHLS={settings.useHLS}
       />
     );
   }

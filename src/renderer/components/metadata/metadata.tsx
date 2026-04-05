@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from 'react';
+import { store } from '../../platform';
 import { useSelector } from '@xstate/react';
 import { getFileType, FileTypes } from '../../../file-types';
 import { GlobalStateContext } from '../../state';
@@ -57,12 +58,12 @@ const tabs = [
 export default function Metadata() {
   const [activeTabKey, setActiveTabKey] = useState<string>(() => {
     // Prefer key-based persistence; fall back to old numeric index if present
-    const storedKey = window.electron.store.get(
+    const storedKey = store.get(
       'metadata.activeTabKey',
       ''
     ) as string;
     if (storedKey) return storedKey;
-    const legacyIndex = window.electron.store.get(
+    const legacyIndex = store.get(
       'metadata.activeTab',
       0
     ) as number;
@@ -97,7 +98,7 @@ export default function Metadata() {
 
   const handleTabChange = (key: string) => {
     setActiveTabKey(key);
-    window.electron.store.set('metadata.activeTabKey', key);
+    store.set('metadata.activeTabKey', key);
   };
 
   const filteredTabs = useMemo(() => {

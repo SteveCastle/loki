@@ -290,6 +290,35 @@ func TestConfigJSONUnmarshal(t *testing.T) {
 	}
 }
 
+func TestConfigRootPaths(t *testing.T) {
+	c := Config{
+		DBPath:    "/tmp/test.db",
+		JWTSecret: "test-secret",
+		RootPaths: []string{"/mnt/media", "/home/user/photos"},
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var c2 Config
+	if err := json.Unmarshal(data, &c2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(c2.RootPaths) != 2 || c2.RootPaths[0] != "/mnt/media" || c2.RootPaths[1] != "/home/user/photos" {
+		t.Fatalf("unexpected RootPaths: %v", c2.RootPaths)
+	}
+}
+
+func TestConfigRootPathsDefaultEmpty(t *testing.T) {
+	c := defaultConfig()
+	if c.RootPaths == nil {
+		t.Fatal("RootPaths should not be nil, should be empty slice")
+	}
+	if len(c.RootPaths) != 0 {
+		t.Fatalf("expected empty RootPaths, got: %v", c.RootPaths)
+	}
+}
+
 // TestConfigConcurrency tests concurrent access to Get/Set
 func TestConfigConcurrency(t *testing.T) {
 	// Save original and restore after test

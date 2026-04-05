@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { ScaleModeOption, clampVolume } from 'settings';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
+import Hls from 'hls.js';
+import { mediaUrl, hlsUrl, fetchMediaPreview as platformFetchMediaPreview } from '../../platform';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 
 import './video.css';
@@ -29,6 +31,7 @@ type Props = {
   version?: number;
   /** Delay loading by ms to prevent loading during fast scroll (0 = no delay) */
   loadDelay?: number;
+  useHLS?: boolean;
 };
 
 const fetchMediaPreview =
@@ -37,8 +40,8 @@ const fetchMediaPreview =
     cache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
     timeStamp: number
   ) =>
-  async (): Promise<string> => {
-    const path = await window.electron.fetchMediaPreview(
+  async (): Promise<string | null> => {
+    const path = await platformFetchMediaPreview(
       item,
       cache,
       timeStamp
@@ -70,6 +73,7 @@ export function Video({
   cache = false,
   version = 0,
   loadDelay = 0,
+  useHLS = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const { timeStamp, loopLength, loopStartTime, playing } = useSelector(
@@ -86,7 +90,7 @@ export function Video({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
 
-  const { data, isLoading } = useQuery<string, Error>(
+  const { data, isLoading, isFetched } = useQuery<string | null, Error>(
     ['media', 'preview', path, cache, startTime, version],
     fetchMediaPreview(path, cache, startTime),
     { enabled: shouldLoad && !!cache }
@@ -182,6 +186,226 @@ export function Video({
     }
   }, [volume]);
 
+  const hlsRef = useRef<Hls | null>(null);
+  const [hlsFailed, setHlsFailed] = useState(false);
+  const [hlsReady, setHlsReady] = useState(false);
+  const [hlsGenerating, setHlsGenerating] = useState(false);
+  const [hlsProgress, setHlsProgress] = useState<{ status: string; progress: number } | null>(null);
+  const [hlsError, setHlsError] = useState<string | null>(null);
+  const hlsManifestUrl = useRef<string | null>(null);
+  const hlsPollCancel = useRef<(() => void) | null>(null);
+
+  // Reset HLS state when path changes.
+  useEffect(() => {
+    hlsPollCancel.current?.();
+    setHlsFailed(false);
+    setHlsReady(false);
+    setHlsGenerating(false);
+    setHlsProgress(null);
+    setHlsError(null);
+    hlsManifestUrl.current = null;
+  }, [path]);
+
+  // Check if stream is already cached on mount (no generation triggered).
+  const hlsActive = useHLS && !hlsFailed && hlsUrl && !cache;
+  useEffect(() => {
+    if (!hlsActive || hlsGenerating || hlsReady) return;
+
+    let cancelled = false;
+    // One-shot check: if server says "ready", skip the button.
+    // Use check=true so the server does NOT start encoding — only reports cached/inflight status.
+    fetch(hlsUrl!(path) + '&check=true', { method: 'GET' })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (cancelled || !data) return;
+        if (data.status === 'ready') {
+          hlsManifestUrl.current = data.url;
+          setHlsReady(true);
+        } else if (data.status === 'processing' || data.status === 'queued') {
+          // Already generating (started by a previous session/request).
+          setHlsGenerating(true);
+          setHlsProgress({ status: data.status, progress: data.progress || 0 });
+          startPolling();
+        }
+      })
+      .catch(() => {});
+
+    return () => { cancelled = true; };
+  }, [hlsActive, path]);
+
+  // Start polling for generation progress.
+  const startPolling = () => {
+    hlsPollCancel.current?.();
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(hlsUrl!(path));
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.status === 'ready') {
+          hlsManifestUrl.current = data.url;
+          setHlsProgress(null);
+          setHlsGenerating(false);
+          setHlsReady(true);
+        } else if (data.status === 'processing' || data.status === 'queued') {
+          setHlsProgress({ status: data.status, progress: data.progress || 0 });
+          pollTimer = setTimeout(poll, 1000);
+        } else if (data.status === 'error') {
+          setHlsGenerating(false);
+          setHlsError(data.error || 'Generation failed');
+        }
+      } catch {
+        if (!cancelled) pollTimer = setTimeout(poll, 2000);
+      }
+    };
+
+    poll();
+    hlsPollCancel.current = () => {
+      cancelled = true;
+      clearTimeout(pollTimer);
+    };
+  };
+
+  // User clicks "Generate Stream" — fire the first request to kick off generation, then poll.
+  const handleGenerateHLS = () => {
+    if (!hlsUrl) return;
+    setHlsGenerating(true);
+    setHlsError(null);
+    setHlsProgress(null);
+
+    fetch(hlsUrl(path))
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!data) return;
+        if (data.status === 'ready') {
+          hlsManifestUrl.current = data.url;
+          setHlsGenerating(false);
+          setHlsReady(true);
+        } else {
+          setHlsProgress({ status: data.status, progress: data.progress || 0 });
+          startPolling();
+        }
+      })
+      .catch(() => {
+        setHlsGenerating(false);
+        setHlsError('Network error');
+      });
+  };
+
+  // Once HLS is ready and the <video> element is mounted, attach hls.js.
+  useEffect(() => {
+    if (!hlsReady || !mediaRef?.current || !hlsManifestUrl.current) return;
+
+    const video = mediaRef.current;
+    const url = hlsManifestUrl.current;
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: true });
+      hlsRef.current = hls;
+      hls.loadSource(url);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_event, errData) => {
+        if (errData.fatal) {
+          console.log('hls.js fatal error:', errData.type, errData.details);
+          hls.destroy();
+          hlsRef.current = null;
+          setHlsFailed(true);
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url;
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [hlsReady, mediaRef]);
+
+  // HLS UI states — shown instead of the <video> element until ready.
+  if (hlsActive && !hlsReady) {
+    // Generating: show progress bar.
+    if (hlsGenerating) {
+      const pct = hlsProgress ? Math.round(hlsProgress.progress * 100) : 0;
+      const label = !hlsProgress
+        ? 'Starting...'
+        : hlsProgress.status === 'queued'
+        ? 'Queued...'
+        : `Processing${pct > 0 ? ` ${pct}%` : '...'}`;
+      return (
+        <div className="Video" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', gap: '8px', color: '#aaa', fontSize: '14px',
+        }}>
+          <div>{label}</div>
+          {hlsProgress && hlsProgress.status === 'processing' && (
+            <div style={{
+              width: '200px', height: '4px', background: '#333',
+              borderRadius: '2px', overflow: 'hidden',
+            }}>
+              <div style={{
+                width: `${pct}%`, height: '100%', background: '#888',
+                transition: 'width 0.5s ease',
+              }} />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Error: show message with retry button.
+    if (hlsError) {
+      return (
+        <div className="Video" style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexDirection: 'column', gap: '8px', color: '#aaa', fontSize: '14px',
+        }}>
+          <div>Stream generation failed</div>
+          <div style={{ fontSize: '12px', color: '#777' }}>{hlsError}</div>
+          <button
+            onClick={handleGenerateHLS}
+            style={{
+              marginTop: '4px', padding: '6px 16px', background: '#333',
+              color: '#ccc', border: '1px solid #555', borderRadius: '4px',
+              cursor: 'pointer', fontSize: '13px',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+
+    // Idle: show generate button.
+    return (
+      <div className="Video" style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexDirection: 'column', gap: '8px', color: '#aaa', fontSize: '14px',
+      }}>
+        <button
+          onClick={handleGenerateHLS}
+          style={{
+            padding: '8px 20px', background: '#333', color: '#ccc',
+            border: '1px solid #555', borderRadius: '4px',
+            cursor: 'pointer', fontSize: '13px',
+          }}
+        >
+          Generate HLS Stream
+        </button>
+      </div>
+    );
+  }
+
   if (error) {
     console.log('video error:', error);
     return (
@@ -192,7 +416,7 @@ export function Video({
         handleLoad={handleLoad}
         orientation={orientation}
         cache={cache}
-        overRideCache={true}
+        overRideCache={!cache}
       />
     );
   }
@@ -250,17 +474,20 @@ export function Video({
             e.preventDefault();
           }}
           muted={!playSound}
-          src={window.electron.url.format({ protocol: 'gsm', pathname: path })}
+          src={hlsActive && hlsReady ? undefined : mediaUrl(path)}
           controls={showControls}
           controlsList={'nodownload nofullscreen'}
           autoPlay
-          loop
+          loop={!hlsActive}
         />
       </>
     );
   }
 
-  if (!shouldLoad || isLoading || !data) {
+  if (!shouldLoad || (isLoading && !isFetched) || !data) {
+    // In cached mode: show skeleton while loading, while fetching,
+    // or when thumbnail is not yet available — never fall back to
+    // the original file path which may be on slow network storage.
     return (
       <div className="ThumnailLoader">
         <div className="loading-bar">
@@ -296,11 +523,7 @@ export function Video({
         e.preventDefault();
       }}
       muted={!playSound}
-      src={window.electron.url.format({
-        protocol: 'gsm',
-        pathname: data,
-        search: version ? `?v=${version}` : undefined,
-      })}
+      src={mediaUrl(data, version)}
       controls={false}
       controlsList={'nodownload nofullscreen'}
       autoPlay

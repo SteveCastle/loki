@@ -1,6 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
+import { transcript } from '../../platform';
 import { GlobalStateContext } from '../../state';
 import { VttCue } from 'main/parse-vtt';
 import { uniqueId } from 'xstate/lib/utils';
@@ -79,7 +80,7 @@ export function Cue({
 
     setIsSaving(true);
     try {
-      await window.electron.transcript.modifyTranscript({
+      await transcript.modifyTranscript({
         mediaPath,
         cueIndex,
         startTime: editStartTime !== cue.startTime ? editStartTime : undefined,

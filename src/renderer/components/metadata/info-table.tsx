@@ -10,6 +10,7 @@ type Props = {
 };
 
 const InfoTable: React.FC<Props> = ({ data }) => {
+  if (!data) return null;
   return (
     <div className="InfoTable">
       <table>

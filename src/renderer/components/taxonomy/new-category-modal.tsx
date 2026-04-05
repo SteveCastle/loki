@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import cancel from '../../../../assets/cancel.svg';
 
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import { invoke } from '../../platform';
 
 import './new-modal.css';
 
@@ -28,12 +29,12 @@ export default function NewCategoryModal({
   function handleSubmit() {
     async function submit() {
       if (currentValue) {
-        await window.electron.ipcRenderer.invoke('rename-category', [
+        await invoke('rename-category', [
           currentValue,
           newLabel,
         ]);
       } else {
-        await window.electron.ipcRenderer.invoke('create-category', [
+        await invoke('create-category', [
           newLabel,
           0,
         ]);
@@ -49,7 +50,7 @@ export default function NewCategoryModal({
 
   function handleResetOrdering() {
     async function resetOrdering() {
-      await window.electron.ipcRenderer.invoke('order-tags', [currentValue]);
+      await invoke('order-tags', [currentValue]);
       queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
       handleClose();

@@ -1347,6 +1347,7 @@
               <option value="metadata">Generate Metadata</option>
               <option value="autotag">Auto Tag (ONNX)</option>
               <option value="lora-dataset">Create LoRA Dataset</option>
+              <option value="hls">Pre-generate HLS Streams</option>
             </select>
             <div
               id="metadata-options"
@@ -1688,6 +1689,52 @@
                 each description.
               </div>
             </div>
+            <div
+              id="hls-options"
+              style="
+                display: none;
+                flex-direction: column;
+                gap: 10px;
+                margin-top: 10px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >Preset:</label
+                >
+                <select
+                  id="hls-preset-select"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    min-width: 180px;
+                  "
+                >
+                  <option value="passthrough">Passthrough (stream copy)</option>
+                  <option value="adaptive">Adaptive (480p + 720p + 1080p)</option>
+                  <option value="480p">480p</option>
+                  <option value="720p">720p</option>
+                  <option value="1080p">1080p</option>
+                </select>
+              </div>
+              <div style="font-size: 0.8em; color: #888; line-height: 1.3">
+                <strong>Note:</strong> Pre-generates HLS streams for video files
+                matching the query. Passthrough remuxes without re-encoding
+                (fastest). Adaptive creates multiple quality tiers. Already-cached
+                streams are skipped automatically.
+              </div>
+            </div>
             <button type="submit" id="execute-button">Execute</button>
             <button
               type="button"
@@ -2006,11 +2053,13 @@
           const loraDatasetOptions = document.getElementById(
             'lora-dataset-options'
           );
+          const hlsOptions = document.getElementById('hls-options');
 
           // Hide all options first
           metadataOptions.style.display = 'none';
           moveOptions.style.display = 'none';
           loraDatasetOptions.style.display = 'none';
+          hlsOptions.style.display = 'none';
 
           // Show relevant options
           if (this.value === 'metadata') {
@@ -2019,6 +2068,8 @@
             moveOptions.style.display = 'flex';
           } else if (this.value === 'lora-dataset') {
             loraDatasetOptions.style.display = 'flex';
+          } else if (this.value === 'hls') {
+            hlsOptions.style.display = 'flex';
           }
         });
 
@@ -2046,6 +2097,7 @@
             'move',
             'remove',
             'lora-dataset',
+            'hls',
           ];
           if (
             selectedItems.size === 0 &&
@@ -2244,6 +2296,26 @@
             }
 
             // If applying to current search, pass the query
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push('--query64=' + encQuery);
+              } catch (e) {
+                args.push('--query', currentSearchQuery);
+              }
+              input = '';
+            } else {
+              input = Array.from(selectedItems).join('\n');
+            }
+          } else if (selectedTask === 'hls') {
+            command = 'hls';
+            args = [];
+
+            const hlsPreset = document.getElementById('hls-preset-select').value;
+            args.push('--preset', hlsPreset);
+
             if (applyToQuery && currentSearchQuery) {
               try {
                 const encQuery = btoa(

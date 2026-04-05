@@ -43,6 +43,9 @@ type Config struct {
 
 	// JWT Secret for authentication
 	JWTSecret string `json:"jwtSecret"`
+
+	// Allowed root paths for web filesystem browsing (empty = unrestricted)
+	RootPaths []string `json:"rootPaths"`
 }
 
 var (
@@ -92,6 +95,7 @@ func defaultConfig() Config {
 			CharacterThreshold: 0.85,
 		},
 		JWTSecret: uuid.New().String(),
+		RootPaths: []string{},
 	}
 }
 
