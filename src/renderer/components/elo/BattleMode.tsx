@@ -3,6 +3,7 @@ import { useSelector } from '@xstate/react';
 import { useMutation } from '@tanstack/react-query';
 import filter from 'renderer/filter';
 import { GlobalStateContext, Item } from '../../state';
+import { invoke } from '../../platform';
 import './BattleMode.css';
 
 interface Props {
@@ -34,7 +35,7 @@ const updateElo = async ({
   losingPath: string;
   losingElo: number;
 }) => {
-  await window.electron.ipcRenderer.invoke('update-elo', [
+  await invoke('update-elo', [
     winningPath,
     winningElo,
     losingPath,

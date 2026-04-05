@@ -1,4 +1,5 @@
 import { useContext, memo, useRef, useEffect, useState } from 'react';
+import { invoke } from '../../platform';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -19,7 +20,7 @@ type Metadata = {
 };
 const loadTagsByMediaPath = (media: Item) => async (): Promise<Metadata> => {
   let metadata: any;
-  metadata = await window.electron.ipcRenderer.invoke(
+  metadata = await invoke(
     'load-tags-by-media-path',
     [media]
   );
@@ -29,7 +30,7 @@ const loadTagsByMediaPath = (media: Item) => async (): Promise<Metadata> => {
 };
 
 const deleteTag = async ({ path, tag }: { path: string; tag: Tag }) => {
-  await window.electron.ipcRenderer.invoke('delete-assignment', [path, tag]);
+  await invoke('delete-assignment', [path, tag]);
 };
 
 const updateTimestamp = async ({ 
@@ -43,7 +44,7 @@ const updateTimestamp = async ({
   oldTimestamp: number; 
   newTimestamp: number; 
 }) => {
-  await window.electron.ipcRenderer.invoke('update-timestamp', [path, tagLabel, oldTimestamp, newTimestamp]);
+  await invoke('update-timestamp', [path, tagLabel, oldTimestamp, newTimestamp]);
 };
 
 const removeTimestamp = async ({ 
@@ -56,7 +57,7 @@ const removeTimestamp = async ({
   timestamp: number; 
 }) => {
   console.log('Frontend: removing timestamp', { path, tagLabel, timestamp });
-  await window.electron.ipcRenderer.invoke('remove-timestamp', [path, tagLabel, timestamp]);
+  await invoke('remove-timestamp', [path, tagLabel, timestamp]);
 };
 
 interface Props {

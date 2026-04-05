@@ -742,6 +742,33 @@
             </div>
 
             <div class="config-card config-card--purple">
+              <div class="section-title">📂 Web File Browser</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Root Paths</label>
+                  <textarea
+                    id="root-paths"
+                    class="input"
+                    rows="3"
+                    placeholder="One path per line (empty = unrestricted)"
+                    style="resize: vertical; font-family: monospace; font-size: 0.9em"
+                  >{{range $i, $p := .Config.RootPaths}}{{if $i}}&#10;{{end}}{{$p}}{{end}}</textarea>
+                  <div
+                    class="hint"
+                    style="
+                      font-size: 0.8em;
+                      color: var(--text-muted);
+                      margin-top: 5px;
+                    "
+                  >
+                    Restrict the web file browser to these directories. One path
+                    per line. Leave empty to allow browsing the entire filesystem.
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-card config-card--purple">
               <div class="section-title">💬 Discord</div>
               <div class="fields">
                 <div class="field">
@@ -1539,6 +1566,11 @@
           fasterWhisperPath: document
             .getElementById('faster-whisper-path')
             .value.trim(),
+          rootPaths: document
+            .getElementById('root-paths')
+            .value.split('\n')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0),
         };
         setStatus('Saving...');
         fetch('/config', {

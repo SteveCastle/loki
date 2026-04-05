@@ -1,5 +1,6 @@
 import { useContext, useRef, useState } from 'react';
 import { GlobalStateContext, Item } from '../state';
+import { invoke } from '../platform';
 import filter from '../filter';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
@@ -100,7 +101,7 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
               },
             });
           }
-          await window.electron.ipcRenderer.invoke('create-assignment', [
+          await invoke('create-assignment', [
             targetPaths,
             tag.label,
             tag.category,
@@ -143,7 +144,7 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
           const newWeight = isLeft
             ? (previousItemWeight + targetWeight) / 2
             : (nextItemWeight + targetWeight) / 2;
-          await window.electron.ipcRenderer.invoke('update-assignment-weight', [
+          await invoke('update-assignment-weight', [
             media.path,
             activeTag,
             newWeight,

@@ -28,3 +28,5 @@ npm-debug.log.*
 *.sass.d.ts
 *.scss.d.ts
 .yarn
+media-server/loki-static
+debug_screenshots

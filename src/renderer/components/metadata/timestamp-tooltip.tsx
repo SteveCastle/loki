@@ -171,7 +171,7 @@ export default function TimestampTooltip({
       place="top"
       className="timestamp-tooltip"
       openOnClick={false}
-      closeOnClick={false}
+      globalCloseEvents={{ clickOutsideAnchor: true }}
       events={['hover']}
       float={true}
       positionStrategy="fixed"

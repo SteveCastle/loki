@@ -1,6 +1,7 @@
 import { useContext } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
+import { send, capabilities } from '../../platform';
 import './setup-wizard.css';
 
 export function SetupWizard() {
@@ -19,19 +20,19 @@ export function SetupWizard() {
           <span
             className="closeControl"
             onClick={() =>
-              window.electron.ipcRenderer.sendMessage('shutdown', [])
+              send('shutdown', [])
             }
           />
           <span
             className="windowedControl"
             onClick={() =>
-              window.electron.ipcRenderer.sendMessage('minimize', [])
+              send('minimize', [])
             }
           />
           <span
             className="fullScreenControl"
             onClick={() =>
-              window.electron.ipcRenderer.sendMessage('toggle-fullscreen', [])
+              send('toggle-fullscreen', [])
             }
           />
         </div>
