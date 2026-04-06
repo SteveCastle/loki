@@ -39,7 +39,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 			width INTEGER,
 			height INTEGER,
 			thumbnail_path_600 TEXT,
-			thumbnail_path_1200 TEXT
+			thumbnail_path_1200 TEXT,
+			elo REAL
 		)`,
 		`CREATE TABLE media_tag_by_category (
 			media_path TEXT,
@@ -107,18 +108,23 @@ func TestLokiTaxonomyHandler(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 
-	var resp struct {
-		Categories []map[string]any `json:"categories"`
-		Tags       []map[string]any `json:"tags"`
+	var resp map[string]struct {
+		Label  string `json:"label"`
+		Weight float64 `json:"weight"`
+		Tags   []map[string]any `json:"tags"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Categories) != 2 {
-		t.Errorf("expected 2 categories, got %d", len(resp.Categories))
+	if len(resp) != 2 {
+		t.Errorf("expected 2 categories, got %d", len(resp))
 	}
-	if len(resp.Tags) != 3 {
-		t.Errorf("expected 3 tags, got %d", len(resp.Tags))
+	totalTags := 0
+	for _, cat := range resp {
+		totalTags += len(cat.Tags)
+	}
+	if totalTags != 3 {
+		t.Errorf("expected 3 tags, got %d", totalTags)
 	}
 }
 

@@ -86,6 +86,11 @@
   background: var(--bg-hover, #2a2a2a);
 }
 
+.file-browser-entry.selected {
+  background: var(--accent-color, #4a9eff);
+  color: #fff;
+}
+
 .file-browser-entry .icon {
   font-size: 16px;
   width: 20px;

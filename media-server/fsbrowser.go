@@ -118,7 +118,7 @@ func fsListHandler(deps *Dependencies) http.HandlerFunc {
 						continue
 					}
 					entries = append(entries, fsEntry{
-						Name:    filepath.Base(root),
+						Name:    root,
 						Path:    root,
 						IsDir:   true,
 						MtimeMs: float64(info.ModTime().UnixMilli()),
