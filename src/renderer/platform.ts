@@ -345,17 +345,21 @@ if (isElectron) {
 
   // Channels that are Electron-only and should silently return undefined
   const stubbedChannels = [
-    'select-file', 'select-db', 'select-new-path',
+    'select-db', 'select-new-path',
     'refresh-library', 'copy-file-into-clipboard',
     'check-for-updates', 'update-elo',
     'load-duplicates-by-path', 'merge-duplicates-by-path',
   ];
 
   invoke = async (channel, args) => {
-    // Special handling: select-directory opens file browser modal
+    // Special handling: file browser modal for select-directory and select-file
     if (channel === 'select-directory') {
       const { openFileBrowser } = await import('./components/controls/file-browser-modal');
-      return openFileBrowser();
+      return openFileBrowser('directory');
+    }
+    if (channel === 'select-file') {
+      const { openFileBrowser } = await import('./components/controls/file-browser-modal');
+      return openFileBrowser('file');
     }
 
     if (stubbedChannels.includes(channel)) {
