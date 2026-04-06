@@ -241,10 +241,19 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// If the path points to a file, scan its parent directory instead
+		// and remember the selected file so we can set the cursor to it.
+		scanPath := req.Path
+		selectedFile := ""
+		if info, err := os.Stat(req.Path); err == nil && !info.IsDir() {
+			selectedFile = req.Path
+			scanPath = filepath.Dir(req.Path)
+		}
+
 		var files []fsScanFile
 
 		if req.Recursive {
-			filepath.WalkDir(req.Path, func(path string, d fs.DirEntry, err error) error {
+			filepath.WalkDir(scanPath, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					return nil
 				}
@@ -267,7 +276,7 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 				return nil
 			})
 		} else {
-			dirEntries, err := os.ReadDir(req.Path)
+			dirEntries, err := os.ReadDir(scanPath)
 			if err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -279,7 +288,7 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 						continue
 					}
 					files = append(files, fsScanFile{
-						Path:    filepath.Join(req.Path, de.Name()),
+						Path:    filepath.Join(scanPath, de.Name()),
 						MtimeMs: float64(info.ModTime().UnixMilli()),
 					})
 				}
@@ -292,9 +301,20 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 			files = []fsScanFile{}
 		}
 
+		cursor := 0
+		if selectedFile != "" {
+			cleanSelected := filepath.Clean(selectedFile)
+			for i, f := range files {
+				if filepath.Clean(f.Path) == cleanSelected {
+					cursor = i
+					break
+				}
+			}
+		}
+
 		writeJSON(w, fsScanResponse{
 			Library: files,
-			Cursor:  0,
+			Cursor:  cursor,
 		})
 	}
 }

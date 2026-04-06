@@ -395,27 +395,27 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 			}
 		}
 
-		// No thumbnail in DB or file missing — generate one asynchronously
+		// No thumbnail in DB or file missing — generate synchronously so the
+		// client receives the path once ffmpeg finishes (matches Electron behavior).
 		dbPath := currentConfig.DBPath
 		if dbPath == "" {
 			writeJSON(w, nil)
 			return
 		}
 		basePath := filepath.Dir(dbPath)
-		go func() {
-			generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
-			if err != nil {
-				log.Printf("Thumbnail generation failed for %s: %v", req.Path, err)
-				return
-			}
-			// Store the generated path in the DB
-			deps.DB.Exec(
-				fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
-				generated, req.Path,
-			)
-			log.Printf("Generated thumbnail for %s → %s", req.Path, generated)
-		}()
-		writeJSON(w, nil)
+		generated, err := generateThumbnailThrottled(req.Path, basePath, cache, req.TimeStamp)
+		if err != nil {
+			log.Printf("Thumbnail generation failed for %s: %v", req.Path, err)
+			writeJSON(w, nil)
+			return
+		}
+		// Store the generated path in the DB
+		deps.DB.Exec(
+			fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
+			generated, req.Path,
+		)
+		log.Printf("Generated thumbnail for %s → %s", req.Path, generated)
+		writeJSON(w, generated)
 	}
 }
 
