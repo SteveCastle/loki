@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import './file-browser-modal.css';
 
@@ -15,12 +15,17 @@ type FsListResponse = {
   roots: string[];
 };
 
+type BrowseMode = 'directory' | 'file';
+
 let resolveModal: ((path: string) => void) | null = null;
 let rejectModal: (() => void) | null = null;
 let mountContainer: HTMLDivElement | null = null;
 let root: ReturnType<typeof createRoot> | null = null;
+let currentMode: BrowseMode = 'directory';
 
 function FileBrowserModal() {
+  const mode = currentMode;
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [currentPath, setCurrentPath] = useState('');
   const [entries, setEntries] = useState<FsEntry[]>([]);
   const [parent, setParent] = useState<string | null>(null);
@@ -58,12 +63,26 @@ function FileBrowserModal() {
 
   const handleEntryClick = (entry: FsEntry) => {
     if (entry.isDir) {
+      setSelectedFile(null);
       fetchEntries(entry.path);
+    } else if (mode === 'file') {
+      setSelectedFile(entry.path);
+    }
+  };
+
+  const handleEntryDoubleClick = (entry: FsEntry) => {
+    if (!entry.isDir && mode === 'file' && resolveModal) {
+      resolveModal(entry.path);
+      cleanup();
     }
   };
 
   const handleOpen = () => {
-    if (resolveModal && currentPath) {
+    if (!resolveModal) return;
+    if (mode === 'file' && selectedFile) {
+      resolveModal(selectedFile);
+      cleanup();
+    } else if (mode === 'directory' && currentPath) {
       resolveModal(currentPath);
       cleanup();
     }
@@ -102,7 +121,7 @@ function FileBrowserModal() {
     <div className="file-browser-overlay" onClick={handleOverlayClick}>
       <div className="file-browser-modal">
         <div className="file-browser-header">
-          <h3>Browse Directory</h3>
+          <h3>{mode === 'file' ? 'Select File' : 'Browse Directory'}</h3>
         </div>
 
         {currentPath && (
@@ -134,8 +153,9 @@ function FileBrowserModal() {
             entries.map((entry) => (
               <div
                 key={entry.path}
-                className="file-browser-entry"
+                className={`file-browser-entry${!entry.isDir && selectedFile === entry.path ? ' selected' : ''}`}
                 onClick={() => handleEntryClick(entry)}
+                onDoubleClick={() => handleEntryDoubleClick(entry)}
               >
                 <span className="icon">{entry.isDir ? '\uD83D\uDCC1' : '\uD83D\uDCC4'}</span>
                 <span className="name">{entry.name}</span>
@@ -145,7 +165,11 @@ function FileBrowserModal() {
 
         <div className="file-browser-footer">
           <button onClick={handleCancel}>Cancel</button>
-          <button className="primary" onClick={handleOpen} disabled={!currentPath}>
+          <button
+            className="primary"
+            onClick={handleOpen}
+            disabled={mode === 'file' ? !selectedFile : !currentPath}
+          >
             Open
           </button>
         </div>
@@ -169,10 +193,11 @@ function cleanup() {
 
 /**
  * Opens the file browser modal and returns a promise that resolves
- * with the selected directory path (bare string) or rejects on cancel.
+ * with the selected path (bare string) or rejects on cancel.
  */
-export function openFileBrowser(): Promise<string> {
+export function openFileBrowser(mode: BrowseMode = 'directory'): Promise<string> {
   cleanup();
+  currentMode = mode;
 
   return new Promise<string>((resolve, reject) => {
     resolveModal = resolve;
