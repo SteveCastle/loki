@@ -1704,7 +1704,7 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		// If local path, enforce absolute path to avoid traversal via relative inputs
-		if !strings.HasPrefix(filePath, "http://") && !strings.HasPrefix(filePath, "https://") {
+		if !strings.HasPrefix(filePath, "http://") && !strings.HasPrefix(filePath, "https://") && !strings.HasPrefix(filePath, "s3://") {
 			if !filepath.IsAbs(filePath) {
 				http.Error(w, "Path must be absolute", http.StatusBadRequest)
 				return
@@ -1714,6 +1714,23 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 		// For remote URLs, proxy the request
 		if strings.HasPrefix(filePath, "http://") || strings.HasPrefix(filePath, "https://") {
 			proxyRemoteMedia(w, r, filePath)
+			return
+		}
+
+		// For S3 paths, redirect to presigned URL
+		if strings.HasPrefix(filePath, "s3://") {
+			backend := deps.Storage.BackendFor(filePath)
+			if backend == nil {
+				http.Error(w, "No storage backend for path", http.StatusNotFound)
+				return
+			}
+			presignedURL, err := backend.MediaURL(filePath)
+			if err != nil {
+				log.Printf("Failed to generate presigned URL for %s: %v", filePath, err)
+				http.Error(w, "Failed to generate media URL", http.StatusInternalServerError)
+				return
+			}
+			http.Redirect(w, r, presignedURL, http.StatusFound)
 			return
 		}
 
