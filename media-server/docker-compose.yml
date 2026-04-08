@@ -1,0 +1,72 @@
+services:
+  lowkey-media-server:
+    build: .
+    ports:
+      - "${LOWKEY_PORT:-8090}:8090"
+    volumes:
+      - lowkey-data:/data
+      # Mount local media directories (uncomment and edit as needed):
+      # - /path/to/your/photos:/mnt/photos:ro
+      # - /path/to/your/videos:/mnt/videos:ro
+    environment:
+      - LOWKEY_DB_PATH=/data/db/media.db
+      - LOWKEY_DOWNLOAD_PATH=/data/media
+      - LOWKEY_OLLAMA_BASE_URL=${LOWKEY_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - LOWKEY_OLLAMA_MODEL=${LOWKEY_OLLAMA_MODEL:-llama3.2-vision}
+      - LOWKEY_JWT_SECRET=${LOWKEY_JWT_SECRET:-}
+      # - LOWKEY_DISCORD_TOKEN=
+
+      # Storage roots — local paths (uncomment and edit):
+      # - LOWKEY_ROOT_1=/mnt/photos:Photos
+      # - LOWKEY_ROOT_2=/mnt/videos:Videos
+
+      # Or use LOWKEY_ROOTS for S3 / mixed configs:
+      # - LOWKEY_ROOTS=[{"type":"s3","label":"My Bucket","endpoint":"https://s3.example.com","region":"us-east-1","bucket":"media","accessKey":"AK","secretKey":"SK"}]
+    restart: unless-stopped
+    depends_on:
+      minio-setup:
+        condition: service_completed_successfully
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"  # Uncomment on Linux for Ollama access
+
+  # ---------------------------------------------------------------------------
+  # MinIO — S3-compatible object storage for local development/testing
+  # Console: http://localhost:9001  (login: minioadmin / minioadmin)
+  # API:     http://localhost:9000
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # One-shot container that creates the default bucket and uploads sample files
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/media &&
+      mc mb --ignore-existing local/media-thumbnails &&
+      mc anonymous set download local/media &&
+      echo 'MinIO buckets ready.'
+      "
+
+volumes:
+  lowkey-data:
+  minio-data:

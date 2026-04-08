@@ -433,6 +433,171 @@ func TestS3ConfigParsing(t *testing.T) {
 	}
 }
 
+// TestApplyEnvOverrides verifies environment variables override config values.
+func TestApplyEnvOverrides(t *testing.T) {
+	c := defaultConfig()
+
+	// Set env vars
+	envs := map[string]string{
+		"LOWKEY_DB_PATH":             "/env/db.sqlite",
+		"LOWKEY_DOWNLOAD_PATH":       "/env/downloads",
+		"LOWKEY_OLLAMA_BASE_URL":     "http://env-ollama:11434",
+		"LOWKEY_OLLAMA_MODEL":        "env-model",
+		"LOWKEY_JWT_SECRET":          "env-secret",
+		"LOWKEY_DISCORD_TOKEN":       "env-discord",
+		"LOWKEY_FASTER_WHISPER_PATH": "/env/whisper",
+	}
+	for k, v := range envs {
+		t.Setenv(k, v)
+	}
+
+	applyEnvOverrides(&c)
+
+	if c.DBPath != "/env/db.sqlite" {
+		t.Errorf("DBPath = %q; want %q", c.DBPath, "/env/db.sqlite")
+	}
+	if c.DownloadPath != "/env/downloads" {
+		t.Errorf("DownloadPath = %q; want %q", c.DownloadPath, "/env/downloads")
+	}
+	if c.OllamaBaseURL != "http://env-ollama:11434" {
+		t.Errorf("OllamaBaseURL = %q; want %q", c.OllamaBaseURL, "http://env-ollama:11434")
+	}
+	if c.OllamaModel != "env-model" {
+		t.Errorf("OllamaModel = %q; want %q", c.OllamaModel, "env-model")
+	}
+	if c.JWTSecret != "env-secret" {
+		t.Errorf("JWTSecret = %q; want %q", c.JWTSecret, "env-secret")
+	}
+	if c.DiscordToken != "env-discord" {
+		t.Errorf("DiscordToken = %q; want %q", c.DiscordToken, "env-discord")
+	}
+	if c.FasterWhisperPath != "/env/whisper" {
+		t.Errorf("FasterWhisperPath = %q; want %q", c.FasterWhisperPath, "/env/whisper")
+	}
+}
+
+// TestApplyEnvOverridesUnset verifies unset env vars don't change config.
+func TestApplyEnvOverridesUnset(t *testing.T) {
+	c := defaultConfig()
+	original := c.OllamaBaseURL
+
+	applyEnvOverrides(&c)
+
+	if c.OllamaBaseURL != original {
+		t.Errorf("OllamaBaseURL changed to %q; should remain %q when env unset", c.OllamaBaseURL, original)
+	}
+}
+
+// TestParseEnvRootsNumbered verifies LOWKEY_ROOT_N env vars produce local roots.
+func TestParseEnvRootsNumbered(t *testing.T) {
+	t.Setenv("LOWKEY_ROOT_1", "/mnt/photos")
+	t.Setenv("LOWKEY_ROOT_2", "/mnt/videos:Videos")
+
+	roots, ok := parseEnvRoots()
+	if !ok {
+		t.Fatal("parseEnvRoots returned false; want true")
+	}
+	if len(roots) != 2 {
+		t.Fatalf("got %d roots; want 2", len(roots))
+	}
+
+	// LOWKEY_ROOT_1: path only — label defaults to path
+	if roots[0].Type != "local" || roots[0].Path != "/mnt/photos" || roots[0].Label != "/mnt/photos" {
+		t.Errorf("roots[0] = %+v; want local /mnt/photos", roots[0])
+	}
+
+	// LOWKEY_ROOT_2: path:label
+	if roots[1].Type != "local" || roots[1].Path != "/mnt/videos" || roots[1].Label != "Videos" {
+		t.Errorf("roots[1] = %+v; want local /mnt/videos:Videos", roots[1])
+	}
+}
+
+// TestParseEnvRootsJSON verifies LOWKEY_ROOTS JSON produces full roots.
+func TestParseEnvRootsJSON(t *testing.T) {
+	jsonRoots := `[
+		{"type":"local","path":"/mnt/photos","label":"Photos"},
+		{"type":"s3","label":"My Bucket","bucket":"media-bucket","endpoint":"https://s3.example.com","region":"us-east-1","accessKey":"AK","secretKey":"SK","thumbnailPrefix":"thumbs/"}
+	]`
+	t.Setenv("LOWKEY_ROOTS", jsonRoots)
+
+	roots, ok := parseEnvRoots()
+	if !ok {
+		t.Fatal("parseEnvRoots returned false; want true")
+	}
+	if len(roots) != 2 {
+		t.Fatalf("got %d roots; want 2", len(roots))
+	}
+
+	if roots[0].Type != "local" || roots[0].Path != "/mnt/photos" {
+		t.Errorf("roots[0] = %+v; want local /mnt/photos", roots[0])
+	}
+
+	s3 := roots[1]
+	if s3.Type != "s3" {
+		t.Errorf("Type = %q; want s3", s3.Type)
+	}
+	if s3.Bucket != "media-bucket" {
+		t.Errorf("Bucket = %q; want media-bucket", s3.Bucket)
+	}
+	if s3.Endpoint != "https://s3.example.com" {
+		t.Errorf("Endpoint = %q; want https://s3.example.com", s3.Endpoint)
+	}
+	if s3.AccessKey != "AK" || s3.SecretKey != "SK" {
+		t.Errorf("credentials wrong: ak=%q sk=%q", s3.AccessKey, s3.SecretKey)
+	}
+	if s3.ThumbnailPrefix != "thumbs/" {
+		t.Errorf("ThumbnailPrefix = %q; want thumbs/", s3.ThumbnailPrefix)
+	}
+}
+
+// TestParseEnvRootsJSONOverridesNumbered verifies LOWKEY_ROOTS wins over LOWKEY_ROOT_N.
+func TestParseEnvRootsJSONOverridesNumbered(t *testing.T) {
+	t.Setenv("LOWKEY_ROOTS", `[{"type":"local","path":"/json-path","label":"JSON"}]`)
+	t.Setenv("LOWKEY_ROOT_1", "/numbered-path")
+
+	roots, ok := parseEnvRoots()
+	if !ok {
+		t.Fatal("parseEnvRoots returned false; want true")
+	}
+	if len(roots) != 1 || roots[0].Path != "/json-path" {
+		t.Errorf("LOWKEY_ROOTS should take priority; got %+v", roots)
+	}
+}
+
+// TestParseEnvRootsNone verifies no env vars returns false.
+func TestParseEnvRootsNone(t *testing.T) {
+	_, ok := parseEnvRoots()
+	if ok {
+		t.Error("parseEnvRoots returned true with no env vars set")
+	}
+}
+
+// TestParseEnvRootsBadJSON verifies malformed JSON is ignored gracefully.
+func TestParseEnvRootsBadJSON(t *testing.T) {
+	t.Setenv("LOWKEY_ROOTS", "not valid json")
+
+	_, ok := parseEnvRoots()
+	if ok {
+		t.Error("parseEnvRoots returned true for invalid JSON")
+	}
+}
+
+// TestApplyEnvOverridesRootsReplacesConfig verifies env roots replace config file roots.
+func TestApplyEnvOverridesRootsReplacesConfig(t *testing.T) {
+	c := defaultConfig()
+	c.Roots = []StorageRoot{
+		{Type: "local", Path: "/original", Label: "Original"},
+	}
+
+	t.Setenv("LOWKEY_ROOT_1", "/env-path:EnvRoot")
+
+	applyEnvOverrides(&c)
+
+	if len(c.Roots) != 1 || c.Roots[0].Path != "/env-path" || c.Roots[0].Label != "EnvRoot" {
+		t.Errorf("env roots should replace config roots; got %+v", c.Roots)
+	}
+}
+
 // TestLoadNewConfig verifies Load() creates a default config when none exists,
 // using an overridden getConfigPath pointing at a temp directory.
 func TestLoadNewConfig(t *testing.T) {

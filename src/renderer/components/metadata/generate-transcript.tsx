@@ -35,7 +35,7 @@ export default function GenerateTranscript({
           headers['Authorization'] = `Bearer ${authToken}`;
         }
 
-        const response = await fetch('/health', {
+        const response = await fetch('http://localhost:8090/health', {
           method: 'GET',
           headers,
           signal: controller.signal,
@@ -65,7 +65,7 @@ export default function GenerateTranscript({
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 
-      const response = await fetch('/create', {
+      const response = await fetch('http://localhost:8090/create', {
         method: 'POST',
         headers,
         body: JSON.stringify({
