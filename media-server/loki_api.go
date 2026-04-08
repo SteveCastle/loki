@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/stevecastle/shrike/storage"
 )
 
 func formatFileSize(bytes int64) string {
@@ -388,15 +390,49 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 		).Scan(&thumbPath)
 
 		if thumbPath.Valid && thumbPath.String != "" {
-			// Check if the thumbnail file actually exists on disk
-			if _, err := os.Stat(thumbPath.String); err == nil {
+			if strings.HasPrefix(thumbPath.String, "s3://") {
+				backend := deps.Storage.BackendFor(thumbPath.String)
+				if backend != nil {
+					exists, _ := backend.Exists(r.Context(), thumbPath.String)
+					if exists {
+						writeJSON(w, thumbPath.String)
+						return
+					}
+				}
+			} else if _, err := os.Stat(thumbPath.String); err == nil {
 				writeJSON(w, thumbPath.String)
 				return
 			}
 		}
 
-		// No thumbnail in DB or file missing — generate synchronously so the
-		// client receives the path once ffmpeg finishes (matches Electron behavior).
+		// Generate thumbnail — S3 or local
+		if strings.HasPrefix(req.Path, "s3://") {
+			backend := deps.Storage.BackendFor(req.Path)
+			if backend == nil {
+				writeJSON(w, nil)
+				return
+			}
+			s3b, ok := backend.(*storage.S3Backend)
+			if !ok {
+				writeJSON(w, nil)
+				return
+			}
+			generated, err := generateS3ThumbnailThrottled(r.Context(), req.Path, s3b, cache, req.TimeStamp)
+			if err != nil {
+				log.Printf("S3 thumbnail generation failed for %s: %v", req.Path, err)
+				writeJSON(w, nil)
+				return
+			}
+			deps.DB.Exec(
+				fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
+				generated, req.Path,
+			)
+			log.Printf("Generated S3 thumbnail for %s → %s", req.Path, generated)
+			writeJSON(w, generated)
+			return
+		}
+
+		// Local thumbnail generation (existing code)
 		dbPath := currentConfig.DBPath
 		if dbPath == "" {
 			writeJSON(w, nil)
@@ -409,7 +445,6 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 			writeJSON(w, nil)
 			return
 		}
-		// Store the generated path in the DB
 		deps.DB.Exec(
 			fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
 			generated, req.Path,
