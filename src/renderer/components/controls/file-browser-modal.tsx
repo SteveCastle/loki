@@ -7,6 +7,7 @@ type FsEntry = {
   path: string;
   isDir: boolean;
   mtimeMs: number;
+  type?: 'local' | 's3';
 };
 
 type FsListResponse = {
@@ -159,6 +160,7 @@ function FileBrowserModal() {
               >
                 <span className="icon">{entry.isDir ? '\uD83D\uDCC1' : '\uD83D\uDCC4'}</span>
                 <span className="name">{entry.name}</span>
+                {entry.type === 's3' && <span className="badge-s3">S3</span>}
               </div>
             ))}
         </div>
