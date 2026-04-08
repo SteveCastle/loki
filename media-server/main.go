@@ -1944,7 +1944,7 @@ type updateConfigRequest struct {
 	OnnxCharacterThreshold float64 `json:"onnxCharacterThreshold"`
 	FasterWhisperPath      string   `json:"fasterWhisperPath"`
 	DiscordToken           string   `json:"discordToken"`
-	RootPaths              []string `json:"rootPaths"`
+	Roots                  []appconfig.StorageRoot `json:"roots"`
 }
 
 func configHandler(deps *Dependencies) http.HandlerFunc {
@@ -2012,8 +2012,8 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if strings.TrimSpace(req.DiscordToken) != "" {
 				newCfg.DiscordToken = strings.TrimSpace(req.DiscordToken)
 			}
-			if req.RootPaths != nil {
-				newCfg.RootPaths = req.RootPaths
+			if req.Roots != nil {
+				newCfg.Roots = req.Roots
 			}
 			cfgPath, err := appconfig.Save(newCfg)
 			if err != nil {
