@@ -12,6 +12,20 @@ import (
 	"github.com/stevecastle/shrike/platform"
 )
 
+// StorageRoot represents a single storage root, either a local filesystem path or an S3-compatible bucket.
+type StorageRoot struct {
+	Type            string `json:"type"`                      // "local" or "s3"
+	Path            string `json:"path,omitempty"`            // local filesystem path
+	Label           string `json:"label"`                     // display name in UI
+	Endpoint        string `json:"endpoint,omitempty"`
+	Region          string `json:"region,omitempty"`
+	Bucket          string `json:"bucket,omitempty"`
+	Prefix          string `json:"prefix,omitempty"`
+	AccessKey       string `json:"accessKey,omitempty"`
+	SecretKey       string `json:"secretKey,omitempty"`
+	ThumbnailPrefix string `json:"thumbnailPrefix,omitempty"`
+}
+
 // Config holds application configuration including database path, LLM prompts, and AI model paths.
 type Config struct {
 	DBPath string `json:"dbPath"`
@@ -44,8 +58,11 @@ type Config struct {
 	// JWT Secret for authentication
 	JWTSecret string `json:"jwtSecret"`
 
-	// Allowed root paths for web filesystem browsing (empty = unrestricted)
-	RootPaths []string `json:"rootPaths"`
+	// Storage roots for web filesystem browsing
+	Roots []StorageRoot `json:"roots"`
+
+	// Deprecated: kept for migration only — use Roots instead
+	RootPaths []string `json:"rootPaths,omitempty"`
 }
 
 var (
@@ -95,7 +112,7 @@ func defaultConfig() Config {
 			CharacterThreshold: 0.85,
 		},
 		JWTSecret: uuid.New().String(),
-		RootPaths: []string{},
+		Roots:     []StorageRoot{},
 	}
 }
 
@@ -145,7 +162,8 @@ func deepMergeJSON(dst, src map[string]json.RawMessage) {
 }
 
 // getConfigPath returns the full path to the config.json file.
-func getConfigPath() (string, error) {
+// It is a variable so tests can override it to use temp directories.
+var getConfigPath = func() (string, error) {
 	configDir := DefaultConfigDir()
 	return filepath.Join(configDir, "config.json"), nil
 }
@@ -197,6 +215,23 @@ func Load() (Config, string, error) {
 	// Merge defaults for any missing fields
 	def := defaultConfig()
 	needsSave := false
+	// needsFullRewrite is set when we must overwrite the file completely (not
+	// merge) to remove deprecated keys from disk (e.g. after rootPaths migration).
+	needsFullRewrite := false
+
+	// Migrate legacy rootPaths to typed Roots
+	if len(c.RootPaths) > 0 && len(c.Roots) == 0 {
+		for _, p := range c.RootPaths {
+			c.Roots = append(c.Roots, StorageRoot{
+				Type:  "local",
+				Path:  p,
+				Label: p,
+			})
+		}
+		c.RootPaths = nil
+		needsSave = true
+		needsFullRewrite = true
+	}
 
 	if c.DBPath == "" {
 		c.DBPath = def.DBPath
@@ -234,16 +269,37 @@ func Load() (Config, string, error) {
 		return Config{}, path, fmt.Errorf("failed to create database directory %s: %v", dbDir, err)
 	}
 
-	// Save config if we had to fill in critical missing fields
+	// Save config if we had to fill in critical missing fields.
+	// Use a full rewrite (not a merge) when deprecated keys must be removed.
 	if needsSave {
-		if _, saveErr := Save(c); saveErr != nil {
-			// Log but don't fail - we can continue with the in-memory config
-			fmt.Printf("Warning: failed to save updated config: %v\n", saveErr)
+		if needsFullRewrite {
+			if saveErr := writeConfigDirect(path, c); saveErr != nil {
+				fmt.Printf("Warning: failed to save migrated config: %v\n", saveErr)
+			}
+		} else {
+			if _, saveErr := Save(c); saveErr != nil {
+				// Log but don't fail - we can continue with the in-memory config
+				fmt.Printf("Warning: failed to save updated config: %v\n", saveErr)
+			}
 		}
 	}
 
 	Set(c)
 	return c, path, nil
+}
+
+// writeConfigDirect writes the config to disk as a clean JSON file, without
+// merging with any existing file contents. Used when deprecated keys must be
+// removed (e.g. after a migration).
+func writeConfigDirect(path string, c Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %v", err)
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %v", err)
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 // Save writes the config to disk, creating the directory as needed. Returns the path.

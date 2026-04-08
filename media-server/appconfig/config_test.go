@@ -291,6 +291,8 @@ func TestConfigJSONUnmarshal(t *testing.T) {
 }
 
 func TestConfigRootPaths(t *testing.T) {
+	// RootPaths is the deprecated field; verify it still round-trips via JSON
+	// (needed for migration testing).
 	c := Config{
 		DBPath:    "/tmp/test.db",
 		JWTSecret: "test-secret",
@@ -309,13 +311,150 @@ func TestConfigRootPaths(t *testing.T) {
 	}
 }
 
-func TestConfigRootPathsDefaultEmpty(t *testing.T) {
+func TestConfigRootsDefaultEmpty(t *testing.T) {
 	c := defaultConfig()
-	if c.RootPaths == nil {
-		t.Fatal("RootPaths should not be nil, should be empty slice")
+	if c.Roots == nil {
+		t.Fatal("Roots should not be nil, should be empty slice")
+	}
+	if len(c.Roots) != 0 {
+		t.Fatalf("expected empty Roots, got: %v", c.Roots)
+	}
+}
+
+// TestMigrateRootPathsToRoots verifies that loading a config with the legacy
+// rootPaths field migrates it into typed Roots entries and saves back to disk.
+func TestMigrateRootPathsToRoots(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	// Write a legacy config that only has rootPaths.
+	legacy := map[string]interface{}{
+		"dbPath":    filepath.Join(dir, "media.db"),
+		"jwtSecret": "test-secret",
+		"rootPaths": []string{"/mnt/media", "/home/user/photos"},
+	}
+	legacyData, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy config: %v", err)
+	}
+	if err := os.WriteFile(cfgFile, legacyData, 0644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	// Override getConfigPath to point at the temp file.
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(c.Roots) != 2 {
+		t.Fatalf("expected 2 Roots after migration, got %d", len(c.Roots))
+	}
+	if c.Roots[0].Type != "local" || c.Roots[0].Path != "/mnt/media" || c.Roots[0].Label != "/mnt/media" {
+		t.Errorf("unexpected Roots[0]: %+v", c.Roots[0])
+	}
+	if c.Roots[1].Type != "local" || c.Roots[1].Path != "/home/user/photos" || c.Roots[1].Label != "/home/user/photos" {
+		t.Errorf("unexpected Roots[1]: %+v", c.Roots[1])
 	}
 	if len(c.RootPaths) != 0 {
-		t.Fatalf("expected empty RootPaths, got: %v", c.RootPaths)
+		t.Errorf("expected RootPaths cleared after migration, got %v", c.RootPaths)
+	}
+
+	// Verify the migrated config was persisted to disk.
+	raw, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatalf("read back config: %v", err)
+	}
+	var saved Config
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatalf("unmarshal saved config: %v", err)
+	}
+	if len(saved.Roots) != 2 {
+		t.Errorf("expected 2 Roots persisted, got %d", len(saved.Roots))
+	}
+	if len(saved.RootPaths) != 0 {
+		t.Errorf("expected rootPaths omitted after migration, got %v", saved.RootPaths)
+	}
+}
+
+// TestS3ConfigParsing verifies that an S3-typed StorageRoot round-trips through JSON.
+func TestS3ConfigParsing(t *testing.T) {
+	c := Config{
+		DBPath:    "/tmp/test.db",
+		JWTSecret: "secret",
+		Roots: []StorageRoot{
+			{
+				Type:            "s3",
+				Label:           "My Bucket",
+				Endpoint:        "https://s3.example.com",
+				Region:          "us-east-1",
+				Bucket:          "my-bucket",
+				Prefix:          "media/",
+				AccessKey:       "AKID",
+				SecretKey:       "SECRET",
+				ThumbnailPrefix: "thumbs/",
+			},
+		},
+	}
+
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var c2 Config
+	if err := json.Unmarshal(data, &c2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if len(c2.Roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(c2.Roots))
+	}
+	r := c2.Roots[0]
+	if r.Type != "s3" {
+		t.Errorf("Type = %q; want %q", r.Type, "s3")
+	}
+	if r.Bucket != "my-bucket" {
+		t.Errorf("Bucket = %q; want %q", r.Bucket, "my-bucket")
+	}
+	if r.AccessKey != "AKID" {
+		t.Errorf("AccessKey = %q; want %q", r.AccessKey, "AKID")
+	}
+	if r.ThumbnailPrefix != "thumbs/" {
+		t.Errorf("ThumbnailPrefix = %q; want %q", r.ThumbnailPrefix, "thumbs/")
+	}
+	// Path should be empty for S3 roots
+	if r.Path != "" {
+		t.Errorf("Path = %q; want empty for S3 root", r.Path)
+	}
+}
+
+// TestLoadNewConfig verifies Load() creates a default config when none exists,
+// using an overridden getConfigPath pointing at a temp directory.
+func TestLoadNewConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, path, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if path != cfgFile {
+		t.Errorf("path = %q; want %q", path, cfgFile)
+	}
+	if c.OllamaBaseURL != "http://localhost:11434" {
+		t.Errorf("OllamaBaseURL = %q; want default", c.OllamaBaseURL)
+	}
+	if _, err := os.Stat(cfgFile); err != nil {
+		t.Errorf("config file not created: %v", err)
 	}
 }
 
