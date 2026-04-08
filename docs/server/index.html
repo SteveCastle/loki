@@ -103,6 +103,15 @@
               <li><a href="#browser-extension">Browser Extension</a></li>
             </ul>
           </li>
+          <li><a href="#docker">Docker Quick Start</a>
+            <ul>
+              <li><a href="#docker-run">Run the Container</a></li>
+              <li><a href="#docker-local-storage">Local Storage</a></li>
+              <li><a href="#docker-s3-storage">S3-Compatible Storage</a></li>
+              <li><a href="#docker-env">Environment Variables</a></li>
+              <li><a href="#docker-data">Data Persistence</a></li>
+            </ul>
+          </li>
           <li><a href="#job-queue">Job Queue</a>
             <ul>
               <li><a href="#creating-jobs">Creating Jobs</a></li>
@@ -214,6 +223,167 @@
           <li>Real-time job status updates</li>
         </ul>
         <div class="placeholder-video">Browser Extension Demo Video</div>
+      </section>
+
+      <section id="docker">
+        <h2>Docker Quick Start</h2>
+        <p>
+          The fastest way to run Lowkey Media Server is with Docker. A single command gets you a working
+          server with ffmpeg and all core dependencies pre-installed.
+        </p>
+
+        <h3 id="docker-run">Run the Container</h3>
+        <p>Pull the image and start the server:</p>
+        <div class="code-block">
+          <code>docker run -d --name lowkey-media-server \</code><br>
+          <code>  -p 8090:8090 \</code><br>
+          <code>  -v lowkey-data:/data \</code><br>
+          <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
+        </div>
+        <p>
+          Open <code>http://localhost:8090</code> in your browser. The server is ready to use.
+        </p>
+
+        <h3 id="docker-local-storage">Local Storage</h3>
+        <p>
+          To browse media from your local filesystem, bind-mount your directories into the container
+          and register them as storage roots with environment variables.
+        </p>
+        <div class="code-block">
+          <code>docker run -d --name lowkey-media-server \</code><br>
+          <code>  -p 8090:8090 \</code><br>
+          <code>  -v lowkey-data:/data \</code><br>
+          <code>  -v /path/to/photos:/mnt/photos:ro \</code><br>
+          <code>  -v /path/to/videos:/mnt/videos:ro \</code><br>
+          <code>  -e LOWKEY_ROOT_1=/mnt/photos:Photos \</code><br>
+          <code>  -e LOWKEY_ROOT_2=/mnt/videos:Videos \</code><br>
+          <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
+        </div>
+        <p>
+          Each <code>LOWKEY_ROOT_&lt;N&gt;</code> variable registers a storage root.
+          The format is <code>path</code> or <code>path:label</code> where the label is
+          the display name shown in the UI. If omitted, the path is used as the label.
+        </p>
+        <p>
+          Mount directories as read-only (<code>:ro</code>) if you only want to browse and process
+          media without the server modifying your files.
+        </p>
+
+        <h3 id="docker-s3-storage">S3-Compatible Storage</h3>
+        <p>
+          Lowkey Media Server can browse and process media stored in any S3-compatible object storage
+          service &mdash; AWS S3, MinIO, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, and others.
+        </p>
+        <p>
+          Use the <code>LOWKEY_ROOTS</code> environment variable with a JSON array to configure S3 backends.
+          You can mix local and S3 roots in the same configuration.
+        </p>
+        <h4>S3 Only</h4>
+        <div class="code-block">
+          <code>docker run -d --name lowkey-media-server \</code><br>
+          <code>  -p 8090:8090 \</code><br>
+          <code>  -v lowkey-data:/data \</code><br>
+          <code>  -e 'LOWKEY_ROOTS=[{</code><br>
+          <code>    "type": "s3",</code><br>
+          <code>    "label": "My Media Bucket",</code><br>
+          <code>    "endpoint": "https://s3.us-east-1.amazonaws.com",</code><br>
+          <code>    "region": "us-east-1",</code><br>
+          <code>    "bucket": "my-media",</code><br>
+          <code>    "prefix": "photos/",</code><br>
+          <code>    "accessKey": "AKIAIOSFODNN7EXAMPLE",</code><br>
+          <code>    "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",</code><br>
+          <code>    "thumbnailPrefix": "thumbs/"</code><br>
+          <code>  }]' \</code><br>
+          <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
+        </div>
+        <h4>Mixed Local + S3</h4>
+        <div class="code-block">
+          <code>docker run -d --name lowkey-media-server \</code><br>
+          <code>  -p 8090:8090 \</code><br>
+          <code>  -v lowkey-data:/data \</code><br>
+          <code>  -v ~/photos:/mnt/photos:ro \</code><br>
+          <code>  -e 'LOWKEY_ROOTS=[</code><br>
+          <code>    {"type": "local", "path": "/mnt/photos", "label": "Local Photos"},</code><br>
+          <code>    {</code><br>
+          <code>      "type": "s3",</code><br>
+          <code>      "label": "Cloud Archive",</code><br>
+          <code>      "endpoint": "https://s3.us-west-2.amazonaws.com",</code><br>
+          <code>      "region": "us-west-2",</code><br>
+          <code>      "bucket": "media-archive",</code><br>
+          <code>      "accessKey": "AKIAIOSFODNN7EXAMPLE",</code><br>
+          <code>      "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"</code><br>
+          <code>    }</code><br>
+          <code>  ]' \</code><br>
+          <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
+        </div>
+
+        <h4>S3 Storage Root Fields</h4>
+        <table>
+          <tr><th>Field</th><th>Required</th><th>Description</th></tr>
+          <tr><td><code>type</code></td><td>Yes</td><td>Must be <code>"s3"</code></td></tr>
+          <tr><td><code>label</code></td><td>Yes</td><td>Display name in the UI</td></tr>
+          <tr><td><code>endpoint</code></td><td>Yes</td><td>S3 API endpoint URL</td></tr>
+          <tr><td><code>region</code></td><td>Yes</td><td>AWS region or equivalent</td></tr>
+          <tr><td><code>bucket</code></td><td>Yes</td><td>Bucket name</td></tr>
+          <tr><td><code>accessKey</code></td><td>Yes</td><td>Access key ID</td></tr>
+          <tr><td><code>secretKey</code></td><td>Yes</td><td>Secret access key</td></tr>
+          <tr><td><code>prefix</code></td><td>No</td><td>Key prefix to scope browsing (e.g. <code>"photos/"</code>)</td></tr>
+          <tr><td><code>thumbnailPrefix</code></td><td>No</td><td>Separate prefix or bucket path for generated thumbnails</td></tr>
+        </table>
+
+        <h4>Tested S3-Compatible Services</h4>
+        <table>
+          <tr><th>Service</th><th>Endpoint Format</th></tr>
+          <tr><td>AWS S3</td><td><code>https://s3.&lt;region&gt;.amazonaws.com</code></td></tr>
+          <tr><td>MinIO</td><td><code>http://&lt;host&gt;:9000</code></td></tr>
+          <tr><td>Backblaze B2</td><td><code>https://s3.&lt;region&gt;.backblazeb2.com</code></td></tr>
+          <tr><td>Cloudflare R2</td><td><code>https://&lt;account-id&gt;.r2.cloudflarestorage.com</code></td></tr>
+          <tr><td>DigitalOcean Spaces</td><td><code>https://&lt;region&gt;.digitaloceanspaces.com</code></td></tr>
+        </table>
+
+        <h3 id="docker-env">Environment Variables</h3>
+        <p>All server settings can be configured with environment variables, no config file needed.</p>
+        <table>
+          <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+          <tr><td><code>LOWKEY_DB_PATH</code></td><td><code>/data/db/media.db</code></td><td>SQLite database path</td></tr>
+          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>/data/media</code></td><td>Download directory for ingested media</td></tr>
+          <tr><td><code>LOWKEY_OLLAMA_BASE_URL</code></td><td><code>http://host.docker.internal:11434</code></td><td>Ollama API endpoint for LLM features</td></tr>
+          <tr><td><code>LOWKEY_OLLAMA_MODEL</code></td><td><code>llama3.2-vision</code></td><td>Vision model for image descriptions</td></tr>
+          <tr><td><code>LOWKEY_JWT_SECRET</code></td><td>(auto-generated)</td><td>JWT signing secret for authentication</td></tr>
+          <tr><td><code>LOWKEY_DISCORD_TOKEN</code></td><td></td><td>Discord token for media export</td></tr>
+          <tr><td><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td></td><td>Path to faster-whisper binary</td></tr>
+          <tr><td><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td></td><td>Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
+          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots (local + S3)</td></tr>
+        </table>
+        <p>
+          If you're running <a href="https://ollama.com" target="_blank">Ollama</a> on the host machine for AI descriptions,
+          the default <code>LOWKEY_OLLAMA_BASE_URL</code> will find it automatically on macOS and Windows.
+          On Linux, add <code>--add-host=host.docker.internal:host-gateway</code> to the <code>docker run</code> command.
+        </p>
+
+        <h3 id="docker-data">Data Persistence</h3>
+        <p>
+          All server state is stored in the <code>/data</code> volume inside the container.
+          Using a named volume (<code>lowkey-data</code>) ensures your data survives container
+          restarts, upgrades, and image rebuilds.
+        </p>
+        <div class="code-block">
+          <code>/data/</code><br>
+          <code>  db/media.db        &mdash; SQLite database</code><br>
+          <code>  media/             &mdash; Downloaded and ingested media</code><br>
+          <code>  config/            &mdash; Auto-generated configuration</code><br>
+          <code>  packages/          &mdash; Auto-downloaded tools (yt-dlp, gallery-dl, etc.)</code>
+        </div>
+        <p>
+          To back up your data, use <code>docker cp</code> or mount a host directory instead
+          of a named volume:
+        </p>
+        <div class="code-block">
+          <code>docker run -d --name lowkey-media-server \</code><br>
+          <code>  -p 8090:8090 \</code><br>
+          <code>  -v /path/to/lowkey-data:/data \</code><br>
+          <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
+        </div>
       </section>
 
       <section id="job-queue">

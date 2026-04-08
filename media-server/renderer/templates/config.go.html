@@ -742,30 +742,10 @@
             </div>
 
             <div class="config-card config-card--purple">
-              <div class="section-title">📂 Web File Browser</div>
-              <div class="fields">
-                <div class="field">
-                  <label class="label">Root Paths</label>
-                  <textarea
-                    id="root-paths"
-                    class="input"
-                    rows="3"
-                    placeholder="One path per line (empty = unrestricted)"
-                    style="resize: vertical; font-family: monospace; font-size: 0.9em"
-                  >{{range $i, $p := .Config.RootPaths}}{{if $i}}&#10;{{end}}{{$p}}{{end}}</textarea>
-                  <div
-                    class="hint"
-                    style="
-                      font-size: 0.8em;
-                      color: var(--text-muted);
-                      margin-top: 5px;
-                    "
-                  >
-                    Restrict the web file browser to these directories. One path
-                    per line. Leave empty to allow browsing the entire filesystem.
-                  </div>
-                </div>
-              </div>
+              <div class="section-title">📂 Storage Roots</div>
+              <div class="section-subtitle">Configure local directories or S3-compatible buckets for the web file browser.</div>
+              <div id="storage-roots-list"></div>
+              <button type="button" class="btn btn-secondary" id="add-root-btn" style="margin-top: var(--space-3)">+ Add Storage Root</button>
             </div>
 
             <div class="config-card config-card--purple">
@@ -990,6 +970,97 @@
       const statusEl = document.getElementById('status');
       const activeDbPathEl = document.getElementById('active-db-path');
       const configPath = '{{.ConfigPath}}';
+
+      // --- Storage Roots dynamic UI ---
+      const storageRootsData = {{.Config.Roots | json}} || [];
+      const rootsListEl = document.getElementById('storage-roots-list');
+
+      function renderStorageRoots() {
+        rootsListEl.innerHTML = '';
+        storageRootsData.forEach((root, i) => {
+          rootsListEl.appendChild(createRootCard(root, i));
+        });
+      }
+
+      function createRootCard(root, index) {
+        const card = document.createElement('div');
+        card.style.cssText = 'background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-3);';
+
+        const isS3 = root.type === 's3';
+        card.innerHTML = `
+          <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)">
+            <select class="input root-type" data-index="${index}" style="width:120px;flex-shrink:0">
+              <option value="local" ${!isS3 ? 'selected' : ''}>Local</option>
+              <option value="s3" ${isS3 ? 'selected' : ''}>S3</option>
+            </select>
+            <input class="input root-label" data-index="${index}" type="text" placeholder="Label" value="${esc(root.label || '')}" style="flex:1"/>
+            <button type="button" class="btn btn-secondary root-remove" data-index="${index}" style="padding:var(--space-2) var(--space-3);color:var(--status-error);border-color:var(--status-error);flex-shrink:0">&times;</button>
+          </div>
+          <div class="root-fields" data-index="${index}">
+            ${isS3 ? s3Fields(root, index) : localFields(root, index)}
+          </div>
+        `;
+        // Wire up type toggle
+        card.querySelector('.root-type').addEventListener('change', (e) => {
+          const newType = e.target.value;
+          storageRootsData[index].type = newType;
+          if (newType === 's3') {
+            storageRootsData[index].path = '';
+          } else {
+            storageRootsData[index].endpoint = '';
+            storageRootsData[index].region = '';
+            storageRootsData[index].bucket = '';
+            storageRootsData[index].prefix = '';
+            storageRootsData[index].accessKey = '';
+            storageRootsData[index].secretKey = '';
+            storageRootsData[index].thumbnailPrefix = '';
+          }
+          renderStorageRoots();
+        });
+        // Wire up remove
+        card.querySelector('.root-remove').addEventListener('click', () => {
+          storageRootsData.splice(index, 1);
+          renderStorageRoots();
+        });
+        // Wire up field syncing
+        card.querySelectorAll('input[data-field]').forEach(inp => {
+          inp.addEventListener('input', () => {
+            storageRootsData[index][inp.dataset.field] = inp.value;
+          });
+        });
+        return card;
+      }
+
+      function esc(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML.replace(/"/g, '&quot;');
+      }
+
+      function localFields(root, index) {
+        return `<input class="input" data-index="${index}" data-field="path" type="text" placeholder="/path/to/media" value="${esc(root.path || '')}"/>`;
+      }
+
+      function s3Fields(root, index) {
+        return `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3)">
+            <input class="input" data-index="${index}" data-field="endpoint" type="text" placeholder="Endpoint URL" value="${esc(root.endpoint || '')}"/>
+            <input class="input" data-index="${index}" data-field="region" type="text" placeholder="Region" value="${esc(root.region || '')}"/>
+            <input class="input" data-index="${index}" data-field="bucket" type="text" placeholder="Bucket" value="${esc(root.bucket || '')}"/>
+            <input class="input" data-index="${index}" data-field="prefix" type="text" placeholder="Prefix (optional)" value="${esc(root.prefix || '')}"/>
+            <input class="input" data-index="${index}" data-field="accessKey" type="text" placeholder="Access Key" value="${esc(root.accessKey || '')}"/>
+            <input class="input" data-index="${index}" data-field="secretKey" type="password" placeholder="Secret Key" value="${esc(root.secretKey || '')}"/>
+          </div>
+          <input class="input" data-index="${index}" data-field="thumbnailPrefix" type="text" placeholder="Thumbnail Prefix (optional)" value="${esc(root.thumbnailPrefix || '')}" style="margin-top:var(--space-3)"/>
+        `;
+      }
+
+      document.getElementById('add-root-btn').addEventListener('click', () => {
+        storageRootsData.push({ type: 'local', path: '', label: '' });
+        renderStorageRoots();
+      });
+
+      renderStorageRoots();
 
       function setStatus(msg, kind = 'info') {
         statusEl.textContent = msg;
@@ -1566,11 +1637,7 @@
           fasterWhisperPath: document
             .getElementById('faster-whisper-path')
             .value.trim(),
-          rootPaths: document
-            .getElementById('root-paths')
-            .value.split('\n')
-            .map((s) => s.trim())
-            .filter((s) => s.length > 0),
+          roots: storageRootsData.filter(r => r.label || r.path || r.bucket),
         };
         setStatus('Saving...');
         fetch('/config', {

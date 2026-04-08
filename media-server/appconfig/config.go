@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -284,8 +287,101 @@ func Load() (Config, string, error) {
 		}
 	}
 
+	// Apply environment variable overrides (useful for Docker / container deployments)
+	applyEnvOverrides(&c)
+
 	Set(c)
 	return c, path, nil
+}
+
+// applyEnvOverrides overrides config fields with environment variables when set.
+// Environment variables take highest priority, overriding both defaults and config file values.
+func applyEnvOverrides(c *Config) {
+	if v := os.Getenv("LOWKEY_DB_PATH"); v != "" {
+		c.DBPath = v
+	}
+	if v := os.Getenv("LOWKEY_DOWNLOAD_PATH"); v != "" {
+		c.DownloadPath = v
+	}
+	if v := os.Getenv("LOWKEY_OLLAMA_BASE_URL"); v != "" {
+		c.OllamaBaseURL = v
+	}
+	if v := os.Getenv("LOWKEY_OLLAMA_MODEL"); v != "" {
+		c.OllamaModel = v
+	}
+	if v := os.Getenv("LOWKEY_JWT_SECRET"); v != "" {
+		c.JWTSecret = v
+	}
+	if v := os.Getenv("LOWKEY_DISCORD_TOKEN"); v != "" {
+		c.DiscordToken = v
+	}
+	if v := os.Getenv("LOWKEY_FASTER_WHISPER_PATH"); v != "" {
+		c.FasterWhisperPath = v
+	}
+
+	// Storage roots from environment variables.
+	// LOWKEY_ROOTS (JSON array) and LOWKEY_ROOT_<N> (simple local paths) are
+	// mutually exclusive — if LOWKEY_ROOTS is set it wins; otherwise numbered
+	// LOWKEY_ROOT_* vars are collected. Either way, env roots replace any
+	// roots from the config file.
+	if roots, ok := parseEnvRoots(); ok {
+		c.Roots = roots
+	}
+}
+
+// parseEnvRoots reads storage roots from environment variables.
+// Returns the roots and true if any env-based roots were found.
+//
+// Two formats are supported:
+//
+//  1. LOWKEY_ROOTS — a JSON array of StorageRoot objects. Supports all fields
+//     including S3 configuration. Example:
+//     LOWKEY_ROOTS='[{"type":"s3","label":"My Bucket","bucket":"media","endpoint":"https://s3.example.com","region":"us-east-1","accessKey":"AK","secretKey":"SK"}]'
+//
+//  2. LOWKEY_ROOT_1, LOWKEY_ROOT_2, ... — numbered local path shortcuts.
+//     Format: "path" or "path:label". Examples:
+//     LOWKEY_ROOT_1=/mnt/photos
+//     LOWKEY_ROOT_2=/mnt/videos:Videos
+func parseEnvRoots() ([]StorageRoot, bool) {
+	// Full JSON takes priority
+	if v := os.Getenv("LOWKEY_ROOTS"); v != "" {
+		var roots []StorageRoot
+		if err := json.Unmarshal([]byte(v), &roots); err != nil {
+			log.Printf("Warning: failed to parse LOWKEY_ROOTS JSON: %v", err)
+			return nil, false
+		}
+		return roots, true
+	}
+
+	// Collect numbered LOWKEY_ROOT_* vars
+	var keys []string
+	for _, env := range os.Environ() {
+		if k, _, ok := strings.Cut(env, "="); ok && strings.HasPrefix(k, "LOWKEY_ROOT_") {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return nil, false
+	}
+
+	sort.Strings(keys) // deterministic order: LOWKEY_ROOT_1, LOWKEY_ROOT_2, ...
+	var roots []StorageRoot
+	for _, k := range keys {
+		v := os.Getenv(k)
+		if v == "" {
+			continue
+		}
+		path, label, _ := strings.Cut(v, ":")
+		if label == "" {
+			label = path
+		}
+		roots = append(roots, StorageRoot{
+			Type:  "local",
+			Path:  path,
+			Label: label,
+		})
+	}
+	return roots, len(roots) > 0
 }
 
 // writeConfigDirect writes the config to disk as a clean JSON file, without

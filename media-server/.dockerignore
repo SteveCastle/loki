@@ -1,0 +1,13 @@
+*.exe
+bin_linux
+bin_windows
+gallery-dl
+*.zip
+lowkeymediaserver
+.git
+.github
+chrome-extension
+firefox-extension
+README.md
+API_DOCUMENTATION.md
+STREAMING_IMPROVEMENTS.md

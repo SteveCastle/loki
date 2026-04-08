@@ -1,0 +1,6 @@
+# Override that wires the media server to the local MinIO instance.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d
+services:
+  lowkey-media-server:
+    environment:
+      - LOWKEY_ROOTS=[{"type":"s3","label":"MinIO Media","endpoint":"http://minio:9000","region":"us-east-1","bucket":"media","accessKey":"minioadmin","secretKey":"minioadmin","thumbnailPrefix":"","prefix":""},{"type":"s3","label":"MinIO Thumbnails","endpoint":"http://minio:9000","region":"us-east-1","bucket":"media-thumbnails","accessKey":"minioadmin","secretKey":"minioadmin"}]

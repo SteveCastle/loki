@@ -14,6 +14,7 @@ Lowkey Media Server is a companion for the Lowkey Media Viewer. It allows for ma
 
 - [Features](#features)
 - [System Requirements](#system-requirements)
+- [Docker Quick Start](#docker-quick-start)
 - [Installation (End Users)](#installation-end-users)
 - [Development Setup](#development-setup)
   - [Prerequisites](#prerequisites)
@@ -49,6 +50,163 @@ Lowkey Media Server is a companion for the Lowkey Media Viewer. It allows for ma
 - **Operating System**: Windows 10/11 (x64) or Linux (x64)
 - **Disk Space**: ~500MB for binaries and embedded tools
 - **RAM**: 4GB minimum, 8GB+ recommended for ML tagging
+
+---
+
+## Docker Quick Start
+
+The fastest way to run the server is with Docker.
+
+### 1. Build and run
+
+```bash
+# Using docker compose (recommended)
+docker compose up -d
+
+# Or build and run manually
+docker build -t lowkey-media-server .
+docker run -d --name lowkey-media-server \
+  -p 8090:8090 \
+  -v lowkey-data:/data \
+  lowkey-media-server
+```
+
+Open **http://localhost:8090** in your browser.
+
+### 2. Mount your media
+
+Bind-mount local directories so the server can browse and process your files:
+
+```bash
+docker run -d --name lowkey-media-server \
+  -p 8090:8090 \
+  -v lowkey-data:/data \
+  -v /path/to/photos:/mnt/photos:ro \
+  -v /path/to/videos:/mnt/videos:ro \
+  lowkey-media-server
+```
+
+Then register them as storage roots using environment variables (see below).
+
+### 3. Environment variables
+
+All configuration can be set via environment variables, no config file needed:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOWKEY_DB_PATH` | `/data/db/media.db` | SQLite database path |
+| `LOWKEY_DOWNLOAD_PATH` | `/data/media` | Media download directory |
+| `LOWKEY_OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
+| `LOWKEY_OLLAMA_MODEL` | `llama3.2-vision` | Vision model for descriptions |
+| `LOWKEY_JWT_SECRET` | (auto-generated) | JWT signing secret |
+| `LOWKEY_DISCORD_TOKEN` | | Discord token for media export |
+| `LOWKEY_FASTER_WHISPER_PATH` | | Path to faster-whisper binary |
+| `LOWKEY_ROOT_1`, `_2`, ... | | Local storage roots (see below) |
+| `LOWKEY_ROOTS` | | JSON storage roots with S3 support (see below) |
+
+#### Storage roots via environment
+
+**Local paths** — use numbered `LOWKEY_ROOT_<N>` variables. Format: `path` or `path:label`.
+
+```bash
+docker run -d --name lowkey-media-server \
+  -p 8090:8090 \
+  -v lowkey-data:/data \
+  -v ~/photos:/mnt/photos:ro \
+  -v ~/videos:/mnt/videos:ro \
+  -e LOWKEY_ROOT_1=/mnt/photos:Photos \
+  -e LOWKEY_ROOT_2=/mnt/videos:Videos \
+  lowkey-media-server
+```
+
+**S3-compatible storage** — use `LOWKEY_ROOTS` with a JSON array. Supports all StorageRoot fields including S3 credentials, endpoints, and thumbnail prefixes. You can mix local and S3 roots.
+
+```bash
+docker run -d --name lowkey-media-server \
+  -p 8090:8090 \
+  -v lowkey-data:/data \
+  -e 'LOWKEY_ROOTS=[
+    {"type":"local","path":"/mnt/photos","label":"Photos"},
+    {
+      "type":"s3",
+      "label":"My S3 Bucket",
+      "endpoint":"https://s3.us-east-1.amazonaws.com",
+      "region":"us-east-1",
+      "bucket":"my-media-bucket",
+      "prefix":"images/",
+      "accessKey":"AKIAIOSFODNN7EXAMPLE",
+      "secretKey":"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+      "thumbnailPrefix":"thumbs/"
+    }
+  ]' \
+  lowkey-media-server
+```
+
+> When `LOWKEY_ROOTS` is set, it takes priority over any `LOWKEY_ROOT_<N>` variables. Either way, environment roots replace roots from the config file.
+
+#### Full example with Ollama
+
+```bash
+docker run -d --name lowkey-media-server \
+  -p 8090:8090 \
+  -v lowkey-data:/data \
+  -v ~/photos:/mnt/photos:ro \
+  -e LOWKEY_ROOT_1=/mnt/photos:Photos \
+  -e LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  -e LOWKEY_OLLAMA_MODEL=llama3.2-vision \
+  lowkey-media-server
+```
+
+> **Linux hosts:** Add `--add-host=host.docker.internal:host-gateway` so the container can reach Ollama on the host.
+
+### 4. Testing with MinIO (S3-compatible storage)
+
+The compose stack includes a MinIO instance for testing S3 workflows locally.
+
+```bash
+# Start everything with MinIO wired as the storage backend
+make up-minio
+```
+
+This gives you:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Media Server | http://localhost:8090 | (set up via web UI) |
+| MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
+| MinIO S3 API | http://localhost:9000 | same |
+
+The setup container automatically creates `media` and `media-thumbnails` buckets. Upload files through the MinIO console at http://localhost:9001 and they'll appear in the media server's file browser.
+
+To stop everything: `make down`
+
+### 5. Makefile shortcuts
+
+```bash
+make up               # Build and start all services (compose)
+make up-minio         # Start with MinIO wired as S3 storage root
+make down             # Stop all services
+make docker-build     # Build the image only
+make docker-run       # Run standalone container (detached)
+make docker-run-it    # Run in foreground (auto-removes on exit)
+make docker-logs      # Tail logs
+make docker-stop      # Stop and remove standalone container
+make docker-rebuild   # Rebuild from scratch (no cache)
+```
+
+### 6. Data persistence
+
+All server state lives in the `/data` volume:
+
+```
+/data/
+  db/media.db        # SQLite database
+  media/             # Downloaded media
+  config/            # Auto-generated config
+  packages/          # Auto-downloaded dependencies (ffmpeg, yt-dlp, etc.)
+```
+
+The named volume `lowkey-data` survives container restarts and rebuilds.
 
 ---
 
