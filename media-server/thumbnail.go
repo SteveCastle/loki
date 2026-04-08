@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -12,6 +14,7 @@ import (
 	"sync"
 
 	depspkg "github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/storage"
 )
 
 // thumbSem limits concurrent ffmpeg processes to prevent resource starvation.
@@ -113,6 +116,120 @@ func getThumbnailPath(mediaPath, basePath, cache string, timeStamp int) string {
 		fileName += ".mp4"
 	}
 	return filepath.Join(thumbDir, fileName)
+}
+
+func getS3ThumbnailPath(mediaPath string, backend *storage.S3Backend, cache string, timeStamp int) string {
+	hashInput := mediaPath
+	if timeStamp > 0 {
+		hashInput += fmt.Sprintf("%d", timeStamp)
+	}
+	fileName := createHash(hashInput)
+	if getFileType(mediaPath) == "video" {
+		fileName += ".mp4"
+	} else {
+		fileName += ".png"
+	}
+	return backend.ThumbnailPath(fileName)
+}
+
+func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend *storage.S3Backend, cache string, timeStamp int) (string, error) {
+	key := thumbKey(mediaPath, cache, timeStamp)
+
+	inflightMu.Lock()
+	if ch, ok := inflight[key]; ok {
+		inflightMu.Unlock()
+		<-ch
+		thumbPath := getS3ThumbnailPath(mediaPath, backend, cache, timeStamp)
+		exists, _ := backend.Exists(ctx, thumbPath)
+		if exists {
+			return thumbPath, nil
+		}
+		return "", fmt.Errorf("in-flight S3 thumbnail generation failed for %s", mediaPath)
+	}
+	done := make(chan struct{})
+	inflight[key] = done
+	inflightMu.Unlock()
+
+	defer func() {
+		inflightMu.Lock()
+		delete(inflight, key)
+		close(done)
+		inflightMu.Unlock()
+	}()
+
+	thumbSem <- struct{}{}
+	defer func() { <-thumbSem }()
+
+	// Download source to temp file
+	reader, err := backend.Download(ctx, mediaPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to download %s: %w", mediaPath, err)
+	}
+	defer reader.Close()
+
+	ext := filepath.Ext(mediaPath)
+	tmpSource, err := os.CreateTemp("", "loki-thumb-src-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpSourcePath := tmpSource.Name()
+	defer os.Remove(tmpSourcePath)
+	if _, err := io.Copy(tmpSource, reader); err != nil {
+		tmpSource.Close()
+		return "", fmt.Errorf("failed to write temp source: %w", err)
+	}
+	tmpSource.Close()
+
+	// Generate thumbnail to temp output using existing ffmpeg functions
+	ffmpegPath := depspkg.GetFFmpegPath()
+	if ffmpegPath == "" {
+		return "", fmt.Errorf("ffmpeg not found")
+	}
+
+	// Determine output extension
+	outExt := ".png"
+	if getFileType(mediaPath) == "video" {
+		outExt = ".mp4"
+	}
+	tmpOutput, err := os.CreateTemp("", "loki-thumb-out-*"+outExt)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp output: %w", err)
+	}
+	tmpOutputPath := tmpOutput.Name()
+	tmpOutput.Close()
+	defer os.Remove(tmpOutputPath)
+
+	fileType := getFileType(mediaPath)
+	switch fileType {
+	case "image":
+		if err := generateImageThumbnail(ffmpegPath, tmpSourcePath, tmpOutputPath, cache); err != nil {
+			return "", err
+		}
+	case "video":
+		if err := generateVideoThumbnail(ffmpegPath, tmpSourcePath, tmpOutputPath, timeStamp); err != nil {
+			return "", err
+		}
+	default:
+		return "", fmt.Errorf("unsupported file type: %s", ext)
+	}
+
+	// Upload result to S3
+	thumbPath := getS3ThumbnailPath(mediaPath, backend, cache, timeStamp)
+	outputFile, err := os.Open(tmpOutputPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open generated thumbnail: %w", err)
+	}
+	defer outputFile.Close()
+
+	contentType := "image/png"
+	if fileType == "video" {
+		contentType = "video/mp4"
+	}
+	if err := backend.Upload(ctx, thumbPath, outputFile, contentType); err != nil {
+		return "", fmt.Errorf("failed to upload thumbnail: %w", err)
+	}
+
+	return thumbPath, nil
 }
 
 // generateThumbnail creates a thumbnail for the given media file using ffmpeg.
