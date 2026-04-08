@@ -7,39 +7,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/stevecastle/shrike/storage"
 )
-
-func TestValidatePathWithinRoots(t *testing.T) {
-	roots := []string{"/mnt/media", "/home/user/photos"}
-
-	tests := []struct {
-		name    string
-		path    string
-		roots   []string
-		wantErr bool
-	}{
-		{"valid path under root", "/mnt/media/vacation", roots, false},
-		{"valid path exact root", "/mnt/media", roots, false},
-		{"valid second root", "/home/user/photos/2024", roots, false},
-		{"path outside roots", "/etc/passwd", roots, true},
-		{"traversal attack", "/mnt/media/../../../etc/passwd", roots, true},
-		{"empty roots allows all", "/any/path", []string{}, false},
-		{"empty path with roots", "", roots, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validatePathWithinRoots(tt.path, tt.roots)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validatePathWithinRoots(%q, %v) error = %v, wantErr %v",
-					tt.path, tt.roots, err, tt.wantErr)
-			}
-		})
-	}
-}
 
 func TestMediaExtensionFilter(t *testing.T) {
 	tests := []struct {
@@ -83,8 +54,9 @@ func TestFsListHandler_EmptyPathNoRoots(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(resp.Entries) == 0 {
-		t.Fatal("expected at least one filesystem root entry")
+	// With no configured roots, we get an empty list
+	if resp.Entries == nil {
+		t.Fatal("entries should not be nil")
 	}
 }
 
@@ -94,7 +66,8 @@ func TestFsListHandler_BrowseDirectory(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "photo.jpg"), []byte("fake"), 0644)
 	os.WriteFile(filepath.Join(tmpDir, "readme.txt"), []byte("text"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
+	b := storage.NewLocalBackend(tmpDir, "test")
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry([]storage.Backend{b})}
 	handler := fsListHandler(deps)
 
 	body, _ := json.Marshal(map[string]string{"path": tmpDir})
@@ -130,13 +103,11 @@ func TestFsListHandler_RootPathJail(t *testing.T) {
 	allowedDir := filepath.Join(tmpDir, "allowed")
 	os.MkdirAll(allowedDir, 0755)
 
-	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
-	origGet := getRootPaths
-	getRootPaths = func() []string { return []string{allowedDir} }
-	defer func() { getRootPaths = origGet }()
-
+	b := storage.NewLocalBackend(allowedDir, "allowed")
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry([]storage.Backend{b})}
 	handler := fsListHandler(deps)
 
+	// Try to browse tmpDir which is outside the allowed root
 	body, _ := json.Marshal(map[string]string{"path": tmpDir})
 	req := httptest.NewRequest(http.MethodPost, "/api/fs/list", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -157,7 +128,8 @@ func TestFsScanHandler_ScanDirectory(t *testing.T) {
 	os.MkdirAll(sub, 0755)
 	os.WriteFile(filepath.Join(sub, "d.png"), []byte("fake"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
+	b := storage.NewLocalBackend(tmpDir, "test")
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry([]storage.Backend{b})}
 	handler := fsScanHandler(deps)
 
 	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})
@@ -185,7 +157,8 @@ func TestFsScanHandler_Recursive(t *testing.T) {
 	os.MkdirAll(sub, 0755)
 	os.WriteFile(filepath.Join(sub, "d.png"), []byte("fake"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
+	b := storage.NewLocalBackend(tmpDir, "test")
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry([]storage.Backend{b})}
 	handler := fsScanHandler(deps)
 
 	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": true})
@@ -210,7 +183,8 @@ func TestFsScanHandler_InsertsIntoDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.WriteFile(filepath.Join(tmpDir, "photo.jpg"), []byte("fake"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
+	b := storage.NewLocalBackend(tmpDir, "test")
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry([]storage.Backend{b})}
 	handler := fsScanHandler(deps)
 
 	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})
@@ -231,5 +205,17 @@ func TestFsScanHandler_InsertsIntoDB(t *testing.T) {
 	}
 }
 
-// Suppress unused import warnings for runtime on non-Windows builds
-var _ = runtime.GOOS
+func TestComputeParent_LocalPath(t *testing.T) {
+	got := computeParent("/mnt/photos/vacation")
+	want := filepath.Clean("/mnt/photos")
+	if got != want {
+		t.Errorf("computeParent local = %q, want %q", got, want)
+	}
+}
+
+func TestComputeParent_S3Path(t *testing.T) {
+	got := computeParent("s3://bucket/media/photos/")
+	if got != "s3://bucket/media/" {
+		t.Errorf("computeParent s3 = %q, want 's3://bucket/media/'", got)
+	}
+}
