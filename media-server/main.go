@@ -37,6 +37,7 @@ import (
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/renderer"
 	"github.com/stevecastle/shrike/runners"
+	"github.com/stevecastle/shrike/storage"
 	"github.com/stevecastle/shrike/stream"
 	"github.com/stevecastle/shrike/tasks"
 )
@@ -86,9 +87,10 @@ var setupModeMutex sync.RWMutex
 // Dependencies struct to hold shared dependencies
 // -----------------------------------------------------------------------------
 type Dependencies struct {
-	Queue *jobqueue.Queue
-	DB    *sql.DB
-	Auth  *auth.AuthService
+	Queue   *jobqueue.Queue
+	DB      *sql.DB
+	Auth    *auth.AuthService
+	Storage *storage.Registry
 }
 
 // -----------------------------------------------------------------------------
@@ -2039,6 +2041,13 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			currentConfig = newCfg
 
+			// Rebuild storage backends from new config
+			newReg, regErrs := storage.BuildRegistry(newCfg.Roots)
+			for _, regErr := range regErrs {
+				log.Printf("Warning: storage backend init error: %v", regErr)
+			}
+			deps.Storage.Replace(newReg.AllBackends())
+
 			// Determine if any config field actually changed
 			changed := !reflect.DeepEqual(oldCfg, newCfg)
 
@@ -2686,10 +2695,15 @@ func main() {
 	}
 
 	// ––– create dependencies struct –––
+	storageReg, storageErrs := storage.BuildRegistry(currentConfig.Roots)
+	for _, err := range storageErrs {
+		log.Printf("Warning: storage backend init error: %v", err)
+	}
 	deps = &Dependencies{
-		Queue: queue,
-		DB:    db,
-		Auth:  authService,
+		Queue:   queue,
+		DB:      db,
+		Auth:    authService,
+		Storage: storageReg,
 	}
 
 	// Initialize renderer auth middleware

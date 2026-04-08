@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/stevecastle/shrike/storage"
 )
 
 func TestValidatePathWithinRoots(t *testing.T) {
@@ -64,7 +66,7 @@ func TestMediaExtensionFilter(t *testing.T) {
 }
 
 func TestFsListHandler_EmptyPathNoRoots(t *testing.T) {
-	deps := &Dependencies{DB: setupTestDB(t)}
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
 	handler := fsListHandler(deps)
 
 	body, _ := json.Marshal(map[string]string{"path": ""})
@@ -92,7 +94,7 @@ func TestFsListHandler_BrowseDirectory(t *testing.T) {
 	os.WriteFile(filepath.Join(tmpDir, "photo.jpg"), []byte("fake"), 0644)
 	os.WriteFile(filepath.Join(tmpDir, "readme.txt"), []byte("text"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t)}
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
 	handler := fsListHandler(deps)
 
 	body, _ := json.Marshal(map[string]string{"path": tmpDir})
@@ -128,7 +130,7 @@ func TestFsListHandler_RootPathJail(t *testing.T) {
 	allowedDir := filepath.Join(tmpDir, "allowed")
 	os.MkdirAll(allowedDir, 0755)
 
-	deps := &Dependencies{DB: setupTestDB(t)}
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
 	origGet := getRootPaths
 	getRootPaths = func() []string { return []string{allowedDir} }
 	defer func() { getRootPaths = origGet }()
@@ -155,7 +157,7 @@ func TestFsScanHandler_ScanDirectory(t *testing.T) {
 	os.MkdirAll(sub, 0755)
 	os.WriteFile(filepath.Join(sub, "d.png"), []byte("fake"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t)}
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
 	handler := fsScanHandler(deps)
 
 	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})
@@ -183,7 +185,7 @@ func TestFsScanHandler_Recursive(t *testing.T) {
 	os.MkdirAll(sub, 0755)
 	os.WriteFile(filepath.Join(sub, "d.png"), []byte("fake"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t)}
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
 	handler := fsScanHandler(deps)
 
 	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": true})
@@ -208,7 +210,7 @@ func TestFsScanHandler_InsertsIntoDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.WriteFile(filepath.Join(tmpDir, "photo.jpg"), []byte("fake"), 0644)
 
-	deps := &Dependencies{DB: setupTestDB(t)}
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry(nil)}
 	handler := fsScanHandler(deps)
 
 	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})

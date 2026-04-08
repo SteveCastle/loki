@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/stevecastle/shrike/storage"
 )
 
 // setupTestDB creates an in-memory SQLite database with the schema and seed data.
@@ -78,7 +80,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 func testDeps(t *testing.T) *Dependencies {
 	t.Helper()
 	return &Dependencies{
-		DB: setupTestDB(t),
+		DB:      setupTestDB(t),
+		Storage: storage.NewRegistry(nil),
 	}
 }
 
