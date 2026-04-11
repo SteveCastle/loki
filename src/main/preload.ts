@@ -55,6 +55,7 @@ export type Channels =
   | 'generate-transcript'
   | 'modify-transcript'
   | 'delete-file'
+  | 'import-files'
   | 'minimize'
   | 'load-duplicates-by-path'
   | 'merge-duplicates-by-path'

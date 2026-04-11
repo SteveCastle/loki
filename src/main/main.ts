@@ -291,6 +291,7 @@ ipcMain.handle('load-db', async (event, args) => {
     mediaModule.copyFileIntoClipboard()
   );
   ipcMain.handle('delete-file', mediaModule.deleteMedia(db));
+  ipcMain.handle('import-files', mediaModule.importFiles(db));
   ipcMain.handle(
     'load-duplicates-by-path',
     mediaModule.loadDuplicatesByPath(db)
