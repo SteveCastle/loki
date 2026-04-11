@@ -266,6 +266,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
   ipcMain.removeHandler('load-gif-metadata');
+  ipcMain.removeHandler('update-tag-description');
+  ipcMain.removeHandler('update-category-description');
 
   // Dynamically import heavy modules in parallel and register handlers
   const [mediaModule, taxonomyModule, metadataModule, loadFilesModule] =
@@ -345,6 +347,14 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('move-tag', taxonomyModule.moveTag(db));
   ipcMain.handle('order-tags', taxonomyModule.orderTags(db));
   ipcMain.handle('delete-tag', taxonomyModule.deleteTag(db));
+  ipcMain.handle(
+    'update-tag-description',
+    taxonomyModule.updateTagDescription(db)
+  );
+  ipcMain.handle(
+    'update-category-description',
+    taxonomyModule.updateCategoryDescription(db)
+  );
   if (!mainWindow) return;
   // Job creation removed - now handled by external job runner service
 });
