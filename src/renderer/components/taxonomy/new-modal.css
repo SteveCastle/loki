@@ -12,9 +12,8 @@
 }
 
 .input-modal-content {
-  width: 400px;
+  width: 550px;
   background-color: var(--controls-background-color);
-  opacity: 0.7;
   border-radius: 5px;
 }
 
@@ -22,18 +21,19 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 16px 20px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .input-modal-title {
   font-size: 0.8rem;
   text-transform: uppercase;
   font-weight: 900;
-  padding: 10px 20px;
+  letter-spacing: 0.5px;
 }
 
 .input-modal-close {
   cursor: pointer;
-  padding: 0 10px;
   opacity: 0.8;
   transition: opacity 0.2s ease-in-out;
 }
@@ -42,35 +42,145 @@
   opacity: 1;
 }
 
-.input-modal-body {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+/* Properties section (name + description) */
+.input-modal-properties {
   padding: 20px;
 }
 
-.input-modal-body input {
-  width: 100%;
-  padding: 10px;
-  border-radius: 2px;
-  border: none;
-  background-color: var(--controls-input-color);
-  color: black;
+.input-modal-properties label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--controls-label-color, rgba(255, 255, 255, 0.4));
+  letter-spacing: 0.5px;
+  display: block;
+  margin-bottom: 6px;
 }
 
-.input-modal-body button {
-  padding: 10px;
-  margin-top: 10px;
-  border-radius: 2px;
+.input-modal-properties input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 4px;
   border: none;
-  margin-left: 4px;
+  background-color: var(--controls-input-color);
+  color: inherit;
+  font-size: 14px;
+  margin-bottom: 16px;
+  box-sizing: border-box;
+}
+
+.input-modal-properties textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 4px;
+  border: none;
+  background-color: var(--controls-input-color);
+  color: inherit;
+  font-size: 13px;
+  min-height: 60px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+/* Divider between sections */
+.input-modal-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 0 20px;
+}
+
+/* Actions section */
+.input-modal-actions {
+  padding: 20px;
+}
+
+.input-modal-actions-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--controls-label-color, rgba(255, 255, 255, 0.4));
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.action-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background-color: var(--controls-input-color);
+  border-radius: 4px;
+  margin-bottom: 8px;
+}
+
+.action-row:last-child {
+  margin-bottom: 0;
+}
+
+.action-row-text {
+  flex: 1;
+  min-width: 0;
+  margin-right: 12px;
+}
+
+.action-row-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.action-row-description {
+  font-size: 11px;
+  color: var(--controls-label-color, rgba(255, 255, 255, 0.4));
+  margin-top: 2px;
+}
+
+.action-row button {
   background-color: var(--controls-button-color);
   color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0.8;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.action-row button:hover {
+  opacity: 1;
+}
+
+/* Footer with Cancel + Save */
+.input-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 20px;
+  gap: 8px;
+}
+
+.input-modal-footer button {
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 13px;
   cursor: pointer;
   opacity: 0.8;
   transition: opacity 0.2s ease-in-out;
 }
 
-.input-modal-body button:hover {
+.input-modal-footer button:hover {
   opacity: 1;
+}
+
+.input-modal-footer .btn-cancel {
+  background: transparent;
+  color: var(--controls-label-color, rgba(255, 255, 255, 0.4));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.input-modal-footer .btn-save {
+  background-color: var(--controls-button-color);
+  color: white;
+  border: none;
+  font-weight: 500;
 }
