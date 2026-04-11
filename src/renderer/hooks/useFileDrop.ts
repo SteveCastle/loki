@@ -121,8 +121,13 @@ export default function useFileDrop() {
   );
 
   async function handleElectronDrop(files: File[], move: boolean) {
-    // Electron File objects have a .path property with the absolute path
-    const filePaths = files.map((f) => (f as any).path).filter(Boolean) as string[];
+    // Use Electron's webUtils.getPathForFile to get absolute paths from dropped files.
+    // File.path was removed in recent Electron versions.
+    const getPath = (window as any).electron?.getPathForFile;
+    const filePaths = files.map((f) => {
+      if (getPath) return getPath(f) as string;
+      return (f as any).path as string | undefined;
+    }).filter(Boolean) as string[];
     if (filePaths.length === 0) return;
 
     let destination: string;
