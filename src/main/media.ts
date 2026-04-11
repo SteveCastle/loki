@@ -738,6 +738,11 @@ const importFiles =
     const imported: string[] = [];
     const failed: string[] = [];
 
+    // Guard: nothing to do if no files provided
+    if (files.length === 0) {
+      return { imported, failed };
+    }
+
     // Ensure destination directory exists
     await fs.promises.mkdir(destination, { recursive: true });
 
@@ -766,7 +771,15 @@ const importFiles =
         // Copy or move the file
         await fs.promises.copyFile(sourcePath, destPath);
         if (move) {
-          await fs.promises.unlink(sourcePath);
+          try {
+            await fs.promises.unlink(sourcePath);
+          } catch (unlinkErr) {
+            // Unlink failed — clean up the copy and treat as failure
+            console.error(`Failed to remove source ${sourcePath}:`, unlinkErr);
+            await fs.promises.unlink(destPath).catch(() => {});
+            failed.push(sourcePath);
+            continue;
+          }
         }
 
         imported.push(destPath);
@@ -778,31 +791,43 @@ const importFiles =
 
     // Insert all imported files into the database
     if (imported.length > 0) {
-      await insertBulkMedia(db, imported);
+      try {
+        await insertBulkMedia(db, imported);
+      } catch (err) {
+        console.error('Failed to insert imported media into database:', err);
+      }
     }
 
     // Apply tags if provided
     if (tags.length > 0 && imported.length > 0) {
-      for (const tag of tags) {
-        const insertStmt = await db.prepare(
-          `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
-           VALUES (?, ?, ?, ?, 0, ?)
-           ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
-        );
-        for (const mediaPath of imported) {
-          const countRow = await db.get(
-            `SELECT COUNT(*) AS count FROM media_tag_by_category WHERE tag_label = ?`,
+      const insertStmt = await db.prepare(
+        `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+         VALUES (?, ?, ?, ?, 0, ?)
+         ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
+      );
+      await db.run('BEGIN TRANSACTION');
+      try {
+        for (const tag of tags) {
+          const maxRow = await db.get(
+            `SELECT MAX(weight) AS maxWeight FROM media_tag_by_category WHERE tag_label = ?`,
             [tag.label]
           );
-          const weight = (countRow?.count || 0) + 1;
-          await insertStmt.run(
-            mediaPath,
-            tag.label,
-            tag.category,
-            weight,
-            Date.now()
-          );
+          let weight = (maxRow?.maxWeight || 0) + 1;
+          for (const mediaPath of imported) {
+            await insertStmt.run(
+              mediaPath,
+              tag.label,
+              tag.category,
+              weight,
+              Date.now()
+            );
+            weight++;
+          }
         }
+        await db.run('COMMIT');
+      } catch (err) {
+        await db.run('ROLLBACK');
+        console.error('Failed to apply tags:', err);
       }
     }
 
