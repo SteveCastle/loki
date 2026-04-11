@@ -59,9 +59,13 @@ export default function useFileDrop() {
 
   const handleDrop = useCallback(
     async (item: { files: File[] }) => {
-      // Guard: only allow drops when app is ready
+      // Guard: only allow drops when library is loaded
       const snapshot = libraryService.getSnapshot();
-      if (!snapshot.matches('ready')) return;
+      const isLoaded =
+        snapshot.matches({ library: 'loadedFromFS' }) ||
+        snapshot.matches({ library: 'loadedFromDB' }) ||
+        snapshot.matches({ library: 'loadedFromSearch' });
+      if (!isLoaded) return;
 
       const nativeFiles = item.files;
       if (!nativeFiles || nativeFiles.length === 0) return;
