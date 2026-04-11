@@ -987,6 +987,7 @@
         card.style.cssText = 'background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: var(--space-3);';
 
         const isS3 = root.type === 's3';
+        const isDefault = !!root.default;
         card.innerHTML = `
           <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-3)">
             <select class="input root-type" data-index="${index}" style="width:120px;flex-shrink:0">
@@ -994,6 +995,7 @@
               <option value="s3" ${isS3 ? 'selected' : ''}>S3</option>
             </select>
             <input class="input root-label" data-index="${index}" type="text" placeholder="Label" value="${esc(root.label || '')}" style="flex:1"/>
+            <button type="button" class="btn btn-secondary root-default" data-index="${index}" style="padding:var(--space-2) var(--space-3);flex-shrink:0;${isDefault ? 'color:var(--accent-primary);border-color:var(--accent-primary);font-weight:600' : ''}" title="Set as default upload destination">${isDefault ? '★ Default' : '☆ Default'}</button>
             <button type="button" class="btn btn-secondary root-remove" data-index="${index}" style="padding:var(--space-2) var(--space-3);color:var(--status-error);border-color:var(--status-error);flex-shrink:0">&times;</button>
           </div>
           <div class="root-fields" data-index="${index}">
@@ -1014,6 +1016,15 @@
             storageRootsData[index].accessKey = '';
             storageRootsData[index].secretKey = '';
             storageRootsData[index].thumbnailPrefix = '';
+          }
+          renderStorageRoots();
+        });
+        // Wire up default toggle (only one root can be default)
+        card.querySelector('.root-default').addEventListener('click', () => {
+          const wasDefault = !!storageRootsData[index].default;
+          storageRootsData.forEach(r => r.default = false);
+          if (!wasDefault) {
+            storageRootsData[index].default = true;
           }
           renderStorageRoots();
         });
@@ -1056,7 +1067,7 @@
       }
 
       document.getElementById('add-root-btn').addEventListener('click', () => {
-        storageRootsData.push({ type: 'local', path: '', label: '' });
+        storageRootsData.push({ type: 'local', path: '', label: '', default: false });
         renderStorageRoots();
       });
 
