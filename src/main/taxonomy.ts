@@ -1,4 +1,5 @@
 import path from 'path';
+import * as fs from 'fs';
 import { Database } from './database';
 import type Store from 'electron-store';
 import { IpcMainInvokeEvent, dialog } from 'electron';
@@ -529,6 +530,126 @@ const applyEloOrdering =
     return { count: mediaItems.length };
   };
 
+type ConsolidateTagFilesInput = [string, string];
+const consolidateTagFiles =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: ConsolidateTagFilesInput) => {
+    const [tagLabel, targetDir] = args;
+
+    const mediaItems = await db.all(
+      `SELECT DISTINCT m.path
+       FROM media m
+       JOIN media_tag_by_category mtc ON m.path = mtc.media_path
+       WHERE mtc.tag_label = $1`,
+      [tagLabel]
+    );
+
+    let copied = 0;
+    let errors = 0;
+
+    for (const item of mediaItems) {
+      const sourcePath = item.path;
+      let fileName = path.basename(sourcePath);
+      let destPath = path.join(targetDir, fileName);
+
+      // Handle filename collisions with numeric suffix
+      let counter = 1;
+      const ext = path.extname(fileName);
+      const base = path.basename(fileName, ext);
+      while (fs.existsSync(destPath) && destPath !== sourcePath) {
+        fileName = `${base}_${counter}${ext}`;
+        destPath = path.join(targetDir, fileName);
+        counter++;
+      }
+
+      // Skip if source and destination are the same
+      if (destPath === sourcePath) {
+        continue;
+      }
+
+      try {
+        fs.copyFileSync(sourcePath, destPath);
+
+        // Update media path
+        await db.run(`UPDATE media SET path = $1 WHERE path = $2`, [
+          destPath,
+          sourcePath,
+        ]);
+
+        // Update all media_tag_by_category references
+        await db.run(
+          `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
+          [destPath, sourcePath]
+        );
+
+        copied++;
+      } catch (e) {
+        console.error(`Failed to copy ${sourcePath} to ${destPath}:`, e);
+        errors++;
+      }
+    }
+
+    return { copied, errors, total: mediaItems.length };
+  };
+
+type ConsolidateCategoryFilesInput = [string, string];
+const consolidateCategoryFiles =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: ConsolidateCategoryFilesInput) => {
+    const [categoryLabel, targetDir] = args;
+
+    const mediaItems = await db.all(
+      `SELECT DISTINCT m.path
+       FROM media m
+       JOIN media_tag_by_category mtc ON m.path = mtc.media_path
+       WHERE mtc.category_label = $1`,
+      [categoryLabel]
+    );
+
+    let copied = 0;
+    let errors = 0;
+
+    for (const item of mediaItems) {
+      const sourcePath = item.path;
+      let fileName = path.basename(sourcePath);
+      let destPath = path.join(targetDir, fileName);
+
+      let counter = 1;
+      const ext = path.extname(fileName);
+      const base = path.basename(fileName, ext);
+      while (fs.existsSync(destPath) && destPath !== sourcePath) {
+        fileName = `${base}_${counter}${ext}`;
+        destPath = path.join(targetDir, fileName);
+        counter++;
+      }
+
+      if (destPath === sourcePath) {
+        continue;
+      }
+
+      try {
+        fs.copyFileSync(sourcePath, destPath);
+
+        await db.run(`UPDATE media SET path = $1 WHERE path = $2`, [
+          destPath,
+          sourcePath,
+        ]);
+
+        await db.run(
+          `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
+          [destPath, sourcePath]
+        );
+
+        copied++;
+      } catch (e) {
+        console.error(`Failed to copy ${sourcePath} to ${destPath}:`, e);
+        errors++;
+      }
+    }
+
+    return { copied, errors, total: mediaItems.length };
+  };
+
 export {
   loadTaxonomy,
   getTagCount,
@@ -552,4 +673,6 @@ export {
   updateTagDescription,
   updateCategoryDescription,
   applyEloOrdering,
+  consolidateTagFiles,
+  consolidateCategoryFiles,
 };
