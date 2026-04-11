@@ -1267,8 +1267,9 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 				})
 				return
 			}
-			// Ensure destination ends with separator for path joining
-			destPrefix = filepath.Clean(destination) + string(filepath.Separator)
+			// Ensure destination ends with / for path joining.
+			// Use "/" not filepath.Separator — S3 paths use forward slashes.
+			destPrefix = strings.TrimRight(destination, "/\\") + "/"
 		} else {
 			backend = deps.Storage.DefaultBackend()
 			if backend == nil {
@@ -1282,7 +1283,8 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			// Use an absolute path within the default backend's root so that
 			// returned paths are valid for DB insertion and media serving.
-			destPrefix = filepath.Join(backend.Root().Path, "uploads") + string(filepath.Separator)
+			rootPath := strings.TrimRight(backend.Root().Path, "/\\")
+			destPrefix = rootPath + "/uploads/"
 		}
 
 		files := r.MultipartForm.File["files"]
