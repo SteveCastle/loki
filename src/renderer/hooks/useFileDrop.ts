@@ -40,7 +40,12 @@ function resolveDirectory(initialFile: string): string {
   if (ft !== FileTypes.Other) {
     // It's a media file — extract the directory
     const lastSep = Math.max(initialFile.lastIndexOf('/'), initialFile.lastIndexOf('\\'));
-    return lastSep > 0 ? initialFile.substring(0, lastSep) : initialFile;
+    let dir = lastSep > 0 ? initialFile.substring(0, lastSep) : initialFile;
+    // On Windows, "D:" without trailing separator is a relative path — add it
+    if (/^[A-Za-z]:$/.test(dir)) {
+      dir += '\\';
+    }
+    return dir;
   }
   // No media extension — treat as directory
   return initialFile;
