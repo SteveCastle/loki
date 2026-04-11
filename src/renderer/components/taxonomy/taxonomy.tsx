@@ -343,6 +343,11 @@ export default function Taxonomy() {
           categoryLabel={activeCategory}
           handleClose={() => setEditingTag(null)}
           currentValue={editingTag}
+          currentDescription={
+            taxonomy?.[activeCategory]?.tags?.find(
+              (t: Concept) => t.label === editingTag
+            )?.description || ''
+          }
         />
       ) : null}
       {editingCategory ? (
@@ -350,6 +355,9 @@ export default function Taxonomy() {
           handleClose={() => setEditingCategory(null)}
           setCategory={setActiveCategory}
           currentValue={editingCategory}
+          currentDescription={
+            taxonomy?.[editingCategory]?.description || ''
+          }
         />
       ) : null}
       <Tooltip
