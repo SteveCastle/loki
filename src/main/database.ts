@@ -178,6 +178,7 @@ export async function initDB(db: Database) {
     const columnsToMigrate = [
       { name: 'preview', type: 'BLOB' },
       { name: 'thumbnail_path_600', type: 'INTEGER' },
+      { name: 'description', type: 'TEXT' },
     ];
     for (const column of columnsToMigrate) {
       const columnExists = tableInfo.some(
@@ -186,6 +187,27 @@ export async function initDB(db: Database) {
       if (!columnExists) {
         await db.run(
           `ALTER TABLE tag ADD COLUMN ${column.name} ${column.type}`
+        );
+      }
+    }
+  }
+
+  // Migrate existing category table if needed
+  const categoryTable = await db.get(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='category'`
+  );
+  if (categoryTable) {
+    const tableInfo = await db.all(`PRAGMA table_info(category)`);
+    const columnsToMigrate = [
+      { name: 'description', type: 'TEXT' },
+    ];
+    for (const column of columnsToMigrate) {
+      const columnExists = tableInfo.some(
+        (tableColumn: any) => tableColumn.name === column.name
+      );
+      if (!columnExists) {
+        await db.run(
+          `ALTER TABLE category ADD COLUMN ${column.name} ${column.type}`
         );
       }
     }
