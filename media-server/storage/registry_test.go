@@ -148,6 +148,59 @@ func TestRegistry_AllBackends_ReturnsCopy(t *testing.T) {
 	}
 }
 
+// --- DefaultBackend ---
+
+func TestRegistry_DefaultBackend_ExplicitDefault(t *testing.T) {
+	root1 := t.TempDir()
+	root2 := t.TempDir()
+
+	b1 := NewLocalBackend(root1, "b1")
+	b2 := NewLocalBackend(root2, "b2")
+
+	reg := NewRegistry([]Backend{b1, b2})
+	reg.defaultIdx = 1 // mark b2 as default
+
+	got := reg.DefaultBackend()
+	if got != b2 {
+		t.Error("DefaultBackend should return b2 (defaultIdx=1)")
+	}
+}
+
+func TestRegistry_DefaultBackend_FallsBackToFirst(t *testing.T) {
+	root := t.TempDir()
+	b := NewLocalBackend(root, "only")
+	reg := NewRegistry([]Backend{b})
+
+	got := reg.DefaultBackend()
+	if got != b {
+		t.Error("DefaultBackend should return the first backend when no default is set")
+	}
+}
+
+func TestRegistry_DefaultBackend_EmptyRegistry(t *testing.T) {
+	reg := NewRegistry(nil)
+	got := reg.DefaultBackend()
+	if got != nil {
+		t.Errorf("DefaultBackend on empty registry = %v, want nil", got)
+	}
+}
+
+func TestRegistry_ReplaceWithDefault(t *testing.T) {
+	root1 := t.TempDir()
+	root2 := t.TempDir()
+
+	b1 := NewLocalBackend(root1, "b1")
+	b2 := NewLocalBackend(root2, "b2")
+
+	reg := NewRegistry([]Backend{b1})
+	reg.ReplaceWithDefault([]Backend{b1, b2}, 1)
+
+	got := reg.DefaultBackend()
+	if got != b2 {
+		t.Error("DefaultBackend after ReplaceWithDefault should return b2")
+	}
+}
+
 // --- Integration: Upload + Download + Exists via Registry ---
 
 func TestRegistry_UploadDownloadExistsRoundTrip(t *testing.T) {

@@ -3,9 +3,7 @@ package tasks
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -38,17 +36,14 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return fmt.Errorf("discord token missing")
 	}
 
-	downloadPath := cfg.DownloadPath
-	if downloadPath == "" {
-		downloadPath = filepath.Join(os.Getenv("USERPROFILE"), "media")
-	}
-
-	// Ensure download directory exists
-	if err := os.MkdirAll(downloadPath, 0755); err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating download directory: %v", err))
+	// Create staging directory for CLI tool output
+	stagingPath, err := stagingDir(j.ID)
+	if err != nil {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating staging directory: %v", err))
 		q.ErrorJob(j.ID)
 		return err
 	}
+	defer cleanupStaging(stagingPath)
 
 	// Extract Channel ID from URL
 	// Format: https://discord.com/channels/{guild_id}/{channel_id}
@@ -62,7 +57,7 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 	channelID := matches[1]
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Starting Discord export for channel: %s", channelID))
-	q.PushJobStdout(j.ID, fmt.Sprintf("Output directory: %s", downloadPath))
+	q.PushJobStdout(j.ID, fmt.Sprintf("Staging directory: %s", stagingPath))
 
 	// Build dce arguments
 	// Command: dce export -t {TOKEN} -c {CHANNEL_ID} -o {OUTPUT_DIR} --media --reuse-media
@@ -70,7 +65,7 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		"export",
 		"-t", cfg.DiscordToken,
 		"-c", channelID,
-		"-o", downloadPath,
+		"-o", stagingPath,
 		"--media",
 		"--reuse-media",
 	}
@@ -118,7 +113,6 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return fmt.Errorf("start: %w", err)
 	}
 
-	var downloadedFiles []string
 	doneReading := make(chan struct{})
 	totalReaders := 2
 	doneCount := 0
@@ -185,23 +179,26 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Since we can't easily get the list of downloaded files from dce output (unknown format),
-	// we might scan the download directory for files modified in the last few minutes?
-	// Or we can leave follow-up tasks for now if dce doesn't output paths cleanly.
-	// Given the prompt, just calling the binary is the main requirement.
-	// I will attempt to ingest all files in the output directory if that's the behavior,
-	// OR I can try to parse lines if they look like file paths.
+	// dce doesn't output file paths in a parseable way, so scan the staging
+	// directory for all media files that were downloaded.
+	stagedFiles, scanErr := scanStagingFiles(stagingPath)
+	if scanErr != nil {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to scan staging dir: %v", scanErr))
+	}
 
-	// For now, I'll assume we just run the command.
-	// If the user wants follow-up tasks, they might need to run a separate scan/ingest on the folder.
-	// Or I can trigger a local ingest on the download folder?
-	// That might be safer.
+	if len(stagedFiles) > 0 {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Found %d media files, uploading to storage...", len(stagedFiles)))
 
-	// Triggering local ingest on the output folder:
-	if len(downloadedFiles) == 0 {
-		q.PushJobStdout(j.ID, "Scanning output directory for new files...")
-		// Use ingestLocalTask logic?
-		// For now, just report completion.
+		finalFiles := uploadStagedFiles(ctx, q, j.ID, stagedFiles, stagingPath, "downloads/")
+
+		for _, filePath := range finalFiles {
+			size := fileSizeOrZero(filePath)
+			if err := insertMediaRecord(q.Db, filePath, size); err != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", filePath, err))
+				continue
+			}
+			q.PushJobStdout(j.ID, fmt.Sprintf("Added to database: %s", filePath))
+		}
 	}
 
 	q.PushJobStdout(j.ID, "Discord export completed.")

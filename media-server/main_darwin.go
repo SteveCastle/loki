@@ -1540,6 +1540,135 @@ type updateConfigRequest struct {
 	Roots                  []appconfig.StorageRoot `json:"roots"`
 }
 
+// -----------------------------------------------------------------------------
+// File Upload handler
+// -----------------------------------------------------------------------------
+
+type uploadResponse struct {
+	Success bool     `json:"success"`
+	Files   []string `json:"files"`
+	Message string   `json:"message,omitempty"`
+	Error   string   `json:"error,omitempty"`
+}
+
+func uploadHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Limit upload size to 10GB
+		r.Body = http.MaxBytesReader(w, r.Body, 10<<30)
+
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "Failed to parse upload: " + err.Error(),
+			})
+			return
+		}
+
+		backend := deps.Storage.DefaultBackend()
+		if backend == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "No storage backend configured. Add a storage root in Config.",
+			})
+			return
+		}
+
+		files := r.MultipartForm.File["files"]
+		if len(files) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "No files provided",
+			})
+			return
+		}
+
+		ctx := r.Context()
+		var uploadedPaths []string
+
+		for _, fileHeader := range files {
+			file, err := fileHeader.Open()
+			if err != nil {
+				log.Printf("Failed to open uploaded file %s: %v", fileHeader.Filename, err)
+				continue
+			}
+
+			filename := filepath.Base(fileHeader.Filename)
+			destPath := "uploads/" + filename
+
+			for i := 1; ; i++ {
+				exists, _ := backend.Exists(ctx, destPath)
+				if !exists {
+					break
+				}
+				ext := filepath.Ext(filename)
+				base := strings.TrimSuffix(filename, ext)
+				destPath = fmt.Sprintf("uploads/%s_%d%s", base, i, ext)
+			}
+
+			contentType := fileHeader.Header.Get("Content-Type")
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+
+			if err := backend.Upload(ctx, destPath, file, contentType); err != nil {
+				file.Close()
+				log.Printf("Failed to upload file %s: %v", destPath, err)
+				continue
+			}
+			file.Close()
+
+			uploadedPaths = append(uploadedPaths, destPath)
+			log.Printf("Uploaded file: %s", destPath)
+		}
+
+		if len(uploadedPaths) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(uploadResponse{
+				Success: false,
+				Error:   "Failed to save any files",
+			})
+			return
+		}
+
+		autoIngest := r.FormValue("autoIngest") != "false"
+		if autoIngest && len(uploadedPaths) > 0 {
+			ids, err := deps.Queue.AddWorkflow(jobqueue.Workflow{
+				Tasks: []jobqueue.WorkflowTask{
+					{
+						Command:   "ingest",
+						Arguments: nil,
+						Input:     "uploads/",
+					},
+				},
+			})
+			if err != nil {
+				log.Printf("Failed to create ingest job: %v", err)
+			} else if len(ids) > 0 {
+				log.Printf("Created ingest job %s for uploaded files", ids[0])
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(uploadResponse{
+			Success: true,
+			Files:   uploadedPaths,
+			Message: fmt.Sprintf("Uploaded %d file(s)", len(uploadedPaths)),
+		})
+	}
+}
+
 func configHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -2309,6 +2438,7 @@ func main() {
 	for _, err := range storageErrs {
 		log.Printf("Warning: storage backend init error: %v", err)
 	}
+	tasks.SetStorageRegistry(storageReg)
 	deps = &Dependencies{
 		Queue:   queue,
 		DB:      db,
@@ -2381,6 +2511,9 @@ func main() {
 	mux.HandleFunc("/auth/logout", renderer.ApplyMiddlewares(logoutHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps), renderer.RolePublic))
+
+	// File upload
+	mux.HandleFunc("/api/upload", renderer.ApplyMiddlewares(uploadHandler(deps), renderer.RoleAdmin))
 
 	// ---- Loki Web Client API ----
 	mux.HandleFunc("/api/media", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {

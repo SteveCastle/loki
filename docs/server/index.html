@@ -276,7 +276,10 @@
         </p>
         <p>
           Use the <code>LOWKEY_ROOTS</code> environment variable with a JSON array to configure S3 backends.
-          You can mix local and S3 roots in the same configuration.
+          You can mix local and S3 roots in the same configuration. Mark one root with
+          <code>"default": true</code> to designate it as the upload and download destination &mdash;
+          uploaded files and ingested media will be stored there. If no root is marked default,
+          the first root is used.
         </p>
         <h4>S3 Only</h4>
         <div class="code-block">
@@ -292,7 +295,8 @@
           <code>    "prefix": "photos/",</code><br>
           <code>    "accessKey": "AKIAIOSFODNN7EXAMPLE",</code><br>
           <code>    "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",</code><br>
-          <code>    "thumbnailPrefix": "thumbs/"</code><br>
+          <code>    "thumbnailPrefix": "thumbs/",</code><br>
+          <code>    "default": true</code><br>
           <code>  }]' \</code><br>
           <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
         </div>
@@ -311,7 +315,8 @@
           <code>      "region": "us-west-2",</code><br>
           <code>      "bucket": "media-archive",</code><br>
           <code>      "accessKey": "AKIAIOSFODNN7EXAMPLE",</code><br>
-          <code>      "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"</code><br>
+          <code>      "secretKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",</code><br>
+          <code>      "default": true</code><br>
           <code>    }</code><br>
           <code>  ]' \</code><br>
           <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
@@ -329,6 +334,7 @@
           <tr><td><code>secretKey</code></td><td>Yes</td><td>Secret access key</td></tr>
           <tr><td><code>prefix</code></td><td>No</td><td>Key prefix to scope browsing (e.g. <code>"photos/"</code>)</td></tr>
           <tr><td><code>thumbnailPrefix</code></td><td>No</td><td>Separate prefix or bucket path for generated thumbnails</td></tr>
+          <tr><td><code>default</code></td><td>No</td><td>Set to <code>true</code> to make this root the upload/download destination</td></tr>
         </table>
 
         <h4>Tested S3-Compatible Services</h4>
@@ -346,14 +352,15 @@
         <table>
           <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
           <tr><td><code>LOWKEY_DB_PATH</code></td><td><code>/data/db/media.db</code></td><td>SQLite database path</td></tr>
-          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>/data/media</code></td><td>Download directory for ingested media</td></tr>
+          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>/data/media</code></td><td>Download directory (deprecated &mdash; use a default storage root instead)</td></tr>
           <tr><td><code>LOWKEY_OLLAMA_BASE_URL</code></td><td><code>http://host.docker.internal:11434</code></td><td>Ollama API endpoint for LLM features</td></tr>
           <tr><td><code>LOWKEY_OLLAMA_MODEL</code></td><td><code>llama3.2-vision</code></td><td>Vision model for image descriptions</td></tr>
           <tr><td><code>LOWKEY_JWT_SECRET</code></td><td>(auto-generated)</td><td>JWT signing secret for authentication</td></tr>
           <tr><td><code>LOWKEY_DISCORD_TOKEN</code></td><td></td><td>Discord token for media export</td></tr>
           <tr><td><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td></td><td>Path to faster-whisper binary</td></tr>
           <tr><td><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td></td><td>Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
-          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots (local + S3)</td></tr>
+          <tr><td><code>LOWKEY_DEFAULT_ROOT</code></td><td><code>1</code></td><td>Which root receives uploads/downloads (1-based index or label)</td></tr>
+          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots (set <code>"default":true</code> on one)</td></tr>
         </table>
         <p>
           If you're running <a href="https://ollama.com" target="_blank">Ollama</a> on the host machine for AI descriptions,

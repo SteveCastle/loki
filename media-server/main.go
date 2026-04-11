@@ -1249,17 +1249,14 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Get upload directory from config
-		cfg := appconfig.Get()
-		uploadDir := filepath.Join(cfg.DownloadPath, "uploads")
-
-		// Ensure upload directory exists
-		if err := os.MkdirAll(uploadDir, 0755); err != nil {
+		// Resolve the default storage backend for uploads
+		backend := deps.Storage.DefaultBackend()
+		if backend == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(uploadResponse{
 				Success: false,
-				Error:   "Failed to create upload directory: " + err.Error(),
+				Error:   "No storage backend configured. Add a storage root in Config.",
 			})
 			return
 		}
@@ -1275,50 +1272,41 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		ctx := r.Context()
 		var uploadedPaths []string
 
 		for _, fileHeader := range files {
-			// Open the uploaded file
 			file, err := fileHeader.Open()
 			if err != nil {
 				log.Printf("Failed to open uploaded file %s: %v", fileHeader.Filename, err)
 				continue
 			}
 
-			// Sanitize filename and create destination path
 			filename := filepath.Base(fileHeader.Filename)
-			destPath := filepath.Join(uploadDir, filename)
+			destPath := "uploads/" + filename
 
-			// Handle duplicate filenames by adding a suffix
-			if _, err := os.Stat(destPath); err == nil {
+			// Check for duplicates and add suffix
+			for i := 1; ; i++ {
+				exists, _ := backend.Exists(ctx, destPath)
+				if !exists {
+					break
+				}
 				ext := filepath.Ext(filename)
 				base := strings.TrimSuffix(filename, ext)
-				for i := 1; ; i++ {
-					destPath = filepath.Join(uploadDir, fmt.Sprintf("%s_%d%s", base, i, ext))
-					if _, err := os.Stat(destPath); os.IsNotExist(err) {
-						break
-					}
-				}
+				destPath = fmt.Sprintf("uploads/%s_%d%s", base, i, ext)
 			}
 
-			// Create destination file
-			dst, err := os.Create(destPath)
-			if err != nil {
+			contentType := fileHeader.Header.Get("Content-Type")
+			if contentType == "" {
+				contentType = "application/octet-stream"
+			}
+
+			if err := backend.Upload(ctx, destPath, file, contentType); err != nil {
 				file.Close()
-				log.Printf("Failed to create file %s: %v", destPath, err)
+				log.Printf("Failed to upload file %s: %v", destPath, err)
 				continue
 			}
-
-			// Copy the file
-			_, err = io.Copy(dst, file)
 			file.Close()
-			dst.Close()
-
-			if err != nil {
-				log.Printf("Failed to save file %s: %v", destPath, err)
-				os.Remove(destPath)
-				continue
-			}
 
 			uploadedPaths = append(uploadedPaths, destPath)
 			log.Printf("Uploaded file: %s", destPath)
@@ -1334,16 +1322,15 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Auto-ingest the upload directory
+		// Auto-ingest the uploads directory in the default backend
 		autoIngest := r.FormValue("autoIngest") != "false"
 		if autoIngest && len(uploadedPaths) > 0 {
-			// Create an ingest job for the uploads directory
 			ids, err := deps.Queue.AddWorkflow(jobqueue.Workflow{
 				Tasks: []jobqueue.WorkflowTask{
 					{
 						Command:   "ingest",
 						Arguments: nil,
-						Input:     uploadDir,
+						Input:     "uploads/",
 					},
 				},
 			})
@@ -2716,6 +2703,7 @@ func main() {
 	for _, err := range storageErrs {
 		log.Printf("Warning: storage backend init error: %v", err)
 	}
+	tasks.SetStorageRegistry(storageReg)
 	deps = &Dependencies{
 		Queue:   queue,
 		DB:      db,

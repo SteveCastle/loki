@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -20,6 +21,7 @@ type StorageRoot struct {
 	Type            string `json:"type"`                      // "local" or "s3"
 	Path            string `json:"path,omitempty"`            // local filesystem path
 	Label           string `json:"label"`                     // display name in UI
+	Default         bool   `json:"default,omitempty"`         // true = destination for uploads/downloads
 	Endpoint        string `json:"endpoint,omitempty"`
 	Region          string `json:"region,omitempty"`
 	Bucket          string `json:"bucket,omitempty"`
@@ -290,8 +292,33 @@ func Load() (Config, string, error) {
 	// Apply environment variable overrides (useful for Docker / container deployments)
 	applyEnvOverrides(&c)
 
+	// Migrate DownloadPath into a default root if no roots exist yet.
+	// This preserves backwards compatibility for configs that only have downloadPath.
+	if len(c.Roots) == 0 && c.DownloadPath != "" {
+		c.Roots = []StorageRoot{{
+			Type:    "local",
+			Path:    c.DownloadPath,
+			Label:   "Downloads",
+			Default: true,
+		}}
+	}
+
 	Set(c)
 	return c, path, nil
+}
+
+// DefaultRoot returns the storage root designated as default.
+// Resolution: first root with Default==true, else the first root, else nil.
+func DefaultRoot(roots []StorageRoot) *StorageRoot {
+	for i := range roots {
+		if roots[i].Default {
+			return &roots[i]
+		}
+	}
+	if len(roots) > 0 {
+		return &roots[0]
+	}
+	return nil
 }
 
 // applyEnvOverrides overrides config fields with environment variables when set.
@@ -327,6 +354,35 @@ func applyEnvOverrides(c *Config) {
 	if roots, ok := parseEnvRoots(); ok {
 		c.Roots = roots
 	}
+
+	// LOWKEY_DEFAULT_ROOT sets which root is the default destination for
+	// uploads and downloads. Value is a 1-based index or a label string.
+	// Only applies when using LOWKEY_ROOT_<N> vars (LOWKEY_ROOTS JSON
+	// should set "default":true directly on the entry).
+	if v := os.Getenv("LOWKEY_DEFAULT_ROOT"); v != "" {
+		applyDefaultRoot(c, v)
+	}
+}
+
+// applyDefaultRoot marks one root as default based on a 1-based index or label.
+func applyDefaultRoot(c *Config, v string) {
+	// Clear any existing defaults first
+	for i := range c.Roots {
+		c.Roots[i].Default = false
+	}
+	// Try as 1-based index
+	if idx, err := strconv.Atoi(v); err == nil && idx >= 1 && idx <= len(c.Roots) {
+		c.Roots[idx-1].Default = true
+		return
+	}
+	// Try as label match
+	for i := range c.Roots {
+		if strings.EqualFold(c.Roots[i].Label, v) {
+			c.Roots[i].Default = true
+			return
+		}
+	}
+	log.Printf("Warning: LOWKEY_DEFAULT_ROOT=%q does not match any root index or label", v)
 }
 
 // parseEnvRoots reads storage roots from environment variables.

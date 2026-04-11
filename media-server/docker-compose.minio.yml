@@ -3,4 +3,4 @@
 services:
   lowkey-media-server:
     environment:
-      - LOWKEY_ROOTS=[{"type":"s3","label":"MinIO Media","endpoint":"http://minio:9000","region":"us-east-1","bucket":"media","accessKey":"minioadmin","secretKey":"minioadmin","thumbnailPrefix":"","prefix":""},{"type":"s3","label":"MinIO Thumbnails","endpoint":"http://minio:9000","region":"us-east-1","bucket":"media-thumbnails","accessKey":"minioadmin","secretKey":"minioadmin"}]
+      - LOWKEY_ROOTS=[{"type":"s3","label":"MinIO Media","endpoint":"http://minio:9000","region":"us-east-1","bucket":"media","accessKey":"minioadmin","secretKey":"minioadmin","thumbnailPrefix":"","prefix":"","default":true},{"type":"s3","label":"MinIO Thumbnails","endpoint":"http://minio:9000","region":"us-east-1","bucket":"media-thumbnails","accessKey":"minioadmin","secretKey":"minioadmin"}]
