@@ -266,6 +266,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
   ipcMain.removeHandler('load-gif-metadata');
+  ipcMain.removeHandler('import-files');
   ipcMain.removeHandler('update-tag-description');
   ipcMain.removeHandler('update-category-description');
   ipcMain.removeHandler('apply-elo-ordering');
