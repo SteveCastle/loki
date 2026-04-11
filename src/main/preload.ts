@@ -61,7 +61,8 @@ export type Channels =
   | 'minimize'
   | 'load-duplicates-by-path'
   | 'merge-duplicates-by-path'
-  | 'check-for-updates';
+  | 'check-for-updates'
+  | 'apply-elo-ordering';
 
 const loadMediaFromDB = async (
   tags: string[],

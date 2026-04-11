@@ -501,6 +501,34 @@ const updateCategoryDescription =
     ]);
   };
 
+type ApplyEloOrderingInput = [string];
+const applyEloOrdering =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: ApplyEloOrderingInput) => {
+    const [tagLabel] = args;
+
+    // Get all media items for this tag, sorted by ELO descending
+    const mediaItems = await db.all(
+      `SELECT m.path, m.elo
+       FROM media m
+       JOIN media_tag_by_category mtc ON m.path = mtc.media_path
+       WHERE mtc.tag_label = $1
+       ORDER BY COALESCE(m.elo, -1) DESC`,
+      [tagLabel]
+    );
+
+    // Assign incrementing weights: highest ELO gets highest weight
+    for (let i = 0; i < mediaItems.length; i++) {
+      const weight = mediaItems.length - i;
+      await db.run(
+        `UPDATE media_tag_by_category SET weight = $1 WHERE media_path = $2 AND tag_label = $3`,
+        [weight, mediaItems[i].path, tagLabel]
+      );
+    }
+
+    return { count: mediaItems.length };
+  };
+
 export {
   loadTaxonomy,
   getTagCount,
@@ -523,4 +551,5 @@ export {
   removeTimestamp,
   updateTagDescription,
   updateCategoryDescription,
+  applyEloOrdering,
 };

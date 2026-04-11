@@ -268,6 +268,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-gif-metadata');
   ipcMain.removeHandler('update-tag-description');
   ipcMain.removeHandler('update-category-description');
+  ipcMain.removeHandler('apply-elo-ordering');
 
   // Dynamically import heavy modules in parallel and register handlers
   const [mediaModule, taxonomyModule, metadataModule, loadFilesModule] =
@@ -355,6 +356,7 @@ ipcMain.handle('load-db', async (event, args) => {
     'update-category-description',
     taxonomyModule.updateCategoryDescription(db)
   );
+  ipcMain.handle('apply-elo-ordering', taxonomyModule.applyEloOrdering(db));
   if (!mainWindow) return;
   // Job creation removed - now handled by external job runner service
 });
