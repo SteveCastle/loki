@@ -641,6 +641,7 @@ export {
   updateDescription,
   loadDuplicatesByPath,
   mergeDuplicatesByPath,
+  importFiles,
 };
 
 // New helpers to manage thumbnails for a given media path
@@ -720,6 +721,92 @@ const regenerateThumbnail =
 
     await asyncCreateThumbnail(filePath, basePath, cache, timeStamp);
     return thumbnailFullPath;
+  };
+
+type ImportFilesInput = [
+  {
+    files: string[];
+    destination: string;
+    move: boolean;
+    tags: { label: string; category: string }[];
+  },
+];
+
+const importFiles =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: ImportFilesInput) => {
+    const { files, destination, move, tags } = args[0];
+    const imported: string[] = [];
+    const failed: string[] = [];
+
+    // Ensure destination directory exists
+    await fs.promises.mkdir(destination, { recursive: true });
+
+    for (const sourcePath of files) {
+      try {
+        const baseName = path.basename(sourcePath);
+        const ext = path.extname(baseName);
+        const nameWithoutExt = path.basename(baseName, ext);
+
+        // Find a non-colliding filename
+        let destPath = path.join(destination, baseName);
+        let counter = 1;
+        while (
+          await fs.promises
+            .access(destPath)
+            .then(() => true)
+            .catch(() => false)
+        ) {
+          destPath = path.join(
+            destination,
+            `${nameWithoutExt}_${counter}${ext}`
+          );
+          counter++;
+        }
+
+        // Copy or move the file
+        await fs.promises.copyFile(sourcePath, destPath);
+        if (move) {
+          await fs.promises.unlink(sourcePath);
+        }
+
+        imported.push(destPath);
+      } catch (err) {
+        console.error(`Failed to import ${sourcePath}:`, err);
+        failed.push(sourcePath);
+      }
+    }
+
+    // Insert all imported files into the database
+    if (imported.length > 0) {
+      await insertBulkMedia(db, imported);
+    }
+
+    // Apply tags if provided
+    if (tags.length > 0 && imported.length > 0) {
+      for (const tag of tags) {
+        const insertStmt = await db.prepare(
+          `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+           VALUES (?, ?, ?, ?, 0, ?)
+           ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
+        );
+        for (const mediaPath of imported) {
+          const countRow = await db.get(
+            `SELECT COUNT(*) AS count FROM media_tag_by_category WHERE tag_label = ?`,
+            [tag.label]
+          );
+          const weight = (countRow?.count || 0) + 1;
+          await insertStmt.run(
+            mediaPath,
+            tag.label,
+            tag.category,
+            weight,
+            Date.now()
+          );
+        }
+      }
+    }
+
+    return { imported, failed };
   };
 
 export { listThumbnails, regenerateThumbnail };
