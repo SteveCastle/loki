@@ -729,15 +729,6 @@
                     >
                   </div>
                 </div>
-                <div class="field">
-                  <label class="label">Download path</label>
-                  <input
-                    id="download-path"
-                    class="input"
-                    type="text"
-                    value="{{.Config.DownloadPath}}"
-                  />
-                </div>
               </div>
             </div>
 
@@ -1619,7 +1610,6 @@
         }
         const payload = {
           dbPath,
-          downloadPath: document.getElementById('download-path').value.trim(),
           discordToken: document.getElementById('discord-token').value.trim(),
           ollamaBaseUrl: document
             .getElementById('ollama-base-url')
