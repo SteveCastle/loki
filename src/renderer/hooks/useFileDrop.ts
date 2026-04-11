@@ -57,6 +57,21 @@ export default function useFileDrop() {
     (state) => state.context.activeCategory
   );
 
+  /** Re-trigger the current browse to pick up newly added files. */
+  function refreshCurrentView() {
+    if (currentStateType === 'fs') {
+      // Re-send the current path to trigger a full rescan via loadingFromFS
+      libraryService.send('SET_FILE', { path: initialFile });
+    } else if (currentStateType === 'db' && dbQueryTags.length > 0) {
+      // Re-send the current tag query to reload from DB
+      libraryService.send('SET_QUERY_TAG', { data: { tag: dbQueryTags[0] } });
+    } else if (currentStateType === 'search') {
+      // For search, a full refresh isn't straightforward — send REFRESH_LIBRARY
+      // as a best-effort (works in Electron, no-op in web)
+      refreshCurrentView();
+    }
+  }
+
   const handleDrop = useCallback(
     async (item: { files: File[] }) => {
       // Guard: only allow drops when library is loaded
@@ -157,7 +172,7 @@ export default function useFileDrop() {
         data: { type: 'success', title: 'Import complete', message, durationMs: 4000 },
       });
 
-      libraryService.send('REFRESH_LIBRARY');
+      refreshCurrentView();
     } catch (err) {
       console.error('Import failed:', err);
       libraryService.send('ADD_TOAST', {
@@ -221,7 +236,7 @@ export default function useFileDrop() {
         data: { type: 'success', title: 'Import complete', message, durationMs: 4000 },
       });
 
-      libraryService.send('REFRESH_LIBRARY');
+      refreshCurrentView();
     } catch (err) {
       console.error('Upload failed:', err);
       libraryService.send('ADD_TOAST', {
