@@ -536,6 +536,12 @@ const consolidateTagFiles =
   async (_: IpcMainInvokeEvent, args: ConsolidateTagFilesInput) => {
     const [tagLabel, targetDir] = args;
 
+    // Create a subfolder named after the tag inside the target directory
+    const tagDir = path.join(targetDir, tagLabel);
+    if (!fs.existsSync(tagDir)) {
+      fs.mkdirSync(tagDir, { recursive: true });
+    }
+
     const mediaItems = await db.all(
       `SELECT DISTINCT m.path
        FROM media m
@@ -550,7 +556,7 @@ const consolidateTagFiles =
     for (const item of mediaItems) {
       const sourcePath = item.path;
       let fileName = path.basename(sourcePath);
-      let destPath = path.join(targetDir, fileName);
+      let destPath = path.join(tagDir, fileName);
 
       // Handle filename collisions with numeric suffix
       let counter = 1;
@@ -558,7 +564,7 @@ const consolidateTagFiles =
       const base = path.basename(fileName, ext);
       while (fs.existsSync(destPath) && destPath !== sourcePath) {
         fileName = `${base}_${counter}${ext}`;
-        destPath = path.join(targetDir, fileName);
+        destPath = path.join(tagDir, fileName);
         counter++;
       }
 
@@ -598,6 +604,12 @@ const consolidateCategoryFiles =
   async (_: IpcMainInvokeEvent, args: ConsolidateCategoryFilesInput) => {
     const [categoryLabel, targetDir] = args;
 
+    // Create a subfolder named after the category inside the target directory
+    const categoryDir = path.join(targetDir, categoryLabel);
+    if (!fs.existsSync(categoryDir)) {
+      fs.mkdirSync(categoryDir, { recursive: true });
+    }
+
     // Query media grouped by tag so we can create subfolders per tag
     const mediaItems = await db.all(
       `SELECT DISTINCT m.path, mtc.tag_label
@@ -614,7 +626,7 @@ const consolidateCategoryFiles =
     for (const item of mediaItems) {
       const sourcePath = item.path;
       const tagLabel = item.tag_label;
-      const tagDir = path.join(targetDir, tagLabel);
+      const tagDir = path.join(categoryDir, tagLabel);
 
       if (!fs.existsSync(tagDir)) {
         fs.mkdirSync(tagDir, { recursive: true });
