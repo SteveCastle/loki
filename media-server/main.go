@@ -1249,16 +1249,38 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Resolve the default storage backend for uploads
-		backend := deps.Storage.DefaultBackend()
-		if backend == nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(uploadResponse{
-				Success: false,
-				Error:   "No storage backend configured. Add a storage root in Config.",
-			})
-			return
+		// Optional destination directory — if provided, upload into that
+		// directory using the backend that owns it. Otherwise use the default
+		// backend's uploads/ directory.
+		destination := r.FormValue("destination")
+
+		var backend storage.Backend
+		var destPrefix string
+		if destination != "" {
+			backend = deps.Storage.BackendFor(destination)
+			if backend == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(uploadResponse{
+					Success: false,
+					Error:   "No storage backend found for path: " + destination,
+				})
+				return
+			}
+			// Ensure destination ends with separator for path joining
+			destPrefix = filepath.Clean(destination) + string(filepath.Separator)
+		} else {
+			backend = deps.Storage.DefaultBackend()
+			if backend == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(uploadResponse{
+					Success: false,
+					Error:   "No storage backend configured. Add a storage root in Config.",
+				})
+				return
+			}
+			destPrefix = "uploads/"
 		}
 
 		files := r.MultipartForm.File["files"]
@@ -1283,7 +1305,7 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 			}
 
 			filename := filepath.Base(fileHeader.Filename)
-			destPath := "uploads/" + filename
+			destPath := destPrefix + filename
 
 			// Check for duplicates and add suffix
 			for i := 1; ; i++ {
@@ -1293,7 +1315,7 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 				}
 				ext := filepath.Ext(filename)
 				base := strings.TrimSuffix(filename, ext)
-				destPath = fmt.Sprintf("uploads/%s_%d%s", base, i, ext)
+				destPath = fmt.Sprintf("%s%s_%d%s", destPrefix, base, i, ext)
 			}
 
 			contentType := fileHeader.Header.Get("Content-Type")

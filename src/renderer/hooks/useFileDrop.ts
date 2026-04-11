@@ -173,6 +173,12 @@ export default function useFileDrop() {
         formData.append('files', file);
       }
 
+      // In FS mode, tell the server to place files in the browsed directory
+      if (currentStateType === 'fs' && initialFile) {
+        const destination = resolveDirectory(initialFile);
+        formData.append('destination', destination);
+      }
+
       const response = await fetch('/api/upload', {
         method: 'POST',
         credentials: 'include',
@@ -205,7 +211,9 @@ export default function useFileDrop() {
 
       const count = uploadedPaths.length;
       let message = `Added ${count} file${count !== 1 ? 's' : ''}`;
-      if (dbQueryTags.length > 0) {
+      if (currentStateType === 'fs') {
+        message += ` to ${resolveDirectory(initialFile)}`;
+      } else if (dbQueryTags.length > 0) {
         message += `, tagged: ${dbQueryTags.join(', ')}`;
       }
 
