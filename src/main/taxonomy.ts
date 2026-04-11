@@ -12,11 +12,13 @@ const loadTaxonomy = (db: Database) => async () => {
       `SELECT
     c.label AS category_label,
     c.weight AS category_weight,
+    c.description AS category_description,
     json_group_array(
       json_object(
         'label', t.label,
         'category', t.category_label,
-        'weight', t.weight
+        'weight', t.weight,
+        'description', t.description
       )
     ) AS tags
   FROM category c
@@ -27,6 +29,7 @@ const loadTaxonomy = (db: Database) => async () => {
       return {
         label: category.category_label,
         weight: category.category_weight,
+        description: category.category_description || '',
         tags: JSON.parse(category.tags),
       };
     });

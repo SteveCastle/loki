@@ -26,11 +26,13 @@ type Concept = {
   label: string;
   category: string;
   weight: number;
+  description: string;
 };
 
 type Category = {
   label: string;
   tags: Concept[];
+  description: string;
 };
 
 type Taxonomy = {
