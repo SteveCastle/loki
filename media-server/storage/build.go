@@ -14,6 +14,7 @@ import (
 func BuildRegistry(roots []appconfig.StorageRoot) (*Registry, []error) {
 	var backends []Backend
 	var errs []error
+	defaultIdx := -1
 
 	for _, root := range roots {
 		switch root.Type {
@@ -43,8 +44,18 @@ func BuildRegistry(roots []appconfig.StorageRoot) (*Registry, []error) {
 			backends = append(backends, b)
 		default:
 			errs = append(errs, fmt.Errorf("unknown storage type %q for root %q", root.Type, root.Label))
+			continue
+		}
+		// Track the first root marked default (maps to backend index, not root index,
+		// because failed roots are skipped).
+		if root.Default && defaultIdx == -1 {
+			defaultIdx = len(backends) - 1
 		}
 	}
 
-	return NewRegistry(backends), errs
+	reg := NewRegistry(backends)
+	if defaultIdx >= 0 {
+		reg.defaultIdx = defaultIdx
+	}
+	return reg, errs
 }

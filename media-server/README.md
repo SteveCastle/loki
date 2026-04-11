@@ -95,13 +95,14 @@ All configuration can be set via environment variables, no config file needed:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOWKEY_DB_PATH` | `/data/db/media.db` | SQLite database path |
-| `LOWKEY_DOWNLOAD_PATH` | `/data/media` | Media download directory |
+| `LOWKEY_DOWNLOAD_PATH` | `/data/media` | Download directory (deprecated — use a default root) |
 | `LOWKEY_OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
 | `LOWKEY_OLLAMA_MODEL` | `llama3.2-vision` | Vision model for descriptions |
 | `LOWKEY_JWT_SECRET` | (auto-generated) | JWT signing secret |
 | `LOWKEY_DISCORD_TOKEN` | | Discord token for media export |
 | `LOWKEY_FASTER_WHISPER_PATH` | | Path to faster-whisper binary |
 | `LOWKEY_ROOT_1`, `_2`, ... | | Local storage roots (see below) |
+| `LOWKEY_DEFAULT_ROOT` | `1` | Which root receives uploads/downloads (index or label) |
 | `LOWKEY_ROOTS` | | JSON storage roots with S3 support (see below) |
 
 #### Storage roots via environment

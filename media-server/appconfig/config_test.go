@@ -651,3 +651,120 @@ func TestConfigConcurrency(t *testing.T) {
 	<-done
 	<-done
 }
+
+// TestDefaultRootExplicit verifies DefaultRoot returns the root marked default.
+func TestDefaultRootExplicit(t *testing.T) {
+	roots := []StorageRoot{
+		{Type: "local", Path: "/a", Label: "A"},
+		{Type: "local", Path: "/b", Label: "B", Default: true},
+		{Type: "local", Path: "/c", Label: "C"},
+	}
+	r := DefaultRoot(roots)
+	if r == nil || r.Path != "/b" {
+		t.Errorf("DefaultRoot = %+v; want root B", r)
+	}
+}
+
+// TestDefaultRootFallsBackToFirst verifies DefaultRoot returns first when none marked.
+func TestDefaultRootFallsBackToFirst(t *testing.T) {
+	roots := []StorageRoot{
+		{Type: "local", Path: "/a", Label: "A"},
+		{Type: "local", Path: "/b", Label: "B"},
+	}
+	r := DefaultRoot(roots)
+	if r == nil || r.Path != "/a" {
+		t.Errorf("DefaultRoot = %+v; want root A (first)", r)
+	}
+}
+
+// TestDefaultRootEmpty verifies DefaultRoot returns nil with no roots.
+func TestDefaultRootEmpty(t *testing.T) {
+	r := DefaultRoot(nil)
+	if r != nil {
+		t.Errorf("DefaultRoot = %+v; want nil", r)
+	}
+}
+
+// TestDefaultRootJSONRoundTrip verifies the default field survives JSON encoding.
+func TestDefaultRootJSONRoundTrip(t *testing.T) {
+	root := StorageRoot{Type: "s3", Label: "Bucket", Bucket: "media", Default: true}
+	data, err := json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded StorageRoot
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.Default {
+		t.Error("Default field lost after JSON round-trip")
+	}
+}
+
+// TestLOWKEY_DEFAULT_ROOT_Index verifies LOWKEY_DEFAULT_ROOT with a 1-based index.
+func TestLOWKEY_DEFAULT_ROOT_Index(t *testing.T) {
+	t.Setenv("LOWKEY_ROOT_1", "/mnt/a:A")
+	t.Setenv("LOWKEY_ROOT_2", "/mnt/b:B")
+	t.Setenv("LOWKEY_DEFAULT_ROOT", "2")
+
+	c := defaultConfig()
+	applyEnvOverrides(&c)
+
+	if len(c.Roots) != 2 {
+		t.Fatalf("got %d roots; want 2", len(c.Roots))
+	}
+	if c.Roots[0].Default {
+		t.Error("root 0 should not be default")
+	}
+	if !c.Roots[1].Default {
+		t.Error("root 1 should be default (index 2)")
+	}
+}
+
+// TestLOWKEY_DEFAULT_ROOT_Label verifies LOWKEY_DEFAULT_ROOT with a label string.
+func TestLOWKEY_DEFAULT_ROOT_Label(t *testing.T) {
+	t.Setenv("LOWKEY_ROOT_1", "/mnt/a:Alpha")
+	t.Setenv("LOWKEY_ROOT_2", "/mnt/b:Beta")
+	t.Setenv("LOWKEY_DEFAULT_ROOT", "Beta")
+
+	c := defaultConfig()
+	applyEnvOverrides(&c)
+
+	if !c.Roots[1].Default {
+		t.Error("root with label Beta should be default")
+	}
+}
+
+// TestDownloadPathMigration verifies DownloadPath becomes a default root when no roots exist.
+func TestDownloadPathMigration(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	// Write a config with only downloadPath, no roots
+	legacy := map[string]interface{}{
+		"dbPath":       filepath.Join(dir, "media.db"),
+		"jwtSecret":    "test-secret",
+		"downloadPath": "/my/downloads",
+	}
+	data, _ := json.Marshal(legacy)
+	os.WriteFile(cfgFile, data, 0644)
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if len(c.Roots) != 1 {
+		t.Fatalf("expected 1 root from migration, got %d", len(c.Roots))
+	}
+	if c.Roots[0].Path != "/my/downloads" {
+		t.Errorf("migrated root path = %q; want /my/downloads", c.Roots[0].Path)
+	}
+	if !c.Roots[0].Default {
+		t.Error("migrated root should be marked default")
+	}
+}

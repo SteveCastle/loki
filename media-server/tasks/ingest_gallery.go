@@ -3,14 +3,12 @@ package tasks
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 
-	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 )
@@ -34,28 +32,23 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Get download path from config
-	cfg := appconfig.Get()
-	downloadPath := cfg.DownloadPath
-	if downloadPath == "" {
-		downloadPath = filepath.Join(os.Getenv("USERPROFILE"), "media")
-	}
-
-	// Ensure download directory exists
-	if err := os.MkdirAll(downloadPath, 0755); err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating download directory: %v", err))
+	// Create staging directory for CLI tool output
+	stagingPath, err := stagingDir(j.ID)
+	if err != nil {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating staging directory: %v", err))
 		q.ErrorJob(j.ID)
 		return err
 	}
+	defer cleanupStaging(stagingPath)
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Starting gallery-dl download: %s", url))
-	q.PushJobStdout(j.ID, fmt.Sprintf("Output directory: %s", downloadPath))
+	q.PushJobStdout(j.ID, fmt.Sprintf("Staging directory: %s", stagingPath))
 
 	// Build gallery-dl arguments
 	// -d sets the base download directory
 	// --write-log outputs the downloaded file paths
 	args := []string{
-		"-d", downloadPath,
+		"-d", stagingPath,
 		"--write-metadata",
 		url,
 	}
@@ -117,7 +110,7 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 
 			// gallery-dl outputs the file path for each downloaded file
 			// Check if the line looks like a valid file path
-			if line != "" && isDownloadedFilePath(line, downloadPath) {
+			if line != "" && isDownloadedFilePath(line, stagingPath) {
 				mu.Lock()
 				downloadedFiles = append(downloadedFiles, line)
 				mu.Unlock()
@@ -162,17 +155,13 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Add downloaded files to database
-	var insertedFiles []string
-	for _, filePath := range downloadedFiles {
-		// Verify the file exists and get its size
-		fi, statErr := os.Stat(filePath)
-		if statErr != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: file not found %s: %v", filePath, statErr))
-			continue
-		}
-		size := fi.Size()
+	// Upload staged files to the default storage backend
+	finalFiles := uploadStagedFiles(ctx, q, j.ID, downloadedFiles, stagingPath, "downloads/")
 
+	// Add final files to database
+	var insertedFiles []string
+	for _, filePath := range finalFiles {
+		size := fileSizeOrZero(filePath)
 		if err := insertMediaRecord(q.Db, filePath, size); err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", filePath, err))
 			continue

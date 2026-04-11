@@ -4,14 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 
-	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 )
@@ -34,26 +32,21 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Get download path from config
-	cfg := appconfig.Get()
-	downloadPath := cfg.DownloadPath
-	if downloadPath == "" {
-		downloadPath = filepath.Join(os.Getenv("USERPROFILE"), "media")
-	}
-
-	// Ensure download directory exists
-	if err := os.MkdirAll(downloadPath, 0755); err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating download directory: %v", err))
+	// Create staging directory for CLI tool output
+	stagingPath, err := stagingDir(j.ID)
+	if err != nil {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating staging directory: %v", err))
 		q.ErrorJob(j.ID)
 		return err
 	}
+	defer cleanupStaging(stagingPath)
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Starting YouTube download: %s", url))
-	q.PushJobStdout(j.ID, fmt.Sprintf("Output directory: %s", downloadPath))
+	q.PushJobStdout(j.ID, fmt.Sprintf("Staging directory: %s", stagingPath))
 
 	// Build yt-dlp arguments
 	// Use --print to get the final filename after download
-	outputTemplate := filepath.Join(downloadPath, "%(title)s [%(id)s].%(ext)s")
+	outputTemplate := filepath.Join(stagingPath, "%(title)s [%(id)s].%(ext)s")
 	args := []string{
 		"-o", outputTemplate,
 		"--print", "after_move:filepath", // Print the final file path after download
@@ -162,13 +155,13 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Add downloaded files to database
+	// Upload staged files to the default storage backend
+	finalFiles := uploadStagedFiles(ctx, q, j.ID, downloadedFiles, stagingPath, "downloads/")
+
+	// Add final files to database
 	var insertedFiles []string
-	for _, filePath := range downloadedFiles {
-		var size int64
-		if fi, statErr := os.Stat(filePath); statErr == nil {
-			size = fi.Size()
-		}
+	for _, filePath := range finalFiles {
+		size := fileSizeOrZero(filePath)
 		if err := insertMediaRecord(q.Db, filePath, size); err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", filePath, err))
 			continue

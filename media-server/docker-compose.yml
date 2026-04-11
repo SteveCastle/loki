@@ -10,18 +10,19 @@ services:
       # - /path/to/your/videos:/mnt/videos:ro
     environment:
       - LOWKEY_DB_PATH=/data/db/media.db
-      - LOWKEY_DOWNLOAD_PATH=/data/media
       - LOWKEY_OLLAMA_BASE_URL=${LOWKEY_OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       - LOWKEY_OLLAMA_MODEL=${LOWKEY_OLLAMA_MODEL:-llama3.2-vision}
       - LOWKEY_JWT_SECRET=${LOWKEY_JWT_SECRET:-}
       # - LOWKEY_DISCORD_TOKEN=
 
       # Storage roots — local paths (uncomment and edit):
+      # The first root (or one with "default":true) receives uploads and downloads.
       # - LOWKEY_ROOT_1=/mnt/photos:Photos
       # - LOWKEY_ROOT_2=/mnt/videos:Videos
+      # - LOWKEY_DEFAULT_ROOT=1
 
-      # Or use LOWKEY_ROOTS for S3 / mixed configs:
-      # - LOWKEY_ROOTS=[{"type":"s3","label":"My Bucket","endpoint":"https://s3.example.com","region":"us-east-1","bucket":"media","accessKey":"AK","secretKey":"SK"}]
+      # Or use LOWKEY_ROOTS for S3 / mixed configs (set "default":true on the upload target):
+      # - LOWKEY_ROOTS=[{"type":"s3","label":"My Bucket","endpoint":"https://s3.example.com","region":"us-east-1","bucket":"media","accessKey":"AK","secretKey":"SK","default":true}]
     restart: unless-stopped
     depends_on:
       minio-setup:

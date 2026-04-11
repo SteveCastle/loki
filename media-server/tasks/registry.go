@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/storage"
 )
 
 // Task represents a runnable unit bound to the jobqueue.
@@ -16,6 +17,16 @@ type Task struct {
 type TaskMap map[string]Task
 
 var tasks = make(TaskMap)
+
+// storageReg holds a reference to the storage registry so tasks can upload to
+// the default backend. Set once at startup via SetStorageRegistry.
+var storageReg *storage.Registry
+
+// SetStorageRegistry provides the storage registry to the tasks package.
+// Must be called before any task that needs storage access runs.
+func SetStorageRegistry(r *storage.Registry) {
+	storageReg = r
+}
 
 func init() {
 	// Register built-in tasks

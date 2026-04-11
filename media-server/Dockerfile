@@ -43,7 +43,6 @@ COPY --from=builder /lowkeymediaserver /usr/local/bin/lowkeymediaserver
 
 # Default environment — all configurable at runtime via -e flags
 ENV LOWKEY_DB_PATH=/data/db/media.db \
-    LOWKEY_DOWNLOAD_PATH=/data/media \
     LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434 \
     XDG_DATA_HOME=/data/config
 
