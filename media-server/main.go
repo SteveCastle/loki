@@ -1280,7 +1280,9 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 				})
 				return
 			}
-			destPrefix = "uploads/"
+			// Use an absolute path within the default backend's root so that
+			// returned paths are valid for DB insertion and media serving.
+			destPrefix = filepath.Join(backend.Root().Path, "uploads") + string(filepath.Separator)
 		}
 
 		files := r.MultipartForm.File["files"]
@@ -1344,7 +1346,7 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Auto-ingest the uploads directory in the default backend
+		// Auto-ingest the upload directory in the appropriate backend
 		autoIngest := r.FormValue("autoIngest") != "false"
 		if autoIngest && len(uploadedPaths) > 0 {
 			ids, err := deps.Queue.AddWorkflow(jobqueue.Workflow{
@@ -1352,7 +1354,7 @@ func uploadHandler(deps *Dependencies) http.HandlerFunc {
 					{
 						Command:   "ingest",
 						Arguments: nil,
-						Input:     "uploads/",
+						Input:     destPrefix,
 					},
 				},
 			})
