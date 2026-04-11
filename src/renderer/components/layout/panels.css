@@ -66,3 +66,8 @@
   height: 30px;
   z-index: 100;
 }
+
+.Panels.file-drop-active {
+  outline: 2px solid rgba(74, 158, 255, 0.7);
+  outline-offset: -2px;
+}
