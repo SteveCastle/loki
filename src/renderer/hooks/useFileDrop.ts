@@ -62,13 +62,14 @@ export default function useFileDrop() {
     if (currentStateType === 'fs') {
       // Re-send the current path to trigger a full rescan via loadingFromFS
       libraryService.send('SET_FILE', { path: initialFile });
-    } else if (currentStateType === 'db' && dbQueryTags.length > 0) {
-      // Re-send the current tag query to reload from DB
-      libraryService.send('SET_QUERY_TAG', { data: { tag: dbQueryTags[0] } });
+    } else if (currentStateType === 'db') {
+      // SORTED_WEIGHTS transitions to switchingTag which re-queries the
+      // current dbQuery.tags without clobbering previous state or navigation.
+      libraryService.send({ type: 'SORTED_WEIGHTS' });
     } else if (currentStateType === 'search') {
       // For search, a full refresh isn't straightforward — send REFRESH_LIBRARY
       // as a best-effort (works in Electron, no-op in web)
-      refreshCurrentView();
+      libraryService.send('REFRESH_LIBRARY');
     }
   }
 
