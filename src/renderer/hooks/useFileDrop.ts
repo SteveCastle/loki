@@ -73,17 +73,22 @@ export default function useFileDrop() {
 
   /** Re-trigger the current browse to pick up newly added files. */
   function refreshCurrentView() {
-    if (currentStateType === 'fs') {
-      // Re-send the current path to trigger a full rescan via loadingFromFS
-      libraryService.send('SET_FILE', { path: initialFile });
-    } else if (currentStateType === 'db') {
-      // SORTED_WEIGHTS transitions to switchingTag which re-queries the
-      // current dbQuery.tags without clobbering previous state or navigation.
-      libraryService.send({ type: 'SORTED_WEIGHTS' });
-    } else if (currentStateType === 'search') {
-      // For search, a full refresh isn't straightforward — send REFRESH_LIBRARY
-      // as a best-effort (works in Electron, no-op in web)
-      libraryService.send('REFRESH_LIBRARY');
+    if (isElectron) {
+      // In Electron, REFRESH_LIBRARY does an incremental diff (adds/removes)
+      // without resetting cursor position. Works for FS, no-op for DB/search
+      // but DB/search use SORTED_WEIGHTS below.
+      if (currentStateType === 'fs') {
+        libraryService.send('REFRESH_LIBRARY');
+      } else if (currentStateType === 'db') {
+        libraryService.send({ type: 'SORTED_WEIGHTS' });
+      }
+    } else {
+      // In web mode, REFRESH_LIBRARY is stubbed. Use mode-specific events.
+      if (currentStateType === 'fs') {
+        libraryService.send('SET_FILE', { path: initialFile });
+      } else if (currentStateType === 'db') {
+        libraryService.send({ type: 'SORTED_WEIGHTS' });
+      }
     }
   }
 
