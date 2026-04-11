@@ -479,6 +479,28 @@ const removeTimestamp =
     }
   };
 
+type UpdateTagDescriptionInput = [string, string];
+const updateTagDescription =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateTagDescriptionInput) => {
+    const [label, description] = args;
+    await db.run(`UPDATE tag SET description = $1 WHERE label = $2`, [
+      description,
+      label,
+    ]);
+  };
+
+type UpdateCategoryDescriptionInput = [string, string];
+const updateCategoryDescription =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateCategoryDescriptionInput) => {
+    const [label, description] = args;
+    await db.run(`UPDATE category SET description = $1 WHERE label = $2`, [
+      description,
+      label,
+    ]);
+  };
+
 export {
   loadTaxonomy,
   getTagCount,
@@ -499,4 +521,6 @@ export {
   selectNewPath,
   updateTimestamp,
   removeTimestamp,
+  updateTagDescription,
+  updateCategoryDescription,
 };

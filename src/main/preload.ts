@@ -43,6 +43,8 @@ export type Channels =
   | 'rename-tag'
   | 'move-tag'
   | 'order-tags'
+  | 'update-tag-description'
+  | 'update-category-description'
   | 'create-assignment'
   | 'fetch-tag-preview'
   | 'fetch-media-preview'
