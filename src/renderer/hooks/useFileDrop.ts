@@ -17,6 +17,15 @@ if (typeof window !== 'undefined') {
   window.addEventListener('blur', () => {
     (window as any).__shiftHeld = false;
   });
+
+  // In Electron, dropping a file on the window navigates to it by default.
+  // Prevent this so react-dnd can handle the drop instead.
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+  });
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+  });
 }
 
 function isMediaFile(fileName: string): boolean {
