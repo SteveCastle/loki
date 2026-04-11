@@ -752,24 +752,22 @@ const importFiles =
         const ext = path.extname(baseName);
         const nameWithoutExt = path.basename(baseName, ext);
 
-        // Find a non-colliding filename
+        // Try copying with EXCL flag to atomically prevent overwrites
         let destPath = path.join(destination, baseName);
         let counter = 1;
-        while (
-          await fs.promises
-            .access(destPath)
-            .then(() => true)
-            .catch(() => false)
-        ) {
-          destPath = path.join(
-            destination,
-            `${nameWithoutExt}_${counter}${ext}`
-          );
-          counter++;
+        while (true) {
+          try {
+            await fs.promises.copyFile(sourcePath, destPath, fs.constants.COPYFILE_EXCL);
+            break; // Success
+          } catch (err: any) {
+            if (err.code === 'EEXIST' && counter < 10000) {
+              destPath = path.join(destination, `${nameWithoutExt}_${counter}${ext}`);
+              counter++;
+            } else {
+              throw err;
+            }
+          }
         }
-
-        // Copy or move the file
-        await fs.promises.copyFile(sourcePath, destPath);
         if (move) {
           try {
             await fs.promises.unlink(sourcePath);
@@ -808,6 +806,16 @@ const importFiles =
       await db.run('BEGIN TRANSACTION');
       try {
         for (const tag of tags) {
+          // Resolve category from DB if not provided
+          let categoryLabel = tag.category;
+          if (!categoryLabel) {
+            const tagRow = await db.get(
+              `SELECT category_label FROM tag WHERE label = ?`,
+              [tag.label]
+            );
+            categoryLabel = tagRow?.category_label || '';
+          }
+
           const maxRow = await db.get(
             `SELECT MAX(weight) AS maxWeight FROM media_tag_by_category WHERE tag_label = ?`,
             [tag.label]
@@ -817,7 +825,7 @@ const importFiles =
             await insertStmt.run(
               mediaPath,
               tag.label,
-              tag.category,
+              categoryLabel,
               weight,
               Date.now()
             );
