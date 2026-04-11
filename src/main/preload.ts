@@ -62,7 +62,9 @@ export type Channels =
   | 'load-duplicates-by-path'
   | 'merge-duplicates-by-path'
   | 'check-for-updates'
-  | 'apply-elo-ordering';
+  | 'apply-elo-ordering'
+  | 'consolidate-tag-files'
+  | 'consolidate-category-files';
 
 const loadMediaFromDB = async (
   tags: string[],
