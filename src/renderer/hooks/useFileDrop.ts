@@ -14,6 +14,9 @@ if (typeof window !== 'undefined') {
   window.addEventListener('keyup', (e) => {
     if (e.key === 'Shift') (window as any).__shiftHeld = false;
   });
+  window.addEventListener('blur', () => {
+    (window as any).__shiftHeld = false;
+  });
 }
 
 function isMediaFile(fileName: string): boolean {
@@ -109,11 +112,14 @@ export default function useFileDrop() {
       }
       destination = defaultImportPath + '/imports';
 
-      // In DB mode, apply the active tags
+      // In DB mode, apply the active tags.
+      // NOTE: We pass empty category so the IPC handler resolves each tag's
+      // actual category from the database. Using activeCategory here would
+      // assign the wrong category in multi-tag views across categories.
       if (currentStateType === 'db' && dbQueryTags.length > 0) {
         tags = dbQueryTags.map((tagLabel: string) => ({
           label: tagLabel,
-          category: activeCategory || '',
+          category: '', // Category resolved by IPC handler
         }));
       }
     }
@@ -124,6 +130,17 @@ export default function useFileDrop() {
       ]);
 
       const count = result?.imported?.length || 0;
+      if (count === 0) {
+        libraryService.send('ADD_TOAST', {
+          data: {
+            type: 'error',
+            title: 'Import failed',
+            message: `Failed to import ${result?.failed?.length || 0} file(s)`,
+            durationMs: 5000,
+          },
+        });
+        return;
+      }
       const action = move ? 'Moved' : 'Added';
       let message = `${action} ${count} file${count !== 1 ? 's' : ''}`;
       if (currentStateType === 'fs') {
