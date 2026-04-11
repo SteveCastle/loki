@@ -598,8 +598,9 @@ const consolidateCategoryFiles =
   async (_: IpcMainInvokeEvent, args: ConsolidateCategoryFilesInput) => {
     const [categoryLabel, targetDir] = args;
 
+    // Query media grouped by tag so we can create subfolders per tag
     const mediaItems = await db.all(
-      `SELECT DISTINCT m.path
+      `SELECT DISTINCT m.path, mtc.tag_label
        FROM media m
        JOIN media_tag_by_category mtc ON m.path = mtc.media_path
        WHERE mtc.category_label = $1`,
@@ -608,41 +609,58 @@ const consolidateCategoryFiles =
 
     let copied = 0;
     let errors = 0;
+    const alreadyCopied = new Map<string, string>();
 
     for (const item of mediaItems) {
       const sourcePath = item.path;
-      let fileName = path.basename(sourcePath);
-      let destPath = path.join(targetDir, fileName);
+      const tagLabel = item.tag_label;
+      const tagDir = path.join(targetDir, tagLabel);
+
+      if (!fs.existsSync(tagDir)) {
+        fs.mkdirSync(tagDir, { recursive: true });
+      }
+
+      // If this file was already copied to a different tag subfolder,
+      // use the same source path (it may have been updated)
+      const effectiveSource = alreadyCopied.get(sourcePath) || sourcePath;
+
+      let fileName = path.basename(effectiveSource);
+      let destPath = path.join(tagDir, fileName);
 
       let counter = 1;
       const ext = path.extname(fileName);
       const base = path.basename(fileName, ext);
-      while (fs.existsSync(destPath) && destPath !== sourcePath) {
+      while (fs.existsSync(destPath) && destPath !== effectiveSource) {
         fileName = `${base}_${counter}${ext}`;
-        destPath = path.join(targetDir, fileName);
+        destPath = path.join(tagDir, fileName);
         counter++;
       }
 
-      if (destPath === sourcePath) {
+      if (destPath === effectiveSource) {
         continue;
       }
 
       try {
-        fs.copyFileSync(sourcePath, destPath);
+        fs.copyFileSync(effectiveSource, destPath);
 
-        await db.run(`UPDATE media SET path = $1 WHERE path = $2`, [
-          destPath,
-          sourcePath,
-        ]);
+        // Only update DB path on first copy (avoid double-updating)
+        if (!alreadyCopied.has(sourcePath)) {
+          await db.run(`UPDATE media SET path = $1 WHERE path = $2`, [
+            destPath,
+            sourcePath,
+          ]);
 
-        await db.run(
-          `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
-          [destPath, sourcePath]
-        );
+          await db.run(
+            `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
+            [destPath, sourcePath]
+          );
+
+          alreadyCopied.set(sourcePath, destPath);
+        }
 
         copied++;
       } catch (e) {
-        console.error(`Failed to copy ${sourcePath} to ${destPath}:`, e);
+        console.error(`Failed to copy ${effectiveSource} to ${destPath}:`, e);
         errors++;
       }
     }
