@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron';
 import * as url from 'url';
 import * as path from 'path';
 import { isValidFilePath } from './file-handling';
@@ -150,6 +150,7 @@ const getGifMetadata = async (filePath: string) => {
 };
 
 contextBridge.exposeInMainWorld('electron', {
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
   loadMediaFromDB,
   loadMediaByDescriptionSearch,
   fetchTagPreview,
