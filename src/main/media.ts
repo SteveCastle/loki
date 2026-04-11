@@ -743,8 +743,13 @@ const importFiles =
       return { imported, failed };
     }
 
-    // Ensure destination directory exists
-    await fs.promises.mkdir(destination, { recursive: true });
+    // Ensure destination directory exists (skip for paths that already exist,
+    // e.g. drive roots like D:\ where mkdir fails with EPERM on Windows)
+    try {
+      await fs.promises.access(destination);
+    } catch {
+      await fs.promises.mkdir(destination, { recursive: true });
+    }
 
     for (const sourcePath of files) {
       try {
