@@ -38,6 +38,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.context-palette-login {
+  padding: 4px 0;
+}
+
 .context-palette-unavailable,
 .context-palette-checking {
   padding: 12px 0;

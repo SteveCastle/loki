@@ -11,6 +11,7 @@ import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import filter from '../../filter';
+import LoginWidget from './login-widget';
 import './context-palette.css';
 
 type ActionDef = {
@@ -392,6 +393,7 @@ export default function ContextPalette() {
         headers,
         body: JSON.stringify({ input }),
         signal: AbortSignal.timeout(10000),
+        redirect: 'error',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       // Job toast appears automatically via SSE stream in ToastSystem
@@ -438,7 +440,13 @@ export default function ContextPalette() {
         </div>
       )}
 
-      {serverAvailable && (
+      {serverAvailable && !authToken && (
+        <div className="context-palette-login">
+          <LoginWidget />
+        </div>
+      )}
+
+      {serverAvailable && authToken && (
         <div className="context-palette-actions">
           {ACTION_GROUPS.map((group) => (
             <div key={group.title} className="action-group">
@@ -457,7 +465,7 @@ export default function ContextPalette() {
         </div>
       )}
 
-      {serverAvailable && activeJobs.length > 0 && (
+      {serverAvailable && authToken && activeJobs.length > 0 && (
         <div className="context-palette-footer">
           <div className="footer-title">Active Jobs</div>
           {activeJobs.map((job) => (
