@@ -15,7 +15,10 @@ export function Panels() {
         className={`Panels${isOver && canDrop ? ' file-drop-active' : ''}`}
         onContextMenu={(e) => {
           e.preventDefault();
-          libraryService.send('SHOW_COMMAND_PALETTE', {
+          const event = e.shiftKey
+            ? 'SHOW_CONTEXT_PALETTE'
+            : 'SHOW_COMMAND_PALETTE';
+          libraryService.send(event, {
             position: { x: e.clientX, y: e.clientY },
           });
         }}
