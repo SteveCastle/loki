@@ -1098,6 +1098,24 @@ const libraryMachine = createMachine(
               },
               onDone: {
                 target: 'init',
+                actions: [
+                  (context) => {
+                    // Notify media-server of DB path change so it can switch databases
+                    const headers: HeadersInit = {
+                      'Content-Type': 'application/json',
+                    };
+                    if (context.authToken) {
+                      headers['Authorization'] = `Bearer ${context.authToken}`;
+                    }
+                    fetch('http://localhost:8090/config', {
+                      method: 'POST',
+                      headers,
+                      body: JSON.stringify({ dbPath: context.dbPath }),
+                    }).catch(() => {
+                      // Server may not be running — ignore
+                    });
+                  },
+                ],
               },
               onError: {
                 target: 'manualSetup',
