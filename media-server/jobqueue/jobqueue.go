@@ -669,6 +669,27 @@ func (q *Queue) PushJobStdout(id string, stdout string) error {
 	return nil
 }
 
+// RegisterOutputFile appends a file path to the job's OutputFiles list.
+// These paths are used by ClaimJob to construct input for downstream jobs,
+// keeping file paths separate from diagnostic stdout.
+func (q *Queue) RegisterOutputFile(id string, path string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, exists := q.Jobs[id]
+	if !exists {
+		return errors.New("job not found")
+	}
+
+	job.OutputFiles = append(job.OutputFiles, path)
+
+	if err := q.saveJobToDB(job); err != nil {
+		log.Printf("Failed to save job output files to database: %v", err)
+	}
+
+	return nil
+}
+
 // CompleteJob marks the specified job as completed if it is currently InProgress.
 // Returns an error if the job does not exist, or if it's not in a valid state to be completed.
 func (q *Queue) CompleteJob(id string) error {
