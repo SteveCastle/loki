@@ -298,11 +298,15 @@
         <div>
           <h2>Workflow Editor</h2>
         </div>
-        <div style="display: flex; gap: var(--space-2)">
-          <button class="btn" onclick="editor.clear()">Clear</button>
-          <button class="btn btn-primary" onclick="runWorkflow()">
-            Run Workflow
-          </button>
+        <div style="display: flex; gap: var(--space-2); align-items: center">
+          <select id="workflow-select" onchange="loadWorkflow(this.value)" style="background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-subtle); padding: 6px 8px; border-radius: 4px; font-size: 13px;">
+            <option value="">Load workflow...</option>
+          </select>
+          <button class="btn" onclick="saveWorkflow()">Save</button>
+          <button class="btn" id="btn-update" onclick="updateWorkflow()" style="display:none">Update</button>
+          <button class="btn" id="btn-delete" onclick="deleteWorkflow()" style="display:none">Delete</button>
+          <button class="btn" onclick="editor.clear(); clearEditState();">Clear</button>
+          <button class="btn btn-primary" onclick="runWorkflow()">Run</button>
         </div>
       </div>
 
@@ -415,31 +419,26 @@
         );
       }
 
-      function runWorkflow() {
+      // Export current canvas to DAG format (shared by save and run)
+      function exportDAG() {
         const data = editor.export();
         const nodes = data.drawflow.Home.data;
         const tasks = [];
-        const nodeMap = {}; // Map Drawflow ID to UUID
+        const nodeMap = {};
 
-        // First pass: Create tasks and UUIDs
-        Object.keys(nodes).forEach((key) => {
+        Object.keys(nodes).forEach(key => {
           const node = nodes[key];
-          const uuid = crypto.randomUUID();
-          nodeMap[key] = uuid;
+          const id = 'node-' + key;
+          nodeMap[key] = id;
 
           const command = node.data.command;
           const argsStr = node.data.args || '';
-          // Simple CSV/Space splitter for args - simplistic but okay for prototype
-          // Better would be a proper tokenizer or JSON input
-          const args =
-            argsStr
-              .match(/(?:[^\s"]+|"[^"]*")+/g)
-              ?.map((s) => s.replace(/^"|"$/g, '')) || [];
+          const args = argsStr.match(/(?:[^\s"]+|"[^"]*")+/g)?.map(s => s.replace(/^"|"$/g, '')) || [];
           const input = node.data.input || '';
 
           tasks.push({
-            id: uuid,
-            drawflowId: key, // temporary
+            id: id,
+            drawflowId: key,
             command: command,
             arguments: args,
             input: input,
@@ -447,40 +446,215 @@
           });
         });
 
-        // Second pass: Link dependencies
-        tasks.forEach((task) => {
+        tasks.forEach(task => {
           const node = nodes[task.drawflowId];
-          // Check inputs
-          Object.keys(node.inputs).forEach((inputKey) => {
-            const connections = node.inputs[inputKey].connections;
-            connections.forEach((conn) => {
-              const parentNodeId = conn.node;
-              const parentUUID = nodeMap[parentNodeId];
-              if (parentUUID) {
-                task.dependencies.push(parentUUID);
-              }
+          Object.keys(node.inputs).forEach(inputKey => {
+            node.inputs[inputKey].connections.forEach(conn => {
+              const parentId = nodeMap[conn.node];
+              if (parentId) task.dependencies.push(parentId);
             });
           });
-          delete task.drawflowId; // Clean up
+          delete task.drawflowId;
+        });
+
+        return tasks;
+      }
+
+      function runWorkflow() {
+        const tasks = exportDAG();
+        if (tasks.length === 0) {
+          alert('Add at least one node before running.');
+          return;
+        }
+
+        // Replace stable IDs with UUIDs for live execution
+        const idMap = {};
+        tasks.forEach(t => {
+          const uuid = crypto.randomUUID();
+          idMap[t.id] = uuid;
+          t.id = uuid;
+        });
+        tasks.forEach(t => {
+          t.dependencies = t.dependencies.map(d => idMap[d] || d);
         });
 
         fetch('/workflow', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tasks: tasks }),
+          body: JSON.stringify({ tasks }),
         })
-          .then((r) => {
+          .then(r => {
             if (!r.ok) throw new Error('Failed to submit workflow');
             return r.json();
           })
-          .then((res) => {
-            alert(`Workflow started! Job IDs: ${res.ids.join(', ')}`);
-            // Optional: redirect to jobs page
+          .then(res => {
+            alert('Workflow started! Job IDs: ' + res.ids.join(', '));
           })
-          .catch((err) => {
-            alert('Error: ' + err.message);
-          });
+          .catch(err => alert('Error: ' + err.message));
       }
+
+      // --- Workflow persistence ---
+      let currentWorkflowId = null;
+
+      function clearEditState() {
+        currentWorkflowId = null;
+        document.getElementById('btn-update').style.display = 'none';
+        document.getElementById('btn-delete').style.display = 'none';
+        document.getElementById('workflow-select').value = '';
+      }
+
+      function refreshWorkflowList() {
+        fetch('/workflows')
+          .then(r => r.json())
+          .then(list => {
+            const sel = document.getElementById('workflow-select');
+            while (sel.options.length > 1) sel.remove(1);
+            (list || []).forEach(w => {
+              const opt = document.createElement('option');
+              opt.value = w.id;
+              opt.textContent = w.name;
+              sel.appendChild(opt);
+            });
+          })
+          .catch(() => {});
+      }
+
+      function saveWorkflow() {
+        const dag = exportDAG();
+        if (dag.length === 0) {
+          alert('Add at least one node before saving.');
+          return;
+        }
+        const name = prompt('Workflow name:');
+        if (!name) return;
+
+        fetch('/workflows/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, dag }),
+        })
+          .then(r => {
+            if (!r.ok) return r.text().then(t => { throw new Error(t); });
+            return r.json();
+          })
+          .then(wf => {
+            currentWorkflowId = wf.id;
+            document.getElementById('btn-update').style.display = '';
+            document.getElementById('btn-delete').style.display = '';
+            refreshWorkflowList();
+            alert('Saved: ' + wf.name);
+          })
+          .catch(err => alert('Error: ' + err.message));
+      }
+
+      function updateWorkflow() {
+        if (!currentWorkflowId) return;
+        const dag = exportDAG();
+        if (dag.length === 0) {
+          alert('Add at least one node before saving.');
+          return;
+        }
+        const sel = document.getElementById('workflow-select');
+        const currentName = sel.selectedOptions[0]?.text || '';
+        const name = prompt('Workflow name:', currentName);
+        if (!name) return;
+
+        fetch('/workflows/' + currentWorkflowId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, dag }),
+        })
+          .then(r => {
+            if (!r.ok) return r.text().then(t => { throw new Error(t); });
+            return r.json();
+          })
+          .then(() => {
+            refreshWorkflowList();
+            alert('Updated');
+          })
+          .catch(err => alert('Error: ' + err.message));
+      }
+
+      function deleteWorkflow() {
+        if (!currentWorkflowId) return;
+        if (!confirm('Delete this workflow?')) return;
+
+        fetch('/workflows/' + currentWorkflowId, { method: 'DELETE' })
+          .then(r => {
+            if (!r.ok) throw new Error('Failed to delete');
+            editor.clear();
+            clearEditState();
+            refreshWorkflowList();
+          })
+          .catch(err => alert('Error: ' + err.message));
+      }
+
+      function loadWorkflow(id) {
+        if (!id) {
+          clearEditState();
+          return;
+        }
+
+        fetch('/workflows/' + id)
+          .then(r => {
+            if (!r.ok) throw new Error('Failed to load');
+            return r.json();
+          })
+          .then(wf => {
+            editor.clear();
+            currentWorkflowId = wf.id;
+            document.getElementById('btn-update').style.display = '';
+            document.getElementById('btn-delete').style.display = '';
+
+            const dag = wf.dag || [];
+            const idToDrawflowId = {};
+            let x = 100, y = 100;
+
+            dag.forEach((task, idx) => {
+              const argsStr = (task.arguments || []).join(' ');
+              const html = `
+                <div class="node-content">
+                  <div class="node-input-group">
+                    <label>Command</label>
+                    <input type="text" df-command value="${task.command}" readonly>
+                  </div>
+                  <div class="node-input-group">
+                    <label>Arguments</label>
+                    <input type="text" df-args value="${argsStr}">
+                  </div>
+                  <div class="node-input-group">
+                    <label>Initial Input</label>
+                    <input type="text" df-input value="${task.input || ''}">
+                  </div>
+                </div>`;
+
+              const drawflowId = editor.addNode(
+                task.command,
+                1, 1,
+                x + (idx % 3) * 300,
+                y + Math.floor(idx / 3) * 200,
+                'node',
+                { command: task.command, args: argsStr, input: task.input || '' },
+                html
+              );
+              idToDrawflowId[task.id] = drawflowId;
+            });
+
+            dag.forEach(task => {
+              const targetId = idToDrawflowId[task.id];
+              (task.dependencies || []).forEach(dep => {
+                const sourceId = idToDrawflowId[dep];
+                if (sourceId && targetId) {
+                  editor.addConnection(sourceId, targetId, 'output_1', 'input_1');
+                }
+              });
+            });
+          })
+          .catch(err => alert('Error: ' + err.message));
+      }
+
+      // Load workflow list on page load
+      refreshWorkflowList();
     </script>
   </body>
 </html>
