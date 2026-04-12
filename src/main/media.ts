@@ -297,7 +297,7 @@ const loadMediaByDescriptionSearch =
 const loadMediaByTags =
   (db: Database) => async (_: IpcMainInvokeEvent, args: LoadMediaInput) => {
     const tableName = 'media_tag_by_category';
-    let sql = `SELECT mtc.media_path, mtc.tag_label, mtc.category_label, mtc.weight, mtc.time_stamp, mtc.created_at, m.height, m.width FROM ${tableName} mtc left join media m on m.path = mtc.media_path`;
+    let sql = `SELECT mtc.media_path, mtc.tag_label, mtc.category_label, mtc.weight, mtc.time_stamp, mtc.created_at, m.height, m.width, m.elo FROM ${tableName} mtc left join media m on m.path = mtc.media_path`;
     const tags = args[0];
     const mode = args[1];
     const params: string[] = [];
