@@ -209,7 +209,10 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      libraryService.send('SHOW_COMMAND_PALETTE', {
+      const event = e.shiftKey
+        ? 'SHOW_CONTEXT_PALETTE'
+        : 'SHOW_COMMAND_PALETTE';
+      libraryService.send(event, {
         position: { x: e.clientX, y: e.clientY },
       });
     },
