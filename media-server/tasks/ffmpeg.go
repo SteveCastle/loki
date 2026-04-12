@@ -3,6 +3,7 @@ package tasks
 import (
 	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -66,7 +67,18 @@ func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildA
 		ext := filepath.Ext(abs)
 		name := strings.TrimSuffix(base, ext)
 
-		args, outputPath := buildArgs(abs, dir, name, ext)
+		// Use temp directory for workflow jobs
+		outputDir := dir
+		if j.WorkflowID != "" {
+			outputDir = filepath.Join(dir, ".loki-temp", j.ID)
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				q.PushJobStdout(j.ID, "ffmpeg: failed to create temp dir: "+err.Error())
+				q.ErrorJob(j.ID)
+				return err
+			}
+		}
+
+		args, outputPath := buildArgs(abs, outputDir, name, ext)
 
 		// Prepend -i <input>
 		finalArgs := append([]string{"-i", abs}, args...)
@@ -116,8 +128,7 @@ func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildA
 		<-doneErr
 
 		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
-		// Output the processed file path so downstream jobs can use it
-		q.PushJobStdout(j.ID, outputPath)
+		q.RegisterOutputFile(j.ID, outputPath)
 	}
 
 	q.CompleteJob(j.ID)
@@ -180,6 +191,17 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		name := strings.TrimSuffix(base, ext)
 		idxStr := strconv.Itoa(idx + 1)
 
+		// Use temp directory for workflow jobs
+		outputDir := dir
+		if j.WorkflowID != "" {
+			outputDir = filepath.Join(dir, ".loki-temp", j.ID)
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				q.PushJobStdout(j.ID, "ffmpeg: failed to create temp dir: "+err.Error())
+				q.ErrorJob(j.ID)
+				return err
+			}
+		}
+
 		expanded := make([]string, len(templateArgs))
 		for i, ta := range templateArgs {
 			s := ta
@@ -219,7 +241,7 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			}
 		}
 		if needsOutput {
-			outputPath = filepath.Join(dir, name+"_output"+ext)
+			outputPath = filepath.Join(outputDir, name+"_output"+ext)
 			finalArgs = append(finalArgs, outputPath)
 		}
 
@@ -268,8 +290,7 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		<-doneErr
 
 		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
-		// Output the processed file path so downstream jobs can use it
-		q.PushJobStdout(j.ID, outputPath)
+		q.RegisterOutputFile(j.ID, outputPath)
 	}
 
 	q.CompleteJob(j.ID)
