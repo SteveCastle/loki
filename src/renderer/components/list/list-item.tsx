@@ -209,6 +209,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
+      e.stopPropagation();
       if (e.shiftKey) {
         libraryService.send('SHOW_CONTEXT_PALETTE', {
           position: { x: e.clientX, y: e.clientY },

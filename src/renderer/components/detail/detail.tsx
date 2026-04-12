@@ -321,6 +321,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         className="Detail"
         onContextMenu={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           if (e.shiftKey) {
             libraryService.send('SHOW_CONTEXT_PALETTE', {
               position: { x: e.clientX, y: e.clientY },
