@@ -18,6 +18,7 @@ import './panels.css';
 import Taxonomy from '../taxonomy/taxonomy';
 import Metadata from '../metadata/metadata';
 import CommandPalette from '../controls/command-palette';
+import ContextPalette from '../controls/context-palette';
 
 function VerticalHandle() {
   return (
@@ -198,6 +199,7 @@ const Layout = () => {
   return (
     <>
       <CommandPalette />
+      <ContextPalette />
       <PanelGroup
         orientation="vertical"
         id="main-group"
