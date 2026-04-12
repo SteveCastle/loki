@@ -69,10 +69,15 @@ const ACTION_GROUPS: ActionGroup[] = [
   },
 ];
 
+type ContextTarget =
+  | { type: 'library' }
+  | { type: 'file'; path: string }
+  | { type: 'tag'; tag: string }
+  | { type: 'category'; category: string };
+
 /** If initialFile is a media file path, return its parent directory; otherwise return as-is. */
 function getDirFromInitialFile(initialFile: string): string {
   const lastSegment = initialFile.split(/[/\\]/).pop() || '';
-  // Has a file extension → it's a file, use parent directory
   if (lastSegment.includes('.')) {
     const sep = initialFile.includes('\\') ? '\\' : '/';
     const idx = initialFile.lastIndexOf(sep);
@@ -81,55 +86,76 @@ function getDirFromInitialFile(initialFile: string): string {
   return initialFile;
 }
 
-function buildQueryFromState(context: {
-  currentStateType: 'fs' | 'db' | 'search';
-  dbQuery: { tags: string[] };
-  textFilter: string;
-  initialFile: string;
-  settings: { filteringMode: string };
-}): string {
-  const { currentStateType, dbQuery, textFilter, initialFile, settings } =
-    context;
-
-  if (currentStateType === 'db' && dbQuery.tags.length > 0) {
-    const joiner = settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
-    return dbQuery.tags.map((t) => `tag:${t}`).join(joiner);
+function buildQuery(
+  target: ContextTarget,
+  libraryContext: {
+    currentStateType: 'fs' | 'db' | 'search';
+    dbQuery: { tags: string[] };
+    textFilter: string;
+    initialFile: string;
+    settings: { filteringMode: string };
   }
-
-  if (currentStateType === 'search' && textFilter) {
-    const parts: string[] = [`description:${textFilter}`];
-    if (dbQuery.tags.length > 0) {
-      const joiner =
-        settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
-      const tagPart = dbQuery.tags.map((t) => `tag:${t}`).join(joiner);
-      parts.push(tagPart);
+): string {
+  switch (target.type) {
+    case 'file':
+      return `path:${target.path}`;
+    case 'tag':
+      return `tag:${target.tag}`;
+    case 'category':
+      return `category:${target.category}`;
+    case 'library': {
+      const { currentStateType, dbQuery, textFilter, initialFile, settings } =
+        libraryContext;
+      if (currentStateType === 'db' && dbQuery.tags.length > 0) {
+        const joiner =
+          settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
+        return dbQuery.tags.map((t) => `tag:${t}`).join(joiner);
+      }
+      if (currentStateType === 'search' && textFilter) {
+        const parts: string[] = [`description:${textFilter}`];
+        if (dbQuery.tags.length > 0) {
+          const joiner =
+            settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
+          parts.push(dbQuery.tags.map((t) => `tag:${t}`).join(joiner));
+        }
+        return parts.join(' AND ');
+      }
+      return `pathdir:${getDirFromInitialFile(initialFile)}`;
     }
-    return parts.join(' AND ');
   }
-
-  // FS mode — use directory path (resolve file to parent dir)
-  return `pathdir:${getDirFromInitialFile(initialFile)}`;
 }
 
-function buildContextLabel(context: {
-  currentStateType: 'fs' | 'db' | 'search';
-  dbQuery: { tags: string[] };
-  textFilter: string;
-  initialFile: string;
-}): string {
-  const { currentStateType, dbQuery, textFilter, initialFile } = context;
-
-  if (currentStateType === 'db' && dbQuery.tags.length > 0) {
-    return `${dbQuery.tags.length} tag${dbQuery.tags.length !== 1 ? 's' : ''} selected`;
+function buildLabel(
+  target: ContextTarget,
+  libraryContext: {
+    currentStateType: 'fs' | 'db' | 'search';
+    dbQuery: { tags: string[] };
+    textFilter: string;
+    initialFile: string;
   }
-
-  if (currentStateType === 'search' && textFilter) {
-    return `Search: ${textFilter}`;
+): string {
+  switch (target.type) {
+    case 'file': {
+      const name = target.path.split(/[/\\]/).pop() || target.path;
+      return name;
+    }
+    case 'tag':
+      return `Tag: ${target.tag}`;
+    case 'category':
+      return `Category: ${target.category}`;
+    case 'library': {
+      const { currentStateType, dbQuery, textFilter, initialFile } =
+        libraryContext;
+      if (currentStateType === 'db' && dbQuery.tags.length > 0) {
+        return `${dbQuery.tags.length} tag${dbQuery.tags.length !== 1 ? 's' : ''} selected`;
+      }
+      if (currentStateType === 'search' && textFilter) {
+        return `Search: ${textFilter}`;
+      }
+      const dir = getDirFromInitialFile(initialFile);
+      return `Directory: ${dir.split(/[/\\]/).filter(Boolean).pop() || dir}`;
+    }
   }
-
-  const dir = getDirFromInitialFile(initialFile);
-  const dirName = dir.split(/[/\\]/).filter(Boolean).pop() || dir;
-  return `Directory: ${dirName}`;
 }
 
 type JobState =
@@ -224,6 +250,10 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.contextPalette.position
   );
+  const target = useSelector(
+    libraryService,
+    (state) => state.context.contextPalette.target
+  ) as ContextTarget;
   const currentStateType = useSelector(
     libraryService,
     (state) => state.context.currentStateType
@@ -377,21 +407,17 @@ export default function ContextPalette() {
   }, [display, libraryLoadId, libraryService]);
 
   // Derived data
-  const items = filter(libraryLoadId, textFilter, library, filters, sortBy);
-  const itemCount = items.length;
-  const contextLabel = buildContextLabel({
-    currentStateType,
-    dbQuery,
-    textFilter,
-    initialFile,
-  });
-  const queryString = buildQueryFromState({
+  const libraryCtx = {
     currentStateType,
     dbQuery,
     textFilter,
     initialFile,
     settings: { filteringMode },
-  });
+  };
+  const items = filter(libraryLoadId, textFilter, library, filters, sortBy);
+  const itemCount = target.type === 'file' ? 1 : items.length;
+  const contextLabel = buildLabel(target, libraryCtx);
+  const queryString = buildQuery(target, libraryCtx);
   const query64 = btoa(queryString);
 
   // Action handler
@@ -437,7 +463,12 @@ export default function ContextPalette() {
     <div className="ContextPalette" ref={paletteRef} style={style}>
       <div className="context-palette-header">
         <span className="context-label">{contextLabel}</span>
-        <span className="context-count">{itemCount} items</span>
+        {target.type === 'library' && (
+          <span className="context-count">{itemCount} items</span>
+        )}
+        {target.type === 'file' && (
+          <span className="context-count">1 file</span>
+        )}
       </div>
 
       {serverAvailable === false && (

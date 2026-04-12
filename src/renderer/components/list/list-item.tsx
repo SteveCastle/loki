@@ -209,12 +209,16 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      const event = e.shiftKey
-        ? 'SHOW_CONTEXT_PALETTE'
-        : 'SHOW_COMMAND_PALETTE';
-      libraryService.send(event, {
-        position: { x: e.clientX, y: e.clientY },
-      });
+      if (e.shiftKey) {
+        libraryService.send('SHOW_CONTEXT_PALETTE', {
+          position: { x: e.clientX, y: e.clientY },
+          target: { type: 'library' },
+        });
+      } else {
+        libraryService.send('SHOW_COMMAND_PALETTE', {
+          position: { x: e.clientX, y: e.clientY },
+        });
+      }
     },
     [libraryService]
   );
