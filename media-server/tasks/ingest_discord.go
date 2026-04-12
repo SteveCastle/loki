@@ -198,6 +198,7 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 				continue
 			}
 			q.PushJobStdout(j.ID, fmt.Sprintf("Added to database: %s", filePath))
+			q.RegisterOutputFile(j.ID, filePath)
 		}
 	}
 

@@ -212,8 +212,7 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		q.PushJobStdout(j.ID, fmt.Sprintf("  Added %d tags", len(tagInfos)))
 		processed++
-		// Output processed path for downstream chaining
-		q.PushJobStdout(j.ID, mediaPath)
+		q.RegisterOutputFile(j.ID, mediaPath)
 
 		// Clean up temporary frame if we extracted one
 		if tempFramePath != "" {

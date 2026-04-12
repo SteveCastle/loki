@@ -157,8 +157,7 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		moveCount++
 		q.PushJobStdout(j.ID, fmt.Sprintf("Moved: %s -> %s", srcPath, destPath))
-		// Output destination path for downstream chaining
-		q.PushJobStdout(j.ID, destPath)
+		q.RegisterOutputFile(j.ID, destPath)
 
 		if err := updateMediaPathInDatabase(q.Db, srcPath, destPath); err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to update database for %s: %v", srcPath, err))

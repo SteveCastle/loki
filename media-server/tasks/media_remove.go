@@ -50,9 +50,8 @@ func removeFromDB(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, fmt.Sprintf("Processed %d paths", len(result.ProcessedPaths)))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Removed %d tag associations", result.TagsRemoved))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Removed %d media items from database", result.MediaItemsRemoved))
-	// Output removed paths for downstream chaining
 	for _, p := range result.ProcessedPaths {
-		q.PushJobStdout(j.ID, p)
+		q.RegisterOutputFile(j.ID, p)
 	}
 	if result.MediaItemsRemoved == 0 {
 		q.PushJobStdout(j.ID, "No matching media items found in database")

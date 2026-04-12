@@ -168,6 +168,7 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		}
 		insertedFiles = append(insertedFiles, filePath)
 		q.PushJobStdout(j.ID, fmt.Sprintf("Added to database: %s", filePath))
+		q.RegisterOutputFile(j.ID, filePath)
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Download completed: %d files added to database", len(insertedFiles)))

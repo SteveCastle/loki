@@ -104,6 +104,7 @@ func ingestLocalTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mut
 			continue
 		}
 		insertedFiles = append(insertedFiles, filePath)
+		q.RegisterOutputFile(j.ID, filePath)
 		if (i+1)%100 == 0 || i == len(newFiles)-1 {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Progress: %d/%d files ingested", i+1, len(newFiles)))
 		}
