@@ -200,6 +200,35 @@ func TestValidateDAG(t *testing.T) {
 	}
 }
 
+func TestRunWorkflowSetsWorkflowID(t *testing.T) {
+	q := newTestQueue(t)
+
+	dag := []WorkflowTask{
+		{ID: "root", Command: "ingest", Input: "existing"},
+		{ID: "child", Command: "process", Dependencies: []string{"root"}},
+	}
+
+	saved, err := q.CreateWorkflow("wf-test", dag)
+	if err != nil {
+		t.Fatalf("CreateWorkflow: %v", err)
+	}
+
+	liveIDs, err := q.RunWorkflow(saved.ID, "")
+	if err != nil {
+		t.Fatalf("RunWorkflow: %v", err)
+	}
+
+	rootJob := q.GetJob(liveIDs[0])
+	childJob := q.GetJob(liveIDs[1])
+
+	if rootJob.WorkflowID == "" {
+		t.Error("root job should have a WorkflowID")
+	}
+	if rootJob.WorkflowID != childJob.WorkflowID {
+		t.Error("all jobs should share the same WorkflowID")
+	}
+}
+
 func TestRunWorkflow(t *testing.T) {
 	q := newTestQueue(t)
 
