@@ -16,37 +16,26 @@ import (
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
+var loraDatasetOptions = []TaskOption{
+	{Name: "target", Label: "Target Directory", Type: "string", Required: true, Description: "Base directory for the LoRA dataset"},
+	{Name: "name", Label: "LoRA Name", Type: "string", Required: true, Description: "Name of the LoRA dataset (used as subfolder name)"},
+	{Name: "prefix", Label: "Concept Prefix", Type: "string", Description: "Prefix prepended to each description caption"},
+	{Name: "model", Label: "Ollama Model", Type: "string", Description: "Ollama model to use for generating descriptions"},
+}
+
 // loraDatasetTask creates a LoRA training dataset from selected media files.
 // It copies images to a new folder, converts them to JPG with lowercase UUID names,
 // and creates accompanying text files with descriptions.
 func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
-	var targetDir string
-	var loraName string
-	var conceptPrefix string
-	var ollamaModel string = appconfig.Get().OllamaModel
-
-	// Parse arguments
-	for i, arg := range j.Arguments {
-		switch strings.ToLower(arg) {
-		case "--target", "-t":
-			if i+1 < len(j.Arguments) {
-				targetDir = strings.TrimSpace(j.Arguments[i+1])
-			}
-		case "--name", "-n":
-			if i+1 < len(j.Arguments) {
-				loraName = strings.TrimSpace(j.Arguments[i+1])
-			}
-		case "--prefix", "-p":
-			if i+1 < len(j.Arguments) {
-				conceptPrefix = strings.TrimSpace(j.Arguments[i+1])
-			}
-		case "--model", "-m":
-			if i+1 < len(j.Arguments) {
-				ollamaModel = strings.TrimSpace(j.Arguments[i+1])
-			}
-		}
+	opts := ParseOptions(j, loraDatasetOptions)
+	targetDir, _ := opts["target"].(string)
+	loraName, _ := opts["name"].(string)
+	conceptPrefix, _ := opts["prefix"].(string)
+	ollamaModel, _ := opts["model"].(string)
+	if ollamaModel == "" {
+		ollamaModel = appconfig.Get().OllamaModel
 	}
 
 	// Validate required arguments

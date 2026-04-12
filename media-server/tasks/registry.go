@@ -7,11 +7,15 @@ import (
 	"github.com/stevecastle/shrike/storage"
 )
 
+// TaskFn is the function signature for task implementations.
+type TaskFn func(j *jobqueue.Job, q *jobqueue.Queue, r *sync.Mutex) error
+
 // Task represents a runnable unit bound to the jobqueue.
 type Task struct {
-	ID   string                                                        `json:"id"`
-	Name string                                                        `json:"name"`
-	Fn   func(j *jobqueue.Job, q *jobqueue.Queue, r *sync.Mutex) error `json:"-"`
+	ID      string       `json:"id"`
+	Name    string       `json:"name"`
+	Options []TaskOption `json:"options"`
+	Fn      TaskFn       `json:"-"`
 }
 
 type TaskMap map[string]Task
@@ -30,26 +34,31 @@ func SetStorageRegistry(r *storage.Registry) {
 
 func init() {
 	// Register built-in tasks
-	RegisterTask("wait", "Wait", waitFn)
-	RegisterTask("gallery-dl", "gallery-dl", executeCommand)
-	RegisterTask("dce", "dce", executeCommand)
-	RegisterTask("yt-dlp", "yt-dlp", executeCommand)
-	RegisterTask("ffmpeg", "ffmpeg", ffmpegTask)
-	RegisterTask("remove", "Remove Media", removeFromDB)
-	RegisterTask("cleanup", "CleanUp", cleanUpFn)
-	RegisterTask("ingest", "Ingest Media Files", ingestTask)
-	RegisterTask("metadata", "Generate Metadata", metadataTask)
-	RegisterTask("move", "Move Media Files", moveTask)
-	RegisterTask("autotag", "Auto Tag (ONNX)", autotagTask)
-	RegisterTask("lora-dataset", "Create LoRA Dataset", loraDatasetTask)
-	RegisterTask("hls", "HLS Transcode", hlsTask)
+	RegisterTask("wait", "Wait", nil, waitFn)
+	RegisterTask("remove", "Remove Media", nil, removeFromDB)
+	RegisterTask("cleanup", "CleanUp", nil, cleanUpFn)
+	RegisterTask("autotag", "Auto Tag (ONNX)", nil, autotagTask)
+
+	RegisterTask("metadata", "Generate Metadata", metadataOptions, metadataTask)
+	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
+	RegisterTask("move", "Move Media Files", moveOptions, moveTask)
+	RegisterTask("ingest", "Ingest Media Files", ingestOptions, ingestTask)
+	RegisterTask("lora-dataset", "Create LoRA Dataset", loraDatasetOptions, loraDatasetTask)
+
+	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
+	RegisterTask("ffmpeg-scale", "FFmpeg Scale", ffmpegScaleOptions, ffmpegScaleTask)
+	RegisterTask("ffmpeg-convert", "FFmpeg Convert", ffmpegConvertOptions, ffmpegConvertTask)
+	RegisterTask("ffmpeg-extract-audio", "FFmpeg Extract Audio", ffmpegExtractAudioOptions, ffmpegExtractAudioTask)
+	RegisterTask("ffmpeg-screenshot", "FFmpeg Screenshot", ffmpegScreenshotOptions, ffmpegScreenshotTask)
+	RegisterTask("ffmpeg-thumbnail", "FFmpeg Thumbnail", ffmpegThumbnailOptions, ffmpegThumbnailTask)
 }
 
-func RegisterTask(id, name string, fn func(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error) {
+func RegisterTask(id, name string, options []TaskOption, fn TaskFn) {
 	tasks[id] = Task{
-		ID:   id,
-		Name: name,
-		Fn:   fn,
+		ID:      id,
+		Name:    name,
+		Options: options,
+		Fn:      fn,
 	}
 }
 

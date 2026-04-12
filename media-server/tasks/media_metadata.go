@@ -11,35 +11,34 @@ import (
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
+var metadataOptions = []TaskOption{
+	{Name: "type", Label: "Metadata Types", Type: "multi-enum", Choices: []string{"description", "transcript", "hash", "dimensions", "autotag"}, Default: "description,hash,dimensions", Description: "Comma-separated list of metadata types to generate"},
+	{Name: "overwrite", Label: "Overwrite Existing", Type: "bool", Description: "Overwrite existing metadata values"},
+	{Name: "apply", Label: "Apply Scope", Type: "enum", Choices: []string{"new", "all"}, Default: "new", Description: "Apply to new items only or all items"},
+	{Name: "model", Label: "Ollama Model", Type: "string", Description: "Ollama model to use for descriptions"},
+}
+
 // metadataTask generates various metadata for media files
 func metadataTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
+	opts := ParseOptions(j, metadataOptions)
+	metadataTypesStr, _ := opts["type"].(string)
 	var metadataTypes []string
-	var overwrite bool
-	var applyScope string = "new"
-	var ollamaModel string = appconfig.Get().OllamaModel
-
-	for i, arg := range j.Arguments {
-		switch strings.ToLower(arg) {
-		case "--type", "-t":
-			if i+1 < len(j.Arguments) {
-				metadataTypes = strings.Split(j.Arguments[i+1], ",")
-				for idx, t := range metadataTypes {
-					metadataTypes[idx] = strings.TrimSpace(t)
-				}
-			}
-		case "--overwrite", "-o":
-			overwrite = true
-		case "--apply", "-a":
-			if i+1 < len(j.Arguments) {
-				applyScope = strings.ToLower(strings.TrimSpace(j.Arguments[i+1]))
-			}
-		case "--model", "-m":
-			if i+1 < len(j.Arguments) {
-				ollamaModel = strings.TrimSpace(j.Arguments[i+1])
-			}
+	for _, t := range strings.Split(metadataTypesStr, ",") {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			metadataTypes = append(metadataTypes, t)
 		}
+	}
+	overwrite, _ := opts["overwrite"].(bool)
+	applyScope, _ := opts["apply"].(string)
+	if applyScope == "" {
+		applyScope = "new"
+	}
+	ollamaModel, _ := opts["model"].(string)
+	if ollamaModel == "" {
+		ollamaModel = appconfig.Get().OllamaModel
 	}
 
 	if len(metadataTypes) == 0 {

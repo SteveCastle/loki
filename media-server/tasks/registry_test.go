@@ -21,10 +21,12 @@ func TestGetTasks(t *testing.T) {
 		name string
 	}{
 		{"wait", "Wait"},
-		{"gallery-dl", "gallery-dl"},
-		{"dce", "dce"},
-		{"yt-dlp", "yt-dlp"},
 		{"ffmpeg", "ffmpeg"},
+		{"ffmpeg-scale", "FFmpeg Scale"},
+		{"ffmpeg-convert", "FFmpeg Convert"},
+		{"ffmpeg-extract-audio", "FFmpeg Extract Audio"},
+		{"ffmpeg-screenshot", "FFmpeg Screenshot"},
+		{"ffmpeg-thumbnail", "FFmpeg Thumbnail"},
 		{"remove", "Remove Media"},
 		{"cleanup", "CleanUp"},
 		{"ingest", "Ingest Media Files"},
@@ -32,6 +34,7 @@ func TestGetTasks(t *testing.T) {
 		{"move", "Move Media Files"},
 		{"autotag", "Auto Tag (ONNX)"},
 		{"lora-dataset", "Create LoRA Dataset"},
+		{"hls", "HLS Transcode"},
 	}
 
 	for _, expected := range expectedTasks {
@@ -68,7 +71,7 @@ func TestRegisterTask(t *testing.T) {
 		return nil
 	}
 
-	RegisterTask("custom-task", "Custom Task Name", customFn)
+	RegisterTask("custom-task", "Custom Task Name", nil, customFn)
 
 	taskMap := GetTasks()
 	task, exists := taskMap["custom-task"]
@@ -98,12 +101,12 @@ func TestRegisterTaskOverwrite(t *testing.T) {
 	}()
 
 	// Register first version
-	RegisterTask("overwrite-test", "First Version", func(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
+	RegisterTask("overwrite-test", "First Version", nil, func(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return nil
 	})
 
 	// Overwrite with second version
-	RegisterTask("overwrite-test", "Second Version", func(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
+	RegisterTask("overwrite-test", "Second Version", nil, func(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return nil
 	})
 
@@ -138,8 +141,9 @@ func TestTaskMapType(t *testing.T) {
 // TestTaskJSONFields verifies JSON marshaling tags
 func TestTaskJSONFields(t *testing.T) {
 	task := Task{
-		ID:   "test-id",
-		Name: "Test Name",
+		ID:      "test-id",
+		Name:    "Test Name",
+		Options: nil,
 		Fn: func(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			return nil
 		},

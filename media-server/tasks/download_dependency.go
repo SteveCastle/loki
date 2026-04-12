@@ -11,7 +11,7 @@ import (
 
 func init() {
 	// Register the download-dependency task
-	RegisterTask("download-dependency", "Download Dependency", downloadDependencyTask)
+	RegisterTask("download-dependency", "Download Dependency", nil, downloadDependencyTask)
 }
 
 // downloadDependencyTask handles downloading a dependency as a job.
