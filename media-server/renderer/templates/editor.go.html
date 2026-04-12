@@ -280,6 +280,31 @@
         opacity: 0.9;
         transform: translateY(-1px);
       }
+
+      .node-label {
+        padding: 8px;
+        font-weight: 600;
+        text-align: center;
+        color: var(--text-primary);
+      }
+
+      .node-content select {
+        width: 100%;
+        background: var(--bg-surface);
+        color: var(--text-primary);
+        border: 1px solid var(--border-subtle);
+        padding: 4px 6px;
+        border-radius: 3px;
+        font-size: 12px;
+      }
+
+      .node-content input[type="checkbox"] {
+        accent-color: var(--accent-primary);
+      }
+
+      .node-content input[type="number"] {
+        width: 100%;
+      }
     </style>
   </head>
   <body>
@@ -339,12 +364,30 @@
       editor.reroute = true;
       editor.start();
 
+      document.getElementById('drawflow').addEventListener('change', function(e) {
+        if (e.target.dataset.multienum) {
+          const name = e.target.dataset.multienum;
+          const container = e.target.closest('.node-input-group');
+          const checkboxes = container.querySelectorAll('input[data-multienum="' + name + '"]');
+          const values = [];
+          checkboxes.forEach(function(cb) { if (cb.checked) values.push(cb.value); });
+          var hidden = container.querySelector('input[df-' + name + ']');
+          if (hidden) {
+            hidden.value = values.join(',');
+            hidden.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+        }
+      });
+
       // Load tasks
+      var taskOptionsMap = {};
+
       fetch('/tasks')
         .then((r) => r.json())
         .then((data) => {
           const palette = document.getElementById('palette');
           data.tasks.forEach((task) => {
+            taskOptionsMap[task.id] = task.options || [];
             const div = document.createElement('div');
             div.className = 'palette-item';
             div.draggable = true;
@@ -369,54 +412,71 @@
         addNodeToGraph(data, ev.clientX, ev.clientY);
       }
 
+      function buildNodeHTML(taskId) {
+        const options = taskOptionsMap[taskId] || [];
+        if (options.length === 0) {
+          return '<div class="node-content"><div class="node-label">' + taskId + '</div></div>';
+        }
+        let html = '<div class="node-content">';
+        for (const opt of options) {
+          html += '<div class="node-input-group">';
+          html += '<label>' + (opt.label || opt.name) + '</label>';
+          const dfAttr = 'df-' + opt.name;
+          const defaultVal = opt.default !== undefined && opt.default !== null ? opt.default : '';
+          switch (opt.type) {
+            case 'bool':
+              html += '<input type="checkbox" ' + dfAttr + ' ' + (defaultVal ? 'checked' : '') + ' style="width:auto;">';
+              break;
+            case 'enum':
+              html += '<select ' + dfAttr + '>';
+              for (const c of (opt.choices || [])) {
+                html += '<option value="' + c + '" ' + (c === String(defaultVal) ? 'selected' : '') + '>' + c + '</option>';
+              }
+              html += '</select>';
+              break;
+            case 'multi-enum': {
+              const defaults = String(defaultVal).split(',').map(s => s.trim());
+              for (const c of (opt.choices || [])) {
+                const checked = defaults.includes(c) ? 'checked' : '';
+                html += '<label style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;font-size:12px;">';
+                html += '<input type="checkbox" data-multienum="' + opt.name + '" value="' + c + '" ' + checked + '>' + c + '</label>';
+              }
+              html += '<input type="hidden" ' + dfAttr + ' value="' + defaultVal + '">';
+              break;
+            }
+            case 'number':
+              html += '<input type="number" ' + dfAttr + ' value="' + defaultVal + '" placeholder="' + (opt.description || '') + '">';
+              break;
+            default:
+              html += '<input type="text" ' + dfAttr + ' value="' + defaultVal + '" placeholder="' + (opt.description || '') + '">';
+              break;
+          }
+          html += '</div>';
+        }
+        html += '</div>';
+        return html;
+      }
+
+      function buildNodeData(taskId) {
+        const options = taskOptionsMap[taskId] || [];
+        const data = { command: taskId };
+        for (const opt of options) {
+          if (opt.type === 'bool') {
+            data[opt.name] = opt.default ? true : false;
+          } else {
+            data[opt.name] = opt.default !== undefined && opt.default !== null ? String(opt.default) : '';
+          }
+        }
+        return data;
+      }
+
       function addNodeToGraph(name, pos_x, pos_y) {
         if (editor.editor_mode === 'fixed') return false;
-
-        // Adjust position relative to canvas
-        pos_x =
-          pos_x *
-            (editor.precanvas.clientWidth /
-              (editor.precanvas.clientWidth * editor.zoom)) -
-          editor.precanvas.getBoundingClientRect().x *
-            (editor.precanvas.clientWidth /
-              (editor.precanvas.clientWidth * editor.zoom));
-        pos_y =
-          pos_y *
-            (editor.precanvas.clientHeight /
-              (editor.precanvas.clientHeight * editor.zoom)) -
-          editor.precanvas.getBoundingClientRect().y *
-            (editor.precanvas.clientHeight /
-              (editor.precanvas.clientHeight * editor.zoom));
-
-        const html = `
-            <div class="node-content">
-                <div class="node-input-group">
-                    <label>Command</label>
-                    <input type="text" df-command value="${
-                      name === 'custom' ? '' : name
-                    }" ${name !== 'custom' ? 'readonly' : ''}>
-                </div>
-                <div class="node-input-group">
-                    <label>Arguments</label>
-                    <input type="text" df-args placeholder="Space separated args...">
-                </div>
-                <div class="node-input-group">
-                    <label>Initial Input</label>
-                    <input type="text" df-input placeholder="Optional input data...">
-                </div>
-            </div>
-            `;
-
-        editor.addNode(
-          name,
-          1,
-          1,
-          pos_x,
-          pos_y,
-          'node',
-          { command: name, args: '', input: '' },
-          html
-        );
+        pos_x = pos_x * (editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom)) - editor.precanvas.getBoundingClientRect().x * (editor.precanvas.clientWidth / (editor.precanvas.clientWidth * editor.zoom));
+        pos_y = pos_y * (editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom)) - editor.precanvas.getBoundingClientRect().y * (editor.precanvas.clientHeight / (editor.precanvas.clientHeight * editor.zoom));
+        const html = buildNodeHTML(name);
+        const data = buildNodeData(name);
+        editor.addNode(name, 1, 1, pos_x, pos_y, 'node', data, html);
       }
 
       // Export current canvas to DAG format (shared by save and run)
@@ -426,37 +486,43 @@
         const tasks = [];
         const nodeMap = {};
 
-        Object.keys(nodes).forEach(key => {
+        Object.keys(nodes).forEach(function(key) {
           const node = nodes[key];
           const id = 'node-' + key;
           nodeMap[key] = id;
-
-          const command = node.data.command;
-          const argsStr = node.data.args || '';
-          const args = argsStr.match(/(?:[^\s"]+|"[^"]*")+/g)?.map(s => s.replace(/^"|"$/g, '')) || [];
-          const input = node.data.input || '';
-
-          tasks.push({
-            id: id,
-            drawflowId: key,
-            command: command,
-            arguments: args,
-            input: input,
-            dependencies: [],
-          });
+          const command = node.data.command || node.name;
+          const options = taskOptionsMap[command] || [];
+          const args = [];
+          for (const opt of options) {
+            const val = node.data[opt.name];
+            if (val === undefined || val === null || val === '') continue;
+            switch (opt.type) {
+              case 'bool':
+                if (val === true || val === 'true') args.push('--' + opt.name);
+                break;
+              case 'number': {
+                const n = Number(val);
+                if (n !== 0 || opt.required) args.push('--' + opt.name, String(n));
+                break;
+              }
+              default:
+                if (String(val).trim() !== '') args.push('--' + opt.name, String(val));
+                break;
+            }
+          }
+          tasks.push({ id: id, drawflowId: key, command: command, arguments: args, input: '', dependencies: [] });
         });
 
-        tasks.forEach(task => {
+        tasks.forEach(function(task) {
           const node = nodes[task.drawflowId];
-          Object.keys(node.inputs).forEach(inputKey => {
-            node.inputs[inputKey].connections.forEach(conn => {
+          Object.keys(node.inputs).forEach(function(inputKey) {
+            node.inputs[inputKey].connections.forEach(function(conn) {
               const parentId = nodeMap[conn.node];
               if (parentId) task.dependencies.push(parentId);
             });
           });
           delete task.drawflowId;
         });
-
         return tasks;
       }
 
@@ -610,34 +676,71 @@
             const idToDrawflowId = {};
             let x = 100, y = 100;
 
-            dag.forEach((task, idx) => {
-              const argsStr = (task.arguments || []).join(' ');
-              const html = `
-                <div class="node-content">
-                  <div class="node-input-group">
-                    <label>Command</label>
-                    <input type="text" df-command value="${task.command}" readonly>
-                  </div>
-                  <div class="node-input-group">
-                    <label>Arguments</label>
-                    <input type="text" df-args value="${argsStr}">
-                  </div>
-                  <div class="node-input-group">
-                    <label>Initial Input</label>
-                    <input type="text" df-input value="${task.input || ''}">
-                  </div>
-                </div>`;
+            dag.forEach(function(task, idx) {
+              var command = task.command;
+              var options = taskOptionsMap[command] || [];
+              var nodeData = { command: command };
+              var args = task.arguments || [];
 
-              const drawflowId = editor.addNode(
-                task.command,
-                1, 1,
-                x + (idx % 3) * 300,
-                y + Math.floor(idx / 3) * 200,
-                'node',
-                { command: task.command, args: argsStr, input: task.input || '' },
-                html
-              );
+              // Set defaults
+              for (var oi = 0; oi < options.length; oi++) {
+                var opt = options[oi];
+                if (opt.type === 'bool') {
+                  nodeData[opt.name] = false;
+                } else {
+                  nodeData[opt.name] = opt.default !== undefined ? String(opt.default) : '';
+                }
+              }
+              // Parse --flag value pairs from arguments
+              for (var ai = 0; ai < args.length; ai++) {
+                var arg = args[ai];
+                if (!arg.startsWith('--')) continue;
+                var key = arg.slice(2);
+                var value = '';
+                var eqIdx = key.indexOf('=');
+                if (eqIdx >= 0) { value = key.slice(eqIdx + 1); key = key.slice(0, eqIdx); }
+                var matchOpt = options.find(function(o) { return o.name === key; });
+                if (!matchOpt) continue;
+                if (matchOpt.type === 'bool') {
+                  nodeData[key] = value ? (value === 'true') : true;
+                } else if (!value && ai + 1 < args.length && !args[ai + 1].startsWith('--')) {
+                  ai++;
+                  nodeData[key] = args[ai];
+                } else {
+                  nodeData[key] = value;
+                }
+              }
+
+              var html = buildNodeHTML(command);
+              var drawflowId = editor.addNode(command, 1, 1, x + (idx % 3) * 300, y + Math.floor(idx / 3) * 200, 'node', nodeData, html);
               idToDrawflowId[task.id] = drawflowId;
+
+              // Update widget states after DOM render
+              setTimeout(function() {
+                var nodeEl = document.querySelector('#node-' + drawflowId);
+                if (!nodeEl) return;
+                for (var wi = 0; wi < options.length; wi++) {
+                  var wopt = options[wi];
+                  if (wopt.type === 'bool') {
+                    var cb = nodeEl.querySelector('input[df-' + wopt.name + ']');
+                    if (cb) cb.checked = !!nodeData[wopt.name];
+                  }
+                  if (wopt.type === 'multi-enum') {
+                    var vals = String(nodeData[wopt.name] || '').split(',');
+                    nodeEl.querySelectorAll('input[data-multienum="' + wopt.name + '"]').forEach(function(mcb) {
+                      mcb.checked = vals.includes(mcb.value);
+                    });
+                  }
+                  if (wopt.type === 'enum') {
+                    var sel = nodeEl.querySelector('select[df-' + wopt.name + ']');
+                    if (sel) sel.value = nodeData[wopt.name] || '';
+                  }
+                  if (wopt.type === 'number' || wopt.type === 'string') {
+                    var inp = nodeEl.querySelector('input[df-' + wopt.name + ']');
+                    if (inp) inp.value = nodeData[wopt.name] || '';
+                  }
+                }
+              }, 50);
             });
 
             dag.forEach(task => {
