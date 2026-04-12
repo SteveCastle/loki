@@ -118,6 +118,10 @@ type Job struct {
 	ClaimedAt   time.Time `json:"claimed_at"`
 	CompletedAt time.Time `json:"completed_at"`
 	ErroredAt   time.Time `json:"errored_at"`
+
+	// Workflow chaining
+	OutputFiles []string `json:"output_files"` // File paths registered for downstream consumption
+	WorkflowID  string   `json:"workflow_id"`  // Non-empty when job is part of a workflow
 }
 
 type WorkflowTask struct {
@@ -208,6 +212,8 @@ func (q *Queue) createJobsTable() error {
 	// Try to add host column if it doesn't exist (migration)
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN host TEXT")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN original_input TEXT")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN output_files TEXT")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN workflow_id TEXT")
 
 	return nil
 }
@@ -222,6 +228,7 @@ func (q *Queue) saveJobToDB(job *Job) error {
 	argumentsJSON, _ := json.Marshal(job.Arguments)
 	stdoutJSON, _ := json.Marshal(job.Stdout)
 	dependenciesJSON, _ := json.Marshal(job.Dependencies)
+	outputFilesJSON, _ := json.Marshal(job.OutputFiles)
 
 	// Find position in job order
 	position := -1
@@ -235,8 +242,9 @@ func (q *Queue) saveJobToDB(job *Job) error {
 	query := `
 	INSERT OR REPLACE INTO jobs (
 		id, command, arguments, input, original_input, host, stdout, dependencies, state,
-		created_at, claimed_at, completed_at, errored_at, job_order_position
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		created_at, claimed_at, completed_at, errored_at, job_order_position,
+		output_files, workflow_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := q.Db.Exec(query,
 		job.ID,
@@ -253,6 +261,8 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		job.CompletedAt,
 		job.ErroredAt,
 		position,
+		string(outputFilesJSON),
+		job.WorkflowID,
 	)
 
 	return err
@@ -266,7 +276,8 @@ func (q *Queue) loadJobsFromDB() error {
 
 	query := `
 	SELECT id, command, arguments, input, COALESCE(original_input, ''), COALESCE(host, ''), stdout, dependencies, state,
-		   created_at, claimed_at, completed_at, errored_at, job_order_position
+		   created_at, claimed_at, completed_at, errored_at, job_order_position,
+		   COALESCE(output_files, '[]'), COALESCE(workflow_id, '')
 	FROM jobs
 	ORDER BY job_order_position`
 
@@ -280,7 +291,7 @@ func (q *Queue) loadJobsFromDB() error {
 
 	for rows.Next() {
 		var job Job
-		var argumentsJSON, stdoutJSON, dependenciesJSON string
+		var argumentsJSON, stdoutJSON, dependenciesJSON, outputFilesJSON string
 		var state int
 		var position int
 
@@ -299,6 +310,8 @@ func (q *Queue) loadJobsFromDB() error {
 			&job.CompletedAt,
 			&job.ErroredAt,
 			&position,
+			&outputFilesJSON,
+			&job.WorkflowID,
 		)
 		if err != nil {
 			log.Printf("Error scanning job row: %v", err)
@@ -314,6 +327,9 @@ func (q *Queue) loadJobsFromDB() error {
 		}
 		if err := json.Unmarshal([]byte(dependenciesJSON), &job.Dependencies); err != nil {
 			job.Dependencies = []string{}
+		}
+		if err := json.Unmarshal([]byte(outputFilesJSON), &job.OutputFiles); err != nil {
+			job.OutputFiles = []string{}
 		}
 
 		job.State = JobState(state)

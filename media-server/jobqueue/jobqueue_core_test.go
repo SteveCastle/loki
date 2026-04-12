@@ -731,3 +731,29 @@ func TestSaveAllJobsToDB(t *testing.T) {
 		t.Errorf("Database has %d jobs; want 2", count)
 	}
 }
+
+func TestOutputFilesAndWorkflowIDPersistence(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+
+	q1 := NewQueueWithDB(db)
+	id, _ := q1.AddJob("persist-out", "command", nil, "input", nil)
+
+	q1.mu.Lock()
+	q1.Jobs[id].OutputFiles = []string{"/tmp/a.mp4", "/tmp/b.mp4"}
+	q1.Jobs[id].WorkflowID = "wf-123"
+	q1.saveJobToDB(q1.Jobs[id])
+	q1.mu.Unlock()
+
+	q2 := NewQueueWithDB(db)
+	job := q2.GetJob(id)
+	if job == nil {
+		t.Fatal("job not found after reload")
+	}
+	if len(job.OutputFiles) != 2 || job.OutputFiles[0] != "/tmp/a.mp4" || job.OutputFiles[1] != "/tmp/b.mp4" {
+		t.Errorf("OutputFiles = %v; want [/tmp/a.mp4, /tmp/b.mp4]", job.OutputFiles)
+	}
+	if job.WorkflowID != "wf-123" {
+		t.Errorf("WorkflowID = %q; want %q", job.WorkflowID, "wf-123")
+	}
+}
