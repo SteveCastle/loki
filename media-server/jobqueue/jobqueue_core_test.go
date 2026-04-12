@@ -3,6 +3,7 @@ package jobqueue
 import (
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -927,5 +928,70 @@ func TestOutputFilesAndWorkflowIDPersistence(t *testing.T) {
 	}
 	if job.WorkflowID != "wf-123" {
 		t.Errorf("WorkflowID = %q; want %q", job.WorkflowID, "wf-123")
+	}
+}
+
+func TestWorkflowEndToEndOutputFiles(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	// Simulate: grayscale -> blur -> save
+	workflow := Workflow{
+		Tasks: []WorkflowTask{
+			{ID: "gray", Command: "ffmpeg-grayscale", Input: "--query64 dGVzdA=="},
+			{ID: "blur", Command: "ffmpeg-blur", Dependencies: []string{"gray"}},
+			{ID: "save", Command: "save", Dependencies: []string{"blur"}},
+		},
+	}
+
+	ids, err := q.AddWorkflow(workflow)
+	if err != nil {
+		t.Fatalf("AddWorkflow error: %v", err)
+	}
+
+	// All should have same WorkflowID
+	wfID := q.GetJob(ids[0]).WorkflowID
+	if wfID == "" {
+		t.Fatal("WorkflowID should be set")
+	}
+	for _, id := range ids {
+		if q.GetJob(id).WorkflowID != wfID {
+			t.Error("all jobs should share WorkflowID")
+		}
+	}
+
+	// Claim and work grayscale
+	gray, _ := q.ClaimJob()
+	if gray.ID != ids[0] {
+		t.Fatalf("expected grayscale job; got %s", gray.ID)
+	}
+	q.PushJobStdout(ids[0], "ffmpeg: encoding frame 1/100")
+	q.PushJobStdout(ids[0], "ffmpeg: encoding frame 100/100")
+	q.RegisterOutputFile(ids[0], "/tmp/.loki-temp/gray-id/video_grayscale.mp4")
+	q.CompleteJob(ids[0])
+
+	// Claim blur — should get OutputFiles only, not ffmpeg diagnostics
+	blur, _ := q.ClaimJob()
+	if blur.ID != ids[1] {
+		t.Fatalf("expected blur job; got %s", blur.ID)
+	}
+	if strings.Contains(blur.Input, "encoding frame") {
+		t.Errorf("blur input should not contain ffmpeg diagnostics; got %q", blur.Input)
+	}
+	if !strings.Contains(blur.Input, "video_grayscale.mp4") {
+		t.Errorf("blur input should contain output file path; got %q", blur.Input)
+	}
+
+	q.RegisterOutputFile(ids[1], "/tmp/.loki-temp/blur-id/video_grayscale_blurred.mp4")
+	q.CompleteJob(ids[1])
+
+	// Claim save
+	save, _ := q.ClaimJob()
+	if save.ID != ids[2] {
+		t.Fatalf("expected save job; got %s", save.ID)
+	}
+	if !strings.Contains(save.Input, "video_grayscale_blurred.mp4") {
+		t.Errorf("save input should contain blur output; got %q", save.Input)
 	}
 }
