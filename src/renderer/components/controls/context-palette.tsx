@@ -29,11 +29,11 @@ const ACTION_GROUPS: ActionGroup[] = [
     title: 'Transcripts',
     actions: [
       {
-        label: 'Generate Transcripts',
+        label: 'Generate',
         command: (q) => `metadata --type transcript --apply all --query64=${q}`,
       },
       {
-        label: 'Regenerate Transcripts',
+        label: 'Regenerate',
         command: (q) =>
           `metadata --type transcript --apply all --overwrite --query64=${q}`,
       },
@@ -43,11 +43,11 @@ const ACTION_GROUPS: ActionGroup[] = [
     title: 'Tags',
     actions: [
       {
-        label: 'Generate Tags',
+        label: 'Generate',
         command: (q) => `autotag --query64=${q}`,
       },
       {
-        label: 'Regenerate Tags',
+        label: 'Regenerate',
         command: (q) => `autotag --overwrite --query64=${q}`,
       },
     ],
@@ -56,12 +56,12 @@ const ACTION_GROUPS: ActionGroup[] = [
     title: 'Descriptions',
     actions: [
       {
-        label: 'Generate Descriptions',
+        label: 'Generate',
         command: (q) =>
           `metadata --type description --apply all --query64=${q}`,
       },
       {
-        label: 'Regenerate Descriptions',
+        label: 'Regenerate',
         command: (q) =>
           `metadata --type description --apply all --overwrite --query64=${q}`,
       },
@@ -450,16 +450,18 @@ export default function ContextPalette() {
         <div className="context-palette-actions">
           {ACTION_GROUPS.map((group) => (
             <div key={group.title} className="action-group">
-              <div className="action-group-title">{group.title}</div>
-              {group.actions.map((action) => (
-                <button
-                  key={action.label}
-                  className="action-row"
-                  onClick={() => handleAction(action)}
-                >
-                  {action.label}
-                </button>
-              ))}
+              <span className="action-group-title">{group.title}</span>
+              <div className="action-buttons">
+                {group.actions.map((action) => (
+                  <button
+                    key={action.label}
+                    className="action-btn"
+                    onClick={() => handleAction(action)}
+                  >
+                    {action.label}
+                  </button>
+                ))}
+              </div>
             </div>
           ))}
         </div>
