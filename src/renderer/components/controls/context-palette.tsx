@@ -350,6 +350,19 @@ export default function ContextPalette() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [display, libraryService]);
 
+  // Close on library change
+  const prevLibraryLoadId = useRef(libraryLoadId);
+  useEffect(() => {
+    if (
+      display &&
+      prevLibraryLoadId.current &&
+      prevLibraryLoadId.current !== libraryLoadId
+    ) {
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    }
+    prevLibraryLoadId.current = libraryLoadId;
+  }, [display, libraryLoadId, libraryService]);
+
   // Derived data
   const items = filter(libraryLoadId, textFilter, library, filters, sortBy);
   const itemCount = items.length;
@@ -381,6 +394,8 @@ export default function ContextPalette() {
         signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Job toast appears automatically via SSE stream in ToastSystem
+      libraryService.send('HIDE_CONTEXT_PALETTE');
     } catch {
       libraryService.send({
         type: 'ADD_TOAST',
@@ -390,8 +405,8 @@ export default function ContextPalette() {
           message: 'Could not communicate with job service',
         },
       });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
     }
-    libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
   if (!display) return null;
