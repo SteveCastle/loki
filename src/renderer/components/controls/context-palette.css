@@ -111,6 +111,28 @@
   background-color: rgba(0, 200, 150, 0.3);
 }
 
+.context-palette-workflows {
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.context-palette-workflows .action-buttons {
+  flex-direction: column;
+  border: none;
+}
+
+.context-palette-workflows .action-btn {
+  border-left: none;
+  text-align: left;
+  padding: 4px 8px;
+}
+
+.context-palette-workflows .action-btn + .action-btn {
+  border-left: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
 /* ── Jobs footer ── */
 
 .context-palette-footer {
