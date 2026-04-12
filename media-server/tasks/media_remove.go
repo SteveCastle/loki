@@ -15,7 +15,7 @@ func removeFromDB(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	var paths []string
 	if qstr, ok := extractQueryFromJob(j); ok {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQuery(q.Db, qstr)
+		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
 		if err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Error loading media paths for query: %v", err))
 			q.ErrorJob(j.ID)
@@ -50,6 +50,10 @@ func removeFromDB(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, fmt.Sprintf("Processed %d paths", len(result.ProcessedPaths)))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Removed %d tag associations", result.TagsRemoved))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Removed %d media items from database", result.MediaItemsRemoved))
+	// Output removed paths for downstream chaining
+	for _, p := range result.ProcessedPaths {
+		q.PushJobStdout(j.ID, p)
+	}
 	if result.MediaItemsRemoved == 0 {
 		q.PushJobStdout(j.ID, "No matching media items found in database")
 	} else {

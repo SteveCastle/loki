@@ -34,7 +34,7 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	var cleanedPaths []string
 	if qstr, ok := extractQueryFromJob(j); ok {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQuery(q.Db, qstr)
+		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
 		if err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Error loading media paths for query: %v", err))
 			q.ErrorJob(j.ID)
@@ -150,6 +150,8 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		moveCount++
 		q.PushJobStdout(j.ID, fmt.Sprintf("Moved: %s -> %s", srcPath, destPath))
+		// Output destination path for downstream chaining
+		q.PushJobStdout(j.ID, destPath)
 
 		if err := updateMediaPathInDatabase(q.Db, srcPath, destPath); err != nil {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to update database for %s: %v", srcPath, err))
