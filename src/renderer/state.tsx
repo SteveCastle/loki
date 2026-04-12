@@ -97,6 +97,11 @@ type LibraryState = {
   contextPalette: {
     display: boolean;
     position: { x: number; y: number };
+    target:
+      | { type: 'library' }
+      | { type: 'file'; path: string }
+      | { type: 'tag'; tag: string }
+      | { type: 'category'; category: string };
   };
   // jobs: removed - now handled by external job runner service
   toasts: {
@@ -557,6 +562,7 @@ const getInitialContext = (): LibraryState => {
     contextPalette: {
       display: false,
       position: { x: 0, y: 0 },
+      target: { type: 'library' } as LibraryState['contextPalette']['target'],
     },
     // jobs: removed - now handled by external job runner service
     toasts: [],
@@ -816,6 +822,7 @@ const libraryMachine = createMachine(
                 return {
                   display: true,
                   position: event.position,
+                  target: event.target || { type: 'library' },
                 };
               },
               commandPalette: (context) => {
@@ -828,10 +835,10 @@ const libraryMachine = createMachine(
           },
           HIDE_CONTEXT_PALETTE: {
             actions: assign<LibraryState, AnyEventObject>({
-              contextPalette: (context, event) => {
+              contextPalette: (context) => {
                 return {
+                  ...context.contextPalette,
                   display: false,
-                  position: context.contextPalette.position,
                 };
               },
             }),
@@ -840,8 +847,8 @@ const libraryMachine = createMachine(
             actions: assign<LibraryState, AnyEventObject>({
               contextPalette: (context) => {
                 return {
+                  ...context.contextPalette,
                   display: false,
-                  position: context.contextPalette.position,
                 };
               },
             }),

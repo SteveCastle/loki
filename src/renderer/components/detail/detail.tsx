@@ -321,12 +321,16 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         className="Detail"
         onContextMenu={(e) => {
           e.preventDefault();
-          const event = e.shiftKey
-            ? 'SHOW_CONTEXT_PALETTE'
-            : 'SHOW_COMMAND_PALETTE';
-          libraryService.send(event, {
-            position: { x: e.clientX, y: e.clientY },
-          });
+          if (e.shiftKey) {
+            libraryService.send('SHOW_CONTEXT_PALETTE', {
+              position: { x: e.clientX, y: e.clientY },
+              target: item ? { type: 'file', path: item.path } : { type: 'library' },
+            });
+          } else {
+            libraryService.send('SHOW_COMMAND_PALETTE', {
+              position: { x: e.clientX, y: e.clientY },
+            });
+          }
         }}
         onClick={settings.controlMode === 'touchpad' ? handleClick : undefined}
         ref={containerRef}

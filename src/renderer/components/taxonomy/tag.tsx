@@ -136,6 +136,16 @@ export default function Tag({
           });
         }
       }}
+      onContextMenu={(e) => {
+        if (e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          libraryService.send('SHOW_CONTEXT_PALETTE', {
+            position: { x: e.clientX, y: e.clientY },
+            target: { type: 'tag', tag: tag.label },
+          });
+        }
+      }}
     >
       {previewImage ? (
         getFileType(previewImage) !== 'video' ? (

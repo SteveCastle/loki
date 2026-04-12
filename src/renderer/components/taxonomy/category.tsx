@@ -1,10 +1,11 @@
-import { useRef, useState, useEffect } from 'react';
+import { useContext, useRef, useState, useEffect } from 'react';
 import { useDrop } from 'react-dnd';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import ConfirmDeleteCategory from './confirm-delete-category';
 import editPencil from '../../../../assets/edit-pencil.svg';
 import deleteIcon from '../../../../assets/delete.svg';
 import { invoke } from '../../platform';
+import { GlobalStateContext } from '../../state';
 
 type Concept = {
   label: string;
@@ -41,6 +42,7 @@ export default function Category({
   setActiveCategory,
   handleEditAction,
 }: Props) {
+  const { libraryService } = useContext(GlobalStateContext);
   const ref = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -77,6 +79,16 @@ export default function Category({
         collectedProps.isOver ? 'hovered' : ''
       }`}
       onClick={() => setActiveCategory(category.label)}
+      onContextMenu={(e) => {
+        if (e.shiftKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          libraryService.send('SHOW_CONTEXT_PALETTE', {
+            position: { x: e.clientX, y: e.clientY },
+            target: { type: 'category', category: category.label },
+          });
+        }
+      }}
     >
       <div className="category-label">{category.label}</div>
       <div className="actions">
