@@ -12,6 +12,118 @@ import (
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
+var ffmpegCustomOptions = []TaskOption{
+	{Name: "arguments", Label: "FFmpeg Arguments", Type: "string", Required: true, Description: "Raw ffmpeg args. Templates: {input}, {dir}, {base}, {name}, {ext}, {idx}"},
+}
+
+// runFFmpegOnFiles gathers files from query or input, then calls buildArgs for
+// each file to obtain the ffmpeg argument list and output path. It prepends
+// "-i <abs>" automatically and handles cancellation, progress, and chaining.
+func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildArgs func(abs, dir, name, ext string) (args []string, outputPath string)) error {
+	ctx := j.Ctx
+
+	var files []string
+	if qstr, ok := extractQueryFromJob(j); ok {
+		q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: using query to select files: %s", qstr))
+		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
+		if err != nil {
+			q.PushJobStdout(j.ID, "ffmpeg: failed to load paths from query: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+		files = mediaPaths
+	} else {
+		raw := strings.TrimSpace(j.Input)
+		if raw == "" {
+			q.PushJobStdout(j.ID, "ffmpeg: no input paths or query provided")
+			q.CompleteJob(j.ID)
+			return nil
+		}
+		files = parseInputPaths(raw)
+	}
+
+	if len(files) == 0 {
+		q.PushJobStdout(j.ID, "ffmpeg: no files to process")
+		q.CompleteJob(j.ID)
+		return nil
+	}
+
+	for _, src := range files {
+		select {
+		case <-ctx.Done():
+			q.PushJobStdout(j.ID, "ffmpeg: task canceled")
+			q.ErrorJob(j.ID)
+			return ctx.Err()
+		default:
+		}
+
+		abs := src
+		if a, err := filepath.Abs(src); err == nil {
+			abs = filepath.FromSlash(a)
+		}
+		dir := filepath.Dir(abs)
+		base := filepath.Base(abs)
+		ext := filepath.Ext(abs)
+		name := strings.TrimSuffix(base, ext)
+
+		args, outputPath := buildArgs(abs, dir, name, ext)
+
+		// Prepend -i <input>
+		finalArgs := append([]string{"-i", abs}, args...)
+
+		q.PushJobStdout(j.ID, "ffmpeg: running on "+base+" -> "+filepath.Base(outputPath))
+
+		cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", finalArgs...)
+		if err != nil {
+			q.PushJobStdout(j.ID, "ffmpeg: failed to prepare: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			q.PushJobStdout(j.ID, "ffmpeg: stdout pipe error: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			q.PushJobStdout(j.ID, "ffmpeg: stderr pipe error: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+
+		doneErr := make(chan struct{})
+		go func() {
+			s := bufio.NewScanner(stderr)
+			for s.Scan() {
+				_ = q.PushJobStdout(j.ID, "ffmpeg: "+s.Text())
+			}
+			close(doneErr)
+		}()
+
+		if err := cmd.Start(); err != nil {
+			q.PushJobStdout(j.ID, "ffmpeg: failed to start: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+
+		scan := bufio.NewScanner(stdout)
+		for scan.Scan() {
+			_ = q.PushJobStdout(j.ID, scan.Text())
+		}
+		_ = cmd.Wait()
+		<-doneErr
+
+		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
+		// Output the processed file path so downstream jobs can use it
+		q.PushJobStdout(j.ID, outputPath)
+	}
+
+	q.CompleteJob(j.ID)
+	return nil
+}
+
 // ffmpegTask runs ffmpeg per selected file with placeholder expansion.
 func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
