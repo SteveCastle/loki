@@ -874,6 +874,36 @@ func TestRegisterOutputFileNotFound(t *testing.T) {
 	}
 }
 
+func TestErrorJobCancelsWorkflowDependents(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	workflow := Workflow{
+		Tasks: []WorkflowTask{
+			{ID: "a", Command: "cmd1"},
+			{ID: "b", Command: "cmd2", Dependencies: []string{"a"}},
+			{ID: "c", Command: "cmd3", Dependencies: []string{"b"}},
+		},
+	}
+
+	ids, _ := q.AddWorkflow(workflow)
+
+	// Claim and error job A
+	q.ClaimJob()
+	q.ErrorJob(ids[0])
+
+	// Jobs B and C should be cancelled since their ancestor errored
+	jobB := q.GetJob(ids[1])
+	jobC := q.GetJob(ids[2])
+	if jobB.State != StateCancelled {
+		t.Errorf("job B state = %v; want StateCancelled", jobB.State)
+	}
+	if jobC.State != StateCancelled {
+		t.Errorf("job C state = %v; want StateCancelled", jobC.State)
+	}
+}
+
 func TestOutputFilesAndWorkflowIDPersistence(t *testing.T) {
 	db, _ := sql.Open("sqlite", ":memory:")
 	defer db.Close()

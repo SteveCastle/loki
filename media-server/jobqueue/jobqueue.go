@@ -629,7 +629,44 @@ func (q *Queue) ErrorJob(id string) error {
 	if err != nil {
 		return nil
 	}
+
+	// Cancel pending dependents in the same workflow
+	if job.WorkflowID != "" {
+		q.cancelWorkflowDependentsLocked(id, job.WorkflowID)
+	}
+
 	return nil
+}
+
+// cancelWorkflowDependentsLocked cancels all pending jobs in the workflow
+// that transitively depend on the errored job. Must be called with mu held.
+func (q *Queue) cancelWorkflowDependentsLocked(erroredID, workflowID string) {
+	cancelled := map[string]bool{erroredID: true}
+	changed := true
+	for changed {
+		changed = false
+		for _, j := range q.Jobs {
+			if j.WorkflowID != workflowID || j.State != StatePending {
+				continue
+			}
+			if cancelled[j.ID] {
+				continue
+			}
+			for _, dep := range j.Dependencies {
+				if cancelled[dep] {
+					j.State = StateCancelled
+					j.Cancel()
+					cancelled[j.ID] = true
+					changed = true
+					if err := q.saveJobToDB(j); err != nil {
+						log.Printf("Failed to save cancelled job %s: %v", j.ID, err)
+					}
+					_ = serializeListUpdate("update", j)
+					break
+				}
+			}
+		}
+	}
 }
 
 // CancelJob sets a job's state to cancelled if it is currently pending.
