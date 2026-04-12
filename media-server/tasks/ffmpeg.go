@@ -19,7 +19,7 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	var files []string
 	if qstr, ok := extractQueryFromJob(j); ok {
 		q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQuery(q.Db, qstr)
+		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
 		if err != nil {
 			q.PushJobStdout(j.ID, "ffmpeg: failed to load paths from query: "+err.Error())
 			q.ErrorJob(j.ID)
@@ -92,7 +92,26 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			finalArgs = append([]string{"-i", abs}, expanded...)
 		}
 
-		q.PushJobStdout(j.ID, "ffmpeg: running on "+base)
+		// Auto-generate output path if not provided.
+		// ffmpeg expects the output as the last arg. If the last arg starts with "-"
+		// or the args are all flags, append an auto-generated output path.
+		outputPath := ""
+		needsOutput := true
+		if len(finalArgs) > 0 {
+			last := finalArgs[len(finalArgs)-1]
+			// If last arg doesn't start with "-" and contains a path separator or extension,
+			// treat it as a user-provided output path
+			if !strings.HasPrefix(last, "-") && (strings.Contains(last, string(filepath.Separator)) || strings.Contains(last, "/") || strings.Contains(last, ".")) {
+				needsOutput = false
+				outputPath = last
+			}
+		}
+		if needsOutput {
+			outputPath = filepath.Join(dir, name+"_output"+ext)
+			finalArgs = append(finalArgs, outputPath)
+		}
+
+		q.PushJobStdout(j.ID, "ffmpeg: running on "+base+" -> "+filepath.Base(outputPath))
 
 		cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", finalArgs...)
 		if err != nil {
@@ -137,6 +156,8 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		<-doneErr
 
 		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
+		// Output the processed file path so downstream jobs can use it
+		q.PushJobStdout(j.ID, outputPath)
 	}
 
 	q.CompleteJob(j.ID)
