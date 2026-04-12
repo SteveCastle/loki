@@ -94,6 +94,10 @@ type LibraryState = {
     display: boolean;
     position: { x: number; y: number };
   };
+  contextPalette: {
+    display: boolean;
+    position: { x: number; y: number };
+  };
   // jobs: removed - now handled by external job runner service
   toasts: {
     id: string;
@@ -550,6 +554,10 @@ const getInitialContext = (): LibraryState => {
       display: false,
       position: { x: 0, y: 0 },
     },
+    contextPalette: {
+      display: false,
+      position: { x: 0, y: 0 },
+    },
     // jobs: removed - now handled by external job runner service
     toasts: [],
     streaming: false,
@@ -794,6 +802,46 @@ const libraryMachine = createMachine(
                 return {
                   display: false,
                   position: event.position,
+                };
+              },
+            }),
+          },
+        },
+      },
+      contextPalette: {
+        on: {
+          SHOW_CONTEXT_PALETTE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              contextPalette: (context, event) => {
+                return {
+                  display: true,
+                  position: event.position,
+                };
+              },
+              commandPalette: (context) => {
+                return {
+                  display: false,
+                  position: context.commandPalette.position,
+                };
+              },
+            }),
+          },
+          HIDE_CONTEXT_PALETTE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              contextPalette: (context, event) => {
+                return {
+                  display: false,
+                  position: context.contextPalette.position,
+                };
+              },
+            }),
+          },
+          SHOW_COMMAND_PALETTE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              contextPalette: (context) => {
+                return {
+                  display: false,
+                  position: context.contextPalette.position,
                 };
               },
             }),
