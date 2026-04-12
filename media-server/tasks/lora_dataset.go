@@ -159,8 +159,7 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		processedCount++
 		q.PushJobStdout(j.ID, fmt.Sprintf("Progress %d/%d: %s -> %s", i+1, len(filesToProcess), filepath.Base(srcPath), jpgName))
-		// Output created file path for downstream chaining
-		q.PushJobStdout(j.ID, jpgPath)
+		q.RegisterOutputFile(j.ID, jpgPath)
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("LoRA dataset creation completed: %d files processed, saved to %s", processedCount, outputDir))

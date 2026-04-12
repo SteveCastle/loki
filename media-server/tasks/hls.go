@@ -240,8 +240,7 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		masterPath := filepath.Join(outDir, "master.m3u8")
 		q.PushJobStdout(j.ID, fmt.Sprintf("hls: completed %s (presets: %s)", base, strings.Join(generatedPresets, ", ")))
-		// Output master playlist path for downstream chaining
-		q.PushJobStdout(j.ID, masterPath)
+		q.RegisterOutputFile(j.ID, masterPath)
 	}
 
 	q.CompleteJob(j.ID)

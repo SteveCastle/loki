@@ -173,8 +173,7 @@ func metadataTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		if fileProcessed {
 			processed++
-			// Output processed path for downstream chaining
-			q.PushJobStdout(j.ID, filePath)
+			q.RegisterOutputFile(j.ID, filePath)
 		}
 	}
 
