@@ -40,40 +40,26 @@ type hlsMetaInfo struct {
 	GeneratedAt int64    `json:"generated_at"`
 }
 
+var hlsOptions = []TaskOption{
+	{Name: "preset", Label: "Preset Mode", Type: "enum", Choices: []string{"passthrough", "adaptive"}, Default: "passthrough", Description: "HLS encoding preset mode"},
+	{Name: "presets", Label: "Quality Presets", Type: "multi-enum", Choices: []string{"480p", "720p", "1080p"}, Description: "Comma-separated quality tiers for adaptive mode"},
+}
+
 // hlsTask is the main task function for HLS generation.
 func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
-	// Parse --preset and --presets from arguments.
-	presetMode := "passthrough" // default
+	opts := ParseOptions(j, hlsOptions)
+	presetMode, _ := opts["preset"].(string)
+	if presetMode == "" {
+		presetMode = "passthrough"
+	}
 	var requestedPresets []string
-	for i, arg := range j.Arguments {
-		lower := strings.ToLower(arg)
-		switch lower {
-		case "--preset":
-			if i+1 < len(j.Arguments) {
-				presetMode = strings.TrimSpace(j.Arguments[i+1])
-			}
-		case "--presets":
-			if i+1 < len(j.Arguments) {
-				for _, p := range strings.Split(j.Arguments[i+1], ",") {
-					p = strings.TrimSpace(p)
-					if p != "" {
-						requestedPresets = append(requestedPresets, p)
-					}
-				}
-			}
-		}
-		if strings.HasPrefix(lower, "--preset=") {
-			presetMode = strings.TrimSpace(arg[len("--preset="):])
-		}
-		if strings.HasPrefix(lower, "--presets=") {
-			for _, p := range strings.Split(arg[len("--presets="):], ",") {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					requestedPresets = append(requestedPresets, p)
-				}
-			}
+	presetsStr, _ := opts["presets"].(string)
+	for _, p := range strings.Split(presetsStr, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			requestedPresets = append(requestedPresets, p)
 		}
 	}
 

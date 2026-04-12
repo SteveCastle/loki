@@ -11,18 +11,25 @@ import (
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
+var moveOptions = []TaskOption{
+	{Name: "target", Label: "Target Directory", Type: "string", Required: true, Description: "Destination directory to move files into"},
+	{Name: "prefix", Label: "Path Prefix", Type: "string", Description: "Common prefix to strip when computing relative paths"},
+}
+
 func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
-	var targetDir string
-	var specifiedPrefix string
-	for i, arg := range j.Arguments {
-		if arg == "--prefix" || arg == "-p" {
-			if i+1 < len(j.Arguments) {
-				specifiedPrefix = strings.TrimSpace(j.Arguments[i+1])
+	opts := ParseOptions(j, moveOptions)
+	targetDir, _ := opts["target"].(string)
+	specifiedPrefix, _ := opts["prefix"].(string)
+
+	// Backwards compatibility: support positional target argument
+	if targetDir == "" {
+		for _, arg := range j.Arguments {
+			if !strings.HasPrefix(arg, "-") {
+				targetDir = strings.TrimSpace(arg)
+				break
 			}
-		} else if !strings.HasPrefix(arg, "-") && targetDir == "" {
-			targetDir = strings.TrimSpace(arg)
 		}
 	}
 	if targetDir == "" {

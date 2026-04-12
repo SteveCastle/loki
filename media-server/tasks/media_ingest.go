@@ -11,6 +11,14 @@ import (
 	"github.com/stevecastle/shrike/media"
 )
 
+var ingestOptions = []TaskOption{
+	{Name: "recursive", Label: "Recursive", Type: "bool", Description: "Scan directories recursively"},
+	{Name: "transcript", Label: "Transcript", Type: "bool", Description: "Queue transcript metadata task for each file"},
+	{Name: "description", Label: "Description", Type: "bool", Description: "Queue description metadata task for each file"},
+	{Name: "filemeta", Label: "File Metadata", Type: "bool", Description: "Queue file metadata (hash, dimensions) task for each file"},
+	{Name: "autotag", Label: "Auto Tag", Type: "bool", Description: "Queue ONNX autotag task for each file"},
+}
+
 // IngestOptions holds the optional follow-up task flags for ingestion
 type IngestOptions struct {
 	Recursive   bool      // For local ingestion: scan directories recursively
@@ -24,29 +32,42 @@ type IngestOptions struct {
 // parseIngestOptions parses arguments to extract ingest options
 // Returns the options and any remaining arguments that weren't option flags
 func parseIngestOptions(args []string) (IngestOptions, []string) {
-	var opts IngestOptions
-	var remaining []string
+	// Use ParseOptions for the structured flags
+	j := &jobqueue.Job{Arguments: args}
+	parsed := ParseOptions(j, ingestOptions)
 
+	var opts IngestOptions
+	opts.Recursive, _ = parsed["recursive"].(bool)
+	opts.Transcript, _ = parsed["transcript"].(bool)
+	opts.Description, _ = parsed["description"].(bool)
+	opts.FileMeta, _ = parsed["filemeta"].(bool)
+	opts.AutoTag, _ = parsed["autotag"].(bool)
+
+	// Also support legacy short flags for recursive
 	for _, arg := range args {
 		lower := strings.ToLower(arg)
-		switch {
-		case lower == "-r" || lower == "--recursive":
+		if lower == "-r" {
 			opts.Recursive = true
-		case lower == "--transcript":
-			opts.Transcript = true
-		case lower == "--description":
-			opts.Description = true
-		case lower == "--filemeta" || lower == "--file-meta":
-			opts.FileMeta = true
-		case lower == "--autotag" || lower == "--auto-tag":
-			opts.AutoTag = true
-		case strings.HasPrefix(lower, "--tag="):
+		}
+	}
+
+	// Parse --tag= args (not a simple option type) and collect remaining args
+	var remaining []string
+	knownFlags := map[string]bool{
+		"--recursive": true, "-r": true,
+		"--transcript": true, "--description": true,
+		"--filemeta": true, "--file-meta": true,
+		"--autotag": true, "--auto-tag": true,
+	}
+	for _, arg := range args {
+		lower := strings.ToLower(arg)
+		if strings.HasPrefix(lower, "--tag=") {
 			value := arg[len("--tag="):]
 			label, category := parseTagArg(value)
 			if label != "" {
 				opts.Tags = append(opts.Tags, TagInfo{Label: label, Category: category})
 			}
-		default:
+		} else if !knownFlags[lower] {
 			remaining = append(remaining, arg)
 		}
 	}
