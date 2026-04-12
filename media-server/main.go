@@ -1027,8 +1027,9 @@ func swipeManifestHandler() http.HandlerFunc {
 
 // TaskInfo represents a task for the API response
 type TaskInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID      string             `json:"id"`
+	Name    string             `json:"name"`
+	Options []tasks.TaskOption `json:"options"`
 }
 
 func tasksHandler(deps *Dependencies) http.HandlerFunc {
@@ -1042,9 +1043,14 @@ func tasksHandler(deps *Dependencies) http.HandlerFunc {
 		taskList := make([]TaskInfo, 0, len(taskMap))
 
 		for _, t := range taskMap {
+			opts := t.Options
+			if opts == nil {
+				opts = []tasks.TaskOption{}
+			}
 			taskList = append(taskList, TaskInfo{
-				ID:   t.ID,
-				Name: t.Name,
+				ID:      t.ID,
+				Name:    t.Name,
+				Options: opts,
 			})
 		}
 
