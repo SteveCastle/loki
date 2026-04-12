@@ -168,6 +168,10 @@ func NewQueueWithDB(db *sql.DB) *Queue {
 		log.Printf("Failed to create jobs table: %v", err)
 	}
 
+	if err := q.createWorkflowsTable(); err != nil {
+		log.Printf("Failed to create workflows table: %v", err)
+	}
+
 	// Load existing jobs from database
 	if err := q.loadJobsFromDB(); err != nil {
 		log.Printf("Failed to load jobs from database: %v", err)
