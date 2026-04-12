@@ -239,6 +239,46 @@ function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
   return jobs;
 }
 
+interface SavedWorkflow {
+  id: string;
+  name: string;
+}
+
+function useSavedWorkflows(
+  isOpen: boolean,
+  authToken: string | null
+): SavedWorkflow[] {
+  const [workflows, setWorkflows] = useState<SavedWorkflow[]>([]);
+
+  useEffect(() => {
+    if (!isOpen || !authToken) {
+      setWorkflows([]);
+      return;
+    }
+    const fetchWorkflows = async () => {
+      try {
+        const headers: HeadersInit = {
+          Authorization: `Bearer ${authToken}`,
+        };
+        const res = await fetch('http://localhost:8090/workflows', {
+          method: 'GET',
+          headers,
+          signal: AbortSignal.timeout(3000),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setWorkflows(data as SavedWorkflow[]);
+        }
+      } catch {
+        // Ignore
+      }
+    };
+    fetchWorkflows();
+  }, [isOpen, authToken]);
+
+  return workflows;
+}
+
 export default function ContextPalette() {
   const { libraryService } = useContext(GlobalStateContext);
 
@@ -299,6 +339,7 @@ export default function ContextPalette() {
   const { width, height } = useComponentSize(paletteRef);
 
   const activeJobs = useActiveJobs(display, authToken);
+  const savedWorkflows = useSavedWorkflows(display, authToken);
 
   // Server health
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
@@ -449,6 +490,35 @@ export default function ContextPalette() {
     }
   };
 
+  const handleRunWorkflow = async (workflow: SavedWorkflow) => {
+    try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(
+        `http://localhost:8090/workflows/${workflow.id}/run`,
+        {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ input: queryString ? `--query64=${query64}` : '' }),
+          signal: AbortSignal.timeout(10000),
+          redirect: 'error',
+        }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Run Workflow',
+          message: 'Could not communicate with job service',
+        },
+      });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    }
+  };
+
   if (!display) return null;
 
   const style: React.CSSProperties = positionReady
@@ -507,6 +577,25 @@ export default function ContextPalette() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {serverAvailable && authToken && savedWorkflows.length > 0 && (
+        <div className="context-palette-workflows">
+          <div className="action-group">
+            <span className="action-group-title">Workflows</span>
+            <div className="action-buttons">
+              {savedWorkflows.map((wf) => (
+                <button
+                  key={wf.id}
+                  className="action-btn"
+                  onClick={() => handleRunWorkflow(wf)}
+                >
+                  {wf.name}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
