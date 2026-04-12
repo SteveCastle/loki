@@ -765,6 +765,20 @@ func (q *Queue) GetJob(id string) *Job {
 	return job
 }
 
+// GetWorkflowOutputFiles returns all OutputFiles paths for jobs matching the given workflowID.
+func (q *Queue) GetWorkflowOutputFiles(workflowID string) []string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	var paths []string
+	for _, job := range q.Jobs {
+		if job.WorkflowID == workflowID {
+			paths = append(paths, job.OutputFiles...)
+		}
+	}
+	return paths
+}
+
 func (q *Queue) RemoveJob(id string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
