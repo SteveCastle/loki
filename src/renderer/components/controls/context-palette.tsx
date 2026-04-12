@@ -468,17 +468,38 @@ export default function ContextPalette() {
       {serverAvailable && authToken && activeJobs.length > 0 && (
         <div className="context-palette-footer">
           <div className="footer-title">Active Jobs</div>
-          {activeJobs.map((job) => (
-            <div key={job.id} className="footer-job">
-              <span className={`job-indicator ${job.state}`} />
-              <span className="job-label">
-                {JOB_TITLES[job.command] || job.command}
-              </span>
-              <span className="job-state">
-                {job.state.replace('_', ' ')}
-              </span>
-            </div>
-          ))}
+          <div className="footer-jobs-scroll">
+            {activeJobs.map((job) => (
+              <div key={job.id} className="footer-job">
+                <span className={`job-indicator ${job.state}`} />
+                <span className="job-label">
+                  {JOB_TITLES[job.command] || job.command}
+                </span>
+                <span className="job-state">
+                  {job.state.replace('_', ' ')}
+                </span>
+                <button
+                  className="job-cancel"
+                  onClick={async () => {
+                    try {
+                      const headers: HeadersInit = {};
+                      if (authToken)
+                        headers['Authorization'] = `Bearer ${authToken}`;
+                      await fetch(
+                        `http://localhost:8090/job/${job.id}/cancel`,
+                        { method: 'POST', headers }
+                      );
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  title="Cancel job"
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>
