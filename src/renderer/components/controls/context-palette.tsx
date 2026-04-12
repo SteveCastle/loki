@@ -69,6 +69,18 @@ const ACTION_GROUPS: ActionGroup[] = [
   },
 ];
 
+/** If initialFile is a media file path, return its parent directory; otherwise return as-is. */
+function getDirFromInitialFile(initialFile: string): string {
+  const lastSegment = initialFile.split(/[/\\]/).pop() || '';
+  // Has a file extension → it's a file, use parent directory
+  if (lastSegment.includes('.')) {
+    const sep = initialFile.includes('\\') ? '\\' : '/';
+    const idx = initialFile.lastIndexOf(sep);
+    return idx > 0 ? initialFile.slice(0, idx) : initialFile;
+  }
+  return initialFile;
+}
+
 function buildQueryFromState(context: {
   currentStateType: 'fs' | 'db' | 'search';
   dbQuery: { tags: string[] };
@@ -95,8 +107,8 @@ function buildQueryFromState(context: {
     return parts.join(' AND ');
   }
 
-  // FS mode — use directory path
-  return `pathdir:${initialFile}`;
+  // FS mode — use directory path (resolve file to parent dir)
+  return `pathdir:${getDirFromInitialFile(initialFile)}`;
 }
 
 function buildContextLabel(context: {
@@ -115,8 +127,8 @@ function buildContextLabel(context: {
     return `Search: ${textFilter}`;
   }
 
-  const dirName =
-    initialFile.split(/[/\\]/).filter(Boolean).pop() || initialFile;
+  const dir = getDirFromInitialFile(initialFile);
+  const dirName = dir.split(/[/\\]/).filter(Boolean).pop() || dir;
   return `Directory: ${dirName}`;
 }
 
