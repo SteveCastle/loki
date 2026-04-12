@@ -89,7 +89,7 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	var files []string
 	if qstr, ok := extractQueryFromJob(j); ok {
 		q.PushJobStdout(j.ID, fmt.Sprintf("hls: using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQuery(q.Db, qstr)
+		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
 		if err != nil {
 			q.PushJobStdout(j.ID, "hls: failed to load paths from query: "+err.Error())
 			q.ErrorJob(j.ID)
@@ -252,7 +252,10 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			_ = os.WriteFile(metaPath, metaBytes, 0644)
 		}
 
+		masterPath := filepath.Join(outDir, "master.m3u8")
 		q.PushJobStdout(j.ID, fmt.Sprintf("hls: completed %s (presets: %s)", base, strings.Join(generatedPresets, ", ")))
+		// Output master playlist path for downstream chaining
+		q.PushJobStdout(j.ID, masterPath)
 	}
 
 	q.CompleteJob(j.ID)
