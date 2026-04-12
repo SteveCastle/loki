@@ -1,42 +1,49 @@
 .ContextPalette {
   color: white;
   background-color: var(--controls-background-color);
-  border-radius: 2px;
+  border-radius: 4px;
   display: flex;
   flex-direction: column;
   z-index: 9999;
-  padding: 12px 16px;
+  padding: 10px 14px;
   position: fixed;
   user-select: none;
-  opacity: 0.9;
-  min-width: 280px;
-  max-width: 400px;
+  opacity: 0.95;
+  min-width: 260px;
   font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
+
+/* ── Header ── */
 
 .context-palette-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: baseline;
   padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .context-label {
   font-weight: 600;
+  font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
   margin-right: 12px;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .context-count {
   color: #00c896;
+  font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── States ── */
 
 .context-palette-login {
   padding: 4px 0;
@@ -44,61 +51,79 @@
 
 .context-palette-unavailable,
 .context-palette-checking {
-  padding: 12px 0;
-  color: rgba(255, 255, 255, 0.5);
+  padding: 10px 0;
+  color: rgba(255, 255, 255, 0.4);
   text-align: center;
+  font-size: 12px;
 }
+
+/* ── Action rows ── */
 
 .context-palette-actions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .action-group {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .action-group-title {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: rgba(255, 255, 255, 0.4);
-  padding: 6px 0 2px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.action-row {
+.action-buttons {
+  display: flex;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.action-btn {
   background: none;
   border: none;
-  color: white;
-  text-align: left;
-  padding: 6px 8px;
-  border-radius: 2px;
+  color: rgba(255, 255, 255, 0.75);
+  padding: 4px 10px;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 11px;
   font-family: inherit;
+  white-space: nowrap;
+  transition: background-color 0.1s, color 0.1s;
 }
 
-.action-row:hover {
+.action-btn + .action-btn {
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.action-btn:hover {
   background-color: rgba(0, 200, 150, 0.15);
+  color: white;
 }
 
-.action-row:active {
-  background-color: rgba(0, 200, 150, 0.25);
+.action-btn:active {
+  background-color: rgba(0, 200, 150, 0.3);
 }
+
+/* ── Jobs footer ── */
 
 .context-palette-footer {
-  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
   margin-top: 8px;
-  padding-top: 8px;
+  padding-top: 6px;
 }
 
 .footer-title {
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.3);
   margin-bottom: 4px;
 }
 
@@ -106,7 +131,7 @@
   max-height: 120px;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
 .footer-jobs-scroll::-webkit-scrollbar {
@@ -114,36 +139,21 @@
 }
 
 .footer-jobs-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 2px;
 }
 
 .footer-job {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 3px 0;
-  font-size: 12px;
-}
-
-.job-cancel {
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.4);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 2px;
-  flex-shrink: 0;
-}
-
-.job-cancel:hover {
-  color: rgb(211, 3, 72);
+  font-size: 11px;
 }
 
 .job-indicator {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -154,19 +164,37 @@
 
 .job-indicator.in_progress {
   background-color: #00c896;
-  animation: pulse 1.5s ease-in-out infinite;
+  animation: ctx-pulse 1.5s ease-in-out infinite;
 }
 
-@keyframes pulse {
+@keyframes ctx-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
 
 .job-label {
   flex: 1;
+  color: rgba(255, 255, 255, 0.7);
 }
 
 .job-state {
-  color: rgba(255, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 10px;
   text-transform: capitalize;
+}
+
+.job-cancel {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+
+.job-cancel:hover {
+  color: rgb(211, 3, 72);
 }
