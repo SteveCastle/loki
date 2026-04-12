@@ -133,7 +133,8 @@ type WorkflowTask struct {
 }
 
 type Workflow struct {
-	Tasks []WorkflowTask `json:"tasks"`
+	Tasks      []WorkflowTask `json:"tasks"`
+	WorkflowID string         `json:"workflow_id"`
 }
 
 // Queue is a thread-safe structure that manages Jobs with dependencies.
@@ -448,6 +449,11 @@ func (q *Queue) AddJob(id string, command string, arguments []string, input stri
 func (q *Queue) AddWorkflow(w Workflow) ([]string, error) {
 	var jobIDs []string
 
+	workflowID := w.WorkflowID
+	if workflowID == "" {
+		workflowID = uuid.NewString()
+	}
+
 	for _, task := range w.Tasks {
 		// Ensure dependencies exist (basic check, could be improved)
 		// Since we process a list, we assume the client sends a valid DAG or at least valid IDs.
@@ -462,6 +468,15 @@ func (q *Queue) AddWorkflow(w Workflow) ([]string, error) {
 		if err != nil {
 			return jobIDs, err
 		}
+		// Set WorkflowID on the newly created job
+		q.mu.Lock()
+		if job, ok := q.Jobs[id]; ok {
+			job.WorkflowID = workflowID
+			if err := q.saveJobToDB(job); err != nil {
+				log.Printf("Failed to save workflow ID to database: %v", err)
+			}
+		}
+		q.mu.Unlock()
 		jobIDs = append(jobIDs, id)
 	}
 	return jobIDs, nil
@@ -485,6 +500,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	newJob := *job
 	newJob.ID = newID
 	newJob.Stdout = []string{}
+	newJob.OutputFiles = []string{}
 	newJob.State = StatePending
 	newJob.CreatedAt = time.Now()
 	newJob.ClaimedAt = time.Time{}
@@ -538,7 +554,12 @@ func (q *Queue) ClaimJob() (*Job, error) {
 			inputBuilder.WriteString(job.OriginalInput)
 			for _, depID := range job.Dependencies {
 				if depJob, ok := q.Jobs[depID]; ok {
-					for _, line := range depJob.Stdout {
+					// Prefer OutputFiles; fall back to Stdout for legacy tasks
+					source := depJob.OutputFiles
+					if len(source) == 0 {
+						source = depJob.Stdout
+					}
+					for _, line := range source {
 						if inputBuilder.Len() > 0 {
 							inputBuilder.WriteString("\n")
 						}

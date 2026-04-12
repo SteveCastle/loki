@@ -291,6 +291,37 @@ func TestAddWorkflow(t *testing.T) {
 	}
 }
 
+func TestAddWorkflowSetsWorkflowID(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	workflow := Workflow{
+		Tasks: []WorkflowTask{
+			{ID: "a", Command: "cmd1", Input: "hello"},
+			{ID: "b", Command: "cmd2", Dependencies: []string{"a"}},
+		},
+	}
+
+	ids, err := q.AddWorkflow(workflow)
+	if err != nil {
+		t.Fatalf("AddWorkflow() error = %v", err)
+	}
+
+	jobA := q.GetJob(ids[0])
+	jobB := q.GetJob(ids[1])
+
+	if jobA.WorkflowID == "" {
+		t.Error("job A should have a WorkflowID")
+	}
+	if jobB.WorkflowID == "" {
+		t.Error("job B should have a WorkflowID")
+	}
+	if jobA.WorkflowID != jobB.WorkflowID {
+		t.Errorf("all jobs should share WorkflowID: A=%q B=%q", jobA.WorkflowID, jobB.WorkflowID)
+	}
+}
+
 func TestAddWorkflowEmpty(t *testing.T) {
 	db, _ := sql.Open("sqlite", ":memory:")
 	defer db.Close()
@@ -349,6 +380,33 @@ func TestCopyJob(t *testing.T) {
 	}
 	if copyJob.CreatedAt.Before(originalJob.CreatedAt) {
 		t.Error("Copy.CreatedAt should not be before original")
+	}
+}
+
+func TestCopyJobPreservesWorkflowID(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	workflow := Workflow{
+		Tasks: []WorkflowTask{
+			{ID: "a", Command: "cmd1"},
+		},
+	}
+	ids, _ := q.AddWorkflow(workflow)
+	originalJob := q.GetJob(ids[0])
+
+	copyID, err := q.CopyJob(ids[0])
+	if err != nil {
+		t.Fatalf("CopyJob() error = %v", err)
+	}
+
+	copyJob := q.GetJob(copyID)
+	if copyJob.WorkflowID != originalJob.WorkflowID {
+		t.Errorf("Copy.WorkflowID = %q; want %q", copyJob.WorkflowID, originalJob.WorkflowID)
+	}
+	if len(copyJob.OutputFiles) != 0 {
+		t.Errorf("Copy.OutputFiles should be empty; got %v", copyJob.OutputFiles)
 	}
 }
 
@@ -754,6 +812,54 @@ func TestRegisterOutputFile(t *testing.T) {
 	}
 	if job.OutputFiles[0] != "/tmp/output1.mp4" || job.OutputFiles[1] != "/tmp/output2.mp4" {
 		t.Errorf("OutputFiles = %v; want [/tmp/output1.mp4, /tmp/output2.mp4]", job.OutputFiles)
+	}
+}
+
+func TestClaimJobUsesOutputFiles(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	parentID, _ := q.AddJob("parent", "test", nil, "", nil)
+	childID, _ := q.AddJob("child", "test", nil, "child-original", []string{parentID})
+
+	q.ClaimJob()
+	q.PushJobStdout(parentID, "ffmpeg: some diagnostic line")
+	q.PushJobStdout(parentID, "ffmpeg: progress 50%")
+	q.RegisterOutputFile(parentID, "/tmp/output.mp4")
+	q.RegisterOutputFile(parentID, "/tmp/output2.mp4")
+	q.CompleteJob(parentID)
+
+	child, _ := q.ClaimJob()
+	if child == nil || child.ID != childID {
+		t.Fatal("expected child to be claimed")
+	}
+
+	expected := "child-original\n/tmp/output.mp4\n/tmp/output2.mp4"
+	if child.Input != expected {
+		t.Errorf("child.Input = %q; want %q", child.Input, expected)
+	}
+}
+
+func TestClaimJobFallsBackToStdout(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	parentID, _ := q.AddJob("parent", "test", nil, "", nil)
+	childID, _ := q.AddJob("child", "test", nil, "", []string{parentID})
+
+	q.ClaimJob()
+	q.PushJobStdout(parentID, "legacy output line")
+	q.CompleteJob(parentID)
+
+	child, _ := q.ClaimJob()
+	if child == nil || child.ID != childID {
+		t.Fatal("expected child to be claimed")
+	}
+
+	if child.Input != "legacy output line" {
+		t.Errorf("child.Input = %q; want %q", child.Input, "legacy output line")
 	}
 }
 
