@@ -732,6 +732,42 @@ func TestSaveAllJobsToDB(t *testing.T) {
 	}
 }
 
+func TestRegisterOutputFile(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	id, _ := q.AddJob("", "test", nil, "", nil)
+
+	err := q.RegisterOutputFile(id, "/tmp/output1.mp4")
+	if err != nil {
+		t.Fatalf("RegisterOutputFile() error = %v", err)
+	}
+	err = q.RegisterOutputFile(id, "/tmp/output2.mp4")
+	if err != nil {
+		t.Fatalf("RegisterOutputFile() error = %v", err)
+	}
+
+	job := q.GetJob(id)
+	if len(job.OutputFiles) != 2 {
+		t.Fatalf("OutputFiles length = %d; want 2", len(job.OutputFiles))
+	}
+	if job.OutputFiles[0] != "/tmp/output1.mp4" || job.OutputFiles[1] != "/tmp/output2.mp4" {
+		t.Errorf("OutputFiles = %v; want [/tmp/output1.mp4, /tmp/output2.mp4]", job.OutputFiles)
+	}
+}
+
+func TestRegisterOutputFileNotFound(t *testing.T) {
+	db, _ := sql.Open("sqlite", ":memory:")
+	defer db.Close()
+	q := NewQueueWithDB(db)
+
+	err := q.RegisterOutputFile("nonexistent", "/tmp/file.mp4")
+	if err == nil {
+		t.Error("RegisterOutputFile() should return error for nonexistent job")
+	}
+}
+
 func TestOutputFilesAndWorkflowIDPersistence(t *testing.T) {
 	db, _ := sql.Open("sqlite", ":memory:")
 	defer db.Close()
