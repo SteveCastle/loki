@@ -66,6 +66,7 @@ export default function NewTagModal({
           title: `Reordered ${(result as any).count} items by ELO ranking`,
         },
       });
+      libraryService.send({ type: 'SORTED_WEIGHTS' });
       queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
     } catch (e) {
