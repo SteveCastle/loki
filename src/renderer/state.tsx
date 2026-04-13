@@ -271,7 +271,10 @@ const setDB = assign<LibraryState, AnyEventObject>({
     if (event.data !== context.dbPath) {
       clearSessionKeys(['library', 'cursor', 'query', 'previous']);
     }
-    store.set('dbPath', event.data);
+    // Only persist real file paths, not the web-mode placeholder
+    if (event.data !== 'web') {
+      store.set('dbPath', event.data);
+    }
     return event.data;
   },
   // Clear initialFile when changing databases so init state doesn't use stale data
@@ -1057,8 +1060,12 @@ const libraryMachine = createMachine(
                 target: 'loadingDB',
                 actions: assign<LibraryState, AnyEventObject>({
                   dbPath: () => {
-                    store.set('dbPath', appArgs?.dbPath);
-                    return appArgs?.dbPath ?? '';
+                    const dbPath = appArgs?.dbPath ?? '';
+                    // Only persist real file paths, not the web-mode placeholder
+                    if (dbPath && dbPath !== 'web') {
+                      store.set('dbPath', dbPath);
+                    }
+                    return dbPath;
                   },
                 }),
               },
@@ -1108,6 +1115,8 @@ const libraryMachine = createMachine(
                 actions: [
                   (context) => {
                     // Notify media-server of DB path change so it can switch databases
+                    // Skip for the web-mode placeholder — the server already knows its own DB
+                    if (context.dbPath === 'web') return;
                     const headers: HeadersInit = {
                       'Content-Type': 'application/json',
                     };

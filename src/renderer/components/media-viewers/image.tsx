@@ -49,10 +49,14 @@ function ImageComponent({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
   
-  const { data, isFetched } = useQuery<string | null, Error>(
+  const { data, isFetched, isError } = useQuery<string | null, Error>(
     ['media', 'preview', path, cache, version],
     fetchMediaPreview(path, cache),
-    { enabled: shouldLoad }
+    {
+      enabled: shouldLoad,
+      retry: 3,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
+    }
   );
 
   // Reset error state if path changes.
@@ -80,6 +84,11 @@ function ImageComponent({
   }, [cache, overRideCache, data, path, version]);
 
   if (error) {
+    return <MediaErrorMsg path={path} />;
+  }
+
+  // Thumbnail generation failed after retries — show error instead of permanent skeleton
+  if (cache && !overRideCache && isError && isFetched) {
     return <MediaErrorMsg path={path} />;
   }
 

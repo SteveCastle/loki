@@ -33,64 +33,22 @@ func TestStripLokiTemp(t *testing.T) {
 	}
 }
 
-func TestBuildSaveFilename(t *testing.T) {
-	tests := []struct {
-		name     string
-		suffix   string
-		ext      string
-		expected string
-	}{
-		{"video_grayscale_blurred", "_edited", ".mp4", "video_grayscale_blurred_edited.mp4"},
-		{"video", "_final", ".mp4", "video_final.mp4"},
-		{"video_grayscale", "", ".mp4", "video_grayscale.mp4"},
-	}
-
-	for _, tt := range tests {
-		got := buildSaveFilename(tt.name, tt.suffix, tt.ext)
-		if got != tt.expected {
-			t.Errorf("buildSaveFilename(%q, %q, %q) = %q; want %q", tt.name, tt.suffix, tt.ext, got, tt.expected)
-		}
-	}
-}
-
-func TestResolveConflictSuffix(t *testing.T) {
+func TestResolveConflict(t *testing.T) {
 	dir := t.TempDir()
 
 	existing := filepath.Join(dir, "video.mp4")
 	os.WriteFile(existing, []byte("x"), 0644)
 
-	result := resolveConflict(filepath.Join(dir, "video.mp4"), "suffix")
+	result := resolveConflict(filepath.Join(dir, "video.mp4"))
 	expected := filepath.Join(dir, "video_1.mp4")
 	if result != expected {
 		t.Errorf("resolveConflict() = %q; want %q", result, expected)
 	}
 
 	os.WriteFile(expected, []byte("x"), 0644)
-	result2 := resolveConflict(filepath.Join(dir, "video.mp4"), "suffix")
+	result2 := resolveConflict(filepath.Join(dir, "video.mp4"))
 	expected2 := filepath.Join(dir, "video_2.mp4")
 	if result2 != expected2 {
 		t.Errorf("resolveConflict() = %q; want %q", result2, expected2)
-	}
-}
-
-func TestResolveConflictOverwrite(t *testing.T) {
-	dir := t.TempDir()
-	existing := filepath.Join(dir, "video.mp4")
-	os.WriteFile(existing, []byte("x"), 0644)
-
-	result := resolveConflict(existing, "overwrite")
-	if result != existing {
-		t.Errorf("resolveConflict(overwrite) = %q; want %q", result, existing)
-	}
-}
-
-func TestResolveConflictSkip(t *testing.T) {
-	dir := t.TempDir()
-	existing := filepath.Join(dir, "video.mp4")
-	os.WriteFile(existing, []byte("x"), 0644)
-
-	result := resolveConflict(existing, "skip")
-	if result != "" {
-		t.Errorf("resolveConflict(skip) = %q; want empty", result)
 	}
 }

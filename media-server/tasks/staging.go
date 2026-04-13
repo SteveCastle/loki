@@ -39,14 +39,20 @@ func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, sta
 		return stagedFiles
 	}
 
+	// Build destination paths under the backend's root directory so files
+	// land inside the configured storage root (e.g. X:\downloads\...) and
+	// the database stores absolute paths that work regardless of CWD.
+	rootPath := backend.Root().Path
+
 	var finalPaths []string
 	for _, localPath := range stagedFiles {
-		// Derive a relative destination path: destPrefix + relative-to-staging
+		// Derive a relative path from the staging base, then place it
+		// under rootPath/destPrefix.
 		rel, err := filepath.Rel(stagingBase, localPath)
 		if err != nil {
 			rel = filepath.Base(localPath)
 		}
-		destPath := destPrefix + filepath.ToSlash(rel)
+		destPath := filepath.Join(rootPath, destPrefix, filepath.FromSlash(rel))
 
 		f, err := os.Open(localPath)
 		if err != nil {

@@ -61,12 +61,13 @@ function getPlayer(
   orientation: 'portrait' | 'landscape' | 'unknown',
   coverSize: { width: number; height: number },
   imageCache: 'thumbnail_path_1200' | 'thumbnail_path_600' | false,
-  startTime = 0
+  startTime = 0,
+  version = 0
 ) {
   if (getFileType(path, Boolean(imageCache)) === FileTypes.Video) {
     return (
       <Video
-        key={path}
+        key={`${path}-${version}`}
         path={path}
         scaleMode={settings.scaleMode}
         settable
@@ -78,6 +79,7 @@ function getPlayer(
         showControls={settings.showControls}
         orientation={orientation}
         startTime={startTime}
+        version={version}
         useHLS={settings.useHLS}
       />
     );
@@ -85,7 +87,7 @@ function getPlayer(
   if (getFileType(path) === FileTypes.Audio) {
     return (
       <Audio
-        key={path}
+        key={`${path}-${version}`}
         path={path}
         scaleMode={settings.scaleMode}
         settable
@@ -113,6 +115,7 @@ function getPlayer(
           handleLoad={handleLoad}
           orientation={orientation}
           cache={imageCache}
+          version={version}
         />
       );
     }
@@ -125,6 +128,7 @@ function getPlayer(
         handleLoad={handleLoad}
         orientation={orientation}
         cache={imageCache}
+        version={version}
       />
     );
   }
@@ -142,6 +146,11 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     return state.context.settings;
   });
 
+  // Version counter used to bust browser HTTP cache when a file is updated on
+  // disk (e.g. save task overwrites the file). Incremented in response to the
+  // `loki-media-updated` custom event dispatched by the SSE handler.
+  const [mediaVersion, setMediaVersion] = useState(0);
+
   const item = useSelector(
     libraryService,
     (state) => {
@@ -158,6 +167,18 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     },
     (a, b) => a?.path === b?.path && a?.timeStamp === b?.timeStamp
   ) as Item;
+
+  // Listen for media-updated SSE events to reload the current file in real time.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const paths: string[] = (e as CustomEvent).detail?.paths || [];
+      if (item && paths.includes(item.path)) {
+        setMediaVersion((v) => v + 1);
+      }
+    };
+    window.addEventListener('loki-media-updated', handler);
+    return () => window.removeEventListener('loki-media-updated', handler);
+  }, [item?.path]);
 
   if (settings.controlMode === 'touchpad') {
     events = {};
@@ -345,7 +366,8 @@ export function Detail({ offset = 0 }: { offset?: number }) {
           orientation,
           coverSize,
           settings.detailImageCache,
-          item.timeStamp
+          item.timeStamp,
+          mediaVersion
         )}
       </div>
       {!settings.showControls &&

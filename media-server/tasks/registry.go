@@ -49,6 +49,7 @@ func init() {
 	RegisterTask("ffmpeg-scale", "FFmpeg Scale", ffmpegScaleOptions, ffmpegScaleTask)
 	RegisterTask("ffmpeg-convert", "FFmpeg Convert", ffmpegConvertOptions, ffmpegConvertTask)
 	RegisterTask("ffmpeg-extract-audio", "FFmpeg Extract Audio", ffmpegExtractAudioOptions, ffmpegExtractAudioTask)
+	RegisterTask("ffmpeg-extract-audio-clip", "FFmpeg Extract Audio Clip", ffmpegExtractAudioClipOptions, ffmpegExtractAudioClipTask)
 	RegisterTask("ffmpeg-screenshot", "FFmpeg Screenshot", ffmpegScreenshotOptions, ffmpegScreenshotTask)
 	RegisterTask("ffmpeg-thumbnail", "FFmpeg Thumbnail", ffmpegThumbnailOptions, ffmpegThumbnailTask)
 	RegisterTask("ffmpeg-reverse", "FFmpeg Reverse", nil, ffmpegReverseTask)
@@ -59,6 +60,7 @@ func init() {
 	RegisterTask("ffmpeg-crop", "FFmpeg Crop", ffmpegCropOptions, ffmpegCropTask)
 	RegisterTask("ffmpeg-rotate", "FFmpeg Rotate", ffmpegRotateOptions, ffmpegRotateTask)
 	RegisterTask("ffmpeg-caption", "FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)
+	RegisterTask("ffmpeg-thumbsheet", "FFmpeg Thumbnail Sheet", ffmpegThumbSheetOptions, ffmpegThumbSheetTask)
 
 	RegisterTask("save", "Save File", saveOptions, saveTask)
 }

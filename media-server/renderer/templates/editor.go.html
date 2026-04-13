@@ -22,7 +22,8 @@
 
       .editor-container {
         display: flex;
-        height: calc(100vh - 80px); /* Adjust for header */
+        flex: 1;
+        min-height: 0;
         gap: 0;
         background: var(--editor-bg);
         position: relative;
@@ -243,6 +244,7 @@
         padding: var(--space-3) var(--space-5);
         border-bottom: 1px solid var(--border-subtle);
         background: var(--bg-surface);
+        flex-shrink: 0;
       }
 
       .actions-bar h2 {
@@ -315,22 +317,32 @@
         height: 100vh;
         display: flex;
         flex-direction: column;
+        overflow: hidden;
       "
     >
-      {{ template "topnav" . }}
+      <div style="flex-shrink: 0;">
+        {{ template "topnav" . }}
+      </div>
 
       <div class="actions-bar">
-        <div>
-          <h2>Workflow Editor</h2>
+        <div style="display:flex;align-items:center;gap:var(--space-3)">
+          <select id="workflow-select" onchange="loadWorkflow(this.value)" style="background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-subtle); padding: 6px 8px; border-radius: 4px; font-size: 13px; min-width: 180px;">
+            <option value="">New Workflow</option>
+          </select>
+          <input
+            id="workflow-name"
+            type="text"
+            placeholder="Workflow name..."
+            spellcheck="false"
+            style="background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border-subtle);padding:6px 10px;border-radius:var(--radius-md);font-size:14px;font-weight:600;width:220px;"
+          />
+          <span id="editor-status" style="font-size:var(--text-xs);color:var(--text-muted);min-width:60px;"></span>
         </div>
         <div style="display: flex; gap: var(--space-2); align-items: center">
-          <select id="workflow-select" onchange="loadWorkflow(this.value)" style="background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-subtle); padding: 6px 8px; border-radius: 4px; font-size: 13px;">
-            <option value="">Load workflow...</option>
-          </select>
-          <button class="btn" onclick="saveWorkflow()">Save</button>
-          <button class="btn" id="btn-update" onclick="updateWorkflow()" style="display:none">Update</button>
+          <button class="btn" id="btn-save" onclick="saveOrUpdate()">Save</button>
+          <button class="btn" id="btn-save-as" onclick="saveAsNew()" style="display:none">Save As New</button>
           <button class="btn" id="btn-delete" onclick="deleteWorkflow()" style="display:none">Delete</button>
-          <button class="btn" onclick="editor.clear(); clearEditState();">Clear</button>
+          <button class="btn" onclick="newWorkflow()">New</button>
           <button class="btn btn-primary" onclick="runWorkflow()">Run</button>
         </div>
       </div>
@@ -377,7 +389,24 @@
             hidden.dispatchEvent(new Event('input', { bubbles: true }));
           }
         }
+        markDirty();
       });
+
+      // --- Status / Toast ---
+      let statusTimer = null;
+      function showStatus(msg, duration) {
+        const el = document.getElementById('editor-status');
+        el.textContent = msg;
+        if (statusTimer) clearTimeout(statusTimer);
+        if (duration) statusTimer = setTimeout(() => { el.textContent = ''; }, duration);
+      }
+
+      // --- Dirty tracking ---
+      let isDirty = false;
+      function markDirty() {
+        isDirty = true;
+        updateButtonStates();
+      }
 
       // Load tasks
       var taskOptionsMap = {};
@@ -393,10 +422,17 @@
             div.draggable = true;
             div.setAttribute('ondragstart', 'drag(event)');
             div.setAttribute('data-node', task.id);
-            div.innerHTML = `<strong>${task.name}</strong><div class="desc">${task.id}</div>`;
+            div.innerHTML = '<strong>' + task.name + '</strong><div class="desc">' + task.id + '</div>';
             palette.appendChild(div);
           });
         });
+
+      // Track editor changes for dirty state
+      editor.on('nodeCreated', markDirty);
+      editor.on('nodeRemoved', markDirty);
+      editor.on('connectionCreated', markDirty);
+      editor.on('connectionRemoved', markDirty);
+      editor.on('nodeMoved', markDirty);
 
       function drag(ev) {
         ev.dataTransfer.setData('node', ev.target.getAttribute('data-node'));
@@ -479,7 +515,7 @@
         editor.addNode(name, 1, 1, pos_x, pos_y, 'node', data, html);
       }
 
-      // Export current canvas to DAG format (shared by save and run)
+      // Export current canvas to DAG format with node positions
       function exportDAG() {
         const data = editor.export();
         const nodes = data.drawflow.Home.data;
@@ -488,8 +524,8 @@
 
         Object.keys(nodes).forEach(function(key) {
           const node = nodes[key];
-          const id = 'node-' + key;
-          nodeMap[key] = id;
+          const nodeId = 'node-' + key;
+          nodeMap[key] = nodeId;
           const command = node.data.command || node.name;
           const options = taskOptionsMap[command] || [];
           const args = [];
@@ -510,7 +546,16 @@
                 break;
             }
           }
-          tasks.push({ id: id, drawflowId: key, command: command, arguments: args, input: '', dependencies: [] });
+          tasks.push({
+            id: nodeId,
+            drawflowId: key,
+            command: command,
+            arguments: args,
+            input: '',
+            dependencies: [],
+            pos_x: node.pos_x,
+            pos_y: node.pos_y,
+          });
         });
 
         tasks.forEach(function(task) {
@@ -529,11 +574,10 @@
       function runWorkflow() {
         const tasks = exportDAG();
         if (tasks.length === 0) {
-          alert('Add at least one node before running.');
+          showStatus('Add nodes first', 3000);
           return;
         }
 
-        // Replace stable IDs with UUIDs for live execution
         const idMap = {};
         tasks.forEach(t => {
           const uuid = crypto.randomUUID();
@@ -544,6 +588,7 @@
           t.dependencies = t.dependencies.map(d => idMap[d] || d);
         });
 
+        showStatus('Starting...');
         fetch('/workflow', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -554,19 +599,29 @@
             return r.json();
           })
           .then(res => {
-            alert('Workflow started! Job IDs: ' + res.ids.join(', '));
+            showStatus('Running (' + res.ids.length + ' jobs)', 5000);
           })
-          .catch(err => alert('Error: ' + err.message));
+          .catch(err => showStatus('Error: ' + err.message, 5000));
       }
 
       // --- Workflow persistence ---
       let currentWorkflowId = null;
 
-      function clearEditState() {
+      function updateButtonStates() {
+        const hasId = !!currentWorkflowId;
+        document.getElementById('btn-save').textContent = hasId ? 'Save' : 'Save';
+        document.getElementById('btn-save-as').style.display = hasId ? '' : 'none';
+        document.getElementById('btn-delete').style.display = hasId ? '' : 'none';
+      }
+
+      function newWorkflow() {
+        editor.clear();
         currentWorkflowId = null;
-        document.getElementById('btn-update').style.display = 'none';
-        document.getElementById('btn-delete').style.display = 'none';
+        isDirty = false;
+        document.getElementById('workflow-name').value = '';
         document.getElementById('workflow-select').value = '';
+        showStatus('');
+        updateButtonStates();
       }
 
       function refreshWorkflowList() {
@@ -574,6 +629,7 @@
           .then(r => r.json())
           .then(list => {
             const sel = document.getElementById('workflow-select');
+            const curVal = sel.value;
             while (sel.options.length > 1) sel.remove(1);
             (list || []).forEach(w => {
               const opt = document.createElement('option');
@@ -581,23 +637,85 @@
               opt.textContent = w.name;
               sel.appendChild(opt);
             });
+            if (curVal) sel.value = curVal;
           })
           .catch(() => {});
       }
 
-      function saveWorkflow() {
-        const dag = exportDAG();
-        if (dag.length === 0) {
-          alert('Add at least one node before saving.');
+      // Save: creates new if no currentWorkflowId, updates if there is one
+      function saveOrUpdate() {
+        const name = document.getElementById('workflow-name').value.trim();
+        if (!name) {
+          document.getElementById('workflow-name').focus();
+          showStatus('Enter a name', 3000);
           return;
         }
-        const name = prompt('Workflow name:');
-        if (!name) return;
+        const dag = exportDAG();
+        if (dag.length === 0) {
+          showStatus('Add nodes first', 3000);
+          return;
+        }
 
+        if (currentWorkflowId) {
+          // Update existing
+          showStatus('Saving...');
+          fetch('/workflows/' + currentWorkflowId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, dag }),
+          })
+            .then(r => {
+              if (!r.ok) return r.text().then(t => { throw new Error(t); });
+              return r.json();
+            })
+            .then(() => {
+              isDirty = false;
+              refreshWorkflowList();
+              showStatus('Saved', 3000);
+            })
+            .catch(err => showStatus('Error: ' + err.message, 5000));
+        } else {
+          // Create new
+          showStatus('Saving...');
+          fetch('/workflows/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, dag }),
+          })
+            .then(r => {
+              if (!r.ok) return r.text().then(t => { throw new Error(t); });
+              return r.json();
+            })
+            .then(wf => {
+              currentWorkflowId = wf.id;
+              isDirty = false;
+              refreshWorkflowList();
+              document.getElementById('workflow-select').value = wf.id;
+              updateButtonStates();
+              showStatus('Saved', 3000);
+            })
+            .catch(err => showStatus('Error: ' + err.message, 5000));
+        }
+      }
+
+      function saveAsNew() {
+        const name = document.getElementById('workflow-name').value.trim();
+        if (!name) {
+          document.getElementById('workflow-name').focus();
+          showStatus('Enter a name', 3000);
+          return;
+        }
+        const dag = exportDAG();
+        if (dag.length === 0) {
+          showStatus('Add nodes first', 3000);
+          return;
+        }
+
+        showStatus('Saving...');
         fetch('/workflows/create', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, dag }),
+          body: JSON.stringify({ name: name + ' (copy)', dag }),
         })
           .then(r => {
             if (!r.ok) return r.text().then(t => { throw new Error(t); });
@@ -605,40 +723,14 @@
           })
           .then(wf => {
             currentWorkflowId = wf.id;
-            document.getElementById('btn-update').style.display = '';
-            document.getElementById('btn-delete').style.display = '';
+            isDirty = false;
+            document.getElementById('workflow-name').value = wf.name;
             refreshWorkflowList();
-            alert('Saved: ' + wf.name);
+            document.getElementById('workflow-select').value = wf.id;
+            updateButtonStates();
+            showStatus('Saved as copy', 3000);
           })
-          .catch(err => alert('Error: ' + err.message));
-      }
-
-      function updateWorkflow() {
-        if (!currentWorkflowId) return;
-        const dag = exportDAG();
-        if (dag.length === 0) {
-          alert('Add at least one node before saving.');
-          return;
-        }
-        const sel = document.getElementById('workflow-select');
-        const currentName = sel.selectedOptions[0]?.text || '';
-        const name = prompt('Workflow name:', currentName);
-        if (!name) return;
-
-        fetch('/workflows/' + currentWorkflowId, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, dag }),
-        })
-          .then(r => {
-            if (!r.ok) return r.text().then(t => { throw new Error(t); });
-            return r.json();
-          })
-          .then(() => {
-            refreshWorkflowList();
-            alert('Updated');
-          })
-          .catch(err => alert('Error: ' + err.message));
+          .catch(err => showStatus('Error: ' + err.message, 5000));
       }
 
       function deleteWorkflow() {
@@ -648,20 +740,20 @@
         fetch('/workflows/' + currentWorkflowId, { method: 'DELETE' })
           .then(r => {
             if (!r.ok) throw new Error('Failed to delete');
-            editor.clear();
-            clearEditState();
+            newWorkflow();
             refreshWorkflowList();
+            showStatus('Deleted', 3000);
           })
-          .catch(err => alert('Error: ' + err.message));
+          .catch(err => showStatus('Error: ' + err.message, 5000));
       }
 
-      function loadWorkflow(id) {
-        if (!id) {
-          clearEditState();
+      function loadWorkflow(wfId) {
+        if (!wfId) {
+          newWorkflow();
           return;
         }
 
-        fetch('/workflows/' + id)
+        fetch('/workflows/' + wfId)
           .then(r => {
             if (!r.ok) throw new Error('Failed to load');
             return r.json();
@@ -669,12 +761,13 @@
           .then(wf => {
             editor.clear();
             currentWorkflowId = wf.id;
-            document.getElementById('btn-update').style.display = '';
-            document.getElementById('btn-delete').style.display = '';
+            isDirty = false;
+            document.getElementById('workflow-name').value = wf.name;
+            updateButtonStates();
 
             const dag = wf.dag || [];
             const idToDrawflowId = {};
-            let x = 100, y = 100;
+            const fallbackX = 100, fallbackY = 100;
 
             dag.forEach(function(task, idx) {
               var command = task.command;
@@ -711,8 +804,12 @@
                 }
               }
 
+              // Use saved positions, fall back to grid layout for old workflows
+              var px = task.pos_x || (fallbackX + (idx % 3) * 300);
+              var py = task.pos_y || (fallbackY + Math.floor(idx / 3) * 200);
+
               var html = buildNodeHTML(command);
-              var drawflowId = editor.addNode(command, 1, 1, x + (idx % 3) * 300, y + Math.floor(idx / 3) * 200, 'node', nodeData, html);
+              var drawflowId = editor.addNode(command, 1, 1, px, py, 'node', nodeData, html);
               idToDrawflowId[task.id] = drawflowId;
 
               // Update widget states after DOM render
@@ -752,12 +849,24 @@
                 }
               });
             });
+
+            // Reset dirty after load (connections trigger events)
+            setTimeout(() => { isDirty = false; }, 100);
           })
-          .catch(err => alert('Error: ' + err.message));
+          .catch(err => showStatus('Error: ' + err.message, 5000));
       }
+
+      // Ctrl+S to save
+      document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+          e.preventDefault();
+          saveOrUpdate();
+        }
+      });
 
       // Load workflow list on page load
       refreshWorkflowList();
+      updateButtonStates();
     </script>
   </body>
 </html>

@@ -81,7 +81,12 @@ function getDirFromInitialFile(initialFile: string): string {
   if (lastSegment.includes('.')) {
     const sep = initialFile.includes('\\') ? '\\' : '/';
     const idx = initialFile.lastIndexOf(sep);
-    return idx > 0 ? initialFile.slice(0, idx) : initialFile;
+    let dir = idx > 0 ? initialFile.slice(0, idx) : initialFile;
+    // Ensure Windows drive-letter roots keep their trailing separator (e.g. "D:" → "D:\")
+    if (/^[A-Za-z]:$/.test(dir)) {
+      dir += sep;
+    }
+    return dir;
   }
   return initialFile;
 }
@@ -98,7 +103,7 @@ function buildQuery(
 ): string {
   switch (target.type) {
     case 'file':
-      return `path:${target.path}`;
+      return `path:"${target.path}"`;
     case 'tag':
       return `tag:${target.tag}`;
     case 'category':
@@ -120,7 +125,7 @@ function buildQuery(
         }
         return parts.join(' AND ');
       }
-      return `pathdir:${getDirFromInitialFile(initialFile)}`;
+      return `pathdir:"${getDirFromInitialFile(initialFile)}"`;
     }
   }
 }
@@ -277,6 +282,86 @@ function useSavedWorkflows(
   }, [isOpen, authToken]);
 
   return workflows;
+}
+
+function WorkflowPicker({
+  workflows,
+  onRun,
+}: {
+  workflows: SavedWorkflow[];
+  onRun: (wf: SavedWorkflow) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [selectedIdx, setSelectedIdx] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  const filtered = search
+    ? workflows.filter((wf) =>
+        wf.name.toLowerCase().includes(search.toLowerCase())
+      )
+    : workflows;
+
+  // Reset selection when filter changes
+  useEffect(() => {
+    setSelectedIdx(0);
+  }, [search]);
+
+  // Keyboard navigation inside the picker
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedIdx((i) => Math.min(i + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedIdx((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Enter' && filtered[selectedIdx]) {
+      e.preventDefault();
+      e.stopPropagation();
+      onRun(filtered[selectedIdx]);
+    }
+  };
+
+  // Scroll selected item into view
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const item = list.children[selectedIdx] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: 'nearest' });
+  }, [selectedIdx]);
+
+  return (
+    <div className="context-palette-workflows" onKeyDown={handleKeyDown}>
+      <div className="workflow-picker-header">
+        <span className="action-group-title">Workflows</span>
+        <span className="workflow-count">{filtered.length}</span>
+      </div>
+      <input
+        ref={inputRef}
+        className="workflow-search"
+        type="text"
+        placeholder="Filter..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        autoFocus={false}
+      />
+      <div className="workflow-list" ref={listRef}>
+        {filtered.map((wf, i) => (
+          <div
+            key={wf.id}
+            className={`workflow-item${i === selectedIdx ? ' selected' : ''}`}
+            onClick={() => onRun(wf)}
+            onMouseEnter={() => setSelectedIdx(i)}
+          >
+            {wf.name}
+          </div>
+        ))}
+        {filtered.length === 0 && (
+          <div className="workflow-empty">No matches</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function ContextPalette() {
@@ -459,7 +544,11 @@ export default function ContextPalette() {
   const itemCount = target.type === 'file' ? 1 : items.length;
   const contextLabel = buildLabel(target, libraryCtx);
   const queryString = buildQuery(target, libraryCtx);
-  const query64 = btoa(queryString);
+  const query64 = btoa(
+    new TextEncoder()
+      .encode(queryString)
+      .reduce((s, b) => s + String.fromCharCode(b), ''),
+  );
 
   // Action handler
   const handleAction = async (action: ActionDef) => {
@@ -581,22 +670,10 @@ export default function ContextPalette() {
       )}
 
       {serverAvailable && authToken && savedWorkflows.length > 0 && (
-        <div className="context-palette-workflows">
-          <div className="action-group">
-            <span className="action-group-title">Workflows</span>
-            <div className="action-buttons">
-              {savedWorkflows.map((wf) => (
-                <button
-                  key={wf.id}
-                  className="action-btn"
-                  onClick={() => handleRunWorkflow(wf)}
-                >
-                  {wf.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+        <WorkflowPicker
+          workflows={savedWorkflows}
+          onRun={handleRunWorkflow}
+        />
       )}
 
       {serverAvailable && authToken && activeJobs.length > 0 && (

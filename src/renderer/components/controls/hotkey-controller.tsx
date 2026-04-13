@@ -482,7 +482,7 @@ export default function HotKeyController() {
             console.log('ITEM PATH', paths);
             await invoke(
               'copy-file-into-clipboard',
-              [paths]
+              paths
             );
             console.log('Content copied to clipboard');
           } catch (err) {
@@ -501,7 +501,7 @@ export default function HotKeyController() {
             console.log('ITEM PATH', paths);
             await invoke(
               'copy-file-into-clipboard',
-              [paths]
+              paths
             );
             console.log('Content copied to clipboard');
           } catch (err) {

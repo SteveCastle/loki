@@ -67,10 +67,13 @@ func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildA
 		ext := filepath.Ext(abs)
 		name := strings.TrimSuffix(base, ext)
 
-		// Use temp directory for workflow jobs
+		// Use temp directory for workflow jobs.
+		// Strip any existing .loki-temp from dir so chained jobs
+		// stay at the same depth instead of nesting.
 		outputDir := dir
 		if j.WorkflowID != "" {
-			outputDir = filepath.Join(dir, ".loki-temp", j.ID)
+			originalDir := stripLokiTemp(abs)
+			outputDir = filepath.Join(originalDir, ".loki-temp", j.ID)
 			if err := os.MkdirAll(outputDir, 0755); err != nil {
 				q.PushJobStdout(j.ID, "ffmpeg: failed to create temp dir: "+err.Error())
 				q.ErrorJob(j.ID)
@@ -128,7 +131,7 @@ func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildA
 		<-doneErr
 
 		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
-		q.RegisterOutputFile(j.ID, outputPath)
+		q.RegisterOutputFile(j.ID, outputPath, abs)
 	}
 
 	q.CompleteJob(j.ID)
@@ -191,10 +194,13 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		name := strings.TrimSuffix(base, ext)
 		idxStr := strconv.Itoa(idx + 1)
 
-		// Use temp directory for workflow jobs
+		// Use temp directory for workflow jobs.
+		// Strip any existing .loki-temp from dir so chained jobs
+		// stay at the same depth instead of nesting.
 		outputDir := dir
 		if j.WorkflowID != "" {
-			outputDir = filepath.Join(dir, ".loki-temp", j.ID)
+			originalDir := stripLokiTemp(abs)
+			outputDir = filepath.Join(originalDir, ".loki-temp", j.ID)
 			if err := os.MkdirAll(outputDir, 0755); err != nil {
 				q.PushJobStdout(j.ID, "ffmpeg: failed to create temp dir: "+err.Error())
 				q.ErrorJob(j.ID)
@@ -290,7 +296,7 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		<-doneErr
 
 		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
-		q.RegisterOutputFile(j.ID, outputPath)
+		q.RegisterOutputFile(j.ID, outputPath, abs)
 	}
 
 	q.CompleteJob(j.ID)
