@@ -2483,6 +2483,7 @@ func main() {
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/api", renderer.ApplyMiddlewares(mediaAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/thumbnail", renderer.ApplyMiddlewares(mediaThumbnailHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/hls", renderer.ApplyMiddlewares(hlsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/hls/", renderer.ApplyMiddlewares(hlsSegmentHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/suggest", renderer.ApplyMiddlewares(mediaSuggestHandler(deps), renderer.RoleAdmin))

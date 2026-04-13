@@ -111,26 +111,93 @@
   background-color: rgba(0, 200, 150, 0.3);
 }
 
+/* ── Workflow picker ── */
+
 .context-palette-workflows {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   margin-top: 6px;
   padding-top: 6px;
 }
 
-.context-palette-workflows .action-buttons {
-  flex-direction: column;
-  border: none;
+.workflow-picker-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
 }
 
-.context-palette-workflows .action-btn {
-  border-left: none;
-  text-align: left;
-  padding: 4px 8px;
+.workflow-count {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.25);
+  font-variant-numeric: tabular-nums;
 }
 
-.context-palette-workflows .action-btn + .action-btn {
-  border-left: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+.workflow-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  color: rgba(255, 255, 255, 0.85);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.workflow-search::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.workflow-search:focus {
+  border-color: rgba(0, 200, 150, 0.4);
+}
+
+.workflow-list {
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.workflow-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.workflow-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+.workflow-item {
+  padding: 4px 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+  border-radius: 2px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background-color 0.1s, color 0.1s;
+}
+
+.workflow-item:hover,
+.workflow-item.selected {
+  background: rgba(0, 200, 150, 0.12);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.workflow-item:active {
+  background: rgba(0, 200, 150, 0.25);
+}
+
+.workflow-empty {
+  padding: 8px 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.25);
+  text-align: center;
 }
 
 /* ── Jobs footer ── */

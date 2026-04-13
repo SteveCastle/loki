@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -9,35 +10,31 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/stream"
 )
 
 var saveOptions = []TaskOption{
-	{Name: "destination", Label: "Destination", Type: "enum", Choices: []string{"original", "directory"}, Default: "original", Description: "Where to save: original directory or a specific directory"},
-	{Name: "directory", Label: "Target Directory", Type: "string", Description: "Target directory (only used when destination=directory)"},
-	{Name: "conflict", Label: "Conflict Resolution", Type: "enum", Choices: []string{"suffix", "overwrite", "skip"}, Default: "suffix", Description: "How to handle existing files"},
-	{Name: "suffix", Label: "Custom Suffix", Type: "string", Description: "Custom suffix for output filename (e.g. _edited). Empty keeps processing name"},
-	{Name: "flatten", Label: "Flatten", Type: "bool", Description: "Flatten all files into target directory (ignore relative paths)"},
+	{Name: "mode", Label: "Save Mode", Type: "enum", Choices: []string{"replace", "alongside", "folder"}, Default: "alongside", Description: "replace: overwrite original file, alongside: save next to original with suffix, folder: save to a specific directory"},
+	{Name: "suffix", Label: "Filename Suffix", Type: "string", Default: "_output", Description: "Suffix added before extension (alongside mode). e.g. _edited produces video_edited.mp4"},
+	{Name: "folder", Label: "Output Folder", Type: "string", Description: "Destination folder (folder mode only)"},
 }
 
 func saveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	opts := ParseOptions(j, saveOptions)
-	destination, _ := opts["destination"].(string)
-	if destination == "" {
-		destination = "original"
-	}
-	directory, _ := opts["directory"].(string)
-	conflict, _ := opts["conflict"].(string)
-	if conflict == "" {
-		conflict = "suffix"
+	mode, _ := opts["mode"].(string)
+	if mode == "" {
+		mode = "alongside"
 	}
 	suffix, _ := opts["suffix"].(string)
-	flatten, _ := opts["flatten"].(bool)
-	_ = flatten // reserved for future use
+	if suffix == "" && mode == "alongside" {
+		suffix = "_output"
+	}
+	folder, _ := opts["folder"].(string)
 
-	if destination == "directory" && directory == "" {
-		q.PushJobStdout(j.ID, "save: no target directory specified")
+	if mode == "folder" && folder == "" {
+		q.PushJobStdout(j.ID, "save: no output folder specified")
 		q.ErrorJob(j.ID)
-		return fmt.Errorf("target directory required when destination=directory")
+		return fmt.Errorf("output folder required for folder mode")
 	}
 
 	raw := strings.TrimSpace(j.Input)
@@ -54,8 +51,13 @@ func saveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return nil
 	}
 
+	// Build a map from output path -> original source path so we can
+	// recover the original filename for "replace" mode.
+	sourceMap := q.GetSourceMap(j.ID)
+
 	saved := 0
 	skipped := 0
+	var savedPaths []string
 	for _, src := range files {
 		select {
 		case <-j.Ctx.Done():
@@ -71,53 +73,96 @@ func saveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			continue
 		}
 
-		ext := filepath.Ext(src)
-		name := strings.TrimSuffix(filepath.Base(src), ext)
+		// Recover the original source path. The sourceMap tracks which
+		// original file produced each output through the chain.
+		originalPath := sourceMap[src]
+		if originalPath == "" {
+			// No source tracking — derive original dir from temp path
+			originalPath = src
+		}
+		originalDir := stripLokiTemp(originalPath)
+		originalExt := filepath.Ext(originalPath)
+		originalName := strings.TrimSuffix(filepath.Base(originalPath), originalExt)
 
-		outName := buildSaveFilename(name, suffix, ext)
+		// The processed file may have a different extension (e.g. converted .webm -> .mp4)
+		processedExt := filepath.Ext(src)
 
-		var outDir string
-		switch destination {
-		case "directory":
-			outDir = directory
-		default: // "original"
-			outDir = stripLokiTemp(src)
+		var destPath string
+		switch mode {
+		case "replace":
+			// Overwrite the original file with the processed version.
+			destPath = filepath.Join(originalDir, originalName+processedExt)
+
+		case "folder":
+			// Save into the specified folder, using the original name + suffix.
+			if err := os.MkdirAll(folder, 0755); err != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("save: failed to create folder %s: %v", folder, err))
+				continue
+			}
+			destPath = filepath.Join(folder, originalName+suffix+processedExt)
+
+		default: // "alongside"
+			// Save next to the original with a suffix.
+			destPath = filepath.Join(originalDir, originalName+suffix+processedExt)
 		}
 
-		if err := os.MkdirAll(outDir, 0755); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("save: failed to create directory %s: %v", outDir, err))
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("save: failed to create directory: %v", err))
 			continue
 		}
 
-		destPath := filepath.Join(outDir, outName)
-
-		if _, err := os.Stat(destPath); err == nil {
-			destPath = resolveConflict(destPath, conflict)
-			if destPath == "" {
-				q.PushJobStdout(j.ID, fmt.Sprintf("save: skipping (exists): %s", filepath.Join(outDir, outName)))
-				skipped++
-				continue
+		// For alongside and folder modes, avoid clobbering existing files.
+		if mode != "replace" {
+			if _, err := os.Stat(destPath); err == nil {
+				destPath = resolveConflict(destPath)
 			}
 		}
 
 		if err := moveFile(src, destPath); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("save: failed to save %s -> %s: %v", filepath.Base(src), destPath, err))
+			q.PushJobStdout(j.ID, fmt.Sprintf("save: failed %s -> %s: %v", filepath.Base(src), destPath, err))
 			continue
 		}
 
 		q.PushJobStdout(j.ID, fmt.Sprintf("save: %s -> %s", filepath.Base(src), destPath))
 		q.RegisterOutputFile(j.ID, destPath)
+		savedPaths = append(savedPaths, destPath)
 		saved++
 	}
 
-	// Clean up .loki-temp directories for this workflow
 	if j.WorkflowID != "" {
 		cleanupWorkflowTempDirs(q, j.WorkflowID)
 	}
 
-	q.PushJobStdout(j.ID, fmt.Sprintf("save: completed — %d saved, %d skipped", saved, skipped))
+	// Notify clients about saved files.
+	if mode == "replace" {
+		broadcastMediaUpdated(savedPaths)
+	} else {
+		broadcastMediaCreated(savedPaths)
+	}
+
+	q.PushJobStdout(j.ID, fmt.Sprintf("save: done — %d saved, %d skipped", saved, skipped))
 	q.CompleteJob(j.ID)
 	return nil
+}
+
+// broadcastMediaUpdated sends an SSE event so clients can bust their
+// cache for the given file paths (e.g. after overwriting originals).
+func broadcastMediaUpdated(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{"paths": paths})
+	stream.Broadcast(stream.Message{Type: "media-updated", Msg: string(payload)})
+}
+
+// broadcastMediaCreated sends an SSE event so clients can add newly
+// created files to the library (e.g. after saving alongside/folder).
+func broadcastMediaCreated(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{"paths": paths})
+	stream.Broadcast(stream.Message{Type: "media-created", Msg: string(payload)})
 }
 
 // stripLokiTemp removes the .loki-temp/<jobID>/ segment from a path,
@@ -134,40 +179,21 @@ func stripLokiTemp(path string) string {
 	return dir
 }
 
-// buildSaveFilename constructs the output filename.
-// If suffix is non-empty, it appends the custom suffix to the name.
-// If suffix is empty, the name is used as-is.
-func buildSaveFilename(name, suffix, ext string) string {
-	if suffix == "" {
-		return name + ext
-	}
-	return name + suffix + ext
-}
-
-// resolveConflict determines the final path when a file already exists.
-// Returns empty string for "skip" mode.
-func resolveConflict(path, mode string) string {
-	switch mode {
-	case "overwrite":
-		return path
-	case "skip":
-		return ""
-	default: // "suffix"
-		dir := filepath.Dir(path)
-		ext := filepath.Ext(path)
-		name := strings.TrimSuffix(filepath.Base(path), ext)
-		for i := 1; i < 1000; i++ {
-			candidate := filepath.Join(dir, fmt.Sprintf("%s_%d%s", name, i, ext))
-			if _, err := os.Stat(candidate); os.IsNotExist(err) {
-				return candidate
-			}
+// resolveConflict appends _1, _2, etc. to avoid overwriting an existing file.
+func resolveConflict(path string) string {
+	dir := filepath.Dir(path)
+	ext := filepath.Ext(path)
+	name := strings.TrimSuffix(filepath.Base(path), ext)
+	for i := 1; i < 1000; i++ {
+		candidate := filepath.Join(dir, fmt.Sprintf("%s_%d%s", name, i, ext))
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
 		}
-		return path
 	}
+	return path
 }
 
-// moveFile tries os.Rename first (fast, same-drive). Falls back to copy+delete
-// for cross-drive moves.
+// moveFile tries os.Rename first (fast, same-drive). Falls back to copy+delete.
 func moveFile(src, dst string) error {
 	if err := os.Rename(src, dst); err == nil {
 		return nil
@@ -217,7 +243,6 @@ func cleanupWorkflowTempDirs(q *jobqueue.Queue, workflowID string) {
 		}
 	}
 
-	// Try to remove the .loki-temp parent dirs if empty
 	for dir := range seen {
 		parent := filepath.Dir(dir)
 		os.Remove(parent) // Only succeeds if empty

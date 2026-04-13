@@ -127,12 +127,15 @@ func (b *LocalBackend) Scan(_ context.Context, path string, recursive bool) ([]F
 }
 
 // Download opens path for reading. The caller is responsible for closing the reader.
+// Relative paths are resolved against the backend's root directory.
 func (b *LocalBackend) Download(_ context.Context, path string) (io.ReadCloser, error) {
-	return os.Open(path)
+	return os.Open(b.resolve(path))
 }
 
 // Upload writes r to path, creating any missing parent directories.
+// Relative paths are resolved against the backend's root directory.
 func (b *LocalBackend) Upload(_ context.Context, path string, r io.Reader, _ string) error {
+	path = b.resolve(path)
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("storage: mkdir %q: %w", filepath.Dir(path), err)
 	}
@@ -147,14 +150,24 @@ func (b *LocalBackend) Upload(_ context.Context, path string, r io.Reader, _ str
 	return nil
 }
 
+// resolve joins relative paths with the backend's root directory.
+// Absolute paths are returned as-is.
+func (b *LocalBackend) resolve(path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(b.rootPath, path)
+}
+
 // MediaURL returns the URL used to serve path to the browser via the media endpoint.
 func (b *LocalBackend) MediaURL(path string) (string, error) {
 	return "/media/file?path=" + url.QueryEscape(path), nil
 }
 
 // Exists reports whether path exists on the local filesystem.
+// Relative paths are resolved against the backend's root directory.
 func (b *LocalBackend) Exists(_ context.Context, path string) (bool, error) {
-	_, err := os.Stat(path)
+	_, err := os.Stat(b.resolve(path))
 	if err == nil {
 		return true, nil
 	}

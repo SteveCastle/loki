@@ -2463,6 +2463,21 @@
         }
       }
 
+      function getThumbnailUrl(path, cache) {
+        if (!path || typeof path !== 'string') {
+          throw new Error('Invalid path');
+        }
+        path = path.trim();
+        if (path.length === 0) {
+          throw new Error('Empty path');
+        }
+        if (isRemoteUrl(path)) {
+          return path;
+        }
+        cache = cache || 'thumbnail_path_600';
+        return `/media/thumbnail?path=${encodeURIComponent(path)}&cache=${encodeURIComponent(cache)}`;
+      }
+
       function showMediaPreview(event, mediaPath) {
         clearTimeout(hideTimeout);
 
@@ -2541,7 +2556,7 @@
 
           let mediaUrl;
           try {
-            mediaUrl = getMediaUrl(mediaPath);
+            mediaUrl = getThumbnailUrl(mediaPath, 'thumbnail_path_1200');
           } catch (e) {
             content.innerHTML = `<div class="media-preview-error">Invalid path<br>${escapeHtml(
               e.message
@@ -3327,9 +3342,9 @@
       function loadGridMedia(itemEl) {
         if (!itemEl || itemEl.getAttribute('data-loaded') === '1') return;
         const path = itemEl.getAttribute('data-path');
-        let url;
+        let thumbUrl;
         try {
-          url = getMediaUrl(path);
+          thumbUrl = getThumbnailUrl(path, 'thumbnail_path_600');
         } catch (e) {
           return;
         }
@@ -3337,10 +3352,11 @@
           const img = new Image();
           img.className = 'grid-thumb';
           img.loading = 'lazy';
-          img.src = url;
+          img.src = thumbUrl;
           img.alt = '';
           itemEl.appendChild(img);
         } else if (isVideoFile(path)) {
+          // Video thumbnails are short MP4 clips — use a video element
           const video = document.createElement('video');
           video.className = 'grid-thumb';
           video.muted = true;
@@ -3348,7 +3364,7 @@
           video.autoplay = false;
           video.controls = false;
           video.preload = 'metadata';
-          video.src = url;
+          video.src = thumbUrl;
           itemEl.appendChild(video);
         }
         itemEl.setAttribute('data-loaded', '1');

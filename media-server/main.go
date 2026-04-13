@@ -1076,6 +1076,18 @@ func editorHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func eventsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := renderer.Templates().ExecuteTemplate(w, "events", nil); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
 type WorkflowRequest struct {
 	Tasks []jobqueue.WorkflowTask `json:"tasks"`
 }
@@ -2918,6 +2930,7 @@ func main() {
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/api", renderer.ApplyMiddlewares(mediaAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/thumbnail", renderer.ApplyMiddlewares(mediaThumbnailHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/hls", renderer.ApplyMiddlewares(hlsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/hls/", renderer.ApplyMiddlewares(hlsSegmentHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/suggest", renderer.ApplyMiddlewares(mediaSuggestHandler(deps), renderer.RoleAdmin))
@@ -2947,6 +2960,7 @@ func main() {
 	mux.HandleFunc("/downloads/stream", renderer.ApplyMiddlewares(downloadsStreamHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/events", renderer.ApplyMiddlewares(eventsHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflows", renderer.ApplyMiddlewares(workflowsListHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflows/create", renderer.ApplyMiddlewares(workflowCreateHandler(deps), renderer.RoleAdmin))

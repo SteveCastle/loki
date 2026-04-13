@@ -121,6 +121,7 @@ type Job struct {
 
 	// Workflow chaining
 	OutputFiles []string `json:"output_files"` // File paths registered for downstream consumption
+	SourceFiles []string `json:"source_files"` // Parallel to OutputFiles: the original source for each output
 	WorkflowID  string   `json:"workflow_id"`  // Non-empty when job is part of a workflow
 }
 
@@ -130,6 +131,8 @@ type WorkflowTask struct {
 	Arguments    []string `json:"arguments"`
 	Input        string   `json:"input"`
 	Dependencies []string `json:"dependencies"` // IDs of other tasks in this workflow
+	PosX         float64  `json:"pos_x,omitempty"`
+	PosY         float64  `json:"pos_y,omitempty"`
 }
 
 type Workflow struct {
@@ -214,6 +217,7 @@ func (q *Queue) createJobsTable() error {
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN host TEXT")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN original_input TEXT")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN output_files TEXT")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN source_files TEXT")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN workflow_id TEXT")
 
 	return nil
@@ -230,6 +234,7 @@ func (q *Queue) saveJobToDB(job *Job) error {
 	stdoutJSON, _ := json.Marshal(job.Stdout)
 	dependenciesJSON, _ := json.Marshal(job.Dependencies)
 	outputFilesJSON, _ := json.Marshal(job.OutputFiles)
+	sourceFilesJSON, _ := json.Marshal(job.SourceFiles)
 
 	// Find position in job order
 	position := -1
@@ -244,8 +249,8 @@ func (q *Queue) saveJobToDB(job *Job) error {
 	INSERT OR REPLACE INTO jobs (
 		id, command, arguments, input, original_input, host, stdout, dependencies, state,
 		created_at, claimed_at, completed_at, errored_at, job_order_position,
-		output_files, workflow_id
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		output_files, source_files, workflow_id
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := q.Db.Exec(query,
 		job.ID,
@@ -263,6 +268,7 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		job.ErroredAt,
 		position,
 		string(outputFilesJSON),
+		string(sourceFilesJSON),
 		job.WorkflowID,
 	)
 
@@ -278,7 +284,7 @@ func (q *Queue) loadJobsFromDB() error {
 	query := `
 	SELECT id, command, arguments, input, COALESCE(original_input, ''), COALESCE(host, ''), stdout, dependencies, state,
 		   created_at, claimed_at, completed_at, errored_at, job_order_position,
-		   COALESCE(output_files, '[]'), COALESCE(workflow_id, '')
+		   COALESCE(output_files, '[]'), COALESCE(source_files, '[]'), COALESCE(workflow_id, '')
 	FROM jobs
 	ORDER BY job_order_position`
 
@@ -292,7 +298,7 @@ func (q *Queue) loadJobsFromDB() error {
 
 	for rows.Next() {
 		var job Job
-		var argumentsJSON, stdoutJSON, dependenciesJSON, outputFilesJSON string
+		var argumentsJSON, stdoutJSON, dependenciesJSON, outputFilesJSON, sourceFilesJSON string
 		var state int
 		var position int
 
@@ -312,6 +318,7 @@ func (q *Queue) loadJobsFromDB() error {
 			&job.ErroredAt,
 			&position,
 			&outputFilesJSON,
+			&sourceFilesJSON,
 			&job.WorkflowID,
 		)
 		if err != nil {
@@ -331,6 +338,9 @@ func (q *Queue) loadJobsFromDB() error {
 		}
 		if err := json.Unmarshal([]byte(outputFilesJSON), &job.OutputFiles); err != nil {
 			job.OutputFiles = []string{}
+		}
+		if err := json.Unmarshal([]byte(sourceFilesJSON), &job.SourceFiles); err != nil {
+			job.SourceFiles = []string{}
 		}
 
 		job.State = JobState(state)
@@ -501,6 +511,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	newJob.ID = newID
 	newJob.Stdout = []string{}
 	newJob.OutputFiles = []string{}
+	newJob.SourceFiles = []string{}
 	newJob.State = StatePending
 	newJob.CreatedAt = time.Now()
 	newJob.ClaimedAt = time.Time{}
@@ -730,7 +741,12 @@ func (q *Queue) PushJobStdout(id string, stdout string) error {
 // RegisterOutputFile appends a file path to the job's OutputFiles list.
 // These paths are used by ClaimJob to construct input for downstream jobs,
 // keeping file paths separate from diagnostic stdout.
-func (q *Queue) RegisterOutputFile(id string, path string) error {
+// RegisterOutputFile appends a file path to the job's OutputFiles list.
+// An optional source argument records which original input file produced
+// this output (kept in parallel in SourceFiles). Pass the source when the
+// output was derived from a specific input so downstream tasks like "save"
+// can recover the original filename.
+func (q *Queue) RegisterOutputFile(id string, path string, source ...string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -740,6 +756,11 @@ func (q *Queue) RegisterOutputFile(id string, path string) error {
 	}
 
 	job.OutputFiles = append(job.OutputFiles, path)
+	src := ""
+	if len(source) > 0 {
+		src = source[0]
+	}
+	job.SourceFiles = append(job.SourceFiles, src)
 
 	if err := q.saveJobToDB(job); err != nil {
 		log.Printf("Failed to save job output files to database: %v", err)
@@ -814,6 +835,59 @@ func (q *Queue) GetWorkflowOutputFiles(workflowID string) []string {
 		}
 	}
 	return paths
+}
+
+// GetSourceMap returns a map from output path to the ultimate original
+// source path, resolved through the entire workflow chain. For each
+// output of the given job's parents, it follows SourceFiles pointers
+// back through ancestor jobs until it reaches a source that isn't itself
+// an output of any job in the workflow.
+func (q *Queue) GetSourceMap(jobID string) map[string]string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, ok := q.Jobs[jobID]
+	if !ok {
+		return nil
+	}
+
+	// Build a global output->source index across all workflow jobs.
+	outputToSource := make(map[string]string)
+	for _, j := range q.Jobs {
+		if j.WorkflowID != job.WorkflowID || job.WorkflowID == "" {
+			continue
+		}
+		for i, out := range j.OutputFiles {
+			if i < len(j.SourceFiles) && j.SourceFiles[i] != "" {
+				outputToSource[out] = j.SourceFiles[i]
+			}
+		}
+	}
+
+	// For each output of the direct parents, resolve to the original source.
+	m := make(map[string]string)
+	for _, depID := range job.Dependencies {
+		dep, ok := q.Jobs[depID]
+		if !ok {
+			continue
+		}
+		for i, out := range dep.OutputFiles {
+			src := out
+			if i < len(dep.SourceFiles) && dep.SourceFiles[i] != "" {
+				src = dep.SourceFiles[i]
+			}
+			// Walk back through the chain to the original.
+			for depth := 0; depth < 100; depth++ {
+				prev, ok := outputToSource[src]
+				if !ok || prev == src {
+					break
+				}
+				src = prev
+			}
+			m[out] = src
+		}
+	}
+	return m
 }
 
 func (q *Queue) RemoveJob(id string) error {

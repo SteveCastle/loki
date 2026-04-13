@@ -90,10 +90,14 @@ export function Video({
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
 
-  const { data, isLoading, isFetched } = useQuery<string | null, Error>(
+  const { data, isLoading, isFetched, isError } = useQuery<string | null, Error>(
     ['media', 'preview', path, cache, startTime, version],
     fetchMediaPreview(path, cache, startTime),
-    { enabled: shouldLoad && !!cache }
+    {
+      enabled: shouldLoad && !!cache,
+      retry: 3,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
+    }
   );
 
   const [error, setError] = useState<boolean>(false);
@@ -474,13 +478,28 @@ export function Video({
             e.preventDefault();
           }}
           muted={!playSound}
-          src={hlsActive && hlsReady ? undefined : mediaUrl(path)}
+          src={hlsActive && hlsReady ? undefined : mediaUrl(path, version)}
           controls={showControls}
           controlsList={'nodownload nofullscreen'}
           autoPlay
           loop={!hlsActive}
         />
       </>
+    );
+  }
+
+  // Thumbnail generation failed after retries — fall back to static image display
+  if (cache && isError && isFetched) {
+    return (
+      <Image
+        path={path}
+        scaleMode={scaleMode}
+        coverSize={coverSize}
+        handleLoad={handleLoad}
+        orientation={orientation}
+        cache={false}
+        overRideCache={true}
+      />
     );
   }
 

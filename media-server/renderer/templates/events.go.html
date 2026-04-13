@@ -1,0 +1,323 @@
+{{ define "events" }}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lowkey Media Server – SSE Event Log</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      .events-container {
+        max-width: 100%;
+        height: calc(100vh - 80px);
+        display: flex;
+        flex-direction: column;
+      }
+      .events-toolbar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-3) var(--space-5);
+        border-bottom: 1px solid var(--border-subtle);
+        background: var(--bg-surface);
+      }
+      .events-toolbar h2 {
+        margin: 0;
+        font-size: var(--text-lg);
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--status-error);
+        transition: background 0.3s;
+      }
+      .status-dot.connected { background: var(--status-success, #22c55e); }
+      #event-count {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        margin-left: auto;
+      }
+      .btn {
+        padding: 6px 12px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-default);
+        background: var(--bg-surface);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-weight: 500;
+        font-size: var(--text-xs);
+        transition: all 0.2s;
+      }
+      .btn:hover {
+        background: var(--bg-hover);
+      }
+      .filter-input {
+        background: var(--bg-card);
+        color: var(--text-primary);
+        border: 1px solid var(--border-subtle);
+        padding: 6px 10px;
+        border-radius: var(--radius-md);
+        font-size: var(--text-xs);
+        font-family: var(--font-mono);
+        width: 200px;
+      }
+      .filter-input::placeholder { color: var(--text-muted); }
+      .events-log {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--space-3);
+        font-family: var(--font-mono);
+        font-size: 12px;
+        background: var(--bg-elevated);
+      }
+      .event-row {
+        display: grid;
+        grid-template-columns: 90px 140px 1fr;
+        gap: var(--space-3);
+        padding: 4px var(--space-2);
+        border-bottom: 1px solid var(--border-subtle);
+        line-height: 1.6;
+        animation: flash 0.3s ease;
+      }
+      .event-row:hover {
+        background: var(--bg-hover);
+      }
+      @keyframes flash {
+        0% { background: rgba(99, 102, 241, 0.1); }
+        100% { background: transparent; }
+      }
+      .event-time {
+        color: var(--text-muted);
+        white-space: nowrap;
+      }
+      .event-type {
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      .event-type.create { color: var(--status-success, #22c55e); }
+      .event-type.update { color: var(--accent-primary); }
+      .event-type.delete { color: var(--status-error); }
+      .event-type.stdout { color: var(--text-secondary); }
+      .event-type.media-updated { color: #f59e0b; }
+      .event-payload {
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        cursor: pointer;
+      }
+      .event-payload.expanded {
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .empty-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container" style="max-width:100%;height:100vh;display:flex;flex-direction:column;">
+      {{ template "topnav" . }}
+      <div class="events-container">
+        <div class="events-toolbar">
+          <div class="status-dot" id="status-dot"></div>
+          <h2>SSE Event Log</h2>
+          <input class="filter-input" id="filter" type="text" placeholder="Filter by type..." />
+          <label style="font-size:var(--text-xs);color:var(--text-secondary);display:flex;align-items:center;gap:4px;">
+            <input type="checkbox" id="auto-scroll" checked /> Auto-scroll
+          </label>
+          <label style="font-size:var(--text-xs);color:var(--text-secondary);display:flex;align-items:center;gap:4px;">
+            <input type="checkbox" id="show-stdout" /> stdout
+          </label>
+          <button class="btn" onclick="clearLog()">Clear</button>
+          <span id="event-count">0 events</span>
+        </div>
+        <div class="events-log" id="log">
+          <div class="empty-state" id="empty">Waiting for events...</div>
+        </div>
+      </div>
+    </div>
+    <script>
+      const logEl = document.getElementById('log');
+      const emptyEl = document.getElementById('empty');
+      const dotEl = document.getElementById('status-dot');
+      const filterEl = document.getElementById('filter');
+      const autoScrollEl = document.getElementById('auto-scroll');
+      const showStdoutEl = document.getElementById('show-stdout');
+      const countEl = document.getElementById('event-count');
+      let eventCount = 0;
+      const MAX_EVENTS = 1000;
+      let pendingFlush = false;
+      const pendingRows = [];
+
+      function clearLog() {
+        logEl.innerHTML = '';
+        pendingRows.length = 0;
+        eventCount = 0;
+        countEl.textContent = '0 events';
+        logEl.appendChild(emptyEl);
+      }
+
+      function formatTime(d) {
+        var h = String(d.getHours()).padStart(2, '0');
+        var m = String(d.getMinutes()).padStart(2, '0');
+        var s = String(d.getSeconds()).padStart(2, '0');
+        var ms = String(d.getMilliseconds()).padStart(3, '0');
+        return h + ':' + m + ':' + s + '.' + ms;
+      }
+
+      function addEvent(type, data) {
+        if (type.startsWith('stdout-') && !showStdoutEl.checked) return;
+        var filter = filterEl.value.toLowerCase();
+        if (filter && type.toLowerCase().indexOf(filter) === -1 && data.toLowerCase().indexOf(filter) === -1) return;
+
+        var compact = data;
+        var pretty = data;
+        try {
+          var parsed = JSON.parse(data);
+          compact = JSON.stringify(parsed);
+          pretty = JSON.stringify(parsed, null, 2);
+        } catch (e) {}
+
+        pendingRows.push({
+          time: formatTime(new Date()),
+          type: type,
+          typeClass: type.replace(/-.*/, ''),
+          compact: compact,
+          pretty: pretty,
+        });
+
+        if (!pendingFlush) {
+          pendingFlush = true;
+          requestAnimationFrame(flushPending);
+        }
+      }
+
+      function flushPending() {
+        pendingFlush = false;
+        if (pendingRows.length === 0) return;
+
+        if (emptyEl.parentNode === logEl) logEl.removeChild(emptyEl);
+
+        var frag = document.createDocumentFragment();
+        for (var i = 0; i < pendingRows.length; i++) {
+          var r = pendingRows[i];
+          var row = document.createElement('div');
+          row.className = 'event-row';
+          row.innerHTML =
+            '<span class="event-time">' + r.time + '</span>' +
+            '<span class="event-type ' + r.typeClass + '">' + r.type + '</span>' +
+            '<span class="event-payload"></span>';
+          var payloadEl = row.lastChild;
+          payloadEl.textContent = r.compact;
+          payloadEl.dataset.pretty = r.pretty;
+          payloadEl.dataset.compact = r.compact;
+          frag.appendChild(row);
+        }
+        logEl.appendChild(frag);
+        eventCount += pendingRows.length;
+        pendingRows.length = 0;
+        countEl.textContent = eventCount + ' events';
+
+        // Trim old rows
+        while (logEl.children.length > MAX_EVENTS) {
+          logEl.removeChild(logEl.firstChild);
+        }
+
+        if (autoScrollEl.checked) {
+          logEl.scrollTop = logEl.scrollHeight;
+        }
+      }
+
+      // Toggle expand/collapse on payload click
+      logEl.addEventListener('click', function(e) {
+        var el = e.target;
+        if (!el.classList.contains('event-payload')) return;
+        if (el.classList.contains('expanded')) {
+          el.classList.remove('expanded');
+          el.textContent = el.dataset.compact;
+        } else {
+          el.classList.add('expanded');
+          el.textContent = el.dataset.pretty;
+        }
+      });
+
+      // Raw SSE parser using fetch + ReadableStream.
+      // This catches ALL event types including dynamic stdout-<jobid>.
+      function connect() {
+        dotEl.classList.remove('connected');
+        fetch('/stream', { headers: { Accept: 'text/event-stream' } }).then(function(res) {
+          if (!res.ok || !res.body) {
+            addEvent('system', '"Connection failed: ' + res.status + '"');
+            setTimeout(connect, 3000);
+            return;
+          }
+          dotEl.classList.add('connected');
+          addEvent('system', '"Connected"');
+
+          var reader = res.body.getReader();
+          var decoder = new TextDecoder();
+          var buffer = '';
+          var currentEvent = '';
+          var currentData = '';
+
+          function processLine(line) {
+            if (line === '') {
+              // Empty line = end of event
+              if (currentData) {
+                addEvent(currentEvent || 'message', currentData);
+              }
+              currentEvent = '';
+              currentData = '';
+              return;
+            }
+            if (line.startsWith('event:')) {
+              currentEvent = line.slice(6).trim();
+            } else if (line.startsWith('data:')) {
+              currentData = line.slice(5).trim();
+            }
+            // Ignore comments (:) and other fields
+          }
+
+          function pump() {
+            reader.read().then(function(result) {
+              if (result.done) {
+                dotEl.classList.remove('connected');
+                addEvent('system', '"Disconnected — reconnecting..."');
+                setTimeout(connect, 2000);
+                return;
+              }
+              buffer += decoder.decode(result.value, { stream: true });
+              var lines = buffer.split('\n');
+              // Keep the last incomplete line in the buffer
+              buffer = lines.pop();
+              for (var i = 0; i < lines.length; i++) {
+                processLine(lines[i]);
+              }
+              pump();
+            }).catch(function(err) {
+              dotEl.classList.remove('connected');
+              addEvent('system', '"Error: ' + err.message + ' — reconnecting..."');
+              setTimeout(connect, 3000);
+            });
+          }
+          pump();
+        }).catch(function(err) {
+          addEvent('system', '"Fetch failed: ' + err.message + ' — reconnecting..."');
+          setTimeout(connect, 3000);
+        });
+      }
+
+      connect();
+    </script>
+  </body>
+</html>
+{{ end }}

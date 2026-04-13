@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
+import { send } from '../../platform';
 import './toast-system.css';
 
 type JobState = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'error';
@@ -112,9 +113,13 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
 
   const filePath = extractFilePath(job.input);
 
+  const handleOpenJobDetail = () => {
+    send('open-external', [`http://localhost:8090/job/${job.id}`]);
+  };
+
   return (
     <div className="toast job-toast">
-      <div className="toast-content">
+      <div className="toast-content toast-clickable" onClick={handleOpenJobDetail}>
         <div
           className={[
             'loading-animation',
@@ -130,7 +135,8 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
             <div className="toast-file-path-container">
               <span
                 className="toast-file-path"
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   const isInLibrary =
                     Array.isArray(library) &&
                     library.some((item) => item?.path === filePath);
@@ -221,9 +227,35 @@ export function ToastSystem() {
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
   const [sseGeneration, setSseGeneration] = useState<number>(0);
 
+  // When a media-created event fires, we store the target path and the
+  // current libraryLoadId. Once libraryLoadId changes (the refresh completed),
+  // we send RESET_CURSOR which searches the filtered/sorted view.
+  const pendingNavigateRef = useRef<{
+    path: string;
+    sinceLoadId: string;
+  } | null>(null);
+
   // Track last activity time to aid in debugging/health visibility
   const lastActivityAtRef = useRef<number>(Date.now());
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  const libraryLoadId = useSelector(
+    libraryService,
+    (state) => state.context.libraryLoadId
+  );
+
+  // Once the library has been refreshed (libraryLoadId changed), navigate
+  // to the pending target. RESET_CURSOR handles filter/sort internally.
+  useEffect(() => {
+    const pending = pendingNavigateRef.current;
+    if (!pending) return;
+    // Wait until the library has actually been reloaded.
+    if (libraryLoadId === pending.sinceLoadId) return;
+    pendingNavigateRef.current = null;
+    libraryService.send('RESET_CURSOR', {
+      currentItem: { path: pending.path },
+    });
+  }, [libraryLoadId, libraryService]);
 
   const toasts = useSelector(
     libraryService,
@@ -389,6 +421,62 @@ export function ToastSystem() {
         newJobs.delete(jobId);
         return newJobs;
       });
+    });
+
+    // When media files are overwritten (e.g. save task in "replace" mode),
+    // invalidate cached previews so the UI shows the updated file.
+    eventSource.addEventListener('media-updated', (event) => {
+      lastActivityAtRef.current = Date.now();
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        const inner = typeof payload.msg === 'string' ? JSON.parse(payload.msg) : payload;
+        const paths: string[] = inner.paths || [];
+        for (const p of paths) {
+          queryClient.invalidateQueries(['media', 'preview', p]);
+        }
+        // Also invalidate the general media list to refresh thumbnails
+        if (paths.length > 0) {
+          queryClient.invalidateQueries(['media']);
+        }
+        // Notify detail view (and any other listener) so it can bust the
+        // browser HTTP cache for direct media URLs.
+        if (paths.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent('loki-media-updated', { detail: { paths } })
+          );
+        }
+      } catch {
+        // Best-effort parse; ignore malformed events
+      }
+    });
+
+    // When new files are created (e.g. save task in "alongside" or "folder" mode),
+    // refresh the library so they appear immediately and navigate to the first new file.
+    eventSource.addEventListener('media-created', (event) => {
+      lastActivityAtRef.current = Date.now();
+      try {
+        const payload = JSON.parse((event as MessageEvent).data);
+        const inner = typeof payload.msg === 'string' ? JSON.parse(payload.msg) : payload;
+        const paths: string[] = inner.paths || [];
+        if (paths.length > 0) {
+          // Capture the current libraryLoadId so the useEffect knows to
+          // wait for it to change before navigating.
+          const snapshot = libraryService.getSnapshot();
+          pendingNavigateRef.current = {
+            path: paths[0],
+            sinceLoadId: snapshot.context.libraryLoadId,
+          };
+
+          // Refresh the library by re-querying the current view.
+          if (snapshot.matches({ library: 'loadedFromDB' })) {
+            libraryService.send({ type: 'SORTED_WEIGHTS' });
+          } else if (snapshot.matches({ library: 'loadedFromFS' })) {
+            libraryService.send('REFRESH_LIBRARY');
+          }
+        }
+      } catch {
+        // Best-effort parse; ignore malformed events
+      }
     });
 
     // Some servers emit default 'message' events (e.g., ping). Track activity.

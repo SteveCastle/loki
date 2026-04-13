@@ -10,11 +10,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/storage"
+)
+
+const (
+	// imageThumbTimeout is the maximum time allowed for generating an image thumbnail.
+	imageThumbTimeout = 30 * time.Second
+	// videoThumbTimeout is the maximum time allowed for generating a video thumbnail
+	// (includes ffprobe duration detection + ffmpeg encoding).
+	videoThumbTimeout = 60 * time.Second
 )
 
 // thumbSem limits concurrent ffmpeg processes to prevent resource starvation.
@@ -27,16 +37,23 @@ var inflightMu sync.Mutex
 // Key is "mediaPath|cache|timeStamp", value is a channel that closes when done.
 var inflight = map[string]chan struct{}{}
 
+// formatTimeStamp formats a float64 timestamp the same way JavaScript's
+// Number.toString() does — no trailing zeros, no exponent for normal values.
+// This ensures the hash matches the Electron app's thumbnail cache.
+func formatTimeStamp(ts float64) string {
+	return strconv.FormatFloat(ts, 'f', -1, 64)
+}
+
 // thumbKey builds a dedup key for a thumbnail generation request.
-func thumbKey(mediaPath, cache string, timeStamp int) string {
-	return fmt.Sprintf("%s|%s|%d", mediaPath, cache, timeStamp)
+func thumbKey(mediaPath, cache string, timeStamp float64) string {
+	return fmt.Sprintf("%s|%s|%s", mediaPath, cache, formatTimeStamp(timeStamp))
 }
 
 // generateThumbnailThrottled wraps generateThumbnail with a concurrency semaphore
 // and deduplication. If the same thumbnail is already being generated, it waits
 // for that to finish instead of spawning a second ffmpeg process.
 // Returns the thumbnail path and any error.
-func generateThumbnailThrottled(mediaPath, basePath, cache string, timeStamp int) (string, error) {
+func generateThumbnailThrottled(mediaPath, basePath, cache string, timeStamp float64) (string, error) {
 	key := thumbKey(mediaPath, cache, timeStamp)
 
 	// Check if this thumbnail is already being generated
@@ -105,11 +122,11 @@ func createHash(input string) string {
 }
 
 // getThumbnailPath computes the expected thumbnail path for a media file.
-func getThumbnailPath(mediaPath, basePath, cache string, timeStamp int) string {
+func getThumbnailPath(mediaPath, basePath, cache string, timeStamp float64) string {
 	thumbDir := filepath.Join(basePath, cache)
 	hashInput := mediaPath
 	if timeStamp > 0 {
-		hashInput += fmt.Sprintf("%d", timeStamp)
+		hashInput += formatTimeStamp(timeStamp)
 	}
 	fileName := createHash(hashInput)
 	if getFileType(mediaPath) == "video" {
@@ -118,10 +135,10 @@ func getThumbnailPath(mediaPath, basePath, cache string, timeStamp int) string {
 	return filepath.Join(thumbDir, fileName)
 }
 
-func getS3ThumbnailPath(mediaPath string, backend *storage.S3Backend, cache string, timeStamp int) string {
+func getS3ThumbnailPath(mediaPath string, backend *storage.S3Backend, cache string, timeStamp float64) string {
 	hashInput := mediaPath
 	if timeStamp > 0 {
-		hashInput += fmt.Sprintf("%d", timeStamp)
+		hashInput += formatTimeStamp(timeStamp)
 	}
 	fileName := createHash(hashInput)
 	if getFileType(mediaPath) == "video" {
@@ -132,7 +149,7 @@ func getS3ThumbnailPath(mediaPath string, backend *storage.S3Backend, cache stri
 	return backend.ThumbnailPath(fileName)
 }
 
-func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend *storage.S3Backend, cache string, timeStamp int) (string, error) {
+func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend *storage.S3Backend, cache string, timeStamp float64) (string, error) {
 	key := thumbKey(mediaPath, cache, timeStamp)
 
 	inflightMu.Lock()
@@ -206,7 +223,7 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 			return "", err
 		}
 	case "video":
-		if err := generateVideoThumbnail(ffmpegPath, tmpSourcePath, tmpOutputPath, timeStamp); err != nil {
+		if err := generateVideoThumbnail(ffmpegPath, tmpSourcePath, tmpOutputPath, cache, timeStamp); err != nil {
 			return "", err
 		}
 	default:
@@ -234,7 +251,7 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 
 // generateThumbnail creates a thumbnail for the given media file using ffmpeg.
 // Returns the full path to the generated thumbnail.
-func generateThumbnail(mediaPath, basePath, cache string, timeStamp int) (string, error) {
+func generateThumbnail(mediaPath, basePath, cache string, timeStamp float64) (string, error) {
 	ffmpegPath := depspkg.GetFFmpegPath()
 	if ffmpegPath == "" {
 		return "", fmt.Errorf("ffmpeg not found")
@@ -254,7 +271,7 @@ func generateThumbnail(mediaPath, basePath, cache string, timeStamp int) (string
 			return "", err
 		}
 	case "video":
-		if err := generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, timeStamp); err != nil {
+		if err := generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, cache, timeStamp); err != nil {
 			return "", err
 		}
 	default:
@@ -281,27 +298,37 @@ func generateImageThumbnail(ffmpegPath, mediaPath, thumbPath, cache string) erro
 		thumbPath,
 	}
 
-	cmd := exec.Command(ffmpegPath, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), imageThumbTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("ffmpeg image thumbnail timed out after %v for %s", imageThumbTimeout, mediaPath)
+			return fmt.Errorf("ffmpeg timed out after %v", imageThumbTimeout)
+		}
 		log.Printf("ffmpeg image thumbnail failed for %s: %s", mediaPath, string(output))
 		return fmt.Errorf("ffmpeg failed: %w", err)
 	}
 	return nil
 }
 
-func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath string, timeStamp int) error {
+func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, cache string, timeStamp float64) error {
 	ffprobePath := depspkg.GetFFprobePath()
 
-	// Get video duration using ffprobe
+	// Get video duration using ffprobe (with its own timeout)
 	durationSec := 0.0
 	if ffprobePath != "" {
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer probeCancel()
+
 		probeArgs := []string{
 			"-v", "quiet",
 			"-print_format", "json",
 			"-show_format",
 			mediaPath,
 		}
-		cmd := exec.Command(ffprobePath, probeArgs...)
+		cmd := exec.CommandContext(probeCtx, ffprobePath, probeArgs...)
 		if output, err := cmd.Output(); err == nil {
 			var result struct {
 				Format struct {
@@ -311,17 +338,23 @@ func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath string, timeStamp i
 			if json.Unmarshal(output, &result) == nil {
 				fmt.Sscanf(result.Format.Duration, "%f", &durationSec)
 			}
+		} else if probeCtx.Err() == context.DeadlineExceeded {
+			log.Printf("ffprobe timed out for %s, proceeding without duration", mediaPath)
 		}
 	}
 
-	thumbnailTime := float64(timeStamp)
+	thumbnailTime := timeStamp
 	if thumbnailTime == 0 {
 		thumbnailTime = durationSec / 2
 	}
 	useMiddle := durationSec > 6
 
 	timeStr := fmt.Sprintf("%.3f", thumbnailTime)
-	scaleExpr := "scale='min(400,iw)':'min(400,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2"
+	targetSize := 600
+	if sz, ok := cacheSizes[cache]; ok {
+		targetSize = sz
+	}
+	scaleExpr := fmt.Sprintf("scale='min(%d,iw)':'min(%d,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2", targetSize, targetSize)
 
 	var args []string
 	if useMiddle {
@@ -330,8 +363,15 @@ func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath string, timeStamp i
 		args = []string{"-y", "-i", mediaPath, "-ss", timeStr, "-vf", scaleExpr, "-t", "2", "-an", thumbPath}
 	}
 
-	cmd := exec.Command(ffmpegPath, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), videoThumbTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 	if output, err := cmd.CombinedOutput(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			log.Printf("ffmpeg video thumbnail timed out after %v for %s", videoThumbTimeout, mediaPath)
+			return fmt.Errorf("ffmpeg timed out after %v", videoThumbTimeout)
+		}
 		log.Printf("ffmpeg video thumbnail failed for %s: %s", mediaPath, string(output))
 		return fmt.Errorf("ffmpeg failed: %w", err)
 	}

@@ -689,7 +689,13 @@ app.on('ready', async () => {
         }
       }
 
-      // Full file request - just stream it
+      // Full file request - stream with ETag for cache revalidation
+      const etag = `"${stats.mtimeMs.toString(36)}-${fileSize.toString(36)}"`;
+      const ifNoneMatch = request.headers.get('If-None-Match');
+      if (ifNoneMatch === etag) {
+        return new Response(null, { status: 304 });
+      }
+
       const stream = fs.createReadStream(filePath);
       return new Response(
         new ReadableStream({
@@ -708,6 +714,8 @@ app.on('ready', async () => {
             'Content-Type': contentType,
             'Content-Length': fileSize.toString(),
             'Accept-Ranges': 'bytes',
+            'ETag': etag,
+            'Cache-Control': 'no-cache',
           },
         }
       );
