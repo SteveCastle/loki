@@ -43,6 +43,21 @@ describe('file-types', () => {
       });
     });
 
+    describe('archive files', () => {
+      const archiveExtensions = ['cbz', 'zip'];
+
+      it.each(archiveExtensions)('should identify .%s as Archive', (ext) => {
+        expect(getFileType(`book.${ext}`)).toBe(FileTypes.Archive);
+        expect(getFileType(`BOOK.${ext.toUpperCase()}`)).toBe(FileTypes.Archive);
+      });
+
+      it('should not treat archives as media', () => {
+        expect(getFileType('book.cbz')).not.toBe(FileTypes.Image);
+        expect(getFileType('book.cbz')).not.toBe(FileTypes.Video);
+        expect(getFileType('book.cbz')).not.toBe(FileTypes.Audio);
+      });
+    });
+
     describe('document files', () => {
       const docExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv'];
 
