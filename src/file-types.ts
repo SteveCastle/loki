@@ -10,6 +10,7 @@ export enum FileTypes {
   Video = 'video',
   Audio = 'audio',
   Document = 'document',
+  Archive = 'archive',
   Other = 'other',
 }
 
@@ -18,6 +19,7 @@ export enum Extensions {
   Video = 'mov|mp4|webm|ogg|mkv|m4v',
   Audio = 'mp3|wav|flac|aac|ogg|m4a|opus|wma|aiff|ape',
   Document = 'pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv',
+  Archive = 'cbz|zip',
 }
 
 export const getFileType = (
@@ -40,6 +42,9 @@ export const getFileType = (
     }
     if (Extensions.Document.includes(extension)) {
       return FileTypes.Document;
+    }
+    if (Extensions.Archive.includes(extension)) {
+      return FileTypes.Archive;
     }
   }
   return FileTypes.Other;
