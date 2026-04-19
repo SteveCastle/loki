@@ -258,7 +258,7 @@ header {
   line-height: 1;
   padding: 0.4rem 0.85rem;
   border-radius: 999px;
-  background-color: #ff424d;
+  background-color: #a855f7;
   color: white;
   letter-spacing: 0.01em;
   transition: background-color 0.2s ease, transform 0.15s ease;
@@ -266,7 +266,7 @@ header {
 
 .patreonBadge:hover {
   color: white;
-  background-color: #ff5a64;
+  background-color: #9333ea;
   transform: translateY(-1px);
 }
 
