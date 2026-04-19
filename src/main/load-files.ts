@@ -6,6 +6,7 @@ import { insertBulkMedia } from './media';
 import fsPromises from 'fs/promises';
 import os from 'os';
 import { spawn } from 'child_process';
+import { isArchivePath, extractArchive } from './archives';
 
 type File = {
   path: string;
@@ -327,18 +328,27 @@ export const loadFiles =
     let fileName: string;
 
     try {
-      const stats = await fsPromises.lstat(filePath);
-      if (stats.isDirectory()) {
-        folderPath = filePath;
+      if (isArchivePath(filePath)) {
+        const extracted = await extractArchive(filePath);
+        folderPath = extracted;
         fileName = '';
       } else {
-        folderPath = path.dirname(filePath);
-        fileName = path.basename(filePath);
+        const stats = await fsPromises.lstat(filePath);
+        if (stats.isDirectory()) {
+          folderPath = filePath;
+          fileName = '';
+        } else {
+          folderPath = path.dirname(filePath);
+          fileName = path.basename(filePath);
+        }
       }
     } catch {
       folderPath = path.dirname(filePath);
       fileName = path.basename(filePath);
     }
+
+    const isArchiveBrowse = folderPath !== filePath && isArchivePath(filePath);
+    const effectiveRecursive = isArchiveBrowse ? true : recursive;
 
     // Stream the directory and emit batches to the renderer for incremental UI updates
     const files: File[] = [];
@@ -374,7 +384,7 @@ export const loadFiles =
       );
       await listFilesFastWindows(
         folderPath,
-        recursive,
+        effectiveRecursive,
         filters.all.value,
         (file) => {
           files.push(file);
@@ -388,7 +398,7 @@ export const loadFiles =
       console.log('[loader] using fastest macOS mode for folder:', folderPath);
       await listFilesFastDarwin(
         folderPath,
-        recursive,
+        effectiveRecursive,
         filters.all.value,
         (file) => {
           files.push(file);
@@ -403,7 +413,7 @@ export const loadFiles =
       console.log('[loader] using Node walker for folder:', folderPath);
       await walkDirectory(
         folderPath,
-        recursive,
+        effectiveRecursive,
         filters.all.value,
         (file) => {
           files.push(file);
