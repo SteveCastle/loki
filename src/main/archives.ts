@@ -51,7 +51,7 @@ async function extractZipTo(
   await new Promise<void>((resolve, reject) => {
     yauzl.open(
       archivePath,
-      { lazyEntries: true, autoClose: true },
+      { lazyEntries: true, autoClose: true, decodeStrings: false },
       (err, zipfile) => {
         if (err || !zipfile) {
           reject(err ?? new Error('Failed to open zip'));
@@ -61,7 +61,9 @@ async function extractZipTo(
         zipfile.on('end', () => resolve());
         zipfile.readEntry();
         zipfile.on('entry', (entry) => {
-          const name = entry.fileName;
+          const name = Buffer.isBuffer(entry.fileName)
+            ? entry.fileName.toString('utf8')
+            : (entry.fileName as string);
           if (/\/$/.test(name)) {
             zipfile.readEntry();
             return;
