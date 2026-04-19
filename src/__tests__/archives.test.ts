@@ -242,4 +242,52 @@ describe('archives', () => {
       expect(secondMtime).toBe(firstMtime);
     });
   });
+
+  describe('cleanupArchives', () => {
+    it('removes the cache root', async () => {
+      const { extractArchive, cleanupArchives, _setCacheRoot } = await import(
+        '../main/archives'
+      );
+      const workDir = mkTmpDir();
+      const cacheDir = pathMod.join(workDir, 'cache');
+      _setCacheRoot(cacheDir);
+
+      const zipPath = pathMod.join(workDir, 'book.cbz');
+      buildZip([{ name: 'page.jpg', content: TINY_JPG }], zipPath);
+
+      await extractArchive(zipPath);
+      expect(fs.existsSync(cacheDir)).toBe(true);
+
+      await cleanupArchives();
+      expect(fs.existsSync(cacheDir)).toBe(false);
+
+      fs.rmSync(workDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('in-flight dedupe', () => {
+    it('concurrent extracts of same archive share one extraction', async () => {
+      const { extractArchive, _setCacheRoot } = await import('../main/archives');
+      const workDir = mkTmpDir();
+      _setCacheRoot(pathMod.join(workDir, 'cache'));
+
+      const zipPath = pathMod.join(workDir, 'book.cbz');
+      buildZip(
+        [{ name: 'a.jpg', content: TINY_JPG }, { name: 'b.jpg', content: TINY_JPG }],
+        zipPath
+      );
+
+      const [r1, r2, r3] = await Promise.all([
+        extractArchive(zipPath),
+        extractArchive(zipPath),
+        extractArchive(zipPath),
+      ]);
+      expect(r1).toBe(r2);
+      expect(r2).toBe(r3);
+      expect(fs.existsSync(pathMod.join(r1, 'a.jpg'))).toBe(true);
+      expect(fs.existsSync(pathMod.join(r1, 'b.jpg'))).toBe(true);
+
+      fs.rmSync(workDir, { recursive: true, force: true });
+    });
+  });
 });
