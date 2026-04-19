@@ -273,15 +273,23 @@ func TestMultipleClients(t *testing.T) {
 	Broadcast(Message{Type: "multi", Msg: "to all"})
 	time.Sleep(50 * time.Millisecond)
 
-	// All clients should receive the message
+	// All clients should receive the "multi" message. Skip any leaked
+	// in-flight broadcasts from prior tests: drainBroadcasts() can't drain
+	// messages already consumed by runBroadcastLoop but not yet fanned out,
+	// so a stale message may be delivered to clients registered here.
 	for i, client := range clients {
-		select {
-		case msg := <-client:
-			if msg.Type != "multi" {
-				t.Errorf("Client %d received wrong message type: %q", i, msg.Type)
+		received := false
+		deadline := time.After(200 * time.Millisecond)
+		for !received {
+			select {
+			case msg := <-client:
+				if msg.Type == "multi" {
+					received = true
+				}
+			case <-deadline:
+				t.Errorf("Client %d did not receive 'multi' message", i)
+				received = true
 			}
-		case <-time.After(100 * time.Millisecond):
-			t.Errorf("Client %d did not receive message", i)
 		}
 	}
 

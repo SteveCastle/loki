@@ -71,6 +71,14 @@ func (r *Registry) ReplaceWithDefault(backends []Backend, defaultIdx int) {
 	r.defaultIdx = defaultIdx
 }
 
+// DefaultIdx returns the index of the explicitly-set default backend, or -1
+// if no default was set (in which case DefaultBackend falls back to index 0).
+func (r *Registry) DefaultIdx() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.defaultIdx
+}
+
 // AllBackends returns a snapshot copy of the current backend slice.
 func (r *Registry) AllBackends() []Backend {
 	r.mu.RLock()

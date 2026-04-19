@@ -2215,7 +2215,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			for _, regErr := range regErrs {
 				log.Printf("Warning: storage backend init error: %v", regErr)
 			}
-			deps.Storage.Replace(newReg.AllBackends())
+			deps.Storage.ReplaceWithDefault(newReg.AllBackends(), newReg.DefaultIdx())
 
 			// Determine if any config field actually changed
 			changed := !reflect.DeepEqual(oldCfg, newCfg)
