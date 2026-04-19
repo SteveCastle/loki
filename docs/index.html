@@ -87,13 +87,15 @@
           <span class="fileType png">.png</span>,
           <span class="fileType gif">.gif</span>,
           <span class="fileType mp4">.mp4</span>,
-          <span class="fileType mov">.mov</span>, and
-          <span class="fileType webm">.webm</span>
+          <span class="fileType mov">.mov</span>,
+          <span class="fileType webm">.webm</span>, and comic book
+          archives <span class="fileType cbz">.cbz</span> /
+          <span class="fileType zip">.zip</span>
         </p>
         <p class="buttonArea">
           <a id="downloadButton" class="buyButton" href="#">Download | Free</a>
         </p>
-        <p class="version">Version 2.6.6</p>
+        <p class="version">Version 2.8.0</p>
         <div class="header-links">
           <a href="./v1/" target="_blank" class="v1">V1 Docs</a>
           <a
@@ -118,8 +120,11 @@
               <a href="#viewer-navigation">Basic Navigation</a>
               <ul>
                 <li><a href="#viewer-open-file">Open a File/Directory</a></li>
+                <li><a href="#viewer-open-archive">Open a Comic Archive</a></li>
+                <li><a href="#viewer-drag-drop">Drag &amp; Drop Import</a></li>
                 <li><a href="#viewer-panels">Using Panels</a></li>
                 <li><a href="#viewer-command">Command Palette</a></li>
+                <li><a href="#viewer-context-palette">Context Palette</a></li>
                 <li><a href="#viewer-grid">Grid Size</a></li>
                 <li><a href="#viewer-shuffle">Shuffle</a></li>
               </ul>
@@ -142,6 +147,7 @@
                 <li><a href="#viewer-filtering">Filtering by Tags</a></li>
                 <li><a href="#viewer-search">Search</a></li>
                 <li><a href="#viewer-edit-tags">Edit & Delete Tags</a></li>
+                <li><a href="#viewer-descriptions">Tag &amp; Category Descriptions</a></li>
               </ul>
             </li>
             <li>
@@ -214,6 +220,26 @@
             </p>
             <div class="placeholder-video">Open File Demo Video</div>
 
+            <h3 id="viewer-open-archive">Open a Comic Archive</h3>
+            <p>
+              Comic book archives (<kbd>.cbz</kbd> and <kbd>.zip</kbd>) open
+              just like directories. Pick one from the file dialog, drag it
+              onto the window, or double-click it in Explorer / Finder — the
+              viewer extracts the contents and loads every page into the list
+              view automatically. Reopening the same archive is instant, and
+              the temporary extraction is cleaned up when you quit the app.
+            </p>
+
+            <h3 id="viewer-drag-drop">Drag &amp; Drop Import</h3>
+            <p>
+              Drop files straight onto the viewer to import them into your
+              current folder. A drop zone appears on the main panels while you
+              drag. Hold <kbd>Shift</kbd> while releasing to move files
+              instead of copying. When you're viewing a tag instead of a
+              folder, dropped files are placed in your configured default
+              import path and the active tags are applied automatically.
+            </p>
+
             <h3 id="viewer-panels">Using Panels</h3>
             <p>
               There are four panels: List View (Left), Detail View (Middle),
@@ -229,6 +255,16 @@
               primary location of all controls and options.
             </p>
             <div class="placeholder-video">Command Palette Demo Video</div>
+
+            <h3 id="viewer-context-palette">Using the Context Palette</h3>
+            <p>
+              <kbd>Shift</kbd> + right-click on any media item to open the
+              context palette. Unlike the full command palette, it shows only
+              actions relevant to what you clicked — run a saved workflow
+              (if you're using the Media Server), copy, delete, tag, and more.
+              Jobs started from the palette stay in a footer so you can watch
+              progress or cancel them without losing your place.
+            </p>
 
             <h3 id="viewer-grid">Resizing List View Grid</h3>
             <p>
@@ -339,6 +375,14 @@
               assignments. Deleting removes all assignments (not reversible).
             </p>
             <div class="placeholder-video">Edit Tags Demo Video</div>
+
+            <h3 id="viewer-descriptions">Tag &amp; Category Descriptions</h3>
+            <p>
+              Tags and categories now support descriptions. Add notes about
+              what a tag is for, what to include, or anything else worth
+              remembering — descriptions appear inline in the tagging panel
+              and can be edited from the redesigned tag and category modals.
+            </p>
           </section>
 
           <section id="viewer-playback">
@@ -505,13 +549,13 @@
       if (window.navigator.platform === 'MacIntel') {
         el.setAttribute(
           'href',
-          'https://github.com/SteveCastle/loki/releases/download/v2.6.5/Lowkey.Media.Viewer-2.6.5-arm64.dmg'
+          'https://github.com/SteveCastle/loki/releases/download/v2.8.0/Lowkey.Media.Viewer-2.8.0-arm64.dmg'
         );
         el.innerHTML = 'Download | Free for Mac';
       } else {
         el.setAttribute(
           'href',
-          'https://github.com/SteveCastle/loki/releases/download/v2.6.6/Lowkey.Media.Viewer.Setup.2.6.6.exe.zip'
+          'https://github.com/SteveCastle/loki/releases/download/v2.8.0/Lowkey.Media.Viewer.Setup.2.8.0.exe.zip'
         );
         el.innerHTML = 'Download | Free for Windows';
       }
