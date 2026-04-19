@@ -5,7 +5,7 @@ Loki is the source repository for two companion products that share a single Rea
 - **Lowkey Media Viewer** — a free, minimalist Electron desktop app for viewing and curating images, video, audio, and comic book archives on Windows and macOS.
 - **Lowkey Media Server** — an HTTP server (Go) with a web UI and job queue for batch processing, auto-tagging, transcription, and media ingestion. Serves the same renderer as a web app.
 
-https://stevecastle.github.io/loki/static/viewer-overview.mp4
+<video src="https://stevecastle.github.io/loki/static/viewer-overview.mp4" autoplay loop muted playsinline controls></video>
 
 Prebuilt binaries and end-user documentation are available at [lowkeyviewer.com](https://lowkeyviewer.com). The media server docs are at [lowkeyviewer.com/server](https://lowkeyviewer.com/server).
 
