@@ -5,7 +5,6 @@ import { isArchivePath } from '../main/archives';
 import * as fs from 'fs';
 import * as pathMod from 'path';
 import * as os from 'os';
-import { execSync } from 'child_process';
 
 type ZipEntry = { name: string; content: Buffer | string };
 

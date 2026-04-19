@@ -345,7 +345,7 @@ if (isElectron) {
 
   // Channels that are Electron-only and should silently return undefined
   const stubbedChannels = [
-    'select-db', 'select-new-path',
+    'select-db', 'select-new-path', 'select-archive',
     'refresh-library', 'copy-file-into-clipboard',
     'check-for-updates', 'update-elo',
     'load-duplicates-by-path', 'merge-duplicates-by-path',
