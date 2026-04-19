@@ -21,6 +21,7 @@ import {
   registerSessionStoreHandlers,
   setupSessionStoreLifecycle,
 } from './sessionStore';
+import { cleanupArchives } from './archives';
 
 import type { Database } from './database';
 
@@ -472,6 +473,29 @@ ipcMain.handle(
   }
 );
 
+// Handle archive-open event from renderer process
+type SelectArchiveInput = [string | undefined];
+ipcMain.handle(
+  'select-archive',
+  async (_: IpcMainInvokeEvent, args: SelectArchiveInput) => {
+    invariant(mainWindow, 'mainWindow is not defined');
+    const defaultPath = args[0];
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      defaultPath,
+      filters: [
+        { name: 'Comic Archive', extensions: ['cbz', 'zip'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+
+    if (!result.canceled) {
+      return result.filePaths[0];
+    }
+    return null;
+  }
+);
+
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');
   sourceMapSupport.install();
@@ -734,6 +758,11 @@ app.on('before-quit', async () => {
       console.error('Error closing database on quit:', err);
     }
     db = null;
+  }
+  try {
+    await cleanupArchives();
+  } catch (err) {
+    console.error('Error cleaning up archive cache on quit:', err);
   }
 });
 
