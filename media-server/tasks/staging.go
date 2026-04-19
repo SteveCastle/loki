@@ -34,25 +34,36 @@ func stagingDir(jobID string) (string, error) {
 // for setups that have no storage roots yet.
 func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, stagedFiles []string, stagingBase string, destPrefix string) []string {
 	backend := defaultBackend()
+
+	// DEBUG: trace backend resolution
+	cwd, _ := os.Getwd()
+	log.Printf("[uploadStagedFiles] cwd=%s stagingBase=%s destPrefix=%s stagedFiles=%v", cwd, stagingBase, destPrefix, stagedFiles)
+
 	if backend == nil {
 		// No storage backend — return local paths as-is (legacy behaviour)
+		log.Printf("[uploadStagedFiles] WARNING: defaultBackend() returned nil — returning raw local paths")
+		q.PushJobStdout(jobID, "DEBUG: no storage backend configured, returning local staged paths as-is")
 		return stagedFiles
 	}
 
-	// Build destination paths under the backend's root directory so files
-	// land inside the configured storage root (e.g. X:\downloads\...) and
-	// the database stores absolute paths that work regardless of CWD.
-	rootPath := backend.Root().Path
+	// The backend root tells us whether we need to resolve relative paths
+	// into absolute ones for the database. Local backends have an absolute
+	// filesystem root (e.g. "X:\"); S3 backends have an "s3://" root and
+	// store relative keys.
+	root := backend.Root()
+	log.Printf("[uploadStagedFiles] backend root: Type=%s Path=%s Name=%s", root.Type, root.Path, root.Name)
+	q.PushJobStdout(jobID, fmt.Sprintf("DEBUG: backend root Type=%s Path=%s Name=%s", root.Type, root.Path, root.Name))
 
 	var finalPaths []string
 	for _, localPath := range stagedFiles {
-		// Derive a relative path from the staging base, then place it
-		// under rootPath/destPrefix.
+		// Derive a relative destination key: destPrefix + relative-to-staging
 		rel, err := filepath.Rel(stagingBase, localPath)
 		if err != nil {
+			log.Printf("[uploadStagedFiles] filepath.Rel(%s, %s) error: %v — falling back to Base", stagingBase, localPath, err)
 			rel = filepath.Base(localPath)
 		}
-		destPath := filepath.Join(rootPath, destPrefix, filepath.FromSlash(rel))
+		destKey := destPrefix + filepath.ToSlash(rel)
+		log.Printf("[uploadStagedFiles] localPath=%s rel=%s destKey=%s", localPath, rel, destKey)
 
 		f, err := os.Open(localPath)
 		if err != nil {
@@ -61,16 +72,25 @@ func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, sta
 		}
 
 		ct := contentTypeFromPath(localPath)
-		if err := backend.Upload(ctx, destPath, f, ct); err != nil {
+		if err := backend.Upload(ctx, destKey, f, ct); err != nil {
 			f.Close()
-			q.PushJobStdout(jobID, fmt.Sprintf("Warning: upload to backend failed for %s: %v", destPath, err))
+			q.PushJobStdout(jobID, fmt.Sprintf("Warning: upload to backend failed for %s: %v", destKey, err))
 			continue
 		}
 		f.Close()
 
-		finalPaths = append(finalPaths, destPath)
-		q.PushJobStdout(jobID, fmt.Sprintf("Uploaded to storage: %s", destPath))
+		// For local backends, store the absolute path so the DB record
+		// works regardless of CWD. S3 backends keep the relative key.
+		storePath := destKey
+		if root.Type == "local" {
+			storePath = filepath.Join(root.Path, filepath.FromSlash(destKey))
+		}
+		log.Printf("[uploadStagedFiles] storePath=%s (root.Type=%s root.Path=%s destKey=%s)", storePath, root.Type, root.Path, destKey)
+		finalPaths = append(finalPaths, storePath)
+		q.PushJobStdout(jobID, fmt.Sprintf("Uploaded to storage: %s", storePath))
 	}
+
+	log.Printf("[uploadStagedFiles] final paths: %v", finalPaths)
 	return finalPaths
 }
 
