@@ -7,6 +7,7 @@ import yauzl from 'yauzl';
 import { Extensions, FileTypes, getFileType } from '../file-types';
 
 let cacheRoot = path.join(os.tmpdir(), 'lowkey-archives');
+const inFlight = new Map<string, Promise<string>>();
 
 /** Test-only: override the cache root before calling extractArchive. */
 export function _setCacheRoot(dir: string): void {
@@ -114,12 +115,24 @@ export async function extractArchive(archivePath: string): Promise<string> {
     /* not cached */
   }
 
-  try {
-    await extractZipTo(archivePath, extractRoot);
-  } catch (err) {
-    await fsp.rm(extractRoot, { recursive: true, force: true });
-    throw err;
-  }
+  const pending = inFlight.get(hash);
+  if (pending) return pending;
 
-  return extractRoot;
+  const p = (async () => {
+    try {
+      await extractZipTo(archivePath, extractRoot);
+      return extractRoot;
+    } catch (err) {
+      await fsp.rm(extractRoot, { recursive: true, force: true });
+      throw err;
+    } finally {
+      inFlight.delete(hash);
+    }
+  })();
+  inFlight.set(hash, p);
+  return p;
+}
+
+export async function cleanupArchives(): Promise<void> {
+  await fsp.rm(cacheRoot, { recursive: true, force: true });
 }
