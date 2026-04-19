@@ -1,3 +1,6 @@
+/**
+ * @jest-environment node
+ */
 import { isArchivePath } from '../main/archives';
 import * as fs from 'fs';
 import * as pathMod from 'path';
@@ -129,6 +132,61 @@ describe('archives', () => {
       expect(isArchivePath('/home/u/image.jpg')).toBe(false);
       expect(isArchivePath('/home/u/folder')).toBe(false);
       expect(isArchivePath('/home/u/file.rar')).toBe(false); // not in scope
+    });
+  });
+
+  describe('extractArchive', () => {
+    let workDir: string;
+
+    beforeEach(() => {
+      workDir = mkTmpDir();
+    });
+    afterEach(() => {
+      try {
+        fs.rmSync(workDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    it('extracts media files and skips non-media entries', async () => {
+      const { extractArchive, _setCacheRoot } = await import('../main/archives');
+      _setCacheRoot(pathMod.join(workDir, 'cache'));
+
+      const zipPath = pathMod.join(workDir, 'book.cbz');
+      buildZip(
+        [
+          { name: 'page01.jpg', content: TINY_JPG },
+          { name: 'page02.jpg', content: TINY_JPG },
+          { name: 'ComicInfo.xml', content: '<ComicInfo/>' },
+        ],
+        zipPath
+      );
+
+      const outDir = await extractArchive(zipPath);
+      const files = fs.readdirSync(outDir).sort();
+
+      expect(files).toContain('page01.jpg');
+      expect(files).toContain('page02.jpg');
+      expect(files).not.toContain('ComicInfo.xml');
+    });
+
+    it('preserves subfolder structure', async () => {
+      const { extractArchive, _setCacheRoot } = await import('../main/archives');
+      _setCacheRoot(pathMod.join(workDir, 'cache'));
+
+      const zipPath = pathMod.join(workDir, 'nested.cbz');
+      buildZip(
+        [
+          { name: 'ch1/01.jpg', content: TINY_JPG },
+          { name: 'ch2/02.jpg', content: TINY_JPG },
+        ],
+        zipPath
+      );
+
+      const outDir = await extractArchive(zipPath);
+      expect(fs.existsSync(pathMod.join(outDir, 'ch1', '01.jpg'))).toBe(true);
+      expect(fs.existsSync(pathMod.join(outDir, 'ch2', '02.jpg'))).toBe(true);
     });
   });
 });
