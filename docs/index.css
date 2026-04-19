@@ -245,33 +245,34 @@ header {
 }
 
 .patreonArea {
-  margin: 0.25rem 0 0.25rem;
+  margin: 0.25rem 0;
+  font-size: 0;
 }
 
 .patreonBadge {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
+  gap: 0.4rem;
+  font-size: 0.75rem;
   font-weight: 600;
-  padding: 0.55rem 1.1rem;
+  line-height: 1;
+  padding: 0.4rem 0.85rem;
   border-radius: 999px;
-  background: linear-gradient(135deg, #ff7a85 0%, #ff424d 100%);
+  background-color: #ff424d;
   color: white;
-  box-shadow: 0 4px 14px rgba(255, 66, 77, 0.35);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  letter-spacing: 0.01em;
+  transition: background-color 0.2s ease, transform 0.15s ease;
 }
 
 .patreonBadge:hover {
   color: white;
+  background-color: #ff5a64;
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(255, 66, 77, 0.5);
-  filter: brightness(1.05);
 }
 
 .patreonBadge svg {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
 }
 
