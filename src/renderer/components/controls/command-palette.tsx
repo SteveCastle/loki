@@ -250,6 +250,11 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
           tooltipId="select-directory"
         />
         <ActionButton
+          icon={folderIcon}
+          onClick={() => libraryService.send('SELECT_ARCHIVE')}
+          tooltipId="select-archive"
+        />
+        <ActionButton
           icon={recursiveIcon}
           onClick={() => handleSettingChange('recursive', !recursive, true)}
           isSelected={recursive}

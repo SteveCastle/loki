@@ -33,21 +33,26 @@ function isMediaFile(fileName: string): boolean {
   return ft === FileTypes.Image || ft === FileTypes.Video || ft === FileTypes.Audio;
 }
 
-/** Resolve the browsed directory from initialFile (which may be a file path or dir path). */
+function isArchiveFile(fileName: string): boolean {
+  return getFileType(fileName) === FileTypes.Archive;
+}
+
+/** Resolve the browsed directory from initialFile (which may be a file path, archive path, or dir path). */
 function resolveDirectory(initialFile: string): string {
-  // Check if it has a media file extension — if so, it's a file and we want its directory
   const ft = getFileType(initialFile);
+  // Archive paths represent their contents — pass through unchanged.
+  if (ft === FileTypes.Archive) {
+    return initialFile;
+  }
   if (ft !== FileTypes.Other) {
     // It's a media file — extract the directory
     const lastSep = Math.max(initialFile.lastIndexOf('/'), initialFile.lastIndexOf('\\'));
     let dir = lastSep > 0 ? initialFile.substring(0, lastSep) : initialFile;
-    // On Windows, "D:" without trailing separator is a relative path — add it
     if (/^[A-Za-z]:$/.test(dir)) {
       dir += '\\';
     }
     return dir;
   }
-  // No media extension — treat as directory
   return initialFile;
 }
 
@@ -104,6 +109,20 @@ export default function useFileDrop() {
 
       const nativeFiles = item.files;
       if (!nativeFiles || nativeFiles.length === 0) return;
+
+      // Archives open as a directory (treat like SELECT_ARCHIVE with a known path).
+      const archiveFiles = nativeFiles.filter((f) => isArchiveFile(f.name));
+      if (archiveFiles.length > 0) {
+        const getPath = (window as any).electron?.getPathForFile;
+        const first = archiveFiles[0];
+        const archivePath = (getPath ? getPath(first) : (first as any).path) as
+          | string
+          | undefined;
+        if (archivePath) {
+          libraryService.send({ type: 'SET_FILE', path: archivePath });
+        }
+        return;
+      }
 
       // Filter to media files only
       const mediaFiles = nativeFiles.filter((f) => isMediaFile(f.name));
