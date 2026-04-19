@@ -120,7 +120,7 @@ interface ListContextDisplayProps {
   activeDirectory: string;
 }
 interface SettingsListProps {
-  filterType: 'image' | 'general' | 'autoplay';
+  filterType: 'image' | 'general' | 'autoplay' | 'listView';
   battleMode: boolean;
   currentItem: any; // Type according to your item structure
 }
@@ -545,6 +545,11 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
           return (
             <div className="tabContent">
               <GridSizePicker />
+              <SettingsList
+                filterType="listView"
+                battleMode={battleMode}
+                currentItem={currentItem}
+              />
             </div>
           );
         case 'dbOptions':

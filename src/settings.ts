@@ -476,7 +476,7 @@ export const ALWAYS_ON_TOP = {
 export const LAYOUT_MODE = {
   title: 'Layout Mode',
   reload: false,
-  display: 'general',
+  display: 'listView',
   options: {
     grid: {
       label: 'Grid',
