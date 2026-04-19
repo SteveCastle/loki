@@ -188,5 +188,39 @@ describe('archives', () => {
       expect(fs.existsSync(pathMod.join(outDir, 'ch1', '01.jpg'))).toBe(true);
       expect(fs.existsSync(pathMod.join(outDir, 'ch2', '02.jpg'))).toBe(true);
     });
+
+    it('skips entries that escape the extraction root (zip-slip)', async () => {
+      const { extractArchive, _setCacheRoot } = await import('../main/archives');
+      _setCacheRoot(pathMod.join(workDir, 'cache'));
+
+      const zipPath = pathMod.join(workDir, 'evil.zip');
+      buildZip(
+        [
+          { name: '../evil.jpg', content: TINY_JPG },
+          { name: 'ok.jpg', content: TINY_JPG },
+        ],
+        zipPath
+      );
+
+      const outDir = await extractArchive(zipPath);
+      expect(fs.existsSync(pathMod.join(outDir, 'ok.jpg'))).toBe(true);
+      expect(
+        fs.existsSync(pathMod.join(workDir, 'cache', 'evil.jpg'))
+      ).toBe(false);
+    });
+
+    it('rejects on a corrupted archive and leaves no partial cache dir', async () => {
+      const { extractArchive, _setCacheRoot } = await import('../main/archives');
+      const cacheDir = pathMod.join(workDir, 'cache');
+      _setCacheRoot(cacheDir);
+
+      const zipPath = pathMod.join(workDir, 'broken.zip');
+      fs.writeFileSync(zipPath, Buffer.from('not a zip at all'));
+
+      await expect(extractArchive(zipPath)).rejects.toBeDefined();
+
+      const dirs = fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir) : [];
+      expect(dirs.length).toBe(0);
+    });
   });
 });
