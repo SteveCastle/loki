@@ -244,6 +244,22 @@ header {
   transform: translateY(-1px);
 }
 
+/* Inline UI icons used in running text */
+.inline-icon {
+  display: inline-block;
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.2em;
+  margin: 0 0.15em;
+  opacity: 0.9;
+}
+
+h3 .inline-icon {
+  vertical-align: -0.15em;
+  opacity: 0.85;
+  margin-right: 0.35em;
+}
+
 .patreonArea {
   margin: 0.25rem 0;
   font-size: 0;
