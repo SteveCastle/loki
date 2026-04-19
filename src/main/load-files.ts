@@ -326,12 +326,14 @@ export const loadFiles =
     const options: LoadFilesOptions = (args as any)[3] || {};
     let folderPath: string;
     let fileName: string;
+    let archiveExtracted = false;
 
     try {
       if (isArchivePath(filePath)) {
         const extracted = await extractArchive(filePath);
         folderPath = extracted;
         fileName = '';
+        archiveExtracted = true;
       } else {
         const stats = await fsPromises.lstat(filePath);
         if (stats.isDirectory()) {
@@ -347,8 +349,7 @@ export const loadFiles =
       fileName = path.basename(filePath);
     }
 
-    const isArchiveBrowse = folderPath !== filePath && isArchivePath(filePath);
-    const effectiveRecursive = isArchiveBrowse ? true : recursive;
+    const effectiveRecursive = archiveExtracted ? true : recursive;
 
     // Stream the directory and emit batches to the renderer for incremental UI updates
     const files: File[] = [];
@@ -475,6 +476,11 @@ export const refreshLibrary =
     args: [RefreshLibraryInput]
   ): Promise<RefreshLibraryResult> => {
     const { initialFile, currentPaths, recursive } = args[0];
+    // Archives are read-only; refresh is a no-op. The extracted temp dir is
+    // a cached snapshot — rescanning it would never find anything new.
+    if (isArchivePath(initialFile)) {
+      return { added: [], removed: [] };
+    }
     let folderPath: string;
     try {
       const stats = await fsPromises.lstat(initialFile);

@@ -43,7 +43,7 @@ import tag from '../../../../assets/tag.svg';
 import { SETTINGS, SettingKey, clampVolume } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
 
 // Platform
-import { invoke, send, capabilities } from '../../platform';
+import { invoke, send, capabilities, isElectron } from '../../platform';
 
 // Styles
 import './command-palette.css';
@@ -249,11 +249,13 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
           onClick={() => libraryService.send('SELECT_DIRECTORY')}
           tooltipId="select-directory"
         />
-        <ActionButton
-          icon={folderIcon}
-          onClick={() => libraryService.send('SELECT_ARCHIVE')}
-          tooltipId="select-archive"
-        />
+        {isElectron && (
+          <ActionButton
+            icon={folderIcon}
+            onClick={() => libraryService.send('SELECT_ARCHIVE')}
+            tooltipId="select-archive"
+          />
+        )}
         <ActionButton
           icon={recursiveIcon}
           onClick={() => handleSettingChange('recursive', !recursive, true)}
