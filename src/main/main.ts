@@ -422,6 +422,8 @@ ipcMain.handle(
             'mov',
             'mkv',
             'webm',
+            'cbz',
+            'zip',
           ],
         },
 
@@ -441,6 +443,7 @@ ipcMain.handle(
           ],
         },
         { name: 'Movies', extensions: ['mp4', 'mkv', 'webm', 'mov'] },
+        { name: 'Archives', extensions: ['cbz', 'zip'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     });
@@ -470,29 +473,6 @@ ipcMain.handle(
     } else {
       return null;
     }
-  }
-);
-
-// Handle archive-open event from renderer process
-type SelectArchiveInput = [string | undefined];
-ipcMain.handle(
-  'select-archive',
-  async (_: IpcMainInvokeEvent, args: SelectArchiveInput) => {
-    invariant(mainWindow, 'mainWindow is not defined');
-    const defaultPath = args[0];
-    const result = await dialog.showOpenDialog(mainWindow, {
-      properties: ['openFile'],
-      defaultPath,
-      filters: [
-        { name: 'Comic Archive', extensions: ['cbz', 'zip'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    });
-
-    if (!result.canceled) {
-      return result.filePaths[0];
-    }
-    return null;
   }
 );
 
