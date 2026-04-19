@@ -1082,9 +1082,6 @@ const libraryMachine = createMachine(
               SELECT_DIRECTORY: {
                 target: 'selectingDirectory',
               },
-              SELECT_ARCHIVE: {
-                target: 'selectingArchive',
-              },
             },
           },
           selectingDB: {
@@ -1206,24 +1203,6 @@ const libraryMachine = createMachine(
                 const currentFile = context.initialFile;
                 console.log('selecting directory', context, event);
                 return invoke('select-directory', [
-                  currentFile,
-                ]);
-              },
-              onDone: {
-                target: 'loadingFromFS',
-                actions: ['setPath'],
-              },
-              onError: {
-                target: 'loadedFromFS',
-              },
-            },
-          },
-          selectingArchive: {
-            invoke: {
-              src: (context, event) => {
-                const currentFile = context.initialFile;
-                console.log('selecting archive', context, event);
-                return invoke('select-archive', [
                   currentFile,
                 ]);
               },
@@ -1657,9 +1636,6 @@ const libraryMachine = createMachine(
               },
               SELECT_DIRECTORY: {
                 target: 'selectingDirectory',
-              },
-              SELECT_ARCHIVE: {
-                target: 'selectingArchive',
               },
               SET_ACTIVE_CATEGORY: {
                 actions: assign<LibraryState, AnyEventObject>({
@@ -2285,9 +2261,6 @@ const libraryMachine = createMachine(
               SELECT_DIRECTORY: {
                 target: 'selectingDirectory',
               },
-              SELECT_ARCHIVE: {
-                target: 'selectingArchive',
-              },
               SET_FILE: {
                 target: 'loadingFromFS',
                 actions: [
@@ -2421,9 +2394,6 @@ const libraryMachine = createMachine(
               },
               SELECT_DIRECTORY: {
                 target: 'selectingDirectory',
-              },
-              SELECT_ARCHIVE: {
-                target: 'selectingArchive',
               },
               SET_FILE: {
                 target: 'loadingFromFS',

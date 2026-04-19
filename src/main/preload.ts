@@ -16,7 +16,6 @@ export type Channels =
   | 'shutdown'
   | 'select-file'
   | 'select-directory'
-  | 'select-archive'
   | 'load-files'
   | 'load-files-batch'
   | 'load-files-done'
