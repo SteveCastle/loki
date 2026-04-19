@@ -222,5 +222,24 @@ describe('archives', () => {
       const dirs = fs.existsSync(cacheDir) ? fs.readdirSync(cacheDir) : [];
       expect(dirs.length).toBe(0);
     });
+
+    it('returns cached dir on second call without re-extracting', async () => {
+      const { extractArchive, _setCacheRoot } = await import('../main/archives');
+      _setCacheRoot(pathMod.join(workDir, 'cache'));
+
+      const zipPath = pathMod.join(workDir, 'book.cbz');
+      buildZip([{ name: 'page.jpg', content: TINY_JPG }], zipPath);
+
+      const first = await extractArchive(zipPath);
+      const firstMtime = fs.statSync(pathMod.join(first, 'page.jpg')).mtimeMs;
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      const second = await extractArchive(zipPath);
+      expect(second).toBe(first);
+
+      const secondMtime = fs.statSync(pathMod.join(second, 'page.jpg')).mtimeMs;
+      expect(secondMtime).toBe(firstMtime);
+    });
   });
 });
