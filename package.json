@@ -328,6 +328,16 @@
         "ext": "mkv",
         "name": "Mkv Video File",
         "role": "Viewer"
+      },
+      {
+        "ext": "cbz",
+        "name": "Comic Book Archive",
+        "role": "Viewer"
+      },
+      {
+        "ext": "zip",
+        "name": "Zip Archive",
+        "role": "Viewer"
       }
     ],
     "dmg": {
