@@ -211,6 +211,36 @@
               automatically and their contents load like a directory.
             </p>
 
+            <!-- Shared SVG icon sprite -->
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              style="display: none"
+              aria-hidden="true"
+            >
+              <symbol id="icon-image" viewBox="0 0 24 24">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <circle cx="8.5" cy="10" r="1.5" />
+                <path d="M21 16l-5-5L5 20" />
+              </symbol>
+              <symbol id="icon-video" viewBox="0 0 24 24">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="M3 9h3M3 15h3M18 9h3M18 15h3" />
+                <path d="M10 9l5 3-5 3z" />
+              </symbol>
+              <symbol id="icon-audio" viewBox="0 0 24 24">
+                <path d="M4 12v2" />
+                <path d="M8 9v8" />
+                <path d="M12 5v14" />
+                <path d="M16 8v10" />
+                <path d="M20 11v4" />
+              </symbol>
+              <symbol id="icon-archive" viewBox="0 0 24 24">
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+                <path d="M12 4v2M12 8v2M12 12v2M12 16v2" />
+                <rect x="10" y="14" width="4" height="5" rx="0.5" />
+              </symbol>
+            </svg>
+
             <ul class="fileTypes-summary">
               <li class="images">
                 <strong>Images</strong>
@@ -233,52 +263,136 @@
             <div class="fileTypes-group images">
               <h4>Images</h4>
               <div class="fileTypes-grid">
-                <span class="fileTypes-chip images">.jpg</span>
-                <span class="fileTypes-chip images">.jpeg</span>
-                <span class="fileTypes-chip images">.png</span>
-                <span class="fileTypes-chip images">.gif</span>
-                <span class="fileTypes-chip images">.webp</span>
-                <span class="fileTypes-chip images">.bmp</span>
-                <span class="fileTypes-chip images">.svg</span>
-                <span class="fileTypes-chip images">.jfif</span>
-                <span class="fileTypes-chip images">.pjpeg</span>
-                <span class="fileTypes-chip images">.pjp</span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.jpg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.jpeg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.png</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.gif</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.webp</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.bmp</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.svg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.jfif</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.pjpeg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.pjp</span>
+                </span>
               </div>
             </div>
 
             <div class="fileTypes-group video">
               <h4>Video</h4>
               <div class="fileTypes-grid">
-                <span class="fileTypes-chip video">.mp4</span>
-                <span class="fileTypes-chip video">.mov</span>
-                <span class="fileTypes-chip video">.webm</span>
-                <span class="fileTypes-chip video">.mkv</span>
-                <span class="fileTypes-chip video">.m4v</span>
-                <span class="fileTypes-chip video">.ogg</span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.mp4</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.mov</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.webm</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.mkv</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.m4v</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.ogg</span>
+                </span>
               </div>
             </div>
 
             <div class="fileTypes-group audio">
               <h4>Audio</h4>
               <div class="fileTypes-grid">
-                <span class="fileTypes-chip audio">.mp3</span>
-                <span class="fileTypes-chip audio">.wav</span>
-                <span class="fileTypes-chip audio">.flac</span>
-                <span class="fileTypes-chip audio">.aac</span>
-                <span class="fileTypes-chip audio">.ogg</span>
-                <span class="fileTypes-chip audio">.m4a</span>
-                <span class="fileTypes-chip audio">.opus</span>
-                <span class="fileTypes-chip audio">.wma</span>
-                <span class="fileTypes-chip audio">.aiff</span>
-                <span class="fileTypes-chip audio">.ape</span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.mp3</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.wav</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.flac</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.aac</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.ogg</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.m4a</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.opus</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.wma</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.aiff</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.ape</span>
+                </span>
               </div>
             </div>
 
             <div class="fileTypes-group archive">
               <h4>Archives</h4>
               <div class="fileTypes-grid">
-                <span class="fileTypes-chip archive">.cbz</span>
-                <span class="fileTypes-chip archive">.zip</span>
+                <span class="fileTypes-chip archive">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
+                  <span class="fileTypes-chip-label">.cbz</span>
+                </span>
+                <span class="fileTypes-chip archive">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
+                  <span class="fileTypes-chip-label">.zip</span>
+                </span>
               </div>
             </div>
           </section>

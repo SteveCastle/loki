@@ -731,8 +731,8 @@ img.fullsize {
 
 .fileTypes-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
-  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 0.6rem;
   margin: 0.5rem 0 0;
   padding: 0;
   list-style: none;
@@ -740,62 +740,68 @@ img.fullsize {
 
 .fileTypes-chip {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0.75rem 0.5rem;
-  border-radius: 8px;
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-weight: 500;
-  font-size: 0.85rem;
-  text-align: center;
-  border: 1px solid transparent;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  padding: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  background: rgba(148, 163, 184, 0.03);
   transition: transform 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
   user-select: none;
 }
 
 .fileTypes-chip:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 }
 
-.fileTypes-chip.images {
-  background: rgba(244, 114, 182, 0.08);
-  color: #f472b6;
-  border-color: rgba(244, 114, 182, 0.2);
-}
-.fileTypes-chip.images:hover {
-  background: rgba(244, 114, 182, 0.14);
-  border-color: rgba(244, 114, 182, 0.4);
-}
-
-.fileTypes-chip.video {
-  background: rgba(56, 189, 248, 0.08);
-  color: #38bdf8;
-  border-color: rgba(56, 189, 248, 0.2);
-}
-.fileTypes-chip.video:hover {
-  background: rgba(56, 189, 248, 0.14);
-  border-color: rgba(56, 189, 248, 0.4);
+.fileTypes-chip-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 64px;
+  color: inherit;
+  opacity: 0.9;
 }
 
-.fileTypes-chip.audio {
-  background: rgba(52, 211, 153, 0.08);
-  color: #34d399;
-  border-color: rgba(52, 211, 153, 0.2);
-}
-.fileTypes-chip.audio:hover {
-  background: rgba(52, 211, 153, 0.14);
-  border-color: rgba(52, 211, 153, 0.4);
+.fileTypes-chip-icon svg {
+  width: 32px;
+  height: 32px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.fileTypes-chip.archive {
-  background: rgba(251, 191, 36, 0.08);
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.2);
+.fileTypes-chip-label {
+  display: block;
+  text-align: center;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.45rem 0.25rem;
+  color: #0f1115;
 }
-.fileTypes-chip.archive:hover {
-  background: rgba(251, 191, 36, 0.14);
-  border-color: rgba(251, 191, 36, 0.4);
-}
+
+/* Category palettes applied to the chip */
+.fileTypes-chip.images        { color: #f472b6; }
+.fileTypes-chip.images:hover  { background: rgba(244, 114, 182, 0.08); border-color: rgba(244, 114, 182, 0.4); }
+.fileTypes-chip.images .fileTypes-chip-label { background: #f472b6; }
+
+.fileTypes-chip.video         { color: #38bdf8; }
+.fileTypes-chip.video:hover   { background: rgba(56, 189, 248, 0.08); border-color: rgba(56, 189, 248, 0.4); }
+.fileTypes-chip.video .fileTypes-chip-label  { background: #38bdf8; }
+
+.fileTypes-chip.audio         { color: #34d399; }
+.fileTypes-chip.audio:hover   { background: rgba(52, 211, 153, 0.08); border-color: rgba(52, 211, 153, 0.4); }
+.fileTypes-chip.audio .fileTypes-chip-label  { background: #34d399; }
+
+.fileTypes-chip.archive       { color: #fbbf24; }
+.fileTypes-chip.archive:hover { background: rgba(251, 191, 36, 0.08); border-color: rgba(251, 191, 36, 0.4); }
+.fileTypes-chip.archive .fileTypes-chip-label { background: #fbbf24; }
 
 /* Bulleted summary list above the grids */
 .fileTypes-summary {
