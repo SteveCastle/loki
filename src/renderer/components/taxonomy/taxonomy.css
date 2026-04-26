@@ -229,7 +229,67 @@
   overflow: auto;
   padding-bottom: 77px;
   height: 100%;
+  /* Block flex items default to min-height: auto (= content size).
+     The virtualized inner div is thousands of px tall, which would
+     otherwise expand this container and disable scrolling. */
+  min-height: 0;
   background-color: #161416;
+}
+
+/* Thin styled scrollbar for the tag containers — invisible by default,
+   fades in on hover. Matches the pattern used in metadata/tags.css. */
+.Taxonomy .tags,
+.Taxonomy .tags.virtualized,
+.Taxonomy .tag-list-view {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 150ms ease;
+}
+
+.Taxonomy .tags:hover,
+.Taxonomy .tags:focus-within,
+.Taxonomy .tags.virtualized:hover,
+.Taxonomy .tags.virtualized:focus-within,
+.Taxonomy .tag-list-view:hover,
+.Taxonomy .tag-list-view:focus-within {
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+/* WebKit / Blink */
+.Taxonomy .tags::-webkit-scrollbar,
+.Taxonomy .tags.virtualized::-webkit-scrollbar,
+.Taxonomy .tag-list-view::-webkit-scrollbar {
+  width: 6px;
+}
+
+.Taxonomy .tags::-webkit-scrollbar-track,
+.Taxonomy .tags.virtualized::-webkit-scrollbar-track,
+.Taxonomy .tag-list-view::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.Taxonomy .tags::-webkit-scrollbar-thumb,
+.Taxonomy .tags.virtualized::-webkit-scrollbar-thumb,
+.Taxonomy .tag-list-view::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+  transition: background 150ms ease;
+}
+
+.Taxonomy .tags:hover::-webkit-scrollbar-thumb,
+.Taxonomy .tags:focus-within::-webkit-scrollbar-thumb,
+.Taxonomy .tags.virtualized:hover::-webkit-scrollbar-thumb,
+.Taxonomy .tags.virtualized:focus-within::-webkit-scrollbar-thumb,
+.Taxonomy .tag-list-view:hover::-webkit-scrollbar-thumb,
+.Taxonomy .tag-list-view:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.Taxonomy .tags::-webkit-scrollbar-thumb:hover,
+.Taxonomy .tags.virtualized::-webkit-scrollbar-thumb:hover,
+.Taxonomy .tag-list-view::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .Taxonomy .tag-list-row {

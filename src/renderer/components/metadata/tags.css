@@ -8,6 +8,41 @@
   margin: 0;
   display: flex;
   flex-wrap: wrap;
+  max-height: 180px;
+  overflow-y: auto;
+  /* Firefox: thin track-less scrollbar that fades in on hover */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 150ms ease;
+}
+
+.Tags ul:hover,
+.Tags ul:focus-within {
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+/* WebKit / Blink */
+.Tags ul::-webkit-scrollbar {
+  width: 6px;
+}
+
+.Tags ul::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.Tags ul::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+  transition: background 150ms ease;
+}
+
+.Tags ul:hover::-webkit-scrollbar-thumb,
+.Tags ul:focus-within::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.Tags ul::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.45);
 }
 
 .Tags li {
@@ -28,6 +63,19 @@
   opacity: 1;
 }
 
+.Tags li.selected {
+  background-color: #5b3a8c;
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px #b794f4;
+}
+
+.Tags li.confirming {
+  background-color: #5a1f1f;
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px #f56565;
+  cursor: default;
+}
+
 .Tags li span {
   margin-right: 12px;
 }
@@ -46,4 +94,37 @@
 
 .Tags li button:hover {
   opacity: 1;
+}
+
+.Tags li .confirm-actions {
+  display: inline-flex;
+  gap: 4px;
+  margin-right: 0;
+}
+
+.Tags li .confirm-actions button {
+  font-size: 11px;
+  font-weight: bold;
+  padding: 0 4px;
+  border-radius: 3px;
+  line-height: 14px;
+  opacity: 1;
+}
+
+.Tags li .confirm-actions button.confirm {
+  background-color: #c53030;
+  color: white;
+}
+
+.Tags li .confirm-actions button.confirm:hover {
+  background-color: #e53e3e;
+}
+
+.Tags li .confirm-actions button.cancel {
+  background-color: #4a4a4a;
+  color: white;
+}
+
+.Tags li .confirm-actions button.cancel:hover {
+  background-color: #6a6a6a;
 }
