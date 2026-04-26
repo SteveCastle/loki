@@ -225,7 +225,15 @@ export default function Taxonomy() {
   const fuse = useMemo(
     () =>
       new Fuse(allTags, {
-        keys: ['label'],
+        // Search the tag's own label and its category name. The label
+        // weight is higher so a direct label match always ranks above a
+        // hit that only matched via the category name (e.g. searching
+        // "Subject" returns every Subject tag, but a Subject tag whose
+        // own label also contains "Subject" lands at the top).
+        keys: [
+          { name: 'label', weight: 2 },
+          { name: 'category', weight: 1 },
+        ],
         threshold: 0.4,
         ignoreLocation: true,
         minMatchCharLength: 1,
