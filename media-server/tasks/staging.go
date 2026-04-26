@@ -56,14 +56,8 @@ func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, sta
 
 	var finalPaths []string
 	for _, localPath := range stagedFiles {
-		// Derive a relative destination key: destPrefix + relative-to-staging
-		rel, err := filepath.Rel(stagingBase, localPath)
-		if err != nil {
-			log.Printf("[uploadStagedFiles] filepath.Rel(%s, %s) error: %v — falling back to Base", stagingBase, localPath, err)
-			rel = filepath.Base(localPath)
-		}
-		destKey := destPrefix + filepath.ToSlash(rel)
-		log.Printf("[uploadStagedFiles] localPath=%s rel=%s destKey=%s", localPath, rel, destKey)
+		destKey := stagedDestKey(localPath, stagingBase, destPrefix)
+		log.Printf("[uploadStagedFiles] localPath=%s destKey=%s", localPath, destKey)
 
 		f, err := os.Open(localPath)
 		if err != nil {
@@ -79,12 +73,7 @@ func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, sta
 		}
 		f.Close()
 
-		// For local backends, store the absolute path so the DB record
-		// works regardless of CWD. S3 backends keep the relative key.
-		storePath := destKey
-		if root.Type == "local" {
-			storePath = filepath.Join(root.Path, filepath.FromSlash(destKey))
-		}
+		storePath := storePathForKey(root, destKey)
 		log.Printf("[uploadStagedFiles] storePath=%s (root.Type=%s root.Path=%s destKey=%s)", storePath, root.Type, root.Path, destKey)
 		finalPaths = append(finalPaths, storePath)
 		q.PushJobStdout(jobID, fmt.Sprintf("Uploaded to storage: %s", storePath))
@@ -100,6 +89,40 @@ func defaultBackend() storage.Backend {
 		return nil
 	}
 	return storageReg.DefaultBackend()
+}
+
+// stagedDestKey computes the relative storage key for a staged file:
+// destPrefix joined with the path of localPath relative to stagingBase, in
+// forward-slash form. Falls back to the basename if the relative path can't
+// be derived.
+func stagedDestKey(localPath, stagingBase, destPrefix string) string {
+	rel, err := filepath.Rel(stagingBase, localPath)
+	if err != nil {
+		log.Printf("[stagedDestKey] filepath.Rel(%s, %s) error: %v — falling back to Base", stagingBase, localPath, err)
+		rel = filepath.Base(localPath)
+	}
+	return destPrefix + filepath.ToSlash(rel)
+}
+
+// storePathForKey converts a destKey into the path that should be persisted
+// in the database for the given backend root. Local backends store absolute
+// filesystem paths; S3 backends store the relative key as-is.
+func storePathForKey(root storage.Entry, destKey string) string {
+	if root.Type == "local" {
+		return filepath.Join(root.Path, filepath.FromSlash(destKey))
+	}
+	return destKey
+}
+
+// stagedToFinalPath predicts the final stored path for a staged file using
+// the default backend, mirroring the behaviour of uploadStagedFiles. When
+// no backend is configured it returns localPath unchanged.
+func stagedToFinalPath(localPath, stagingBase, destPrefix string) string {
+	backend := defaultBackend()
+	if backend == nil {
+		return localPath
+	}
+	return storePathForKey(backend.Root(), stagedDestKey(localPath, stagingBase, destPrefix))
 }
 
 // cleanupStaging removes the staging directory, logging but not failing on error.

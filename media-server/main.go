@@ -136,7 +136,7 @@ func switchDatabase(newDBPath string) error {
 	}
 
 	// Open and ping the new DB first to validate
-	newDB, err := sql.Open("sqlite", newDBPath)
+	newDB, err := sql.Open("sqlite", sqliteDSN(newDBPath))
 	if err != nil {
 		return fmt.Errorf("failed to open new database: %v", err)
 	}
@@ -207,7 +207,7 @@ func initDB() (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to create database directory: %v", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", sqliteDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %v", err)
 	}
