@@ -527,7 +527,7 @@ const VersionInfo: React.FC = React.memo(() => {
     }
   }, []);
 
-  const currentVersion = result?.currentVersion || '2.8.6';
+  const currentVersion = result?.currentVersion || '2.8.7';
 
   return (
     <div className="versionContainer">
