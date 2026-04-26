@@ -2,6 +2,23 @@
   margin: 0.6rem;
 }
 
+/* When rendered inside a list-item overlay, the tag list must not extend
+   beyond the item. The wrapper fills the (already-capped) `.controls`
+   parent and the inner ul gets its scroll cap from 100% of this box,
+   not from the fixed 180px default. */
+.ListItem .Tags {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ListItem .Tags ul {
+  max-height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .Tags ul {
   list-style: none;
   padding: 0;
