@@ -72,9 +72,14 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(enableTagGeneration); // Always visible for metadata panel
+  const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
   const hideSuggestedTags = useSelector(
     libraryService,
     (state) => state.context.settings.hideSuggestedTags
+  );
+  const queryTags = useSelector(
+    libraryService,
+    (state) => (state.context.dbQuery?.tags as string[] | undefined) ?? []
   );
   
   // Reset visibility when item changes (for detail views)
@@ -166,10 +171,21 @@ function Tags({ item, enableTagGeneration = false }: Props) {
       <ul>
         {visibleTags
           .map((tag, idx) => {
+            const liKey = `${tag.tag_label}-${tag.time_stamp || 0}-${idx}`;
+            const isSelected = queryTags.includes(tag.tag_label);
+            const isConfirming = confirmingKey === liKey;
+            const className = [
+              isSelected ? 'selected' : '',
+              isConfirming ? 'confirming' : '',
+            ]
+              .filter(Boolean)
+              .join(' ');
             return (
               <li
-                key={`${tag.tag_label}-${tag.time_stamp || 0}-${idx}`}
+                key={liKey}
+                className={className || undefined}
                 onClick={() => {
+                  if (isConfirming) return; // Don't navigate while confirming
                   libraryService.send({
                     type: 'SET_QUERY_TAG',
                     data: { tag: tag.tag_label },
@@ -223,14 +239,41 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                   </>
                 ) : null}
                 <span>{tag.tag_label}</span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    mutate({ path: item.path, tag });
-                  }}
-                >
-                  ❌
-                </button>
+                {isConfirming ? (
+                  <span className="confirm-actions">
+                    <button
+                      className="confirm"
+                      title="Confirm remove"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmingKey(null);
+                        mutate({ path: item.path, tag });
+                      }}
+                    >
+                      ✓
+                    </button>
+                    <button
+                      className="cancel"
+                      title="Cancel"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmingKey(null);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ) : (
+                  <button
+                    title="Remove tag"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmingKey(liKey);
+                    }}
+                  >
+                    ❌
+                  </button>
+                )}
               </li>
             );
           })}
