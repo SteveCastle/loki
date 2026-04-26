@@ -21,6 +21,7 @@ type Props = {
   isDisabled: boolean;
   tags: Concept[];
   handleEditAction: (tag: string) => void;
+  disableReorder?: boolean;
 };
 
 function TagListRow({
@@ -29,6 +30,7 @@ function TagListRow({
   active,
   handleEditAction,
   isDisabled,
+  disableReorder = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const showTagCount = useSelector(
@@ -49,11 +51,15 @@ function TagListRow({
     return (mouseY || 0) < middleY;
   }
 
-  const [, drag] = useDrag(() => ({
-    collect: (monitor) => ({ isDragging: monitor.isDragging() }),
-    type: 'TAG',
-    item: tag,
-  }));
+  const [, drag] = useDrag(
+    () => ({
+      collect: (monitor) => ({ isDragging: monitor.isDragging() }),
+      type: 'TAG',
+      item: tag,
+      canDrag: () => !disableReorder,
+    }),
+    [tag, disableReorder]
+  );
 
   type DropProps = {
     isOver: boolean;
@@ -64,6 +70,7 @@ function TagListRow({
   const [collectedProps, drop] = useDrop<Concept, unknown, DropProps>(
     () => ({
       accept: ['TAG'],
+      canDrop: () => !disableReorder,
       collect: (monitor) => ({
         isOver: monitor.isOver(),
         isAbove: getIsAbove(monitor, ref),
@@ -88,7 +95,7 @@ function TagListRow({
         updateWeight();
       },
     }),
-    [tag, tags]
+    [tag, tags, disableReorder]
   );
   drag(drop(ref));
 

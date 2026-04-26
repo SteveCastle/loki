@@ -433,13 +433,23 @@
   width: 100%;
 }
 
+/* Match the .menuLabel chip used in other tabs' Setting components: small
+   uppercase pill with the same dark background and border-radius. */
 .CommandPalette .sectionTitle {
-  font-size: 13px;
-  font-weight: 600;
+  background-color: #281c25;
   color: #fff;
-  margin: 0 0 6px 0;
-  padding-bottom: 4px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  margin: 0 0 0.3rem 0.6rem;
+  padding: 0.2rem;
+  font-size: 0.6rem;
+  font-weight: normal;
+  text-transform: uppercase;
+  border-radius: 2px;
+  border-bottom: none;
+  transition: linear 0.2s;
+}
+
+.CommandPalette .storedItemsSection:hover .sectionTitle {
+  background-color: #362531;
 }
 
 .CommandPalette .storedItemsList {
