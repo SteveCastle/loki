@@ -170,6 +170,12 @@
   height: 16px;
   width: 16px;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.Taxonomy .category:hover .actions button,
+.Taxonomy .category.active .actions button {
   opacity: 0.7;
 }
 
@@ -207,6 +213,151 @@
   overflow: auto;
   padding-bottom: 77px;
   height: 100%;
+}
+
+.Taxonomy .tags.virtualized {
+  display: block;
+  flex: 8 1 0;
+  overflow: auto;
+  padding-bottom: 77px;
+  height: 100%;
+}
+
+.Taxonomy .tag-list-view {
+  display: block;
+  flex: 8 1 0;
+  overflow: auto;
+  padding-bottom: 77px;
+  height: 100%;
+  background-color: #161416;
+}
+
+.Taxonomy .tag-list-row {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 96px 0 14px;
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  cursor: pointer;
+  position: relative;
+  font-size: 0.78rem;
+  letter-spacing: 0.1px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.Taxonomy .tag-list-row:hover {
+  background-color: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.Taxonomy .tag-list-row.active {
+  background-color: rgba(110, 90, 140, 0.28);
+  color: #fff;
+  box-shadow: inset 2px 0 0 rgb(150, 110, 180);
+}
+
+.Taxonomy .tag-list-row.active:hover {
+  background-color: rgba(120, 100, 150, 0.34);
+}
+
+.Taxonomy .tag-list-row.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.Taxonomy .tag-list-row .label {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 30px;
+  align-self: center;
+}
+
+.Taxonomy .tag-list-row .actions {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.Taxonomy .tag-list-row .actions > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  background-color: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.55);
+  border-radius: 9px;
+  height: 16px;
+}
+
+.Taxonomy .tag-list-row:hover .actions > span,
+.Taxonomy .tag-list-row.active .actions > span {
+  color: rgba(255, 255, 255, 0.8);
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.Taxonomy .tag-list-row .actions button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.Taxonomy .tag-list-row:hover .actions button,
+.Taxonomy .tag-list-row.active .actions button {
+  opacity: 0.55;
+}
+
+.Taxonomy .tag-list-row .actions button:hover {
+  opacity: 1;
+}
+
+.Taxonomy .tag-list-row .actions button img {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.Taxonomy .tag-list-row.hovered.above::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: rgb(82, 130, 200);
+  z-index: 1;
+}
+
+.Taxonomy .tag-list-row.hovered.below::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: rgb(82, 130, 200);
+  z-index: 1;
 }
 
 .Taxonomy .tag {
@@ -296,11 +447,16 @@
   background: none;
   border: none;
   cursor: pointer;
-  opacity: 0.7;
+  opacity: 0;
+  transition: opacity 0.12s ease;
   padding: 0;
   margin: 0;
   width: 16px;
   height: 16px;
+}
+
+.Taxonomy .tag:hover .actions button {
+  opacity: 0.7;
 }
 
 .Taxonomy .tag .actions button:hover {

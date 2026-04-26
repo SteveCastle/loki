@@ -1,6 +1,7 @@
-import { useState, useContext, useRef, useEffect } from 'react';
+import { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
+import { debounce } from 'lodash';
 import { Tooltip } from 'react-tooltip';
 import { GlobalStateContext } from '../../state';
 import { FilterModeOption, getNextFilterMode } from '../../../settings';
@@ -15,12 +16,16 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 
 import Tag from './tag';
+import VirtualizedTagGrid from './virtualized-tag-grid';
+import TagListView from './tag-list-view';
 import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
 import './taxonomy.css';
 import Category from './category';
 import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
+
+const VIRTUALIZE_THRESHOLD = 300;
 
 type Concept = {
   label: string;
@@ -29,10 +34,13 @@ type Concept = {
   description: string;
 };
 
+type TagViewMode = 'card' | 'list';
+
 type Category = {
   label: string;
   tags: Concept[];
   description: string;
+  tagViewMode?: TagViewMode;
 };
 
 type Taxonomy = {
@@ -100,7 +108,25 @@ export default function Taxonomy() {
     }
   }, [textFilter]);
 
+  // Two-tier search state: tagFilterInput updates on every keystroke so the
+  // input feels responsive; tagFilter is the debounced value that drives the
+  // (potentially expensive) filter+sort over many tags.
+  const [tagFilterInput, setTagFilterInput] = useState<string>('');
   const [tagFilter, setTagFilter] = useState<string>('');
+  const debouncedSetTagFilter = useRef(
+    debounce((value: string) => {
+      setTagFilter(value);
+    }, 300)
+  );
+  useEffect(() => {
+    debouncedSetTagFilter.current(tagFilterInput);
+  }, [tagFilterInput]);
+  useEffect(() => {
+    const debounced = debouncedSetTagFilter.current;
+    return () => {
+      debounced.cancel();
+    };
+  }, []);
 
   const [addingTag, setAddingTag] = useState<boolean>(false);
   const [addingCategory, setAddingCategory] = useState<boolean>(false);
@@ -123,21 +149,42 @@ export default function Taxonomy() {
       data: { category },
     });
   }
+
+  // User-initiated category click: clears any active search before switching
+  // categories so the picked category is what the user actually sees.
+  function handleCategoryClick(category: string) {
+    if (tagFilterInput || tagFilter) {
+      setTagFilterInput('');
+      setTagFilter('');
+      debouncedSetTagFilter.current.cancel();
+    }
+    setActiveCategory(category);
+  }
   const { data: taxonomy } = useQuery<Taxonomy, Error>(
     ['taxonomy', initSessionId],
     loadTaxonomy
   );
 
-  // Ensure activeCategory is valid; if not, reset to the first available category
+  // Ensure activeCategory is valid; if not, reset to the first available category.
+  // Suspended while a search is active — during search no category should be selected.
   useEffect(() => {
     if (!taxonomy) return;
+    if (tagFilter) return;
     const categories = Object.values(taxonomy || {});
     if (categories.length === 0) return;
     const exists = categories.some((c) => c.label === activeCategory);
     if (!exists) {
       setActiveCategory(categories[0].label);
     }
-  }, [taxonomy, activeCategory]);
+  }, [taxonomy, activeCategory, tagFilter]);
+
+  // When a search becomes active, clear the active category — the user is now
+  // searching across categories, not viewing one.
+  useEffect(() => {
+    if (tagFilter) {
+      setActiveCategory('');
+    }
+  }, [tagFilter]);
 
   // Given every Category is 20 pixels tall, this will scroll to the active category
   // when it is not visible in the list by setting the scrollTop of the categoryListRef
@@ -153,6 +200,32 @@ export default function Taxonomy() {
     }
   }
 
+  const tags = useMemo(() => {
+    if (!taxonomy) return [] as Concept[];
+    return Object.values(taxonomy)
+      .reduce((acc, category) => {
+        return [...acc, ...category.tags];
+      }, [] as Concept[])
+      .filter((tag) => {
+        if (tagFilter) {
+          return (
+            tag.label &&
+            tag.label.toLowerCase().includes(tagFilter.toLowerCase())
+          );
+        } else {
+          return tag.category && tag.category === activeCategory;
+        }
+      })
+      .sort((a, b) => {
+        if (tagFilter) {
+          return a.label.localeCompare(b.label, undefined, {
+            sensitivity: 'base',
+          });
+        }
+        return a.weight - b.weight;
+      });
+  }, [taxonomy, tagFilter, activeCategory]);
+
   if (!taxonomy || state.matches('loadingDB') || state.matches('selectingDB')) {
     return (
       <div className={`Placeholder`}>
@@ -164,22 +237,6 @@ export default function Taxonomy() {
       </div>
     );
   }
-  const tags = Object.values(taxonomy)
-    .reduce((acc, category) => {
-      return [...acc, ...category.tags];
-    }, [] as Concept[])
-    .filter((tag) => {
-      if (tagFilter) {
-        return (
-          tag.label && tag.label.toLowerCase().includes(tagFilter.toLowerCase())
-        );
-      } else {
-        return tag.category && tag.category === activeCategory;
-      }
-    })
-    .sort((a, b) => {
-      return a.weight - b.weight;
-    });
   return (
     <>
       <div
@@ -207,19 +264,21 @@ export default function Taxonomy() {
             <input
               type="text"
               placeholder="Search Tags"
-              value={tagFilter}
+              value={tagFilterInput}
               onKeyDown={(e) => {
                 e.stopPropagation();
               }}
               onKeyUp={(e) => {
                 e.stopPropagation();
               }}
-              onChange={(e) => setTagFilter(e.currentTarget.value)}
+              onChange={(e) => setTagFilterInput(e.currentTarget.value)}
             />
             <button
               className="clear-search"
               onClick={() => {
+                setTagFilterInput('');
                 setTagFilter('');
+                debouncedSetTagFilter.current.cancel();
                 setEditingTag(null);
               }}
             >
@@ -293,7 +352,7 @@ export default function Taxonomy() {
                   key={category.label}
                   category={category}
                   activeCategory={activeCategory}
-                  setActiveCategory={setActiveCategory}
+                  setActiveCategory={handleCategoryClick}
                   handleEditAction={setEditingCategory}
                 />
               );
@@ -305,26 +364,54 @@ export default function Taxonomy() {
             <div className="tag-label">+</div>
           </div>
         )}
-        <div className={`tags`}>
-          {activeCategory || tagFilter
-            ? tags.map((tag: Concept) => {
-                return (
-                  <Tag
-                    isDisabled={isDisabled}
-                    tags={tags}
-                    tag={{
-                      label: tag.label,
-                      weight: tag.weight,
-                      category: tag.category,
-                    }}
-                    active={selectedTags.includes(tag.label)}
-                    handleEditAction={setEditingTag}
-                    key={tag.label}
-                  />
-                );
-              })
-            : null}
-        </div>
+        {(() => {
+          if (!(activeCategory || tagFilter)) {
+            return <div className={`tags`} />;
+          }
+          // Search results span categories — always use card style.
+          // For an active category, honour its persisted tagViewMode.
+          const activeViewMode: TagViewMode = tagFilter
+            ? 'card'
+            : (taxonomy?.[activeCategory]?.tagViewMode as TagViewMode) || 'card';
+          if (activeViewMode === 'list') {
+            return (
+              <TagListView
+                tags={tags}
+                selectedTags={selectedTags}
+                isDisabled={isDisabled}
+                handleEditAction={setEditingTag}
+              />
+            );
+          }
+          if (tags.length > VIRTUALIZE_THRESHOLD) {
+            return (
+              <VirtualizedTagGrid
+                tags={tags}
+                selectedTags={selectedTags}
+                isDisabled={isDisabled}
+                handleEditAction={setEditingTag}
+              />
+            );
+          }
+          return (
+            <div className={`tags`}>
+              {tags.map((tag: Concept) => (
+                <Tag
+                  isDisabled={isDisabled}
+                  tags={tags}
+                  tag={{
+                    label: tag.label,
+                    weight: tag.weight,
+                    category: tag.category,
+                  }}
+                  active={selectedTags.includes(tag.label)}
+                  handleEditAction={setEditingTag}
+                  key={tag.label}
+                />
+              ))}
+            </div>
+          );
+        })()}
       </div>
       {activeCategory && addingTag ? (
         <NewTagModal
@@ -357,6 +444,9 @@ export default function Taxonomy() {
           currentValue={editingCategory}
           currentDescription={
             taxonomy?.[editingCategory]?.description || ''
+          }
+          currentTagViewMode={
+            (taxonomy?.[editingCategory]?.tagViewMode as TagViewMode) || 'card'
           }
         />
       ) : null}

@@ -361,6 +361,7 @@ const getInitialContext = (): LibraryState => {
     ['playSound', false],
     ['followTranscript', true],
     ['showTags', 'all'],
+    ['hideSuggestedTags', false],
     ['showFileInfo', 'none'],
     ['showControls', false],
     ['gridSize', [4, 4]],
@@ -482,6 +483,7 @@ const getInitialContext = (): LibraryState => {
       playSound: batched['playSound'] as boolean,
       followTranscript: batched['followTranscript'] as boolean,
       showTags: batched['showTags'] as 'all' | 'list' | 'detail' | 'none',
+      hideSuggestedTags: batched['hideSuggestedTags'] as boolean,
       showFileInfo: batched['showFileInfo'] as
         | 'all'
         | 'list'

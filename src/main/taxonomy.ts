@@ -14,6 +14,7 @@ const loadTaxonomy = (db: Database) => async () => {
     c.label AS category_label,
     c.weight AS category_weight,
     c.description AS category_description,
+    c.tag_view_mode AS category_tag_view_mode,
     json_group_array(
       json_object(
         'label', t.label,
@@ -31,6 +32,7 @@ const loadTaxonomy = (db: Database) => async () => {
         label: category.category_label,
         weight: category.category_weight,
         description: category.category_description || '',
+        tagViewMode: category.category_tag_view_mode || 'card',
         tags: JSON.parse(category.tags),
       };
     });
@@ -502,6 +504,17 @@ const updateCategoryDescription =
     ]);
   };
 
+type UpdateCategoryTagViewModeInput = [string, string];
+const updateCategoryTagViewMode =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: UpdateCategoryTagViewModeInput) => {
+    const [label, mode] = args;
+    await db.run(`UPDATE category SET tag_view_mode = $1 WHERE label = $2`, [
+      mode,
+      label,
+    ]);
+  };
+
 type ApplyEloOrderingInput = [string];
 const applyEloOrdering =
   (db: Database) =>
@@ -702,6 +715,7 @@ export {
   removeTimestamp,
   updateTagDescription,
   updateCategoryDescription,
+  updateCategoryTagViewMode,
   applyEloOrdering,
   consolidateTagFiles,
   consolidateCategoryFiles,

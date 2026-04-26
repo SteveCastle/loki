@@ -200,6 +200,7 @@ export async function initDB(db: Database) {
     const tableInfo = await db.all(`PRAGMA table_info(category)`);
     const columnsToMigrate = [
       { name: 'description', type: 'TEXT' },
+      { name: 'tag_view_mode', type: 'TEXT' },
     ];
     for (const column of columnsToMigrate) {
       const columnExists = tableInfo.some(

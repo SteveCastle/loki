@@ -17,6 +17,10 @@ import './context-palette.css';
 type ActionDef = {
   label: string;
   command: (query64: string) => string;
+  // When true and the current context is a folder (pathdir query), append
+  // `tagcount:<3` to the query before base64 encoding so already-tagged
+  // media are skipped.
+  skipTaggedInFolder?: boolean;
 };
 
 type ActionGroup = {
@@ -45,6 +49,7 @@ const ACTION_GROUPS: ActionGroup[] = [
       {
         label: 'Generate',
         command: (q) => `autotag --query64=${q}`,
+        skipTaggedInFolder: true,
       },
       {
         label: 'Regenerate',
@@ -544,15 +549,27 @@ export default function ContextPalette() {
   const itemCount = target.type === 'file' ? 1 : items.length;
   const contextLabel = buildLabel(target, libraryCtx);
   const queryString = buildQuery(target, libraryCtx);
-  const query64 = btoa(
-    new TextEncoder()
-      .encode(queryString)
-      .reduce((s, b) => s + String.fromCharCode(b), ''),
-  );
+  const isFolderContext =
+    target.type === 'library' &&
+    !(currentStateType === 'db' && dbQuery.tags.length > 0) &&
+    !(currentStateType === 'search' && textFilter);
+  const encodeQuery64 = (q: string) =>
+    btoa(
+      new TextEncoder()
+        .encode(q)
+        .reduce((s, b) => s + String.fromCharCode(b), ''),
+    );
+  const query64 = encodeQuery64(queryString);
 
   // Action handler
   const handleAction = async (action: ActionDef) => {
-    const input = action.command(query64);
+    const effectiveQuery =
+      action.skipTaggedInFolder && isFolderContext
+        ? `${queryString} tagcount:<3`
+        : queryString;
+    const effectiveQuery64 =
+      effectiveQuery === queryString ? query64 : encodeQuery64(effectiveQuery);
+    const input = action.command(effectiveQuery64);
     try {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;

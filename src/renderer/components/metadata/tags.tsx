@@ -1,4 +1,5 @@
 import { useContext, memo, useRef, useEffect, useState } from 'react';
+import { useSelector } from '@xstate/react';
 import { invoke } from '../../platform';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
@@ -71,6 +72,10 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(enableTagGeneration); // Always visible for metadata panel
+  const hideSuggestedTags = useSelector(
+    libraryService,
+    (state) => state.context.settings.hideSuggestedTags
+  );
   
   // Reset visibility when item changes (for detail views)
   useEffect(() => {
@@ -150,10 +155,16 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   
   if (isLoading || !data) return <div ref={containerRef} className={`Tags`} />;
   if (error) return <div ref={containerRef} className={`Tags`}><p>{error.message}</p></div>;
+  const visibleTags = (data.tags || []).filter((tag) => {
+    if (!enableTagGeneration && hideSuggestedTags && tag.category_label === 'Suggested') {
+      return false;
+    }
+    return true;
+  });
   return (
     <div ref={containerRef} className={`Tags`}>
       <ul>
-        {(data.tags || [])
+        {visibleTags
           .map((tag, idx) => {
             return (
               <li
