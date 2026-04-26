@@ -395,6 +395,9 @@ export default function Taxonomy() {
           const activeViewMode: TagViewMode = tagFilter
             ? 'card'
             : (taxonomy?.[activeCategory]?.tagViewMode as TagViewMode) || 'card';
+          // Reordering by drag is meaningless when results are sorted by
+          // search relevance — disable DnD while a search is active.
+          const disableReorder = !!tagFilter;
           if (activeViewMode === 'list') {
             return (
               <TagListView
@@ -402,6 +405,7 @@ export default function Taxonomy() {
                 selectedTags={selectedTags}
                 isDisabled={isDisabled}
                 handleEditAction={setEditingTag}
+                disableReorder={disableReorder}
               />
             );
           }
@@ -427,6 +431,7 @@ export default function Taxonomy() {
                         selectedTags={selectedTags}
                         isDisabled={isDisabled}
                         handleEditAction={setEditingTag}
+                        disableReorder={disableReorder}
                       />
                     </div>
                   )}
@@ -437,6 +442,7 @@ export default function Taxonomy() {
                       selectedTags={selectedTags}
                       isDisabled={isDisabled}
                       handleEditAction={setEditingTag}
+                      disableReorder={disableReorder}
                     />
                   </div>
                 </div>
@@ -453,6 +459,7 @@ export default function Taxonomy() {
                 selectedTags={selectedTags}
                 isDisabled={isDisabled}
                 handleEditAction={setEditingTag}
+                disableReorder={disableReorder}
               />
             );
           }
@@ -469,6 +476,7 @@ export default function Taxonomy() {
                   }}
                   active={selectedTags.includes(tag.label)}
                   handleEditAction={setEditingTag}
+                  disableReorder={disableReorder}
                   key={tag.label}
                 />
               ))}

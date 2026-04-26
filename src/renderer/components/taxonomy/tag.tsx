@@ -25,6 +25,7 @@ type Props = {
   isDisabled: boolean;
   tags: Concept[];
   handleEditAction: (tag: string) => void;
+  disableReorder?: boolean;
 };
 
 const fetchTagPreviewFn = (tag: string) => async (): Promise<string> => {
@@ -38,6 +39,7 @@ export default function Tag({
   active,
   handleEditAction,
   isDisabled,
+  disableReorder = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const showTagCount = useSelector(
@@ -64,14 +66,18 @@ export default function Tag({
     return isLeft;
   }
 
-  const [{ isDragging, offset }, drag, dragPreview] = useDrag(() => ({
-    collect: (monitor) => ({
-      isDragging: monitor.isDragging(),
-      offset: monitor.getClientOffset(),
+  const [{ isDragging, offset }, drag, dragPreview] = useDrag(
+    () => ({
+      collect: (monitor) => ({
+        isDragging: monitor.isDragging(),
+        offset: monitor.getClientOffset(),
+      }),
+      type: 'TAG',
+      item: tag,
+      canDrag: () => !disableReorder,
     }),
-    type: 'TAG',
-    item: tag,
-  }));
+    [tag, disableReorder]
+  );
 
   type DropProps = {
     isOver: boolean;
@@ -83,6 +89,7 @@ export default function Tag({
   const [collectedProps, drop] = useDrop<Concept, unknown, DropProps>(
     () => ({
       accept: ['TAG', NativeTypes.FILE],
+      canDrop: () => !disableReorder,
       collect: (monitor) => ({
         isOver: monitor.isOver(),
         isLeft: getIsLeft(monitor, ref),
@@ -113,7 +120,7 @@ export default function Tag({
         updateWeight();
       },
     }),
-    [tag]
+    [tag, disableReorder]
   );
   drag(drop(ref));
   return (

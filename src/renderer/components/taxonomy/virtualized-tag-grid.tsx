@@ -14,6 +14,7 @@ type Props = {
   selectedTags: string[];
   isDisabled: boolean;
   handleEditAction: (tag: string) => void;
+  disableReorder?: boolean;
 };
 
 const MIN_COLUMN_WIDTH = 100;
@@ -25,6 +26,7 @@ export default function VirtualizedTagGrid({
   selectedTags,
   isDisabled,
   handleEditAction,
+  disableReorder = false,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const { width } = useComponentSize(parentRef);
@@ -82,6 +84,7 @@ export default function VirtualizedTagGrid({
                   active={selectedTags.includes(tag.label)}
                   isDisabled={isDisabled}
                   handleEditAction={handleEditAction}
+                  disableReorder={disableReorder}
                 />
               );
             })}

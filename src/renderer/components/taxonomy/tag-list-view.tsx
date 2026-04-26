@@ -13,6 +13,7 @@ type Props = {
   selectedTags: string[];
   isDisabled: boolean;
   handleEditAction: (tag: string) => void;
+  disableReorder?: boolean;
 };
 
 const ROW_HEIGHT = 30;
@@ -22,6 +23,7 @@ export default function TagListView({
   selectedTags,
   isDisabled,
   handleEditAction,
+  disableReorder = false,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -62,6 +64,7 @@ export default function TagListView({
                 active={selectedTags.includes(tag.label)}
                 isDisabled={isDisabled}
                 handleEditAction={handleEditAction}
+                disableReorder={disableReorder}
               />
             </div>
           );
