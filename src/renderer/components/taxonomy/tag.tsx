@@ -74,9 +74,8 @@ export default function Tag({
       }),
       type: 'TAG',
       item: tag,
-      canDrag: () => !disableReorder,
     }),
-    [tag, disableReorder]
+    [tag]
   );
 
   type DropProps = {

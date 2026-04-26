@@ -56,9 +56,8 @@ function TagListRow({
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
       type: 'TAG',
       item: tag,
-      canDrag: () => !disableReorder,
     }),
-    [tag, disableReorder]
+    [tag]
   );
 
   type DropProps = {
