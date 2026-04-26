@@ -699,6 +699,7 @@ func lokiTaxonomyHandler(deps *Dependencies) http.HandlerFunc {
 			SELECT
 				c.label AS category_label,
 				c.weight AS category_weight,
+				COALESCE(c.tag_view_mode, '') AS category_tag_view_mode,
 				COALESCE(t.label, '') AS tag_label,
 				COALESCE(t.category_label, '') AS tag_category,
 				COALESCE(t.weight, 0) AS tag_weight
@@ -717,22 +718,27 @@ func lokiTaxonomyHandler(deps *Dependencies) http.HandlerFunc {
 			Weight   float64 `json:"weight"`
 		}
 		type categoryInfo struct {
-			Label  string    `json:"label"`
-			Weight float64   `json:"weight"`
-			Tags   []tagInfo `json:"tags"`
+			Label       string    `json:"label"`
+			Weight      float64   `json:"weight"`
+			TagViewMode string    `json:"tagViewMode"`
+			Tags        []tagInfo `json:"tags"`
 		}
 
 		catMap := make(map[string]*categoryInfo)
 		catOrder := []string{}
 
 		for rows.Next() {
-			var catLabel, tagLabel, tagCategory string
+			var catLabel, catTagViewMode, tagLabel, tagCategory string
 			var catWeight, tagWeight float64
-			rows.Scan(&catLabel, &catWeight, &tagLabel, &tagCategory, &tagWeight)
+			rows.Scan(&catLabel, &catWeight, &catTagViewMode, &tagLabel, &tagCategory, &tagWeight)
 
 			cat, exists := catMap[catLabel]
 			if !exists {
-				cat = &categoryInfo{Label: catLabel, Weight: catWeight, Tags: []tagInfo{}}
+				mode := catTagViewMode
+				if mode == "" {
+					mode = "card"
+				}
+				cat = &categoryInfo{Label: catLabel, Weight: catWeight, TagViewMode: mode, Tags: []tagInfo{}}
 				catMap[catLabel] = cat
 				catOrder = append(catOrder, catLabel)
 			}
@@ -962,6 +968,31 @@ func lokiRenameCategoryHandler(deps *Dependencies) http.HandlerFunc {
 		tx.Exec("UPDATE tag SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label)
 		tx.Exec("UPDATE media_tag_by_category SET category_label = ? WHERE category_label = ?", req.NewLabel, req.Label)
 		tx.Commit()
+		writeJSON(w, map[string]string{})
+	}
+}
+
+func lokiUpdateCategoryTagViewModeHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Label string `json:"label"`
+			Mode  string `json:"mode"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if req.Label == "" {
+			httpError(w, "missing label", http.StatusBadRequest)
+			return
+		}
+		if _, err := deps.DB.Exec(
+			"UPDATE category SET tag_view_mode = ? WHERE label = ?",
+			req.Mode, req.Label,
+		); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, map[string]string{})
 	}
 }
