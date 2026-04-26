@@ -17,7 +17,6 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 
 import Tag from './tag';
-import TagListRow from './tag-list-row';
 import VirtualizedTagGrid from './virtualized-tag-grid';
 import TagListView from './tag-list-view';
 import NewTagModal from './new-tag-modal';
@@ -28,6 +27,11 @@ import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
 
 const VIRTUALIZE_THRESHOLD = 300;
+// Hard cap on search results. Each rendered <Tag> fires an IPC call to
+// fetch its preview, so an unbounded match list (e.g. 1-char query against
+// a 50k-tag library) used to flood the renderer + main process and freeze
+// the app. Fuse still ranks across the full set; we only render the top N.
+const MAX_SEARCH_RESULTS = 200;
 
 type Concept = {
   label: string;
@@ -203,11 +207,18 @@ export default function Taxonomy() {
   }
 
   // Flat list of every tag in the taxonomy. Built once per taxonomy load
-  // so the Fuse index can be reused across keystrokes.
+  // so the Fuse index can be reused across keystrokes. Defensive filter
+  // drops tags without a label — Fuse and the row components both assume
+  // a non-empty string and would otherwise throw when one slips in.
   const allTags = useMemo(() => {
     if (!taxonomy) return [] as Concept[];
     return Object.values(taxonomy).reduce((acc, category) => {
-      return [...acc, ...category.tags];
+      for (const t of category.tags) {
+        if (t && typeof t.label === 'string' && t.label.length > 0) {
+          acc.push(t);
+        }
+      }
+      return acc;
     }, [] as Concept[]);
   }, [taxonomy]);
 
@@ -226,8 +237,11 @@ export default function Taxonomy() {
     if (!taxonomy) return [] as Concept[];
     if (tagFilter) {
       // Fuzzy match across all categories. Fuse returns results pre-sorted
-      // by relevance (best match first).
-      return fuse.search(tagFilter).map((r) => r.item);
+      // by relevance (best match first). Cap at MAX_SEARCH_RESULTS so a
+      // pathological query can't render thousands of cards at once.
+      return fuse
+        .search(tagFilter, { limit: MAX_SEARCH_RESULTS })
+        .map((r) => r.item);
     }
     return allTags
       .filter((tag) => tag.category && tag.category === activeCategory)
@@ -393,7 +407,9 @@ export default function Taxonomy() {
           }
           // Blended search view: when there are matches in the Suggested
           // category, render non-Suggested results as cards on top and
-          // Suggested results as a compact list below.
+          // Suggested results as a compact list below. Both sections are
+          // virtualized — `<Tag>` triggers an IPC preview fetch on mount,
+          // so rendering all matches at once would saturate the IPC layer.
           if (tagFilter) {
             const suggestedTags = tags.filter(
               (t: Concept) => t.category === 'Suggested'
@@ -405,43 +421,32 @@ export default function Taxonomy() {
               return (
                 <div className="tags-blended">
                   {mainTags.length > 0 && (
-                    <div className="tags-grid-inline">
-                      {mainTags.map((tag: Concept) => (
-                        <Tag
-                          isDisabled={isDisabled}
-                          tags={mainTags}
-                          tag={{
-                            label: tag.label,
-                            weight: tag.weight,
-                            category: tag.category,
-                          }}
-                          active={selectedTags.includes(tag.label)}
-                          handleEditAction={setEditingTag}
-                          key={tag.label}
-                        />
-                      ))}
+                    <div className="tags-blended-cards">
+                      <VirtualizedTagGrid
+                        tags={mainTags}
+                        selectedTags={selectedTags}
+                        isDisabled={isDisabled}
+                        handleEditAction={setEditingTag}
+                      />
                     </div>
                   )}
                   <div className="suggested-section">
                     <div className="suggested-heading">Suggested</div>
-                    <div className="suggested-list">
-                      {suggestedTags.map((tag: Concept) => (
-                        <TagListRow
-                          key={tag.label}
-                          tag={tag}
-                          tags={suggestedTags}
-                          active={selectedTags.includes(tag.label)}
-                          isDisabled={isDisabled}
-                          handleEditAction={setEditingTag}
-                        />
-                      ))}
-                    </div>
+                    <TagListView
+                      tags={suggestedTags}
+                      selectedTags={selectedTags}
+                      isDisabled={isDisabled}
+                      handleEditAction={setEditingTag}
+                    />
                   </div>
                 </div>
               );
             }
           }
-          if (tags.length > VIRTUALIZE_THRESHOLD) {
+          // Virtualize whenever searching (results can be large and each
+          // <Tag> mounts an IPC preview fetch), or when browsing a
+          // category that exceeds the static threshold.
+          if (tagFilter || tags.length > VIRTUALIZE_THRESHOLD) {
             return (
               <VirtualizedTagGrid
                 tags={tags}
