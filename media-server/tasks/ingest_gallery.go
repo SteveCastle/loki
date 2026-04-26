@@ -191,6 +191,29 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Download completed: %d files added to database", len(insertedFiles)))
 
+	// Tag inserted files using the tags found in their JSON sidecars (if any).
+	// The sidecars only exist on local disk under stagingPath until the deferred
+	// cleanupStaging runs, so this must happen before the function returns.
+	if len(insertedFiles) > 0 {
+		insertedSet := make(map[string]struct{}, len(insertedFiles))
+		for _, p := range insertedFiles {
+			insertedSet[p] = struct{}{}
+		}
+		finalToSidecar := make(map[string]string)
+		for _, mediaStaging := range downloadedFiles {
+			predictedFinal := stagedToFinalPath(mediaStaging, stagingPath, "downloads/")
+			if _, ok := insertedSet[predictedFinal]; !ok {
+				continue
+			}
+			sidecar := mediaStaging + ".json"
+			if _, err := os.Stat(sidecar); err != nil {
+				continue
+			}
+			finalToSidecar[predictedFinal] = sidecar
+		}
+		applySidecarTagsToMedia(q.Db, q, j.ID, finalToSidecar)
+	}
+
 	// Apply tags to downloaded files
 	if len(opts.Tags) > 0 {
 		applyIngestTags(q.Db, j.ID, q, insertedFiles, opts.Tags)
