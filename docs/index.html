@@ -116,7 +116,7 @@
             Support on Patreon
           </a>
         </p>
-        <p class="version">Version 2.8.7</p>
+        <p class="version">Version 2.8.8</p>
         <div class="header-links">
           <a href="./v1/" target="_blank" class="v1">V1 Docs</a>
           <a
@@ -884,7 +884,7 @@
 
       const el = document.getElementById('downloadButton');
       const RELEASE_BASE =
-        'https://github.com/SteveCastle/loki/releases/download/v2.8.7/';
+        'https://github.com/SteveCastle/loki/releases/download/v2.8.8/';
       const RELEASES_PAGE =
         'https://github.com/SteveCastle/loki/releases/latest';
       const platform = window.navigator.platform || '';
@@ -894,14 +894,14 @@
       let label = 'Download | Free';
 
       if (/Win/i.test(platform) || /Windows/i.test(ua)) {
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer.Setup.2.8.7.exe';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer.Setup.2.8.8.exe';
         label = 'Download | Free for Windows';
       } else if (/Mac/i.test(platform) || /Mac OS/i.test(ua)) {
         // Default to Apple Silicon; Intel Macs can grab the x64 .dmg from the releases page.
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.8.7-arm64.dmg';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.8.8-arm64.dmg';
         label = 'Download | Free for Mac';
       } else if (/Linux/i.test(platform) || /Linux/i.test(ua)) {
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.8.7.AppImage';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.8.8.AppImage';
         label = 'Download | Free for Linux';
       }
 

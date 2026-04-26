@@ -1,6 +1,6 @@
 {
   "name": "loki",
-  "version": "2.8.7",
+  "version": "2.8.8",
   "type": "commonjs",
   "productName": "Lowkey Media Viewer",
   "description": "A Media library for quick curation.",
