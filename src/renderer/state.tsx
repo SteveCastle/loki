@@ -2447,6 +2447,60 @@ const libraryMachine = createMachine(
                   },
                 ],
               },
+              // Remove a single tag from the active query. Falls back to
+              // CLEAR semantics (restoring the previous library) when the
+              // last tag is removed; otherwise reloads against the
+              // remaining tag set.
+              REMOVE_QUERY_TAG: [
+                {
+                  cond: (context, event) => {
+                    const remaining = (context.dbQuery.tags || []).filter(
+                      (t) => t !== event.data.tag
+                    );
+                    return remaining.length > 0;
+                  },
+                  target: 'loadingFromDB',
+                  actions: [
+                    assign<LibraryState, AnyEventObject>({
+                      previousLibrary: (context) => context.library,
+                      previousCursor: (context) => context.cursor,
+                      previousStateType: (context) => context.currentStateType,
+                      previousTextFilter: (context) => context.textFilter,
+                      previousDbQuery: (context) => ({ ...context.dbQuery }),
+                      dbQuery: (context, event) => ({
+                        tags: (context.dbQuery.tags || []).filter(
+                          (t) => t !== event.data.tag
+                        ),
+                      }),
+                    }),
+                    (context, event) => {
+                      const newTags = (context.dbQuery.tags || []).filter(
+                        (t) => t !== event.data.tag
+                      );
+                      updatePersistedState({
+                        ...context,
+                        dbQuery: { tags: newTags },
+                      });
+                      clearSessionKeys(['library', 'cursor']);
+                    },
+                  ],
+                },
+                {
+                  target: 'loadingFromPreviousLibrary',
+                  actions: [
+                    assign<LibraryState, AnyEventObject>({
+                      dbQuery: () => ({ tags: [] }),
+                    }),
+                    (context) => {
+                      updatePersistedState({
+                        ...context,
+                        dbQuery: { tags: [] },
+                      });
+                      clearSessionKeys(['library', 'cursor']);
+                    },
+                  ],
+                },
+              ],
               SET_TEXT_FILTER: {
                 target: 'loadingFromSearch',
                 actions: [

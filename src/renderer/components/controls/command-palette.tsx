@@ -118,6 +118,7 @@ interface ListContextDisplayProps {
   textFilter: string;
   tags: string[];
   activeDirectory: string;
+  libraryService: any;
 }
 interface SettingsListProps {
   filterType: 'image' | 'general' | 'autoplay' | 'listView';
@@ -323,15 +324,63 @@ const MenuBar: React.FC<MenuBarProps> = React.memo(
 MenuBar.displayName = 'MenuBar'; // Add display name
 
 const ListContextDisplay: React.FC<ListContextDisplayProps> = React.memo(
-  ({ textFilter, tags, activeDirectory }) => {
-    const displayContent = useMemo(() => {
-      if (textFilter) return textFilter;
-      if (Array.isArray(tags) && tags.length > 0) return tags.join(', ');
-      return getDirectory(activeDirectory);
-    }, [textFilter, tags, activeDirectory]);
+  ({ textFilter, tags, activeDirectory, libraryService }) => {
+    const hasTextFilter = !!textFilter;
+    const hasTags = Array.isArray(tags) && tags.length > 0;
+
+    if (hasTextFilter) {
+      return (
+        <span className="listContext">
+          <span className="contextPill contextPill--search">
+            <span className="contextPill__prefix">Search</span>
+            <span className="contextPill__label">{textFilter}</span>
+            <button
+              type="button"
+              className="contextPill__remove"
+              title="Clear search"
+              onClick={() =>
+                libraryService.send({
+                  type: 'SET_TEXT_FILTER',
+                  data: { textFilter: '' },
+                })
+              }
+            >
+              ×
+            </button>
+          </span>
+        </span>
+      );
+    }
+
+    if (hasTags) {
+      return (
+        <span className="listContext">
+          {tags.map((tag) => (
+            <span key={tag} className="contextPill contextPill--tag">
+              <span className="contextPill__label">{tag}</span>
+              <button
+                type="button"
+                className="contextPill__remove"
+                title={`Remove ${tag}`}
+                onClick={() =>
+                  libraryService.send({
+                    type: 'REMOVE_QUERY_TAG',
+                    data: { tag },
+                  })
+                }
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </span>
+      );
+    }
 
     return (
-      <span className="listContext">{displayContent || 'No Context'}</span>
+      <span className="listContext">
+        {getDirectory(activeDirectory) || 'No Context'}
+      </span>
     );
   }
 );
@@ -838,6 +887,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
     textFilter,
     tags,
     activeDirectory,
+    libraryService,
   };
 
   const menuContentAreaProps: Omit<
