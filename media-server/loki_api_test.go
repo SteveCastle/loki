@@ -24,7 +24,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 	stmts := []string{
 		`CREATE TABLE category (
 			label TEXT PRIMARY KEY,
-			weight REAL
+			weight REAL,
+			description TEXT,
+			tag_view_mode TEXT
 		)`,
 		`CREATE TABLE tag (
 			label TEXT PRIMARY KEY,

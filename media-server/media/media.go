@@ -1570,12 +1570,19 @@ func InitializeSchema(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS category (
 			label TEXT PRIMARY KEY,
-			weight REAL
+			weight REAL,
+			description TEXT,
+			tag_view_mode TEXT
 		)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create category table: %w", err)
 	}
+
+	// Idempotent migrations for older databases that pre-date these columns.
+	// Errors are ignored — they fire when the column already exists.
+	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN description TEXT`)
+	_, _ = db.Exec(`ALTER TABLE category ADD COLUMN tag_view_mode TEXT`)
 
 	// Create tag table
 	_, err = db.Exec(`

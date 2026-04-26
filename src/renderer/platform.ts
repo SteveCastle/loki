@@ -174,6 +174,11 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'PUT',
       argsToBody: (args) => ({ label: args[0], newLabel: args[1] }),
     },
+    'update-category-tag-view-mode': {
+      url: '/api/categories/tag-view-mode',
+      method: 'PUT',
+      argsToBody: (args) => ({ label: args[0], mode: args[1] }),
+    },
     'delete-category': {
       url: '/api/categories',
       method: 'DELETE',
