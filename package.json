@@ -110,6 +110,7 @@
     "electron-log": "^5.4.3",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.6.2",
+    "fuse.js": "^7.3.0",
     "hls.js": "^1.6.15",
     "js-base64": "^3.7.8",
     "lodash": "^4.17.21",

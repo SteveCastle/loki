@@ -2,6 +2,7 @@ import { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { debounce } from 'lodash';
+import Fuse from 'fuse.js';
 import { Tooltip } from 'react-tooltip';
 import { GlobalStateContext } from '../../state';
 import { FilterModeOption, getNextFilterMode } from '../../../settings';
@@ -16,6 +17,7 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import 'react-loading-skeleton/dist/skeleton.css';
 
 import Tag from './tag';
+import TagListRow from './tag-list-row';
 import VirtualizedTagGrid from './virtualized-tag-grid';
 import TagListView from './tag-list-view';
 import NewTagModal from './new-tag-modal';
@@ -200,31 +202,37 @@ export default function Taxonomy() {
     }
   }
 
+  // Flat list of every tag in the taxonomy. Built once per taxonomy load
+  // so the Fuse index can be reused across keystrokes.
+  const allTags = useMemo(() => {
+    if (!taxonomy) return [] as Concept[];
+    return Object.values(taxonomy).reduce((acc, category) => {
+      return [...acc, ...category.tags];
+    }, [] as Concept[]);
+  }, [taxonomy]);
+
+  const fuse = useMemo(
+    () =>
+      new Fuse(allTags, {
+        keys: ['label'],
+        threshold: 0.4,
+        ignoreLocation: true,
+        minMatchCharLength: 1,
+      }),
+    [allTags]
+  );
+
   const tags = useMemo(() => {
     if (!taxonomy) return [] as Concept[];
-    return Object.values(taxonomy)
-      .reduce((acc, category) => {
-        return [...acc, ...category.tags];
-      }, [] as Concept[])
-      .filter((tag) => {
-        if (tagFilter) {
-          return (
-            tag.label &&
-            tag.label.toLowerCase().includes(tagFilter.toLowerCase())
-          );
-        } else {
-          return tag.category && tag.category === activeCategory;
-        }
-      })
-      .sort((a, b) => {
-        if (tagFilter) {
-          return a.label.localeCompare(b.label, undefined, {
-            sensitivity: 'base',
-          });
-        }
-        return a.weight - b.weight;
-      });
-  }, [taxonomy, tagFilter, activeCategory]);
+    if (tagFilter) {
+      // Fuzzy match across all categories. Fuse returns results pre-sorted
+      // by relevance (best match first).
+      return fuse.search(tagFilter).map((r) => r.item);
+    }
+    return allTags
+      .filter((tag) => tag.category && tag.category === activeCategory)
+      .sort((a, b) => a.weight - b.weight);
+  }, [taxonomy, tagFilter, activeCategory, allTags, fuse]);
 
   if (!taxonomy || state.matches('loadingDB') || state.matches('selectingDB')) {
     return (
@@ -382,6 +390,56 @@ export default function Taxonomy() {
                 handleEditAction={setEditingTag}
               />
             );
+          }
+          // Blended search view: when there are matches in the Suggested
+          // category, render non-Suggested results as cards on top and
+          // Suggested results as a compact list below.
+          if (tagFilter) {
+            const suggestedTags = tags.filter(
+              (t: Concept) => t.category === 'Suggested'
+            );
+            if (suggestedTags.length > 0) {
+              const mainTags = tags.filter(
+                (t: Concept) => t.category !== 'Suggested'
+              );
+              return (
+                <div className="tags-blended">
+                  {mainTags.length > 0 && (
+                    <div className="tags-grid-inline">
+                      {mainTags.map((tag: Concept) => (
+                        <Tag
+                          isDisabled={isDisabled}
+                          tags={mainTags}
+                          tag={{
+                            label: tag.label,
+                            weight: tag.weight,
+                            category: tag.category,
+                          }}
+                          active={selectedTags.includes(tag.label)}
+                          handleEditAction={setEditingTag}
+                          key={tag.label}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div className="suggested-section">
+                    <div className="suggested-heading">Suggested</div>
+                    <div className="suggested-list">
+                      {suggestedTags.map((tag: Concept) => (
+                        <TagListRow
+                          key={tag.label}
+                          tag={tag}
+                          tags={suggestedTags}
+                          active={selectedTags.includes(tag.label)}
+                          isDisabled={isDisabled}
+                          handleEditAction={setEditingTag}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
           }
           if (tags.length > VIRTUALIZE_THRESHOLD) {
             return (
