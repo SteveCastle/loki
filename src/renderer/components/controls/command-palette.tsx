@@ -328,6 +328,14 @@ const ListContextDisplay: React.FC<ListContextDisplayProps> = React.memo(
     const hasTextFilter = !!textFilter;
     const hasTags = Array.isArray(tags) && tags.length > 0;
 
+    // Stop the native event from reaching window-level listeners
+    // (specifically the palette's outside-click closer) so removing a
+    // pill never closes the palette as a side-effect.
+    const stopAll = (e: React.SyntheticEvent) => {
+      e.stopPropagation();
+      (e.nativeEvent as Event).stopImmediatePropagation?.();
+    };
+
     if (hasTextFilter) {
       return (
         <span className="listContext">
@@ -338,12 +346,14 @@ const ListContextDisplay: React.FC<ListContextDisplayProps> = React.memo(
               type="button"
               className="contextPill__remove"
               title="Clear search"
-              onClick={() =>
+              onMouseDown={stopAll}
+              onClick={(e) => {
+                stopAll(e);
                 libraryService.send({
                   type: 'SET_TEXT_FILTER',
                   data: { textFilter: '' },
-                })
-              }
+                });
+              }}
             >
               ×
             </button>
@@ -362,12 +372,14 @@ const ListContextDisplay: React.FC<ListContextDisplayProps> = React.memo(
                 type="button"
                 className="contextPill__remove"
                 title={`Remove ${tag}`}
-                onClick={() =>
+                onMouseDown={stopAll}
+                onClick={(e) => {
+                  stopAll(e);
                   libraryService.send({
                     type: 'REMOVE_QUERY_TAG',
                     data: { tag },
-                  })
-                }
+                  });
+                }}
               >
                 ×
               </button>
@@ -849,8 +861,46 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
     }
   }, [display]);
 
-  // Close on Click Outside
-  useOnClickOutside(paletteRef, () => {
+  // Close on Click Outside.
+  //
+  // In trackpad/touchpad mode the detail view binds its own onClick
+  // (cursor advance/decrement). Without intervention the user's click
+  // both closes the palette AND lands on the detail handler, jumping
+  // to a different media item. Absorb the trailing `click` event in
+  // the capture phase so it never reaches the React tree handlers.
+  useOnClickOutside(paletteRef, (event) => {
+    // Defensive: useOnClickOutside already checks `paletteRef.current
+    // .contains(target)`, but that ref-based check has been observed to
+    // misfire — clicks on pill × buttons inside the palette were
+    // closing it. Walk up from the click target instead. If any
+    // ancestor is a `.CommandPalette` (or this element itself is one),
+    // the click originated inside and should not close.
+    const target = event.target as HTMLElement | null;
+    if (target && typeof target.closest === 'function') {
+      if (target.closest('.CommandPalette')) {
+        return;
+      }
+    }
+
+    const absorbClick = (clickEvent: Event) => {
+      clickEvent.stopPropagation();
+      clickEvent.preventDefault();
+    };
+    window.addEventListener('click', absorbClick, {
+      capture: true,
+      once: true,
+    });
+    // Safety net — if no click follows the mousedown (e.g. the user
+    // releases off-window), drop the listener so it can't swallow a
+    // future legitimate click.
+    setTimeout(
+      () =>
+        window.removeEventListener('click', absorbClick, {
+          capture: true,
+        } as EventListenerOptions),
+      300
+    );
+
     libraryService.send('HIDE_COMMAND_PALETTE');
   });
 

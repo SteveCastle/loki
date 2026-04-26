@@ -196,12 +196,6 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
   },
   libraryLoadId: () => uniqueId(),
   cursor: (_, event) => event.data.cursor,
-  commandPalette: (context) => {
-    return {
-      ...context.commandPalette,
-      display: false,
-    };
-  },
 });
 
 const clearPersistedLibrary = () => {
