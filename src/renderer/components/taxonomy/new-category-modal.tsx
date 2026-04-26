@@ -8,11 +8,28 @@ import { GlobalStateContext } from '../../state';
 
 import './new-modal.css';
 
+type TagViewMode = 'card' | 'list';
+
+type CachedConcept = {
+  label: string;
+  category: string;
+  weight: number;
+  description?: string;
+};
+type CachedCategory = {
+  label: string;
+  tags: CachedConcept[];
+  description: string;
+  tagViewMode?: TagViewMode;
+};
+type TaxonomyCache = { [key: string]: CachedCategory };
+
 type Props = {
   handleClose: () => void;
   setCategory: (category: string) => void;
   currentValue?: string;
   currentDescription?: string;
+  currentTagViewMode?: TagViewMode;
 };
 
 export default function NewCategoryModal({
@@ -20,6 +37,7 @@ export default function NewCategoryModal({
   setCategory,
   currentValue = '',
   currentDescription = '',
+  currentTagViewMode = 'card',
 }: Props) {
   const [newLabel, setNewLabel] = useState<string>(currentValue);
   const [description, setDescription] = useState<string>(currentDescription);
@@ -60,6 +78,42 @@ export default function NewCategoryModal({
       handleClose();
     }
     submit();
+  }
+
+  async function handleSetTagViewMode(mode: TagViewMode) {
+    if (!currentValue || mode === currentTagViewMode) return;
+    const targetLabel = currentValue;
+    const snapshot = queryClient.getQueriesData<TaxonomyCache>({
+      queryKey: ['taxonomy'],
+    });
+    queryClient.setQueriesData<TaxonomyCache>(
+      { queryKey: ['taxonomy'] },
+      (old) => {
+        if (!old) return old;
+        const existing = old[targetLabel];
+        if (!existing) return old;
+        return {
+          ...old,
+          [targetLabel]: { ...existing, tagViewMode: mode },
+        };
+      }
+    );
+    try {
+      await invoke('update-category-tag-view-mode', [targetLabel, mode]);
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+    } catch (e) {
+      for (const [key, value] of snapshot) {
+        queryClient.setQueryData(key, value);
+      }
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to update tag list style',
+          message: String(e),
+        },
+      });
+    }
   }
 
   async function handleResetOrdering() {
@@ -172,6 +226,28 @@ export default function NewCategoryModal({
             <div className="input-modal-divider" />
             <div className="input-modal-actions">
               <div className="input-modal-actions-label">Actions</div>
+              <div className="action-row">
+                <div className="action-row-text">
+                  <div className="action-row-title">Tag List Style</div>
+                  <div className="action-row-description">
+                    Card grid with previews, or dense single-column list
+                  </div>
+                </div>
+                <div className="segmented">
+                  <button
+                    className={currentTagViewMode === 'card' ? 'selected' : ''}
+                    onClick={() => handleSetTagViewMode('card')}
+                  >
+                    Card
+                  </button>
+                  <button
+                    className={currentTagViewMode === 'list' ? 'selected' : ''}
+                    onClick={() => handleSetTagViewMode('list')}
+                  >
+                    List
+                  </button>
+                </div>
+              </div>
               <div className="action-row">
                 <div className="action-row-text">
                   <div className="action-row-title">Reset tag order</div>

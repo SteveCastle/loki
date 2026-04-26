@@ -270,6 +270,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('import-files');
   ipcMain.removeHandler('update-tag-description');
   ipcMain.removeHandler('update-category-description');
+  ipcMain.removeHandler('update-category-tag-view-mode');
   ipcMain.removeHandler('apply-elo-ordering');
   ipcMain.removeHandler('consolidate-tag-files');
   ipcMain.removeHandler('consolidate-category-files');
@@ -359,6 +360,10 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle(
     'update-category-description',
     taxonomyModule.updateCategoryDescription(db)
+  );
+  ipcMain.handle(
+    'update-category-tag-view-mode',
+    taxonomyModule.updateCategoryTagViewMode(db)
   );
   ipcMain.handle('apply-elo-ordering', taxonomyModule.applyEloOrdering(db));
   ipcMain.handle(

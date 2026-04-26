@@ -43,6 +43,7 @@ export type SettingKey =
   | 'battleMode'
   | 'followTranscript'
   | 'showTags'
+  | 'hideSuggestedTags'
   | 'showFileInfo'
   | 'showControls'
   | 'recursive'
@@ -69,6 +70,7 @@ export type Settings = {
   libraryLayout: LibraryLayout;
   battleMode: boolean;
   showTags: ShowTagOptions;
+  hideSuggestedTags: boolean;
   showFileInfo: ShowFileInfoOptions;
   showControls: boolean;
   recursive: boolean;
@@ -284,6 +286,22 @@ export const SHOW_TAGS = {
     none: {
       label: 'None',
       value: 'none',
+    },
+  },
+};
+
+export const HIDE_SUGGESTED_TAGS = {
+  title: 'Hide Suggested Tags',
+  reload: false,
+  display: 'general',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
     },
   },
 };
@@ -536,6 +554,7 @@ export const SETTINGS: SettingsObject = {
   libraryLayout: LIBRARY_LAYOUT,
   followTranscript: FOLLOW_TRANSCRIPT,
   showTags: SHOW_TAGS,
+  hideSuggestedTags: HIDE_SUGGESTED_TAGS,
   showFileInfo: SHOW_FILE_INFO,
   showControls: SHOW_CONTROLS,
   recursive: RECURSIVE,

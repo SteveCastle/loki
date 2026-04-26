@@ -7,6 +7,19 @@ import { GlobalStateContext } from '../../state';
 
 import './new-modal.css';
 
+type CachedConcept = {
+  label: string;
+  category: string;
+  weight: number;
+  description?: string;
+};
+type CachedCategory = {
+  label: string;
+  tags: CachedConcept[];
+  description: string;
+};
+type TaxonomyCache = { [key: string]: CachedCategory };
+
 type Props = {
   categoryLabel: string;
   handleClose: () => void;
@@ -33,25 +46,85 @@ export default function NewTagModal({
   function handleSubmit() {
     async function submit() {
       if (isEditing) {
-        if (newLabel !== currentValue) {
-          await invoke('rename-tag', [currentValue, newLabel]);
+        try {
+          if (newLabel !== currentValue) {
+            await invoke('rename-tag', [currentValue, newLabel]);
+          }
+          if (description !== currentDescription) {
+            await invoke('update-tag-description', [newLabel, description]);
+          }
+          setNewLabel('');
+          handleClose();
+          queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+          queryClient.invalidateQueries({ queryKey: ['metadata'] });
+        } catch (err) {
+          console.error('[new-tag-modal] edit failed', err);
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: {
+              type: 'error',
+              title: 'Failed to update tag',
+              message: String(err),
+            },
+          });
         }
-        if (description !== currentDescription) {
-          await invoke('update-tag-description', [
-            newLabel,
-            description,
-          ]);
-        }
-      } else {
-        await invoke('create-tag', [newLabel, categoryLabel, 0]);
-        if (description) {
-          await invoke('update-tag-description', [newLabel, description]);
-        }
+        return;
       }
+
+      // Optimistic create: snapshot, mutate cache, close modal, then fire IPC.
+      const snapshot = queryClient.getQueriesData<TaxonomyCache>({
+        queryKey: ['taxonomy'],
+      });
+      queryClient.setQueriesData<TaxonomyCache>(
+        { queryKey: ['taxonomy'] },
+        (old) => {
+          if (!old) return old;
+          const existing = old[categoryLabel];
+          if (!existing) return old;
+          const maxWeight = existing.tags.reduce(
+            (m, t) => Math.max(m, t.weight ?? 0),
+            0
+          );
+          const newTag = {
+            label: newLabel,
+            category: categoryLabel,
+            weight: maxWeight + 1,
+            description,
+          };
+          return {
+            ...old,
+            [categoryLabel]: {
+              ...existing,
+              tags: [...existing.tags, newTag],
+            },
+          };
+        }
+      );
+      const submittedLabel = newLabel;
       setNewLabel('');
       handleClose();
-      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
-      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+
+      try {
+        await invoke('create-tag', [submittedLabel, categoryLabel, 0]);
+        if (description) {
+          await invoke('update-tag-description', [submittedLabel, description]);
+        }
+        queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+        queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      } catch (err) {
+        console.error('[new-tag-modal] create failed', err);
+        for (const [key, value] of snapshot) {
+          queryClient.setQueryData(key, value);
+        }
+        libraryService.send({
+          type: 'ADD_TOAST',
+          data: {
+            type: 'error',
+            title: 'Failed to create tag',
+            message: String(err),
+          },
+        });
+      }
     }
     submit();
   }

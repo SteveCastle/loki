@@ -3,6 +3,7 @@ package tasks
 import (
 	"bufio"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -155,8 +156,25 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
+	// Collect gallery-dl `--write-metadata` sidecars (`<media>.json`) so they
+	// can be copied alongside their media file. Sidecars are filtered out of
+	// `downloadedFiles` by isDownloadedFilePath, so look them up explicitly.
+	var metadataFiles []string
+	for _, mediaPath := range downloadedFiles {
+		sidecar := mediaPath + ".json"
+		if _, err := os.Stat(sidecar); err == nil {
+			metadataFiles = append(metadataFiles, sidecar)
+		}
+	}
+
 	// Upload staged files to the default storage backend
 	finalFiles := uploadStagedFiles(ctx, q, j.ID, downloadedFiles, stagingPath, "downloads/")
+
+	// Upload metadata sidecars to the same destination so they sit next to
+	// the media. Not inserted into the media table — they are sidecars only.
+	if len(metadataFiles) > 0 {
+		uploadStagedFiles(ctx, q, j.ID, metadataFiles, stagingPath, "downloads/")
+	}
 
 	// Add final files to database
 	var insertedFiles []string

@@ -45,6 +45,7 @@ export type Channels =
   | 'order-tags'
   | 'update-tag-description'
   | 'update-category-description'
+  | 'update-category-tag-view-mode'
   | 'create-assignment'
   | 'fetch-tag-preview'
   | 'fetch-media-preview'
