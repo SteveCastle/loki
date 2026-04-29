@@ -61,6 +61,10 @@ type LibraryState = {
   previousStateType: LibraryStateType | null;
   previousTextFilter: string;
   previousDbQuery: { tags: string[] };
+  // Path the library was loaded for. Captured alongside previousLibrary
+  // so back-restoration keeps the UI's path/filter/search/library
+  // coherent — without this, library and initialFile drift apart.
+  previousInitialFile: string;
   activeCategory: string;
   storedCategories: {
     [key: string]: string;
@@ -159,6 +163,10 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
     context.previousLibrary.length > 0
       ? context.previousDbQuery
       : { ...context.dbQuery },
+  previousInitialFile: (context) =>
+    context.previousLibrary.length > 0
+      ? context.previousInitialFile
+      : context.initialFile,
   library: (context, event) => {
     const library = event.data.library;
     // Use existing previous state if already set, otherwise use current state
@@ -178,6 +186,9 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
     const previousDbQuery = hasPrevious
       ? context.previousDbQuery
       : context.dbQuery;
+    const previousInitialFile = hasPrevious
+      ? context.previousInitialFile
+      : context.initialFile;
 
     // Update all session data using session store (async, debounced, batched)
     setSessionValues({
@@ -189,6 +200,7 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
         previousStateType,
         previousTextFilter,
         previousDbQuery,
+        previousInitialFile,
       },
     });
 
@@ -443,6 +455,7 @@ const getInitialContext = (): LibraryState => {
     previousStateType: null,
     previousTextFilter: '',
     previousDbQuery: { tags: [] },
+    previousInitialFile: '',
     scrollPosition: 0,
     previousScrollPosition: 0,
     videoPlayer: {
@@ -1528,6 +1541,10 @@ const libraryMachine = createMachine(
                 const previousData = getSessionValue('previous');
                 return previousData?.previousDbQuery ?? { tags: [] };
               },
+              previousInitialFile: () => {
+                const previousData = getSessionValue('previous');
+                return previousData?.previousInitialFile ?? '';
+              },
               dbQuery: () => {
                 const queryData = getSessionValue('query');
                 return queryData ? queryData.dbQuery : { tags: [] };
@@ -1556,9 +1573,13 @@ const libraryMachine = createMachine(
             entry: assign<LibraryState, AnyEventObject>({
               library: (context) => {
                 const library = context.previousLibrary;
-                // Persist the restored library using session store (batched)
+                const restoredInitialFile =
+                  context.previousInitialFile || context.initialFile;
+                // Persist the restored library using session store (batched).
+                // Use the restored path so the persisted snapshot stays in
+                // sync with the library being restored.
                 setSessionValues({
-                  library: { library, initialFile: context.initialFile },
+                  library: { library, initialFile: restoredInitialFile },
                   cursor: { cursor: context.previousCursor },
                   previous: {
                     previousLibrary: [],
@@ -1566,11 +1587,13 @@ const libraryMachine = createMachine(
                     previousStateType: null,
                     previousTextFilter: '',
                     previousDbQuery: { tags: [] },
+                    previousInitialFile: '',
                   },
                 });
                 // Persist restored query state
                 updatePersistedState({
                   ...context,
+                  initialFile: restoredInitialFile,
                   textFilter: context.previousTextFilter,
                   dbQuery: context.previousDbQuery,
                 });
@@ -1581,6 +1604,12 @@ const libraryMachine = createMachine(
               // Restore query state from previous
               textFilter: (context) => context.previousTextFilter,
               dbQuery: (context) => ({ ...context.previousDbQuery }),
+              // Restore the path the library was loaded for so the UI
+              // (and any subsequent fs operations) stay coherent. Fall
+              // back to the current initialFile when no previous was
+              // captured (e.g. from a state that didn't change paths).
+              initialFile: (context) =>
+                context.previousInitialFile || context.initialFile,
               // Store the target state type before clearing (used by always conditions)
               currentStateType: (context) =>
                 context.previousStateType || ('fs' as LibraryStateType),
@@ -1590,6 +1619,7 @@ const libraryMachine = createMachine(
               previousStateType: () => null,
               previousTextFilter: () => '',
               previousDbQuery: () => ({ tags: [] }),
+              previousInitialFile: () => '',
             }),
             always: [
               {
@@ -1739,6 +1769,7 @@ const libraryMachine = createMachine(
                       previousStateType: (context) => context.currentStateType,
                       previousTextFilter: (context) => context.textFilter,
                       previousDbQuery: (context) => ({ ...context.dbQuery }),
+                      previousInitialFile: (context) => context.initialFile,
                       // Now set the new values
                       dbQuery: (context, event) => {
                         console.log(
@@ -1772,6 +1803,7 @@ const libraryMachine = createMachine(
                     previousStateType: (context) => context.currentStateType,
                     previousTextFilter: (context) => context.textFilter,
                     previousDbQuery: (context) => ({ ...context.dbQuery }),
+                    previousInitialFile: (context) => context.initialFile,
                     // Now set the new values
                     textFilter: (context, event) => {
                       console.log('SET_TEXT_FILTER', context, event);
@@ -2102,6 +2134,7 @@ const libraryMachine = createMachine(
                       previousStateType: (context) => context.currentStateType,
                       previousTextFilter: (context) => context.textFilter,
                       previousDbQuery: (context) => ({ ...context.dbQuery }),
+                      previousInitialFile: (context) => context.initialFile,
                       // Now clear text filter when switching to tag mode (mutually exclusive)
                       textFilter: () => '',
                       dbQuery: (context, event) => {
@@ -2267,6 +2300,7 @@ const libraryMachine = createMachine(
                     previousStateType: (context) => context.currentStateType,
                     previousTextFilter: (context) => context.textFilter,
                     previousDbQuery: (context) => ({ ...context.dbQuery }),
+                    previousInitialFile: (context) => context.initialFile,
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
                   }),
@@ -2401,6 +2435,7 @@ const libraryMachine = createMachine(
                     previousStateType: (context) => context.currentStateType,
                     previousTextFilter: (context) => context.textFilter,
                     previousDbQuery: (context) => ({ ...context.dbQuery }),
+                    previousInitialFile: (context) => context.initialFile,
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
                   }),
@@ -2461,6 +2496,7 @@ const libraryMachine = createMachine(
                       previousStateType: (context) => context.currentStateType,
                       previousTextFilter: (context) => context.textFilter,
                       previousDbQuery: (context) => ({ ...context.dbQuery }),
+                      previousInitialFile: (context) => context.initialFile,
                       dbQuery: (context, event) => ({
                         tags: (context.dbQuery.tags || []).filter(
                           (t) => t !== event.data.tag
@@ -2505,6 +2541,7 @@ const libraryMachine = createMachine(
                     previousStateType: (context) => context.currentStateType,
                     previousTextFilter: (context) => context.textFilter,
                     previousDbQuery: (context) => ({ ...context.dbQuery }),
+                    previousInitialFile: (context) => context.initialFile,
                     // Now set the new values
                     cursor: 0,
                     libraryLoadId: () => uniqueId(),
