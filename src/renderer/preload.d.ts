@@ -52,6 +52,7 @@ interface SessionPreviousData {
   previousStateType?: LibraryStateType | null;
   previousTextFilter?: string;
   previousDbQuery?: { tags: string[] };
+  previousInitialFile?: string;
 }
 
 interface SessionData {

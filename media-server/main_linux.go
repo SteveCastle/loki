@@ -163,6 +163,10 @@ func switchDatabase(newDBPath string) error {
 	deps.DB = newDB
 	deps.Queue = newQueue
 
+	// Random-sampler cache is per-DB; invalidate and warm asynchronously.
+	media.InvalidateRandomSampleCache()
+	media.WarmRandomSampleCache(newDB)
+
 	// Start new runners for the new queue
 	log.Println("Starting new runners for new queue...")
 	currentRunners = runners.New(newQueue)
@@ -219,6 +223,10 @@ func initDB() (*sql.DB, error) {
 	if err := ensureIndexes(db); err != nil {
 		log.Printf("warning: failed to ensure indexes: %v", err)
 	}
+
+	// Warm the random-sampler cache asynchronously so the first
+	// /swipe/api request doesn't pay the SELECT DISTINCT scan.
+	media.WarmRandomSampleCache(db)
 
 	log.Printf("Connected to SQLite database at: %s", dbPath)
 	return db, nil

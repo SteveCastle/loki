@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stevecastle/shrike/querylog"
 )
 
 // MediaItem represents a row from the media table
@@ -186,18 +188,23 @@ func GetTags(db *sql.DB, mediaPaths []string) (map[string][]MediaTag, error) {
 		ORDER BY media_path, category_label, tag_label
 	`, strings.Join(placeholders, ","))
 
+	stop := querylog.Start("GetTags", query, args)
 	rows, err := db.Query(query, args...)
 	if err != nil {
+		stop(-1, err)
 		return nil, err
 	}
 	defer rows.Close()
 
 	tagMap := make(map[string][]MediaTag)
+	rowCount := 0
 	for rows.Next() {
 		var mediaPath, tagLabel, categoryLabel string
 		if err := rows.Scan(&mediaPath, &tagLabel, &categoryLabel); err != nil {
+			stop(rowCount, err)
 			return nil, err
 		}
+		rowCount++
 
 		tag := MediaTag{
 			Label:    tagLabel,
@@ -207,6 +214,7 @@ func GetTags(db *sql.DB, mediaPaths []string) (map[string][]MediaTag, error) {
 		tagMap[mediaPath] = append(tagMap[mediaPath], tag)
 	}
 
+	stop(rowCount, nil)
 	return tagMap, nil
 }
 
@@ -215,6 +223,14 @@ func GetTags(db *sql.DB, mediaPaths []string) (map[string][]MediaTag, error) {
 // This function is designed for the TikTok-like swipe view
 // Only items with at least one tag are included
 func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int64) ([]MediaItem, bool, error) {
+	// Fast path: no search filter (the dominant swipe case). Use the
+	// in-memory sampler — see random_sampler.go. ORDER BY RANDOM() over the
+	// full tagged set scaled to ~7 seconds on a real library; the sampler
+	// path is essentially constant time after a one-time cache build.
+	if strings.TrimSpace(searchQuery) == "" {
+		return getRandomItemsFromSampler(db, offset, limit, seed)
+	}
+
 	// Use a deterministic but shuffled ordering based on a hash of the path
 	// This provides consistent pagination while appearing random
 	// You can later modify this to use different algorithms (trending, recent, AI-curated, etc.)
@@ -268,28 +284,43 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 		return getRandomItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
 	}
 
-	// Standard pagination when no exists conditions
+	// Standard pagination when no exists conditions.
+	//
+	// Performance note: ORDER BY RANDOM() forces SQLite to materialize and
+	// sort the entire matching set. Doing it on the full SELECT
+	// (`m.path, m.description, m.size, m.hash, m.width, m.height`) means the
+	// sort buffer holds those wide rows for every match. On a large library
+	// this took 11+ seconds for LIMIT 2.
+	//
+	// Fix: do the random sort against a narrow path-only inner query, then
+	// fetch full rows for just the chosen paths. The sort step now only
+	// shuffles TEXT path values; the wide-row fetch is bounded by LIMIT.
 	limitClause := ` LIMIT ? OFFSET ?`
-	var query string
+	innerQuery := `SELECT m.path FROM media m ` + whereClause + orderBy + limitClause
+	innerArgs := append([]interface{}{}, args...)
+	innerArgs = append(innerArgs, limit+1, offset)
 
-	// Construct full query
-	query = baseQuery + " " + whereClause + orderBy + limitClause
-	args = append(args, limit+1, offset)
+	query := `SELECT m.path, m.description, m.size, m.hash, m.width, m.height FROM media m WHERE m.path IN (` + innerQuery + `)`
 
-	rows, err := db.Query(query, args...)
+	stop := querylog.Start("GetRandomItems", query, innerArgs)
+	rows, err := db.Query(query, innerArgs...)
 	if err != nil {
+		stop(-1, err)
 		return nil, false, err
 	}
 	defer rows.Close()
 
 	var items []MediaItem
 	var mediaPaths []string
+	rowCount := 0
 	for rows.Next() {
 		var item MediaItem
 		err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height)
 		if err != nil {
+			stop(rowCount, err)
 			return nil, false, err
 		}
+		rowCount++
 
 		// Handle nullable size field
 		if item.Size.Valid {
@@ -301,6 +332,7 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 		items = append(items, item)
 		mediaPaths = append(mediaPaths, item.Path)
 	}
+	stop(rowCount, nil)
 
 	hasMore := len(items) > limit
 	if hasMore {
@@ -358,20 +390,25 @@ func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string
 		query = baseQuery + " " + whereClause + orderBy + limitClause
 		args = append(whereArgs, batchSize)
 
+		stop := querylog.Start("getRandomItemsWithExistenceFilter", query, args)
 		rows, err := db.Query(query, args...)
 		if err != nil {
+			stop(-1, err)
 			return nil, false, err
 		}
 
 		var batchItems []MediaItem
 		var batchPaths []string
+		rowCount := 0
 		for rows.Next() {
 			var item MediaItem
 			err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height)
 			if err != nil {
+				stop(rowCount, err)
 				rows.Close()
 				return nil, false, err
 			}
+			rowCount++
 
 			if item.Size.Valid {
 				item.FormattedSize = FormatBytes(item.Size.Int64)
@@ -383,6 +420,7 @@ func getRandomItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string
 			batchPaths = append(batchPaths, item.Path)
 		}
 		rows.Close()
+		stop(rowCount, nil)
 
 		if len(batchItems) == 0 {
 			break
@@ -487,9 +525,13 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, i
 	// Calculate total count for standard queries
 	countQuery := "SELECT COUNT(*) FROM media m " + whereClause
 	var totalCount int
+	stopCount := querylog.Start("GetItems.count", countQuery, args)
 	if err := db.QueryRow(countQuery, args...).Scan(&totalCount); err != nil {
+		stopCount(-1, err)
 		log.Printf("Error calculating total count: %v", err)
 		totalCount = -1
+	} else {
+		stopCount(1, nil)
 	}
 
 	// Standard pagination for stable sorting
@@ -502,20 +544,25 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, i
 	queryArgs := append([]interface{}{}, args...)
 	queryArgs = append(queryArgs, limit+1, offset)
 
+	stop := querylog.Start("GetItems", query, queryArgs)
 	rows, err := db.Query(query, queryArgs...)
 	if err != nil {
+		stop(-1, err)
 		return nil, 0, false, err
 	}
 	defer rows.Close()
 
 	var items []MediaItem
 	var mediaPaths []string
+	rowCount := 0
 	for rows.Next() {
 		var item MediaItem
 		err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height)
 		if err != nil {
+			stop(rowCount, err)
 			return nil, 0, false, err
 		}
+		rowCount++
 
 		// Handle nullable size field
 		if item.Size.Valid {
@@ -527,6 +574,7 @@ func GetItems(db *sql.DB, offset, limit int, searchQuery string) ([]MediaItem, i
 		items = append(items, item)
 		mediaPaths = append(mediaPaths, item.Path)
 	}
+	stop(rowCount, nil)
 
 	hasMore := len(items) > limit
 	if hasMore {
@@ -625,20 +673,25 @@ func getItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string, wher
 			args = []interface{}{batchSize, dbOffset}
 		}
 
+		stop := querylog.Start("getItemsWithExistenceFilter", query, args)
 		rows, err := db.Query(query, args...)
 		if err != nil {
+			stop(-1, err)
 			return nil, false, err
 		}
 
 		var batchItems []MediaItem
 		var batchPaths []string
+		rowCount := 0
 		for rows.Next() {
 			var item MediaItem
 			err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height)
 			if err != nil {
+				stop(rowCount, err)
 				rows.Close()
 				return nil, false, err
 			}
+			rowCount++
 
 			// Handle nullable size field
 			if item.Size.Valid {
@@ -651,6 +704,7 @@ func getItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string, wher
 			batchPaths = append(batchPaths, item.Path)
 		}
 		rows.Close()
+		stop(rowCount, nil)
 
 		// If no more items from database, break
 		if len(batchItems) == 0 {
@@ -844,6 +898,10 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 
 	result.MediaItemsRemoved = totalMediaRemoved
 	result.TagsRemoved = totalTagsRemoved
+	// Removed media may have been in the swipe pool — invalidate the cache.
+	if totalMediaRemoved > 0 || totalTagsRemoved > 0 {
+		InvalidateRandomSampleCache()
+	}
 	return result, nil
 }
 
@@ -1101,11 +1159,22 @@ func SuggestTagsWithCategories(db *sql.DB, prefix string) ([]MediaTag, error) {
 		return nil, fmt.Errorf("database connection not available")
 	}
 	like := "%" + escapeLikePattern(strings.TrimSpace(prefix)) + "%"
+	// Source the list from the `tag` registry (one row per tag) rather than
+	// `media_tag_by_category` (one row per assignment). With many media and
+	// up to ~10k tags, the assignment table holds millions of rows; doing
+	// `SELECT DISTINCT` over it forced a full scan and dedupe just to
+	// recover the same handful of distinct tags. The `tag` table is bounded
+	// by the actual tag count and is cheap to scan even unfiltered.
+	//
+	// Both the Electron client and Go server insert into `tag` whenever an
+	// assignment is created (taxonomy.ts uses `INSERT … ON CONFLICT DO
+	// NOTHING`; media.go uses EnsureTagsExist), so this is in sync with the
+	// set of tags actually in use.
 	rows, err := db.Query(`
-        SELECT DISTINCT tag_label, category_label
-        FROM media_tag_by_category
-        WHERE tag_label COLLATE NOCASE LIKE ? ESCAPE '\'
-        ORDER BY category_label, tag_label
+        SELECT label, COALESCE(category_label, '')
+        FROM tag
+        WHERE label COLLATE NOCASE LIKE ? ESCAPE '\'
+        ORDER BY category_label, label
     `, like)
 	if err != nil {
 		return nil, err
@@ -1251,6 +1320,9 @@ func AddTag(db *sql.DB, mediaPath, tagLabel, categoryLabel string) error {
 		return fmt.Errorf("failed to insert tag: %w", err)
 	}
 
+	// New tag may make a previously-untagged media path eligible for the
+	// random swipe pool. Mark the cache stale so the next sample sees it.
+	InvalidateRandomSampleCache()
 	return nil
 }
 
@@ -1271,6 +1343,9 @@ func RemoveTag(db *sql.DB, mediaPath, tagLabel, categoryLabel string) error {
 		return fmt.Errorf("failed to remove tag: %w", err)
 	}
 
+	// Removed tag may strip a path from the swipe pool entirely (if it had
+	// no other tags). Mark the cache stale.
+	InvalidateRandomSampleCache()
 	return nil
 }
 
@@ -1520,20 +1595,26 @@ func GetPathsByQuery(db *sql.DB, searchQuery string) ([]string, error) {
 		query = baseQuery + orderBy
 	}
 
+	stop := querylog.Start("GetPathsByQuery", query, args)
 	rows, err := db.Query(query, args...)
 	if err != nil {
+		stop(-1, err)
 		return nil, err
 	}
 	defer rows.Close()
 
 	var paths []string
+	rowCount := 0
 	for rows.Next() {
 		var path string
 		if err := rows.Scan(&path); err != nil {
+			stop(rowCount, err)
 			return nil, err
 		}
+		rowCount++
 		paths = append(paths, path)
 	}
+	stop(rowCount, nil)
 
 	return paths, nil
 }
@@ -1661,6 +1742,24 @@ func InitializeSchema(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
+	// Index on tag_label for the typed-query hot paths. The composite PK on
+	// (media_path, tag_label, ...) only helps queries that lead with
+	// media_path; a standalone tag_label index is needed so `WHERE
+	// tag_label = ?` lookups don't full-scan.
+	//
+	// We deliberately don't add a separate index on media_path: the PK's
+	// leading column already covers those lookups, and adding a redundant
+	// one contended with the Electron client and produced SQLITE_BUSY on
+	// startup when both processes had the DB open.
+	//
+	// Errors are logged but never returned — index creation is a perf
+	// optimisation, never a correctness requirement.
+	if _, err := db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_mtc_tag_label ON media_tag_by_category(tag_label)`,
+	); err != nil {
+		log.Printf("warning: failed to create idx_mtc_tag_label (will retry on next start): %v", err)
 	}
 
 	log.Println("Database schema initialized successfully")

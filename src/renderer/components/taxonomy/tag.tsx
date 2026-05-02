@@ -17,6 +17,9 @@ type Concept = {
   label: string;
   weight: number;
   category: string;
+  // Bundled in the taxonomy load so we don't have to issue a separate
+  // fetchTagPreview IPC per tag at startup.
+  thumbnail_path_600?: string | null;
 };
 
 type Props = {
@@ -49,10 +52,18 @@ export default function Tag({
   const queryClient = useQueryClient();
   const ref = React.useRef<HTMLDivElement>(null);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
-  const { data: previewImage } = useQuery<string, Error>(
+  // Prefer the thumbnail bundled in the taxonomy payload. Fall back to the
+  // dedicated fetchTagPreview IPC only when the bundled value is missing
+  // (e.g. legacy callers that haven't loaded taxonomy through the updated
+  // query). When the bundled value is present, `enabled: false` skips the
+  // network roundtrip entirely.
+  const bundledPreview = tag.thumbnail_path_600 || '';
+  const { data: fetchedPreview } = useQuery<string, Error>(
     ['taxonomy', 'tag', tag.label],
-    fetchTagPreviewFn(tag.label)
+    fetchTagPreviewFn(tag.label),
+    { enabled: !bundledPreview }
   );
+  const previewImage = bundledPreview || fetchedPreview;
 
   function getIsLeft(
     monitor: DropTargetMonitor,

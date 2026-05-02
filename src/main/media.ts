@@ -272,19 +272,30 @@ const loadMediaByDescriptionSearch =
       ? `WHERE ${whereClauses.join(' AND ')}`
       : '';
 
-    // Final SQL: we do subqueries for tags instead of an explicit join
+    // Project only the columns the renderer actually consumes. The original
+    // `SELECT DISTINCT media.*` pulled the BLOB `preview` column, the full
+    // `transcript` text, and both thumbnail paths back over IPC for every
+    // match — for a search that returned 341k rows the payload was hundreds
+    // of MB. The renderer maps the result to {path, weight, ...} where the
+    // useful fields are path / elo / height / width / description.
+    //
+    // DISTINCT was unnecessary too: this query has no joins (tag conditions
+    // are EXISTS subqueries), so each media row appears at most once.
     const sql = `
-    SELECT DISTINCT media.*
+    SELECT media.path, media.description, media.elo, media.height, media.width
     FROM media
     ${whereClause}
   `;
 
     try {
-      const mediaRows = await db.all(sql, params);
+      const mediaRows = await db.all(sql, params, 'loadMediaByDescriptionSearch');
 
       const library = mediaRows.map((m: any) => ({
         path: m.path,
-        weight: m.weight,
+        description: m.description,
+        elo: m.elo,
+        height: m.height,
+        width: m.width,
       }));
 
       return { library, cursor: 0 };
@@ -333,7 +344,7 @@ const loadMediaByTags =
     sql += ` ORDER BY weight;`;
     console.log('SQL', sql, params);
     try {
-      const media = await db.all(sql, params);
+      const media = await db.all(sql, params, 'loadMediaByTags');
 
       const library = media.map((media) => ({
         path: media.media_path,

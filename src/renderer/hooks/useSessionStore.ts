@@ -45,6 +45,9 @@ export interface SessionPreviousData {
   previousStateType?: LibraryStateType | null;
   previousTextFilter?: string;
   previousDbQuery?: { tags: string[] };
+  // Path the library was loaded for, so back-restoration keeps
+  // initialFile coherent with the restored library snapshot.
+  previousInitialFile?: string;
 }
 
 export interface SessionData {
@@ -314,7 +317,8 @@ export function updatePrevious(
   previousCursor: number,
   previousStateType?: LibraryStateType | null,
   previousTextFilter?: string,
-  previousDbQuery?: { tags: string[] }
+  previousDbQuery?: { tags: string[] },
+  previousInitialFile?: string
 ): void {
   setSessionValue('previous', {
     previousLibrary,
@@ -322,5 +326,6 @@ export function updatePrevious(
     previousStateType,
     previousTextFilter,
     previousDbQuery,
+    previousInitialFile,
   });
 }

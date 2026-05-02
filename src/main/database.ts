@@ -1,4 +1,13 @@
 import * as sqlite3 from 'sqlite3';
+import { logQuery } from './queryLog';
+
+// High-resolution timer that works in Node and Electron without depending on
+// the DOM Performance global being typed.
+const now = (): number => {
+  // Use Number conversion so we always return a plain number in ms.
+  const hr = process.hrtime();
+  return hr[0] * 1000 + hr[1] / 1e6;
+};
 
 export class Database {
   private db: sqlite3.Database;
@@ -16,40 +25,95 @@ export class Database {
 
   run(
     query: string,
-    params: any[] = []
+    params: any[] = [],
+    name?: string
   ): Promise<{ id: number; changes: number }> {
+    const start = now();
     return new Promise((resolve, reject) => {
       this.db.run(query, params, function (err: Error | null) {
+        const duration_ms = now() - start;
         if (err) {
+          logQuery({
+            name,
+            sql: query,
+            params,
+            duration_ms,
+            rows: null,
+            error: err.message,
+          });
           console.error('Error executing query:', err);
           reject(err);
         } else {
+          logQuery({
+            name,
+            sql: query,
+            params,
+            duration_ms,
+            rows: this.changes ?? null,
+            error: null,
+          });
           resolve({ id: this.lastID, changes: this.changes });
         }
       });
     });
   }
 
-  get(query: string, params: any[] = []): Promise<any> {
+  get(query: string, params: any[] = [], name?: string): Promise<any> {
+    const start = now();
     return new Promise((resolve, reject) => {
       this.db.get(query, params, (err: Error | null, row: any) => {
+        const duration_ms = now() - start;
         if (err) {
+          logQuery({
+            name,
+            sql: query,
+            params,
+            duration_ms,
+            rows: null,
+            error: err.message,
+          });
           console.error('Error executing query:', err);
           reject(err);
         } else {
+          logQuery({
+            name,
+            sql: query,
+            params,
+            duration_ms,
+            rows: row ? 1 : 0,
+            error: null,
+          });
           resolve(row);
         }
       });
     });
   }
 
-  all(query: string, params: any[] = []): Promise<any[]> {
+  all(query: string, params: any[] = [], name?: string): Promise<any[]> {
+    const start = now();
     return new Promise((resolve, reject) => {
       this.db.all(query, params, (err: Error | null, rows: any[]) => {
+        const duration_ms = now() - start;
         if (err) {
+          logQuery({
+            name,
+            sql: query,
+            params,
+            duration_ms,
+            rows: null,
+            error: err.message,
+          });
           console.error('Error executing query:', err);
           reject(err);
         } else {
+          logQuery({
+            name,
+            sql: query,
+            params,
+            duration_ms,
+            rows: rows ? rows.length : 0,
+            error: null,
+          });
           resolve(rows);
         }
       });
@@ -234,5 +298,30 @@ export async function initDB(db: Database) {
         );
       }
     }
+  }
+
+  // Index on tag_label for the typed-query hot paths. Without this, every
+  // tag-based filter does a full table scan of media_tag_by_category. The
+  // composite PK (media_path, tag_label, ...) only helps queries that lead
+  // with media_path, so we still need a standalone index for tag_label.
+  //
+  // We don't add a separate index on media_path because the PK's leading
+  // column already covers `WHERE media_path = ?` lookups; adding one was
+  // redundant and contended with the Go media-server when both processes
+  // hold the DB open, producing SQLITE_BUSY on every Electron start.
+  //
+  // Index creation is wrapped in try/catch so a transient lock contention
+  // (or any other failure) cannot kill app startup. The app still works
+  // without the index — queries are just slower — and the next start will
+  // try again.
+  try {
+    await db.run(
+      `CREATE INDEX IF NOT EXISTS idx_mtc_tag_label ON media_tag_by_category(tag_label)`
+    );
+  } catch (e) {
+    console.warn(
+      '[initDB] failed to create idx_mtc_tag_label (will retry next start):',
+      e
+    );
   }
 }
