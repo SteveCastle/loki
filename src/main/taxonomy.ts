@@ -9,6 +9,9 @@ import { getFileType } from '../file-types';
 
 const loadTaxonomy = (db: Database) => async () => {
   try {
+    // Include thumbnail_path_600 so the renderer doesn't have to fan out one
+    // extra IPC + SQL roundtrip per tag (`fetchTagPreview`) at startup. With
+    // many categories that was 18+ sequential 1-3ms lookups in the log.
     const categories = await db.all(
       `SELECT
     c.label AS category_label,
@@ -20,7 +23,8 @@ const loadTaxonomy = (db: Database) => async () => {
         'label', t.label,
         'category', t.category_label,
         'weight', t.weight,
-        'description', t.description
+        'description', t.description,
+        'thumbnail_path_600', t.thumbnail_path_600
       )
     ) AS tags
   FROM category c

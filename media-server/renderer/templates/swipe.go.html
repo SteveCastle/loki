@@ -807,9 +807,13 @@
         margin-bottom: 0;
       }
 
+      /* Virtualized list inner container: a tall spacer that gives the
+         scrollbar the right size. Visible rows are absolutely positioned. */
+      .tag-list-inner {
+        position: relative;
+      }
+
       .tag-category-header {
-        position: sticky;
-        top: 0;
         background: rgba(0, 0, 0, 0.98);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
@@ -822,6 +826,23 @@
         border-bottom: 1px solid rgba(0, 217, 165, 0.15);
         z-index: 10;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        /* Absolute positioning when virtualized */
+        height: 36px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+      }
+
+      .tag-list-inner > .tag-category-header,
+      .tag-list-inner > .tag-item {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+      }
+
+      .tag-list-inner > .tag-category-header {
+        left: 0;
+        right: 0;
       }
 
       .tag-category-items {
@@ -829,18 +850,28 @@
       }
 
       .tag-item {
-        padding: 12px 14px;
+        padding: 0 14px;
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid transparent;
         border-radius: 10px;
         color: var(--text-dim);
         cursor: pointer;
-        margin-bottom: 6px;
-        transition: all 0.15s;
+        transition: background 0.15s, border-color 0.15s, color 0.15s;
         display: flex;
         align-items: center;
         justify-content: space-between;
         font-size: 14px;
+        height: 38px;
+        box-sizing: border-box;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+
+      .tag-item > span:first-child {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        flex: 1;
       }
 
       .tag-item:last-child {
@@ -2585,22 +2616,41 @@
       }
 
       // Tag filtering functions
-      async function loadAllTags() {
-        try {
-          const response = await fetch('/media/suggest?kind=tag&prefix=');
-          const data = await response.json();
-          // New format: { tags: [{label: "...", category: "..."}] }
-          allTags = (data.tags || []).map((tag) => ({
-            label: tag.label,
-            category: tag.category,
-          }));
-          filteredTags = [...allTags];
+      // Module-level cache state: once loaded, allTags persists for the
+      // page's lifetime. With up to ~10k tags, the network + JSON parse
+      // shouldn't repeat every time the filter modal opens.
+      let allTagsLoaded = false;
+      let allTagsLoading = null; // in-flight Promise to dedupe concurrent opens
+
+      async function loadAllTags(force = false) {
+        if (!force && allTagsLoaded) {
           renderTagList();
-        } catch (err) {
-          console.error('Failed to load tags:', err);
-          tagList.innerHTML =
-            '<div class="tag-list-empty">Failed to load tags</div>';
+          return;
         }
+        if (allTagsLoading) {
+          return allTagsLoading;
+        }
+        tagList.innerHTML = '<div class="tag-list-empty">Loading tags...</div>';
+        allTagsLoading = (async () => {
+          try {
+            const response = await fetch('/media/suggest?kind=tag&prefix=');
+            const data = await response.json();
+            allTags = (data.tags || []).map((tag) => ({
+              label: tag.label,
+              category: tag.category,
+            }));
+            filteredTags = [...allTags];
+            allTagsLoaded = true;
+            renderTagList();
+          } catch (err) {
+            console.error('Failed to load tags:', err);
+            tagList.innerHTML =
+              '<div class="tag-list-empty">Failed to load tags</div>';
+          } finally {
+            allTagsLoading = null;
+          }
+        })();
+        return allTagsLoading;
       }
 
       function renderSelectedTags() {
@@ -2629,56 +2679,168 @@
         selectedTagsContainer.innerHTML = chips + clearAll;
       }
 
-      function renderTagList() {
-        if (filteredTags.length === 0) {
-          tagList.innerHTML = '<div class="tag-list-empty">No tags found</div>';
+      // Virtualized tag list. With up to ~10k tags, rendering every row
+      // into the DOM blocks the main thread for hundreds of milliseconds and
+      // makes the modal feel frozen. Instead we maintain a flat array of
+      // "rows" with precomputed `y` positions, render only the rows visible
+      // in the scroll viewport (plus a small overscan), and re-render on
+      // scroll via requestAnimationFrame.
+      const VLIST_HEADER_H = 36;
+      const VLIST_ITEM_H = 42; // 38px item + 4px gap
+      const VLIST_SECTION_GAP = 8;
+      const VLIST_OVERSCAN_PX = 240;
+
+      let virtualRows = []; // [{type, y, label?, category?}]
+      let virtualTotalHeight = 0;
+      let virtualScrollScheduled = false;
+      let virtualListenerInstalled = false;
+
+      function buildVirtualRows() {
+        virtualRows = [];
+        virtualTotalHeight = 0;
+        if (filteredTags.length === 0) return;
+
+        const byCategory = {};
+        filteredTags.forEach((tag) => {
+          const cat = tag.category || 'Other';
+          if (!byCategory[cat]) byCategory[cat] = [];
+          byCategory[cat].push(tag);
+        });
+        const categories = Object.keys(byCategory).sort();
+
+        let y = 0;
+        categories.forEach((cat) => {
+          virtualRows.push({ type: 'header', y, category: cat });
+          y += VLIST_HEADER_H;
+          byCategory[cat].forEach((tag) => {
+            virtualRows.push({
+              type: 'item',
+              y,
+              label: tag.label,
+              category: tag.category,
+            });
+            y += VLIST_ITEM_H;
+          });
+          y += VLIST_SECTION_GAP;
+        });
+        virtualTotalHeight = y;
+      }
+
+      // Binary search for the first row whose bottom edge is past `y`.
+      function findFirstRowAt(y) {
+        let lo = 0;
+        let hi = virtualRows.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          const row = virtualRows[mid];
+          const h = row.type === 'header' ? VLIST_HEADER_H : VLIST_ITEM_H;
+          if (row.y + h <= y) {
+            lo = mid + 1;
+          } else {
+            hi = mid;
+          }
+        }
+        return lo;
+      }
+
+      function renderVirtualWindow() {
+        if (virtualRows.length === 0) {
+          tagList.innerHTML =
+            '<div class="tag-list-empty">No tags found</div>';
           return;
         }
 
-        // Group tags by category
-        const tagsByCategory = {};
-        filteredTags.forEach((tag) => {
-          const category = tag.category || 'Other';
-          if (!tagsByCategory[category]) {
-            tagsByCategory[category] = [];
+        const viewportH = tagList.clientHeight || 400;
+        const scrollTop = tagList.scrollTop;
+        const windowTop = Math.max(0, scrollTop - VLIST_OVERSCAN_PX);
+        const windowBottom = scrollTop + viewportH + VLIST_OVERSCAN_PX;
+
+        let firstIdx = findFirstRowAt(windowTop);
+        let lastIdx = firstIdx;
+        while (lastIdx < virtualRows.length && virtualRows[lastIdx].y < windowBottom) {
+          lastIdx++;
+        }
+
+        // Build only the visible slice. With overscan ~240px and rows
+        // ~38–42px each, this is on the order of 10–20 nodes regardless
+        // of how large the dataset is.
+        let inner = `<div class="tag-list-inner" style="height:${virtualTotalHeight}px;">`;
+        for (let i = firstIdx; i < lastIdx; i++) {
+          const row = virtualRows[i];
+          if (row.type === 'header') {
+            inner +=
+              `<div class="tag-category-header" style="top:${row.y}px;">` +
+              escapeHtml(row.category) +
+              '</div>';
+          } else {
+            const sel = selectedTags.has(row.label) ? ' selected' : '';
+            inner +=
+              `<div class="tag-item${sel}" data-tag-label="${escapeAttr(
+                row.label
+              )}" style="top:${row.y}px;" onclick="toggleTag('${escapeAttr(
+                row.label
+              )}', this)"><span>` +
+              escapeHtml(row.label) +
+              '</span></div>';
           }
-          tagsByCategory[category].push(tag);
-        });
-
-        // Sort categories alphabetically
-        const categories = Object.keys(tagsByCategory).sort();
-
-        // Render grouped tags with proper section structure
-        let html = '';
-        categories.forEach((category) => {
-          html += `<div class="tag-category-section">
-            <div class="tag-category-header">${escapeHtml(category)}</div>
-            <div class="tag-category-items">`;
-
-          tagsByCategory[category].forEach((tag) => {
-            const selected = selectedTags.has(tag.label) ? 'selected' : '';
-            html += `<div class="tag-item ${selected}" onclick="toggleTag('${escapeAttr(
-              tag.label
-            )}')">
-              <span>${escapeHtml(tag.label)}</span>
-            </div>`;
-          });
-
-          html += `</div></div>`;
-        });
-
-        tagList.innerHTML = html;
+        }
+        inner += '</div>';
+        tagList.innerHTML = inner;
       }
 
-      function toggleTag(tag) {
-        if (selectedTags.has(tag)) {
-          selectedTags.delete(tag);
-        } else {
+      function scheduleVirtualRender() {
+        if (virtualScrollScheduled) return;
+        virtualScrollScheduled = true;
+        requestAnimationFrame(() => {
+          virtualScrollScheduled = false;
+          renderVirtualWindow();
+        });
+      }
+
+      function ensureVirtualScrollListener() {
+        if (virtualListenerInstalled) return;
+        tagList.addEventListener('scroll', scheduleVirtualRender, {
+          passive: true,
+        });
+        virtualListenerInstalled = true;
+      }
+
+      function renderTagList() {
+        ensureVirtualScrollListener();
+        buildVirtualRows();
+        // Reset scroll on full rebuild (e.g. after filter change) so the
+        // user sees the top of the new result set.
+        tagList.scrollTop = 0;
+        renderVirtualWindow();
+      }
+
+      // Find the .tag-item DOM node for a tag label. Uses an attribute
+      // selector with CSS.escape so labels with quotes/special chars don't
+      // break the lookup.
+      function findTagItem(label) {
+        if (!label) return null;
+        const escaped =
+          window.CSS && CSS.escape ? CSS.escape(label) : label.replace(/"/g, '\\"');
+        return tagList.querySelector('.tag-item[data-tag-label="' + escaped + '"]');
+      }
+
+      // Toggling/removing a tag changes one row's `.selected` class. The
+      // previous version rebuilt the entire 10k-item list on every click —
+      // hundreds of milliseconds of layout per toggle. Now we just flip
+      // the class on the affected element.
+      function toggleTag(tag, el) {
+        const isAdding = !selectedTags.has(tag);
+        if (isAdding) {
           selectedTags.add(tag);
+        } else {
+          selectedTags.delete(tag);
         }
         saveSelectedTags();
         renderSelectedTags();
-        renderTagList();
+        const node = el || findTagItem(tag);
+        if (node) {
+          node.classList.toggle('selected', isAdding);
+        }
         applyFilter();
       }
 
@@ -2686,7 +2848,10 @@
         selectedTags.delete(tag);
         saveSelectedTags();
         renderSelectedTags();
-        renderTagList();
+        const node = findTagItem(tag);
+        if (node) {
+          node.classList.remove('selected');
+        }
         applyFilter();
       }
 
@@ -2694,7 +2859,11 @@
         selectedTags.clear();
         saveSelectedTags();
         renderSelectedTags();
-        renderTagList();
+        // One pass over only the currently-selected nodes — fast even with
+        // many tags loaded.
+        tagList.querySelectorAll('.tag-item.selected').forEach((el) => {
+          el.classList.remove('selected');
+        });
         applyFilter();
       }
 

@@ -141,6 +141,19 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
   cursor: (_, event) => event.data.cursor,
 });
 
+// Atomically snapshot the current state into the previous-state slot. Use
+// this instead of inlining the six previous* assigns at each save site so a
+// future edit cannot accidentally save five of six fields and leave the
+// restore inconsistent.
+const capturePrevious = assign<LibraryState, AnyEventObject>({
+  previousLibrary: (context) => context.library,
+  previousCursor: (context) => context.cursor,
+  previousStateType: (context) => context.currentStateType,
+  previousTextFilter: (context) => context.textFilter,
+  previousDbQuery: (context) => ({ ...context.dbQuery }),
+  previousInitialFile: (context) => context.initialFile,
+});
+
 const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
   // Only save previous state if not already saved by an action (check if previousLibrary is empty)
   previousLibrary: (context) =>
@@ -233,6 +246,21 @@ const updatePersistedState = (context: LibraryState) => {
   });
 };
 
+// Mirror the just-captured previous* fields from context to the session store.
+// Why: capturing previous in the assign only updates in-memory context. If the
+// app closes (or a beforeunload flush fires) before setLibraryWithPrevious runs
+// at the end of the load, the on-disk previous would lag by one transition.
+const persistPreviousState = (context: LibraryState) => {
+  setSessionValue('previous', {
+    previousLibrary: context.previousLibrary,
+    previousCursor: context.previousCursor,
+    previousStateType: context.previousStateType,
+    previousTextFilter: context.previousTextFilter,
+    previousDbQuery: context.previousDbQuery,
+    previousInitialFile: context.previousInitialFile,
+  });
+};
+
 const setPath = assign<LibraryState, AnyEventObject>({
   initialFile: (context, event) => {
     if (!event.data) {
@@ -241,12 +269,27 @@ const setPath = assign<LibraryState, AnyEventObject>({
     clearPersistedLibrary();
     return event.data;
   },
+  // Only reset filter setting when the user actually picked a new path.
+  // Cancelling the picker should leave filters untouched.
   settings: (context, event) => {
+    if (!event.data) return context.settings;
     return {
       ...context.settings,
       filters: 'all',
     };
   },
+  // Wipe in-memory previous-state slot when starting in a new workspace,
+  // so a back-navigation doesn't restore a library from the prior path.
+  previousLibrary: (context, event) => (event.data ? [] : context.previousLibrary),
+  previousCursor: (context, event) => (event.data ? 0 : context.previousCursor),
+  previousStateType: (context, event) =>
+    event.data ? null : context.previousStateType,
+  previousTextFilter: (context, event) =>
+    event.data ? '' : context.previousTextFilter,
+  previousDbQuery: (context, event) =>
+    event.data ? { tags: [] } : context.previousDbQuery,
+  previousInitialFile: (context, event) =>
+    event.data ? '' : context.previousInitialFile,
 });
 
 const updateFilePath = assign<LibraryState, AnyEventObject>({
@@ -290,6 +333,28 @@ const setDB = assign<LibraryState, AnyEventObject>({
     }
     return '';
   },
+  // Wipe in-memory previous-state slot when switching databases so a
+  // back-navigation can't surface a library from the prior DB.
+  previousLibrary: (context, event) =>
+    event.data && event.data !== context.dbPath ? [] : context.previousLibrary,
+  previousCursor: (context, event) =>
+    event.data && event.data !== context.dbPath ? 0 : context.previousCursor,
+  previousStateType: (context, event) =>
+    event.data && event.data !== context.dbPath
+      ? null
+      : context.previousStateType,
+  previousTextFilter: (context, event) =>
+    event.data && event.data !== context.dbPath
+      ? ''
+      : context.previousTextFilter,
+  previousDbQuery: (context, event) =>
+    event.data && event.data !== context.dbPath
+      ? { tags: [] }
+      : context.previousDbQuery,
+  previousInitialFile: (context, event) =>
+    event.data && event.data !== context.dbPath
+      ? ''
+      : context.previousInitialFile,
 });
 
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
@@ -1181,6 +1246,32 @@ const libraryMachine = createMachine(
                 const cursorData = getSessionValue('cursor');
                 return cursorData ? cursorData.cursor : 0;
               },
+              // Restore back-navigation slot from session so a reload in
+              // web mode keeps the same one-step undo as Electron mode.
+              previousLibrary: () => {
+                const previousData = getSessionValue('previous');
+                return previousData ? previousData.previousLibrary : [];
+              },
+              previousCursor: () => {
+                const previousData = getSessionValue('previous');
+                return previousData ? previousData.previousCursor : 0;
+              },
+              previousStateType: () => {
+                const previousData = getSessionValue('previous');
+                return previousData?.previousStateType ?? null;
+              },
+              previousTextFilter: () => {
+                const previousData = getSessionValue('previous');
+                return previousData?.previousTextFilter ?? '';
+              },
+              previousDbQuery: () => {
+                const previousData = getSessionValue('previous');
+                return previousData?.previousDbQuery ?? { tags: [] };
+              },
+              previousInitialFile: () => {
+                const previousData = getSessionValue('previous');
+                return previousData?.previousInitialFile ?? '';
+              },
             }),
             always: [
               { target: 'loadingFromSearch', cond: hasPersistedTextFilter },
@@ -1570,17 +1661,40 @@ const libraryMachine = createMachine(
             ],
           },
           loadingFromPreviousLibrary: {
-            entry: assign<LibraryState, AnyEventObject>({
-              library: (context) => {
-                const library = context.previousLibrary;
-                const restoredInitialFile =
-                  context.previousInitialFile || context.initialFile;
-                // Persist the restored library using session store (batched).
-                // Use the restored path so the persisted snapshot stays in
-                // sync with the library being restored.
+            // Restoration runs in three discrete actions so the assign is
+            // pure and the side effects are visible: (1) atomic context
+            // restore from previous*, (2) mirror the restored snapshot to
+            // the session store, (3) `always` then routes to the correct
+            // loaded* state based on the restored currentStateType.
+            entry: [
+              assign<LibraryState, AnyEventObject>({
+                library: (context) => context.previousLibrary,
+                cursor: (context) => context.previousCursor,
+                textFilter: (context) => context.previousTextFilter,
+                dbQuery: (context) => ({ ...context.previousDbQuery }),
+                initialFile: (context) =>
+                  context.previousInitialFile || context.initialFile,
+                currentStateType: (context) =>
+                  context.previousStateType || ('fs' as LibraryStateType),
+                libraryLoadId: () => uniqueId(),
+                // Clear the previous-state slot now that we've consumed it.
+                previousLibrary: () => [],
+                previousCursor: () => 0,
+                previousStateType: () => null,
+                previousTextFilter: () => '',
+                previousDbQuery: () => ({ tags: [] }),
+                previousInitialFile: () => '',
+              }),
+              // Mirror the restored snapshot to the session store. context
+              // here is post-assign, so library/cursor/textFilter/dbQuery
+              // already reflect the restored values.
+              (context) => {
                 setSessionValues({
-                  library: { library, initialFile: restoredInitialFile },
-                  cursor: { cursor: context.previousCursor },
+                  library: {
+                    library: context.library,
+                    initialFile: context.initialFile,
+                  },
+                  cursor: { cursor: context.cursor },
                   previous: {
                     previousLibrary: [],
                     previousCursor: 0,
@@ -1590,37 +1704,9 @@ const libraryMachine = createMachine(
                     previousInitialFile: '',
                   },
                 });
-                // Persist restored query state
-                updatePersistedState({
-                  ...context,
-                  initialFile: restoredInitialFile,
-                  textFilter: context.previousTextFilter,
-                  dbQuery: context.previousDbQuery,
-                });
-                return library;
+                updatePersistedState(context);
               },
-              libraryLoadId: () => uniqueId(),
-              cursor: (context) => context.previousCursor,
-              // Restore query state from previous
-              textFilter: (context) => context.previousTextFilter,
-              dbQuery: (context) => ({ ...context.previousDbQuery }),
-              // Restore the path the library was loaded for so the UI
-              // (and any subsequent fs operations) stay coherent. Fall
-              // back to the current initialFile when no previous was
-              // captured (e.g. from a state that didn't change paths).
-              initialFile: (context) =>
-                context.previousInitialFile || context.initialFile,
-              // Store the target state type before clearing (used by always conditions)
-              currentStateType: (context) =>
-                context.previousStateType || ('fs' as LibraryStateType),
-              // Clear previous state after restoration
-              previousLibrary: () => [],
-              previousCursor: () => 0,
-              previousStateType: () => null,
-              previousTextFilter: () => '',
-              previousDbQuery: () => ({ tags: [] }),
-              previousInitialFile: () => '',
-            }),
+            ],
             always: [
               {
                 target: 'loadedFromDB',
@@ -1653,8 +1739,15 @@ const libraryMachine = createMachine(
           },
           loadedFromFS: {
             initial: 'idle',
+            // Invariant: in FS mode, no description search and no tag query
+            // are active. If we land here with stale filter/query state from a
+            // partial restore or some upstream bug, force the context back to
+            // a coherent shape so the UI never shows a search/tag pill paired
+            // with a filesystem library.
             entry: assign<LibraryState, AnyEventObject>({
               currentStateType: () => 'fs' as LibraryStateType,
+              textFilter: () => '',
+              dbQuery: () => ({ tags: [] }),
             }),
             on: {
               SELECT_FILE: {
@@ -1762,15 +1855,12 @@ const libraryMachine = createMachine(
                 {
                   target: 'loadingFromDB',
                   actions: [
+                    // Atomic snapshot of current state for back-navigation,
+                    // then mutate dbQuery in a separate assign so the capture
+                    // and the mutation can't race.
+                    capturePrevious,
+                    persistPreviousState,
                     assign<LibraryState, AnyEventObject>({
-                      // IMPORTANT: Save previous state BEFORE modifying
-                      previousLibrary: (context) => context.library,
-                      previousCursor: (context) => context.cursor,
-                      previousStateType: (context) => context.currentStateType,
-                      previousTextFilter: (context) => context.textFilter,
-                      previousDbQuery: (context) => ({ ...context.dbQuery }),
-                      previousInitialFile: (context) => context.initialFile,
-                      // Now set the new values
                       dbQuery: (context, event) => {
                         console.log(
                           'SET QUERY TAG TO',
@@ -1781,49 +1871,55 @@ const libraryMachine = createMachine(
                       },
                     }),
                     (context, event) => {
-                      // Persist the updated state
                       updatePersistedState({
                         ...context,
                         dbQuery: { tags: [event.data.tag] },
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      // Invalidate persisted library snapshot using session store
                       clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
               ],
-              SET_TEXT_FILTER: {
-                target: 'loadingFromSearch',
-                actions: [
-                  assign<LibraryState, AnyEventObject>({
-                    // IMPORTANT: Save previous state BEFORE modifying
-                    previousLibrary: (context) => context.library,
-                    previousCursor: (context) => context.cursor,
-                    previousStateType: (context) => context.currentStateType,
-                    previousTextFilter: (context) => context.textFilter,
-                    previousDbQuery: (context) => ({ ...context.dbQuery }),
-                    previousInitialFile: (context) => context.initialFile,
-                    // Now set the new values
-                    textFilter: (context, event) => {
-                      console.log('SET_TEXT_FILTER', context, event);
-                      return event.data.textFilter;
+              SET_TEXT_FILTER: [
+                {
+                  cond: notEmpty,
+                  target: 'loadingFromSearch',
+                  actions: [
+                    capturePrevious,
+                    persistPreviousState,
+                    assign<LibraryState, AnyEventObject>({
+                      textFilter: (context, event) => {
+                        console.log('SET_TEXT_FILTER', context, event);
+                        return event.data.textFilter;
+                      },
+                      // Clear tag filters when entering search mode (mutually exclusive)
+                      dbQuery: () => ({ tags: [] }),
+                    }),
+                    (context, event) => {
+                      updatePersistedState({
+                        ...context,
+                        textFilter: event.data.textFilter,
+                        dbQuery: { tags: [] },
+                      });
+                      clearSessionKeys(['library', 'cursor']);
                     },
-                    // Clear tag filters when entering search mode (mutually exclusive)
-                    dbQuery: () => ({ tags: [] }),
-                  }),
-                  (context, event) => {
-                    updatePersistedState({
-                      ...context,
-                      textFilter: event.data.textFilter,
-                      dbQuery: { tags: [] },
-                    });
-                    // Invalidate persisted library snapshot to avoid query/library mismatch
-                    // Invalidate persisted library snapshot using session store
-                    clearSessionKeys(['library', 'cursor']);
-                  },
-                ],
-              },
+                  ],
+                },
+                {
+                  // Empty text in FS mode is a no-op for the library — just
+                  // clear textFilter without leaving FS or running a search.
+                  cond: isEmpty,
+                  actions: [
+                    assign<LibraryState, AnyEventObject>({
+                      textFilter: () => '',
+                    }),
+                    (context) => {
+                      updatePersistedState({ ...context, textFilter: '' });
+                    },
+                  ],
+                },
+              ],
               SHUFFLE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
@@ -2047,10 +2143,14 @@ const libraryMachine = createMachine(
           },
           loadedFromSearch: {
             initial: 'idle',
+            // Invariant: in search mode, tag query is empty (search and tags
+            // are mutually exclusive in this app). Force dbQuery.tags=[] on
+            // entry so a stale tag set can't surface alongside search results.
             entry: [
               assign<LibraryState, AnyEventObject>({
                 libraryLoadId: () => uniqueId(),
                 currentStateType: () => 'search' as LibraryStateType,
+                dbQuery: () => ({ tags: [] }),
               }),
               (context) => updatePersistedState(context),
             ],
@@ -2126,16 +2226,10 @@ const libraryMachine = createMachine(
                   target: 'loadingFromDB',
                   cond: willHaveTag,
                   actions: [
+                    capturePrevious,
+                    persistPreviousState,
                     assign<LibraryState, AnyEventObject>({
-                      // IMPORTANT: Save previous state BEFORE modifying, because setLibraryWithPrevious
-                      // runs after the transition and would capture the modified values
-                      previousLibrary: (context) => context.library,
-                      previousCursor: (context) => context.cursor,
-                      previousStateType: (context) => context.currentStateType,
-                      previousTextFilter: (context) => context.textFilter,
-                      previousDbQuery: (context) => ({ ...context.dbQuery }),
-                      previousInitialFile: (context) => context.initialFile,
-                      // Now clear text filter when switching to tag mode (mutually exclusive)
+                      // Clear text filter when switching to tag mode (mutually exclusive)
                       textFilter: () => '',
                       dbQuery: (context, event) => {
                         console.log(
@@ -2143,7 +2237,6 @@ const libraryMachine = createMachine(
                           context,
                           event.data.tag
                         );
-                        // Start fresh with just this tag
                         return { tags: [event.data.tag] };
                       },
                     }),
@@ -2153,30 +2246,14 @@ const libraryMachine = createMachine(
                         textFilter: '',
                         dbQuery: { tags: [event.data.tag] },
                       });
-                      // Invalidate persisted library snapshot to avoid query/library mismatch
                       clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
-                {
-                  // If toggling off the only tag, go back to previous library
-                  target: 'loadingFromPreviousLibrary',
-                  cond: willHaveNoTag,
-                  actions: [
-                    assign<LibraryState, AnyEventObject>({
-                      textFilter: () => '',
-                      dbQuery: () => ({ tags: [] }),
-                    }),
-                    (context) => {
-                      updatePersistedState({
-                        ...context,
-                        textFilter: '',
-                        dbQuery: { tags: [] },
-                      });
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
-                },
+                // willHaveNoTag branch removed — search mode invariant is
+                // dbQuery.tags === [], so toggling any new tag yields a
+                // single-tag set (handled above) and the empty-result branch
+                // is unreachable.
               ],
               SET_TEXT_FILTER: [
                 {
@@ -2198,34 +2275,19 @@ const libraryMachine = createMachine(
                         dbQuery: { tags: [] },
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
-                      // Invalidate persisted library snapshot using session store
                       clearSessionKeys(['library', 'cursor']);
                     },
                   ],
                 },
                 {
+                  // Empty text exits search mode. Don't write textFilter or
+                  // dbQuery here — loadingFromPreviousLibrary's entry will
+                  // restore them from previous*. Writing intermediate
+                  // {textFilter: '', dbQuery: {tags: []}} to the session
+                  // store before the restore would briefly persist a
+                  // corrupt query if the app flushed in that window.
                   cond: isEmpty,
                   target: 'loadingFromPreviousLibrary',
-                  actions: [
-                    assign<LibraryState, AnyEventObject>({
-                      textFilter: (context, event) => {
-                        console.log('Clearing search', context, event);
-                        return event.data.textFilter;
-                      },
-                      // Clear tags when exiting search mode
-                      dbQuery: () => ({ tags: [] }),
-                    }),
-                    (context, event) => {
-                      updatePersistedState({
-                        ...context,
-                        textFilter: event.data.textFilter,
-                        dbQuery: { tags: [] },
-                      });
-                      // Invalidate persisted library snapshot to avoid query/library mismatch
-                      // Invalidate persisted library snapshot using session store
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
                 },
               ],
               DELETE_FILE: {
@@ -2293,14 +2355,9 @@ const libraryMachine = createMachine(
               SET_FILE: {
                 target: 'loadingFromFS',
                 actions: [
+                  capturePrevious,
+                  persistPreviousState,
                   assign<LibraryState, AnyEventObject>({
-                    previousLibrary: (context) => context.library,
-                    previousCursor: (context) => context.cursor,
-                    // Capture state type and query for proper back navigation
-                    previousStateType: (context) => context.currentStateType,
-                    previousTextFilter: (context) => context.textFilter,
-                    previousDbQuery: (context) => ({ ...context.dbQuery }),
-                    previousInitialFile: (context) => context.initialFile,
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
                   }),
@@ -2351,10 +2408,14 @@ const libraryMachine = createMachine(
           },
           loadedFromDB: {
             initial: 'idle',
+            // Invariant: in tag (DB) mode, description search is empty (tags
+            // and search are mutually exclusive). Force textFilter='' on entry
+            // so a stale search pill can't surface alongside tag results.
             entry: [
               (context, event) => console.log('loadedFromDB', context, event),
               assign<LibraryState, AnyEventObject>({
                 currentStateType: () => 'db' as LibraryStateType,
+                textFilter: () => '',
               }),
               (context) => updatePersistedState(context),
             ],
@@ -2428,14 +2489,9 @@ const libraryMachine = createMachine(
               SET_FILE: {
                 target: 'loadingFromFS',
                 actions: [
+                  capturePrevious,
+                  persistPreviousState,
                   assign<LibraryState, AnyEventObject>({
-                    previousLibrary: (context) => context.library,
-                    previousCursor: (context) => context.cursor,
-                    // Capture state type and query for proper back navigation
-                    previousStateType: (context) => context.currentStateType,
-                    previousTextFilter: (context) => context.textFilter,
-                    previousDbQuery: (context) => ({ ...context.dbQuery }),
-                    previousInitialFile: (context) => context.initialFile,
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
                   }),
@@ -2457,24 +2513,13 @@ const libraryMachine = createMachine(
                 target: 'selectingFilePath',
               },
               CLEAR_QUERY_TAG: {
+                // No actions — loadingFromPreviousLibrary's entry restores
+                // dbQuery, textFilter, library, and cursor from previous*
+                // and persists them. Writing dbQuery: { tags: [] } here
+                // would be clobbered by the entry, and persisting that
+                // intermediate state to disk could leave the on-disk query
+                // in a bad shape if the app closes mid-transition.
                 target: 'loadingFromPreviousLibrary',
-                actions: [
-                  assign<LibraryState, AnyEventObject>({
-                    dbQuery: (context, event) => {
-                      console.log('CLEAR QUERY TAG', context, event);
-                      return { tags: [] };
-                    },
-                  }),
-                  (context, event) => {
-                    updatePersistedState({
-                      ...context,
-                      dbQuery: { tags: [] },
-                    });
-                    // Invalidate persisted library snapshot to avoid query/library mismatch
-                    // Invalidate persisted library snapshot using session store
-                    clearSessionKeys(['library', 'cursor']);
-                  },
-                ],
               },
               // Remove a single tag from the active query. Falls back to
               // CLEAR semantics (restoring the previous library) when the
@@ -2488,15 +2533,13 @@ const libraryMachine = createMachine(
                     );
                     return remaining.length > 0;
                   },
-                  target: 'loadingFromDB',
+                  // Target switchingTag (which uses setLibrary, not
+                  // setLibraryWithPrevious) so the original entry-mode
+                  // previous (e.g. FS → DB) is preserved across within-DB
+                  // tag tweaks. Symmetric with SET_QUERY_TAG.
+                  target: 'switchingTag',
                   actions: [
                     assign<LibraryState, AnyEventObject>({
-                      previousLibrary: (context) => context.library,
-                      previousCursor: (context) => context.cursor,
-                      previousStateType: (context) => context.currentStateType,
-                      previousTextFilter: (context) => context.textFilter,
-                      previousDbQuery: (context) => ({ ...context.dbQuery }),
-                      previousInitialFile: (context) => context.initialFile,
                       dbQuery: (context, event) => ({
                         tags: (context.dbQuery.tags || []).filter(
                           (t) => t !== event.data.tag
@@ -2517,32 +2560,14 @@ const libraryMachine = createMachine(
                 },
                 {
                   target: 'loadingFromPreviousLibrary',
-                  actions: [
-                    assign<LibraryState, AnyEventObject>({
-                      dbQuery: () => ({ tags: [] }),
-                    }),
-                    (context) => {
-                      updatePersistedState({
-                        ...context,
-                        dbQuery: { tags: [] },
-                      });
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
                 },
               ],
               SET_TEXT_FILTER: {
                 target: 'loadingFromSearch',
                 actions: [
+                  capturePrevious,
+                  persistPreviousState,
                   assign<LibraryState, AnyEventObject>({
-                    // IMPORTANT: Save previous state BEFORE modifying
-                    previousLibrary: (context) => context.library,
-                    previousCursor: (context) => context.cursor,
-                    previousStateType: (context) => context.currentStateType,
-                    previousTextFilter: (context) => context.textFilter,
-                    previousDbQuery: (context) => ({ ...context.dbQuery }),
-                    previousInitialFile: (context) => context.initialFile,
-                    // Now set the new values
                     cursor: 0,
                     libraryLoadId: () => uniqueId(),
                     textFilter: (context, event) => {
@@ -2558,8 +2583,6 @@ const libraryMachine = createMachine(
                       textFilter: event.data.textFilter,
                       dbQuery: { tags: [] },
                     });
-                    // Invalidate persisted library snapshot to avoid query/library mismatch
-                    // Invalidate persisted library snapshot using session store
                     clearSessionKeys(['library', 'cursor']);
                   },
                 ],
@@ -2713,29 +2736,10 @@ const libraryMachine = createMachine(
                   ],
                 },
                 {
+                  // Toggling off the last tag — let
+                  // loadingFromPreviousLibrary restore previous state.
                   target: 'loadingFromPreviousLibrary',
                   cond: willHaveNoTag,
-                  actions: [
-                    assign<LibraryState, AnyEventObject>({
-                      dbQuery: (context, event) => {
-                        console.log(
-                          'SET QUERY TAG TO',
-                          context,
-                          event.data.tag
-                        );
-                        return { tags: [] };
-                      },
-                    }),
-                    (context, event) => {
-                      updatePersistedState({
-                        ...context,
-                        dbQuery: { tags: [] },
-                      });
-                      // Invalidate persisted library snapshot to avoid query/library mismatch
-                      // Invalidate persisted library snapshot using session store
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
                 },
               ],
               DELETED_ASSIGNMENT: {
