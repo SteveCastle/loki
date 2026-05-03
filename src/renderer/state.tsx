@@ -652,7 +652,7 @@ const getInitialContext = (): LibraryState => {
   };
 };
 
-const libraryMachine = createMachine(
+export const libraryMachine = createMachine(
   {
     id: 'library',
     predictableActionArguments: true,
@@ -1744,11 +1744,18 @@ const libraryMachine = createMachine(
             // partial restore or some upstream bug, force the context back to
             // a coherent shape so the UI never shows a search/tag pill paired
             // with a filesystem library.
-            entry: assign<LibraryState, AnyEventObject>({
-              currentStateType: () => 'fs' as LibraryStateType,
-              textFilter: () => '',
-              dbQuery: () => ({ tags: [] }),
-            }),
+            entry: [
+              assign<LibraryState, AnyEventObject>({
+                currentStateType: () => 'fs' as LibraryStateType,
+                textFilter: () => '',
+                dbQuery: () => ({ tags: [] }),
+              }),
+              // Mirror the cleared invariant to session storage so a folder
+              // load can never leave session.query holding stale tags. Without
+              // this, a later boot would see persisted tags + an FS library
+              // and route to loadedFromDB over the wrong library.
+              (context) => updatePersistedState(context),
+            ],
             on: {
               SELECT_FILE: {
                 target: 'selecting',
