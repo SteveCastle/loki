@@ -12,6 +12,7 @@ import { getFileType } from 'file-types';
 import { useSelector } from '@xstate/react';
 import TagCount from './tag-count';
 import { invoke, mediaUrl, fetchTagPreview } from '../../platform';
+import { isClickWithinThreshold, Point } from './click-vs-drag';
 
 type Concept = {
   label: string;
@@ -51,6 +52,11 @@ export default function Tag({
   );
   const queryClient = useQueryClient();
   const ref = React.useRef<HTMLDivElement>(null);
+  // Tracks the mousedown coordinate so we can fire selection only on real
+  // clicks. Same DOM node is the drag source, and HTML5 dnd suppresses
+  // synthetic `click` events once any cursor movement starts a drag, so
+  // relying on `onClick` here would drop intentional taps with mild jitter.
+  const mouseDownPosRef = React.useRef<Point | null>(null);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
   // Prefer the thumbnail bundled in the taxonomy payload. Fall back to the
   // dedicated fetchTagPreview IPC only when the bundled value is missing
@@ -145,13 +151,22 @@ export default function Tag({
         isDisabled ? 'disabled' : '',
       ].join(' ')}
       ref={ref}
-      onClick={() => {
-        if (!isDisabled) {
-          libraryService.send({
-            type: 'SET_QUERY_TAG',
-            data: { tag: tag.label },
-          });
+      onMouseDown={(e) => {
+        if (e.button !== 0) return;
+        mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
+      }}
+      onMouseUp={(e) => {
+        if (e.button !== 0) return;
+        const start = mouseDownPosRef.current;
+        mouseDownPosRef.current = null;
+        if (isDisabled) return;
+        if (!isClickWithinThreshold(start, { x: e.clientX, y: e.clientY })) {
+          return;
         }
+        libraryService.send({
+          type: 'SET_QUERY_TAG',
+          data: { tag: tag.label },
+        });
       }}
       onContextMenu={(e) => {
         if (e.shiftKey) {
@@ -185,6 +200,8 @@ export default function Tag({
         <button
           disabled={isDisabled}
           className={isDisabled ? 'disabled' : ''}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             if (!isDisabled) {
@@ -197,6 +214,8 @@ export default function Tag({
         <button
           disabled={isDisabled}
           className={isDisabled ? 'disabled' : ''}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             if (!isDisabled) {
