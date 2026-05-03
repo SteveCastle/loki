@@ -8,6 +8,7 @@ import { GlobalStateContext } from '../../state';
 import ConfirmDeleteTag from './confirm-delete-tag';
 import TagCount from './tag-count';
 import { invoke } from '../../platform';
+import { isClickWithinThreshold, Point } from './click-vs-drag';
 
 type Concept = {
   label: string;
@@ -39,6 +40,10 @@ function TagListRow({
   );
   const queryClient = useQueryClient();
   const ref = React.useRef<HTMLDivElement>(null);
+  // See tag.tsx for the rationale: HTML5 drag-and-drop suppresses synthetic
+  // click events on draggable elements once the cursor moves, so we gate
+  // selection on a manual mousedown/mouseup distance check instead.
+  const mouseDownPosRef = React.useRef<Point | null>(null);
   const [showDeleteModal, setShowDeleteModal] = React.useState(false);
 
   function getIsAbove(
@@ -111,13 +116,22 @@ function TagListRow({
       ]
         .filter(Boolean)
         .join(' ')}
-      onClick={() => {
-        if (!isDisabled) {
-          libraryService.send({
-            type: 'SET_QUERY_TAG',
-            data: { tag: tag.label },
-          });
+      onMouseDown={(e) => {
+        if (e.button !== 0) return;
+        mouseDownPosRef.current = { x: e.clientX, y: e.clientY };
+      }}
+      onMouseUp={(e) => {
+        if (e.button !== 0) return;
+        const start = mouseDownPosRef.current;
+        mouseDownPosRef.current = null;
+        if (isDisabled) return;
+        if (!isClickWithinThreshold(start, { x: e.clientX, y: e.clientY })) {
+          return;
         }
+        libraryService.send({
+          type: 'SET_QUERY_TAG',
+          data: { tag: tag.label },
+        });
       }}
       onContextMenu={(e) => {
         if (e.shiftKey) {
@@ -138,6 +152,8 @@ function TagListRow({
         <button
           disabled={isDisabled}
           className={isDisabled ? 'disabled' : ''}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             if (!isDisabled) handleEditAction(tag.label);
@@ -148,6 +164,8 @@ function TagListRow({
         <button
           disabled={isDisabled}
           className={isDisabled ? 'disabled' : ''}
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             if (!isDisabled) setShowDeleteModal(true);
