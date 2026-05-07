@@ -343,8 +343,8 @@ if (isElectron) {
   loadDuplicatesByPath = window.electron.loadDuplicatesByPath;
   mergeDuplicatesByPath = window.electron.mergeDuplicatesByPath;
   getGifMetadata = window.electron.getGifMetadata;
-  findSubtitle = (videoPath) =>
-    window.electron.ipcRenderer.invoke('find-subtitle', [videoPath]);
+  findSubtitle = ((videoPath: string) =>
+    window.electron.ipcRenderer.invoke('find-subtitle', [videoPath])) as any;
 } else {
   // Web mode
 
