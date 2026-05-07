@@ -91,6 +91,24 @@ type LibraryState = {
     loopStartTime: number;
     loopCount: number;
   };
+  // Audio tracks discovered on the currently-loaded <video> element. Reset
+  // to [] when the path changes; populated on `loadedmetadata`. The list
+  // is sourced from HTMLMediaElement.audioTracks (gated by the
+  // --enable-blink-features=AudioVideoTracks Chromium flag).
+  availableAudioTracks: Array<{
+    id: string;
+    label: string;
+    language: string;
+  }>;
+  // Index into availableAudioTracks of the user-selected (or default)
+  // track. Always 0 on a fresh path; never persisted.
+  selectedAudioTrackIndex: number;
+  // Sidecar subtitle for the current path. The blob URL is owned by the
+  // renderer and revoked when the path changes or the file unloads.
+  availableSubtitle: {
+    blobUrl: string;
+    label: string;
+  } | null;
   dbQuery: {
     tags: string[];
   };
@@ -445,6 +463,7 @@ const getInitialContext = (): LibraryState => {
     ['volume', 1.0],
     ['alwaysOnTop', false],
     ['useHLS', false],
+    ['subtitlesEnabled', false],
     ['incrementCursor', 'arrowright'],
     ['decrementCursor', 'arrowleft'],
     ['toggleTagPreview', 'shift'],
@@ -523,6 +542,9 @@ const getInitialContext = (): LibraryState => {
     previousInitialFile: '',
     scrollPosition: 0,
     previousScrollPosition: 0,
+    availableAudioTracks: [],
+    selectedAudioTrackIndex: 0,
+    availableSubtitle: null,
     videoPlayer: {
       eventId: 'initial',
       timeStamp: 0,
@@ -576,6 +598,7 @@ const getInitialContext = (): LibraryState => {
       alwaysOnTop: batched['alwaysOnTop'] as boolean,
       layoutMode: batched['layoutMode'] as 'grid' | 'masonry',
       useHLS: batched['useHLS'] as boolean,
+      subtitlesEnabled: batched['subtitlesEnabled'] as boolean,
     },
     hotKeys: {
       incrementCursor: batched['incrementCursor'] as string,
@@ -739,6 +762,23 @@ export const libraryMachine = createMachine(
                 }
                 return context.libraryLoadId;
               },
+            }),
+          },
+          SET_AVAILABLE_AUDIO_TRACKS: {
+            actions: assign<LibraryState, AnyEventObject>({
+              availableAudioTracks: (_context, event) => event.tracks,
+              // Reset selection when the track list changes (new video load).
+              selectedAudioTrackIndex: () => 0,
+            }),
+          },
+          SET_AUDIO_TRACK: {
+            actions: assign<LibraryState, AnyEventObject>({
+              selectedAudioTrackIndex: (_context, event) => event.index,
+            }),
+          },
+          SET_AVAILABLE_SUBTITLE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              availableSubtitle: (_context, event) => event.subtitle,
             }),
           },
           CHANGE_HOTKEY: {
