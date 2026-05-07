@@ -22,6 +22,7 @@ import {
   setupSessionStoreLifecycle,
 } from './sessionStore';
 import { cleanupArchives } from './archives';
+import { registerSubtitleHandlers } from './subtitles';
 
 import type { Database } from './database';
 
@@ -46,6 +47,11 @@ protocol.registerSchemesAsPrivileged([
     },
   },
 ]);
+
+// Expose HTMLMediaElement.audioTracks / videoTracks to renderer code.
+// Without this flag Chromium leaves these collections empty even on
+// MP4 files that contain multiple audio streams.
+app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
 
 // Heavy modules (database implementation, media, taxonomy, metadata, load-files)
 // are dynamically imported when needed to speed up cold start.
@@ -128,6 +134,7 @@ const store = new Store();
 
 // Session Store Provider (for ephemeral session data like library, cursor, etc.)
 registerSessionStoreHandlers();
+registerSubtitleHandlers();
 setupSessionStoreLifecycle();
 ipcMain.on('electron-store-get', async (event, key, defaultValue) => {
   event.returnValue = store.get(key, defaultValue);
