@@ -14,7 +14,7 @@ import soundHigh from '../../../../assets/sound-high.svg';
 import soundOff from '../../../../assets/sound-off.svg';
 import { uniqueId } from 'xstate/lib/utils';
 import { GlobalStateContext } from '../../state';
-import { clampVolume } from '../../../settings';
+import AudioTrackControls from './audio-track-controls';
 import './video-controls.css';
 
 // --- Helper Functions (mapRange, getLabel, useElementSize - remain the same) ---
@@ -461,20 +461,7 @@ export default function VideoControls() {
           </button>
           {showVolumeControl && playSound && (
             <div className="volumeControlHover">
-              <div className="volumeLabel">{Math.round(volume * 100)}%</div>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                value={volume}
-                onChange={(e) => {
-                  const newVolume = clampVolume(parseFloat(e.target.value));
-                  handleSettingChange('volume', newVolume);
-                }}
-                className="volumeSliderHover"
-                aria-label="Volume"
-              />
+              <AudioTrackControls />
             </div>
           )}
         </div>
