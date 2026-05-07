@@ -65,7 +65,8 @@ export type Channels =
   | 'check-for-updates'
   | 'apply-elo-ordering'
   | 'consolidate-tag-files'
-  | 'consolidate-category-files';
+  | 'consolidate-category-files'
+  | 'find-subtitle';
 
 const loadMediaFromDB = async (
   tags: string[],
