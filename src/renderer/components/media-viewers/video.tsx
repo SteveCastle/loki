@@ -650,16 +650,6 @@ export function Video({
       controlsList={'nodownload nofullscreen'}
       autoPlay
       loop
-    >
-      {availableSubtitle && (
-        <track
-          ref={trackRef}
-          kind="subtitles"
-          src={availableSubtitle.blobUrl}
-          label={availableSubtitle.label}
-          default={subtitlesEnabled}
-        />
-      )}
-    </video>
+    />
   );
 }
