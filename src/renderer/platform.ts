@@ -309,6 +309,10 @@ export let getGifMetadata: (
   filePath: string
 ) => Promise<GifMetadata | null>;
 
+export let findSubtitle: (
+  videoPath: string
+) => Promise<{ ext: 'srt' | 'vtt'; content: string } | null>;
+
 // ---- Platform initialization ----
 
 if (isElectron) {
@@ -339,6 +343,8 @@ if (isElectron) {
   loadDuplicatesByPath = window.electron.loadDuplicatesByPath;
   mergeDuplicatesByPath = window.electron.mergeDuplicatesByPath;
   getGifMetadata = window.electron.getGifMetadata;
+  findSubtitle = (videoPath) =>
+    window.electron.ipcRenderer.invoke('find-subtitle', [videoPath]);
 } else {
   // Web mode
 
@@ -551,4 +557,6 @@ if (isElectron) {
 
   getGifMetadata = (filePath) =>
     jsonPost('/api/media/gif-metadata', { path: filePath });
+
+  findSubtitle = async () => null;
 }
