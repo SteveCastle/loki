@@ -53,7 +53,8 @@ export type SettingKey =
   | 'autoPlayVideoLoops'
   | 'alwaysOnTop'
   | 'layoutMode'
-  | 'useHLS';
+  | 'useHLS'
+  | 'subtitlesEnabled';
 
 export type LayoutModeOption = 'grid' | 'masonry';
 
@@ -88,6 +89,7 @@ export type Settings = {
   alwaysOnTop: boolean;
   layoutMode: LayoutModeOption;
   useHLS: boolean;
+  subtitlesEnabled: boolean;
 };
 
 export const SCALE_MODES = {
@@ -523,6 +525,22 @@ export const USE_HLS = {
   },
 };
 
+export const SUBTITLES_ENABLED = {
+  title: 'Subtitles',
+  reload: false,
+  display: 'none',
+  options: {
+    yes: {
+      label: 'On',
+      value: true,
+    },
+    no: {
+      label: 'Off',
+      value: false,
+    },
+  },
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -565,4 +583,5 @@ export const SETTINGS: SettingsObject = {
   alwaysOnTop: ALWAYS_ON_TOP,
   layoutMode: LAYOUT_MODE,
   useHLS: USE_HLS,
+  subtitlesEnabled: SUBTITLES_ENABLED,
 };
