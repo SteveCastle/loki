@@ -6,7 +6,8 @@ import { GlobalStateContext } from '../../state';
 import { ScaleModeOption, clampVolume } from 'settings';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import Hls from 'hls.js';
-import { mediaUrl, hlsUrl, fetchMediaPreview as platformFetchMediaPreview } from '../../platform';
+import { mediaUrl, hlsUrl, fetchMediaPreview as platformFetchMediaPreview, findSubtitle } from '../../platform';
+import { toVttString, vttBlobUrl } from './subtitle-loader';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
 
 import './video.css';
@@ -86,6 +87,19 @@ export function Video({
     (state) => state.context.videoPlayer.eventId
   );
 
+  const availableSubtitle = useSelector(
+    libraryService,
+    (state) => state.context.availableSubtitle
+  );
+  const subtitlesEnabled = useSelector(
+    libraryService,
+    (state) => state.context.settings.subtitlesEnabled
+  );
+  const selectedAudioTrackIndex = useSelector(
+    libraryService,
+    (state) => state.context.selectedAudioTrackIndex
+  );
+
   // Delay loading to prevent loading videos that are quickly scrolled past (list mode)
   // When loadDelay is 0, load immediately (detail view)
   const shouldLoad = useVisibilityLoader(loadDelay);
@@ -102,6 +116,7 @@ export function Video({
 
   const [error, setError] = useState<boolean>(false);
   const prevTimeRef = useRef<number>(0);
+  const trackRef = useRef<HTMLTrackElement>(null);
 
   useEffect(() => {
     if (mediaRef && mediaRef.current && settable) {
@@ -182,6 +197,84 @@ export function Video({
       video.removeEventListener('timeupdate', handleTimeUpdate);
     };
   }, [onTimestampChange]);
+
+  useEffect(() => {
+    const video = mediaRef?.current;
+    if (!video) return;
+    const handleMetadata = () => {
+      const list = (video as any).audioTracks as
+        | { length: number; [i: number]: any }
+        | undefined;
+      if (!list || typeof list.length !== 'number') {
+        libraryService.send({ type: 'SET_AVAILABLE_AUDIO_TRACKS', tracks: [] });
+        return;
+      }
+      const tracks: Array<{ id: string; label: string; language: string }> = [];
+      for (let i = 0; i < list.length; i++) {
+        const t = list[i];
+        tracks.push({
+          id: String(t.id ?? i),
+          label: typeof t.label === 'string' && t.label ? t.label : `Track ${i + 1}`,
+          language: typeof t.language === 'string' ? t.language : '',
+        });
+      }
+      libraryService.send({ type: 'SET_AVAILABLE_AUDIO_TRACKS', tracks });
+    };
+    video.addEventListener('loadedmetadata', handleMetadata);
+    // Some browsers fire only `loadeddata` reliably for already-cached files.
+    video.addEventListener('loadeddata', handleMetadata);
+    return () => {
+      video.removeEventListener('loadedmetadata', handleMetadata);
+      video.removeEventListener('loadeddata', handleMetadata);
+    };
+  }, [path, libraryService]);
+
+  useEffect(() => {
+    const video = mediaRef?.current;
+    if (!video) return;
+    const list = (video as any).audioTracks as
+      | { length: number; [i: number]: { enabled: boolean } }
+      | undefined;
+    if (!list || list.length < 2) return;
+    for (let i = 0; i < list.length; i++) {
+      list[i].enabled = i === selectedAudioTrackIndex;
+    }
+  }, [selectedAudioTrackIndex]);
+
+  useEffect(() => {
+    let revoked: string | null = null;
+    let cancelled = false;
+    findSubtitle(path)
+      .then((sidecar) => {
+        if (cancelled) return;
+        if (!sidecar) {
+          libraryService.send({ type: 'SET_AVAILABLE_SUBTITLE', subtitle: null });
+          return;
+        }
+        const vtt = toVttString(sidecar.content, sidecar.ext);
+        const url = vttBlobUrl(vtt);
+        revoked = url;
+        libraryService.send({
+          type: 'SET_AVAILABLE_SUBTITLE',
+          subtitle: { blobUrl: url, label: sidecar.ext.toUpperCase() },
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        libraryService.send({ type: 'SET_AVAILABLE_SUBTITLE', subtitle: null });
+      });
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+      libraryService.send({ type: 'SET_AVAILABLE_SUBTITLE', subtitle: null });
+    };
+  }, [path, libraryService]);
+
+  useEffect(() => {
+    const trackEl = trackRef.current;
+    if (!trackEl || !trackEl.track) return;
+    trackEl.track.mode = subtitlesEnabled ? 'showing' : 'hidden';
+  }, [subtitlesEnabled, availableSubtitle]);
 
   // Apply volume setting to video element
   useEffect(() => {
@@ -483,7 +576,17 @@ export function Video({
           controlsList={'nodownload nofullscreen'}
           autoPlay
           loop={!hlsActive}
-        />
+        >
+          {availableSubtitle && (
+            <track
+              ref={trackRef}
+              kind="subtitles"
+              src={availableSubtitle.blobUrl}
+              label={availableSubtitle.label}
+              default={subtitlesEnabled}
+            />
+          )}
+        </video>
       </>
     );
   }
@@ -547,6 +650,16 @@ export function Video({
       controlsList={'nodownload nofullscreen'}
       autoPlay
       loop
-    />
+    >
+      {availableSubtitle && (
+        <track
+          ref={trackRef}
+          kind="subtitles"
+          src={availableSubtitle.blobUrl}
+          label={availableSubtitle.label}
+          default={subtitlesEnabled}
+        />
+      )}
+    </video>
   );
 }
