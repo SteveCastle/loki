@@ -546,7 +546,7 @@ func generateTranscriptWithFasterWhisper(ctx context.Context, filePath string) (
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, exePath, "--beep_off", "--output_format=vtt", "--output_dir=source", "--model", "large-v2", filePath)
+	cmd := exec.CommandContext(ctx, exePath, "--beep_off", "--output_format=vtt", "--output_dir=source", "--model", "large-v3", filePath)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("faster-whisper-xxl failed: %w", err)
 	}
