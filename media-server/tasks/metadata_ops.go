@@ -556,7 +556,10 @@ func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue,
 		"--beep_off",
 		"--output_format=vtt",
 		"--output_dir=source",
-		"--model", "large-v3",
+		// faster-whisper itself warns that large-v3 can produce worse
+		// results than large-v2 on general content (more hallucinations,
+		// some accents regressed). Stick with v2.
+		"--model", "large-v2",
 		"--vad_filter", "true",
 		"--language", "en",
 		filePath,
