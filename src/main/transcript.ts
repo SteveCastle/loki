@@ -113,49 +113,94 @@ type ModifyTranscriptInput = {
   text?: string;
 };
 
-async function modifyTranscript(input: ModifyTranscriptInput): Promise<boolean> {
-  const { mediaPath, cueIndex, startTime, endTime, text } = input;
-  
-  // Find the transcript file path
+async function findTranscriptPath(mediaPath: string): Promise<string | null> {
   const pathOptions = [
     mediaPath.replace(/\.[^/.]+$/, '.vtt'),
     mediaPath + '.vtt',
   ];
-  
-  let transcriptPath: string | null = null;
   for (const pathOption of pathOptions) {
     if (await isPathToFile(pathOption)) {
-      transcriptPath = pathOption;
-      break;
+      return pathOption;
     }
   }
-  
+  return null;
+}
+
+async function modifyTranscript(input: ModifyTranscriptInput): Promise<boolean> {
+  const { mediaPath, cueIndex, startTime, endTime, text } = input;
+
+  const transcriptPath = await findTranscriptPath(mediaPath);
   if (!transcriptPath) {
     throw new Error('Transcript file not found');
   }
-  
-  // Load existing transcript
+
   const cues = await parseVttFile(transcriptPath);
-  
   if (cueIndex < 0 || cueIndex >= cues.length) {
     throw new Error('Invalid cue index');
   }
-  
-  // Modify the specified cue
-  if (startTime !== undefined) {
-    cues[cueIndex].startTime = startTime;
-  }
-  if (endTime !== undefined) {
-    cues[cueIndex].endTime = endTime;
-  }
-  if (text !== undefined) {
-    cues[cueIndex].text = text;
-  }
-  
-  // Write the modified transcript back to file
+
+  if (startTime !== undefined) cues[cueIndex].startTime = startTime;
+  if (endTime !== undefined) cues[cueIndex].endTime = endTime;
+  if (text !== undefined) cues[cueIndex].text = text;
+
   await writeVttFile(transcriptPath, cues);
-  
   return true;
 }
 
-export { loadTranscript, generateTranscript, checkIfWhisperIsInstalled, modifyTranscript };
+type DeleteTranscriptCueInput = {
+  mediaPath: string;
+  cueIndex: number;
+};
+
+async function deleteTranscriptCue(input: DeleteTranscriptCueInput): Promise<boolean> {
+  const { mediaPath, cueIndex } = input;
+  const transcriptPath = await findTranscriptPath(mediaPath);
+  if (!transcriptPath) {
+    throw new Error('Transcript file not found');
+  }
+  const cues = await parseVttFile(transcriptPath);
+  if (cueIndex < 0 || cueIndex >= cues.length) {
+    throw new Error('Invalid cue index');
+  }
+  cues.splice(cueIndex, 1);
+  await writeVttFile(transcriptPath, cues);
+  return true;
+}
+
+type InsertTranscriptCueInput = {
+  mediaPath: string;
+  startTime: string;
+  endTime: string;
+  text?: string;
+};
+
+/**
+ * Inserts a new cue and re-sorts by start time so the file stays in
+ * canonical order. Returns the index where the new cue ended up so the
+ * caller can focus it in the UI.
+ */
+async function insertTranscriptCue(
+  input: InsertTranscriptCueInput
+): Promise<number> {
+  const { mediaPath, startTime, endTime } = input;
+  const text = input.text ?? '';
+  const transcriptPath = await findTranscriptPath(mediaPath);
+  if (!transcriptPath) {
+    throw new Error('Transcript file not found');
+  }
+  const cues = await parseVttFile(transcriptPath);
+  const newCue: VttCue = { startTime, endTime, text };
+  cues.push(newCue);
+  cues.sort((a, b) => (a.startTime < b.startTime ? -1 : a.startTime > b.startTime ? 1 : 0));
+  await writeVttFile(transcriptPath, cues);
+  return cues.indexOf(newCue);
+}
+
+export {
+  loadTranscript,
+  generateTranscript,
+  checkIfWhisperIsInstalled,
+  modifyTranscript,
+  deleteTranscriptCue,
+  insertTranscriptCue,
+};

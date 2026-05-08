@@ -16,6 +16,12 @@ type Props = {
   searchQuery?: string;
   /** Whether this cue is the active search match (extra-bright highlight). */
   isCurrentMatch?: boolean;
+  /**
+   * If true, mount this cue in edit mode. Used by the parent to focus a
+   * freshly-inserted cue. Only the initial render reads this value;
+   * subsequent prop changes don't toggle the local edit state.
+   */
+  autoEdit?: boolean;
 };
 
 /**
@@ -79,6 +85,7 @@ export function Cue({
   followVideoTime = false,
   searchQuery = '',
   isCurrentMatch = false,
+  autoEdit = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
@@ -87,11 +94,12 @@ export function Cue({
     (state) => state.context.videoPlayer
   );
 
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(autoEdit);
   const [editStartTime, setEditStartTime] = useState(cue.startTime);
   const [editEndTime, setEditEndTime] = useState(cue.endTime);
   const [editText, setEditText] = useState(cue.text);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const startTimeInSeconds = convertVTTTimestampToSeconds(cue.startTime);
   const endTimeInSeconds = convertVTTTimestampToSeconds(cue.endTime);
@@ -146,6 +154,19 @@ export function Cue({
     setEditEndTime(cue.endTime);
     setEditText(cue.text);
     setIsEditing(false);
+  };
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await transcript.deleteTranscriptCue({ mediaPath, cueIndex });
+      queryClient.invalidateQueries({ queryKey: ['transcript', mediaPath] });
+    } catch (err) {
+      console.error('Failed to delete cue:', err);
+      setIsDeleting(false);
+    }
   };
 
   const handleDoubleClick = () => {
@@ -289,7 +310,21 @@ export function Cue({
           )}
         </div>
       </div>
-      {!isEditing && <div className="edit-hint">Double-click to edit</div>}
+      {!isEditing && (
+        <>
+          <button
+            type="button"
+            className="cue-delete-btn"
+            onClick={handleDelete}
+            disabled={isDeleting}
+            aria-label="Delete cue"
+            title="Delete cue"
+          >
+            ✕
+          </button>
+          <div className="edit-hint">Double-click to edit</div>
+        </>
+      )}
     </li>
   );
 }

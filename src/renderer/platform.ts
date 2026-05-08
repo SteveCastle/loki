@@ -266,6 +266,13 @@ export let sessionStore: {
 export let transcript: {
   loadTranscript(filePath: string): Promise<any>;
   modifyTranscript(input: any): Promise<any>;
+  deleteTranscriptCue(input: { mediaPath: string; cueIndex: number }): Promise<boolean>;
+  insertTranscriptCue(input: {
+    mediaPath: string;
+    startTime: string;
+    endTime: string;
+    text?: string;
+  }): Promise<number>;
 };
 
 // ---- Typed wrappers ----
@@ -514,6 +521,12 @@ if (isElectron) {
       throw new Error('Transcripts not yet available in web mode');
     },
     modifyTranscript: async () => {
+      throw new Error('Transcripts not yet available in web mode');
+    },
+    deleteTranscriptCue: async () => {
+      throw new Error('Transcripts not yet available in web mode');
+    },
+    insertTranscriptCue: async () => {
       throw new Error('Transcripts not yet available in web mode');
     },
   };
