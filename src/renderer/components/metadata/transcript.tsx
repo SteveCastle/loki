@@ -1,6 +1,6 @@
 import { useRef, useContext, useState, useMemo, useEffect } from 'react';
 import { useSelector } from '@xstate/react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { transcript as transcriptApi } from '../../platform';
 
 import { GlobalStateContext } from '../../state';
@@ -11,6 +11,19 @@ import GenerateTranscript from './generate-transcript';
 import './transcript.css';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 
+/** Format a number of seconds as a WebVTT timestamp (HH:MM:SS.mmm). */
+function secondsToVttTimestamp(seconds: number): string {
+  const s = Math.max(0, seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s - h * 3600 - m * 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${sec
+    .toFixed(3)
+    .padStart(6, '0')}`;
+}
+
+const INSERT_LEAD_LAG_SECONDS = 2;
+
 const loadTranscript = (path: string) => async () => {
   const transcript = await transcriptApi.loadTranscript(path);
   return transcript as VttCue[];
@@ -18,9 +31,14 @@ const loadTranscript = (path: string) => async () => {
 
 export default function Transcript() {
   const { libraryService } = useContext(GlobalStateContext);
+  const queryClient = useQueryClient();
   const followTranscript = useSelector(
     libraryService,
     (state) => state.context.settings.followTranscript
+  );
+  const actualVideoTime = useSelector(
+    libraryService,
+    (state) => state.context.videoPlayer.actualVideoTime
   );
   const library = useSelector(libraryService, (state) =>
     filter(
@@ -56,6 +74,15 @@ export default function Transcript() {
   // that list driven by the prev/next arrows.
   const [searchQuery, setSearchQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
+
+  // After inserting a new cue we want it to mount in edit mode so the
+  // user can immediately type. Track its startTime here; the matching
+  // Cue picks autoEdit=true on mount and the local edit-state takes
+  // over from there. Cleared in a follow-up tick so subsequent renders
+  // don't keep pinning that cue into edit mode.
+  const [autoEditStartTime, setAutoEditStartTime] = useState<string | null>(
+    null
+  );
 
   const matches = useMemo<number[]>(() => {
     if (!searchQuery || !transcript) return [];
@@ -105,6 +132,26 @@ export default function Transcript() {
   const goPrev = () => {
     if (matches.length === 0) return;
     setMatchIndex((i) => (i - 1 + matches.length) % matches.length);
+  };
+
+  const handleInsertAtCurrentTime = async () => {
+    if (!path) return;
+    const startSeconds = Math.max(0, actualVideoTime - INSERT_LEAD_LAG_SECONDS);
+    const endSeconds = actualVideoTime + INSERT_LEAD_LAG_SECONDS;
+    const startTime = secondsToVttTimestamp(startSeconds);
+    const endTime = secondsToVttTimestamp(endSeconds);
+    try {
+      await transcriptApi.insertTranscriptCue({
+        mediaPath: path,
+        startTime,
+        endTime,
+        text: '',
+      });
+      setAutoEditStartTime(startTime);
+      await queryClient.invalidateQueries({ queryKey: ['transcript', path] });
+    } catch (err) {
+      console.error('Failed to insert transcript cue:', err);
+    }
   };
 
   if (!path) {
@@ -194,8 +241,16 @@ export default function Transcript() {
           ▼
         </button>
       </div>
-      {/* Top action bar with regenerate button when transcript exists */}
+      {/* Top action bar with regenerate + insert buttons when transcript exists */}
       <div className="transcript-actions">
+        <button
+          type="button"
+          className="transcript-insert-btn"
+          onClick={handleInsertAtCurrentTime}
+          title={`Insert a new cue at the current time (±${INSERT_LEAD_LAG_SECONDS}s)`}
+        >
+          + Insert at {secondsToVttTimestamp(actualVideoTime || 0)}
+        </button>
         <GenerateTranscript
           path={path}
           label={'Regenerate Transcript'}
@@ -213,6 +268,7 @@ export default function Transcript() {
             followVideoTime={followTranscript}
             searchQuery={searchQuery}
             isCurrentMatch={index === currentMatchCueIndex}
+            autoEdit={cue.startTime === autoEditStartTime}
           />
         ))}
       </ul>

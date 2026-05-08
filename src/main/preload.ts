@@ -176,6 +176,14 @@ contextBridge.exposeInMainWorld('electron', {
     const mod = await ensureTranscriptModule();
     return mod.modifyTranscript(input);
   },
+  async deleteTranscriptCue(input: any) {
+    const mod = await ensureTranscriptModule();
+    return mod.deleteTranscriptCue(input);
+  },
+  async insertTranscriptCue(input: any) {
+    const mod = await ensureTranscriptModule();
+    return mod.insertTranscriptCue(input);
+  },
   userHome: path.join(process.env.HOME || '', '.lowkey', 'dream.sqlite'),
   // Config store (synchronous, for settings/config that rarely change)
   store: {
@@ -245,6 +253,14 @@ contextBridge.exposeInMainWorld('electron', {
     async modifyTranscript(input: any) {
       const mod = await ensureTranscriptModule();
       return mod.modifyTranscript(input);
+    },
+    async deleteTranscriptCue(input: any) {
+      const mod = await ensureTranscriptModule();
+      return mod.deleteTranscriptCue(input);
+    },
+    async insertTranscriptCue(input: any) {
+      const mod = await ensureTranscriptModule();
+      return mod.insertTranscriptCue(input);
     },
     async checkIfWhisperIsInstalled() {
       const mod = await ensureTranscriptModule();

@@ -100,11 +100,34 @@
   box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.7);
 }
 
-/* Actions bar at top for regenerate/generate */
+/* Actions bar at top for regenerate/generate + insert */
 .transcript-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
   margin-bottom: 0.5rem;
+}
+
+.transcript-insert-btn {
+  background: linear-gradient(135deg, #1f6feb 0%, #0969da 100%);
+  border: 1px solid #1f6feb;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.35rem 0.7rem;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  transition: filter 0.15s ease, transform 0.05s ease;
+}
+
+.transcript-insert-btn:hover {
+  filter: brightness(1.1);
+}
+
+.transcript-insert-btn:active {
+  transform: translateY(1px);
 }
 
 .transcript-empty {
@@ -332,11 +355,50 @@
   color: #6e7681;
 }
 
+/* Delete cue button — top-right of each cue card, only visible on hover. */
+.cue-delete-btn {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(218, 54, 51, 0.85);
+  color: #fff;
+  border: 1px solid rgba(248, 81, 73, 0.9);
+  border-radius: 50%;
+  font-size: 0.7rem;
+  font-weight: bold;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.15s ease, transform 0.05s ease;
+  z-index: 2;
+}
+
+.cue-container:hover .cue-delete-btn {
+  opacity: 1;
+}
+
+.cue-delete-btn:hover {
+  background: #f85149;
+}
+
+.cue-delete-btn:active {
+  transform: scale(0.95);
+}
+
+.cue-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Edit Hint */
 .edit-hint {
   position: absolute;
   top: 0.5rem;
-  right: 0.75rem;
+  right: 2.2rem;
   font-size: 0.6rem;
   color: #6e7681;
   opacity: 0;
