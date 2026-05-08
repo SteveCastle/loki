@@ -38,17 +38,20 @@
  * transparent cue box plus a layered text shadow (four 1.5px outlines for
  * sharp legibility on any background, plus a wider soft shadow for
  * separation on bright scenes) — this is the standard outlined-caption
- * style used by most modern players, and reads better than the default
+ * style used by most modern players and reads better than the default
  * opaque black box.
  *
- * `::-webkit-media-text-track-display` is the Chromium shadow-DOM
- * element that wraps the cue display area. Lifting its `bottom` keeps
- * subtitles clear of the very bottom of the video and out of the way of
- * the playback controls that overlay there on hover.
+ * `::-webkit-media-text-track-container` is the Chromium shadow-DOM
+ * element that holds the entire text-track display area. Padding the
+ * bottom of the container shrinks the area cues can occupy, so the
+ * browser's normal per-cue positioning logic still runs but draws a few
+ * percent higher — clear of the screen edge and the hover-overlay
+ * playback controls. Don't override `::-webkit-media-text-track-display`
+ * directly: that element is laid out per-cue by Chromium and overriding
+ * its `bottom` breaks line-stacking for multi-line / overlapping cues.
  */
-.Video::-webkit-media-text-track-display {
-  bottom: 8% !important;
-  padding-bottom: 0 !important;
+.Video::-webkit-media-text-track-container {
+  padding-bottom: 8%;
 }
 
 .Video::cue {
