@@ -25,6 +25,13 @@ const skipDLLs =
 
 /**
  * Warn if the DLL is not built
+ *
+ * We invoke the DLL webpack config directly rather than `npm run postinstall`
+ * because postinstall also runs `electron-rebuild install-app-deps`, which
+ * compiles native modules (sqlite3) from source and requires the Visual
+ * Studio C++ toolchain. The dev renderer only needs the DLL bundle; the
+ * production package step has its own native-rebuild path that uses
+ * prebuilt binaries.
  */
 if (
   !skipDLLs &&
@@ -32,10 +39,13 @@ if (
 ) {
   console.log(
     chalk.black.bgYellow.bold(
-      'The DLL files are missing. Sit back while we build them for you with "npm run build-dll"'
+      'The DLL files are missing. Sit back while we build them for you.'
     )
   );
-  execSync('npm run postinstall');
+  execSync(
+    'cross-env NODE_ENV=development TS_NODE_TRANSPILE_ONLY=true webpack --config ./.erb/configs/webpack.config.renderer.dev.dll.ts',
+    { stdio: 'inherit' }
+  );
 }
 
 const configuration: webpack.Configuration = {
