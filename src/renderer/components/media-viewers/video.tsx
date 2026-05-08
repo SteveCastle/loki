@@ -276,6 +276,31 @@ export function Video({
     trackEl.track.mode = subtitlesEnabled ? 'showing' : 'hidden';
   }, [subtitlesEnabled, availableSubtitle]);
 
+  // Constrain each cue's width via the WebVTT `size` property so long
+  // captions wrap to a more readable line length. CSS can't reliably
+  // constrain ::cue width — Chromium positions the per-cue display
+  // elements absolutely and largely ignores parent padding for them.
+  // Setting cue.size = 70 caps the cue at 70% of the video width
+  // centered (default position=50, align=center), yielding ~35-45 chars
+  // per line at typical caption font sizes.
+  useEffect(() => {
+    const trackEl = trackRef.current;
+    if (!trackEl) return;
+    const apply = () => {
+      const cues = trackEl.track?.cues;
+      if (!cues) return;
+      for (let i = 0; i < cues.length; i++) {
+        const cue = cues[i] as VTTCue;
+        if (typeof cue.size === 'number') cue.size = 70;
+      }
+    };
+    // Cues may already be loaded (track.readyState === 2) or still
+    // loading — handle both.
+    apply();
+    trackEl.addEventListener('load', apply);
+    return () => trackEl.removeEventListener('load', apply);
+  }, [availableSubtitle]);
+
   // Apply volume setting to video element
   useEffect(() => {
     if (mediaRef && mediaRef.current) {
