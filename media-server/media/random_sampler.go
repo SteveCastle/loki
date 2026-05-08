@@ -139,8 +139,19 @@ func (s *randomSampler) runBuild(db *sql.DB, ch chan struct{}) {
 // queryPaths runs the SELECT DISTINCT scan without touching sampler state,
 // so it can run outside the mutex. Slow on large databases — that's
 // exactly why ensureBuilt no longer holds the lock around it.
+//
+// ORDER BY media_path is load-bearing for pagination correctness: the
+// per-seed shuffle in `sample` is deterministic given the input slice
+// order, but a tag mutation invalidates the cache and `runBuild` resets
+// the shuffle. If queryPaths returns rows in a different order on rebuild
+// (SQLite gives no order guarantee without ORDER BY), the next request
+// reshuffles to a *different* permutation, and the swipe client's
+// monotonic offset starts re-emitting items it already showed —
+// the "swipe loops over the same set once before new items appear" bug.
+// Sorting pins the input order so the same seed always reproduces the
+// same shuffle for an unchanged universe.
 func (s *randomSampler) queryPaths(db *sql.DB) ([]string, error) {
-	const q = `SELECT DISTINCT media_path FROM media_tag_by_category`
+	const q = `SELECT DISTINCT media_path FROM media_tag_by_category ORDER BY media_path`
 	stop := querylog.Start("randomSampler.build", q, nil)
 	rows, err := db.Query(q)
 	if err != nil {
