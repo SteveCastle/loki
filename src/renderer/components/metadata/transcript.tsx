@@ -78,8 +78,13 @@ export default function Transcript() {
   // Scroll the current match cue into the middle of the viewport. Uses a
   // data attribute lookup rather than per-cue refs so we don't have to
   // thread a ref array through the Cue component.
+  //
+  // Depends on `searchQuery` as well as `currentMatchCueIndex` so each
+  // keystroke that lands on a match re-scrolls — that's instant feedback
+  // when typing, even if the first match happens to stay in the same cue
+  // as more characters are added.
   useEffect(() => {
-    if (currentMatchCueIndex == null) return;
+    if (!searchQuery || currentMatchCueIndex == null) return;
     const container = scrollRef.current;
     if (!container) return;
     const el = container.querySelector(
@@ -91,7 +96,7 @@ export default function Transcript() {
     const target =
       container.scrollTop + (elRect.top - containerRect.top) - container.clientHeight / 2 + el.clientHeight / 2;
     container.scrollTo({ top: target, behavior: 'smooth' });
-  }, [currentMatchCueIndex]);
+  }, [currentMatchCueIndex, searchQuery]);
 
   const goNext = () => {
     if (matches.length === 0) return;
