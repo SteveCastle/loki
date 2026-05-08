@@ -28,13 +28,5 @@ npm-debug.log.*
 *.sass.d.ts
 *.scss.d.ts
 .yarn
-
-# Project uses yarn (see "packageManager" in package.json). Committed
-# npm lockfiles drift out of sync with what yarn installs and cause
-# noisy "extraneous" warnings when electron-builder shells out to
-# `npm ls` during packaging. Keep yarn.lock as the single source of
-# truth for the dependency graph.
-package-lock.json
-
 media-server/loki-static
 debug_screenshots
