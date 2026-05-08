@@ -12,7 +12,47 @@ type Props = {
   mediaPath: string;
   setScrollTop: (scrollTop: number) => void;
   followVideoTime?: boolean;
+  /** Substring to highlight within the cue text. Empty string disables. */
+  searchQuery?: string;
+  /** Whether this cue is the active search match (extra-bright highlight). */
+  isCurrentMatch?: boolean;
 };
+
+/**
+ * Wrap every case-insensitive occurrence of `query` in `text` with a
+ * <mark> element so the search hits stand out. Returns plain text when
+ * the query is empty.
+ */
+function highlightMatches(
+  text: string,
+  query: string,
+  isCurrent: boolean
+): React.ReactNode {
+  if (!query) return text;
+  const parts: React.ReactNode[] = [];
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  let i = 0;
+  let key = 0;
+  while (i < text.length) {
+    const idx = lowerText.indexOf(lowerQuery, i);
+    if (idx === -1) {
+      parts.push(text.slice(i));
+      break;
+    }
+    if (idx > i) parts.push(text.slice(i, idx));
+    parts.push(
+      <mark
+        key={`m-${key++}`}
+        className={`transcript-match${isCurrent ? ' current' : ''}`}
+      >
+        {text.slice(idx, idx + query.length)}
+      </mark>
+    );
+    i = idx + query.length;
+  }
+  return <>{parts}</>;
+}
 
 function convertVTTTimestampToSeconds(timestamp: string) {
   const [minutes, seconds] = timestamp.split(':');
@@ -37,6 +77,8 @@ export function Cue({
   mediaPath,
   setScrollTop,
   followVideoTime = false,
+  searchQuery = '',
+  isCurrentMatch = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
@@ -156,10 +198,12 @@ export function Cue({
   return (
     <li
       ref={ref}
+      data-cue-index={cueIndex}
       className={[
         'cue-container',
         isActive ? 'active' : '',
         isEditing ? 'editing' : '',
+        isCurrentMatch ? 'current-match' : '',
       ].join(' ')}
     >
       <div
@@ -238,7 +282,9 @@ export function Cue({
               rows={Math.max(2, editText.split('\n').length)}
             />
           ) : (
-            <div className="text-display">{cue.text}</div>
+            <div className="text-display">
+              {highlightMatches(cue.text, searchQuery, isCurrentMatch)}
+            </div>
           )}
         </div>
       </div>

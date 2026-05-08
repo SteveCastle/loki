@@ -7,6 +7,99 @@
   padding-bottom: 80px;
 }
 
+/* Search bar — sticky at the top of the scrolling transcript panel. */
+.transcript-search {
+  position: sticky;
+  top: -0.5rem;
+  margin: -0.5rem -0.5rem 0.5rem;
+  padding: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(13, 17, 23, 0.92);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-bottom: 1px solid #21262d;
+  z-index: 5;
+}
+
+.transcript-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #e6edf3;
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.transcript-search-input:focus {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.25);
+}
+
+.transcript-search-input::placeholder {
+  color: #6e7681;
+}
+
+.transcript-search-counter {
+  flex: 0 0 auto;
+  color: #7d8590;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5rem;
+  text-align: right;
+}
+
+.transcript-search-nav {
+  flex: 0 0 auto;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  color: #c9d1d9;
+  font-size: 0.7rem;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.transcript-search-nav:hover:not(:disabled) {
+  background: #2d333b;
+  border-color: #58a6ff;
+}
+
+.transcript-search-nav:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Per-substring highlight inside cue text. */
+.transcript-match {
+  background: rgba(255, 215, 0, 0.35);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.transcript-match.current {
+  background: rgba(255, 215, 0, 0.85);
+  color: #1c2128;
+  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.95);
+}
+
+/* Subtle outline on the cue card containing the active match so the
+   highlighted text inside is easier to spot when scrolling. */
+.cue-container.current-match {
+  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.7);
+}
+
 /* Actions bar at top for regenerate/generate */
 .transcript-actions {
   display: flex;
