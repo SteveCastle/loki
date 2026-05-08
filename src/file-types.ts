@@ -19,7 +19,7 @@ export enum Extensions {
   Video = 'mov|mp4|webm|ogg|mkv|m4v',
   Audio = 'mp3|wav|flac|aac|ogg|m4a|opus|wma|aiff|ape',
   Document = 'pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv',
-  Archive = 'cbz|zip',
+  Archive = 'cbz|zip|cbr',
 }
 
 export const getFileType = (

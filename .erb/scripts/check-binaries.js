@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Pre-build script to ensure platform-specific binaries are available
- * Downloads FFmpeg binaries for all platforms if they don't exist
+ * Pre-build script to ensure platform-specific binaries are available.
+ * Downloads FFmpeg + UnRAR for the current platform if any are missing.
  */
 
 const fs = require('fs');
@@ -14,26 +14,32 @@ const binDir = path.join(__dirname, '..', '..', 'src', 'main', 'resources', 'bin
 
 console.log('Checking platform-specific binaries...');
 
-function downloadBinaries(platformDir, platformName, binaryExtension = '') {
+function checkAndDownload(platformDir, platformName, binaryExtension = '') {
   const platformBinDir = path.join(binDir, platformDir);
-  const ffmpegPath = path.join(platformBinDir, `ffmpeg${binaryExtension}`);
-  const ffprobePath = path.join(platformBinDir, `ffprobe${binaryExtension}`);
-  
-  // Check if binaries exist
-  const ffmpegExists = fs.existsSync(ffmpegPath);
-  const ffprobeExists = fs.existsSync(ffprobePath);
-  
-  if (!ffmpegExists || !ffprobeExists) {
-    console.log(`${platformName} FFmpeg binaries not found. Downloading...`);
+  const required = ['ffmpeg', 'ffprobe', 'unrar'];
+  const missing = required.filter(
+    (name) => !fs.existsSync(path.join(platformBinDir, `${name}${binaryExtension}`))
+  );
+
+  if (missing.length > 0) {
+    console.log(`${platformName} binaries missing: ${missing.join(', ')}. Downloading...`);
     const downloadScript = path.join(platformBinDir, 'download-binaries.sh');
-    
+
     if (!fs.existsSync(downloadScript)) {
       console.error(`Error: download-binaries.sh not found in ${platformBinDir}!`);
       process.exit(1);
     }
-    
+
     try {
-      execSync(`bash "${downloadScript}"`, { stdio: 'inherit' });
+      // Run via the script's own directory + relative name so we don't
+      // hand bash a Windows path with backslashes (it would interpret
+      // the backslashes as escape sequences and report the file as
+      // missing). cwd handles the path translation cleanly on every
+      // platform, including Git Bash on Windows.
+      execSync('bash ./download-binaries.sh', {
+        stdio: 'inherit',
+        cwd: platformBinDir,
+      });
       console.log(`✓ ${platformName} binaries downloaded successfully`);
     } catch (error) {
       console.error(`Failed to download ${platformName} binaries:`, error.message);
@@ -41,17 +47,17 @@ function downloadBinaries(platformDir, platformName, binaryExtension = '') {
       process.exit(1);
     }
   } else {
-    console.log(`✓ ${platformName} FFmpeg binaries already present`);
+    console.log(`✓ ${platformName} binaries already present (ffmpeg, ffprobe, unrar)`);
   }
 }
 
 // Download binaries for the current platform
 if (platform === 'linux') {
-  downloadBinaries('linux', 'Linux');
+  checkAndDownload('linux', 'Linux');
 } else if (platform === 'darwin') {
-  downloadBinaries('darwin', 'macOS');
+  checkAndDownload('darwin', 'macOS');
 } else if (platform === 'win32') {
-  downloadBinaries('win32', 'Windows', '.exe');
+  checkAndDownload('win32', 'Windows', '.exe');
 }
 
 console.log('Platform-specific binaries check complete.\n');

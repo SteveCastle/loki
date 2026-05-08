@@ -250,7 +250,8 @@
       "entitlementsInherit": "assets/entitlements.mac.plist",
       "binaries": [
         "src/main/resources/bin/darwin/ffmpeg",
-        "src/main/resources/bin/darwin/ffprobe"
+        "src/main/resources/bin/darwin/ffprobe",
+        "src/main/resources/bin/darwin/unrar"
       ],
       "icon": "assets/icon.png",
       "gatekeeperAssess": false,
@@ -336,8 +337,8 @@
         "role": "Viewer"
       },
       {
-        "ext": "zip",
-        "name": "Zip Archive",
+        "ext": "cbr",
+        "name": "Comic Book RAR Archive",
         "role": "Viewer"
       }
     ],

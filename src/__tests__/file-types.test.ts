@@ -44,7 +44,7 @@ describe('file-types', () => {
     });
 
     describe('archive files', () => {
-      const archiveExtensions = ['cbz', 'zip'];
+      const archiveExtensions = ['cbz', 'zip', 'cbr'];
 
       it.each(archiveExtensions)('should identify .%s as Archive', (ext) => {
         expect(getFileType(`book.${ext}`)).toBe(FileTypes.Archive);

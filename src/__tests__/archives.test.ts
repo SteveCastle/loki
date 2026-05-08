@@ -127,10 +127,16 @@ describe('archives', () => {
       expect(isArchivePath('BOOK.CBZ')).toBe(true);
       expect(isArchivePath('Book.Zip')).toBe(true);
     });
+    it('returns true for .cbr', () => {
+      expect(isArchivePath('/home/u/comic.cbr')).toBe(true);
+      expect(isArchivePath('Book.CBR')).toBe(true);
+    });
     it('returns false for non-archive paths', () => {
       expect(isArchivePath('/home/u/image.jpg')).toBe(false);
       expect(isArchivePath('/home/u/folder')).toBe(false);
-      expect(isArchivePath('/home/u/file.rar')).toBe(false); // not in scope
+      // Plain .rar is intentionally not registered — only the comic-book
+      // variant .cbr is.
+      expect(isArchivePath('/home/u/file.rar')).toBe(false);
     });
   });
 
@@ -239,6 +245,27 @@ describe('archives', () => {
 
       const secondMtime = fs.statSync(pathMod.join(second, 'page.jpg')).mtimeMs;
       expect(secondMtime).toBe(firstMtime);
+    });
+  });
+
+  describe('pruneNonMediaAndUnsafe (CBR post-extraction guard)', () => {
+    it('removes non-media files and empties left-over folders', async () => {
+      const { _pruneNonMediaAndUnsafe } = await import('../main/archives');
+      const root = mkTmpDir('prune-');
+      fs.mkdirSync(pathMod.join(root, 'ch1'), { recursive: true });
+      fs.writeFileSync(pathMod.join(root, 'ch1', '01.jpg'), TINY_JPG);
+      fs.writeFileSync(pathMod.join(root, 'ch1', 'ComicInfo.xml'), '<x/>');
+      fs.mkdirSync(pathMod.join(root, 'meta'));
+      fs.writeFileSync(pathMod.join(root, 'meta', 'about.txt'), 'hi');
+
+      await _pruneNonMediaAndUnsafe(root);
+
+      expect(fs.existsSync(pathMod.join(root, 'ch1', '01.jpg'))).toBe(true);
+      expect(fs.existsSync(pathMod.join(root, 'ch1', 'ComicInfo.xml'))).toBe(false);
+      // The meta/ folder held only a non-media file and should be cleaned up.
+      expect(fs.existsSync(pathMod.join(root, 'meta'))).toBe(false);
+
+      fs.rmSync(root, { recursive: true, force: true });
     });
   });
 
