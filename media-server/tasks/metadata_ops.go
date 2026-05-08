@@ -546,7 +546,19 @@ func generateTranscriptWithFasterWhisper(ctx context.Context, filePath string) (
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, exePath, "--beep_off", "--output_format=vtt", "--output_dir=source", "--model", "large-v3", filePath)
+	// --vad_filter trims non-speech, which dramatically reduces hallucinations
+	// during silent stretches in long clips. --language=en skips the
+	// (often-wrong on silent openings) auto-detect — change if non-English
+	// content needs supporting.
+	cmd := exec.CommandContext(ctx, exePath,
+		"--beep_off",
+		"--output_format=vtt",
+		"--output_dir=source",
+		"--model", "large-v3",
+		"--vad_filter", "true",
+		"--language", "en",
+		filePath,
+	)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("faster-whisper-xxl failed: %w", err)
 	}
