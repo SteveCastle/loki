@@ -1,9 +1,12 @@
 /**
  * Sidecar subtitle file lookup + IPC handler.
  *
- * For a given video path we check for `<basename>.srt` first, then
- * `<basename>.vtt` in the same directory. Exact basename only — no
- * language-suffix matching by design.
+ * For `dir/movie.mp4` we look for, in order:
+ *   1. `dir/movie.srt`        — basename only
+ *   2. `dir/movie.mp4.srt`    — full filename including the video extension
+ *   3. `dir/movie.vtt`
+ *   4. `dir/movie.mp4.vtt`
+ * Exact match only — no language-suffix matching by design.
  */
 import { ipcMain } from 'electron';
 import * as fs from 'fs';
@@ -21,18 +24,24 @@ export async function findSidecarSubtitle(
 ): Promise<SubtitleSidecar | null> {
   if (!videoPath) return null;
   const dir = path.dirname(videoPath);
-  const ext = path.extname(videoPath);
-  const base = path.basename(videoPath, ext);
+  const videoExt = path.extname(videoPath);
+  const base = path.basename(videoPath, videoExt);
+  const fullName = path.basename(videoPath); // basename + extension, e.g. "movie.mp4"
 
   for (const candidate of EXTS) {
-    const p = path.join(dir, `${base}.${candidate}`);
-    try {
-      const content = await fs.promises.readFile(p, 'utf-8');
-      return { ext: candidate, content };
-    } catch (err: any) {
-      if (err && err.code === 'ENOENT') continue;
-      // Other read errors (permission, etc.): log and treat as not found.
-      console.warn('[subtitles] failed to read', p, err);
+    const candidatePaths = [
+      path.join(dir, `${base}.${candidate}`),
+      path.join(dir, `${fullName}.${candidate}`),
+    ];
+    for (const p of candidatePaths) {
+      try {
+        const content = await fs.promises.readFile(p, 'utf-8');
+        return { ext: candidate, content };
+      } catch (err: any) {
+        if (err && err.code === 'ENOENT') continue;
+        // Other read errors (permission, etc.): log and treat as not found.
+        console.warn('[subtitles] failed to read', p, err);
+      }
     }
   }
   return null;
