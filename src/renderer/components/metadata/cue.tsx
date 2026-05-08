@@ -156,7 +156,8 @@ export function Cue({
     // Stop event bubbling to prevent hotkey system from capturing
     e.stopPropagation();
 
-    if (e.key === 'Enter' && e.ctrlKey) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      // Enter saves; Shift+Enter still inserts a newline.
       e.preventDefault();
       handleSave();
     } else if (e.key === 'Escape') {
@@ -253,7 +254,7 @@ export function Cue({
                 className="save-btn"
                 onClick={handleSave}
                 disabled={isSaving}
-                title="Save (Ctrl+Enter)"
+                title="Save (Enter; Shift+Enter for newline)"
               >
                 {isSaving ? '⟳' : '✓'}
               </button>
