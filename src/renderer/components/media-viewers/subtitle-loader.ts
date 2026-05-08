@@ -12,8 +12,19 @@ export type SubtitleExt = 'srt' | 'vtt';
 
 const TIMESTAMP_LINE = /^\d{2}:\d{2}:\d{2},\d{3}\s+-->\s+\d{2}:\d{2}:\d{2},\d{3}/;
 
+// Strip a leading UTF-8 BOM and normalize CRLF / lone CR to LF. Sidecar
+// subtitle files in the wild are routinely saved by Windows tools with
+// both: a BOM ahead of the WEBVTT/SRT content corrupts the first cue
+// identifier, and CRLF confuses strict WebVTT parsers when it appears on
+// the header line. Without this normalization the browser silently drops
+// every cue (track.cues.length === 0) even though the file loads.
+function normalize(text: string): string {
+  const stripped = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  return stripped.replace(/\r\n?/g, '\n');
+}
+
 export function srtToVtt(srt: string): string {
-  const converted = srt
+  const converted = normalize(srt)
     .split('\n')
     .map((line) =>
       TIMESTAMP_LINE.test(line) ? line.replace(/,(\d{3})/g, '.$1') : line
@@ -24,9 +35,11 @@ export function srtToVtt(srt: string): string {
 
 export function toVttString(content: string, ext: SubtitleExt): string {
   if (ext === 'srt') return srtToVtt(content);
-  // VTT: ensure header is present.
-  if (!/^WEBVTT/.test(content)) return `WEBVTT\n\n${content}`;
-  return content;
+  // VTT: ensure header is present and the input is normalized so a stray
+  // BOM / CRLF can't break parsing of an otherwise-valid file.
+  const normalized = normalize(content);
+  if (!/^WEBVTT/.test(normalized)) return `WEBVTT\n\n${normalized}`;
+  return normalized;
 }
 
 /**
