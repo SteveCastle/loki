@@ -121,7 +121,7 @@ func generateTranscripts(ctx context.Context, q *jobqueue.Queue, jobID string, f
 			return ctx.Err()
 		default:
 		}
-		transcript, err := generateTranscriptWithFasterWhisper(ctx, filePath)
+		transcript, err := generateTranscriptWithFasterWhisper(ctx, q, jobID, filePath)
 		if err != nil {
 			q.PushJobStdout(jobID, fmt.Sprintf("Warning: failed to transcribe %s: %v", filePath, err))
 			continue
@@ -534,12 +534,14 @@ func callOllamaVision(ctx context.Context, imagePath, model string) (string, err
 	return response.Response, nil
 }
 
-func generateTranscriptWithFasterWhisper(ctx context.Context, filePath string) (string, error) {
+func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string) (string, error) {
 	// Try to get the path from the dependency system first
 	exePath, err := deps.GetFilePath("faster-whisper", deps.GetWhisperExecutableName())
 	if err != nil {
 		// Fall back to config if dependency system doesn't have it
-		fmt.Printf("error getting faster-whisper path: %v\n", err)
+		if q != nil && jobID != "" {
+			q.PushJobStdout(jobID, fmt.Sprintf("[whisper] dependency lookup failed: %v; falling back to config FasterWhisperPath", err))
+		}
 		exePath = appconfig.Get().FasterWhisperPath
 		if strings.TrimSpace(exePath) == "" {
 			return "", fmt.Errorf("faster-whisper not found: dependency not installed and FasterWhisperPath not configured. Please install faster-whisper from the Dependencies page")
@@ -550,7 +552,7 @@ func generateTranscriptWithFasterWhisper(ctx context.Context, filePath string) (
 	// during silent stretches in long clips. --language=en skips the
 	// (often-wrong on silent openings) auto-detect — change if non-English
 	// content needs supporting.
-	cmd := exec.CommandContext(ctx, exePath,
+	args := []string{
 		"--beep_off",
 		"--output_format=vtt",
 		"--output_dir=source",
@@ -558,11 +560,55 @@ func generateTranscriptWithFasterWhisper(ctx context.Context, filePath string) (
 		"--vad_filter", "true",
 		"--language", "en",
 		filePath,
-	)
-	if err := cmd.Run(); err != nil {
+	}
+	cmd := exec.CommandContext(ctx, exePath, args...)
+
+	// Pipe both stdout and stderr line-by-line into the job stream so failures
+	// surface in the job's output (rather than disappearing into a dropped
+	// process buffer). faster-whisper-xxl writes progress and errors to
+	// stderr — without this we'd lose the actual reason for a failed run.
+	pushLine := func(line string) {
+		if q != nil && jobID != "" {
+			q.PushJobStdout(jobID, "[whisper] "+line)
+		}
+	}
+	pushLine(fmt.Sprintf("running: %s %s", exePath, strings.Join(args, " ")))
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("faster-whisper-xxl: stdout pipe: %w", err)
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "", fmt.Errorf("faster-whisper-xxl: stderr pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("faster-whisper-xxl: start: %w", err)
+	}
+
+	scanReader := func(r io.Reader) {
+		scanner := bufio.NewScanner(r)
+		// Whisper progress lines can be long; bump the buffer so we don't drop them.
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			pushLine(scanner.Text())
+		}
+	}
+	go scanReader(stdout)
+	go scanReader(stderr)
+
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			pushLine(fmt.Sprintf("exited with code %d", exitErr.ExitCode()))
+			return "", fmt.Errorf("faster-whisper-xxl exited with code %d: %w", exitErr.ExitCode(), err)
+		}
 		return "", fmt.Errorf("faster-whisper-xxl failed: %w", err)
 	}
+
 	vttPath := filePath[:len(filePath)-len(filepath.Ext(filePath))] + ".vtt"
+	pushLine("transcription complete; reading " + vttPath)
 	return readFileAll(vttPath)
 }
 
@@ -705,7 +751,7 @@ func processTranscriptForFile(ctx context.Context, q *jobqueue.Queue, jobID stri
 		}
 	}
 
-	transcript, err := generateTranscriptWithFasterWhisper(ctx, filePath)
+	transcript, err := generateTranscriptWithFasterWhisper(ctx, q, jobID, filePath)
 	if err != nil {
 		return fmt.Errorf("failed to transcribe: %w", err)
 	}
