@@ -45,6 +45,28 @@ describe('srtToVtt', () => {
   it('handles empty input as an empty VTT', () => {
     expect(srtToVtt('')).toBe('WEBVTT\n\n');
   });
+
+  it('strips a leading UTF-8 BOM so it does not corrupt the first cue', () => {
+    const srt = '﻿1\n00:00:01,000 --> 00:00:02,000\nHello\n';
+    const out = srtToVtt(srt);
+    expect(out.startsWith('WEBVTT\n\n')).toBe(true);
+    // The BOM must not survive into the cue body.
+    expect(out).not.toContain('﻿');
+  });
+
+  it('normalizes CRLF line endings to LF', () => {
+    const srt = '1\r\n00:00:01,000 --> 00:00:02,000\r\nHello\r\n';
+    const out = srtToVtt(srt);
+    expect(out).not.toContain('\r');
+    expect(out).toContain('00:00:01.000 --> 00:00:02.000');
+  });
+
+  it('normalizes lone CR line endings to LF', () => {
+    const srt = '1\r00:00:01,000 --> 00:00:02,000\rHello\r';
+    const out = srtToVtt(srt);
+    expect(out).not.toContain('\r');
+    expect(out).toContain('00:00:01.000 --> 00:00:02.000');
+  });
 });
 
 describe('toVttString', () => {
@@ -63,5 +85,13 @@ describe('toVttString', () => {
   it('adds a WEBVTT header to VTT input that is missing one', () => {
     const noHeader = '1\n00:00:01.000 --> 00:00:02.000\nHi\n';
     expect(toVttString(noHeader, 'vtt')).toMatch(/^WEBVTT\n\n/);
+  });
+
+  it('strips BOM and normalizes CRLF in a VTT input that has both', () => {
+    const vtt = '﻿WEBVTT\r\n\r\n1\r\n00:00:01.000 --> 00:00:02.000\r\nHi\r\n';
+    const out = toVttString(vtt, 'vtt');
+    expect(out.startsWith('WEBVTT')).toBe(true);
+    expect(out).not.toContain('\r');
+    expect(out).not.toContain('﻿');
   });
 });
