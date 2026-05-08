@@ -601,18 +601,41 @@ func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue,
 	go scanReader(stdout)
 	go scanReader(stderr)
 
-	if err := cmd.Wait(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			pushLine(fmt.Sprintf("exited with code %d", exitErr.ExitCode()))
-			return "", fmt.Errorf("faster-whisper-xxl exited with code %d: %w", exitErr.ExitCode(), err)
-		}
-		return "", fmt.Errorf("faster-whisper-xxl failed: %w", err)
-	}
+	waitErr := cmd.Wait()
 
 	vttPath := filePath[:len(filePath)-len(filepath.Ext(filePath))] + ".vtt"
-	pushLine("transcription complete; reading " + vttPath)
-	return readFileAll(vttPath)
+
+	// Trust the artifact, not the exit code. faster-whisper-xxl is a
+	// PyInstaller-bundled binary that on Windows sometimes returns
+	// 0xc0000409 (STATUS_STACK_BUFFER_OVERRUN) AFTER all transcription
+	// work is complete and the .vtt is written — a known teardown crash
+	// in the bundled CRT/CUDA runtime, not a transcription failure. If
+	// the expected output is on disk, treat the run as success regardless
+	// of the exit code.
+	if stat, statErr := os.Stat(vttPath); statErr == nil && stat.Size() > 0 {
+		if waitErr != nil {
+			var exitErr *exec.ExitError
+			if errors.As(waitErr, &exitErr) {
+				pushLine(fmt.Sprintf("exited with code %d but VTT is present (%d bytes); treating as success", exitErr.ExitCode(), stat.Size()))
+			} else {
+				pushLine(fmt.Sprintf("wait error %v but VTT is present (%d bytes); treating as success", waitErr, stat.Size()))
+			}
+		} else {
+			pushLine("transcription complete; reading " + vttPath)
+		}
+		return readFileAll(vttPath)
+	}
+
+	// No VTT produced — this is a real failure.
+	if waitErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			pushLine(fmt.Sprintf("exited with code %d, no VTT produced", exitErr.ExitCode()))
+			return "", fmt.Errorf("faster-whisper-xxl exited with code %d (no VTT produced): %w", exitErr.ExitCode(), waitErr)
+		}
+		return "", fmt.Errorf("faster-whisper-xxl failed (no VTT produced): %w", waitErr)
+	}
+	return "", fmt.Errorf("faster-whisper-xxl exited cleanly but no VTT was produced at %s", vttPath)
 }
 
 func readFileAll(path string) (string, error) {
