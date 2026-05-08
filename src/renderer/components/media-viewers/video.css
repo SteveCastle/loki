@@ -29,3 +29,37 @@
   width: 90px;
   height: 40px;
 }
+
+/*
+ * Subtitle (WebVTT) rendering.
+ *
+ * `::cue` only accepts a small set of properties (color, font-*,
+ * line-height, text-shadow, background, opacity, white-space). We use a
+ * transparent cue box plus a layered text shadow (four 1.5px outlines for
+ * sharp legibility on any background, plus a wider soft shadow for
+ * separation on bright scenes) — this is the standard outlined-caption
+ * style used by most modern players, and reads better than the default
+ * opaque black box.
+ *
+ * `::-webkit-media-text-track-display` is the Chromium shadow-DOM
+ * element that wraps the cue display area. Lifting its `bottom` keeps
+ * subtitles clear of the very bottom of the video and out of the way of
+ * the playback controls that overlay there on hover.
+ */
+.Video::-webkit-media-text-track-display {
+  bottom: 8% !important;
+  padding-bottom: 0 !important;
+}
+
+.Video::cue {
+  background: transparent;
+  color: #fff;
+  font-weight: 500;
+  line-height: 1.4;
+  text-shadow:
+    -1.5px -1.5px 0 #000,
+     1.5px -1.5px 0 #000,
+    -1.5px  1.5px 0 #000,
+     1.5px  1.5px 0 #000,
+     0      0     6px rgba(0, 0, 0, 0.85);
+}
