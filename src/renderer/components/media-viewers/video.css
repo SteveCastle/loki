@@ -52,16 +52,6 @@
  */
 .Video::-webkit-media-text-track-container {
   padding-bottom: 8%;
-  /*
-   * Horizontal padding constrains the area cues can occupy, forcing
-   * line wraps at a more readable width. ~70% of the video width yields
-   * roughly 35-45 chars per line at typical caption font sizes — close
-   * to broadcast / streaming-service guidelines (BBC: 37, Netflix: 42).
-   * CSS can't cap by character count directly (`::cue` doesn't accept
-   * max-width), so this is the closest CSS-only approximation.
-   */
-  padding-left: 15%;
-  padding-right: 15%;
 }
 
 .Video::cue {
