@@ -217,7 +217,8 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   }, [containerRef.current, settings.controlMode]);
 
   function handleClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
-    if (e.clientX < containerRef.current!.clientWidth / 2) {
+    const rect = containerRef.current!.getBoundingClientRect();
+    if (e.clientX - rect.left < rect.width / 2) {
       libraryService.send('DECREMENT_CURSOR');
     } else {
       libraryService.send('INCREMENT_CURSOR');
