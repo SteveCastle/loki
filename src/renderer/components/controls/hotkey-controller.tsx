@@ -15,6 +15,39 @@ type ActionMap = {
   [key: string]: Action;
 };
 
+// Shared by the copyFile and copyAllSelectedFiles hotkeys. Splits out so
+// both copy paths show the same "Copied N file(s) to clipboard" toast and
+// route failures through the same error toast — without duplicating the
+// IPC + toast-dispatch logic in each handler.
+async function copyPathsToClipboard(
+  libraryService: { send: (event: { type: string; data: unknown }) => void },
+  paths: string[]
+): Promise<void> {
+  if (paths.length === 0) return;
+  try {
+    await invoke('copy-file-into-clipboard', paths);
+    libraryService.send({
+      type: 'ADD_TOAST',
+      data: {
+        type: 'success',
+        title: 'Copied to clipboard',
+        message: `${paths.length} ${paths.length === 1 ? 'file' : 'files'}`,
+        durationMs: 2500,
+      },
+    });
+  } catch (err) {
+    console.error('Failed to copy: ', err);
+    libraryService.send({
+      type: 'ADD_TOAST',
+      data: {
+        type: 'error',
+        title: 'Copy failed',
+        message: err instanceof Error ? err.message : 'Could not copy to clipboard',
+      },
+    });
+  }
+}
+
 export default function HotKeyController() {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
@@ -477,38 +510,17 @@ export default function HotKeyController() {
     copyFile: {
       down: (e) => {
         e.preventDefault();
-        const copyContent = async (paths: string[]) => {
-          try {
-            console.log('ITEM PATH', paths);
-            await invoke(
-              'copy-file-into-clipboard',
-              paths
-            );
-            console.log('Content copied to clipboard');
-          } catch (err) {
-            console.error('Failed to copy: ', err);
-          }
-        };
-        copyContent([item.path]);
+        copyPathsToClipboard(libraryService, [item.path]);
       },
       up: () => {},
     },
     copyAllSelectedFiles: {
       down: (e) => {
         e.preventDefault();
-        const copyContent = async (paths: string[]) => {
-          try {
-            console.log('ITEM PATH', paths);
-            await invoke(
-              'copy-file-into-clipboard',
-              paths
-            );
-            console.log('Content copied to clipboard');
-          } catch (err) {
-            console.error('Failed to copy: ', err);
-          }
-        };
-        copyContent(filteredLibrary.map((item: Item) => item.path));
+        copyPathsToClipboard(
+          libraryService,
+          filteredLibrary.map((item: Item) => item.path)
+        );
       },
       up: () => {},
     },
