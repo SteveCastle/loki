@@ -364,14 +364,26 @@ jobs:
             git log --pretty=format:"- %s (%h)" >> changelog.md
           fi
 
-          # Get contributors
+          # Get contributors — resolve GitHub usernames via the API so the
+          # @-mentions actually link/notify. Falls back to the raw git author
+          # name (no @) when a commit can't be tied to a GitHub user.
           echo "" >> changelog.md
           echo "" >> changelog.md
           echo "## Contributors" >> changelog.md
           if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
-            git log $PREV_TAG..HEAD --format='%aN' | sort -u | sed 's/^/- @/' >> changelog.md
+            COMPARE_RANGE="${PREV_TAG}...HEAD"
           else
-            git log --format='%aN' | sort -u | sed 's/^/- @/' >> changelog.md
+            COMPARE_RANGE=""
+          fi
+          if [ -n "$COMPARE_RANGE" ]; then
+            gh api --paginate "repos/${{ github.repository }}/compare/${COMPARE_RANGE}" \
+              --jq '.commits[] | if .author then "- @" + .author.login else "- " + .commit.author.name end' \
+              | sort -u >> changelog.md
+          else
+            git log --format='%H' | while read sha; do
+              gh api "repos/${{ github.repository }}/commits/${sha}" \
+                --jq 'if .author then "- @" + .author.login else "- " + .commit.author.name end'
+            done | sort -u >> changelog.md
           fi
 
           # Output for next step
@@ -379,6 +391,8 @@ jobs:
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload changelog
         uses: actions/upload-artifact@v4
