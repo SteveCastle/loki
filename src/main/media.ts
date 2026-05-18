@@ -396,14 +396,17 @@ const fetchMediaPreview =
     });
   };
 
-type CopyFileIntoClipboardInput = [string];
+// The renderer sends the full path array as `args` (see invoke wrapper in
+// renderer/platform.ts). Reading args[0] would silently drop everything
+// after the first path — that's the bug that made Ctrl+Shift+C
+// (copyAllSelectedFiles) only place a single file on the clipboard.
+type CopyFileIntoClipboardInput = string[];
 const copyFileIntoClipboard =
   () => async (_: IpcMainInvokeEvent, args: CopyFileIntoClipboardInput) => {
-    const filePaths = args[0];
-    console.log('copying file into clipboard', filePaths);
-    // Copies the file into the clipboard
-    clipboard.writeFilePaths([filePaths]);
-    console.log('copied file into clipboard');
+    const filePaths = args ?? [];
+    console.log('copying files into clipboard', filePaths.length, filePaths);
+    clipboard.writeFilePaths(filePaths);
+    console.log('copied files into clipboard');
   };
 
 type UpdateEloInput = [string, number, string, number];
