@@ -139,7 +139,7 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		mu.Unlock()
 	}()
 
-	err = cmd.Wait()
+	galleryErr := cmd.Wait()
 	<-doneReading
 
 	select {
@@ -150,10 +150,17 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 	default:
 	}
 
-	if err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("gallery-dl error: %s", err))
-		q.ErrorJob(j.ID)
-		return err
+	// On gallery-dl failure, still ingest anything that was successfully
+	// downloaded before the error so partial work isn't thrown away. We
+	// fall through to the upload/insert/tag/follow-up flow and mark the
+	// job as errored at the end to surface the underlying failure.
+	if galleryErr != nil {
+		q.PushJobStdout(j.ID, fmt.Sprintf("gallery-dl error: %s", galleryErr))
+		if len(downloadedFiles) == 0 {
+			q.ErrorJob(j.ID)
+			return galleryErr
+		}
+		q.PushJobStdout(j.ID, fmt.Sprintf("Continuing to ingest %d file(s) downloaded before the failure", len(downloadedFiles)))
 	}
 
 	// Collect gallery-dl `--write-metadata` sidecars (`<media>.json`) so they
@@ -221,6 +228,11 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 
 	// Queue follow-up tasks for each inserted file
 	queueFollowUpTasks(q, j.ID, insertedFiles, opts)
+
+	if galleryErr != nil {
+		q.ErrorJob(j.ID)
+		return galleryErr
+	}
 
 	q.CompleteJob(j.ID)
 	return nil
