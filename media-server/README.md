@@ -1,8 +1,8 @@
 # Lowkey Media Server
 
-**⚠️ Alpha Software Warning:** Lowkey Media Server is in the alpha phase of development. The server binds to port 8090 and exposes your media library over HTTP with **no authentication**. If you don't want your media accessible on your network, ensure the port is blocked by your firewall or only run Lowkey Media Server on trusted networks.
+Lowkey Media Server is the back-end companion to the Lowkey Media Viewer. It manages a SQLite media library, runs long-lived jobs (auto-tagging, transcription, ingestion, ffmpeg pipelines, HLS transcodes), serves files over HTTP with optional S3 storage, streams video as HLS, and embeds the same React UI the Electron app uses so the whole interface works in a browser.
 
-Lowkey Media Server is a companion for the Lowkey Media Viewer. It allows for managing long-running offline tasks like media tagging, transcript generation, media conversion, file serving, and media ingestion.
+> **⚠️ Beta software.** Authentication is now enabled by default — the server creates a temporary `admin` / `admin` user on first launch and forces you through a setup wizard to replace it. All `/api/*`, `/media/*`, and admin pages require a valid session. There is currently no per-route authorization beyond "is logged in," so every authenticated user has admin-level access. JWTs are signed with `LOWKEY_JWT_SECRET` (auto-generated and persisted on first run if not provided) and stored as HttpOnly cookies. Don't expose the server to the open internet without a reverse proxy and TLS.
 
 <img width="1628" height="494" alt="Screenshot 2025-09-20 083904" src="https://github.com/user-attachments/assets/e814d2a5-7088-46b2-9a8c-d537b989b018" />
 
@@ -16,46 +16,53 @@ Lowkey Media Server is a companion for the Lowkey Media Viewer. It allows for ma
 - [System Requirements](#system-requirements)
 - [Docker Quick Start](#docker-quick-start)
 - [Installation (End Users)](#installation-end-users)
+- [Authentication](#authentication)
 - [Development Setup](#development-setup)
-  - [Prerequisites](#prerequisites)
-  - [Building from Source](#building-from-source)
-  - [Project Structure](#project-structure)
-  - [Dependencies](#dependencies)
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [Available Tasks](#available-tasks)
 - [API Documentation](#api-documentation)
-- [Chrome Extension](#chrome-extension)
+- [Browser Extensions](#browser-extensions)
+- [Troubleshooting](#troubleshooting)
 - [License](#license)
 
 ---
 
 ## Features
 
-- **Job Queue Management**: Create, monitor, cancel, and manage long-running media processing jobs
-- **Media Browser**: Browse, search, and preview media files with a modern web interface
-- **Auto-Tagging**: Automatic image tagging using ONNX-based machine learning models (WD Tagger)
-- **LLM Descriptions**: Generate image descriptions using Ollama vision models
-- **Transcription**: Generate video transcripts using Faster Whisper
-- **Media Processing**: FFmpeg integration for media conversion and manipulation
-- **Media Ingestion**: Batch import media files into the database
-- **Real-Time Updates**: Server-Sent Events (SSE) for live job status updates
-- **System Tray**: Windows system tray integration for easy access
-- **Database Persistence**: SQLite-backed job and media database
+- **Authenticated multi-user access** — JWT sessions, bcrypt password hashes, HttpOnly cookies, setup wizard, user management UI.
+- **Job queue** — create, monitor, copy, cancel, and clear long-running media-processing jobs. SQLite-backed so jobs survive restarts.
+- **Workflow DAG engine** — chain tasks into reusable workflows, persisted under the `workflows` table; visual editor at `/editor`.
+- **Media browser** — search, filter, paginate, preview, and tag your library from the web UI.
+- **HLS adaptive streaming** — on-demand transcode to 480p / 720p / 1080p with on-disk segment cache (`/media/hls/...`).
+- **Swipe mode** — paginated random-sample view designed for quick triage on touch devices.
+- **File system browser** — list local roots and S3 buckets, drill into folders, ingest in-place.
+- **Auto-tagging** — ONNX (WD-EVA02-Large-Tagger v3) or Ollama vision models against the tag set already in your DB.
+- **Transcription** — Faster-Whisper integration (bundled under the "Generate Metadata" task).
+- **Ingestion** — bulk import from local paths, YouTube (yt-dlp), arbitrary galleries (gallery-dl), or Discord exports.
+- **FFmpeg toolkit** — 16 preset operations (scale, convert, extract audio, screenshot, thumbnail sheet, blur, crop, reverse, speed, caption, etc.) plus raw passthrough.
+- **LoRA dataset builder** — assemble a captioned image dataset from tagged media.
+- **Storage abstraction** — multiple local roots and S3-compatible buckets side-by-side. Per-root thumbnail prefixes. Default-root configurable.
+- **On-demand dependencies** — `ffmpeg`, `yt-dlp`, `gallery-dl`, Faster-Whisper, and ONNX runtime are downloaded by the web UI on first use; nothing is shipped in the binary.
+- **SSE updates** — `/stream` pushes live job state and download progress to all connected clients.
+- **System tray** — Windows and macOS get a tray icon with Open Web UI / Quit shortcuts.
+- **Browser extensions** — Chrome and Firefox extensions for sending the current URL to the job queue.
 
 ---
 
 ## System Requirements
 
-- **Operating System**: Windows 10/11 (x64) or Linux (x64)
-- **Disk Space**: ~500MB for binaries and embedded tools
-- **RAM**: 4GB minimum, 8GB+ recommended for ML tagging
+- **Operating System:** Windows 10/11 (x64), macOS 11+ (arm64 or amd64), or Linux (amd64).
+- **Disk Space:** ~150 MB for the binary; downloaded dependencies (ffmpeg + yt-dlp + whisper + onnx) add ~1–3 GB depending on what you install.
+- **RAM:** 4 GB minimum, 8 GB+ recommended once ONNX tagging or HLS transcodes are running.
+
+The server is a single statically-linked Go binary. SQLite uses `modernc.org/sqlite` (pure Go) so **no CGO is required** at build time.
 
 ---
 
 ## Docker Quick Start
 
-The fastest way to run the server is with Docker.
+The fastest way to run the server is with Docker. The compose stack handles persistence, sane defaults, and an optional MinIO bucket for testing S3 workflows.
 
 ### 1. Build and run
 
@@ -71,7 +78,7 @@ docker run -d --name lowkey-media-server \
   lowkey-media-server
 ```
 
-Open **http://localhost:8090** in your browser.
+Open **http://localhost:8090**, log in as `admin` / `admin`, and follow the setup wizard to create your real account.
 
 ### 2. Mount your media
 
@@ -90,20 +97,20 @@ Then register them as storage roots using environment variables (see below).
 
 ### 3. Environment variables
 
-All configuration can be set via environment variables, no config file needed:
+All configuration can be set via environment variables — no config file needed.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOWKEY_DB_PATH` | `/data/db/media.db` | SQLite database path |
-| `LOWKEY_DOWNLOAD_PATH` | `/data/media` | Download directory (deprecated — use a default root) |
+| `LOWKEY_DOWNLOAD_PATH` | `/data/media` | Download directory (deprecated — prefer a default root) |
 | `LOWKEY_OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
-| `LOWKEY_OLLAMA_MODEL` | `llama3.2-vision` | Vision model for descriptions |
-| `LOWKEY_JWT_SECRET` | (auto-generated) | JWT signing secret |
-| `LOWKEY_DISCORD_TOKEN` | | Discord token for media export |
-| `LOWKEY_FASTER_WHISPER_PATH` | | Path to faster-whisper binary |
+| `LOWKEY_OLLAMA_MODEL` | `llama3.2-vision` | Vision model for descriptions and tagging |
+| `LOWKEY_JWT_SECRET` | auto-generated and persisted | JWT signing secret. Override to share sessions across replicas. |
+| `LOWKEY_DISCORD_TOKEN` | | Discord token for Discord export ingestion |
+| `LOWKEY_FASTER_WHISPER_PATH` | | Path to faster-whisper binary (overrides the on-demand download) |
 | `LOWKEY_ROOT_1`, `_2`, ... | | Local storage roots (see below) |
-| `LOWKEY_DEFAULT_ROOT` | `1` | Which root receives uploads/downloads (index or label) |
-| `LOWKEY_ROOTS` | | JSON storage roots with S3 support (see below) |
+| `LOWKEY_DEFAULT_ROOT` | `1` | Which root receives uploads/downloads (1-based index or label) |
+| `LOWKEY_ROOTS` | | JSON storage roots array with S3 support (see below) |
 
 #### Storage roots via environment
 
@@ -120,7 +127,7 @@ docker run -d --name lowkey-media-server \
   lowkey-media-server
 ```
 
-**S3-compatible storage** — use `LOWKEY_ROOTS` with a JSON array. Supports all StorageRoot fields including S3 credentials, endpoints, and thumbnail prefixes. You can mix local and S3 roots.
+**S3-compatible storage** — use `LOWKEY_ROOTS` with a JSON array. Supports all StorageRoot fields including S3 credentials, custom endpoints, and thumbnail prefixes. Mix local and S3 roots freely.
 
 ```bash
 docker run -d --name lowkey-media-server \
@@ -145,27 +152,11 @@ docker run -d --name lowkey-media-server \
 
 > When `LOWKEY_ROOTS` is set, it takes priority over any `LOWKEY_ROOT_<N>` variables. Either way, environment roots replace roots from the config file.
 
-#### Full example with Ollama
-
-```bash
-docker run -d --name lowkey-media-server \
-  -p 8090:8090 \
-  -v lowkey-data:/data \
-  -v ~/photos:/mnt/photos:ro \
-  -e LOWKEY_ROOT_1=/mnt/photos:Photos \
-  -e LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-  -e LOWKEY_OLLAMA_MODEL=llama3.2-vision \
-  lowkey-media-server
-```
-
-> **Linux hosts:** Add `--add-host=host.docker.internal:host-gateway` so the container can reach Ollama on the host.
-
 ### 4. Testing with MinIO (S3-compatible storage)
 
 The compose stack includes a MinIO instance for testing S3 workflows locally.
 
 ```bash
-# Start everything with MinIO wired as the storage backend
 make up-minio
 ```
 
@@ -173,7 +164,7 @@ This gives you:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Media Server | http://localhost:8090 | (set up via web UI) |
+| Media Server | http://localhost:8090 | `admin` / `admin` on first run; reset via setup wizard |
 | MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
 | MinIO S3 API | http://localhost:9000 | same |
 
@@ -201,10 +192,10 @@ All server state lives in the `/data` volume:
 
 ```
 /data/
-  db/media.db        # SQLite database
-  media/             # Downloaded media
-  config/            # Auto-generated config
-  packages/          # Auto-downloaded dependencies (ffmpeg, yt-dlp, etc.)
+  db/media.db        # SQLite database (jobs, workflows, users, media, tags)
+  media/             # Downloaded media (when no S3 / explicit roots configured)
+  config/            # Auto-generated config and JWT secret
+  packages/          # Auto-downloaded dependencies (ffmpeg, yt-dlp, whisper, onnx)
 ```
 
 The named volume `lowkey-data` survives container restarts and rebuilds.
@@ -213,19 +204,45 @@ The named volume `lowkey-data` survives container restarts and rebuilds.
 
 ## Installation (End Users)
 
-1. **Run the lowkeymediaserver.exe binary.** This will start the background server and create an icon in your Windows system tray for launching the WebUI.
+Prebuilt binaries for Windows (x64), macOS (arm64 + amd64), and Linux (amd64) are published to GitHub Releases on every push to `master`. Download `media-server-<os>-<arch>` from the latest release.
+
+1. **Run the binary.** On Windows it starts the background server and creates a system tray icon. On macOS and Linux it runs in the foreground; use your init system of choice to keep it alive.
 
    <img width="408" height="247" alt="Screenshot 2025-09-20 080659" src="https://github.com/user-attachments/assets/4b8a0141-08d4-4fb9-9c42-78db5dbd25ad" />
 
-2. **Check Lowkey Database Path.** Open the Config tab in the Web UI. You should see the path to your Lowkey Media Database. If it's incorrect, you can manually change it here.
+2. **Open <http://localhost:8090>.** Log in as `admin` / `admin`. You'll be redirected to a setup wizard — pick a real username and password. The default admin is deleted automatically once a real user exists.
 
-3. **Set Up Model Paths.** You'll need to point the server at a few files to enable auto tagging:
+3. **Open the Config tab** to verify the Lowkey Database path and configure model paths for ONNX tagging, Ollama, or Faster Whisper.
 
-   - [Download Model Files for AutoTagger](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/tree/main)
-   - [Install Ollama for LLM-based description generation](https://ollama.com/)
-   - [Download Faster Whisper for Video Transcription](https://github.com/Purfview/whisper-standalone-win)
+4. **Open the Dependencies tab** to download whichever optional tools you need (ffmpeg, yt-dlp, gallery-dl, whisper, onnx runtime). These are pulled from upstream GitHub releases and verified before installation.
+
+   - [Download model files for the ONNX tagger](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/tree/main)
+   - [Install Ollama for LLM-based descriptions and tagging](https://ollama.com/)
+   - [Faster-Whisper standalone builds](https://github.com/Purfview/whisper-standalone-win) (or install from PyPI on Linux/macOS)
 
    <img width="1233" height="1693" alt="Screenshot 2025-09-20 080416" src="https://github.com/user-attachments/assets/5eb008ae-88fb-4519-af03-4e55afbb6601" />
+
+---
+
+## Authentication
+
+### How it works
+
+- On first launch, if the `users` table is empty, the server creates a temporary `admin` user with password `admin`.
+- All protected routes redirect to `/login?setup=true` while the only user is the default admin, forcing you to register a real account.
+- `POST /auth/login` exchanges credentials for a JWT (returned in the response body **and** set as an `auth_token` HttpOnly cookie, `SameSite=Lax`, 24 hour expiry).
+- Subsequent requests are accepted with either the cookie or an `Authorization: Bearer <token>` header. Browser extensions and the Electron app use the Bearer header; the web UI uses the cookie.
+- `POST /auth/logout` clears the cookie.
+- `GET /auth/status` reports whether a user is logged in and whether setup is still pending.
+- `/auth/users` (admin) lists and deletes users; the last remaining user can't be deleted, so you can't lock yourself out.
+
+### What's still TODO
+
+- All authenticated users get full admin access. Per-route role checks (`RolePublic` / `RoleAdmin`) exist in the middleware but every real user is treated as admin.
+- No password reset flow. Recover by stopping the server, deleting the user row from SQLite, and letting the default admin re-spawn.
+- No rate limiting on `/auth/login`.
+
+Override the JWT secret by setting `LOWKEY_JWT_SECRET` (otherwise one is generated and persisted in the config dir on first run).
 
 ---
 
@@ -235,268 +252,201 @@ The named volume `lowkey-data` survives container restarts and rebuilds.
 
 #### 1. Install Go
 
-Lowkey Media Server requires **Go 1.24.0** or later.
+Requires **Go 1.24.0** or later (CI builds against `go1.24`).
 
-**Windows (Recommended):**
-
-1. Download the latest Go installer from [https://go.dev/dl/](https://go.dev/dl/)
-2. Run the MSI installer
-3. Verify installation:
-   ```powershell
-   go version
-   # Should output: go version go1.24.x windows/amd64
-   ```
-
-**Alternative (using winget):**
+**Windows:**
 
 ```powershell
 winget install GoLang.Go
+# or download the MSI from https://go.dev/dl/
+go version
 ```
 
-**Alternative (using Chocolatey):**
+**macOS:**
 
-```powershell
-choco install golang
+```bash
+brew install go
 ```
+
+**Linux:**
+
+Install the official tarball from <https://go.dev/dl/> or your distro's package.
 
 #### 2. Install Git
 
 Required for cloning the repository and Go module management.
 
-```powershell
-winget install Git.Git
-```
+#### 3. C Compiler
 
-#### 3. C Compiler (for CGO - SQLite)
-
-The SQLite package (`modernc.org/sqlite`) is a pure Go implementation and does **not** require CGO. No C compiler is needed.
+**Not required.** SQLite uses `modernc.org/sqlite` (pure Go) and the project sets `CGO_ENABLED=0` in CI. Cross-compilation just works.
 
 #### 4. Optional: External Tools
 
-For full functionality, install these optional tools:
+For full functionality you'll eventually want the following tools, all of which can be installed from the Dependencies tab in the web UI rather than by hand:
 
-| Tool                                                                 | Purpose                             | Windows Installation                     | Linux Installation                       |
-| -------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| [Ollama](https://ollama.com/)                                        | LLM-based image descriptions        | Download and run installer               | `curl -fsSL https://ollama.com/install.sh \| sh` |
-| [ONNX Runtime](https://onnxruntime.ai/)                              | ML model inference for auto-tagging | Download DLL, configure path in settings | `apt install libonnxruntime` or download .so |
-| [Faster Whisper](https://github.com/Purfview/whisper-standalone-win) | Video transcription                 | Download, configure path in settings     | Build from source or use Python version  |
+| Tool | Purpose | Install method |
+|------|---------|----------------|
+| [Ollama](https://ollama.com/) | LLM-based image descriptions / vision tagging | Native installer per OS |
+| ONNX Runtime + WD-EVA02-Large-Tagger v3 | ML auto-tagging | Web UI → Dependencies |
+| Faster-Whisper | Video transcription | Web UI → Dependencies (or system Python install) |
+| FFmpeg / FFprobe | Media probing, conversion, HLS, thumbnails | Web UI → Dependencies |
+| yt-dlp | YouTube and other video downloads | Web UI → Dependencies |
+| gallery-dl | Image gallery downloads | Web UI → Dependencies |
 
-> **Note:** FFmpeg, yt-dlp, and gallery-dl are managed as downloadable dependencies via the web UI.
+If a dependency is installed on the system PATH the server will fall back to it; otherwise it uses the version downloaded into the Dependencies directory.
 
 ### Building from Source
 
 #### 1. Clone the Repository
 
-```bash
-git clone https://github.com/stevecastle/shrike.git
-cd shrike
-```
-
-#### 2. Download Dependencies
+The Go module path is `github.com/stevecastle/shrike` even though the public repo is `loki`.
 
 ```bash
-go mod download
+git clone https://github.com/stevecastle/loki.git
+cd loki/media-server
 ```
 
-#### 3. Verify Dependencies
+#### 2. Build the React UI (required)
+
+The Go binary embeds `loki-static/**` at compile time, so the renderer must be built first:
 
 ```bash
-go mod verify
+# From the repo root
+npm install
+npm run build:web   # builds the renderer and copies it into media-server/loki-static/
 ```
 
-#### 4. Build the Executable
-
-The project uses Go build tags to handle platform-specific code. Build for your target platform:
-
-##### Building for Windows
-
-```powershell
-# Standard build (from Windows)
-go build -o lowkeymediaserver.exe .
-
-# Build with optimizations (smaller binary, no debug info)
-go build -ldflags="-s -w" -o lowkeymediaserver.exe .
-```
-
-##### Building for Linux
+For a full one-shot build (renderer + server, with any running `media-server` killed first):
 
 ```bash
-# Standard build (from Linux)
-go build -o lowkeymediaserver .
-
-# Build with optimizations (smaller binary, no debug info)
-go build -ldflags="-s -w" -o lowkeymediaserver .
+npm run build:server
 ```
 
-##### Cross-Compilation
-
-You can cross-compile from one platform to another using the `GOOS` and `GOARCH` environment variables:
+#### 3. Build the Go Binary
 
 ```bash
-# Build Windows executable from Linux/macOS
-GOOS=windows GOARCH=amd64 go build -o lowkeymediaserver.exe .
+# From media-server/
 
-# Build Linux executable from Windows (PowerShell)
-$env:GOOS="linux"; $env:GOARCH="amd64"; go build -o lowkeymediaserver .
+# Standard build
+go build -o media-server .
 
-# Build Linux executable from Windows (Command Prompt)
-set GOOS=linux
-set GOARCH=amd64
-go build -o lowkeymediaserver .
+# Optimized build
+go build -ldflags="-s -w" -o media-server .
+
+# Cross-compile (works with no extra setup since CGO is off)
+GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o media-server-windows-amd64.exe .
+GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w" -o media-server-darwin-arm64 .
+GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o media-server-linux-amd64 .
 ```
 
-> **Note:** Cross-compilation works because the project uses pure Go dependencies (no CGO required).
+#### 4. Run the Server
 
-#### 5. Run the Server
-
-**Windows:**
-```powershell
-.\lowkeymediaserver.exe
-```
-
-**Linux:**
 ```bash
-./lowkeymediaserver
+./media-server        # or .\media-server.exe on Windows
 ```
 
-The server will start on `http://localhost:8090`. On Windows, a system tray icon will appear.
+The server listens on `http://localhost:8090`. On Windows and macOS a system tray icon appears.
 
 ### Development Mode
 
-For faster iteration during development, you can use `go run`:
+For faster iteration:
 
 ```bash
 go run .
 ```
 
+Make renderer changes? Re-run `npm run build:web` from the repo root before reloading.
+
 ### Running Tests
 
 ```bash
-# Run all tests
+# All tests
 go test ./...
 
-# Run tests with verbose output
+# Verbose
 go test -v ./...
 
-# Run tests for a specific package
+# Single package
 go test -v ./media/...
+
+# Or from the repo root
+npm run test:server
 ```
 
-### Project Structure
+### Project Layout
+
+The actual layout is more complex than a typical Go HTTP project because the entry point is split across three build-tagged files (Windows tray, macOS tray, Linux headless):
 
 ```
-lowkeymediaserver/
-├── main.go                 # Windows entry point, HTTP handlers, system tray
-├── main_linux.go           # Linux entry point, HTTP handlers
-├── go.mod                  # Go module definition
-├── go.sum                  # Dependency checksums
+media-server/
+├── main.go                 # Windows entry point: HTTP server + system tray
+├── main_darwin.go          # macOS entry point: HTTP server + system tray
+├── main_linux.go           # Linux entry point: HTTP server (headless)
+├── loki_api.go             # JSON REST API used by the React SPA
+├── hls.go                  # HLS transcode/segment cache, /media/hls/* handlers
+├── fsbrowser.go            # /api/fs/list filesystem browser (local + S3)
+├── thumbnail.go            # On-demand image and video thumbnail generation
+├── db_dsn.go               # SQLite connection string helpers
 │
-├── appconfig/              # Application configuration management
-│   └── config.go           # Config loading/saving, defaults
-│
-├── assets/                 # Static assets
-│   └── logo.ico            # System tray icon
-│
-├── client/                 # Frontend static files
-│   └── static/
-│       ├── styles.css      # Main stylesheet
-│       └── details.css     # Job details page styles
-│
-├── deps/                   # Dependency management
-│   ├── deps.go             # Dependency registry and core logic
-│   ├── metadata.go         # Dependency metadata persistence
-│   ├── paths.go            # Platform-specific paths
-│   ├── exec.go             # Executable command builder
-│   ├── ffmpeg.go           # FFmpeg dependency
-│   ├── ytdlp.go            # yt-dlp dependency
-│   ├── gallerydl.go        # gallery-dl dependency
-│   ├── whisper.go          # Faster Whisper dependency
-│   ├── onnx.go             # ONNX runtime/model dependency
-│   └── ...                 # Other dependencies
-│
-├── jobqueue/               # Job queue implementation
-│   └── jobqueue.go         # Queue, job state, persistence
-│
-├── media/                  # Media database operations
-│   ├── media.go            # Media queries, search, pagination
-│   └── media_test.go       # Media tests
-│
+├── auth/                   # JWT + bcrypt user management
+├── appconfig/              # Config file load/save, env-var overrides
+├── deps/                   # On-demand dependency downloader (ffmpeg, yt-dlp, whisper, onnx)
+├── downloads/              # Bulk install / progress tracking for deps
+├── jobqueue/               # SQLite-backed job + workflow DAG engine
+├── media/                  # Media table queries, search, random sampler
 ├── onnxtag/                # ONNX-based image tagging
-│   ├── onnxtag.go          # Tagger implementation
-│   └── config.go           # Tagger configuration
-│
-├── renderer/               # HTML template rendering
-│   ├── renderer.go         # Template loading, middleware
-│   └── templates/          # Go HTML templates
-│       ├── index.go.html   # Home page
-│       ├── jobs.go.html    # Jobs list
-│       ├── detail.go.html  # Job detail view
-│       ├── media.go.html   # Media browser
-│       ├── config.go.html  # Configuration page
-│       └── ...
-│
-├── runners/                # Job execution runners
-│   └── runners.go          # Worker pool implementation
-│
-├── stream/                 # Server-Sent Events (SSE)
-│   └── stream.go           # Real-time update streaming
-│
-├── tasks/                  # Task implementations
-│   ├── registry.go         # Task registration
+├── platform/               # Per-OS path/process helpers
+├── querylog/               # Slow-query logger
+├── renderer/               # Go HTML templates + middleware (RolePublic / RoleAdmin)
+│   └── templates/          # Templates for /jobs, /config, /editor, /login, etc.
+├── runners/                # Worker pool that dispatches jobs to task fns
+├── storage/                # Local + S3 storage registry, signed URLs, thumbnails
+├── stream/                 # Server-Sent Events broker (/stream, /downloads/stream)
+├── tasks/                  # Self-registering task implementations
+│   ├── registry.go         # init() registers every built-in task
 │   ├── autotag.go          # ONNX auto-tagging
-│   ├── autotag_vision.go   # LLM vision tagging
-│   ├── command.go          # Generic command execution
-│   ├── ffmpeg.go           # FFmpeg processing
-│   ├── media_ingest.go     # Media file ingestion
-│   ├── media_metadata.go   # Metadata generation
-│   ├── media_move.go       # File moving with DB update
-│   ├── media_cleanup.go    # Orphan cleanup
+│   ├── autotag_vision.go   # Ollama vision-based tagging
+│   ├── metadata_ops.go     # Descriptions + transcripts + hashes + dimensions
+│   ├── ffmpeg*.go          # 16 ffmpeg preset variants + custom passthrough
+│   ├── hls.go              # HLS transcode task
+│   ├── ingest_*.go         # Local / YouTube / gallery / Discord ingestion
+│   ├── lora_dataset.go     # LoRA training dataset builder
+│   ├── media_*.go          # ingest / move / metadata / cleanup / remove
+│   ├── save.go             # Save File task
 │   └── ...
 │
-├── chrome-extension/       # Browser extension for sending URLs
-│   ├── manifest.json
-│   ├── popup.html
-│   ├── popup.js
-│   └── popup.css
-│
-├── cmd/                    # Additional command-line tools
-│   ├── onnxtag/            # Standalone ONNX tagger CLI
+├── loki-static/            # React renderer bundle (embedded at compile time)
+├── chrome-extension/       # Chrome extension for sending URLs into the queue
+├── firefox-extension/      # Firefox extension (same functionality)
+├── cmd/                    # Side CLIs
+│   ├── onnxtag/            # Standalone ONNX tagger
 │   ├── dbcopy/             # Database copy utility
 │   └── sbs/                # Side-by-side comparison tool
-│
 ├── API_DOCUMENTATION.md    # Detailed API reference
 └── README.md               # This file
 ```
 
+Changes to HTTP handlers, startup, or tray integration usually need to be mirrored across `main.go`, `main_darwin.go`, and `main_linux.go`. They share helpers from `tasks`, `jobqueue`, `storage`, `runners`, and `stream`.
+
 ### Dependencies
 
-Lowkey Media Server uses a dependency management system that downloads executables on-demand rather than embedding them in the binary. This keeps the main executable small and allows for easy updates.
+Lowkey Media Server uses a download-on-demand dependency manager. The main binary stays small and dependencies can be updated independently.
 
-Dependencies are stored in:
+Default dependency locations:
 
 - **Windows:** `%ProgramData%\Lowkey Media Server\deps\`
+- **macOS:** `~/Library/Application Support/Lowkey Media Server/deps/`
 - **Linux:** `/var/lib/lowkeymediaserver/deps/`
 
 | Dependency   | Purpose                         | Source                                |
 | ------------ | ------------------------------- | ------------------------------------- |
-| `ffmpeg`     | Media conversion and processing | BtbN/FFmpeg-Builds (GitHub)           |
-| `yt-dlp`     | Video downloading               | yt-dlp/yt-dlp (GitHub)                |
-| `gallery-dl` | Image gallery downloading       | mikf/gallery-dl (GitHub)              |
-| `whisper`    | Video transcription             | Purfview/whisper-standalone-win       |
-| `onnx`       | ML model inference              | HuggingFace/SmilingWolf               |
+| `ffmpeg`     | Media conversion, HLS, thumbnails | BtbN/FFmpeg-Builds (GitHub)         |
+| `yt-dlp`     | Video downloading                | yt-dlp/yt-dlp (GitHub)               |
+| `gallery-dl` | Image gallery downloading        | mikf/gallery-dl (GitHub)             |
+| `whisper`    | Faster-Whisper transcription     | Purfview/whisper-standalone-win      |
+| `onnx`       | ONNX Runtime + WD tagger model   | HuggingFace/SmilingWolf              |
 
-#### Managing Dependencies
-
-1. Open the web interface at `http://localhost:8090`
-2. Navigate to the **Dependencies** tab
-3. Click **Download** next to any dependency you need
-4. The server will download and extract the dependency automatically
-
-Dependencies are downloaded from official sources (GitHub releases) and verified before installation. The status of each dependency is shown in the UI.
-
-#### Fallback to System PATH
-
-If a dependency is not installed via the web UI, the server will attempt to find the executable in your system PATH. This allows you to use system-installed versions of tools like FFmpeg if preferred.
+Open the web UI at <http://localhost:8090>, navigate to **Dependencies**, and click **Download** next to anything you need. The server fetches the latest release, verifies it, and unpacks it into the deps directory. If a tool is already on `$PATH` the server uses that instead.
 
 ---
 
@@ -505,14 +455,17 @@ If a dependency is not installed via the web UI, the server will attempt to find
 Configuration file location:
 
 - **Windows:** `%APPDATA%\Lowkey Media Viewer\config.json`
+- **macOS:** `~/Library/Application Support/Lowkey Media Viewer/config.json`
 - **Linux:** `~/.config/lowkeymediaviewer/config.json`
 
-### Configuration Options
+Most settings can also be set via environment variables (see the Docker section above). Env vars take precedence over the config file.
 
-**Windows Example:**
+### Example config.json
+
 ```json
 {
-  "dbPath": "C:\\path\\to\\your\\database.db",
+  "dbPath": "C:\\path\\to\\database.db",
+  "jwtSecret": "auto-generated-on-first-run",
 
   "ollamaBaseUrl": "http://localhost:11434",
   "ollamaModel": "llama3.2-vision",
@@ -528,189 +481,176 @@ Configuration file location:
     "characterThreshold": 0.85
   },
 
-  "fasterWhisperPath": "C:\\path\\to\\faster-whisper-xxl.exe"
-}
-```
+  "fasterWhisperPath": "C:\\path\\to\\faster-whisper-xxl.exe",
 
-**Linux Example:**
-```json
-{
-  "dbPath": "/home/user/media/database.db",
-
-  "ollamaBaseUrl": "http://localhost:11434",
-  "ollamaModel": "llama3.2-vision",
-  "describePrompt": "Please describe this image...",
-  "autotagPrompt": "Please analyze this image and select tags...",
-
-  "onnxTagger": {
-    "modelPath": "/home/user/models/model.onnx",
-    "labelsPath": "/home/user/models/selected_tags.csv",
-    "configPath": "/home/user/models/config.json",
-    "ortSharedLibraryPath": "/usr/lib/libonnxruntime.so",
-    "generalThreshold": 0.35,
-    "characterThreshold": 0.85
-  },
-
-  "fasterWhisperPath": "/usr/local/bin/faster-whisper-xxl"
+  "storageRoots": [
+    { "type": "local", "path": "C:\\Media\\Photos", "label": "Photos" },
+    { "type": "local", "path": "C:\\Media\\Videos", "label": "Videos" }
+  ]
 }
 ```
 
 ### ONNX Tagger Setup
 
 1. Download model files from [HuggingFace](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/tree/main):
-
-   - `model.onnx` - The neural network model
-   - `selected_tags.csv` - Tag labels
-   - `config.json` - Model configuration (optional)
+   - `model.onnx` — the neural network model
+   - `selected_tags.csv` — tag labels
+   - `config.json` — model configuration (optional)
 
 2. Download [ONNX Runtime](https://github.com/microsoft/onnxruntime/releases):
+   - Windows: `onnxruntime-win-x64-*.zip` → extract `onnxruntime.dll` from `lib/`
+   - macOS: `onnxruntime-osx-arm64-*.tgz` → extract `libonnxruntime.dylib`
+   - Linux: `onnxruntime-linux-x64-*.tgz` → extract `libonnxruntime.so`
 
-   - Get `onnxruntime-win-x64-*.zip`
-   - Extract `onnxruntime.dll` from `lib/` folder
-
-3. Configure paths in the Lowkey Media Server Config tab
+3. Configure the paths in the Config tab of the web UI.
 
 ---
 
 ## Usage
 
-Once the server is installed, Lowkey Media Viewer should detect it and be able to create jobs. You can also create bulk jobs on the results of any search from the Media Browser tab.
+Once the server is running, the Lowkey Media Viewer detects it automatically and can dispatch jobs to it. Bulk jobs against any search result are also creatable from the Media Browser tab.
 
 ### Web Interface
 
-Access the web interface at: `http://localhost:8090`
+Access the web UI at: <http://localhost:8090>
 
-- **Home**: Quick job creation
-- **Jobs**: View and manage all jobs
-- **Media**: Browse and search media files
-- **Config**: Configure server settings
-- **Stats**: View database statistics
+- **Home / Tasks** — quick task creation
+- **Jobs** — view, cancel, copy, and remove jobs; real-time updates via SSE
+- **Workflows** — create reusable DAGs; visual editor at `/editor`
+- **Media** — browse, search, preview, and tag media; bulk-job action on results
+- **Swipe** — paginated random-sample view (`/swipe`)
+- **Config** — server settings, model paths, storage roots, user management
+- **Dependencies** — download/update ffmpeg, yt-dlp, gallery-dl, whisper, onnx
+- **Stats** — database statistics
 
 ### System Tray
 
-Right-click the Lowkey Media Server icon in the system tray:
+Right-click the tray icon (Windows/macOS) for:
 
-- **Open Web UI**: Launch browser to web interface
-- **Quit**: Shutdown the server
+- **Open Web UI** — opens <http://localhost:8090> in your default browser
+- **Quit** — shutdown the server
+
+Linux builds run headless.
 
 ---
 
 ## Available Tasks
 
-| Task ID      | Name               | Description                               |
-| ------------ | ------------------ | ----------------------------------------- |
-| `wait`       | Wait               | Test task that waits 5 seconds            |
-| `gallery-dl` | gallery-dl         | Download media from websites              |
-| `yt-dlp`     | yt-dlp             | Download videos from YouTube, etc.        |
-| `ffmpeg`     | ffmpeg             | Process media files                       |
-| `ingest`     | Ingest Media Files | Scan directories and add to database      |
-| `metadata`   | Generate Metadata  | Generate descriptions, hashes, dimensions |
-| `autotag`    | Auto Tag (ONNX)    | Automatic image tagging with ML           |
-| `move`       | Move Media Files   | Move files and update database            |
-| `remove`     | Remove Media       | Remove entries from database              |
-| `cleanup`    | CleanUp            | Remove orphaned database entries          |
+Tasks register themselves in `tasks/registry.go`'s `init()`. The current catalog:
+
+| Task ID                      | Name                       | Description                                              |
+| ---------------------------- | -------------------------- | -------------------------------------------------------- |
+| `wait`                       | Wait                       | Test task that sleeps 5 seconds                          |
+| `ingest`                     | Ingest Media Files         | Dispatches by URL: local path, YouTube, gallery, Discord |
+| `metadata`                   | Generate Metadata          | Descriptions, transcripts (Whisper), hashes, dimensions  |
+| `autotag`                    | Auto Tag (ONNX)            | ML image tagging against the existing tag set            |
+| `hls`                        | HLS Transcode              | Build the 480p / 720p / 1080p HLS ladder for a video     |
+| `move`                       | Move Media Files           | Move files on disk and update DB paths                   |
+| `remove`                     | Remove Media               | Delete entries from the database                         |
+| `cleanup`                    | CleanUp                    | Remove orphaned database entries                         |
+| `save`                       | Save File                  | Copy/persist a file with metadata                        |
+| `lora-dataset`               | Create LoRA Dataset        | Assemble a captioned image dataset                       |
+| `download-dependency`        | Download Dependency        | Internal — used by the Dependencies UI                   |
+| `ffmpeg`                     | ffmpeg                     | Raw ffmpeg passthrough with custom args                  |
+| `ffmpeg-scale`               | FFmpeg Scale               |                                                          |
+| `ffmpeg-convert`             | FFmpeg Convert             |                                                          |
+| `ffmpeg-extract-audio`       | FFmpeg Extract Audio       |                                                          |
+| `ffmpeg-extract-audio-clip`  | FFmpeg Extract Audio Clip  |                                                          |
+| `ffmpeg-screenshot`          | FFmpeg Screenshot          |                                                          |
+| `ffmpeg-thumbnail`           | FFmpeg Thumbnail           |                                                          |
+| `ffmpeg-reverse`             | FFmpeg Reverse             |                                                          |
+| `ffmpeg-speed`               | FFmpeg Speed               |                                                          |
+| `ffmpeg-grayscale`           | FFmpeg Grayscale           |                                                          |
+| `ffmpeg-blur`                | FFmpeg Blur                |                                                          |
+| `ffmpeg-resize`              | FFmpeg Resize              |                                                          |
+| `ffmpeg-crop`                | FFmpeg Crop                |                                                          |
+| `ffmpeg-rotate`              | FFmpeg Rotate              |                                                          |
+| `ffmpeg-caption`             | FFmpeg Caption             |                                                          |
+| `ffmpeg-thumbsheet`          | FFmpeg Thumbnail Sheet     |                                                          |
+
+To add a new task: implement a `TaskFn` (`func(j *jobqueue.Job, q *jobqueue.Queue, r *sync.Mutex) error`) and add a `RegisterTask(...)` line in `tasks/registry.go`. Tasks can register output files via `RegisterOutputFile` so downstream workflow steps can chain off them.
 
 ---
 
 ## API Documentation
 
-See [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) for detailed HTTP API reference including:
+See [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) for the detailed HTTP API reference including:
 
-- Endpoint specifications
+- Endpoint specifications (REST + SSE)
 - Request/response formats
-- SSE streaming events
+- Auth flow and Bearer token usage
 - Example curl commands
 
 ---
 
-## Chrome Extension
+## Browser Extensions
 
-A Chrome extension is included for quickly sending URLs to Lowkey Media Server.
-
-### Installation
-
-1. Open Chrome and go to `chrome://extensions/`
-2. Enable "Developer mode"
-3. Click "Load unpacked"
-4. Select the `chrome-extension/` folder
-
-### Usage
-
-1. Navigate to a page you want to download
-2. Click the Lowkey Media Server extension icon
-3. Select the download method (yt-dlp, gallery-dl, etc.)
-4. Job is created automatically
+Both a [Chrome](./chrome-extension/README.md) and [Firefox](./firefox-extension/README.md) extension are bundled. They let you create jobs (yt-dlp, gallery-dl, ffmpeg, ingest, etc.) from the page you're currently viewing, with real-time job status via SSE. Auth is supported via the same `/auth/login` endpoint.
 
 ---
 
 ## Troubleshooting
 
-### Port 8090 Already in Use
+### Locked out / forgot password
 
-If another application is using port 8090, you'll need to modify the port in `main.go`:
+Stop the server, delete the offending user from SQLite:
 
-```go
-srv = &http.Server{
-    Addr:    ":8090",  // Change this port
-    Handler: mux,
-}
+```bash
+sqlite3 /path/to/media.db "DELETE FROM users;"
 ```
 
-### Database Connection Errors
+Restart the server. The default `admin` / `admin` will be re-created and you'll be sent through the setup wizard again.
 
-1. Ensure the database path in config.json exists
-2. Check file permissions on the database file
-3. Ensure no other process has locked the database
+### Port 8090 already in use
 
-### ONNX Tagger Not Working
+Bind address is currently hardcoded to `:8090` in the entry-point files. To run on a different port, edit `main.go` / `main_darwin.go` / `main_linux.go` and rebuild.
 
-1. Verify all model files are downloaded
-2. Check ONNX Runtime DLL path is correct
-3. Ensure model is compatible (ONNX opset 11+)
-4. Check Windows Event Viewer for crash logs
+### Database connection errors
 
-### System Tray Icon Not Appearing (Windows)
+1. Ensure the database path in `config.json` (or `LOWKEY_DB_PATH`) exists and is writable.
+2. Check file permissions on the database file.
+3. Ensure no other process has the database open in WAL-incompatible exclusive mode.
 
-1. Check Windows notification area settings
-2. Ensure hidden icons are visible
-3. Try restarting Windows Explorer
+### ONNX Tagger not working
 
-### Linux-Specific Issues
+1. Verify all model files (`model.onnx`, `selected_tags.csv`, optional `config.json`) are present.
+2. Verify the ONNX Runtime shared library path is correct for your OS.
+3. Make sure the model opset is ≥ 11.
+4. On Windows, check Event Viewer for native crash logs.
+
+### System tray icon not appearing (Windows)
+
+1. Check the Windows notification area settings for hidden icons.
+2. Restart Windows Explorer if necessary.
+
+### Linux-specific issues
 
 **Permission denied when running:**
+
 ```bash
-chmod +x lowkeymediaserver
-./lowkeymediaserver
+chmod +x media-server-linux-amd64
+./media-server-linux-amd64
 ```
 
-**Port 8090 requires root privileges:**
-On Linux, ports below 1024 require root. Port 8090 should work without root, but if you encounter permission issues:
-```bash
-# Run with elevated permissions (not recommended for production)
-sudo ./lowkeymediaserver
+**Missing shared libraries (only relevant if you point ONNX at a system install):**
 
-# Or use a reverse proxy like nginx to forward from port 80/443
-```
-
-**Missing shared libraries:**
-If you encounter errors about missing libraries (e.g., libonnxruntime.so), ensure the library path is set:
 ```bash
 export LD_LIBRARY_PATH=/path/to/libs:$LD_LIBRARY_PATH
-./lowkeymediaserver
+./media-server-linux-amd64
 ```
 
 ---
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `go test ./...`
-5. Submit a pull request
+1. Fork the repository.
+2. Create a feature branch.
+3. Make your changes; keep handler logic mirrored across `main.go`, `main_darwin.go`, and `main_linux.go`.
+4. Run tests: `go test ./...` (and `npm run test:server` from the repo root).
+5. Submit a pull request.
 
 ---
 
 ## License
 
-See [LICENSE](./LICENSE) for details.
+See [LICENSE](../LICENSE) for details.
