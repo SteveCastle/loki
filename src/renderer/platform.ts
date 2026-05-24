@@ -104,8 +104,19 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'DELETE',
       argsToBody: (args) => ({ path: args[0] }),
     },
-    'load-taxonomy': {
-      url: '/api/taxonomy',
+    'load-categories': {
+      url: '/api/taxonomy/categories',
+      method: 'GET',
+      argsToBody: () => null,
+    },
+    'load-category-tags': {
+      url: '/api/taxonomy/tags',
+      // For GET we treat the returned object as query string params.
+      method: 'GET',
+      argsToBody: (args) => ({ category: args[0] }),
+    },
+    'load-all-tags': {
+      url: '/api/taxonomy/tags',
       method: 'GET',
       argsToBody: () => null,
     },
@@ -391,7 +402,18 @@ if (isElectron) {
     }
     const body = mapping.argsToBody(args ?? []);
     if (mapping.method === 'GET') {
-      return authFetch(mapping.url).then(handleResponse);
+      // GET endpoints treat the returned object as URL query params.
+      let url = mapping.url;
+      if (body && typeof body === 'object') {
+        const qs = new URLSearchParams();
+        for (const [key, value] of Object.entries(body)) {
+          if (value === undefined || value === null) continue;
+          qs.append(key, String(value));
+        }
+        const q = qs.toString();
+        if (q) url += `?${q}`;
+      }
+      return authFetch(url).then(handleResponse);
     }
     if (mapping.method === 'PUT') return jsonPut(mapping.url, body);
     if (mapping.method === 'DELETE') return jsonDelete(mapping.url, body);

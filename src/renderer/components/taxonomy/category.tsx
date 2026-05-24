@@ -7,15 +7,8 @@ import deleteIcon from '../../../../assets/delete.svg';
 import { invoke } from '../../platform';
 import { GlobalStateContext } from '../../state';
 
-type Concept = {
-  label: string;
-  category: string;
-  weight: number;
-};
-
 type Category = {
   label: string;
-  tags: Concept[];
 };
 
 type Props = {

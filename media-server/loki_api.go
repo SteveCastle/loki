@@ -583,6 +583,8 @@ func lokiMediaDeleteHandler(deps *Dependencies) http.HandlerFunc {
 		// Delete from database
 		deps.DB.Exec("DELETE FROM media_tag_by_category WHERE media_path = ?", req.Path)
 		deps.DB.Exec("DELETE FROM media WHERE path = ?", req.Path)
+		// Path removed — drop it from the swipe sampler.
+		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -690,6 +692,90 @@ type labelRequest struct {
 }
 
 // ---- Taxonomy handlers ----
+
+// Returns the category list only (no tags). Pairs with lokiTaxonomyTagsHandler
+// so the renderer can lazy-load tags one category at a time.
+func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rows, err := deps.DB.Query(`
+			SELECT label,
+			       COALESCE(weight, 0) AS weight,
+			       COALESCE(description, '') AS description,
+			       COALESCE(tag_view_mode, 'card') AS tag_view_mode
+			FROM category
+			ORDER BY weight`)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type categoryInfo struct {
+			Label       string  `json:"label"`
+			Weight      float64 `json:"weight"`
+			Description string  `json:"description"`
+			TagViewMode string  `json:"tagViewMode"`
+		}
+		result := []categoryInfo{}
+		for rows.Next() {
+			var c categoryInfo
+			if err := rows.Scan(&c.Label, &c.Weight, &c.Description, &c.TagViewMode); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			result = append(result, c)
+		}
+		writeJSON(w, result)
+	}
+}
+
+// Returns tag rows. With ?category=<label> returns just that category's tags;
+// without the param returns every tag (used by the search box on first focus).
+func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		category := r.URL.Query().Get("category")
+
+		var rows *sql.Rows
+		var err error
+		if category != "" {
+			rows, err = deps.DB.Query(`
+				SELECT label,
+				       COALESCE(category_label, '') AS category_label,
+				       COALESCE(weight, 0) AS weight
+				FROM tag
+				WHERE category_label = ?
+				ORDER BY weight`, category)
+		} else {
+			rows, err = deps.DB.Query(`
+				SELECT label,
+				       COALESCE(category_label, '') AS category_label,
+				       COALESCE(weight, 0) AS weight
+				FROM tag
+				ORDER BY category_label, weight`)
+		}
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		type tagInfo struct {
+			Label    string  `json:"label"`
+			Category string  `json:"category"`
+			Weight   float64 `json:"weight"`
+		}
+		result := []tagInfo{}
+		for rows.Next() {
+			var t tagInfo
+			if err := rows.Scan(&t.Label, &t.Category, &t.Weight); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			result = append(result, t)
+		}
+		writeJSON(w, result)
+	}
+}
 
 func lokiTaxonomyHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -821,6 +907,8 @@ func lokiDeleteTagHandler(deps *Dependencies) http.HandlerFunc {
 		tx.Exec("DELETE FROM media_tag_by_category WHERE tag_label = ?", req.Label)
 		tx.Exec("DELETE FROM tag WHERE label = ?", req.Label)
 		tx.Commit()
+		// Cascade may have removed paths from the swipe pool.
+		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -895,6 +983,8 @@ func lokiRemoveTimestampHandler(deps *Dependencies) http.HandlerFunc {
 				WHERE media_path = ? AND tag_label = ? AND time_stamp = ?`,
 				req.MediaPath, req.TagLabel, req.Timestamp)
 		}
+		// Either branch can shift this path's row out of the swipe sampler's view.
+		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1013,6 +1103,8 @@ func lokiDeleteCategoryHandler(deps *Dependencies) http.HandlerFunc {
 		tx.Exec("DELETE FROM tag WHERE category_label = ?", req.Label)
 		tx.Exec("DELETE FROM category WHERE label = ?", req.Label)
 		tx.Commit()
+		// Cascade may have removed paths from the swipe pool.
+		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1051,6 +1143,8 @@ func lokiCreateAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 			count++
 		}
 		tx.Commit()
+		// New assignments may add previously-untagged paths to the swipe pool.
+		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
 	}
 }
@@ -1075,6 +1169,8 @@ func lokiDeleteAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 				WHERE media_path = ? AND tag_label = ?`,
 				req.MediaPath, tagLabel)
 		}
+		// Removing the path's last tag drops it from the swipe pool.
+		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})
 	}
 }

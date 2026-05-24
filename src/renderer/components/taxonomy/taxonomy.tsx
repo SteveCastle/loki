@@ -44,25 +44,32 @@ type TagViewMode = 'card' | 'list';
 
 type Category = {
   label: string;
-  tags: Concept[];
+  weight: number;
   description: string;
   tagViewMode?: TagViewMode;
-};
-
-type Taxonomy = {
-  [key: string]: Category;
 };
 
 type FilterModeIconMap = {
   [key in FilterModeOption]: string;
 };
 
-async function loadTaxonomy(): Promise<Taxonomy> {
-  const taxonomy = await invoke(
-    'load-taxonomy',
-    []
-  );
-  return taxonomy as Taxonomy;
+// Loaders for the three taxonomy slices. Each is a separate React Query so
+// the panel can fetch categories cheaply, then lazy-load per-category tags
+// and the full tag list (for search) only when needed.
+async function loadCategories(): Promise<Category[]> {
+  const result = await invoke('load-categories', []);
+  return (result as Category[]) ?? [];
+}
+
+async function loadCategoryTags(categoryLabel: string): Promise<Concept[]> {
+  if (!categoryLabel) return [];
+  const result = await invoke('load-category-tags', [categoryLabel]);
+  return (result as Concept[]) ?? [];
+}
+
+async function loadAllTags(): Promise<Concept[]> {
+  const result = await invoke('load-all-tags', []);
+  return (result as Concept[]) ?? [];
 }
 
 const filteringModeIcons: FilterModeIconMap = {
@@ -166,23 +173,64 @@ export default function Taxonomy() {
     }
     setActiveCategory(category);
   }
-  const { data: taxonomy } = useQuery<Taxonomy, Error>(
-    ['taxonomy', initSessionId],
-    loadTaxonomy
+  // Three separate queries, all under the 'taxonomy' prefix so existing
+  // broad invalidations (`queryClient.invalidateQueries(['taxonomy'])`) keep
+  // working. staleTime: Infinity means remounts within a session never refetch
+  // — mutations and DB swaps (initSessionId) are what trigger reloads.
+  const { data: categories } = useQuery<Category[], Error>(
+    ['taxonomy', 'categories', initSessionId],
+    loadCategories,
+    { staleTime: Infinity }
   );
+
+  const { data: activeCategoryTags, isFetching: isFetchingCategoryTags } =
+    useQuery<Concept[], Error>(
+      ['taxonomy', 'category-tags', activeCategory, initSessionId],
+      () => loadCategoryTags(activeCategory),
+      { enabled: !!activeCategory, staleTime: Infinity }
+    );
+
+  // Triggered on the first keystroke (tagFilterInput, pre-debounce) so the
+  // network request overlaps with the 300ms debounce window — by the time
+  // tagFilter actually fires Fuse, the data is usually already in cache.
+  const { data: allTagsData, isFetching: isFetchingAllTags } = useQuery<
+    Concept[],
+    Error
+  >(['taxonomy', 'all-tags', initSessionId], loadAllTags, {
+    enabled: !!tagFilterInput,
+    staleTime: Infinity,
+  });
+
+  // Display categories alphabetically regardless of their stored weight order.
+  // Weight still controls drag-reorder persistence and edit-modal logic; we
+  // only sort here for the rendered list, the auto-select fallback, and the
+  // scroll-to-active behaviour below.
+  const sortedCategories = useMemo(() => {
+    if (!categories) return [] as Category[];
+    return [...categories].sort((a, b) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
+    );
+  }, [categories]);
+
+  // Indexed lookup so the edit-category modal can pull description / view mode
+  // without scanning the list every render.
+  const categoriesByLabel = useMemo(() => {
+    if (!categories) return {} as Record<string, Category>;
+    const map: Record<string, Category> = {};
+    for (const c of categories) map[c.label] = c;
+    return map;
+  }, [categories]);
 
   // Ensure activeCategory is valid; if not, reset to the first available category.
   // Suspended while a search is active — during search no category should be selected.
   useEffect(() => {
-    if (!taxonomy) return;
+    if (!sortedCategories.length) return;
     if (tagFilter) return;
-    const categories = Object.values(taxonomy || {});
-    if (categories.length === 0) return;
-    const exists = categories.some((c) => c.label === activeCategory);
+    const exists = sortedCategories.some((c) => c.label === activeCategory);
     if (!exists) {
-      setActiveCategory(categories[0].label);
+      setActiveCategory(sortedCategories[0].label);
     }
-  }, [taxonomy, activeCategory, tagFilter]);
+  }, [sortedCategories, activeCategory, tagFilter]);
 
   // When a search becomes active, clear the active category — the user is now
   // searching across categories, not viewing one.
@@ -195,8 +243,8 @@ export default function Taxonomy() {
   // Given every Category is 20 pixels tall, this will scroll to the active category
   // when it is not visible in the list by setting the scrollTop of the categoryListRef
 
-  if (categoryListRef.current && activeCategory) {
-    const activeCategoryIndex = Object.values(taxonomy || {}).findIndex(
+  if (categoryListRef.current && activeCategory && sortedCategories.length) {
+    const activeCategoryIndex = sortedCategories.findIndex(
       (category) => category.label === activeCategory
     );
     if (activeCategoryIndex > -1) {
@@ -206,21 +254,15 @@ export default function Taxonomy() {
     }
   }
 
-  // Flat list of every tag in the taxonomy. Built once per taxonomy load
-  // so the Fuse index can be reused across keystrokes. Defensive filter
+  // The full-tag list is only fetched lazily for search; defensive filter
   // drops tags without a label — Fuse and the row components both assume
   // a non-empty string and would otherwise throw when one slips in.
   const allTags = useMemo(() => {
-    if (!taxonomy) return [] as Concept[];
-    return Object.values(taxonomy).reduce((acc, category) => {
-      for (const t of category.tags) {
-        if (t && typeof t.label === 'string' && t.label.length > 0) {
-          acc.push(t);
-        }
-      }
-      return acc;
-    }, [] as Concept[]);
-  }, [taxonomy]);
+    if (!allTagsData) return [] as Concept[];
+    return allTagsData.filter(
+      (t) => t && typeof t.label === 'string' && t.label.length > 0
+    );
+  }, [allTagsData]);
 
   const fuse = useMemo(
     () =>
@@ -242,21 +284,22 @@ export default function Taxonomy() {
   );
 
   const tags = useMemo(() => {
-    if (!taxonomy) return [] as Concept[];
     if (tagFilter) {
       // Fuzzy match across all categories. Fuse returns results pre-sorted
       // by relevance (best match first). Cap at MAX_SEARCH_RESULTS so a
-      // pathological query can't render thousands of cards at once.
+      // pathological query can't render thousands of cards at once. When
+      // allTagsData hasn't loaded yet (first search), the Fuse index is
+      // empty and we render no results until it arrives.
       return fuse
         .search(tagFilter, { limit: MAX_SEARCH_RESULTS })
         .map((r) => r.item);
     }
-    return allTags
-      .filter((tag) => tag.category && tag.category === activeCategory)
+    return (activeCategoryTags ?? [])
+      .slice()
       .sort((a, b) => a.weight - b.weight);
-  }, [taxonomy, tagFilter, activeCategory, allTags, fuse]);
+  }, [tagFilter, activeCategoryTags, fuse]);
 
-  if (!taxonomy || state.matches('loadingDB') || state.matches('selectingDB')) {
+  if (!categories || state.matches('loadingDB') || state.matches('selectingDB')) {
     return (
       <div className={`Placeholder`}>
         <div className={`inner`}>
@@ -376,7 +419,7 @@ export default function Taxonomy() {
             <div className="category-label">+</div>
           </div>
           <div className={`categories`} ref={categoryListRef}>
-            {(Object.values(taxonomy) || []).map((category) => {
+            {sortedCategories.map((category) => {
               return (
                 <Category
                   key={category.label}
@@ -402,10 +445,46 @@ export default function Taxonomy() {
           // For an active category, honour its persisted tagViewMode.
           const activeViewMode: TagViewMode = tagFilter
             ? 'card'
-            : (taxonomy?.[activeCategory]?.tagViewMode as TagViewMode) || 'card';
+            : (categoriesByLabel[activeCategory]?.tagViewMode as TagViewMode) ||
+              'card';
           // Reordering by drag is meaningless when results are sorted by
           // search relevance — disable DnD while a search is active.
           const disableReorder = !!tagFilter;
+
+          // Skeleton placeholder while the per-category tags (or the full
+          // tag list for search) load for the first time. `data === undefined`
+          // means React Query hasn't returned yet; once a category is cached
+          // or after an optimistic mutation we keep prior data and skip this
+          // branch so the panel doesn't flash empty on refetch.
+          const isLoadingTags = tagFilter
+            ? allTagsData === undefined && isFetchingAllTags
+            : activeCategoryTags === undefined && isFetchingCategoryTags;
+          if (isLoadingTags) {
+            if (activeViewMode === 'list') {
+              return (
+                <div className="tag-list-view">
+                  <SkeletonTheme baseColor="#202020" highlightColor="#444">
+                    {Array.from({ length: 16 }).map((_, i) => (
+                      <Skeleton
+                        key={i}
+                        height={28}
+                        style={{ marginBottom: 4 }}
+                      />
+                    ))}
+                  </SkeletonTheme>
+                </div>
+              );
+            }
+            return (
+              <div className="tags">
+                <SkeletonTheme baseColor="#202020" highlightColor="#444">
+                  {Array.from({ length: 18 }).map((_, i) => (
+                    <Skeleton key={i} height={60} />
+                  ))}
+                </SkeletonTheme>
+              </div>
+            );
+          }
           if (activeViewMode === 'list') {
             return (
               <TagListView
@@ -510,7 +589,7 @@ export default function Taxonomy() {
           handleClose={() => setEditingTag(null)}
           currentValue={editingTag}
           currentDescription={
-            taxonomy?.[activeCategory]?.tags?.find(
+            (activeCategoryTags || []).find(
               (t: Concept) => t.label === editingTag
             )?.description || ''
           }
@@ -522,10 +601,11 @@ export default function Taxonomy() {
           setCategory={setActiveCategory}
           currentValue={editingCategory}
           currentDescription={
-            taxonomy?.[editingCategory]?.description || ''
+            categoriesByLabel[editingCategory]?.description || ''
           }
           currentTagViewMode={
-            (taxonomy?.[editingCategory]?.tagViewMode as TagViewMode) || 'card'
+            (categoriesByLabel[editingCategory]?.tagViewMode as TagViewMode) ||
+            'card'
           }
         />
       ) : null}

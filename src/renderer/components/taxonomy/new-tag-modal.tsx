@@ -12,13 +12,8 @@ type CachedConcept = {
   category: string;
   weight: number;
   description?: string;
+  thumbnail_path_600?: string | null;
 };
-type CachedCategory = {
-  label: string;
-  tags: CachedConcept[];
-  description: string;
-};
-type TaxonomyCache = { [key: string]: CachedCategory };
 
 type Props = {
   categoryLabel: string;
@@ -71,35 +66,46 @@ export default function NewTagModal({
         return;
       }
 
-      // Optimistic create: snapshot, mutate cache, close modal, then fire IPC.
-      const snapshot = queryClient.getQueriesData<TaxonomyCache>({
-        queryKey: ['taxonomy'],
+      // Optimistic create. Targets:
+      //   - ['taxonomy', 'category-tags', categoryLabel, ...]  (active panel)
+      //   - ['taxonomy', 'all-tags', ...]                      (search index)
+      // Snapshot both so we can roll back on failure.
+      const tagsSnapshot = queryClient.getQueriesData<CachedConcept[]>({
+        queryKey: ['taxonomy', 'category-tags', categoryLabel],
       });
-      queryClient.setQueriesData<TaxonomyCache>(
-        { queryKey: ['taxonomy'] },
+      const allSnapshot = queryClient.getQueriesData<CachedConcept[]>({
+        queryKey: ['taxonomy', 'all-tags'],
+      });
+
+      const buildNewTag = (existing: CachedConcept[]): CachedConcept => {
+        const maxWeight = existing.reduce(
+          (m, t) => Math.max(m, t.weight ?? 0),
+          0
+        );
+        return {
+          label: newLabel,
+          category: categoryLabel,
+          weight: maxWeight + 1,
+          description,
+          thumbnail_path_600: null,
+        };
+      };
+
+      queryClient.setQueriesData<CachedConcept[]>(
+        { queryKey: ['taxonomy', 'category-tags', categoryLabel] },
         (old) => {
           if (!old) return old;
-          const existing = old[categoryLabel];
-          if (!existing) return old;
-          const maxWeight = existing.tags.reduce(
-            (m, t) => Math.max(m, t.weight ?? 0),
-            0
-          );
-          const newTag = {
-            label: newLabel,
-            category: categoryLabel,
-            weight: maxWeight + 1,
-            description,
-          };
-          return {
-            ...old,
-            [categoryLabel]: {
-              ...existing,
-              tags: [...existing.tags, newTag],
-            },
-          };
+          return [...old, buildNewTag(old)];
         }
       );
+      queryClient.setQueriesData<CachedConcept[]>(
+        { queryKey: ['taxonomy', 'all-tags'] },
+        (old) => {
+          if (!old) return old;
+          return [...old, buildNewTag(old)];
+        }
+      );
+
       const submittedLabel = newLabel;
       setNewLabel('');
       handleClose();
@@ -113,7 +119,10 @@ export default function NewTagModal({
         queryClient.invalidateQueries({ queryKey: ['metadata'] });
       } catch (err) {
         console.error('[new-tag-modal] create failed', err);
-        for (const [key, value] of snapshot) {
+        for (const [key, value] of tagsSnapshot) {
+          queryClient.setQueryData(key, value);
+        }
+        for (const [key, value] of allSnapshot) {
           queryClient.setQueryData(key, value);
         }
         libraryService.send({

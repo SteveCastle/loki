@@ -10,19 +10,12 @@ import './new-modal.css';
 
 type TagViewMode = 'card' | 'list';
 
-type CachedConcept = {
-  label: string;
-  category: string;
-  weight: number;
-  description?: string;
-};
 type CachedCategory = {
   label: string;
-  tags: CachedConcept[];
+  weight: number;
   description: string;
   tagViewMode?: TagViewMode;
 };
-type TaxonomyCache = { [key: string]: CachedCategory };
 
 type Props = {
   handleClose: () => void;
@@ -83,19 +76,22 @@ export default function NewCategoryModal({
   async function handleSetTagViewMode(mode: TagViewMode) {
     if (!currentValue || mode === currentTagViewMode) return;
     const targetLabel = currentValue;
-    const snapshot = queryClient.getQueriesData<TaxonomyCache>({
-      queryKey: ['taxonomy'],
+    const snapshot = queryClient.getQueriesData<CachedCategory[]>({
+      queryKey: ['taxonomy', 'categories'],
     });
-    queryClient.setQueriesData<TaxonomyCache>(
-      { queryKey: ['taxonomy'] },
+    queryClient.setQueriesData<CachedCategory[]>(
+      { queryKey: ['taxonomy', 'categories'] },
       (old) => {
         if (!old) return old;
-        const existing = old[targetLabel];
-        if (!existing) return old;
-        return {
-          ...old,
-          [targetLabel]: { ...existing, tagViewMode: mode },
-        };
+        let mutated = false;
+        const next = old.map((c) => {
+          if (c.label === targetLabel) {
+            mutated = true;
+            return { ...c, tagViewMode: mode };
+          }
+          return c;
+        });
+        return mutated ? next : old;
       }
     );
     try {
