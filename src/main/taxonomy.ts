@@ -7,47 +7,75 @@ import { IpcMainInvokeEvent, dialog } from 'electron';
 import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
 
-const loadTaxonomy = (db: Database) => async () => {
+// Returns just the category list (no tags). Used by the taxonomy panel's
+// initial render — lightweight even when the library has tens of thousands
+// of tags. Per-category tag lists are fetched lazily via loadCategoryTags.
+const loadCategories = (db: Database) => async () => {
   try {
-    // Include thumbnail_path_600 so the renderer doesn't have to fan out one
-    // extra IPC + SQL roundtrip per tag (`fetchTagPreview`) at startup. With
-    // many categories that was 18+ sequential 1-3ms lookups in the log.
-    const categories = await db.all(
-      `SELECT
-    c.label AS category_label,
-    c.weight AS category_weight,
-    c.description AS category_description,
-    c.tag_view_mode AS category_tag_view_mode,
-    json_group_array(
-      json_object(
-        'label', t.label,
-        'category', t.category_label,
-        'weight', t.weight,
-        'description', t.description,
-        'thumbnail_path_600', t.thumbnail_path_600
-      )
-    ) AS tags
-  FROM category c
-  LEFT JOIN tag t ON c.label = t.category_label
-  GROUP BY c.label, c.weight ORDER BY c.weight;`
+    const rows = await db.all(
+      `SELECT label, weight, description, tag_view_mode
+         FROM category
+         ORDER BY weight`
     );
-    const taxonomy = categories.map((category) => {
-      return {
-        label: category.category_label,
-        weight: category.category_weight,
-        description: category.category_description || '',
-        tagViewMode: category.category_tag_view_mode || 'card',
-        tags: JSON.parse(category.tags),
-      };
-    });
-
-    const taxonomyByLabel = taxonomy.reduce((acc, category) => {
-      acc[category.label] = category;
-      return acc;
-    }, {} as { [key: string]: any });
-    return taxonomyByLabel;
+    return rows.map((row) => ({
+      label: row.label,
+      weight: row.weight,
+      description: row.description || '',
+      tagViewMode: row.tag_view_mode || 'card',
+    }));
   } catch (e) {
     console.log(e);
+    return [];
+  }
+};
+
+type LoadCategoryTagsInput = [string];
+// Returns the tags for a single category. Includes thumbnail_path_600 so the
+// per-tag fetchTagPreview IPC roundtrip can be skipped on render.
+const loadCategoryTags =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: LoadCategoryTagsInput) => {
+    try {
+      const [categoryLabel] = args;
+      const rows = await db.all(
+        `SELECT label, category_label, weight, description, thumbnail_path_600
+           FROM tag
+           WHERE category_label = $1
+           ORDER BY weight`,
+        [categoryLabel]
+      );
+      return rows.map((row) => ({
+        label: row.label,
+        category: row.category_label,
+        weight: row.weight,
+        description: row.description || '',
+        thumbnail_path_600: row.thumbnail_path_600 || null,
+      }));
+    } catch (e) {
+      console.log(e);
+      return [];
+    }
+  };
+
+// Returns every tag across every category as a flat list. Used by the
+// fuzzy search box, loaded lazily the first time the user types a query.
+const loadAllTags = (db: Database) => async () => {
+  try {
+    const rows = await db.all(
+      `SELECT label, category_label, weight, description, thumbnail_path_600
+         FROM tag
+         ORDER BY category_label, weight`
+    );
+    return rows.map((row) => ({
+      label: row.label,
+      category: row.category_label,
+      weight: row.weight,
+      description: row.description || '',
+      thumbnail_path_600: row.thumbnail_path_600 || null,
+    }));
+  } catch (e) {
+    console.log(e);
+    return [];
   }
 };
 
@@ -698,7 +726,9 @@ const consolidateCategoryFiles =
   };
 
 export {
-  loadTaxonomy,
+  loadCategories,
+  loadCategoryTags,
+  loadAllTags,
   getTagCount,
   createTag,
   createAssignment,

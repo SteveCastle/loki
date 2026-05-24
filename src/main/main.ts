@@ -244,6 +244,9 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-tags-by-media-path');
   ipcMain.removeHandler('copy-file-into-clipboard');
   ipcMain.removeHandler('load-taxonomy');
+  ipcMain.removeHandler('load-categories');
+  ipcMain.removeHandler('load-category-tags');
+  ipcMain.removeHandler('load-all-tags');
   ipcMain.removeHandler('get-tag-count');
   ipcMain.removeHandler('create-tag');
   ipcMain.removeHandler('create-category');
@@ -321,7 +324,9 @@ ipcMain.handle('load-db', async (event, args) => {
     'load-tags-by-media-path',
     taxonomyModule.loadTagsByMediaPath(db)
   );
-  ipcMain.handle('load-taxonomy', taxonomyModule.loadTaxonomy(db));
+  ipcMain.handle('load-categories', taxonomyModule.loadCategories(db));
+  ipcMain.handle('load-category-tags', taxonomyModule.loadCategoryTags(db));
+  ipcMain.handle('load-all-tags', taxonomyModule.loadAllTags(db));
   ipcMain.handle('get-tag-count', taxonomyModule.getTagCount(db));
   ipcMain.handle('create-tag', taxonomyModule.createTag(db));
   ipcMain.handle('create-category', taxonomyModule.createCategory(db));

@@ -12,13 +12,8 @@ type CachedConcept = {
   category: string;
   weight: number;
   description?: string;
+  thumbnail_path_600?: string | null;
 };
-type CachedCategory = {
-  label: string;
-  tags: CachedConcept[];
-  description: string;
-};
-type TaxonomyCache = { [key: string]: CachedCategory };
 
 type Props = {
   handleClose: () => void;
@@ -39,29 +34,32 @@ export default function ConfirmDeleteTag({ handleClose, currentValue }: Props) {
     }
     const targetLabel = currentValue;
     async function submit() {
-      // Optimistic delete: snapshot, remove from cache, close modal, then fire IPC.
-      const snapshot = queryClient.getQueriesData<TaxonomyCache>({
-        queryKey: ['taxonomy'],
+      // Optimistic delete. The tag could live in any loaded per-category
+      // cache; we don't know its category from props, so scan every
+      // ['taxonomy', 'category-tags', *] cache (plus the all-tags cache)
+      // and remove the tag wherever it shows up.
+      const tagsSnapshot = queryClient.getQueriesData<CachedConcept[]>({
+        queryKey: ['taxonomy', 'category-tags'],
       });
-      queryClient.setQueriesData<TaxonomyCache>(
-        { queryKey: ['taxonomy'] },
-        (old) => {
-          if (!old) return old;
-          let mutated = false;
-          const next: TaxonomyCache = {};
-          for (const [catLabel, cat] of Object.entries(old)) {
-            if (cat.tags.some((t) => t.label === targetLabel)) {
-              next[catLabel] = {
-                ...cat,
-                tags: cat.tags.filter((t) => t.label !== targetLabel),
-              };
-              mutated = true;
-            } else {
-              next[catLabel] = cat;
-            }
-          }
-          return mutated ? next : old;
-        }
+      const allSnapshot = queryClient.getQueriesData<CachedConcept[]>({
+        queryKey: ['taxonomy', 'all-tags'],
+      });
+
+      const removeFromList = (
+        old: CachedConcept[] | undefined
+      ): CachedConcept[] | undefined => {
+        if (!old) return old;
+        const next = old.filter((t) => t.label !== targetLabel);
+        return next.length === old.length ? old : next;
+      };
+
+      queryClient.setQueriesData<CachedConcept[]>(
+        { queryKey: ['taxonomy', 'category-tags'] },
+        removeFromList
+      );
+      queryClient.setQueriesData<CachedConcept[]>(
+        { queryKey: ['taxonomy', 'all-tags'] },
+        removeFromList
       );
       handleClose();
 
@@ -72,7 +70,10 @@ export default function ConfirmDeleteTag({ handleClose, currentValue }: Props) {
         queryClient.invalidateQueries(['tags-by-path']);
       } catch (err) {
         console.error('[confirm-delete-tag] delete failed', err);
-        for (const [key, value] of snapshot) {
+        for (const [key, value] of tagsSnapshot) {
+          queryClient.setQueryData(key, value);
+        }
+        for (const [key, value] of allSnapshot) {
           queryClient.setQueryData(key, value);
         }
         libraryService.send({
