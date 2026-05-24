@@ -2,12 +2,14 @@
 
 Loki is the source repository for two companion products that share a single React frontend:
 
-- **Lowkey Media Viewer** — a free, minimalist Electron desktop app for viewing and curating images, video, audio, and comic book archives on Windows and macOS.
-- **Lowkey Media Server** — an HTTP server (Go) with a web UI and job queue for batch processing, auto-tagging, transcription, and media ingestion. Serves the same renderer as a web app.
+- **Lowkey Media Viewer** — a free, minimalist Electron desktop app for viewing and curating images, video, audio, and comic book archives on Windows, macOS, and Linux.
+- **Lowkey Media Server** — a Go HTTP server with a web UI, authenticated multi-user access, a job queue, an HLS streamer, and a workflow DAG engine for batch processing media. It also serves the same React UI as a web app so the desktop and browser experiences stay in sync.
 
 <video src="https://stevecastle.github.io/loki/static/viewer-overview.mp4" autoplay loop muted playsinline controls></video>
 
-Prebuilt binaries and end-user documentation are available at [lowkeyviewer.com](https://lowkeyviewer.com). The media server docs are at [lowkeyviewer.com/server](https://lowkeyviewer.com/server).
+Prebuilt binaries and end-user documentation live at [lowkeyviewer.com](https://lowkeyviewer.com). Media server docs are at [lowkeyviewer.com/server](https://lowkeyviewer.com/server).
+
+> **Status: beta.** Both products are in active development and ship from `master` on every push. Versions are tagged automatically by CI. Expect occasional breaking schema changes between releases — the viewer migrates on startup, but back up your `dream.sqlite` if you're paranoid.
 
 ---
 
@@ -16,14 +18,17 @@ Prebuilt binaries and end-user documentation are available at [lowkeyviewer.com]
 ```
 loki/
 ├── src/                # Electron app
-│   ├── main/           # Main process (Node): IPC, menus, file I/O, archive extraction
+│   ├── main/           # Main process (Node): IPC, archive extraction, thumbnails, transcripts
 │   └── renderer/       # React + XState SPA (also embedded by the media server)
-├── media-server/       # Go module: HTTP API, job queue, web UI, task runners
+├── media-server/       # Go module: HTTP API, auth, job queue, HLS, S3 storage, web UI
+│   ├── auth/           # JWT + bcrypt user auth
 │   ├── tasks/          # Self-registering task implementations
 │   ├── jobqueue/       # SQLite-backed job + workflow DAG engine
 │   ├── storage/        # Local + S3-compatible storage registry
-│   ├── runners/        # Faster-Whisper, ONNX tagger, Ollama, FFmpeg wrappers
-│   └── loki-static/    # Built renderer embedded at compile time
+│   ├── runners/        # Worker pool that dispatches jobs to task fns
+│   ├── deps/           # On-demand download manager (ffmpeg, yt-dlp, gallery-dl, whisper, onnx)
+│   ├── renderer/       # Go HTML templates for the admin web UI
+│   └── loki-static/    # Built React renderer embedded at compile time
 └── docs/               # Source for lowkeyviewer.com
 ```
 
@@ -35,49 +40,71 @@ The renderer under `src/renderer/` targets both environments. `src/renderer/plat
 
 A fast, distraction-free viewer for large personal media libraries. Highlights:
 
-- Native playback for images, video, audio
-- Comic book archives (`.cbz` / `.zip`) open like directories — opened from the file dialog or drag-and-drop
-- Tag and category system with stored slots and a command palette
-- Battle mode (ELO rating), duplicate detection, transcript-based video navigation
-- Grid and masonry layouts, scale modes, shuffle, bulk tagging
+- Native playback for images, video, audio (with multi-track / subtitle pickup, transcript-driven navigation, and editable cues)
+- Comic book archives (`.cbz`, `.cbr`) open like directories from the file dialog or drag-and-drop. CBR is supported out of the box via a bundled UnRAR binary.
+- Tag and category system: drag-to-tag, bulk apply, category-scoped stored slots, and a context palette
+- Battle mode (ELO rating), duplicate detection, ORB-based perceptual hashing
+- Grid, masonry, and detail layouts; scale modes; shuffle; bulk tagging
+- WebGPU audio visualizer for audio files
+- Optional pairing with Lowkey Media Server for HLS playback of large videos
 
 ### Build Requirements
 
-- Node 18
-- Yarn
-- `ffmpeg`, `ffprobe`, `ffplay`, and `exiftool` placed in `src/main/resources/bin/<platform>/`
+- **Node 18** (CI builds against `18.x`)
+- **npm** (yarn is no longer used; `package.json` declares `"packageManager": "npm@10.9.0"`)
+- FFmpeg and FFprobe binaries under `src/main/resources/bin/<platform>/` — these are auto-downloaded by `npm run package`, or you can run `./download-binaries.sh` in each platform subdirectory manually. ExifTool and FFplay are no longer required; dimensions come from FFprobe.
+- On Windows, the bundled `unrar.exe` ships in-tree so CBR Just Works.
 
 ### Development
 
 ```bash
-yarn
-yarn dev
+npm install
+npm start       # webpack-dev-server + electronmon
 ```
 
 ### Tests
 
 ```bash
-npm test              # runs build first, then jest
-npx jest <pattern>    # single test (build must exist)
+npm test              # builds first, then jest
+npx jest <pattern>    # single test (a build must already exist)
 ```
 
 ### Build a Distributable
 
 ```bash
-yarn package
+npm run package
 ```
 
-Binaries land in `release/build/`.
+`electron-builder` produces:
+
+- **Windows:** NSIS installer (`.exe`)
+- **macOS:** universal DMG (`arm64` + `x64`)
+- **Linux:** AppImage
+
+Binaries land in `release/build/`. CI builds and publishes all three targets to GitHub Releases on every push to `master`.
 
 ---
 
 ## Lowkey Media Server (Go)
 
-> **⚠️ Alpha.** The server binds to `:8090` and exposes your library over HTTP with no authentication by default. Run only on trusted networks or behind a firewall.
+> **Beta with auth enabled by default.** On first launch the server creates a temporary `admin` / `admin` account, then forces you through a setup wizard at `/login?setup=true` to replace it with a real user. JWT sessions are signed with `LOWKEY_JWT_SECRET` (auto-generated and persisted if not set) and stored as `HttpOnly` cookies. All `/api/*`, `/media/*`, and admin pages require login. There is still no per-route authorization beyond "logged-in" — every authenticated user gets admin role today, so don't give credentials to anyone you wouldn't trust with the box itself.
 
-A companion service for long-running work the desktop app shouldn't block on: auto-tagging via ONNX models, Whisper transcription, Ollama-powered image descriptions, FFmpeg conversion, ingestion, and arbitrary workflows chained as a DAG.
+A companion service for the long-running work the desktop app shouldn't block on:
 
-See [`media-server/README.md`](media-server/README.md) for full server documentation, Docker setup, and API reference.
+- **HLS adaptive streaming** with on-disk segment cache (480p / 720p / 1080p plus passthrough)
+- **Auto-tagging** via ONNX models (WD-EVA02-Large-Tagger v3) or Ollama vision models
+- **Transcription** via Faster-Whisper (bundled in the "Generate Metadata" task)
+- **Ingestion** from local directories, YouTube (yt-dlp), galleries (gallery-dl), and Discord exports
+- **Workflow DAGs** — chain any registered task; persisted in SQLite, editable from the web UI
+- **FFmpeg toolkit** — 16 preset operations (scale, convert, extract audio, screenshot, thumbnail sheet, etc.) plus raw command pass-through
+- **S3-compatible storage** alongside local disks; per-root thumbnail prefixes; signed URLs
+- **File browser** over local roots and S3 buckets
+- **LoRA dataset builder** for AI training workflows
+- **SSE** streaming for real-time job updates
+- **System tray** integration on Windows and macOS
+- **Browser extensions** (Chrome + Firefox) for sending URLs into the job queue
+
+See [`media-server/README.md`](media-server/README.md) for full server documentation, Docker setup, environment variables, the task catalog, and the API reference.
 
 ### Quick Start
 
@@ -89,7 +116,7 @@ cd media-server
 ./media-server         # or media-server.exe on Windows
 ```
 
-Open <http://localhost:8090>.
+Open <http://localhost:8090>, log in as `admin` / `admin`, and follow the setup wizard to create your real account.
 
 ### Running the Server in Development
 
@@ -99,7 +126,7 @@ cd media-server
 go run .
 ```
 
-After renderer changes, re-run `build:web` before the Go binary will serve the updated assets (the static files are embedded at compile time).
+After renderer changes, re-run `build:web` before the Go binary will serve the updated assets — the static files are embedded at compile time.
 
 ### Server Tests
 
@@ -111,9 +138,24 @@ cd media-server && go test ./...
 
 ---
 
+## Releases & CI
+
+`.github/workflows/release.yml` runs on every push to `master`:
+
+1. Runs Electron Jest tests and Go tests.
+2. Tags the commit `vX.Y.Z` from `package.json` if the tag doesn't already exist.
+3. Builds Electron app for Windows, macOS (arm64 + x64), and Linux in parallel.
+4. Cross-compiles the Go server for `windows/amd64`, `darwin/{arm64,amd64}`, and `linux/amd64`.
+5. Generates a changelog from commits and contributors since the previous tag.
+6. Publishes everything to GitHub Releases.
+
+To cut a release, bump the version in `package.json`, `package-lock.json`, `release/app/package.json`, `release/app/package-lock.json`, and the `RELEASE_BASE` / version label in `docs/index.html`, then push to `master`.
+
+---
+
 ## Contributing
 
-Fork, branch, and open a pull request against `master`. If you've forked the project and done something interesting with it, I'd love to hear about it.
+Fork, branch, and open a pull request against `master`. If you've forked the project and built something interesting on top, I'd love to hear about it.
 
 ## License
 
