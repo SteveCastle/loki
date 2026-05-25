@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "wd-eva02-large-tagger-v3",
+      "name": "WD EVA02 Large Tagger v3",
+      "description": "Image autotagging classifier (general + character tags).",
+      "version": "1.0.0",
+      "consumers": ["autotag"],
+      "size_bytes": 1257385984,
+      "files": [
+        {
+          "url": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/model.onnx",
+          "rel_path": "model.onnx",
+          "sha256": "UNVERIFIED"
+        },
+        {
+          "url": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/selected_tags.csv",
+          "rel_path": "selected_tags.csv",
+          "sha256": "UNVERIFIED"
+        },
+        {
+          "url": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/config.json",
+          "rel_path": "config.json",
+          "sha256": "UNVERIFIED"
+        }
+      ]
+    }
+  ]
+}
