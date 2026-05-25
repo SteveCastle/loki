@@ -16,4 +16,8 @@ func RegisterDepsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/deps/models/{id}/cancel", handlers.HandleModelCancel)
 	mux.HandleFunc("POST /api/deps/models/{id}/verify", handlers.HandleModelVerify)
 	mux.HandleFunc("DELETE /api/deps/models/{id}", handlers.HandleModelDelete)
+
+	mux.HandleFunc("GET /api/onboarding/state", handlers.HandleOnboardingGet)
+	mux.HandleFunc("POST /api/onboarding/dismiss", handlers.HandleOnboardingDismiss)
+	mux.HandleFunc("POST /api/onboarding/reset", handlers.HandleOnboardingReset)
 }
