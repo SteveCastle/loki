@@ -18,14 +18,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="Description"
-      content="LowKey Media Viewer is a fast and simple free image and video viewer for macOS and Windows. LowKey Media Server is a companion app for batch processing, AI tagging, and media ingestion."
+      content="Lowkey Media Viewer is a fast, minimalist viewer for the images, videos, audio, and comics on your hard drive. Free and open source for Windows, macOS, and Linux. Built for big personal libraries — local-first, no account, no cloud, no upsell."
     />
     <meta property="og:url" content="https://lowkeyviewer.com" />
     <meta property="og:type" content="product" />
-    <meta property="og:title" content="LowKey Media Suite" />
+    <meta property="og:title" content="Lowkey Media Viewer" />
     <meta
       property="og:description"
-      content="A media viewer for viewing and curating images, plus a powerful media server for batch processing and AI features."
+      content="A fast, minimalist viewer for the images, videos, audio, and comics on your hard drive. Free, open source, and local-first. Windows, macOS, Linux."
     />
     <meta
       property="og:image"
@@ -46,7 +46,7 @@
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
         "name": "Lowkey Media Viewer",
-        "operatingSystem": "Windows 10, MacOS",
+        "operatingSystem": "Windows 10, macOS, Linux",
         "applicationCategory": "MultimediaApplication",
         "offers": {
           "@type": "Offer",
@@ -75,12 +75,15 @@
         <img src="logo.png" class="logo" alt="Lowkey Media Viewer Logo" />
         <h1>Lowkey Media Viewer</h1>
         <p class="subTitle">
-          A free open source viewer for viewing and curating images and videos
-          really well and nothing more.
+          A fast, minimalist viewer for the images, videos, audio, and
+          comics on your hard drive. Free and open source. Built for
+          people who care about their personal media library and want
+          to actually look at it instead of fighting their software.
         </p>
         <p class="info">
-          Works on <span class="os">Windows</span> and
-          <span class="os">macOS</span>
+          Works on <span class="os">Windows</span>,
+          <span class="os">macOS</span>, and
+          <span class="os">Linux</span>
         </p>
         <p class="info">
           Supports <span class="fileType jpg">.jpg</span>,
@@ -89,9 +92,9 @@
           <span class="fileType gif">.gif</span>,
           <span class="fileType mp4">.mp4</span>,
           <span class="fileType mov">.mov</span>,
-          <span class="fileType webm">.webm</span>, and comic book
+          <span class="fileType webm">.webm</span>, comic book
           archives <span class="fileType cbz">.cbz</span> /
-          <span class="fileType zip">.zip</span>
+          <span class="fileType cbr">.cbr</span>, audio files, and more
         </p>
         <p class="buttonArea">
           <a id="downloadButton" class="buyButton" href="#">Download | Free</a>
@@ -222,19 +225,105 @@
           <section id="viewer-overview">
             <h2>Overview</h2>
             <p>
-              LowKey Media Viewer is a fast and simple image and video viewer
-              for macOS and Windows. Designed for a visually rich experience
-              that puts your media first with no distractions. Supports easy
-              navigation with Mouse/Scrollwheel or Trackpad modes.
+              Most media apps treat your files like cattle in a database
+              — slow scans, lossy compression, opinions about how things
+              should be organized, a cloud account you didn't ask for.
+              Lowkey Media Viewer is the opposite. Point it at a directory
+              and it just opens. Files stay where you put them. Tagging is
+              local. There is no telemetry, no account, no upsell.
             </p>
+            <p>
+              It's built for the kind of library that's hard to manage with
+              existing tools: tens of thousands of images and videos
+              accumulated over years, mixed formats, comic archives, audio
+              files, screenshots, weird old <kbd>.webm</kbd>s. If you want
+              to view those files, tag them, find them again later, and
+              never lose them to a service shutting down — this is for you.
+            </p>
+
+            <h3>Why use it</h3>
             <ul>
-              <li>Simple, low-clutter UI with no wasted space</li>
-              <li>Folder-based navigation with recursive scanning</li>
-              <li>Powerful tagging and curation system</li>
-              <li>Transcript-based video navigation</li>
-              <li>Battle mode for ELO-based media rating</li>
-              <li>Support for common image and video formats</li>
+              <li>
+                <strong>Fast.</strong> Opens enormous folders without
+                hanging. Renders 4K videos and high-res images without
+                stutter. Tested against libraries with 100,000+ files.
+              </li>
+              <li>
+                <strong>Local-first.</strong> Your media stays where you
+                put it. Tags live in a SQLite database in your home
+                directory that you own and can back up. No sync, no
+                cloud, no account.
+              </li>
+              <li>
+                <strong>Free and open source.</strong> MIT licensed. No
+                paywalled features. Support the project on
+                <a href="https://www.patreon.com/c/lowkeyviewer" target="_blank" rel="noopener">Patreon</a>
+                if you want, but you never have to.
+              </li>
+              <li>
+                <strong>Quiet by design.</strong> Dark UI, no chrome you
+                don't need, full-screen modes, hotkeys for everything.
+              </li>
+              <li>
+                <strong>Handles awkward stuff.</strong> Comic archives
+                (<kbd>.cbz</kbd>, <kbd>.cbr</kbd>) open like directories.
+                Video subtitles get picked up automatically. Audio gets a
+                WebGPU visualizer. Transcripts are editable in place.
+              </li>
+              <li>
+                <strong>Cross-platform.</strong> Native installer for
+                Windows, signed and notarized DMG for macOS (Apple Silicon
+                + Intel), and AppImage for Linux.
+              </li>
             </ul>
+
+            <h3>What's inside</h3>
+            <ul>
+              <li>
+                <strong>Viewing</strong> — images (JPG, PNG, GIF, WebP,
+                BMP, SVG, JFIF), video (MP4, MOV, MKV, WebM, FLV, M4V)
+                with subtitle pickup and audio-track selection on
+                multi-track files, audio (MP3, M4A, AAC, OGG, WAV) with a
+                WebGPU spectrum visualizer, and comic archives
+                (<kbd>.cbz</kbd>, <kbd>.cbr</kbd>) opened like directories
+              </li>
+              <li>
+                <strong>Organizing</strong> — drag-to-tag, bulk apply,
+                stored category slots (1–9), command palette, context
+                palette, Battle Mode ELO rating, duplicate detection,
+                custom tag previews
+              </li>
+              <li>
+                <strong>Finding things</strong> — fuzzy tag search across
+                every category, filename search, description search,
+                transcript-driven video navigation, OR/AND/Exclusive tag
+                filtering
+              </li>
+              <li>
+                <strong>Metadata &amp; transcripts</strong> — markdown
+                notes on tags and categories, in-place transcript editing
+                (Enter saves, Shift+Enter for newline), per-cue delete,
+                substring search through transcripts, automatic SRT/VTT
+                sidecar pickup
+              </li>
+              <li>
+                <strong>Built for big libraries</strong> — virtualized
+                scrolling for 50,000+ tags or items, thumbnails generated
+                on-demand and cached, library and query state persisted
+                across launches
+              </li>
+            </ul>
+
+            <h3>Want batch processing or AI tagging?</h3>
+            <p>
+              <strong>Lowkey Media Server</strong> is an optional
+              companion that adds a job queue, auto-tagging via ONNX or
+              Ollama vision models, video transcription via Faster
+              Whisper, HLS streaming, and a workflow editor. The viewer
+              detects it automatically once both are running. The viewer
+              is stable; the server is in beta. See the
+              <a href="./server/">Media Server docs</a>.
+            </p>
           </section>
 
           <section id="viewer-filetypes">
