@@ -21,6 +21,12 @@ func hintFor(o Optional) InstallHint {
 			{OS: "windows", Label: "Download", Command: "Download installer from https://ollama.com/download/windows"},
 			{OS: "linux", Label: "Shell installer", Command: "curl -fsSL https://ollama.com/install.sh | sh"},
 		}
+	case "dce":
+		h.Commands = []OSCmd{
+			{OS: "darwin", Label: "Homebrew", Command: "brew install --cask discord-chat-exporter"},
+			{OS: "windows", Label: "Releases", Command: "Download DiscordChatExporter.Cli from https://github.com/Tyrrrz/DiscordChatExporter/releases and add to PATH as 'dce'"},
+			{OS: "linux", Label: "Releases", Command: "Download DiscordChatExporter.Cli from https://github.com/Tyrrrz/DiscordChatExporter/releases and add to PATH as 'dce'"},
+		}
 	}
 	return h
 }

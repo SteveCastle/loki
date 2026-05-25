@@ -71,3 +71,6 @@ func ensureExecutable(path string) error {
 	// Add executable bit for owner
 	return os.Chmod(path, info.Mode()|0111)
 }
+
+// HideSubprocessWindow is a no-op on Linux (no console window concept).
+func HideSubprocessWindow(_ *exec.Cmd) {}

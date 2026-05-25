@@ -7,7 +7,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 )
+
+// HideSubprocessWindow prevents subprocesses from flashing a console window.
+// Windows-only effect; no-op on other platforms.
+func HideSubprocessWindow(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.HideWindow = true
+}
 
 func getDataDir() string {
 	appDataDir := os.Getenv("APPDATA")
