@@ -1,0 +1,85 @@
+name: Release Media Server
+
+on:
+  push:
+    tags: [ 'mediaserver-v*' ]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            fetch_cmd: "powershell -File media-server/scripts/fetch-bundled-deps.ps1 -Target windows-amd64 -Mode verify"
+          - os: ubuntu-latest
+            target: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ""
+            fetch_cmd: "media-server/scripts/fetch-bundled-deps.sh linux-amd64 verify"
+          - os: macos-14   # Apple Silicon
+            target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ""
+            fetch_cmd: "media-server/scripts/fetch-bundled-deps.sh darwin-arm64 verify"
+          - os: macos-13   # Intel
+            target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            ext: ""
+            fetch_cmd: "media-server/scripts/fetch-bundled-deps.sh darwin-amd64 verify"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.22' }
+      - name: Install jq (unix)
+        if: runner.os != 'Windows'
+        run: |
+          if ! command -v jq >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq || brew install jq
+          fi
+      - name: Build SPA
+        run: |
+          yarn install --frozen-lockfile
+          yarn build:web
+      - name: Fetch bundled binaries
+        shell: bash
+        run: ${{ matrix.fetch_cmd }}
+      - name: Build server
+        working-directory: media-server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -o lowkeymediaserver${{ matrix.ext }} .
+      - name: Stage release dir
+        shell: bash
+        run: |
+          mkdir -p release/${{ matrix.target }}/bin
+          cp media-server/lowkeymediaserver${{ matrix.ext }} release/${{ matrix.target }}/
+          cp -R media-server/bin/${{ matrix.target }}/* release/${{ matrix.target }}/bin/
+      - name: Smoke test (unix only)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: media-server/scripts/smoke-bundled.sh release/${{ matrix.target }}
+      - name: Archive
+        shell: bash
+        run: |
+          cd release
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            7z a lowkey-media-server-${{ matrix.target }}.zip ${{ matrix.target }}/*
+          else
+            tar -czf lowkey-media-server-${{ matrix.target }}.tar.gz ${{ matrix.target }}
+          fi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.target }}
+          path: release/lowkey-media-server-${{ matrix.target }}.*
