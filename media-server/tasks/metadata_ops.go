@@ -30,6 +30,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // generateDescriptions generates descriptions for media files using Ollama
@@ -367,7 +368,8 @@ func extractVideoFrame(ctx context.Context, videoPath string, outputPath string)
 		outputPath,
 	}
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, deps.MustBundled("ffmpeg"), args...)
+	platform.HideSubprocessWindow(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("ffmpeg frame extraction failed (seek=%.2fs, duration=%.2fs, frames=%d): %w\nOutput: %s",
@@ -385,11 +387,12 @@ func extractVideoFrame(ctx context.Context, videoPath string, outputPath string)
 // getVideoMetadata retrieves duration and frame count from a video file using ffprobe
 func getVideoMetadata(ctx context.Context, videoPath string) (duration float64, frameCount int, err error) {
 	// Query duration
-	durationCmd := exec.CommandContext(ctx, "ffprobe",
+	durationCmd := exec.CommandContext(ctx, deps.MustBundled("ffprobe"),
 		"-v", "error",
 		"-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		videoPath)
+	platform.HideSubprocessWindow(durationCmd)
 
 	durationOut, err := durationCmd.Output()
 	if err != nil {
@@ -408,13 +411,14 @@ func getVideoMetadata(ctx context.Context, videoPath string) (duration float64, 
 	}
 
 	// Get frame count
-	frameCmd := exec.CommandContext(ctx, "ffprobe",
+	frameCmd := exec.CommandContext(ctx, deps.MustBundled("ffprobe"),
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-count_frames",
 		"-show_entries", "stream=nb_read_frames",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		videoPath)
+	platform.HideSubprocessWindow(frameCmd)
 
 	frameOut, err := frameCmd.Output()
 	if err == nil {
@@ -598,6 +602,7 @@ func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue,
 		filePath,
 	}
 	cmd := exec.CommandContext(ctx, exePath, args...)
+	platform.HideSubprocessWindow(cmd)
 
 	// Pipe both stdout and stderr line-by-line into the job stream so failures
 	// surface in the job's output (rather than disappearing into a dropped
@@ -703,7 +708,8 @@ func getImageDimensions(path string) (int, int, error) {
 }
 
 func getVideoDimensionsFFProbe(path string) (int, int, error) {
-	cmd := exec.Command("ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path)
+	cmd := exec.Command(deps.MustBundled("ffprobe"), "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", path)
+	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err

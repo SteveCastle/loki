@@ -1072,6 +1072,7 @@ func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
 
 		run := func(args ...string) ([]byte, error) {
 			cmd := exec.Command("ollama", args...)
+			platform.HideSubprocessWindow(cmd)
 			// Best-effort timeout via context is not critical here; rely on default.
 			return cmd.Output()
 		}

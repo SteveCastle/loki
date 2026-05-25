@@ -14,7 +14,9 @@ import (
 	"strconv"
 	"strings"
 
+	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/media"
+	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/storage"
 )
 
@@ -597,9 +599,10 @@ func lokiGifMetadataHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 		// Use ffprobe to get gif metadata
-		cmd := exec.Command("ffprobe", "-v", "error", "-count_frames",
+		cmd := exec.Command(depspkg.MustBundled("ffprobe"), "-v", "error", "-count_frames",
 			"-select_streams", "v:0", "-show_entries",
 			"stream=nb_read_frames,duration", "-of", "json", req.Path)
+		platform.HideSubprocessWindow(cmd)
 		out, err := cmd.Output()
 		if err != nil {
 			writeJSON(w, nil)

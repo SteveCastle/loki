@@ -12,6 +12,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
@@ -139,6 +140,7 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		onnxtagPath := deps.MustBundled("onnxtag")
 		cmd := exec.CommandContext(ctx, onnxtagPath, args...)
+		platform.HideSubprocessWindow(cmd)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			q.PushJobStdout(j.ID, "Failed to get stdout pipe: "+err.Error())
