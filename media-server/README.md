@@ -43,7 +43,7 @@ Lowkey Media Server is the back-end companion to the Lowkey Media Viewer. It man
 - **FFmpeg toolkit** — 16 preset operations (scale, convert, extract audio, screenshot, thumbnail sheet, blur, crop, reverse, speed, caption, etc.) plus raw passthrough.
 - **LoRA dataset builder** — assemble a captioned image dataset from tagged media.
 - **Storage abstraction** — multiple local roots and S3-compatible buckets side-by-side. Per-root thumbnail prefixes. Default-root configurable.
-- **On-demand dependencies** — `ffmpeg`, `yt-dlp`, `gallery-dl`, Faster-Whisper, and ONNX runtime are downloaded by the web UI on first use; nothing is shipped in the binary.
+- **Bundled binaries** — `ffmpeg`, `ffprobe`, `ffplay`, `exiftool`, `onnxtag`, and `onnxruntime` ship inside the release archive (no first-run downloads, no Gatekeeper headaches on macOS). Optional tools (`yt-dlp`, `gallery-dl`, `ollama`) are detected on PATH with copy-paste install instructions per OS. AI models are downloaded on demand from a checksummed manifest.
 - **SSE updates** — `/stream` pushes live job state and download progress to all connected clients.
 - **System tray** — Windows and macOS get a tray icon with Open Web UI / Quit shortcuts.
 - **Browser extensions** — Chrome and Firefox extensions for sending the current URL to the job queue.
@@ -53,7 +53,7 @@ Lowkey Media Server is the back-end companion to the Lowkey Media Viewer. It man
 ## System Requirements
 
 - **Operating System:** Windows 10/11 (x64), macOS 11+ (arm64 or amd64), or Linux (amd64).
-- **Disk Space:** ~150 MB for the binary; downloaded dependencies (ffmpeg + yt-dlp + whisper + onnx) add ~1–3 GB depending on what you install.
+- **Disk Space:** ~250 MB for the release archive (binary + bundled ffmpeg / exiftool / onnxruntime); downloaded AI models add ~1–3 GB depending on which you enable.
 - **RAM:** 4 GB minimum, 8 GB+ recommended once ONNX tagging or HLS transcodes are running.
 
 The server is a single statically-linked Go binary. SQLite uses `modernc.org/sqlite` (pure Go) so **no CGO is required** at build time.
@@ -195,7 +195,7 @@ All server state lives in the `/data` volume:
   db/media.db        # SQLite database (jobs, workflows, users, media, tags)
   media/             # Downloaded media (when no S3 / explicit roots configured)
   config/            # Auto-generated config and JWT secret
-  packages/          # Auto-downloaded dependencies (ffmpeg, yt-dlp, whisper, onnx)
+  models/            # On-demand AI model files (downloaded via the wizard)
 ```
 
 The named volume `lowkey-data` survives container restarts and rebuilds.
@@ -214,7 +214,7 @@ Prebuilt binaries for Windows (x64), macOS (arm64 + amd64), and Linux (amd64) ar
 
 3. **Open the Config tab** to verify the Lowkey Database path and configure model paths for ONNX tagging, Ollama, or Faster Whisper.
 
-4. **Open the Dependencies tab** to download whichever optional tools you need (ffmpeg, yt-dlp, gallery-dl, whisper, onnx runtime). These are pulled from upstream GitHub releases and verified before installation.
+4. **Walk the welcome wizard** at <http://localhost:8090/> on first run. It shows what's bundled, gives install instructions for optional tools (`yt-dlp`, `gallery-dl`, `ollama`), and lets you pick which AI models to download. You can skip it and revisit any time.
 
    - [Download model files for the ONNX tagger](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/tree/main)
    - [Install Ollama for LLM-based descriptions and tagging](https://ollama.com/)
@@ -282,18 +282,18 @@ Required for cloning the repository and Go module management.
 
 #### 4. Optional: External Tools
 
-For full functionality you'll eventually want the following tools, all of which can be installed from the Dependencies tab in the web UI rather than by hand:
+For full functionality you'll want the following tools. Bundled ones ship with the server; optional ones you install yourself (the welcome wizard shows the right command for your OS); models download on demand:
 
-| Tool | Purpose | Install method |
+| Tool | Purpose | How you get it |
 |------|---------|----------------|
-| [Ollama](https://ollama.com/) | LLM-based image descriptions / vision tagging | Native installer per OS |
-| ONNX Runtime + WD-EVA02-Large-Tagger v3 | ML auto-tagging | Web UI → Dependencies |
-| Faster-Whisper | Video transcription | Web UI → Dependencies (or system Python install) |
-| FFmpeg / FFprobe | Media probing, conversion, HLS, thumbnails | Web UI → Dependencies |
-| yt-dlp | YouTube and other video downloads | Web UI → Dependencies |
-| gallery-dl | Image gallery downloads | Web UI → Dependencies |
-
-If a dependency is installed on the system PATH the server will fall back to it; otherwise it uses the version downloaded into the Dependencies directory.
+| FFmpeg / FFprobe / FFplay | Media probing, conversion, HLS, thumbnails | Bundled in the release |
+| ExifTool | Image and video metadata extraction | Bundled in the release |
+| ONNX Runtime + ONNX Tagger binary | ML inference plumbing | Bundled in the release |
+| WD-EVA02-Large-Tagger v3 (model files) | Image auto-tagging | Welcome wizard → AI models |
+| Faster-Whisper | Video transcription | Configure path in settings (binary not bundled in this release) |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp) | YouTube and other video downloads | Optional — install via `brew`/`winget`/`pipx`; wizard shows the command |
+| [gallery-dl](https://github.com/mikf/gallery-dl) | Image gallery downloads | Optional — install via `brew`/`pip`/`pipx`; wizard shows the command |
+| [Ollama](https://ollama.com/) | LLM-based image descriptions / vision tagging | Optional — install via the official installer |
 
 ### Building from Source
 
@@ -430,23 +430,13 @@ Changes to HTTP handlers, startup, or tray integration usually need to be mirror
 
 ### Dependencies
 
-Lowkey Media Server uses a download-on-demand dependency manager. The main binary stays small and dependencies can be updated independently.
+The server ships with everything it needs to run out of the box. Three categories:
 
-Default dependency locations:
+- **Bundled** — `ffmpeg`, `ffprobe`, `ffplay` (not on macOS), `exiftool`, `onnxtag`, `onnxruntime` live in `<install-root>/bin/` alongside the executable. Populated per-OS-arch by CI (`scripts/fetch-bundled-deps.sh` / `.ps1` driven by `scripts/bundled-versions.json` with pinned SHA-256s). On macOS the server strips `com.apple.quarantine` from each binary at boot so Gatekeeper doesn't kill it.
+- **Optional** — `yt-dlp`, `gallery-dl`, and `ollama` are detected on `PATH`. The welcome wizard (`/onboarding`) shows the right install command per OS; the server never auto-installs them.
+- **Models** — AI model files (currently the WD-EVA02 tagger) download on demand via the wizard or `POST /api/deps/models/{id}/download`. Each model has a manifest entry with URLs and SHA-256 checksums. Downloads are atomic (`.partial` → rename), resumable, and verified before the model is marked installed.
 
-- **Windows:** `%ProgramData%\Lowkey Media Server\deps\`
-- **macOS:** `~/Library/Application Support/Lowkey Media Server/deps/`
-- **Linux:** `/var/lib/lowkeymediaserver/deps/`
-
-| Dependency   | Purpose                         | Source                                |
-| ------------ | ------------------------------- | ------------------------------------- |
-| `ffmpeg`     | Media conversion, HLS, thumbnails | BtbN/FFmpeg-Builds (GitHub)         |
-| `yt-dlp`     | Video downloading                | yt-dlp/yt-dlp (GitHub)               |
-| `gallery-dl` | Image gallery downloading        | mikf/gallery-dl (GitHub)             |
-| `whisper`    | Faster-Whisper transcription     | Purfview/whisper-standalone-win      |
-| `onnx`       | ONNX Runtime + WD tagger model   | HuggingFace/SmilingWolf              |
-
-Open the web UI at <http://localhost:8090>, navigate to **Dependencies**, and click **Download** next to anything you need. The server fetches the latest release, verifies it, and unpacks it into the deps directory. If a tool is already on `$PATH` the server uses that instead.
+Inspect runtime state via `GET /api/deps/status` or the wizard at `/settings/dependencies`. The welcome wizard appears once on first run and can be reopened any time.
 
 ---
 
@@ -520,7 +510,7 @@ Access the web UI at: <http://localhost:8090>
 - **Media** — browse, search, preview, and tag media; bulk-job action on results
 - **Swipe** — paginated random-sample view (`/swipe`)
 - **Config** — server settings, model paths, storage roots, user management
-- **Dependencies** — download/update ffmpeg, yt-dlp, gallery-dl, whisper, onnx
+- **Dependencies** — view bundled-binary status, install hints for optional tools, and download/delete AI models
 - **Stats** — database statistics
 
 ### System Tray
@@ -550,7 +540,6 @@ Tasks register themselves in `tasks/registry.go`'s `init()`. The current catalog
 | `cleanup`                    | CleanUp                    | Remove orphaned database entries                         |
 | `save`                       | Save File                  | Copy/persist a file with metadata                        |
 | `lora-dataset`               | Create LoRA Dataset        | Assemble a captioned image dataset                       |
-| `download-dependency`        | Download Dependency        | Internal — used by the Dependencies UI                   |
 | `ffmpeg`                     | ffmpeg                     | Raw ffmpeg passthrough with custom args                  |
 | `ffmpeg-scale`               | FFmpeg Scale               |                                                          |
 | `ffmpeg-convert`             | FFmpeg Convert             |                                                          |
