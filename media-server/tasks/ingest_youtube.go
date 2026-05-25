@@ -12,6 +12,7 @@ import (
 
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // ingestYouTubeTask downloads media from YouTube using yt-dlp and adds to database
@@ -58,12 +59,15 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		args = append(args, arg)
 	}
 
-	cmd, err := deps.GetExec(ctx, "yt-dlp", "yt-dlp", args...)
-	if err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error starting yt-dlp: %s", err))
+	status, _ := deps.DetectOptional("yt-dlp")
+	if !status.Installed {
+		msg := "yt-dlp is not installed. Install it (e.g. brew install yt-dlp / winget install yt-dlp / pipx install yt-dlp) and try again. See /onboarding for instructions."
+		q.PushJobStdout(j.ID, msg)
 		q.ErrorJob(j.ID)
-		return fmt.Errorf("start yt-dlp: %w", err)
+		return fmt.Errorf("yt-dlp not installed")
 	}
+	cmd := exec.CommandContext(ctx, status.Path, args...)
+	platform.HideSubprocessWindow(cmd)
 
 	// Handle cancellation
 	go func() {

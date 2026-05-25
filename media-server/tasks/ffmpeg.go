@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 var ffmpegCustomOptions = []TaskOption{
@@ -88,12 +90,9 @@ func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildA
 
 		q.PushJobStdout(j.ID, "ffmpeg: running on "+base+" -> "+filepath.Base(outputPath))
 
-		cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", finalArgs...)
-		if err != nil {
-			q.PushJobStdout(j.ID, "ffmpeg: failed to prepare: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
+		ffmpegPath := deps.MustBundled("ffmpeg")
+		cmd := exec.CommandContext(ctx, ffmpegPath, finalArgs...)
+		platform.HideSubprocessWindow(cmd)
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -253,12 +252,9 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		q.PushJobStdout(j.ID, "ffmpeg: running on "+base+" -> "+filepath.Base(outputPath))
 
-		cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", finalArgs...)
-		if err != nil {
-			q.PushJobStdout(j.ID, "ffmpeg: failed to prepare: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
+		ffmpegPath := deps.MustBundled("ffmpeg")
+		cmd := exec.CommandContext(ctx, ffmpegPath, finalArgs...)
+		platform.HideSubprocessWindow(cmd)
 
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
