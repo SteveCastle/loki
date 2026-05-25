@@ -266,6 +266,42 @@
         font-size: 1em;
       }
 
+      /* ---- New dependency cards (post-overhaul) ---- */
+      .dep-section { margin-bottom: var(--space-6); }
+      .dep-section h3 { margin: 0 0 var(--space-2); }
+      .dep-section-desc { color: var(--text-muted); margin: 0 0 var(--space-3); font-size: 0.9em; }
+      .dep-cards { display: grid; gap: var(--space-3); }
+      .dep-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        padding: var(--space-3) var(--space-4);
+      }
+      .dep-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+      .dep-row strong { flex: 0 0 auto; min-width: 8em; }
+      .dep-version { color: var(--text-muted); font-family: monospace; font-size: 0.85em; }
+      .dep-path {
+        margin-top: var(--space-2);
+        font-size: 0.85em;
+        color: var(--text-muted);
+        word-break: break-all;
+        user-select: all;
+      }
+      .dep-path code { background: var(--bg-base, #000); padding: 0 var(--space-2); border-radius: 3px; }
+      .dep-error { margin-top: var(--space-2); color: var(--status-error); font-size: 0.85em; }
+      .dep-actions { margin-left: auto; display: flex; gap: var(--space-2); }
+      .dep-hint { margin-top: var(--space-3); }
+      .dep-hint ul { list-style: none; padding: 0; margin: var(--space-2) 0; }
+      .dep-hint li { margin: var(--space-1) 0; }
+      .dep-hint code { background: var(--bg-base, #000); padding: 0 var(--space-2); border-radius: 3px; user-select: all; }
+      .dep-progress { margin-top: var(--space-2); }
+      .dep-progress-bar { height: 6px; background: var(--border-subtle); border-radius: 3px; overflow: hidden; }
+      .dep-progress-fill { height: 100%; background: var(--accent-primary); transition: width 200ms; }
+      .status-ok    { background: rgba(94,194,122,.15); color: #5ec27a; }
+      .status-error { background: rgba(211,83,83,.15); color: #d35353; }
+      .status-info  { background: rgba(91,155,213,.15); color: #5b9bd5; }
+      .status-neutral { background: rgba(128,128,128,.15); color: var(--text-muted); }
+
       /* Legacy grid styles for backwards compat */
       .dependencies-grid {
         display: grid;
@@ -1108,498 +1144,217 @@
           });
         });
 
-      // Dependencies loading and management
-      let eventSource = null;
+      // ---- Dependencies tab (rewritten 2026-05-25) ----
+      // Renders bundled / optional / model status from /api/deps/status with
+      // on-disk paths, sizes, and category-appropriate actions. Live model
+      // progress overlaid from /api/deps/models/progress (SSE).
+
       window.dependenciesLoaded = false;
+      let depsRefreshTimer = null;
+      let depsSSE = null;
+      let depsCurrent = [];
 
       function loadDependencies() {
-        const contentEl = document.getElementById('dependencies-content');
-        contentEl.innerHTML =
-          '<div style="text-align: center; padding: var(--space-6); color: var(--text-muted);">Loading dependencies...</div>';
+        if (depsRefreshTimer) clearInterval(depsRefreshTimer);
+        if (depsSSE) { depsSSE.close(); depsSSE = null; }
 
-        fetch('/dependencies')
-          .then((r) => r.text())
-          .then((html) => {
-            // Extract the dependencies content from the HTML response
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(html, 'text/html');
+        refreshDependencies();
+        depsRefreshTimer = setInterval(refreshDependencies, 5000);
+        connectDepsProgress();
+        window.dependenciesLoaded = true;
+      }
 
-            // Look for action bar, section, and dependencies list
-            const actionBar = doc.querySelector('.action-bar');
-            const section = doc.querySelector('.section');
-            const depList = doc.querySelector('.dep-list') || doc.querySelector('.dependencies-grid');
-
-            if (depList) {
-              // Build the content including action bar if available
-              let content = '';
-              if (actionBar) {
-                content += actionBar.outerHTML;
-              }
-              if (section) {
-                content += section.outerHTML;
-              } else {
-                content += depList.outerHTML;
-              }
-              contentEl.innerHTML = content;
-
-              // Re-attach event listeners for dependency buttons
-              attachDependencyListeners();
-              connectDependenciesSSE();
-
-              // Initialize any cards that already have active jobs
-              document.querySelectorAll('.dep-item, .dependency-card').forEach((card) => {
-                const jobID = card.getAttribute('data-job-id');
-                if (jobID) {
-                  const progressDiv = card.querySelector('.download-progress') || card.querySelector('.dep-progress');
-                  const statusBadge = card.querySelector('.status-badge');
-                  if (
-                    statusBadge &&
-                    statusBadge.textContent.trim() === 'downloading' &&
-                    progressDiv
-                  ) {
-                    progressDiv.style.display = 'block';
-                  }
-                }
-              });
-
-              // Update counts if action bar is present
-              updateDependencyCounts();
-            } else {
-              contentEl.innerHTML =
-                '<div style="text-align: center; padding: var(--space-6); color: var(--text-muted);">No dependencies found</div>';
-            }
-            window.dependenciesLoaded = true;
-          })
+      function refreshDependencies() {
+        fetch('/api/deps/status', { credentials: 'include' })
+          .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then((items) => { depsCurrent = items; renderDependencies(items); })
           .catch((err) => {
-            contentEl.innerHTML = `<div style="text-align: center; padding: var(--space-6); color: var(--status-error);">Error loading dependencies: ${err.message}</div>`;
-            console.error('Failed to load dependencies:', err);
+            const el = document.getElementById('dependencies-content');
+            el.innerHTML = `<div class="status-message error show">Failed to load dependency status: ${escDep(err.message)}</div>`;
           });
       }
 
-      function updateDependencyCounts() {
-        let installed = 0, missing = 0;
-        document.querySelectorAll('.dep-item, .dependency-card').forEach(item => {
-          const isOpt = item.dataset.optional === 'true';
-          const isInst = item.classList.contains('installed');
-          if (!isOpt) {
-            if (isInst) installed++;
-            else missing++;
-          } else if (isInst) {
-            installed++;
-          }
-        });
-
-        const installedEl = document.getElementById('installed-count');
-        const missingEl = document.getElementById('missing-count');
-        if (installedEl) installedEl.textContent = installed;
-        if (missingEl) missingEl.textContent = missing;
-
-        const btn = document.getElementById('install-all-btn');
-        if (btn && missing === 0) {
-          btn.disabled = true;
-          btn.textContent = 'All Installed';
-        }
+      function connectDepsProgress() {
+        try {
+          depsSSE = new EventSource('/api/deps/models/progress');
+          depsSSE.onmessage = (ev) => {
+            try {
+              const inst = JSON.parse(ev.data);
+              depsCurrent = depsCurrent.map((it) =>
+                it.category === 'model' && it.id === inst.id
+                  ? { ...it, state: inst.state, detail: inst, error: inst.error }
+                  : it,
+              );
+              renderDependencies(depsCurrent);
+            } catch (_) { /* drop bad payload */ }
+          };
+          depsSSE.onerror = () => { /* browser auto-retries */ };
+        } catch (_) { /* EventSource unsupported */ }
       }
 
-      function attachDependencyListeners() {
-        document
-          .querySelectorAll('[onclick*="downloadDependency"]')
-          .forEach((btn) => {
-            const onclick = btn.getAttribute('onclick');
-            const match = onclick.match(/downloadDependency\('([^']+)'\)/);
-            if (match) {
-              btn.onclick = () => downloadDependency(match[1]);
-            }
-          });
-
-        document
-          .querySelectorAll('[onclick*="reinstallDependency"]')
-          .forEach((btn) => {
-            const onclick = btn.getAttribute('onclick');
-            const match = onclick.match(/reinstallDependency\('([^']+)'\)/);
-            if (match) {
-              btn.onclick = () => reinstallDependency(match[1]);
-            }
-          });
-
-        document
-          .querySelectorAll('[onclick*="checkDependency"]')
-          .forEach((btn) => {
-            const onclick = btn.getAttribute('onclick');
-            const match = onclick.match(/checkDependency\('([^']+)'\)/);
-            if (match) {
-              btn.onclick = () => checkDependency(match[1]);
-            }
-          });
-
-        document
-          .querySelectorAll('[onclick*="installAll"]')
-          .forEach((btn) => {
-            btn.onclick = () => installAll();
-          });
+      function escDep(s) {
+        return String(s == null ? '' : s)
+          .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       }
 
-      let isInstallingAll = false;
-
-      function installAll() {
-        if (isInstallingAll) return;
-
-        const btn = document.getElementById('install-all-btn');
-        if (btn) {
-          btn.disabled = true;
-          btn.textContent = 'Installing...';
-        }
-        isInstallingAll = true;
-
-        fetch('/downloads/install-all', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        })
-        .then(r => r.json())
-        .then(data => {
-          if (data.status === 'nothing_to_install') {
-            showDependencyStatus('All components installed', 'success');
-            if (btn) btn.textContent = 'All Installed';
-          } else if (data.status !== 'started') {
-            if (btn) {
-              btn.disabled = false;
-              btn.textContent = 'Install Missing';
-            }
-            isInstallingAll = false;
-          }
-        })
-        .catch(() => {
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = 'Install Missing';
-          }
-          isInstallingAll = false;
-        });
+      function fmtBytes(n) {
+        if (!n || n <= 0) return '';
+        const mb = n / 1024 / 1024;
+        if (mb < 1024) return mb.toFixed(0) + ' MB';
+        return (mb / 1024).toFixed(2) + ' GB';
       }
 
-      let progressStream = null;
-
-      function connectDependenciesSSE() {
-        if (eventSource) return;
-
-        // Connect to main job stream
-        eventSource = new EventSource('/stream');
-
-        eventSource.addEventListener('update', (event) => {
-          const data = JSON.parse(event.data);
-          if (data.job && data.job.command === 'download-dependency') {
-            updateDependencyCard(data.job);
-          }
-        });
-
-        eventSource.addEventListener('message', (event) => {
-          const data = JSON.parse(event.data);
-          if (data.type && data.type.startsWith('stdout-')) {
-            const jobID = data.type.replace('stdout-', '');
-            const card = document.querySelector(`[data-job-id="${jobID}"]`);
-            if (card) {
-              const progressDiv = card.querySelector('.download-progress') || card.querySelector('.dep-progress');
-              if (progressDiv) {
-                progressDiv.style.display = 'block';
-                progressDiv.classList.add('show');
-              }
-            }
-          }
-        });
-
-        eventSource.addEventListener('error', () => {
-          // SSE errors are expected when connection closes
-        });
-
-        // Connect to downloads progress stream
-        if (!progressStream) {
-          progressStream = new EventSource('/downloads/stream');
-          progressStream.addEventListener('progress', (event) => {
-            const progress = JSON.parse(event.data);
-            handleDownloadProgress(progress);
-          });
-          progressStream.addEventListener('error', () => {
-            // SSE errors are expected when connection closes
-          });
-        }
+      function stateBadge(state) {
+        const map = {
+          ready: ['ok', 'Ready'],
+          installed: ['ok', 'Installed'],
+          missing: ['error', 'Missing'],
+          broken: ['error', 'Broken'],
+          failed: ['error', 'Failed'],
+          not_installed: ['neutral', 'Not installed'],
+          queued: ['info', 'Queued'],
+          downloading: ['info', 'Downloading'],
+          verifying: ['info', 'Verifying'],
+          cancelled: ['neutral', 'Cancelled'],
+        };
+        const [cls, label] = map[state] || ['neutral', state];
+        return `<span class="status-badge status-${escDep(cls)}">${escDep(label)}</span>`;
       }
 
-      function handleDownloadProgress(progress) {
-        if (!progress.dependencies) return;
+      function renderDependencies(items) {
+        const root = document.getElementById('dependencies-content');
+        const groups = { bundled: [], optional: [], model: [] };
+        items.forEach((it) => { if (groups[it.category]) groups[it.category].push(it); });
 
-        for (const dep of progress.dependencies) {
-          const item = document.querySelector(`[data-dep-id="${dep.dependency_id}"]`);
-          if (!item) continue;
-
-          const icon = item.querySelector('.dep-icon');
-          const statusText = document.getElementById(`status-text-${dep.dependency_id}`);
-          const progressDiv = document.getElementById(`progress-${dep.dependency_id}`) || item.querySelector('.dep-progress');
-          const progressText = document.getElementById(`progress-text-${dep.dependency_id}`);
-          const actions = item.querySelector('.dep-actions');
-
-          item.classList.remove('installed', 'not-installed', 'downloading', 'outdated');
-          if (icon) icon.classList.remove('installed', 'not-installed', 'downloading', 'outdated');
-
-          switch(dep.status) {
-            case 'complete':
-              item.classList.add('installed');
-              if (icon) {
-                icon.classList.add('installed');
-                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-              }
-              if (statusText) statusText.textContent = 'Installed';
-              if (progressDiv) {
-                progressDiv.style.display = 'none';
-                progressDiv.classList.remove('show');
-              }
-              if (actions) {
-                actions.innerHTML = `<button class="btn btn-secondary" onclick="reinstallDependency('${dep.dependency_id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"></path><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>Reinstall</button>`;
-              }
-              updateDependencyCounts();
-              break;
-
-            case 'downloading':
-            case 'extracting':
-              item.classList.add('downloading');
-              if (icon) {
-                icon.classList.add('downloading');
-                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"></path></svg>';
-              }
-              if (statusText) statusText.textContent = dep.status === 'extracting' ? 'Extracting...' : 'Downloading...';
-              if (progressDiv) {
-                progressDiv.style.display = 'block';
-                progressDiv.classList.add('show');
-                const fill = progressDiv.querySelector('.progress-bar-fill');
-                if (fill) fill.style.width = dep.percent + '%';
-              }
-              if (progressText) progressText.textContent = dep.message || `${Math.round(dep.percent)}%`;
-              if (actions) {
-                actions.innerHTML = '<button class="btn btn-secondary" disabled>Installing...</button>';
-              }
-              break;
-
-            case 'error':
-              item.classList.add('not-installed');
-              if (icon) {
-                icon.classList.add('not-installed');
-                icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle></svg>';
-              }
-              if (statusText) statusText.textContent = dep.error || 'Failed';
-              if (progressDiv) {
-                progressDiv.style.display = 'none';
-                progressDiv.classList.remove('show');
-              }
-              if (actions) {
-                actions.innerHTML = `<button class="btn btn-primary" onclick="downloadDependency('${dep.dependency_id}')">Retry</button>`;
-              }
-              showDependencyStatus(dep.error || 'Installation failed', 'error');
-              break;
-          }
-        }
-        attachDependencyListeners();
+        root.innerHTML = `
+          <div class="dep-section">
+            <h3>Bundled binaries</h3>
+            <p class="dep-section-desc">Shipped with the server release. No setup needed.</p>
+            <div class="dep-cards">${groups.bundled.map(bundledCard).join('')}</div>
+          </div>
+          <div class="dep-section">
+            <h3>Optional tools</h3>
+            <p class="dep-section-desc">Install yourself if you want the features they unlock.</p>
+            <div class="dep-cards">${groups.optional.map(optionalCard).join('')}</div>
+          </div>
+          <div class="dep-section">
+            <h3>AI models</h3>
+            <p class="dep-section-desc">Downloaded on demand. Checksummed and resumable.</p>
+            <div class="dep-cards">${groups.model.map(modelCard).join('')}</div>
+          </div>
+        `;
+        wireDepActions();
       }
 
-      function updateDependencyCard(job) {
-        const depID = job.input;
-        const card = document.querySelector(`[data-dep-id="${depID}"]`);
-        if (!card) return;
-
-        // Support both old and new template structures
-        const statusBadge = card.querySelector('.status-badge');
-        const statusText = document.getElementById(`status-text-${depID}`);
-        const actionsDiv = card.querySelector('.dep-actions');
-        const progressDiv = card.querySelector('.download-progress') || card.querySelector('.dep-progress');
-        const depIcon = card.querySelector('.dep-icon');
-
-        card.setAttribute('data-job-id', job.id);
-
-        const state = job.state;
-        if (
-          state === 0 ||
-          state === 'pending' ||
-          state === 'Pending' ||
-          state === 1 ||
-          state === 'in_progress' ||
-          state === 'InProgress'
-        ) {
-          if (statusBadge) {
-            statusBadge.textContent = 'downloading';
-            statusBadge.className = 'status-badge status-downloading';
-          }
-          if (statusText) statusText.textContent = 'Installing...';
-          if (progressDiv) {
-            progressDiv.style.display = 'block';
-            progressDiv.classList.add('show');
-          }
-          if (depIcon) {
-            depIcon.className = 'dep-icon downloading';
-            depIcon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"></path></svg>';
-          }
-          card.classList.remove('installed', 'not-installed', 'error');
-          card.classList.add('downloading');
-          if (actionsDiv) {
-            actionsDiv.innerHTML = `<button class="btn btn-secondary" disabled>Installing...</button>`;
-          }
-        } else if (
-          state === 2 ||
-          state === 'completed' ||
-          state === 'Completed'
-        ) {
-          if (statusBadge) {
-            statusBadge.textContent = 'installed';
-            statusBadge.className = 'status-badge status-installed';
-          }
-          if (statusText) statusText.textContent = 'Installed';
-          if (progressDiv) {
-            progressDiv.style.display = 'none';
-            progressDiv.classList.remove('show');
-          }
-          if (depIcon) {
-            depIcon.className = 'dep-icon installed';
-            depIcon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>';
-          }
-          card.classList.remove('downloading', 'not-installed', 'error');
-          card.classList.add('installed');
-          if (actionsDiv) {
-            actionsDiv.innerHTML = `<button class="btn btn-secondary" onclick="reinstallDependency('${depID}')">Reinstall</button>`;
-          }
-          showDependencyStatus(`${depID} installed successfully!`, 'success');
-        } else if (
-          state === 4 ||
-          state === 'error' ||
-          state === 'Error' ||
-          state === 3 ||
-          state === 'cancelled' ||
-          state === 'Cancelled'
-        ) {
-          if (statusBadge) {
-            statusBadge.textContent = 'not_installed';
-            statusBadge.className = 'status-badge status-not_installed';
-          }
-          if (statusText) statusText.textContent = 'Failed';
-          if (progressDiv) {
-            progressDiv.style.display = 'none';
-            progressDiv.classList.remove('show');
-          }
-          if (depIcon) {
-            depIcon.className = 'dep-icon not-installed';
-            depIcon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle></svg>';
-          }
-          card.classList.remove('downloading', 'installed');
-          card.classList.add('not-installed');
-          if (actionsDiv) {
-            actionsDiv.innerHTML = `<button class="btn btn-primary" onclick="downloadDependency('${depID}')">Retry</button>`;
-          }
-          showDependencyStatus(`Download failed for ${depID}`, 'error');
-        }
-        attachDependencyListeners();
+      function bundledCard(it) {
+        return `<div class="dep-card" data-cat="bundled" data-id="${escDep(it.id)}">
+          <div class="dep-row">
+            <strong>${escDep(it.name)}</strong>
+            ${stateBadge(it.state)}
+            ${it.version ? `<span class="dep-version">${escDep(it.version)}</span>` : ''}
+          </div>
+          ${it.path ? `<div class="dep-path" title="${escDep(it.path)}"><code>${escDep(it.path)}</code></div>` : ''}
+          ${it.error ? `<div class="dep-error">${escDep(it.error)}</div>` : ''}
+        </div>`;
       }
 
-      function reinstallDependency(depID) {
-        if (!confirm(`Reinstall ${depID}? This will download and install the latest version.`)) return;
-        downloadDependency(depID);
+      function optionalCard(it) {
+        const hint = it.detail || {};
+        const cmds = (hint.Commands || hint.commands || []);
+        const docs = hint.DocsURL || hint.docs_url || hint.docsURL || '';
+        const desc = hint.Description || hint.description || '';
+        return `<div class="dep-card" data-cat="optional" data-id="${escDep(it.id)}">
+          <div class="dep-row">
+            <strong>${escDep(it.name)}</strong>
+            ${stateBadge(it.state)}
+            ${it.version ? `<span class="dep-version">${escDep(it.version)}</span>` : ''}
+            <button type="button" class="btn btn-secondary dep-toggle">Install info</button>
+          </div>
+          ${it.path ? `<div class="dep-path" title="${escDep(it.path)}"><code>${escDep(it.path)}</code></div>` : ''}
+          <div class="dep-hint" style="display:none">
+            ${desc ? `<p>${escDep(desc)}</p>` : ''}
+            <ul>${cmds.map((c) => `<li><strong>${escDep(c.os)} (${escDep(c.label)}):</strong> <code>${escDep(c.command)}</code></li>`).join('')}</ul>
+            ${docs ? `<a href="${escDep(docs)}" target="_blank" rel="noreferrer">Documentation</a>` : ''}
+          </div>
+        </div>`;
       }
 
-      function showDependencyStatus(message, type) {
-        const statusDiv = document.getElementById('dependency-status-message');
-        if (!statusDiv) {
-          const newDiv = document.createElement('div');
-          newDiv.id = 'dependency-status-message';
-          newDiv.className = 'status-message';
-          document
-            .getElementById('dependencies-content')
-            .insertBefore(
-              newDiv,
-              document.getElementById('dependencies-content').firstChild
-            );
-          newDiv.textContent = message;
-          newDiv.className = `status-message ${type} show`;
-          setTimeout(() => {
-            newDiv.className = 'status-message';
-          }, 5000);
+      function modelCard(it) {
+        const inst = it.detail || {};
+        const done = Number(inst.bytes_done || 0);
+        const total = Number(inst.bytes_total || it.size_bytes || 0);
+        const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+        const isInFlight = ['downloading', 'queued', 'verifying'].includes(it.state);
+        let actions = '';
+        if (it.state === 'installed') {
+          actions = `<button type="button" class="btn btn-secondary dep-verify">Verify</button>
+                     <button type="button" class="btn btn-secondary dep-delete">Delete</button>`;
+        } else if (isInFlight) {
+          actions = `<button type="button" class="btn btn-secondary dep-cancel">Cancel</button>`;
         } else {
-          statusDiv.textContent = message;
-          statusDiv.className = `status-message ${type} show`;
-          setTimeout(() => {
-            statusDiv.className = 'status-message';
-          }, 5000);
+          actions = `<button type="button" class="btn btn-primary dep-download">Download</button>`;
         }
+        const path = it.path
+          ? `<div class="dep-path" title="${escDep(it.path)}"><code>${escDep(it.path)}</code></div>`
+          : '';
+        return `<div class="dep-card" data-cat="model" data-id="${escDep(it.id)}">
+          <div class="dep-row">
+            <strong>${escDep(it.name)}</strong>
+            ${stateBadge(it.state)}
+            ${it.size_bytes ? `<span class="dep-version">${escDep(fmtBytes(it.size_bytes))}</span>` : ''}
+            <div class="dep-actions">${actions}</div>
+          </div>
+          ${path}
+          ${isInFlight && total > 0 ? `
+            <div class="dep-progress">
+              <div class="dep-progress-bar"><div class="dep-progress-fill" style="width:${pct}%"></div></div>
+              <small>${escDep(fmtBytes(done))} / ${escDep(fmtBytes(total))} (${pct}%) ${inst.current_file ? '· ' + escDep(inst.current_file) : ''}</small>
+            </div>` : ''}
+          ${it.error ? `<div class="dep-error">${escDep(it.error)}</div>` : ''}
+        </div>`;
       }
 
-      function downloadDependency(depID) {
-        const card = document.querySelector(`[data-dep-id="${depID}"]`);
-        if (!card) return;
-
-        const statusBadge = card.querySelector('.status-badge');
-        const statusText = document.getElementById(`status-text-${depID}`);
-        const progressDiv = card.querySelector('.download-progress') || card.querySelector('.dep-progress');
-        const actionsDiv = card.querySelector('.dep-actions');
-        const depIcon = card.querySelector('.dep-icon');
-
-        // Optimistic update
-        if (statusBadge) {
-          statusBadge.textContent = 'downloading';
-          statusBadge.className = 'status-badge status-downloading';
-        }
-        if (statusText) statusText.textContent = 'Starting...';
-        if (progressDiv) {
-          progressDiv.style.display = 'block';
-          progressDiv.classList.add('show');
-        }
-        if (depIcon) {
-          depIcon.className = 'dep-icon downloading';
-          depIcon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"></path></svg>';
-        }
-        card.classList.remove('installed', 'not-installed');
-        card.classList.add('downloading');
-        if (actionsDiv) {
-          actionsDiv.innerHTML = `<button class="btn btn-secondary" disabled>Installing...</button>`;
-        }
-
-        // Try new downloads endpoint first, fall back to legacy
-        fetch('/downloads/install', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: depID }),
-        })
-          .then((r) => r.json())
-          .then((data) => {
-            if (data.status !== 'started') {
-              // Fall back to legacy endpoint
-              return fetch('/dependencies/download', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ dependency_id: depID }),
-              });
-            }
-          })
-          .catch((err) => {
-            showDependencyStatus(`Failed to start download: ${err.message}`, 'error');
+      function wireDepActions() {
+        document.querySelectorAll('#dependencies-content .dep-card').forEach((card) => {
+          const id = card.getAttribute('data-id');
+          const cat = card.getAttribute('data-cat');
+          const toggle = card.querySelector('.dep-toggle');
+          if (toggle) {
+            toggle.addEventListener('click', () => {
+              const hint = card.querySelector('.dep-hint');
+              if (hint) hint.style.display = hint.style.display === 'none' ? '' : 'none';
+            });
+          }
+          if (cat !== 'model') return;
+          const dl = card.querySelector('.dep-download');
+          if (dl) dl.addEventListener('click', () => apiPost(`/api/deps/models/${encodeURIComponent(id)}/download`));
+          const cancel = card.querySelector('.dep-cancel');
+          if (cancel) cancel.addEventListener('click', () => apiPost(`/api/deps/models/${encodeURIComponent(id)}/cancel`));
+          const del = card.querySelector('.dep-delete');
+          if (del) del.addEventListener('click', () => {
+            if (!confirm('Delete the installed files for ' + id + '?')) return;
+            apiDelete(`/api/deps/models/${encodeURIComponent(id)}`);
           });
+          const verify = card.querySelector('.dep-verify');
+          if (verify) verify.addEventListener('click', () => {
+            apiPost(`/api/deps/models/${encodeURIComponent(id)}/verify`)
+              .then((r) => r && r.json && r.json())
+              .then((r) => { if (r) alert(JSON.stringify(r.files || r, null, 2)); });
+          });
+        });
       }
 
+      function apiPost(url) {
+        return fetch(url, { method: 'POST', credentials: 'include' })
+          .then((r) => { refreshDependencies(); return r; })
+          .catch((err) => alert('Request failed: ' + err.message));
+      }
 
-      function checkDependency(depID) {
-        fetch(`/dependencies/check?id=${depID}`)
-          .then((r) => {
-            if (!r.ok) throw new Error('Check request failed');
-            return r.json();
-          })
-          .then((data) => {
-            showDependencyStatus(
-              `Status: ${data.status}, Version: ${data.version || 'unknown'}`,
-              'success'
-            );
-            setTimeout(() => {
-              loadDependencies();
-            }, 1500);
-          })
-          .catch((err) => {
-            showDependencyStatus(
-              `Failed to check status: ${err.message}`,
-              'error'
-            );
-          });
+      function apiDelete(url) {
+        return fetch(url, { method: 'DELETE', credentials: 'include' })
+          .then((r) => { refreshDependencies(); return r; })
+          .catch((err) => alert('Request failed: ' + err.message));
       }
 
       document.getElementById('save-btn').addEventListener('click', () => {
