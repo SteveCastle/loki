@@ -16,6 +16,7 @@ import (
 	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/storage"
 )
 
@@ -302,6 +303,7 @@ func generateImageThumbnail(ffmpegPath, mediaPath, thumbPath, cache string) erro
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	platform.HideSubprocessWindow(cmd)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Printf("ffmpeg image thumbnail timed out after %v for %s", imageThumbTimeout, mediaPath)
@@ -329,6 +331,7 @@ func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, cache string, time
 			mediaPath,
 		}
 		cmd := exec.CommandContext(probeCtx, ffprobePath, probeArgs...)
+		platform.HideSubprocessWindow(cmd)
 		if output, err := cmd.Output(); err == nil {
 			var result struct {
 				Format struct {
@@ -367,6 +370,7 @@ func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, cache string, time
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	platform.HideSubprocessWindow(cmd)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Printf("ffmpeg video thumbnail timed out after %v for %s", videoThumbTimeout, mediaPath)

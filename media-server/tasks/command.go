@@ -92,7 +92,9 @@ func executeCommand(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		<-ctx.Done()
 		if cmd.Process != nil {
 			if runtime.GOOS == "windows" {
-				_ = exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", cmd.Process.Pid)).Run()
+				tk := exec.Command("taskkill", "/F", "/T", "/PID", fmt.Sprintf("%d", cmd.Process.Pid))
+				platform.HideSubprocessWindow(tk)
+				_ = tk.Run()
 			} else {
 				_ = cmd.Process.Kill()
 			}

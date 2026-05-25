@@ -320,6 +320,7 @@ func generatePassthroughHLS(ctx context.Context, mediaPath, cacheDir string, dur
 	log.Printf("[hls] ffmpeg args: %v", args)
 
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	platform.HideSubprocessWindow(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -444,6 +445,7 @@ func probeDuration(mediaPath string) float64 {
 		"-show_format",
 		mediaPath,
 	)
+	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		log.Printf("[hls] WARNING: ffprobe failed for %s: %v", filepath.Base(mediaPath), err)

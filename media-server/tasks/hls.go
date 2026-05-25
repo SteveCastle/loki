@@ -267,6 +267,7 @@ func probeMedia(ctx context.Context, ffprobePath, src string) (hlsProbeInfo, err
 		src,
 	}
 	cmd := exec.CommandContext(ctx, ffprobePath, args...)
+	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return hlsProbeInfo{}, fmt.Errorf("ffprobe video stream: %w", err)
@@ -300,6 +301,7 @@ func probeMedia(ctx context.Context, ffprobePath, src string) (hlsProbeInfo, err
 		src,
 	}
 	acmd := exec.CommandContext(ctx, ffprobePath, aargs...)
+	platform.HideSubprocessWindow(acmd)
 	aout, aerr := acmd.Output()
 	if aerr == nil {
 		var audioResult struct {
@@ -359,6 +361,7 @@ func hlsBuildTranscodeArgs(input, playlistPath, segmentPattern string, preset Hl
 func hlsRunFFmpeg(ctx context.Context, jobID string, q *jobqueue.Queue, args []string) error {
 	ffmpegPath := deps.MustBundled("ffmpeg")
 	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+	platform.HideSubprocessWindow(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
