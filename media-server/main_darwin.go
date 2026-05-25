@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -31,7 +30,6 @@ import (
 
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/auth"
-	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/deps/bundled"
 	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/jobqueue"
@@ -73,10 +71,6 @@ var currentConfig appconfig.Config
 
 // Global runners instance so we can shut it down when switching databases
 var currentRunners *runners.Runners
-
-// Global flag to track if we're in setup mode (missing dependencies)
-var setupMode bool
-var setupModeMutex sync.RWMutex
 
 // -----------------------------------------------------------------------------
 // Dependencies struct to hold shared dependencies
@@ -277,50 +271,6 @@ func ensureIndexes(db *sql.DB) error {
 	}
 
 	return nil
-}
-
-// -----------------------------------------------------------------------------
-// Middleware
-// -----------------------------------------------------------------------------
-
-// setupModeMiddleware intercepts requests and redirects to setup page if dependencies are missing
-func setupModeMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow access to setup page, static files, stream, and dependency management endpoints
-		// Note: paths with trailing slash will match all sub-paths (prefix matching)
-		allowedPaths := []string{
-			"/setup",
-			"/setup/",        // Allows /setup/skip and other setup sub-routes
-			"/static/",       // Allows all static files
-			"/stream",        // SSE endpoint
-			"/dependencies/", // Allows /dependencies/check, /dependencies/download, etc.
-			"/health",        // Health check endpoint
-			"/login",         // Login page (needed before accessing protected setup routes)
-			"/auth/",         // Auth endpoints (login API, logout, status, etc.)
-		}
-
-		for _, path := range allowedPaths {
-			// Exact match for paths without trailing slash
-			if r.URL.Path == path {
-				next.ServeHTTP(w, r)
-				return
-			}
-			// Prefix match for paths with trailing slash
-			if len(path) > 1 && path[len(path)-1] == '/' && strings.HasPrefix(r.URL.Path, path) {
-				next.ServeHTTP(w, r)
-				return
-			}
-		}
-
-		// If in setup mode and not accessing allowed paths, redirect to setup
-		setupModeMutex.RLock()
-		inSetupMode := setupMode
-		setupModeMutex.RUnlock()
-
-		_ = inSetupMode // setup mode is permanently disabled by the new dependency system
-
-		next.ServeHTTP(w, r)
-	})
 }
 
 // -----------------------------------------------------------------------------
@@ -1223,289 +1173,6 @@ func statsHandler(deps *Dependencies) http.HandlerFunc {
 		if err := renderer.Templates().ExecuteTemplate(w, "stats", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
-	}
-}
-
-// -----------------------------------------------------------------------------
-// Dependencies page handlers
-// -----------------------------------------------------------------------------
-
-type dependenciesTemplateData struct {
-	Dependencies []dependencyStatusInfo
-}
-
-type dependencyStatusInfo struct {
-	ID               string
-	Name             string
-	Description      string
-	Status           depspkg.DependencyStatus
-	InstalledVersion string
-	LatestVersion    string
-	SizeFormatted    string
-	TargetDir        string
-	JobID            string
-}
-
-func dependenciesHandler(dependencies *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
-			return
-		}
-
-		allDeps := depspkg.GetAll()
-		metadata := depspkg.GetMetadataStore()
-		var depStatuses []dependencyStatusInfo
-
-		for _, dep := range allDeps {
-			exists, version, err := dep.Check(r.Context())
-
-			status := depspkg.StatusNotInstalled
-			installedVersion := ""
-
-			if err == nil && exists {
-				status = depspkg.StatusInstalled
-				installedVersion = version
-
-				// Check if outdated
-				if version != dep.LatestVersion && dep.LatestVersion != "" && version != "unknown" {
-					status = depspkg.StatusOutdated
-				}
-			}
-
-			// Check metadata for current status (e.g., downloading)
-			metaStatus := metadata.GetStatus(dep.ID)
-			if metaStatus == depspkg.StatusDownloading {
-				status = depspkg.StatusDownloading
-			}
-
-			// Get active job ID if any
-			jobID := metadata.GetJobID(dep.ID)
-
-			sizeFormatted := formatBytes(dep.ExpectedSize)
-
-			depStatuses = append(depStatuses, dependencyStatusInfo{
-				ID:               dep.ID,
-				Name:             dep.Name,
-				Description:      dep.Description,
-				Status:           status,
-				InstalledVersion: installedVersion,
-				LatestVersion:    dep.LatestVersion,
-				SizeFormatted:    sizeFormatted,
-				TargetDir:        dep.TargetDir,
-				JobID:            jobID,
-			})
-		}
-
-		data := dependenciesTemplateData{
-			Dependencies: depStatuses,
-		}
-
-		if err := renderer.Templates().ExecuteTemplate(w, "dependencies", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-}
-
-func setupHandler(dependencies *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
-			return
-		}
-
-		allDeps := depspkg.GetAll()
-		metadata := depspkg.GetMetadataStore()
-		var depStatuses []dependencyStatusInfo
-
-		for _, dep := range allDeps {
-			exists, version, err := dep.Check(r.Context())
-
-			status := depspkg.StatusNotInstalled
-			installedVersion := ""
-
-			if err == nil && exists {
-				status = depspkg.StatusInstalled
-				installedVersion = version
-
-				// Check if outdated
-				if version != dep.LatestVersion && dep.LatestVersion != "" && version != "unknown" {
-					status = depspkg.StatusOutdated
-				}
-			}
-
-			// Check metadata for current status (e.g., downloading)
-			metaStatus := metadata.GetStatus(dep.ID)
-			if metaStatus == depspkg.StatusDownloading {
-				status = depspkg.StatusDownloading
-			}
-
-			// Get active job ID if any
-			jobID := metadata.GetJobID(dep.ID)
-
-			sizeFormatted := formatBytes(dep.ExpectedSize)
-
-			depStatuses = append(depStatuses, dependencyStatusInfo{
-				ID:               dep.ID,
-				Name:             dep.Name,
-				Description:      dep.Description,
-				Status:           status,
-				InstalledVersion: installedVersion,
-				LatestVersion:    dep.LatestVersion,
-				SizeFormatted:    sizeFormatted,
-				TargetDir:        dep.TargetDir,
-				JobID:            jobID,
-			})
-		}
-
-		data := dependenciesTemplateData{
-			Dependencies: depStatuses,
-		}
-
-		if err := renderer.Templates().ExecuteTemplate(w, "setup", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-}
-
-func skipSetupHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Disable setup mode to allow access to the rest of the app
-		setupModeMutex.Lock()
-		setupMode = false
-		setupModeMutex.Unlock()
-		log.Println("Setup mode disabled by user (skipped)")
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			"status":  "ok",
-			"message": "Setup skipped successfully",
-		})
-	}
-}
-
-// checkSetupStatusHandler checks if all dependencies are installed and updates setup mode accordingly
-func checkSetupStatusHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
-			return
-		}
-
-		// Check dependencies with a reasonable timeout
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
-
-		hasMissing := depspkg.CheckAnyMissing(ctx)
-
-		// Update global setup mode flag based on current dependency status
-		setupModeMutex.Lock()
-		oldSetupMode := setupMode
-		setupMode = hasMissing
-		setupModeMutex.Unlock()
-
-		if oldSetupMode && !hasMissing {
-			log.Println("✓ All dependencies now installed - setup mode disabled automatically")
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"setup_required": hasMissing,
-			"has_missing":    hasMissing,
-			"can_continue":   !hasMissing,
-		})
-	}
-}
-
-func checkDependencyHandler(dependencies *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
-			return
-		}
-
-		depID := r.URL.Query().Get("id")
-		if depID == "" {
-			http.Error(w, "missing id parameter", http.StatusBadRequest)
-			return
-		}
-
-		dep, ok := depspkg.Get(depID)
-		if !ok {
-			http.Error(w, "unknown dependency", http.StatusNotFound)
-			return
-		}
-
-		exists, version, err := dep.Check(r.Context())
-		status := "not_installed"
-		if err == nil && exists {
-			status = "installed"
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"id":      depID,
-			"status":  status,
-			"version": version,
-			"error":   err,
-		})
-	}
-}
-
-func downloadDependencyHandler(dependencies *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Use POST", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var req struct {
-			DependencyID string `json:"dependency_id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", http.StatusBadRequest)
-			return
-		}
-
-		if req.DependencyID == "" {
-			http.Error(w, "dependency_id is required", http.StatusBadRequest)
-			return
-		}
-
-		// Verify dependency exists
-		if _, ok := depspkg.Get(req.DependencyID); !ok {
-			http.Error(w, "unknown dependency", http.StatusNotFound)
-			return
-		}
-
-		// Create download job
-		jobID, err := dependencies.Queue.AddJob(
-			"",
-			"download-dependency",
-			[]string{},
-			req.DependencyID,
-			[]string{},
-		)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Store job ID in metadata
-		metadata := depspkg.GetMetadataStore()
-		metadata.SetJobID(req.DependencyID, jobID)
-		metadata.Save()
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
-			"job_id":        jobID,
-			"dependency_id": req.DependencyID,
-		})
 	}
 }
 
@@ -2461,18 +2128,6 @@ func main() {
 		return authMiddleware(deps, next, role)
 	}
 
-	hasMissing := false
-
-	setupModeMutex.Lock()
-	setupMode = false
-	setupModeMutex.Unlock()
-
-	if hasMissing {
-		log.Println("⚠️  Missing dependencies detected - setup mode enabled")
-	} else {
-		log.Println("✓ Dependency setup mode disabled (managed by new deps system)")
-	}
-
 	// ––– routes –––
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", renderer.ApplyMiddlewares(homeHandler(deps), renderer.RoleAdmin))
@@ -2639,7 +2294,7 @@ func main() {
 
 	srv = &http.Server{
 		Addr:    ":8090",
-		Handler: setupModeMiddleware(mux),
+		Handler: mux,
 	}
 
 	// Set up signal handling for graceful shutdown
