@@ -43,6 +43,12 @@ type randomSampler struct {
 	// kept true so the next call schedules another build.
 	invalidations uint64
 
+	// Last build error, if the most recent build failed. ensureBuilt
+	// surfaces this only when there is no cached snapshot to fall back on
+	// — otherwise stale-while-revalidate keeps serving. Cleared on the
+	// next successful build.
+	lastBuildErr error
+
 	// One cached shuffle. The swipe client uses `offset` to paginate within
 	// a single session, so a deterministic per-seed shuffle gives stable
 	// pagination (no dupes across pages) without storing one shuffle per
@@ -64,6 +70,10 @@ const samplerTTL = 30 * time.Minute
 // what keeps the swipe view responsive after a tag like — without it, the
 // next swipe request after AddTag has to scan the whole tag table while
 // holding the mutex, freezing every concurrent request for seconds.
+//
+// Returns an error only when there is no cached snapshot to fall back on
+// AND the (blocking) build failed. Background rebuild errors are logged
+// and swallowed — callers continue to serve from the stale snapshot.
 func (s *randomSampler) ensureBuilt(db *sql.DB) error {
 	s.mu.Lock()
 	fresh := s.paths != nil && !s.stale && time.Since(s.builtAt) < samplerTTL
@@ -83,6 +93,17 @@ func (s *randomSampler) ensureBuilt(db *sql.DB) error {
 		ch := s.buildCh
 		s.mu.Unlock()
 		<-ch
+		// Re-check: if the build that we waited on failed, `s.paths` is
+		// still nil. Surface that so the caller can return a 500 instead
+		// of silently returning "no items" (which the swipe UI shows as
+		// "no matching media").
+		s.mu.Lock()
+		err := s.lastBuildErr
+		hasPaths := s.paths != nil
+		s.mu.Unlock()
+		if !hasPaths && err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -100,6 +121,13 @@ func (s *randomSampler) ensureBuilt(db *sql.DB) error {
 	}
 	// First-ever build: must block, callers can't render anything yet.
 	s.runBuild(db, ch)
+	s.mu.Lock()
+	err := s.lastBuildErr
+	hasPaths := s.paths != nil
+	s.mu.Unlock()
+	if !hasPaths && err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -117,6 +145,7 @@ func (s *randomSampler) runBuild(db *sql.DB, ch chan struct{}) {
 		log.Printf("[randomSampler] build failed: %v", err)
 		s.mu.Lock()
 		s.buildCh = nil
+		s.lastBuildErr = err
 		s.mu.Unlock()
 		return
 	}
@@ -124,6 +153,7 @@ func (s *randomSampler) runBuild(db *sql.DB, ch chan struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.buildCh = nil
+	s.lastBuildErr = nil
 	s.paths = paths
 	s.builtAt = time.Now()
 	// If a mutation arrived during the rebuild, the snapshot we just took
@@ -185,6 +215,32 @@ func (s *randomSampler) Invalidate() {
 	s.stale = true
 	s.invalidations++
 	s.mu.Unlock()
+}
+
+// Reset drops the cached snapshot entirely. Unlike Invalidate, this
+// forces the next call to ensureBuilt to block and rebuild — no
+// stale-while-revalidate. Use when the cached paths are not just out of
+// date but tied to a *different* underlying dataset (DB swap), where
+// serving them would yield IN-list lookups against a database that has
+// none of them and silently return zero items.
+func (s *randomSampler) Reset() {
+	s.mu.Lock()
+	s.paths = nil
+	s.shuffledPaths = nil
+	s.shuffleSeed = 0
+	s.builtAt = time.Time{}
+	s.stale = true
+	s.invalidations++
+	s.lastBuildErr = nil
+	s.mu.Unlock()
+}
+
+// ResetRandomSampleCache drops the cached snapshot. Use on DB swap so
+// stale paths from the old database don't leak into queries against the
+// new one. For tag mutations on the same DB, prefer InvalidateRandomSampleCache
+// — it allows stale-while-revalidate.
+func ResetRandomSampleCache() {
+	defaultSampler.Reset()
 }
 
 // sample returns a window into the per-seed shuffle. The returned slice is a

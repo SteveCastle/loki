@@ -358,6 +358,34 @@
         background: rgba(255, 255, 255, 0.2);
       }
 
+      /* Filter button: dot indicator + count when a tag filter is active.
+         A persisted filter from localStorage can otherwise silently produce
+         an empty swipe view; this surfaces it without opening the modal. */
+      .header-btn.has-filter {
+        background: rgba(0, 217, 165, 0.2);
+        color: var(--accent);
+        position: relative;
+      }
+
+      .header-btn.has-filter::after {
+        content: attr(data-filter-count);
+        position: absolute;
+        top: -4px;
+        right: -4px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 4px;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #000;
+        font-size: 10px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+      }
+
       /* Empty state */
       .empty-state {
         position: absolute;
@@ -1302,9 +1330,17 @@
       <div class="empty-state" id="emptyState" style="display: none">
         <div class="empty-icon">📷</div>
         <div class="empty-title">No media found</div>
-        <div class="empty-text">
+        <div class="empty-text" id="emptyText">
           Try adjusting your filter or add some media to your library.
         </div>
+        <button
+          id="emptyClearFilter"
+          class="clear-all-tags"
+          style="display: none; margin-top: 16px"
+          onclick="clearAllTags()"
+        >
+          Clear filter
+        </button>
       </div>
 
       <div class="heart-animation" id="heartAnimation">❤️</div>
@@ -1460,6 +1496,25 @@
         return tagQueries.join(' OR ');
       }
 
+      // Reflect the active-filter state on the filter button so a stale
+      // localStorage filter doesn't silently masquerade as "no media".
+      // The selected-tag chips are only visible inside the modal, so
+      // without this the user has no indication a filter is applied.
+      function updateFilterButtonIndicator() {
+        const btn = document.getElementById('filterBtn');
+        if (!btn) return;
+        const count = selectedTags.size;
+        if (count > 0) {
+          btn.classList.add('has-filter');
+          btn.dataset.filterCount = String(count);
+          btn.title = `Filter (${count} active) — tap to edit`;
+        } else {
+          btn.classList.remove('has-filter');
+          delete btn.dataset.filterCount;
+          btn.title = 'Filter';
+        }
+      }
+
       // Load selected tags from localStorage
       function loadSelectedTags() {
         try {
@@ -1563,6 +1618,11 @@
         // Do NOT restore saved position to ensure fresh start every time
         // const savedPath = getSavedPosition();
 
+        // Surface any persisted tag filter from localStorage immediately,
+        // before the first fetch, so the user can see why an "empty" view
+        // may not actually be empty.
+        updateFilterButtonIndicator();
+
         // Load first item immediately for fast initial render
         // We do this via a separate specific call that renders immediately
         await loadInitial();
@@ -1610,13 +1670,35 @@
             isLoading = false; // Reset flag to allow next load
             loadMore(30, true); // Preload next batch
           } else {
+            // Surface the active filter in the empty state so a stale
+            // persisted filter doesn't look like "the library is empty".
+            const emptyText = document.getElementById('emptyText');
+            const emptyClearBtn = document.getElementById('emptyClearFilter');
+            if (selectedTags.size > 0) {
+              const tagList = Array.from(selectedTags)
+                .map((t) => `"${t}"`)
+                .join(', ');
+              if (emptyText) {
+                emptyText.textContent = `No media matches your tag filter (${tagList}). Clear the filter or pick different tags.`;
+              }
+              if (emptyClearBtn) emptyClearBtn.style.display = 'inline-flex';
+            } else {
+              if (emptyText) {
+                emptyText.textContent =
+                  'Try adjusting your filter or add some media to your library.';
+              }
+              if (emptyClearBtn) emptyClearBtn.style.display = 'none';
+            }
             emptyState.style.display = 'flex';
             swipeActions.style.display = 'none';
             swipeHint.style.display = 'none';
             isLoading = false;
           }
         } catch (err) {
-          if (err.name === 'AbortError') return;
+          if (err.name === 'AbortError') {
+            isLoading = false;
+            return;
+          }
           console.error('Failed to load initial item:', err);
           isLoading = false;
         } finally {
@@ -2910,6 +2992,7 @@
       function applyFilter(shouldClose = false) {
         const newQuery = buildTagQuery();
         saveSelectedTags();
+        updateFilterButtonIndicator();
         if (newQuery !== searchQuery) {
           // Abort any pending requests
           if (fetchController) {

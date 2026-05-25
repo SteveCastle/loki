@@ -1,8 +1,10 @@
 package media
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
+	"time"
 )
 
 // TestSamplerQueryPathsSorted guards the swipe pagination contract.
@@ -93,5 +95,87 @@ func TestSamplerShuffleStableForSameInput(t *testing.T) {
 		if seen[p] {
 			t.Fatalf("page2 of a stable shuffle must not overlap page1; duplicate %q", p)
 		}
+	}
+}
+
+// TestSamplerEnsureBuiltSurfacesFirstBuildError guards the contract that
+// callers can distinguish "the universe is empty" from "we couldn't build
+// the universe". Before the fix, ensureBuilt logged the build error and
+// returned nil; the sampler then served zero items, the API returned 200
+// with an empty list, and the swipe UI showed "no matching media" — for
+// what was really a transient SQL failure.
+func TestSamplerEnsureBuiltSurfacesFirstBuildError(t *testing.T) {
+	// Use a closed connection: every query fails. A real-world equivalent
+	// is a DB swap that closed the old handle while a request was mid-flight.
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	db.Close()
+
+	s := &randomSampler{}
+	if err := s.ensureBuilt(db); err == nil {
+		t.Fatal("ensureBuilt must surface the first-build error when there is no cache to fall back on")
+	}
+}
+
+// TestSamplerStaleCacheSurvivesBackgroundFailure guards the stale-while-
+// revalidate contract: if a background rebuild fails, callers keep the
+// existing snapshot rather than getting a sudden error.
+func TestSamplerStaleCacheSurvivesBackgroundFailure(t *testing.T) {
+	s := &randomSampler{
+		paths:   []string{"/m/a.jpg", "/m/b.jpg"},
+		builtAt: time.Now().Add(-2 * samplerTTL), // TTL-stale
+		stale:   true,
+	}
+
+	// Pass a closed DB so the background rebuild will fail.
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	db.Close()
+
+	// With an existing snapshot, ensureBuilt must NOT block on the
+	// background build and must NOT return an error: the stale snapshot is
+	// the fallback. The background goroutine may finish before or after
+	// this returns; either way the snapshot must still be sampleable.
+	if err := s.ensureBuilt(db); err != nil {
+		t.Fatalf("ensureBuilt with stale cache must swallow background-build errors; got %v", err)
+	}
+
+	// Give the background rebuild a moment to fail. It must not clobber
+	// the snapshot, only mark `lastBuildErr`.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		done := s.buildCh == nil
+		s.mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	got, total := s.sample(42, 0, 10)
+	if total != 2 || len(got) != 2 {
+		t.Fatalf("stale snapshot must still be sampleable after background build fails; got total=%d len=%d", total, len(got))
+	}
+}
+
+// TestSamplerResetDropsCache guards the DB-swap contract: after Reset the
+// next sample call must NOT return paths from the old snapshot, because
+// the underlying database is now different and those paths may not exist
+// in it.
+func TestSamplerResetDropsCache(t *testing.T) {
+	s := &randomSampler{
+		paths: []string{"/old/a.jpg", "/old/b.jpg"},
+	}
+	if got, total := s.sample(1, 0, 10); total != 2 || len(got) != 2 {
+		t.Fatalf("precondition: sampler should hold 2 paths; got total=%d len=%d", total, len(got))
+	}
+	s.Reset()
+	if got, total := s.sample(1, 0, 10); total != 0 || len(got) != 0 {
+		t.Fatalf("after Reset, sampler must hold zero paths so old-DB paths can't leak; got total=%d len=%d", total, len(got))
 	}
 }

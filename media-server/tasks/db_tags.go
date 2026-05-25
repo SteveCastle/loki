@@ -69,7 +69,12 @@ func getExistingTagsForFile(db *sql.DB, filePath string) ([]TagInfo, error) {
 // removeExistingTagsForFile removes all existing tags for a file
 func removeExistingTagsForFile(db *sql.DB, filePath string) error {
 	_, err := db.Exec(`DELETE FROM media_tag_by_category WHERE media_path = ?`, filePath)
-	return err
+	if err != nil {
+		return err
+	}
+	// Stripping a path's last tag removes it from the swipe pool.
+	media.InvalidateRandomSampleCache()
+	return nil
 }
 
 // insertTagsForFile inserts tags for a file into the database
@@ -78,10 +83,18 @@ func insertTagsForFile(db *sql.DB, filePath string, tags []TagInfo) error {
 		return err
 	}
 	stmt := `INSERT INTO media_tag_by_category (media_path, tag_label, category_label) VALUES (?, ?, ?)`
+	inserted := 0
 	for _, t := range tags {
 		if _, err := db.Exec(stmt, filePath, t.Label, t.Category); err != nil {
 			return fmt.Errorf("failed to insert tag %s/%s: %w", t.Category, t.Label, err)
 		}
+		inserted++
+	}
+	// New tag rows may make a previously-untagged path eligible for the
+	// swipe pool. Without this, auto-tagged paths never appear there until
+	// the sampler's TTL expires.
+	if inserted > 0 {
+		media.InvalidateRandomSampleCache()
 	}
 	return nil
 }
