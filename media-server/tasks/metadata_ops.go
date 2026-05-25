@@ -535,8 +535,12 @@ func callOllamaVision(ctx context.Context, imagePath, model string) (string, err
 }
 
 func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string) (string, error) {
-	// Try to get the path from the dependency system first
-	exePath, err := deps.GetFilePath("faster-whisper", deps.GetWhisperExecutableName())
+	// Faster-Whisper is not bundled in this build. Caller falls back to user-configured path.
+	exePath := deps.BundledOrEmpty("faster-whisper")
+	var err error
+	if exePath == "" {
+		err = fmt.Errorf("faster-whisper not bundled; configure FasterWhisperPath in settings to enable transcription")
+	}
 	if err != nil {
 		// Fall back to config if dependency system doesn't have it
 		if q != nil && jobID != "" {
