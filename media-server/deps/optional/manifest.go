@@ -25,4 +25,12 @@ var Manifest = []Optional{
 		Description: "Local large language model runtime. Enables AI captioning and chat features.",
 		DocsURL:     "https://ollama.com/download",
 	},
+	{
+		ID:          "dce",
+		Name:        "DiscordChatExporter",
+		Binary:      "dce",
+		VersionArgs: nil,
+		Description: "Discord Chat Exporter CLI. Required to ingest Discord channel exports.",
+		DocsURL:     "https://github.com/Tyrrrz/DiscordChatExporter",
+	},
 }
