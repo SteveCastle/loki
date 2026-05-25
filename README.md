@@ -4,9 +4,9 @@
 
 <video src="https://stevecastle.github.io/loki/static/viewer-overview.mp4" autoplay loop muted playsinline controls></video>
 
-Most media apps treat your files like cattle in a database — slow scans, lossy compression, opinions about how things should be organized, a cloud account you didn't ask for. Lowkey Media Viewer is the opposite. Point it at a directory and it just opens. Files stay where you put them. Tagging is local. There is no telemetry, no account, no upsell.
+Most media apps want to take over your files — importing them into a private library, re-encoding them, asking you to sign in. Lowkey Media Viewer doesn't. Point it at a directory and it just opens. Files stay where you put them, in the formats you already have. Tags live in a local SQLite database you own and can back up. No account, no cloud sync, no telemetry.
 
-It's built for the kind of library that's hard to organize with existing tools: tens of thousands of images and videos accumulated over years, mixed formats, comic archives, audio files, screenshots, weird old `.webm`s. If you want to view those files, tag them, find them again later, and never lose them to a service shutting down — this is for you.
+It's built for the kind of library that's hard to handle with existing tools: tens of thousands of images and videos accumulated over years, mixed formats, comic archives, audio files, screenshots, weird old `.webm`s. If you want to view those files, tag them, find them again later, and never lose them to a service shutting down — this is for you.
 
 **Download free** at [**lowkeyviewer.com**](https://lowkeyviewer.com) for **Windows, macOS, and Linux**.
 
