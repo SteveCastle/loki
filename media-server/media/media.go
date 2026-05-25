@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -284,60 +285,122 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 		return getRandomItemsWithExistenceFilter(db, baseQuery, whereClause, args, orderBy, offset, limit, rootNode)
 	}
 
-	// Standard pagination when no exists conditions.
-	//
-	// Performance note: ORDER BY RANDOM() forces SQLite to materialize and
-	// sort the entire matching set. Doing it on the full SELECT
-	// (`m.path, m.description, m.size, m.hash, m.width, m.height`) means the
-	// sort buffer holds those wide rows for every match. On a large library
-	// this took 11+ seconds for LIMIT 2.
-	//
-	// Fix: do the random sort against a narrow path-only inner query, then
-	// fetch full rows for just the chosen paths. The sort step now only
-	// shuffles TEXT path values; the wide-row fetch is bounded by LIMIT.
-	limitClause := ` LIMIT ? OFFSET ?`
-	innerQuery := `SELECT m.path FROM media m ` + whereClause + orderBy + limitClause
-	innerArgs := append([]interface{}{}, args...)
-	innerArgs = append(innerArgs, limit+1, offset)
+	// Hash-clustered duplicates view stays on the SQL path: it wants items
+	// grouped by hash, not shuffled into a stable random order. Everything
+	// else (the dominant tag-filtered swipe case) goes through the Go-side
+	// seeded shuffle below.
+	if rootNode != nil && rootNode.HasDuplicates() {
+		return getRandomItemsFilteredSQL(db, whereClause, args, orderBy, offset, limit)
+	}
 
-	query := `SELECT m.path, m.description, m.size, m.hash, m.width, m.height FROM media m WHERE m.path IN (` + innerQuery + `)`
+	// Fetch all matching paths in a stable order and shuffle in Go keyed by
+	// the session seed. The previous implementation used `ORDER BY RANDOM()`
+	// per request, which produced a fresh independent shuffle on every page
+	// — so consecutive paginated calls (offset=0,limit=1 then offset=1,limit=30
+	// then offset=31,limit=30…) sliced windows out of *different* permutations
+	// of the same universe, and items reappeared across pages (the swipe
+	// "cycles of repeating media" bug). A deterministic per-seed shuffle on
+	// a fixed input order — mirroring the unfiltered sampler in
+	// random_sampler.go — produces a stable session-wide permutation that the
+	// client can paginate without overlap.
+	pathQuery := `SELECT m.path FROM media m ` + whereClause + ` ORDER BY m.path`
+	stopPaths := querylog.Start("GetRandomItems.filtered.paths", pathQuery, args)
+	pathRows, err := db.Query(pathQuery, args...)
+	if err != nil {
+		stopPaths(-1, err)
+		return nil, false, err
+	}
+	allPaths := make([]string, 0, 1024)
+	for pathRows.Next() {
+		var p string
+		if err := pathRows.Scan(&p); err != nil {
+			pathRows.Close()
+			stopPaths(len(allPaths), err)
+			return nil, false, err
+		}
+		allPaths = append(allPaths, p)
+	}
+	pathRows.Close()
+	if err := pathRows.Err(); err != nil {
+		stopPaths(len(allPaths), err)
+		return nil, false, err
+	}
+	stopPaths(len(allPaths), nil)
 
-	stop := querylog.Start("GetRandomItems", query, innerArgs)
-	rows, err := db.Query(query, innerArgs...)
+	if len(allPaths) == 0 {
+		return nil, false, nil
+	}
+
+	// seed == 0 means "fresh randomness this session" — matches the sampler's
+	// contract so the unfiltered and filtered swipe paths behave the same.
+	effectiveSeed := seed
+	if effectiveSeed == 0 {
+		effectiveSeed = time.Now().UnixNano()
+	}
+	rng := rand.New(rand.NewSource(effectiveSeed))
+	rng.Shuffle(len(allPaths), func(i, j int) { allPaths[i], allPaths[j] = allPaths[j], allPaths[i] })
+
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(allPaths) {
+		return nil, false, nil
+	}
+	end := offset + limit + 1
+	if end > len(allPaths) {
+		end = len(allPaths)
+	}
+	picked := allPaths[offset:end]
+	hasMore := len(picked) > limit
+	if hasMore {
+		picked = picked[:limit]
+	}
+
+	placeholders := strings.Repeat("?,", len(picked))
+	placeholders = placeholders[:len(placeholders)-1]
+	wideQuery := `SELECT m.path, m.description, m.size, m.hash, m.width, m.height FROM media m WHERE m.path IN (` + placeholders + `)`
+	wideArgs := make([]interface{}, len(picked))
+	for i, p := range picked {
+		wideArgs[i] = p
+	}
+
+	stop := querylog.Start("GetRandomItems.filtered.wide", wideQuery, wideArgs)
+	rows, err := db.Query(wideQuery, wideArgs...)
 	if err != nil {
 		stop(-1, err)
 		return nil, false, err
 	}
 	defer rows.Close()
 
-	var items []MediaItem
-	var mediaPaths []string
+	// SQLite's IN-list returns rows in PK order, not the shuffle order. Build
+	// a path→item map and re-emit in `picked` order so the client sees items
+	// in the deterministic shuffle order — needed for stable offset-based
+	// pagination across calls within a session.
+	byPath := make(map[string]MediaItem, len(picked))
 	rowCount := 0
 	for rows.Next() {
 		var item MediaItem
-		err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height)
-		if err != nil {
+		if err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height); err != nil {
 			stop(rowCount, err)
 			return nil, false, err
 		}
 		rowCount++
-
-		// Handle nullable size field
 		if item.Size.Valid {
 			item.FormattedSize = FormatBytes(item.Size.Int64)
 		} else {
 			item.FormattedSize = "Unknown"
 		}
-
-		items = append(items, item)
-		mediaPaths = append(mediaPaths, item.Path)
+		byPath[item.Path] = item
 	}
 	stop(rowCount, nil)
 
-	hasMore := len(items) > limit
-	if hasMore {
-		items = items[:limit]
-		mediaPaths = mediaPaths[:limit]
+	items := make([]MediaItem, 0, len(picked))
+	mediaPaths := make([]string, 0, len(picked))
+	for _, p := range picked {
+		if it, ok := byPath[p]; ok {
+			items = append(items, it)
+			mediaPaths = append(mediaPaths, p)
+		}
 	}
 
 	// Fetch tags for all media items
@@ -363,6 +426,91 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 	}
 
 	// Check file existence for all media items concurrently
+	existenceMap := CheckFilesExistConcurrent(mediaPaths)
+	for i := range items {
+		if exists, found := existenceMap[items[i].Path]; found {
+			items[i].Exists = exists
+		} else {
+			items[i].Exists = false
+		}
+	}
+
+	return items, hasMore, nil
+}
+
+// getRandomItemsFilteredSQL is the legacy SQL-shuffled path. Used only when
+// the search query includes `duplicates:` — that mode wants items clustered
+// by hash so duplicate sets show together, which the Go-side seeded shuffle
+// in GetRandomItems would scramble. Repeats across pages are an inherent
+// property of `ORDER BY RANDOM()` pagination but the duplicates view doesn't
+// rely on stable session-wide pagination.
+//
+// Performance note: ORDER BY RANDOM() forces SQLite to materialize and sort
+// the entire matching set. Doing it on the full SELECT means the sort buffer
+// holds wide rows for every match. The inner-query split below keeps the
+// random sort against a narrow path-only projection, then fetches wide rows
+// for just the chosen paths.
+func getRandomItemsFilteredSQL(db *sql.DB, whereClause string, args []interface{}, orderBy string, offset, limit int) ([]MediaItem, bool, error) {
+	limitClause := ` LIMIT ? OFFSET ?`
+	innerQuery := `SELECT m.path FROM media m ` + whereClause + orderBy + limitClause
+	innerArgs := append([]interface{}{}, args...)
+	innerArgs = append(innerArgs, limit+1, offset)
+
+	query := `SELECT m.path, m.description, m.size, m.hash, m.width, m.height FROM media m WHERE m.path IN (` + innerQuery + `)`
+
+	stop := querylog.Start("GetRandomItems.duplicates", query, innerArgs)
+	rows, err := db.Query(query, innerArgs...)
+	if err != nil {
+		stop(-1, err)
+		return nil, false, err
+	}
+	defer rows.Close()
+
+	var items []MediaItem
+	var mediaPaths []string
+	rowCount := 0
+	for rows.Next() {
+		var item MediaItem
+		if err := rows.Scan(&item.Path, &item.Description, &item.Size, &item.Hash, &item.Width, &item.Height); err != nil {
+			stop(rowCount, err)
+			return nil, false, err
+		}
+		rowCount++
+		if item.Size.Valid {
+			item.FormattedSize = FormatBytes(item.Size.Int64)
+		} else {
+			item.FormattedSize = "Unknown"
+		}
+		items = append(items, item)
+		mediaPaths = append(mediaPaths, item.Path)
+	}
+	stop(rowCount, nil)
+
+	hasMore := len(items) > limit
+	if hasMore {
+		items = items[:limit]
+		mediaPaths = mediaPaths[:limit]
+	}
+
+	if limit > 1 || len(items) > 1 {
+		tagMap, err := GetTags(db, mediaPaths)
+		if err != nil {
+			log.Printf("Error fetching media tags: %v", err)
+		} else {
+			for i := range items {
+				if tags, exists := tagMap[items[i].Path]; exists {
+					items[i].Tags = tags
+				} else {
+					items[i].Tags = []MediaTag{}
+				}
+			}
+		}
+	} else {
+		for i := range items {
+			items[i].Tags = []MediaTag{}
+		}
+	}
+
 	existenceMap := CheckFilesExistConcurrent(mediaPaths)
 	for i := range items {
 		if exists, found := existenceMap[items[i].Path]; found {
