@@ -46,18 +46,22 @@ func Snapshot() []Item {
 		if state == "" {
 			state = string(models.StatusMissing)
 		}
+		path := ""
+		if cached[m.ID] == models.StatusInstalled {
+			path = models.ModelDir(m.ID)
+		}
 		if inst, ok := models.Tracker.Snapshot(m.ID); ok {
 			state = string(inst.State)
 			out = append(out, Item{
 				ID: m.ID, Category: "model", Name: m.Name,
-				State: state, SizeBytes: m.SizeBytes,
+				State: state, SizeBytes: m.SizeBytes, Path: path,
 				Detail: inst, Error: inst.Error,
 			})
 			continue
 		}
 		out = append(out, Item{
 			ID: m.ID, Category: "model", Name: m.Name,
-			State: state, SizeBytes: m.SizeBytes,
+			State: state, SizeBytes: m.SizeBytes, Path: path,
 		})
 	}
 	return out
