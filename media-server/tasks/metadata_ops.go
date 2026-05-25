@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -471,7 +472,13 @@ func describeFileWithOllama(ctx context.Context, mediaPath, model string) (strin
 	return description, nil
 }
 
+// resizeImageIfNeeded ensures the image fed to Ollama has its long side at
+// most maxLongSide pixels. Returns the original path unchanged if it already
+// fits, otherwise writes a downscaled PNG to a uniquely-named temp file and
+// returns that path; caller is responsible for removing it.
 func resizeImageIfNeeded(path string) (string, error) {
+	const maxLongSide = 1280
+
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -482,19 +489,41 @@ func resizeImageIfNeeded(path string) (string, error) {
 		return "", fmt.Errorf("image decode failed: %w", err)
 	}
 	b := img.Bounds()
-	if b.Dx() <= 1024 && b.Dy() <= 1024 {
+	longSide := b.Dx()
+	if b.Dy() > longSide {
+		longSide = b.Dy()
+	}
+	if longSide <= maxLongSide {
 		return path, nil
 	}
-	convertedPath := filepath.Join(os.TempDir(), fmt.Sprintf("ollama_resized_%s.png", filepath.Base(path)))
-	out, err := os.Create(convertedPath)
+
+	scale := float64(maxLongSide) / float64(longSide)
+	w := int(float64(b.Dx()) * scale)
+	h := int(float64(b.Dy()) * scale)
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Over, nil)
+
+	out, err := os.CreateTemp("", "ollama_resize_*.png")
 	if err != nil {
 		return "", err
 	}
-	defer out.Close()
-	if err := png.Encode(out, img); err != nil {
+	tmpPath := out.Name()
+	if err := png.Encode(out, dst); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmpPath)
 		return "", err
 	}
-	return convertedPath, nil
+	if err := out.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", err
+	}
+	return tmpPath, nil
 }
 
 func callOllamaVision(ctx context.Context, imagePath, model string) (string, error) {
