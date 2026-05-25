@@ -12,6 +12,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // ingestDiscordTaskWithOptions downloads media from Discord using dce and adds to database
@@ -75,12 +76,15 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		args = append(args, arg)
 	}
 
-	cmd, err := deps.GetExec(ctx, "dce", "dce", args...)
-	if err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error starting dce: %s", err))
+	status, _ := deps.DetectOptional("dce")
+	if !status.Installed {
+		msg := "DiscordChatExporter (dce) is not installed. See /onboarding for install instructions."
+		q.PushJobStdout(j.ID, msg)
 		q.ErrorJob(j.ID)
-		return fmt.Errorf("start dce: %w", err)
+		return fmt.Errorf("dce not installed")
 	}
+	cmd := exec.CommandContext(ctx, status.Path, args...)
+	platform.HideSubprocessWindow(cmd)
 
 	// Handle cancellation
 	go func() {

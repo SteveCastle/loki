@@ -10,8 +10,10 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/deps/bundled"
+	"github.com/stevecastle/shrike/deps/optional"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // commandToDependencyID maps command names to their dependency IDs.
@@ -75,12 +77,16 @@ func executeCommand(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		depID = j.Command
 	}
 
-	cmd, err := deps.GetExec(ctx, depID, j.Command, args...)
-	if err != nil {
-		_ = q.PushJobStdout(j.ID, fmt.Sprintf("Error starting job: %s", err))
+	// Resolve the executable: bundled → optional → PATH.
+	exePath := resolveCommand(depID, j.Command)
+	if exePath == "" {
+		msg := fmt.Sprintf("Error starting job: %q not found in bundled, optional, or PATH", j.Command)
+		_ = q.PushJobStdout(j.ID, msg)
 		_ = q.ErrorJob(j.ID)
-		return fmt.Errorf("start %q: %w", j.Command, err)
+		return fmt.Errorf("start %q: not found", j.Command)
 	}
+	cmd := exec.CommandContext(ctx, exePath, args...)
+	platform.HideSubprocessWindow(cmd)
 
 	go func() {
 		<-ctx.Done()
@@ -159,4 +165,21 @@ func executeCommand(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	_ = q.CompleteJob(j.ID)
 	return nil
+}
+
+// resolveCommand looks up an executable by dep id (bundled first, then
+// optional), then by name on PATH. Returns "" if nothing matches.
+func resolveCommand(depID, exeName string) string {
+	if depID != "" {
+		if p, err := bundled.Resolve(depID); err == nil {
+			return p
+		}
+		if s, _ := optional.Detect(depID); s.Installed && s.Path != "" {
+			return s.Path
+		}
+	}
+	if p, err := exec.LookPath(exeName); err == nil {
+		return p
+	}
+	return ""
 }

@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // isImageExt returns true for image file extensions (case-insensitive).
@@ -525,12 +527,9 @@ func ffmpegThumbSheetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) er
 
 		q.PushJobStdout(j.ID, "thumbsheet: running on "+base+" -> "+filepath.Base(output))
 
-		cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", finalArgs...)
-		if err != nil {
-			q.PushJobStdout(j.ID, "thumbsheet: failed to prepare: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
+		ffmpegPath := deps.MustBundled("ffmpeg")
+		cmd := exec.CommandContext(ctx, ffmpegPath, finalArgs...)
+		platform.HideSubprocessWindow(cmd)
 
 		stderr, err := cmd.StderrPipe()
 		if err != nil {

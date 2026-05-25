@@ -12,6 +12,7 @@ import (
 
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // ingestGalleryTask downloads media using gallery-dl and adds to database
@@ -59,12 +60,15 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		args = append(args, arg)
 	}
 
-	cmd, err := deps.GetExec(ctx, "gallery-dl", "gallery-dl", args...)
-	if err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error starting gallery-dl: %s", err))
+	status, _ := deps.DetectOptional("gallery-dl")
+	if !status.Installed {
+		msg := "gallery-dl is not installed. Install it (e.g. pipx install gallery-dl) and try again. See /onboarding for per-OS instructions."
+		q.PushJobStdout(j.ID, msg)
 		q.ErrorJob(j.ID)
-		return fmt.Errorf("start gallery-dl: %w", err)
+		return fmt.Errorf("gallery-dl not installed")
 	}
+	cmd := exec.CommandContext(ctx, status.Path, args...)
+	platform.HideSubprocessWindow(cmd)
 
 	// Handle cancellation
 	go func() {
