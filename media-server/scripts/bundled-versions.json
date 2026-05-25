@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "binaries": {
+    "ffmpeg": {
+      "windows-amd64": {
+        "version": "n7.1",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
+        "sha256": "TO_FILL",
+        "archive": "zip",
+        "extract": [
+          {"from": "*/bin/ffmpeg.exe",  "to": "ffmpeg.exe"},
+          {"from": "*/bin/ffprobe.exe", "to": "ffprobe.exe"},
+          {"from": "*/bin/ffplay.exe",  "to": "ffplay.exe"}
+        ]
+      },
+      "linux-amd64": {
+        "version": "n7.1",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
+        "sha256": "TO_FILL",
+        "archive": "tar.xz",
+        "extract": [
+          {"from": "*/bin/ffmpeg",  "to": "ffmpeg"},
+          {"from": "*/bin/ffprobe", "to": "ffprobe"},
+          {"from": "*/bin/ffplay",  "to": "ffplay"}
+        ]
+      },
+      "darwin-arm64": {
+        "version": "evermeet-latest",
+        "url": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
+        "sha256": "TO_FILL",
+        "archive": "zip",
+        "extract": [{"from": "ffmpeg", "to": "ffmpeg"}]
+      },
+      "darwin-amd64": {
+        "version": "evermeet-latest",
+        "url": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
+        "sha256": "TO_FILL",
+        "archive": "zip",
+        "extract": [{"from": "ffmpeg", "to": "ffmpeg"}]
+      }
+    },
+    "ffprobe-macos": {
+      "darwin-arm64": {
+        "version": "evermeet-latest",
+        "url": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
+        "sha256": "TO_FILL",
+        "archive": "zip",
+        "extract": [{"from": "ffprobe", "to": "ffprobe"}]
+      },
+      "darwin-amd64": {
+        "version": "evermeet-latest",
+        "url": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
+        "sha256": "TO_FILL",
+        "archive": "zip",
+        "extract": [{"from": "ffprobe", "to": "ffprobe"}]
+      }
+    },
+    "exiftool": {
+      "windows-amd64": {
+        "version": "13.04",
+        "url": "https://exiftool.org/exiftool-13.04_64.zip",
+        "sha256": "TO_FILL",
+        "archive": "zip",
+        "extract": [
+          {"from": "exiftool-13.04_64/exiftool(-k).exe", "to": "exiftool.exe"},
+          {"from": "exiftool-13.04_64/exiftool_files",   "to": "exiftool_files", "type": "dir"}
+        ]
+      },
+      "linux-amd64": {
+        "version": "13.04",
+        "url": "https://exiftool.org/Image-ExifTool-13.04.tar.gz",
+        "sha256": "TO_FILL",
+        "archive": "tar.gz",
+        "extract": [
+          {"from": "Image-ExifTool-13.04/exiftool",   "to": "exiftool"},
+          {"from": "Image-ExifTool-13.04/lib",        "to": "exiftool_files", "type": "dir"}
+        ]
+      },
+      "darwin-arm64": {
+        "version": "13.04",
+        "url": "https://exiftool.org/Image-ExifTool-13.04.tar.gz",
+        "sha256": "TO_FILL",
+        "archive": "tar.gz",
+        "extract": [
+          {"from": "Image-ExifTool-13.04/exiftool", "to": "exiftool"},
+          {"from": "Image-ExifTool-13.04/lib",      "to": "exiftool_files", "type": "dir"}
+        ]
+      },
+      "darwin-amd64": {
+        "version": "13.04",
+        "url": "https://exiftool.org/Image-ExifTool-13.04.tar.gz",
+        "sha256": "TO_FILL",
+        "archive": "tar.gz",
+        "extract": [
+          {"from": "Image-ExifTool-13.04/exiftool", "to": "exiftool"},
+          {"from": "Image-ExifTool-13.04/lib",      "to": "exiftool_files", "type": "dir"}
+        ]
+      }
+    },
+    "onnxtag": {
+      "windows-amd64": {
+        "version": "1.0.0",
+        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag.exe",
+        "sha256": "TO_FILL",
+        "archive": "none",
+        "extract": [{"from": "onnxtag.exe", "to": "onnxtag.exe"}]
+      },
+      "linux-amd64": {
+        "version": "1.0.0",
+        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag",
+        "sha256": "TO_FILL",
+        "archive": "none",
+        "extract": [{"from": "onnxtag", "to": "onnxtag"}]
+      },
+      "darwin-arm64": {
+        "version": "1.0.0",
+        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag-darwin-arm64",
+        "sha256": "TO_FILL",
+        "archive": "none",
+        "extract": [{"from": "onnxtag-darwin-arm64", "to": "onnxtag"}]
+      },
+      "darwin-amd64": {
+        "version": "1.0.0",
+        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag-darwin-amd64",
+        "sha256": "TO_FILL",
+        "archive": "none",
+        "extract": [{"from": "onnxtag-darwin-amd64", "to": "onnxtag"}]
+      }
+    },
+    "onnxruntime": {
+      "windows-amd64": {
+        "version": "1.21.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-x64-1.21.0.zip",
+        "sha256": "TO_FILL",
+        "archive": "zip",
+        "extract": [{"from": "onnxruntime-win-x64-1.21.0/lib/onnxruntime.dll", "to": "onnxruntime.dll"}]
+      },
+      "linux-amd64": {
+        "version": "1.21.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-linux-x64-1.21.0.tgz",
+        "sha256": "TO_FILL",
+        "archive": "tar.gz",
+        "extract": [{"from": "onnxruntime-linux-x64-1.21.0/lib/libonnxruntime.so*", "to": "onnxruntime.so", "match": "newest"}]
+      },
+      "darwin-arm64": {
+        "version": "1.21.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-osx-arm64-1.21.0.tgz",
+        "sha256": "TO_FILL",
+        "archive": "tar.gz",
+        "extract": [{"from": "onnxruntime-osx-arm64-1.21.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
+      },
+      "darwin-amd64": {
+        "version": "1.21.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-osx-x86_64-1.21.0.tgz",
+        "sha256": "TO_FILL",
+        "archive": "tar.gz",
+        "extract": [{"from": "onnxruntime-osx-x86_64-1.21.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
+      }
+    }
+  }
+}
