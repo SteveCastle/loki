@@ -20,6 +20,13 @@ var (
 	stateCacheMu sync.RWMutex
 )
 
+// SetCachedStateForTest overrides the cache. Tests only.
+func SetCachedStateForTest(in map[string]ModelStatus) {
+	stateCacheMu.Lock()
+	defer stateCacheMu.Unlock()
+	stateCache = in
+}
+
 // RebuildState walks the model directory and recomputes installed/missing
 // for every manifest entry. Always succeeds; results are cached.
 func RebuildState() map[string]ModelStatus {
