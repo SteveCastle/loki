@@ -32,6 +32,8 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/auth"
 	depspkg "github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/deps/bundled"
+	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/platform"
@@ -315,10 +317,7 @@ func setupModeMiddleware(next http.Handler) http.Handler {
 		inSetupMode := setupMode
 		setupModeMutex.RUnlock()
 
-		if inSetupMode {
-			http.Redirect(w, r, "/setup", http.StatusTemporaryRedirect)
-			return
-		}
+		_ = inSetupMode // setup mode is permanently disabled by the new dependency system
 
 		next.ServeHTTP(w, r)
 	})
@@ -2462,20 +2461,16 @@ func main() {
 		return authMiddleware(deps, next, role)
 	}
 
-	// ––– check for missing dependencies –––
-	log.Println("Checking dependencies...")
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	hasMissing := depspkg.CheckAnyMissing(ctx)
+	hasMissing := false
 
 	setupModeMutex.Lock()
-	setupMode = hasMissing
+	setupMode = false
 	setupModeMutex.Unlock()
 
 	if hasMissing {
 		log.Println("⚠️  Missing dependencies detected - setup mode enabled")
 	} else {
-		log.Println("✓ All dependencies are installed")
+		log.Println("✓ Dependency setup mode disabled (managed by new deps system)")
 	}
 
 	// ––– routes –––
@@ -2507,12 +2502,7 @@ func main() {
 	mux.HandleFunc("/stats", renderer.ApplyMiddlewares(statsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/dependencies", renderer.ApplyMiddlewares(dependenciesHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/dependencies/check", renderer.ApplyMiddlewares(checkDependencyHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/dependencies/download", renderer.ApplyMiddlewares(downloadDependencyHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/setup", renderer.ApplyMiddlewares(setupHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/setup/skip", renderer.ApplyMiddlewares(skipSetupHandler(), renderer.RoleAdmin))
-	mux.HandleFunc("/setup/status", renderer.ApplyMiddlewares(checkSetupStatusHandler(), renderer.RoleAdmin))
+	RegisterDepsRoutes(mux)
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))
@@ -2634,6 +2624,19 @@ func main() {
 	mux.Handle("/static/",
 		http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 
+	// Verify bundled deps and rebuild model state. Both are non-fatal; the
+	// server boots either way and surfaces problems via /api/deps/status.
+	go func() {
+		bundled.VerifyAll()
+		models.RebuildState()
+		legacy := filepath.Join(platform.GetDataDir(), "dependencies.json")
+		if _, err := os.Stat(legacy); err == nil {
+			if rerr := os.Rename(legacy, legacy+".bak"); rerr == nil {
+				log.Printf("deps: legacy dependencies.json renamed to dependencies.json.bak")
+			}
+		}
+	}()
+
 	srv = &http.Server{
 		Addr:    ":8090",
 		Handler: setupModeMiddleware(mux),
@@ -2652,15 +2655,7 @@ func main() {
 	}()
 
 	// Try to open browser on macOS
-	setupModeMutex.RLock()
-	inSetupMode := setupMode
-	setupModeMutex.RUnlock()
-
-	startURL := "http://localhost:8090/"
-	if inSetupMode {
-		startURL = "http://localhost:8090/setup"
-	}
-	_ = browser.OpenURL(startURL)
+	_ = browser.OpenURL("http://localhost:8090/")
 
 	// Wait for shutdown signal
 	sig := <-sigChan
