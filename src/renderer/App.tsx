@@ -13,6 +13,7 @@ import HotKeyController from './components/controls/hotkey-controller';
 import { ToastSystem } from './components/controls/toast-system';
 import AutoPlayController from './components/controls/autoplay-controller';
 import { PERFORMANCE_CONSTANTS } from './constants/performance';
+import { OnboardingGate } from './onboarding/OnboardingGate';
 
 // Create QueryClient with optimized settings
 const queryClient = new QueryClient({
@@ -62,6 +63,7 @@ export default function App(): JSX.Element {
         <HotKeyController />
         {autoPlay && <AutoPlayController />}
         <ToastSystem />
+        <OnboardingGate />
       </DndProvider>
     </QueryClientProvider>
   );
