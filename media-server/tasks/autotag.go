@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -98,29 +99,29 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		args := []string{}
 
 		// Try to get paths from dependency system first, fall back to config
-		labelsPath, err := deps.GetFilePath("onnx-bundle", "selected_tags.csv")
-		if err == nil && labelsPath != "" {
+		labelsPath, _ := deps.ModelPath("wd-eva02-large-tagger-v3", "selected_tags.csv")
+		if labelsPath != "" {
 			args = append(args, `--labels=`+labelsPath)
 		} else if strings.TrimSpace(cfg.OnnxTagger.LabelsPath) != "" {
 			args = append(args, `--labels=`+cfg.OnnxTagger.LabelsPath)
 		}
 
-		configPath, err := deps.GetFilePath("onnx-bundle", "config.json")
-		if err == nil && configPath != "" {
+		configPath, _ := deps.ModelPath("wd-eva02-large-tagger-v3", "config.json")
+		if configPath != "" {
 			args = append(args, `--config=`+configPath)
 		} else if strings.TrimSpace(cfg.OnnxTagger.ConfigPath) != "" {
 			args = append(args, `--config=`+cfg.OnnxTagger.ConfigPath)
 		}
 
-		modelPath, err := deps.GetFilePath("onnx-bundle", "model.onnx")
-		if err == nil && modelPath != "" {
+		modelPath, _ := deps.ModelPath("wd-eva02-large-tagger-v3", "model.onnx")
+		if modelPath != "" {
 			args = append(args, `--model=`+modelPath)
 		} else if strings.TrimSpace(cfg.OnnxTagger.ModelPath) != "" {
 			args = append(args, `--model=`+cfg.OnnxTagger.ModelPath)
 		}
 
-		ortPath, err := deps.GetFilePath("onnx-bundle", deps.GetOnnxRuntimeLibName())
-		if err == nil && ortPath != "" {
+		ortPath := deps.BundledOrEmpty("onnxruntime")
+		if ortPath != "" {
 			args = append(args, `--ort=`+ortPath)
 		} else if strings.TrimSpace(cfg.OnnxTagger.ORTSharedLibraryPath) != "" {
 			args = append(args, `--ort=`+cfg.OnnxTagger.ORTSharedLibraryPath)
@@ -136,12 +137,8 @@ func autotagTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		q.PushJobStdout(j.ID, fmt.Sprintf("[%d/%d] Tagging: %s", idx+1, len(paths), filepath.Base(mediaPath)))
 
-		cmd, err := deps.GetExec(ctx, "onnxtag", "onnxtag", args...)
-		if err != nil {
-			q.PushJobStdout(j.ID, "Failed to prepare onnxtag: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
+		onnxtagPath := deps.MustBundled("onnxtag")
+		cmd := exec.CommandContext(ctx, onnxtagPath, args...)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			q.PushJobStdout(j.ID, "Failed to get stdout pipe: "+err.Error())

@@ -98,7 +98,7 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return nil
 	}
 
-	ffprobePath := deps.GetFFprobePath()
+	ffprobePath := deps.MustBundled("ffprobe")
 
 	for _, src := range files {
 		select {
@@ -357,10 +357,8 @@ func hlsBuildTranscodeArgs(input, playlistPath, segmentPattern string, preset Hl
 
 // hlsRunFFmpeg runs ffmpeg with the given args, streaming stderr to job stdout.
 func hlsRunFFmpeg(ctx context.Context, jobID string, q *jobqueue.Queue, args []string) error {
-	cmd, err := deps.GetExec(ctx, "ffmpeg", "ffmpeg", args...)
-	if err != nil {
-		return fmt.Errorf("prepare ffmpeg: %w", err)
-	}
+	ffmpegPath := deps.MustBundled("ffmpeg")
+	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

@@ -299,7 +299,7 @@ func generatePassthroughHLS(ctx context.Context, mediaPath, cacheDir string, dur
 	playlistPath := filepath.Join(outDir, "stream.m3u8")
 	segmentPattern := filepath.Join(outDir, "segment_%03d.ts")
 
-	ffmpegPath := depspkg.GetFFmpegPath()
+	ffmpegPath := depspkg.MustBundled("ffmpeg")
 	if ffmpegPath == "" {
 		log.Printf("[hls] ERROR: ffmpeg not found")
 		return fmt.Errorf("ffmpeg not found")
@@ -433,7 +433,7 @@ func generatePassthroughHLS(ctx context.Context, mediaPath, cacheDir string, dur
 
 // probeDuration uses ffprobe to get the source media duration in seconds.
 func probeDuration(mediaPath string) float64 {
-	ffprobePath := depspkg.GetFFprobePath()
+	ffprobePath := depspkg.MustBundled("ffprobe")
 	if ffprobePath == "" {
 		log.Printf("[hls] WARNING: ffprobe not found, cannot determine duration")
 		return 0

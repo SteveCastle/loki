@@ -198,7 +198,7 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 	tmpSource.Close()
 
 	// Generate thumbnail to temp output using existing ffmpeg functions
-	ffmpegPath := depspkg.GetFFmpegPath()
+	ffmpegPath := depspkg.MustBundled("ffmpeg")
 	if ffmpegPath == "" {
 		return "", fmt.Errorf("ffmpeg not found")
 	}
@@ -252,7 +252,7 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 // generateThumbnail creates a thumbnail for the given media file using ffmpeg.
 // Returns the full path to the generated thumbnail.
 func generateThumbnail(mediaPath, basePath, cache string, timeStamp float64) (string, error) {
-	ffmpegPath := depspkg.GetFFmpegPath()
+	ffmpegPath := depspkg.MustBundled("ffmpeg")
 	if ffmpegPath == "" {
 		return "", fmt.Errorf("ffmpeg not found")
 	}
@@ -314,7 +314,7 @@ func generateImageThumbnail(ffmpegPath, mediaPath, thumbPath, cache string) erro
 }
 
 func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, cache string, timeStamp float64) error {
-	ffprobePath := depspkg.GetFFprobePath()
+	ffprobePath := depspkg.MustBundled("ffprobe")
 
 	// Get video duration using ffprobe (with its own timeout)
 	durationSec := 0.0
