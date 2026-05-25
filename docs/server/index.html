@@ -141,6 +141,16 @@
             </ul>
           </li>
           <li><a href="#swipe-app">Swipe App</a></li>
+          <li><a href="#app-experience">App Experience</a></li>
+          <li><a href="#users">Users &amp; Permissions</a>
+            <ul>
+              <li><a href="#users-setup">First-Run Setup</a></li>
+              <li><a href="#users-manage">Managing Users</a></li>
+              <li><a href="#users-jwt">JWT &amp; Sessions</a></li>
+              <li><a href="#users-roles">Roles &amp; Permissions</a></li>
+              <li><a href="#users-recovery">Account Recovery</a></li>
+            </ul>
+          </li>
           <li><a href="#tasks">Available Tasks</a></li>
           <li><a href="#config">Configuration</a></li>
           <li><a href="#api">API Reference</a></li>
@@ -176,8 +186,12 @@
 
         <h3 id="initial-setup">Initial Setup</h3>
         <p>
-          On first launch, you'll be prompted to create an initial user account. This account is used to authenticate
-          with the web interface and API.
+          On first launch the server creates a temporary
+          <code>admin</code> / <code>admin</code> account and forces you
+          through a setup wizard to replace it with a real user. The
+          default admin is deleted as soon as your real account exists.
+          See <a href="#users">Users &amp; Permissions</a> for the full
+          flow, JWT details, and how to add or remove users later.
         </p>
         <div class="placeholder-video">Initial Setup Demo Video</div>
 
@@ -524,6 +538,168 @@
           Access the Swipe App at <code>http://[server-ip]:8090/swipe</code> on your mobile device.
         </p>
         <div class="placeholder-video">Swipe App Demo Video</div>
+      </section>
+
+      <section id="app-experience">
+        <h2>App Experience</h2>
+        <p>
+          The full Lowkey Media Viewer runs inside any browser as a web
+          app, served by the media server at
+          <code>http://[server-ip]:8090/app/</code>. It is the same React
+          interface as the Electron desktop app — same layout, same
+          tagging panel, same hotkeys — but routed over HTTP instead of
+          Electron IPC so you can reach your library from any computer
+          on your network.
+        </p>
+        <p>
+          The static bundle is embedded into the server binary at compile
+          time, so there is nothing extra to install. Log in once and the
+          UI is ready to go.
+        </p>
+        <ul>
+          <li>
+            <strong>Same UI, anywhere</strong> — the renderer is shared
+            between the desktop app and the web app. Anything you can do
+            in the Electron viewer (tagging, Battle Mode, transcripts,
+            comic archives, search) works in the browser.
+          </li>
+          <li>
+            <strong>Remote-friendly</strong> — point a laptop, tablet, or
+            second PC at your home server's IP and you have your entire
+            library. Pair it with a reverse proxy and TLS for
+            access from outside your network.
+          </li>
+          <li>
+            <strong>HLS playback for big videos</strong> — videos stream
+            as adaptive HLS so large files start instantly and scrub
+            cleanly even over a slow connection.
+          </li>
+          <li>
+            <strong>Authenticated</strong> — gated by the same login
+            system as the rest of the server. See
+            <a href="#users">Users &amp; Permissions</a>.
+          </li>
+        </ul>
+        <p>
+          Open <code>http://[server-ip]:8090/app/</code> in a browser,
+          sign in, and use the viewer exactly like you would on the
+          desktop.
+        </p>
+        <div class="placeholder-video">App Experience Demo Video</div>
+      </section>
+
+      <section id="users">
+        <h2>Users &amp; Permissions</h2>
+        <p>
+          The media server uses JWT-based authentication. All admin
+          pages, the App Experience, the Swipe App, and the JSON API
+          require a valid session. The system is intentionally simple
+          today: there is one role (admin) and one shared user list.
+          Everyone you create has full access to the server.
+        </p>
+
+        <h3 id="users-setup">First-Run Setup</h3>
+        <p>
+          On the very first launch — before any users exist — the server
+          creates a temporary administrator account:
+        </p>
+        <div class="code-block">
+          <code>username: admin</code><br>
+          <code>password: admin</code>
+        </div>
+        <p>
+          Visit <code>http://localhost:8090</code>, log in with those
+          credentials, and you'll be redirected to a setup wizard at
+          <code>/login?setup=true</code> that forces you to register a
+          real account. The default admin is deleted as soon as your
+          new user is created — there is no way to skip this step while
+          the default admin is still present.
+        </p>
+        <p>
+          Pick a username and a strong password. Passwords are stored as
+          bcrypt hashes; the server never stores or transmits them in
+          plaintext.
+        </p>
+
+        <h3 id="users-manage">Managing Users</h3>
+        <p>
+          Once you're logged in, open the <strong>Config</strong> tab in
+          the web UI. The <strong>Users</strong> section shows every
+          registered account and lets you:
+        </p>
+        <ul>
+          <li><strong>Add a user</strong> — type a username and password and click <em>Create</em>.</li>
+          <li><strong>Delete a user</strong> — click <em>Delete</em> next to the user you want to remove. The server refuses to delete the last remaining user so you can never lock yourself out.</li>
+        </ul>
+        <p>
+          The same operations are available over the JSON API for
+          automation:
+        </p>
+        <div class="code-block">
+          <code>GET    /auth/users                       # list users</code><br>
+          <code>POST   /auth/users  { username, password } # create user</code><br>
+          <code>DELETE /auth/users?username=alice         # delete user</code>
+        </div>
+        <p>
+          You'll need a valid session cookie or
+          <code>Authorization: Bearer &lt;token&gt;</code> header from
+          <code>POST /auth/login</code> to call any of these.
+        </p>
+
+        <h3 id="users-jwt">JWT &amp; Sessions</h3>
+        <p>
+          <code>POST /auth/login</code> exchanges credentials for a JWT.
+          The token is returned in the response body <em>and</em> set as
+          an <code>auth_token</code> HttpOnly cookie
+          (<code>SameSite=Lax</code>) for browser use. Subsequent
+          requests are accepted with either the cookie <em>or</em> an
+          <code>Authorization: Bearer &lt;token&gt;</code> header — the
+          browser extensions and the Electron app use the header; the web
+          UI uses the cookie.
+        </p>
+        <ul>
+          <li><strong>Cookie lifetime:</strong> 24 hours from issue.</li>
+          <li><strong>JWT lifetime:</strong> 1 year (Bearer-token clients stay logged in until they explicitly log out).</li>
+          <li><strong>Logout:</strong> <code>POST /auth/logout</code> clears the cookie. Bearer tokens remain valid until expiry — there is no server-side token revocation list, so rotate the JWT secret if you need to invalidate everyone.</li>
+          <li><strong>Signing secret:</strong> set <code>LOWKEY_JWT_SECRET</code> to a long random string in production. If unset, one is auto-generated and persisted into the config file on first run.</li>
+        </ul>
+
+        <h3 id="users-roles">Roles &amp; Permissions</h3>
+        <p>
+          Right now there is exactly one role: <strong>admin</strong>.
+          Every authenticated user is treated as an admin and can do
+          everything — manage other users, edit configuration, run any
+          task, browse and modify all media. Per-route role separation
+          (<code>RolePublic</code> vs. <code>RoleAdmin</code>) exists in
+          the middleware so a more granular system can be added later
+          without redesigning the auth flow, but until then:
+        </p>
+        <ul>
+          <li>Only create accounts for people you would trust with the box itself.</li>
+          <li>Don't expose the server to the open internet without putting it behind a reverse proxy with TLS and additional restrictions (e.g. IP allow-list or an OAuth front-door).</li>
+          <li>There is no rate limit on <code>/auth/login</code> yet — make sure passwords are strong, especially if the server is publicly reachable.</li>
+        </ul>
+        <p>
+          A future release will add proper role separation (read-only
+          users, per-storage-root access, scoped API tokens). The
+          underlying schema and middleware already account for it.
+        </p>
+
+        <h3 id="users-recovery">Account Recovery</h3>
+        <p>
+          There is no password-reset flow. If you lose your only password,
+          recover access by stopping the server and clearing the
+          <code>users</code> table from SQLite:
+        </p>
+        <div class="code-block">
+          <code>sqlite3 /path/to/media.db "DELETE FROM users;"</code>
+        </div>
+        <p>
+          Restart the server. The default <code>admin</code> / <code>admin</code>
+          account is recreated and you'll be sent through the setup wizard
+          again. Your media, tags, jobs, and workflows are untouched —
+          only the user list is reset.
+        </p>
       </section>
 
       <section id="tasks">
