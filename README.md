@@ -1,19 +1,163 @@
-# Loki
+# Lowkey Media Viewer
 
-Loki is the source repository for two companion products that share a single React frontend:
-
-- **Lowkey Media Viewer** — a free, minimalist Electron desktop app for viewing and curating images, video, audio, and comic book archives on Windows, macOS, and Linux.
-- **Lowkey Media Server** — a Go HTTP server with a web UI, authenticated multi-user access, a job queue, an HLS streamer, and a workflow DAG engine for batch processing media. It also serves the same React UI as a web app so the desktop and browser experiences stay in sync.
+**A fast, minimalist viewer for the images, videos, audio, and comics on your hard drive. Free and open source. Built for people who care about their personal media library and want to actually look at it instead of fighting their software.**
 
 <video src="https://stevecastle.github.io/loki/static/viewer-overview.mp4" autoplay loop muted playsinline controls></video>
 
-Prebuilt binaries and end-user documentation live at [lowkeyviewer.com](https://lowkeyviewer.com). Media server docs are at [lowkeyviewer.com/server](https://lowkeyviewer.com/server).
+Most media apps treat your files like cattle in a database — slow scans, lossy compression, opinions about how things should be organized, a cloud account you didn't ask for. Lowkey Media Viewer is the opposite. Point it at a directory and it just opens. Files stay where you put them. Tagging is local. There is no telemetry, no account, no upsell.
 
-> **Status: beta.** Both products are in active development and ship from `master` on every push. Versions are tagged automatically by CI. Expect occasional breaking schema changes between releases — the viewer migrates on startup, but back up your `dream.sqlite` if you're paranoid.
+It's built for the kind of library that's hard to organize with existing tools: tens of thousands of images and videos accumulated over years, mixed formats, comic archives, audio files, screenshots, weird old `.webm`s. If you want to view those files, tag them, find them again later, and never lose them to a service shutting down — this is for you.
+
+**Download free** at [**lowkeyviewer.com**](https://lowkeyviewer.com) for **Windows, macOS, and Linux**.
+
+This repository is also home to **Lowkey Media Server** — an optional companion that adds batch processing, AI auto-tagging, transcription, and a web UI. See further down.
 
 ---
 
-## Repo Layout
+## Why use it
+
+- **Fast.** Opens enormous folders without hanging. Renders 4K videos and high-res images without stutter. Battle-tested against libraries with 100,000+ files.
+- **Local-first.** Your media stays where you put it. Tags live in a SQLite database in your home directory that you own and can back up. No sync, no cloud, no account.
+- **Free and open source.** MIT licensed. No paywalled features. Support the project on [Patreon](https://www.patreon.com/c/lowkeyviewer) if you want, but you never have to.
+- **Quiet by design.** Dark UI, no chrome you don't need, full-screen modes, hotkeys for everything.
+- **Handles awkward stuff.** Comic archives (`.cbz`, `.cbr`) open like directories. Video subtitles get picked up automatically. Audio gets a WebGPU visualizer. Transcripts are editable in place.
+- **Cross-platform.** Native installer for Windows, signed/notarized DMG for macOS (Apple Silicon + Intel), AppImage for Linux.
+
+---
+
+## Features
+
+### Viewing
+
+- **Images** — JPG, JPEG, PNG, GIF, WebP, JFIF, BMP, SVG, and animated GIF
+- **Video** — MP4, MOV, MKV, WebM, FLV, M4V, with subtitle pickup (SRT/VTT) and audio-track selection on multi-track files
+- **Audio** — MP3, M4A, AAC, OGG, WAV with a WebGPU spectrum visualizer
+- **Comic archives** — `.cbz` and `.cbr` (CBR uses a bundled UnRAR binary so it Just Works on every platform)
+- **Detail, grid, and masonry layouts** with multiple scale modes, shuffle, and infinite-scroll
+- **Background autoplay** with looping, fit modes, and configurable transitions
+
+### Organizing
+
+- **Tags and categories** — drag any tag onto any image to apply it. Bulk-apply to a whole filter. Hold Ctrl to apply to every visible item.
+- **Custom tag previews** — use any image you're viewing as the cover for a tag
+- **Stored category slots** (1–9) — jump between your most-used categories with a single keystroke
+- **Command palette** for fast tag/category/file actions
+- **Context palette** (Shift + right-click) for in-place edits
+- **Battle mode** — pairwise comparison with ELO ranking, then apply the resulting order as a custom sort
+- **Duplicate detection** with perceptual hashing
+- **Reorder tags and media** by drag-and-drop within a category
+
+### Finding things
+
+- **Tag filtering** with OR / AND / Exclusive modes
+- **Fuzzy tag search** across every tag in every category
+- **Filename search** as you type
+- **Description search** if you've generated descriptions via the server
+- **Transcript-driven video navigation** — click a line of a transcript to jump to that moment
+
+### Metadata & transcripts
+
+- **Tag and category descriptions** — markdown notes that travel with your tags
+- **In-place transcript editing** — Enter to save, Shift+Enter for a newline, per-cue delete, insert button
+- **In-panel substring search** through transcripts with prev/next navigation
+- **Captions and subtitles** picked up from SRT/VTT sidecars next to video files (auto-converted to WebVTT with BOM/CRLF normalization)
+
+### Built for big libraries
+
+- Virtualized scrolling — 50,000+ tags or media items render without stutter
+- Thumbnails generated on-demand and cached
+- Selection state, query state, and library state persisted across launches
+- File-association registration on Windows and macOS so you can set it as your default viewer
+
+---
+
+## Get it
+
+Prebuilt binaries are at [**lowkeyviewer.com**](https://lowkeyviewer.com). Builds are signed/notarized on macOS, NSIS-installed on Windows, AppImage on Linux. New releases ship straight from `master`.
+
+If you'd rather build from source, see [Building from source](#building-from-source) below.
+
+---
+
+## Lowkey Media Server (optional companion)
+
+> **⚠️ The server is in beta.** The viewer is stable. Only the server has rough edges — expect occasional breaking changes, missing features, and bugs that need a workaround. The two products are versioned independently in spirit but ship from the same release.
+
+The server is what you reach for when the desktop app shouldn't block on a long-running task — auto-tagging 10,000 photos with an AI model, transcribing a 4-hour video, transcoding a library to adaptive HLS, ingesting a YouTube channel. Run it on the same machine as the viewer, or on a NAS/home server.
+
+What you get:
+
+- **A job queue** with real-time progress via SSE — start things, walk away, come back later
+- **Visual workflow editor** to chain tasks into reusable pipelines (transcode → screenshot → auto-tag → ingest)
+- **Auto-tagging** using ONNX models (WD-EVA02-Large-Tagger v3) or Ollama vision models
+- **Transcription** of any video via Faster-Whisper
+- **Ingestion** from local folders, YouTube (via yt-dlp), galleries (via gallery-dl), and Discord exports
+- **HLS adaptive streaming** so the viewer can scrub through massive videos remotely
+- **FFmpeg toolkit** with 16 presets (scale, convert, extract audio, screenshots, thumbnail sheets, etc.) plus raw passthrough
+- **S3-compatible storage** alongside local disks
+- **A web UI** for everything above — works in any browser, embeds the same React app the desktop viewer uses
+- **Browser extensions** for Chrome and Firefox — right-click a page and send it to your queue
+
+Authentication is on by default (JWT + bcrypt). First launch creates a temporary `admin` / `admin` user and forces you through a setup wizard to replace it.
+
+The viewer detects the server automatically once both are running and unlocks the bulk-job actions.
+
+**Get it the same way:** prebuilt binaries on [lowkeyviewer.com/server](https://lowkeyviewer.com/server), or in Docker. Full setup, configuration, environment variables, task catalog, and API reference live in [`media-server/README.md`](media-server/README.md).
+
+---
+
+## Building from source
+
+The viewer is an Electron + React + TypeScript app. The server is a single Go binary. They live in the same repo because they share a React renderer.
+
+### Prerequisites
+
+- **Node 18** (CI builds against `18.x`)
+- **npm** — `package.json` declares `"packageManager": "npm@10.9.0"`. Yarn is no longer supported; there's no `yarn.lock`.
+- **Go 1.24+** (only for the server)
+- A C compiler is **not** required for either product. SQLite uses pure-Go drivers everywhere.
+
+### Build & run the viewer
+
+```bash
+npm install
+npm start        # webpack-dev-server + electronmon
+npm test         # builds first, then runs jest
+npm run package  # build a distributable for the current OS
+```
+
+`npm run package` produces an NSIS installer on Windows, a universal DMG on macOS, and an AppImage on Linux. Artifacts land in `release/build/`. FFmpeg/FFprobe binaries are auto-downloaded as part of packaging.
+
+### Build & run the server
+
+```bash
+npm run build:server   # builds the React UI, embeds it, then go build
+cd media-server
+./media-server          # or media-server.exe on Windows
+```
+
+Then open <http://localhost:8090> and log in as `admin` / `admin`.
+
+For faster iteration:
+
+```bash
+npm run build:web       # build the renderer and copy into media-server/loki-static/
+cd media-server
+go run .
+```
+
+After renderer changes, re-run `build:web` before the Go binary will serve the updated assets (the static files are embedded at compile time).
+
+### Tests
+
+```bash
+npm test               # viewer (Jest)
+npm run test:server    # server (go test ./...)
+```
+
+---
+
+## Repo layout
 
 ```
 loki/
@@ -32,126 +176,20 @@ loki/
 └── docs/               # Source for lowkeyviewer.com
 ```
 
-The renderer under `src/renderer/` targets both environments. `src/renderer/platform.ts` abstracts over Electron IPC vs. HTTP so a single codebase powers the desktop app and the server's web UI.
+`src/renderer/platform.ts` is the abstraction layer that lets the same React code run as the Electron renderer process or as the web UI served by the Go server.
 
----
-
-## Lowkey Media Viewer (Electron)
-
-A fast, distraction-free viewer for large personal media libraries. Highlights:
-
-- Native playback for images, video, audio (with multi-track / subtitle pickup, transcript-driven navigation, and editable cues)
-- Comic book archives (`.cbz`, `.cbr`) open like directories from the file dialog or drag-and-drop. CBR is supported out of the box via a bundled UnRAR binary.
-- Tag and category system: drag-to-tag, bulk apply, category-scoped stored slots, and a context palette
-- Battle mode (ELO rating), duplicate detection, ORB-based perceptual hashing
-- Grid, masonry, and detail layouts; scale modes; shuffle; bulk tagging
-- WebGPU audio visualizer for audio files
-- Optional pairing with Lowkey Media Server for HLS playback of large videos
-
-### Build Requirements
-
-- **Node 18** (CI builds against `18.x`)
-- **npm** (yarn is no longer used; `package.json` declares `"packageManager": "npm@10.9.0"`)
-- FFmpeg and FFprobe binaries under `src/main/resources/bin/<platform>/` — these are auto-downloaded by `npm run package`, or you can run `./download-binaries.sh` in each platform subdirectory manually. ExifTool and FFplay are no longer required; dimensions come from FFprobe.
-- On Windows, the bundled `unrar.exe` ships in-tree so CBR Just Works.
-
-### Development
-
-```bash
-npm install
-npm start       # webpack-dev-server + electronmon
-```
-
-### Tests
-
-```bash
-npm test              # builds first, then jest
-npx jest <pattern>    # single test (a build must already exist)
-```
-
-### Build a Distributable
-
-```bash
-npm run package
-```
-
-`electron-builder` produces:
-
-- **Windows:** NSIS installer (`.exe`)
-- **macOS:** universal DMG (`arm64` + `x64`)
-- **Linux:** AppImage
-
-Binaries land in `release/build/`. CI builds and publishes all three targets to GitHub Releases on every push to `master`.
-
----
-
-## Lowkey Media Server (Go)
-
-> **Beta with auth enabled by default.** On first launch the server creates a temporary `admin` / `admin` account, then forces you through a setup wizard at `/login?setup=true` to replace it with a real user. JWT sessions are signed with `LOWKEY_JWT_SECRET` (auto-generated and persisted if not set) and stored as `HttpOnly` cookies. All `/api/*`, `/media/*`, and admin pages require login. There is still no per-route authorization beyond "logged-in" — every authenticated user gets admin role today, so don't give credentials to anyone you wouldn't trust with the box itself.
-
-A companion service for the long-running work the desktop app shouldn't block on:
-
-- **HLS adaptive streaming** with on-disk segment cache (480p / 720p / 1080p plus passthrough)
-- **Auto-tagging** via ONNX models (WD-EVA02-Large-Tagger v3) or Ollama vision models
-- **Transcription** via Faster-Whisper (bundled in the "Generate Metadata" task)
-- **Ingestion** from local directories, YouTube (yt-dlp), galleries (gallery-dl), and Discord exports
-- **Workflow DAGs** — chain any registered task; persisted in SQLite, editable from the web UI
-- **FFmpeg toolkit** — 16 preset operations (scale, convert, extract audio, screenshot, thumbnail sheet, etc.) plus raw command pass-through
-- **S3-compatible storage** alongside local disks; per-root thumbnail prefixes; signed URLs
-- **File browser** over local roots and S3 buckets
-- **LoRA dataset builder** for AI training workflows
-- **SSE** streaming for real-time job updates
-- **System tray** integration on Windows and macOS
-- **Browser extensions** (Chrome + Firefox) for sending URLs into the job queue
-
-See [`media-server/README.md`](media-server/README.md) for full server documentation, Docker setup, environment variables, the task catalog, and the API reference.
-
-### Quick Start
-
-From the repo root:
-
-```bash
-npm run build:server   # builds the renderer, copies it into media-server/loki-static/, then go build
-cd media-server
-./media-server         # or media-server.exe on Windows
-```
-
-Open <http://localhost:8090>, log in as `admin` / `admin`, and follow the setup wizard to create your real account.
-
-### Running the Server in Development
-
-```bash
-npm run build:web      # build the renderer and copy to media-server/loki-static/
-cd media-server
-go run .
-```
-
-After renderer changes, re-run `build:web` before the Go binary will serve the updated assets — the static files are embedded at compile time.
-
-### Server Tests
-
-```bash
-npm run test:server
-# or
-cd media-server && go test ./...
-```
-
----
-
-## Releases & CI
+## Releases
 
 `.github/workflows/release.yml` runs on every push to `master`:
 
-1. Runs Electron Jest tests and Go tests.
+1. Runs the Electron Jest tests and Go tests.
 2. Tags the commit `vX.Y.Z` from `package.json` if the tag doesn't already exist.
-3. Builds Electron app for Windows, macOS (arm64 + x64), and Linux in parallel.
+3. Builds the Electron app for Windows, macOS (arm64 + x64), and Linux in parallel.
 4. Cross-compiles the Go server for `windows/amd64`, `darwin/{arm64,amd64}`, and `linux/amd64`.
 5. Generates a changelog from commits and contributors since the previous tag.
 6. Publishes everything to GitHub Releases.
 
-To cut a release, bump the version in `package.json`, `package-lock.json`, `release/app/package.json`, `release/app/package-lock.json`, and the `RELEASE_BASE` / version label in `docs/index.html`, then push to `master`.
-
----
+To cut a release: bump the version in `package.json`, `package-lock.json`, `release/app/package.json`, `release/app/package-lock.json`, and `docs/index.html`, then push to `master`.
 
 ## Contributing
 
