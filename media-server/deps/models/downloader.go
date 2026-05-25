@@ -218,6 +218,25 @@ func copyWithProgress(ctx context.Context, dst io.Writer, src io.Reader, start, 
 	}
 }
 
+// VerifySHA256 hashes the file at path and compares against want. Returns
+// os.ErrNotExist if the file is missing.
+func VerifySHA256(path, want string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != want {
+		return fmt.Errorf("%w: got %s want %s", ErrChecksumMismatch, got, want)
+	}
+	return nil
+}
+
 func writeMeta(id string, m Model) error {
 	type meta struct {
 		Version        string `json:"version"`
