@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/media"
 )
 
 var moveOptions = []TaskOption{
@@ -246,5 +247,9 @@ func updateMediaPathInDatabase(db *sql.DB, oldPath, newPath string) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	// The swipe sampler caches paths from media_tag_by_category by value.
+	// After a rename, the cached old path lookups in `media` return zero rows
+	// and items silently disappear from the swipe view until invalidation.
+	media.InvalidateRandomSampleCache()
 	return nil
 }

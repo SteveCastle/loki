@@ -171,9 +171,12 @@ func switchDatabase(newDBPath string) error {
 	deps.Queue = newQueue
 
 	// The random-sampler cache is per-DB (paths are tied to the active
-	// database). Invalidate immediately and warm asynchronously so the
-	// first /swipe/api request after a DB swap stays fast.
-	media.InvalidateRandomSampleCache()
+	// database). Reset (not Invalidate) so the OLD DB's cached paths
+	// never get served to a /swipe/api request while the rebuild against
+	// the NEW DB is still running — they'd IN-list against the new DB
+	// and silently return zero items. Warm asynchronously so the first
+	// /swipe/api request after the swap stays fast.
+	media.ResetRandomSampleCache()
 	media.WarmRandomSampleCache(newDB)
 
 	// Start new runners for the new queue
