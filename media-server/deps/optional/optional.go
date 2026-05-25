@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/stevecastle/shrike/platform"
 )
 
 var ErrUnknown = errors.New("optional: unknown tool id")
@@ -66,7 +68,9 @@ func Detect(id string) (Status, error) {
 	if len(entry.VersionArgs) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		out, perr := exec.CommandContext(ctx, path, entry.VersionArgs...).CombinedOutput()
+		cmd := exec.CommandContext(ctx, path, entry.VersionArgs...)
+		platform.HideSubprocessWindow(cmd)
+		out, perr := cmd.CombinedOutput()
 		if perr == nil {
 			s.Version = firstLine(string(out))
 		}

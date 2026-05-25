@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/stevecastle/shrike/platform"
 )
 
 var (
@@ -57,6 +59,7 @@ func verifyOne(b Bundled) Status {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path, b.VersionArgs...)
+	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		s.State = "broken"
