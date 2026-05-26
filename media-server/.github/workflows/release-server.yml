@@ -64,7 +64,7 @@ jobs:
         run: |
           mkdir -p release/${{ matrix.target }}/bin
           cp media-server/lowkeymediaserver${{ matrix.ext }} release/${{ matrix.target }}/
-          cp -R media-server/bin/${{ matrix.target }}/* release/${{ matrix.target }}/bin/
+          cp -R media-server/bin/* release/${{ matrix.target }}/bin/
       - name: Smoke test (unix only)
         if: runner.os != 'Windows'
         shell: bash

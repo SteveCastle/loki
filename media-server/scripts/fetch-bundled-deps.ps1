@@ -13,7 +13,11 @@ $ProgressPreference = 'SilentlyContinue'
 
 $root  = (Resolve-Path "$PSScriptRoot\..\..").Path
 $conf  = Join-Path $root "media-server\scripts\bundled-versions.json"
-$outDir = Join-Path $root "media-server\bin\$Target"
+# Drop files flat into media-server\bin\ so the server (which resolves
+# <execDir>\bin\<name> at runtime) finds them immediately. Only one target
+# is staged per invocation, so a per-target subdir would just trip up
+# `go run`/`go build` workflows on the host.
+$outDir = Join-Path $root "media-server\bin"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 $data = Get-Content $conf -Raw | ConvertFrom-Json
