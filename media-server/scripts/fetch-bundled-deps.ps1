@@ -18,9 +18,18 @@ try {
     $entry = $data.binaries.$bin.$Target
     if ($null -eq $entry) { continue }
 
-    $archivePath = Join-Path $tmp "$bin.archive"
+    # Expand-Archive demands a .zip extension, and `tar` is happier when the
+    # extension matches the content — so name the temp file accordingly.
+    $archiveExt = switch ($entry.archive) {
+      "zip"    { ".zip" }
+      "tar.gz" { ".tar.gz" }
+      "tar.xz" { ".tar.xz" }
+      "none"   { [IO.Path]::GetExtension([IO.Path]::GetFileName($entry.url)) }
+      default  { ".bin" }
+    }
+    $archivePath = Join-Path $tmp ("$bin$archiveExt")
     Write-Host "fetching $bin ($($entry.url)) ..."
-    Invoke-WebRequest -Uri $entry.url -OutFile $archivePath
+    Invoke-WebRequest -Uri $entry.url -OutFile $archivePath -UseBasicParsing
     $gotSum = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLower()
 
     if ($Mode -eq "update") {
@@ -43,9 +52,10 @@ try {
 
     foreach ($ex in $entry.extract) {
       $type = if ($ex.type) { $ex.type } else { "file" }
-      $matches = Get-ChildItem -Path $extractDir -Recurse -Filter ([IO.Path]::GetFileName($ex.from)) -ErrorAction SilentlyContinue
-      if (-not $matches) { Write-Error "no match for $($ex.from) in $bin" }
-      $src = $matches[0].FullName
+      # $matches is an automatic variable in PowerShell — avoid shadowing it.
+      $found = Get-ChildItem -Path $extractDir -Recurse -Filter ([IO.Path]::GetFileName($ex.from)) -ErrorAction SilentlyContinue
+      if (-not $found) { Write-Error "no match for $($ex.from) in $bin" }
+      $src = $found[0].FullName
       $dst = Join-Path $outDir $ex.to
       if ($type -eq "dir") {
         if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
