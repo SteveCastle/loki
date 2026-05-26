@@ -13,7 +13,10 @@ if [ -z "$TARGET" ]; then
   exit 2
 fi
 
-OUTDIR="$ROOT/media-server/bin/$TARGET"
+# Drop files flat into media-server/bin/. Only one target is staged per
+# invocation, so a per-target subdir would just trip up `go run`/`go build`
+# on the host.
+OUTDIR="$ROOT/media-server/bin"
 mkdir -p "$OUTDIR"
 
 tmpdir="$(mktemp -d)"
