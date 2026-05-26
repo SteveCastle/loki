@@ -1,0 +1,38 @@
+# --- VCS / editor ---
+.git
+.github
+.idea
+.vscode
+
+# --- Node ---
+node_modules
+**/node_modules
+npm-debug.log
+yarn-error.log
+
+# --- Build outputs ---
+release
+dist
+build
+**/*.tsbuildinfo
+
+# --- Media server: regenerated inside the image ---
+media-server/loki-static
+media-server/bin
+media-server/media-server
+media-server/media-server.exe
+media-server/lowkeymediaserver
+media-server/lowkeymediaserver.exe
+media-server/*.db
+media-server/*.sqlite
+
+# --- Misc ---
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+
+# Tests / fixtures we don't need in the image
+coverage
+__snapshots__
