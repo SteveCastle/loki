@@ -11,6 +11,10 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+# Invoke-WebRequest's Write-Progress overhead can slow large model
+# downloads 10-100x on PowerShell 5.1. Silence it.
+$ProgressPreference = 'SilentlyContinue'
+
 if (-not (Test-Path $ManifestPath)) {
   Write-Error "manifest not found: $ManifestPath"
 }

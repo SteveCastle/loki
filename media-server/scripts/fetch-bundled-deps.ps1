@@ -5,6 +5,12 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+# Invoke-WebRequest is notoriously slow on PowerShell 5.1 because it writes
+# a Write-Progress event on every chunk. For multi-hundred-MB downloads
+# (ffmpeg, onnxruntime) this can be 10-100x slower than a browser. Disabling
+# the progress UI fixes it.
+$ProgressPreference = 'SilentlyContinue'
+
 $root  = (Resolve-Path "$PSScriptRoot\..\..").Path
 $conf  = Join-Path $root "media-server\scripts\bundled-versions.json"
 $outDir = Join-Path $root "media-server\bin\$Target"
