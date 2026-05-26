@@ -31,12 +31,15 @@
 FROM node:20-bookworm-slim AS node-builder
 
 WORKDIR /src
-# Install deps first (cached layer when only sources change)
+# Install deps first (cached layer when only sources change). --ignore-scripts
+# skips the package's postinstall hook (electron-rebuild + a webpack DLL
+# build) which we don't need for the web-only renderer bundle and which
+# pulls in native build deps we'd rather not install.
 COPY package.json package-lock.json* yarn.lock* ./
 RUN if [ -f yarn.lock ]; then \
-      corepack enable && yarn install --frozen-lockfile --network-timeout 600000; \
+      corepack enable && yarn install --frozen-lockfile --ignore-scripts --network-timeout 600000; \
     else \
-      npm ci --no-audit --no-fund; \
+      npm ci --no-audit --no-fund --ignore-scripts; \
     fi
 
 # Copy the source needed for the renderer build
@@ -84,9 +87,7 @@ RUN curl -fsSL -o ort.tgz \
       "https://github.com/microsoft/onnxruntime/releases/download/v${ONNXRUNTIME_VERSION}/onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}.tgz" && \
     tar -xzf ort.tgz && \
     mkdir -p /out && \
-    # Newest libonnxruntime.so* file copied as onnxruntime.so (no extension)
-    # so it matches what bundled/manifest.go expects on Linux.
-    cp -L "$(ls onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so."*[0-9] | sort -V | tail -1)" /out/onnxruntime.so
+    cp -L "onnxruntime-linux-x64-${ONNXRUNTIME_VERSION}/lib/libonnxruntime.so.${ONNXRUNTIME_VERSION}" /out/onnxruntime.so
 
 # -----------------------------------------------------------------------------
 # Stage 4 — runtime image

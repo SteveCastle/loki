@@ -12,6 +12,8 @@ yarn-error.log
 
 # --- Build outputs ---
 release
+# but keep the app package.json (it's tracked in git and the SPA build reads it)
+!release/app/package.json
 dist
 build
 **/*.tsbuildinfo
