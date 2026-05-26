@@ -1261,9 +1261,9 @@
 
       function optionalCard(it) {
         const hint = it.detail || {};
-        const cmds = (hint.Commands || hint.commands || []);
-        const docs = hint.DocsURL || hint.docs_url || hint.docsURL || '';
-        const desc = hint.Description || hint.description || '';
+        const cmds = hint.commands || [];
+        const docs = hint.docs_url || '';
+        const desc = hint.description || '';
         return `<div class="dep-card" data-cat="optional" data-id="${escDep(it.id)}">
           <div class="dep-row">
             <strong>${escDep(it.name)}</strong>

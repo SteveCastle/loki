@@ -25,24 +25,24 @@ type Optional struct {
 }
 
 type Status struct {
-	ID        string
-	Name      string
-	Installed bool
-	Path      string
-	Version   string
-	Hint      InstallHint
+	ID        string      `json:"id"`
+	Name      string      `json:"name"`
+	Installed bool        `json:"installed"`
+	Path      string      `json:"path,omitempty"`
+	Version   string      `json:"version,omitempty"`
+	Hint      InstallHint `json:"hint"`
 }
 
 type InstallHint struct {
-	Description string
-	Commands    []OSCmd
-	DocsURL     string
+	Description string  `json:"description,omitempty"`
+	Commands    []OSCmd `json:"commands,omitempty"`
+	DocsURL     string  `json:"docs_url,omitempty"`
 }
 
 type OSCmd struct {
-	OS      string
-	Label   string
-	Command string
+	OS      string `json:"os"`
+	Label   string `json:"label"`
+	Command string `json:"command"`
 }
 
 func IDs() []string {
