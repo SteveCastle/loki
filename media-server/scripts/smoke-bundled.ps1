@@ -12,6 +12,10 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+# Silence Invoke-WebRequest's progress UI — it can slow even tiny requests
+# on PowerShell 5.1 because of how Write-Progress drives the host.
+$ProgressPreference = 'SilentlyContinue'
+
 if ([string]::IsNullOrEmpty($InstallDir)) {
   $InstallDir = (Resolve-Path "$PSScriptRoot\..").Path
 }
