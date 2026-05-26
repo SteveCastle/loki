@@ -12,17 +12,17 @@
         {
           "url": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/model.onnx",
           "rel_path": "model.onnx",
-          "sha256": "UNVERIFIED"
+          "sha256": "9e768793060c7939b277ccb382783e8670e8a042d29d77aa736be0c8cc898bfc"
         },
         {
           "url": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/selected_tags.csv",
           "rel_path": "selected_tags.csv",
-          "sha256": "UNVERIFIED"
+          "sha256": "298633d94d0031d2081c0893f29c82eab7f0df00b08483ba8f29d1e979441217"
         },
         {
           "url": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/config.json",
           "rel_path": "config.json",
-          "sha256": "UNVERIFIED"
+          "sha256": "1db05aefb1a245533818e33bea22852300ac647a64636854095d1a313cd2e9dc"
         }
       ]
     }

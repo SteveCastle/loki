@@ -140,6 +140,12 @@ type LibraryState = {
   userMovedCursorDuringStreaming: boolean;
   // When set to a new unique ID, signals the list to scroll to the current cursor
   scrollToCursorEventId: string | null;
+  // libraryLoadId captured at the moment an in-place mutation (e.g. removing
+  // a tag from an image) requested its reload. When the list sees that the
+  // libraryLoadId transition's "from" value matches this, it preserves scroll
+  // instead of resetting. Stale values can't match a future transition's
+  // "from" value, so no explicit clear is needed.
+  preserveScrollFromLoadId: string | null;
   authToken: string | null;
   // Cache for masonry layout dimensions to maintain stable layout across view switches
   masonryDimensionsCache: Record<string, { width: number; height: number }>;
@@ -671,6 +677,7 @@ const getInitialContext = (): LibraryState => {
     savedSortByDuringStreaming: null,
     userMovedCursorDuringStreaming: false,
     scrollToCursorEventId: null,
+    preserveScrollFromLoadId: null,
     masonryDimensionsCache: {},
   };
 };
@@ -2790,8 +2797,17 @@ export const libraryMachine = createMachine(
                 },
               ],
               DELETED_ASSIGNMENT: {
+                // Removing a tag from an image refreshes the current view; it
+                // doesn't navigate. Capture the current libraryLoadId so the
+                // list can recognize the upcoming setLibrary as an in-place
+                // refresh and preserve scroll instead of jumping to top.
                 target: 'switchingTag',
-                actions: () => console.log('deleted assignment'),
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    preserveScrollFromLoadId: (context) => context.libraryLoadId,
+                  }),
+                  () => console.log('deleted assignment'),
+                ],
               },
               SORTED_WEIGHTS: {
                 target: 'switchingTag',
