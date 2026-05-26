@@ -99,32 +99,28 @@
     },
     "onnxtag": {
       "windows-amd64": {
-        "version": "1.0.0",
-        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag.exe",
-        "sha256": "TO_FILL",
-        "archive": "none",
+        "version": "local",
+        "source": "./cmd/onnxtag",
+        "archive": "build",
         "extract": [{"from": "onnxtag.exe", "to": "onnxtag.exe"}]
       },
       "linux-amd64": {
-        "version": "1.0.0",
-        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag",
-        "sha256": "TO_FILL",
-        "archive": "none",
+        "version": "local",
+        "source": "./cmd/onnxtag",
+        "archive": "build",
         "extract": [{"from": "onnxtag", "to": "onnxtag"}]
       },
       "darwin-arm64": {
-        "version": "1.0.0",
-        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag-darwin-arm64",
-        "sha256": "TO_FILL",
-        "archive": "none",
-        "extract": [{"from": "onnxtag-darwin-arm64", "to": "onnxtag"}]
+        "version": "local",
+        "source": "./cmd/onnxtag",
+        "archive": "build",
+        "extract": [{"from": "onnxtag", "to": "onnxtag"}]
       },
       "darwin-amd64": {
-        "version": "1.0.0",
-        "url": "https://github.com/SteveCastle/loki/releases/download/onnxtag-v1.0.0/onnxtag-darwin-amd64",
-        "sha256": "TO_FILL",
-        "archive": "none",
-        "extract": [{"from": "onnxtag-darwin-amd64", "to": "onnxtag"}]
+        "version": "local",
+        "source": "./cmd/onnxtag",
+        "archive": "build",
+        "extract": [{"from": "onnxtag", "to": "onnxtag"}]
       }
     },
     "onnxruntime": {
