@@ -32,6 +32,7 @@ func main() {
 		padSquare     bool
 		generalThresh float64
 		charThresh    float64
+		showVersion   bool
 	)
 
 	flag.StringVar(&modelPath, "model", "", "Path to ONNX model file")
@@ -54,7 +55,13 @@ func main() {
 	flag.BoolVar(&padSquare, "pad-square", false, "Pad to square (white) before resize instead of center-crop")
 	flag.Float64Var(&generalThresh, "general-thresh", 0.35, "General tags threshold (wd style)")
 	flag.Float64Var(&charThresh, "character-thresh", 0.85, "Character tags threshold (wd style)")
+	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println("onnxtag local-build")
+		os.Exit(0)
+	}
 
 	if modelPath == "" || imagePath == "" {
 		fmt.Fprintln(os.Stderr, "Error: --model and --image are required")
