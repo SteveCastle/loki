@@ -22,9 +22,9 @@ export const OptionalPanel: React.FC<Props> = ({ items }) => {
 const OptionalRow: React.FC<{ item: DepStatus }> = ({ item }) => {
   const hint = item.detail || {};
   const [open, setOpen] = useState(false);
-  const cmds: Array<{ os: string; label: string; command: string }> = hint.Commands || hint.commands || [];
-  const desc: string = hint.Description || hint.description || '';
-  const docsURL: string = hint.DocsURL || hint.docs_url || hint.docsURL || '';
+  const cmds: Array<{ os: string; label: string; command: string }> = hint.commands || [];
+  const desc: string = hint.description || '';
+  const docsURL: string = hint.docs_url || '';
   return (
     <li className={styles[item.state] || styles.row}>
       <div className={styles.head}>
