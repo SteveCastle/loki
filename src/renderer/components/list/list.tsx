@@ -31,6 +31,7 @@ export function List() {
         sortBy: state.context.settings.sortBy,
         gridSize: state.context.settings.gridSize as [number, number],
         layoutMode: state.context.settings.layoutMode || 'grid',
+        preserveScrollFromLoadId: state.context.preserveScrollFromLoadId,
       };
     },
     (a, b) =>
@@ -41,7 +42,8 @@ export function List() {
       a.sortBy === b.sortBy &&
       a.gridSize[0] === b.gridSize[0] &&
       a.gridSize[1] === b.gridSize[1] &&
-      a.layoutMode === b.layoutMode
+      a.layoutMode === b.layoutMode &&
+      a.preserveScrollFromLoadId === b.preserveScrollFromLoadId
   );
 
   const items = useMemo(() => {
@@ -137,6 +139,7 @@ export function List() {
         cursor={cursor}
         scrollToCursorEventId={scrollToCursorEventId}
         libraryLoadId={base.libraryLoadId}
+        preserveScrollFromLoadId={base.preserveScrollFromLoadId}
         libraryService={libraryService}
         onScroll={handleScroll}
         onDidInitialScroll={() => setInitialLoad(false)}
@@ -155,6 +158,7 @@ export function List() {
       cursor={cursor}
       scrollToCursorEventId={scrollToCursorEventId}
       libraryLoadId={base.libraryLoadId}
+      preserveScrollFromLoadId={base.preserveScrollFromLoadId}
       libraryService={libraryService}
       onScroll={handleScroll}
       onDidInitialScroll={() => setInitialLoad(false)}
@@ -172,6 +176,7 @@ type VirtualGridProps = {
   cursor: number | null;
   scrollToCursorEventId: string | null;
   libraryLoadId: number;
+  preserveScrollFromLoadId: string | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   libraryService: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
@@ -188,6 +193,7 @@ function VirtualGrid({
   cursor,
   scrollToCursorEventId,
   libraryLoadId,
+  preserveScrollFromLoadId,
   libraryService,
   onScroll,
   onDidInitialScroll,
@@ -227,14 +233,24 @@ function VirtualGrid({
     rowVirtualizer,
   ]);
 
-  // Reset scroll to top when library content changes
+  // Reset scroll to top when library content changes — UNLESS the load was
+  // triggered by an in-place mutation (e.g. removing a tag from an image).
+  // The state machine sets preserveScrollFromLoadId to the libraryLoadId in
+  // effect at the time of the mutation; if that matches the transition we're
+  // about to react to, we keep the user's scroll position. Stale values from
+  // earlier mutations naturally won't match a later, unrelated transition.
   const prevLibraryLoadIdRef = useRef(libraryLoadId);
   useEffect(() => {
     if (libraryLoadId !== prevLibraryLoadIdRef.current) {
+      const shouldPreserve =
+        preserveScrollFromLoadId !== null &&
+        preserveScrollFromLoadId === prevLibraryLoadIdRef.current;
       prevLibraryLoadIdRef.current = libraryLoadId;
-      rowVirtualizer.scrollToOffset(0);
+      if (!shouldPreserve) {
+        rowVirtualizer.scrollToOffset(0);
+      }
     }
-  }, [libraryLoadId, rowVirtualizer]);
+  }, [libraryLoadId, rowVirtualizer, preserveScrollFromLoadId]);
 
   // Scroll to cursor when explicitly requested via scrollToCursorEventId
   // Use refs to avoid effect re-running on every render
@@ -382,6 +398,7 @@ type MasonryGridProps = {
   cursor: number | null;
   scrollToCursorEventId: string | null;
   libraryLoadId: number;
+  preserveScrollFromLoadId: string | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   libraryService: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
@@ -401,6 +418,7 @@ function MasonryGrid({
   cursor,
   scrollToCursorEventId,
   libraryLoadId,
+  preserveScrollFromLoadId,
   libraryService,
   onScroll,
   onDidInitialScroll,
@@ -548,17 +566,22 @@ function MasonryGrid({
     layout.height,
   ]);
 
-  // Reset scroll to top when library content changes
+  // Reset scroll to top when library content changes — UNLESS the load was
+  // triggered by an in-place mutation (e.g. removing a tag from an image).
+  // See VirtualGrid for the preserveScrollFromLoadId protocol.
   const prevLibraryLoadIdRef = useRef(libraryLoadId);
   useEffect(() => {
     if (libraryLoadId !== prevLibraryLoadIdRef.current) {
+      const shouldPreserve =
+        preserveScrollFromLoadId !== null &&
+        preserveScrollFromLoadId === prevLibraryLoadIdRef.current;
       prevLibraryLoadIdRef.current = libraryLoadId;
-      if (parentRef.current) {
+      if (!shouldPreserve && parentRef.current) {
         parentRef.current.scrollTop = 0;
         setScrollTop(0);
       }
     }
-  }, [libraryLoadId]);
+  }, [libraryLoadId, preserveScrollFromLoadId]);
 
   // Scroll to cursor when explicitly requested via scrollToCursorEventId
   useEffect(() => {

@@ -583,18 +583,32 @@ export default function Taxonomy() {
           setCategory={setActiveCategory}
         />
       ) : null}
-      {activeCategory && editingTag ? (
-        <NewTagModal
-          categoryLabel={activeCategory}
-          handleClose={() => setEditingTag(null)}
-          currentValue={editingTag}
-          currentDescription={
-            (activeCategoryTags || []).find(
-              (t: Concept) => t.label === editingTag
-            )?.description || ''
-          }
-        />
-      ) : null}
+      {editingTag ? (() => {
+        // The tag being edited may live outside the active category — in
+        // search mode `activeCategory` is intentionally cleared, so fall back
+        // to allTagsData to recover the tag's real category and description.
+        // categoryLabel isn't used by the edit flow itself (only the create
+        // flow consumes it for cache keys), but we pass the real category for
+        // correctness.
+        const editingTagConcept =
+          (activeCategoryTags || []).find(
+            (t: Concept) => t.label === editingTag
+          ) ||
+          (allTagsData || []).find(
+            (t: Concept) => t.label === editingTag
+          ) ||
+          null;
+        return (
+          <NewTagModal
+            categoryLabel={
+              editingTagConcept?.category || activeCategory || ''
+            }
+            handleClose={() => setEditingTag(null)}
+            currentValue={editingTag}
+            currentDescription={editingTagConcept?.description || ''}
+          />
+        );
+      })() : null}
       {editingCategory ? (
         <NewCategoryModal
           handleClose={() => setEditingCategory(null)}
