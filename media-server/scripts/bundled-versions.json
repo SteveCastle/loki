@@ -57,43 +57,43 @@
     },
     "exiftool": {
       "windows-amd64": {
-        "version": "13.04",
-        "url": "https://exiftool.org/exiftool-13.04_64.zip",
+        "version": "13.58",
+        "url": "https://exiftool.org/exiftool-13.58_64.zip",
         "sha256": "TO_FILL",
         "archive": "zip",
         "extract": [
-          {"from": "exiftool-13.04_64/exiftool(-k).exe", "to": "exiftool.exe"},
-          {"from": "exiftool-13.04_64/exiftool_files",   "to": "exiftool_files", "type": "dir"}
+          {"from": "exiftool-13.58_64/exiftool(-k).exe", "to": "exiftool.exe"},
+          {"from": "exiftool-13.58_64/exiftool_files",   "to": "exiftool_files", "type": "dir"}
         ]
       },
       "linux-amd64": {
-        "version": "13.04",
-        "url": "https://exiftool.org/Image-ExifTool-13.04.tar.gz",
+        "version": "13.58",
+        "url": "https://exiftool.org/Image-ExifTool-13.58.tar.gz",
         "sha256": "TO_FILL",
         "archive": "tar.gz",
         "extract": [
-          {"from": "Image-ExifTool-13.04/exiftool",   "to": "exiftool"},
-          {"from": "Image-ExifTool-13.04/lib",        "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.58/exiftool",   "to": "exiftool"},
+          {"from": "Image-ExifTool-13.58/lib",        "to": "exiftool_files", "type": "dir"}
         ]
       },
       "darwin-arm64": {
-        "version": "13.04",
-        "url": "https://exiftool.org/Image-ExifTool-13.04.tar.gz",
+        "version": "13.58",
+        "url": "https://exiftool.org/Image-ExifTool-13.58.tar.gz",
         "sha256": "TO_FILL",
         "archive": "tar.gz",
         "extract": [
-          {"from": "Image-ExifTool-13.04/exiftool", "to": "exiftool"},
-          {"from": "Image-ExifTool-13.04/lib",      "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.58/exiftool", "to": "exiftool"},
+          {"from": "Image-ExifTool-13.58/lib",      "to": "exiftool_files", "type": "dir"}
         ]
       },
       "darwin-amd64": {
-        "version": "13.04",
-        "url": "https://exiftool.org/Image-ExifTool-13.04.tar.gz",
+        "version": "13.58",
+        "url": "https://exiftool.org/Image-ExifTool-13.58.tar.gz",
         "sha256": "TO_FILL",
         "archive": "tar.gz",
         "extract": [
-          {"from": "Image-ExifTool-13.04/exiftool", "to": "exiftool"},
-          {"from": "Image-ExifTool-13.04/lib",      "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.58/exiftool", "to": "exiftool"},
+          {"from": "Image-ExifTool-13.58/lib",      "to": "exiftool_files", "type": "dir"}
         ]
       }
     },
