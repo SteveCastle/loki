@@ -152,6 +152,7 @@ func switchDatabase(newDBPath string) error {
 
 	// Prepare a new queue backed by the new DB
 	newQueue := jobqueue.NewQueueWithDB(newDB)
+	tasks.ApplyHostLimits(newQueue, currentConfig)
 
 	// Shut down old runners first if they exist
 	if currentRunners != nil {
@@ -1526,6 +1527,10 @@ type updateConfigRequest struct {
 	InferenceProvider      string  `json:"inferenceProvider"`
 	RunPodEndpoint         string  `json:"runpodEndpoint"`
 	RunPodAPIKey           string  `json:"runpodApiKey"`
+	InferenceConcurrency   struct {
+		Ollama int `json:"ollama"`
+		RunPod int `json:"runpod"`
+	} `json:"inferenceConcurrency"`
 	OnnxModelPath          string  `json:"onnxModelPath"`
 	OnnxLabelsPath         string  `json:"onnxLabelsPath"`
 	OnnxConfigPath         string  `json:"onnxConfigPath"`
@@ -1597,6 +1602,15 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			// works. The active provider is what gates whether they're used.
 			newCfg.RunPodEndpoint = strings.TrimSpace(req.RunPodEndpoint)
 			newCfg.RunPodAPIKey = strings.TrimSpace(req.RunPodAPIKey)
+			// Concurrency caps: positive values overwrite, anything else
+			// (zero / negative from a misshaped payload) leaves the stored
+			// value alone so the user can't accidentally stall a bucket.
+			if req.InferenceConcurrency.Ollama > 0 {
+				newCfg.InferenceConcurrency.Ollama = req.InferenceConcurrency.Ollama
+			}
+			if req.InferenceConcurrency.RunPod > 0 {
+				newCfg.InferenceConcurrency.RunPod = req.InferenceConcurrency.RunPod
+			}
 			newCfg.OnnxTagger.ModelPath = strings.TrimSpace(req.OnnxModelPath)
 			newCfg.OnnxTagger.LabelsPath = strings.TrimSpace(req.OnnxLabelsPath)
 			newCfg.OnnxTagger.ConfigPath = strings.TrimSpace(req.OnnxConfigPath)
@@ -1648,6 +1662,11 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				log.Printf("Warning: storage backend init error: %v", regErr)
 			}
 			deps.Storage.ReplaceWithDefault(newReg.AllBackends(), newReg.DefaultIdx())
+
+			// Re-apply per-bucket concurrency caps so UI changes take effect
+			// immediately. Cheap idempotent operation — only future ClaimJob
+			// calls consult the new value; in-flight jobs are untouched.
+			tasks.ApplyHostLimits(deps.Queue, newCfg)
 
 			// Determine if any config field actually changed
 			changed := !reflect.DeepEqual(oldCfg, newCfg)
@@ -2302,8 +2321,15 @@ func main() {
 
 	// ––– job queue and runners –––
 	log.Println("Initializing job queue with database persistence...")
+	// Wire the host resolver before NewQueueWithDB so the DB-restore path
+	// uses the full task-aware policy (rather than the jobqueue fallback)
+	// when assigning buckets to persisted jobs.
+	jobqueue.SetHostResolver(tasks.ResolveHost)
 	queue := jobqueue.NewQueueWithDB(db)
 	log.Printf("Job queue initialized. Current jobs: %d", len(queue.GetJobs()))
+	// Apply per-bucket concurrency caps from config. Safe to call before
+	// runners start since SetHostLimit only mutates the limits map.
+	tasks.ApplyHostLimits(queue, currentConfig)
 	currentRunners = runners.New(queue)
 
 	// ––– auth service –––

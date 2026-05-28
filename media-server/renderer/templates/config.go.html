@@ -925,6 +925,21 @@
                       </option>
                     </select>
                   </div>
+                  <div class="field">
+                    <label class="label">Max concurrent jobs</label>
+                    <input
+                      id="ollama-concurrency"
+                      class="input"
+                      type="number"
+                      min="1"
+                      value="{{.Config.InferenceConcurrency.Ollama}}"
+                    />
+                    <small class="hint">
+                      Caps how many describe/auto-tag jobs run against
+                      Ollama in parallel. Local single-GPU installs
+                      typically want 1.
+                    </small>
+                  </div>
                 </div>
               </div>
 
@@ -953,6 +968,21 @@
                       autocomplete="off"
                       value="{{.Config.RunPodAPIKey}}"
                     />
+                  </div>
+                  <div class="field">
+                    <label class="label">Max concurrent jobs</label>
+                    <input
+                      id="runpod-concurrency"
+                      class="input"
+                      type="number"
+                      min="1"
+                      value="{{.Config.InferenceConcurrency.RunPod}}"
+                    />
+                    <small class="hint">
+                      RunPod serverless scales out per request, so this
+                      can run well above 1. Match it to whatever your
+                      worker config can support.
+                    </small>
                   </div>
                   <div class="field">
                     <small class="hint">
@@ -1525,6 +1555,18 @@
           runpodApiKey: document
             .getElementById('runpod-api-key')
             .value.trim(),
+          inferenceConcurrency: {
+            ollama:
+              parseInt(
+                document.getElementById('ollama-concurrency').value,
+                10
+              ) || 0,
+            runpod:
+              parseInt(
+                document.getElementById('runpod-concurrency').value,
+                10
+              ) || 0,
+          },
           onnxModelPath: document
             .getElementById('onnx-model-path')
             .value.trim(),

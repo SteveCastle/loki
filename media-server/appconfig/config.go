@@ -60,6 +60,16 @@ type Config struct {
 	RunPodEndpoint string `json:"runpodEndpoint"`
 	RunPodAPIKey   string `json:"runpodApiKey"`
 
+	// Per-provider concurrency caps. Drives the jobqueue host-bucket limit
+	// for the corresponding inference bucket — a single GPU Ollama install
+	// typically wants 1 at a time, while RunPod serverless can absorb many
+	// concurrent requests because it scales out per-call. Add one field
+	// per new engine; values <= 0 leave the queue at its default of 1.
+	InferenceConcurrency struct {
+		Ollama int `json:"ollama"`
+		RunPod int `json:"runpod"`
+	} `json:"inferenceConcurrency"`
+
 	// ONNX tagger settings
 	OnnxTagger struct {
 		ModelPath            string  `json:"modelPath"`
@@ -122,6 +132,13 @@ func defaultConfig() Config {
 		OllamaModel:       "llama3.2-vision",
 		DescribePrompt: "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
 		AutotagPrompt:  "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
+		InferenceConcurrency: struct {
+			Ollama int `json:"ollama"`
+			RunPod int `json:"runpod"`
+		}{
+			Ollama: 1, // local single-GPU Ollama: one at a time
+			RunPod: 4, // serverless scales out per request
+		},
 		OnnxTagger: struct {
 			ModelPath            string  `json:"modelPath"`
 			LabelsPath           string  `json:"labelsPath"`
@@ -292,6 +309,16 @@ func Load() (Config, string, error) {
 	if c.OnnxTagger.CharacterThreshold == 0 {
 		c.OnnxTagger.CharacterThreshold = def.OnnxTagger.CharacterThreshold
 	}
+	// Fill in inference-concurrency defaults for configs predating these
+	// fields; treat 0 as "use default" so users can deliberately raise the
+	// cap to a large number but won't accidentally land at zero (which
+	// would stall the bucket entirely).
+	if c.InferenceConcurrency.Ollama <= 0 {
+		c.InferenceConcurrency.Ollama = def.InferenceConcurrency.Ollama
+	}
+	if c.InferenceConcurrency.RunPod <= 0 {
+		c.InferenceConcurrency.RunPod = def.InferenceConcurrency.RunPod
+	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = uuid.New().String()
 		needsSave = true
@@ -373,6 +400,22 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_RUNPOD_API_KEY"); v != "" {
 		c.RunPodAPIKey = v
+	}
+	// Per-provider concurrency caps. Parse as int; warn and skip on bad
+	// values rather than silently zeroing the bucket.
+	if v := os.Getenv("LOWKEY_INFERENCE_OLLAMA_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.InferenceConcurrency.Ollama = n
+		} else {
+			log.Printf("Warning: LOWKEY_INFERENCE_OLLAMA_CONCURRENCY=%q is not a positive integer; ignored", v)
+		}
+	}
+	if v := os.Getenv("LOWKEY_INFERENCE_RUNPOD_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.InferenceConcurrency.RunPod = n
+		} else {
+			log.Printf("Warning: LOWKEY_INFERENCE_RUNPOD_CONCURRENCY=%q is not a positive integer; ignored", v)
+		}
 	}
 	if v := os.Getenv("LOWKEY_JWT_SECRET"); v != "" {
 		c.JWTSecret = v

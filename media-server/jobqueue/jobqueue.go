@@ -1018,7 +1018,31 @@ func serializeStdout(line string, id string) error {
 
 // Helper methods
 
-func getHost(command, input string) string {
+// HostResolverFunc maps a job's (command, input) pair to a concurrency
+// bucket name. The bucket is then governed by HostLimits / RunningCounts;
+// see ClaimJob. Inject one with SetHostResolver to keep task-specific
+// policy out of jobqueue. The default resolver preserves the previous
+// inline behavior so packages that don't override get the same result.
+type HostResolverFunc func(command, input string) string
+
+var hostResolver HostResolverFunc = defaultHostResolver
+
+// SetHostResolver replaces the host-bucket resolver. Call once at startup
+// (before any AddJob / loadJobsFromDB), typically with the tasks package's
+// registry so per-task host policy stays alongside the tasks themselves.
+func SetHostResolver(fn HostResolverFunc) {
+	if fn == nil {
+		hostResolver = defaultHostResolver
+		return
+	}
+	hostResolver = fn
+}
+
+// defaultHostResolver mirrors the historical getHost behavior: URL hostname
+// for "ingest", "localhost" for everything else. Kept here so existing
+// jobqueue tests and any consumer that doesn't register a resolver still
+// see the same buckets as before.
+func defaultHostResolver(command, input string) string {
 	if command == "ingest" {
 		u, err := url.Parse(input)
 		if err == nil && u.Host != "" {
@@ -1026,6 +1050,12 @@ func getHost(command, input string) string {
 		}
 	}
 	return "localhost"
+}
+
+// getHost is retained as a tiny shim so the existing internal call sites
+// don't need to change shape.
+func getHost(command, input string) string {
+	return hostResolver(command, input)
 }
 
 func (q *Queue) getHostLimitLocked(host string) int {
