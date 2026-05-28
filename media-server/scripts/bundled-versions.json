@@ -125,32 +125,32 @@
     },
     "onnxruntime": {
       "windows-amd64": {
-        "version": "1.21.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-win-x64-1.21.0.zip",
+        "version": "1.22.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip",
         "sha256": "TO_FILL",
         "archive": "zip",
-        "extract": [{"from": "onnxruntime-win-x64-1.21.0/lib/onnxruntime.dll", "to": "onnxruntime.dll"}]
+        "extract": [{"from": "onnxruntime-win-x64-1.22.0/lib/onnxruntime.dll", "to": "onnxruntime.dll"}]
       },
       "linux-amd64": {
-        "version": "1.21.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-linux-x64-1.21.0.tgz",
+        "version": "1.22.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz",
         "sha256": "TO_FILL",
         "archive": "tar.gz",
-        "extract": [{"from": "onnxruntime-linux-x64-1.21.0/lib/libonnxruntime.so*", "to": "onnxruntime.so", "match": "newest"}]
+        "extract": [{"from": "onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so*", "to": "onnxruntime.so", "match": "newest"}]
       },
       "darwin-arm64": {
-        "version": "1.21.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-osx-arm64-1.21.0.tgz",
+        "version": "1.22.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz",
         "sha256": "TO_FILL",
         "archive": "tar.gz",
-        "extract": [{"from": "onnxruntime-osx-arm64-1.21.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
+        "extract": [{"from": "onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
       },
       "darwin-amd64": {
-        "version": "1.21.0",
-        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.21.0/onnxruntime-osx-x86_64-1.21.0.tgz",
+        "version": "1.22.0",
+        "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz",
         "sha256": "TO_FILL",
         "archive": "tar.gz",
-        "extract": [{"from": "onnxruntime-osx-x86_64-1.21.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
+        "extract": [{"from": "onnxruntime-osx-x86_64-1.22.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
       }
     }
   }
