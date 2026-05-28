@@ -5,9 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
@@ -16,7 +14,6 @@ import (
 	"image/png"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -530,41 +527,13 @@ func resizeImageIfNeeded(path string) (string, error) {
 	return tmpPath, nil
 }
 
-func callOllamaVision(ctx context.Context, imagePath, model string) (string, error) {
-	data, err := os.ReadFile(imagePath)
-	if err != nil {
-		return "", fmt.Errorf("could not read image for Ollama: %w", err)
-	}
-	b64 := base64.StdEncoding.EncodeToString(data)
-	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"prompt":%s,"images":["%s"]}`,
-		model, strconv.Quote(appconfig.Get().DescribePrompt), b64)
-	base := strings.TrimRight(appconfig.Get().OllamaBaseURL, "/")
-	req, err := http.NewRequestWithContext(ctx, "POST", base+"/api/generate", strings.NewReader(reqJSON))
-	if err != nil {
-		return "", fmt.Errorf("failed to build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 600 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ollama request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("ollama error: status=%d, body=%s", resp.StatusCode, string(body))
-	}
-	var response struct {
-		Response string `json:"response"`
-	}
-	dataBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("reading response body failed: %w", err)
-	}
-	if err := json.Unmarshal(dataBytes, &response); err != nil {
-		return "", fmt.Errorf("could not unmarshal Ollama response: %w", err)
-	}
-	return response.Response, nil
+// callOllamaVision routes to either RunPod or the local Ollama HTTP API for
+// image description. The 10-minute deadline preserves the upper bound that
+// used to live on the per-request http.Client.
+func callOllamaVision(ctx context.Context, imagePath, _ string) (string, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 600*time.Second)
+	defer cancel()
+	return callVisionLLM(timeoutCtx, imagePath, appconfig.Get().DescribePrompt)
 }
 
 func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string) (string, error) {
