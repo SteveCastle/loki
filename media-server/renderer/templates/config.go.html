@@ -837,6 +837,40 @@
               </div>
             </div>
 
+            <div class="config-card config-card--purple">
+              <div class="section-title">🚀 RunPod (overrides Ollama when set)</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Serverless endpoint</label>
+                  <input
+                    id="runpod-endpoint"
+                    class="input"
+                    type="text"
+                    placeholder="https://api.runpod.ai/v2/&lt;id&gt;/run or /runsync"
+                    value="{{.Config.RunPodEndpoint}}"
+                  />
+                </div>
+                <div class="field">
+                  <label class="label">API key</label>
+                  <input
+                    id="runpod-api-key"
+                    class="input"
+                    type="password"
+                    autocomplete="off"
+                    value="{{.Config.RunPodAPIKey}}"
+                  />
+                </div>
+                <div class="field">
+                  <small class="hint">
+                    Vision LLM calls (describe / auto-tag) go to RunPod when
+                    both fields are set. Clear either field to fall back to
+                    the Ollama settings above. Model is configured on the
+                    RunPod worker side (OLLAMA_MODEL_NAME env on the worker).
+                  </small>
+                </div>
+              </div>
+            </div>
+
             <div class="config-card config-card--cyan">
               <div class="section-title">🧩 ONNX Tagger</div>
               <div class="fields">
@@ -1372,6 +1406,12 @@
           ollamaModel: document.getElementById('ollama-model').value.trim(),
           describePrompt: document.getElementById('describe-prompt').value,
           autotagPrompt: document.getElementById('autotag-prompt').value,
+          runpodEndpoint: document
+            .getElementById('runpod-endpoint')
+            .value.trim(),
+          runpodApiKey: document
+            .getElementById('runpod-api-key')
+            .value.trim(),
           onnxModelPath: document
             .getElementById('onnx-model-path')
             .value.trim(),

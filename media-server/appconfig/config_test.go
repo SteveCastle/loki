@@ -34,6 +34,14 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.OnnxTagger.CharacterThreshold != 0.85 {
 		t.Errorf("Default CharacterThreshold = %f; want 0.85", cfg.OnnxTagger.CharacterThreshold)
 	}
+
+	// RunPod is opt-in; empty by default keeps Ollama as the vision backend.
+	if cfg.RunPodEndpoint != "" {
+		t.Errorf("Default RunPodEndpoint = %q; want empty", cfg.RunPodEndpoint)
+	}
+	if cfg.RunPodAPIKey != "" {
+		t.Errorf("Default RunPodAPIKey = %q; want empty", cfg.RunPodAPIKey)
+	}
 }
 
 // TestDefaultDownloadPath verifies the download path generation
@@ -443,6 +451,8 @@ func TestApplyEnvOverrides(t *testing.T) {
 		"LOWKEY_DOWNLOAD_PATH":       "/env/downloads",
 		"LOWKEY_OLLAMA_BASE_URL":     "http://env-ollama:11434",
 		"LOWKEY_OLLAMA_MODEL":        "env-model",
+		"LOWKEY_RUNPOD_ENDPOINT":     "https://api.runpod.ai/v2/abc123/run",
+		"LOWKEY_RUNPOD_API_KEY":      "env-runpod-key",
 		"LOWKEY_JWT_SECRET":          "env-secret",
 		"LOWKEY_DISCORD_TOKEN":       "env-discord",
 		"LOWKEY_FASTER_WHISPER_PATH": "/env/whisper",
@@ -464,6 +474,12 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if c.OllamaModel != "env-model" {
 		t.Errorf("OllamaModel = %q; want %q", c.OllamaModel, "env-model")
+	}
+	if c.RunPodEndpoint != "https://api.runpod.ai/v2/abc123/run" {
+		t.Errorf("RunPodEndpoint = %q; want %q", c.RunPodEndpoint, "https://api.runpod.ai/v2/abc123/run")
+	}
+	if c.RunPodAPIKey != "env-runpod-key" {
+		t.Errorf("RunPodAPIKey = %q; want %q", c.RunPodAPIKey, "env-runpod-key")
 	}
 	if c.JWTSecret != "env-secret" {
 		t.Errorf("JWTSecret = %q; want %q", c.JWTSecret, "env-secret")

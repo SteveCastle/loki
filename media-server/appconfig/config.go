@@ -44,6 +44,15 @@ type Config struct {
 	DescribePrompt string `json:"describePrompt"`
 	AutotagPrompt  string `json:"autotagPrompt"`
 
+	// RunPod serverless vision settings. When both RunPodEndpoint and
+	// RunPodAPIKey are set, vision LLM calls (describe / auto-tag) bypass
+	// Ollama and use the RunPod worker instead. The worker is expected to
+	// expose an OpenAI-compatible chat-completions interface (e.g.
+	// SvenBrnn/runpod-worker-ollama). The endpoint may point at either
+	// `/run` (async, polled) or `/runsync` (inline response).
+	RunPodEndpoint string `json:"runpodEndpoint"`
+	RunPodAPIKey   string `json:"runpodApiKey"`
+
 	// ONNX tagger settings
 	OnnxTagger struct {
 		ModelPath            string  `json:"modelPath"`
@@ -335,6 +344,12 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_OLLAMA_MODEL"); v != "" {
 		c.OllamaModel = v
+	}
+	if v := os.Getenv("LOWKEY_RUNPOD_ENDPOINT"); v != "" {
+		c.RunPodEndpoint = v
+	}
+	if v := os.Getenv("LOWKEY_RUNPOD_API_KEY"); v != "" {
+		c.RunPodAPIKey = v
 	}
 	if v := os.Getenv("LOWKEY_JWT_SECRET"); v != "" {
 		c.JWTSecret = v

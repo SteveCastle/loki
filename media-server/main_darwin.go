@@ -1207,6 +1207,8 @@ type updateConfigRequest struct {
 	OllamaModel            string  `json:"ollamaModel"`
 	DescribePrompt         string  `json:"describePrompt"`
 	AutotagPrompt          string  `json:"autotagPrompt"`
+	RunPodEndpoint         string  `json:"runpodEndpoint"`
+	RunPodAPIKey           string  `json:"runpodApiKey"`
 	OnnxModelPath          string  `json:"onnxModelPath"`
 	OnnxLabelsPath         string  `json:"onnxLabelsPath"`
 	OnnxConfigPath         string  `json:"onnxConfigPath"`
@@ -1396,6 +1398,10 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.AutotagPrompt != "" {
 				newCfg.AutotagPrompt = req.AutotagPrompt
 			}
+			// RunPod fields: assign unconditionally so an empty value disables
+			// the worker (user clears the field in the UI to fall back to Ollama).
+			newCfg.RunPodEndpoint = strings.TrimSpace(req.RunPodEndpoint)
+			newCfg.RunPodAPIKey = strings.TrimSpace(req.RunPodAPIKey)
 			newCfg.OnnxTagger.ModelPath = strings.TrimSpace(req.OnnxModelPath)
 			newCfg.OnnxTagger.LabelsPath = strings.TrimSpace(req.OnnxLabelsPath)
 			newCfg.OnnxTagger.ConfigPath = strings.TrimSpace(req.OnnxConfigPath)

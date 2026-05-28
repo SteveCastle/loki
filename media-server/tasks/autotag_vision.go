@@ -2,15 +2,11 @@ package tasks
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -137,13 +133,11 @@ func generateAutoTagsWithVision(ctx context.Context, mediaPath string, available
 	return selectedTags, nil
 }
 
-// callOllamaVisionForTags calls Ollama API to select appropriate tags for an image
-func callOllamaVisionForTags(ctx context.Context, imagePath string, availableTags []TagInfo, model string) ([]TagInfo, error) {
-	data, err := os.ReadFile(imagePath)
-	if err != nil {
-		return nil, fmt.Errorf("could not read image for Ollama: %w", err)
-	}
-	b64 := base64.StdEncoding.EncodeToString(data)
+// callOllamaVisionForTags asks the vision LLM (RunPod when configured, else
+// Ollama) to pick appropriate tags for an image from a constrained list.
+// The unused model arg is preserved for callsite signature parity; the
+// underlying client picks its own model from config.
+func callOllamaVisionForTags(ctx context.Context, imagePath string, availableTags []TagInfo, _ string) ([]TagInfo, error) {
 	var tagOptions strings.Builder
 	tagOptions.WriteString("Available tags by category:\n")
 	categoryMap := make(map[string][]string)
@@ -155,36 +149,17 @@ func callOllamaVisionForTags(ctx context.Context, imagePath string, availableTag
 	}
 	prompt := fmt.Sprintf(appconfig.Get().AutotagPrompt, tagOptions.String())
 	log.Printf("AutoTag Vision Prompt for %s:\n%s", imagePath, prompt)
-	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"prompt":%s,"images":["%s"]}`,
-		model, strconv.Quote(prompt), b64)
-	base := strings.TrimRight(appconfig.Get().OllamaBaseURL, "/")
-	req, err := http.NewRequestWithContext(ctx, "POST", base+"/api/generate", strings.NewReader(reqJSON))
+
+	// 60s timeout matched the prior http.Client literal; preserved here as
+	// a context deadline so the RunPod async path can also honor it.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	response, err := callVisionLLM(timeoutCtx, imagePath, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build request: %w", err)
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ollama request failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama error: status=%d, body=%s", resp.StatusCode, string(body))
-	}
-	var response struct {
-		Response string `json:"response"`
-	}
-	respData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body failed: %w", err)
-	}
-	if err := json.Unmarshal(respData, &response); err != nil {
-		return nil, fmt.Errorf("could not unmarshal Ollama response: %w", err)
-	}
-	log.Printf("AutoTag Vision Raw Response for %s:\n%s", imagePath, response.Response)
-	selectedTags, err := parseTagsFromResponse(response.Response, availableTags)
+	log.Printf("AutoTag Vision Raw Response for %s:\n%s", imagePath, response)
+	selectedTags, err := parseTagsFromResponse(response, availableTags)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse tags from response: %w", err)
 	}
