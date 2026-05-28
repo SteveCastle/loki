@@ -886,6 +886,22 @@
                 >
                   RunPod
                 </button>
+                <button
+                  type="button"
+                  class="inference-tab"
+                  data-provider="lmstudio"
+                  role="tab"
+                >
+                  LM Studio
+                </button>
+                <button
+                  type="button"
+                  class="inference-tab"
+                  data-provider="llamacpp"
+                  role="tab"
+                >
+                  llama.cpp
+                </button>
               </div>
 
               <input
@@ -990,6 +1006,117 @@
                       (OLLAMA_MODEL_NAME env on the worker, per the
                       SvenBrnn/runpod-worker-ollama convention).
                     </small>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                class="inference-panel"
+                data-provider="lmstudio"
+                role="tabpanel"
+              >
+                <div class="fields">
+                  <div class="field">
+                    <label class="label">Base URL</label>
+                    <input
+                      id="lmstudio-base-url"
+                      class="input"
+                      type="text"
+                      placeholder="http://localhost:1234"
+                      value="{{.Config.LMStudioBaseURL}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">Model</label>
+                    <input
+                      id="lmstudio-model"
+                      class="input"
+                      type="text"
+                      placeholder="e.g. llava-1.5-7b"
+                      value="{{.Config.LMStudioModel}}"
+                    />
+                    <small class="hint">
+                      Match the identifier shown for the loaded model in
+                      LM Studio's Local Server tab.
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">API key (optional)</label>
+                    <input
+                      id="lmstudio-api-key"
+                      class="input"
+                      type="password"
+                      autocomplete="off"
+                      value="{{.Config.LMStudioAPIKey}}"
+                    />
+                    <small class="hint">
+                      Only needed if you've put LM Studio behind a proxy
+                      that enforces auth. Local installs leave this blank.
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">Max concurrent jobs</label>
+                    <input
+                      id="lmstudio-concurrency"
+                      class="input"
+                      type="number"
+                      min="1"
+                      value="{{.Config.InferenceConcurrency.LMStudio}}"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div
+                class="inference-panel"
+                data-provider="llamacpp"
+                role="tabpanel"
+              >
+                <div class="fields">
+                  <div class="field">
+                    <label class="label">Base URL</label>
+                    <input
+                      id="llamacpp-base-url"
+                      class="input"
+                      type="text"
+                      placeholder="http://localhost:8080"
+                      value="{{.Config.LlamaCppBaseURL}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">Model (optional)</label>
+                    <input
+                      id="llamacpp-model"
+                      class="input"
+                      type="text"
+                      placeholder="leave empty to use the loaded model"
+                      value="{{.Config.LlamaCppModel}}"
+                    />
+                    <small class="hint">
+                      The llama.cpp server usually serves whatever model
+                      was loaded at startup; the model name is mostly
+                      cosmetic but some setups require an explicit value.
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">API key (optional)</label>
+                    <input
+                      id="llamacpp-api-key"
+                      class="input"
+                      type="password"
+                      autocomplete="off"
+                      value="{{.Config.LlamaCppAPIKey}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">Max concurrent jobs</label>
+                    <input
+                      id="llamacpp-concurrency"
+                      class="input"
+                      type="number"
+                      min="1"
+                      value="{{.Config.InferenceConcurrency.LlamaCpp}}"
+                    />
                   </div>
                 </div>
               </div>
@@ -1555,6 +1682,24 @@
           runpodApiKey: document
             .getElementById('runpod-api-key')
             .value.trim(),
+          lmstudioBaseUrl: document
+            .getElementById('lmstudio-base-url')
+            .value.trim(),
+          lmstudioModel: document
+            .getElementById('lmstudio-model')
+            .value.trim(),
+          lmstudioApiKey: document
+            .getElementById('lmstudio-api-key')
+            .value.trim(),
+          llamacppBaseUrl: document
+            .getElementById('llamacpp-base-url')
+            .value.trim(),
+          llamacppModel: document
+            .getElementById('llamacpp-model')
+            .value.trim(),
+          llamacppApiKey: document
+            .getElementById('llamacpp-api-key')
+            .value.trim(),
           inferenceConcurrency: {
             ollama:
               parseInt(
@@ -1564,6 +1709,16 @@
             runpod:
               parseInt(
                 document.getElementById('runpod-concurrency').value,
+                10
+              ) || 0,
+            lmstudio:
+              parseInt(
+                document.getElementById('lmstudio-concurrency').value,
+                10
+              ) || 0,
+            llamacpp:
+              parseInt(
+                document.getElementById('llamacpp-concurrency').value,
                 10
               ) || 0,
           },

@@ -23,20 +23,24 @@ import (
 // driven from the Inference tab in the config UI. Add a new constant + a
 // matching case in callVisionLLM to wire in a new backend.
 const (
-	InferenceProviderOff    = "off"
-	InferenceProviderOllama = "ollama"
-	InferenceProviderRunPod = "runpod"
+	InferenceProviderOff      = "off"
+	InferenceProviderOllama   = "ollama"
+	InferenceProviderRunPod   = "runpod"
+	InferenceProviderLMStudio = "lmstudio"
+	InferenceProviderLlamaCpp = "llamacpp"
 )
 
 // Host buckets used for jobqueue concurrency on inference work. Each
 // provider gets its own bucket so its limit can be tuned independently —
-// Ollama on a single local GPU typically wants 1 at a time, while RunPod
+// local single-GPU backends typically want 1 at a time, while RunPod
 // serverless can take many in parallel because it scales out per request.
 // A new engine adds one constant here, one case in InferenceHost, one
 // field on appconfig.InferenceConcurrency, and one bump in ApplyHostLimits.
 const (
-	HostBucketOllama = "ollama"
-	HostBucketRunPod = "runpod"
+	HostBucketOllama   = "ollama"
+	HostBucketRunPod   = "runpod"
+	HostBucketLMStudio = "lmstudio"
+	HostBucketLlamaCpp = "llamacpp"
 )
 
 // InferenceHost returns the concurrency bucket name for the currently
@@ -52,6 +56,10 @@ func InferenceHost() string {
 		return HostBucketRunPod
 	case InferenceProviderOllama:
 		return HostBucketOllama
+	case InferenceProviderLMStudio:
+		return HostBucketLMStudio
+	case InferenceProviderLlamaCpp:
+		return HostBucketLlamaCpp
 	default:
 		return "localhost"
 	}
@@ -79,9 +87,106 @@ func callVisionLLM(ctx context.Context, imagePath, prompt string) (string, error
 			return "", fmt.Errorf("runpod provider selected but endpoint or api key is empty")
 		}
 		return callRunPodVision(ctx, imagePath, prompt, cfg.RunPodEndpoint, cfg.RunPodAPIKey)
+	case InferenceProviderLMStudio:
+		if strings.TrimSpace(cfg.LMStudioBaseURL) == "" {
+			return "", fmt.Errorf("lmstudio provider selected but base URL is empty")
+		}
+		return callOpenAICompatibleVision(ctx, imagePath, prompt, cfg.LMStudioBaseURL, cfg.LMStudioAPIKey, cfg.LMStudioModel)
+	case InferenceProviderLlamaCpp:
+		if strings.TrimSpace(cfg.LlamaCppBaseURL) == "" {
+			return "", fmt.Errorf("llamacpp provider selected but base URL is empty")
+		}
+		return callOpenAICompatibleVision(ctx, imagePath, prompt, cfg.LlamaCppBaseURL, cfg.LlamaCppAPIKey, cfg.LlamaCppModel)
 	default:
 		return "", fmt.Errorf("unknown inference provider %q", cfg.InferenceProvider)
 	}
+}
+
+// callOpenAICompatibleVision posts a chat-completions vision payload to any
+// server that speaks the OpenAI /v1/chat/completions shape — currently
+// LM Studio and the llama.cpp `server` binary, but the same client handles
+// any future OpenAI-compatible local engine. The auth header is only sent
+// when apiKey is non-empty so this works for unauthenticated local servers
+// as well as proxied / remote setups.
+//
+// Distinct from callRunPodVision, which wraps the same payload in RunPod's
+// {input: ...} envelope and supports async /run polling. If we ever pick up
+// more OpenAI-shaped providers (vLLM, TGI, etc.) they reuse this helper.
+func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL, apiKey, model string) (string, error) {
+	data, err := os.ReadFile(imagePath)
+	if err != nil {
+		return "", fmt.Errorf("could not read image for inference: %w", err)
+	}
+	b64 := base64.StdEncoding.EncodeToString(data)
+	mime := mimeFromExt(imagePath)
+	dataURI := fmt.Sprintf("data:%s;base64,%s", mime, b64)
+
+	payload := map[string]any{
+		"model":  model,
+		"stream": false,
+		"messages": []map[string]any{
+			{
+				"role": "user",
+				"content": []map[string]any{
+					{"type": "text", "text": prompt},
+					{"type": "image_url", "image_url": map[string]any{"url": dataURI}},
+				},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal chat-completions payload: %w", err)
+	}
+
+	endpoint := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("failed to build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if strings.TrimSpace(apiKey) != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("inference request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("inference error: status=%d, body=%s", resp.StatusCode, string(raw))
+	}
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading inference response failed: %w", err)
+	}
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(rawBody, &parsed); err != nil {
+		return "", fmt.Errorf("could not unmarshal chat-completions response: %w", err)
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return "", fmt.Errorf("inference returned error: %s", parsed.Error.Message)
+	}
+	if len(parsed.Choices) == 0 {
+		return "", fmt.Errorf("inference response missing choices: %s", string(rawBody))
+	}
+	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
+	if content == "" {
+		return "", fmt.Errorf("inference response empty content: %s", string(rawBody))
+	}
+	return content, nil
 }
 
 // callOllamaVisionRaw issues an /api/generate request to a local-or-remote

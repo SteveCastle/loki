@@ -29,6 +29,8 @@ func TestInferenceHostMapping(t *testing.T) {
 	}{
 		{InferenceProviderOllama, HostBucketOllama},
 		{InferenceProviderRunPod, HostBucketRunPod},
+		{InferenceProviderLMStudio, HostBucketLMStudio},
+		{InferenceProviderLlamaCpp, HostBucketLlamaCpp},
 		{InferenceProviderOff, "localhost"},
 		{"", "localhost"},
 		{"something-new", "localhost"},

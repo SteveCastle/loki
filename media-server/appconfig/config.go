@@ -60,14 +60,32 @@ type Config struct {
 	RunPodEndpoint string `json:"runpodEndpoint"`
 	RunPodAPIKey   string `json:"runpodApiKey"`
 
+	// LM Studio vision settings. Active when InferenceProvider == "lmstudio".
+	// LM Studio exposes an OpenAI-compatible /v1/chat/completions endpoint
+	// (default base http://localhost:1234). API key is rarely needed for
+	// local installs but supported for proxied / remote setups.
+	LMStudioBaseURL string `json:"lmstudioBaseUrl"`
+	LMStudioModel   string `json:"lmstudioModel"`
+	LMStudioAPIKey  string `json:"lmstudioApiKey"`
+
+	// llama.cpp server vision settings. Active when InferenceProvider ==
+	// "llamacpp". The official llama.cpp `server` binary exposes an
+	// OpenAI-compatible /v1/chat/completions endpoint (default base
+	// http://localhost:8080). API key is optional and only honored if set.
+	LlamaCppBaseURL string `json:"llamacppBaseUrl"`
+	LlamaCppModel   string `json:"llamacppModel"`
+	LlamaCppAPIKey  string `json:"llamacppApiKey"`
+
 	// Per-provider concurrency caps. Drives the jobqueue host-bucket limit
-	// for the corresponding inference bucket — a single GPU Ollama install
+	// for the corresponding inference bucket — a single GPU local install
 	// typically wants 1 at a time, while RunPod serverless can absorb many
 	// concurrent requests because it scales out per-call. Add one field
 	// per new engine; values <= 0 leave the queue at its default of 1.
 	InferenceConcurrency struct {
-		Ollama int `json:"ollama"`
-		RunPod int `json:"runpod"`
+		Ollama   int `json:"ollama"`
+		RunPod   int `json:"runpod"`
+		LMStudio int `json:"lmstudio"`
+		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
 
 	// ONNX tagger settings
@@ -132,12 +150,18 @@ func defaultConfig() Config {
 		OllamaModel:       "llama3.2-vision",
 		DescribePrompt: "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
 		AutotagPrompt:  "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
+		LMStudioBaseURL: "http://localhost:1234",
+		LlamaCppBaseURL: "http://localhost:8080",
 		InferenceConcurrency: struct {
-			Ollama int `json:"ollama"`
-			RunPod int `json:"runpod"`
+			Ollama   int `json:"ollama"`
+			RunPod   int `json:"runpod"`
+			LMStudio int `json:"lmstudio"`
+			LlamaCpp int `json:"llamacpp"`
 		}{
-			Ollama: 1, // local single-GPU Ollama: one at a time
-			RunPod: 4, // serverless scales out per request
+			Ollama:   1, // local single-GPU Ollama: one at a time
+			RunPod:   4, // serverless scales out per request
+			LMStudio: 1, // local single-GPU LM Studio: one at a time
+			LlamaCpp: 1, // local single-GPU llama.cpp: one at a time
 		},
 		OnnxTagger: struct {
 			ModelPath            string  `json:"modelPath"`
@@ -319,6 +343,18 @@ func Load() (Config, string, error) {
 	if c.InferenceConcurrency.RunPod <= 0 {
 		c.InferenceConcurrency.RunPod = def.InferenceConcurrency.RunPod
 	}
+	if c.InferenceConcurrency.LMStudio <= 0 {
+		c.InferenceConcurrency.LMStudio = def.InferenceConcurrency.LMStudio
+	}
+	if c.InferenceConcurrency.LlamaCpp <= 0 {
+		c.InferenceConcurrency.LlamaCpp = def.InferenceConcurrency.LlamaCpp
+	}
+	if c.LMStudioBaseURL == "" {
+		c.LMStudioBaseURL = def.LMStudioBaseURL
+	}
+	if c.LlamaCppBaseURL == "" {
+		c.LlamaCppBaseURL = def.LlamaCppBaseURL
+	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = uuid.New().String()
 		needsSave = true
@@ -415,6 +451,38 @@ func applyEnvOverrides(c *Config) {
 			c.InferenceConcurrency.RunPod = n
 		} else {
 			log.Printf("Warning: LOWKEY_INFERENCE_RUNPOD_CONCURRENCY=%q is not a positive integer; ignored", v)
+		}
+	}
+	if v := os.Getenv("LOWKEY_LMSTUDIO_BASE_URL"); v != "" {
+		c.LMStudioBaseURL = v
+	}
+	if v := os.Getenv("LOWKEY_LMSTUDIO_MODEL"); v != "" {
+		c.LMStudioModel = v
+	}
+	if v := os.Getenv("LOWKEY_LMSTUDIO_API_KEY"); v != "" {
+		c.LMStudioAPIKey = v
+	}
+	if v := os.Getenv("LOWKEY_LLAMACPP_BASE_URL"); v != "" {
+		c.LlamaCppBaseURL = v
+	}
+	if v := os.Getenv("LOWKEY_LLAMACPP_MODEL"); v != "" {
+		c.LlamaCppModel = v
+	}
+	if v := os.Getenv("LOWKEY_LLAMACPP_API_KEY"); v != "" {
+		c.LlamaCppAPIKey = v
+	}
+	if v := os.Getenv("LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.InferenceConcurrency.LMStudio = n
+		} else {
+			log.Printf("Warning: LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY=%q is not a positive integer; ignored", v)
+		}
+	}
+	if v := os.Getenv("LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.InferenceConcurrency.LlamaCpp = n
+		} else {
+			log.Printf("Warning: LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY=%q is not a positive integer; ignored", v)
 		}
 	}
 	if v := os.Getenv("LOWKEY_JWT_SECRET"); v != "" {
