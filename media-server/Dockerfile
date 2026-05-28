@@ -77,7 +77,7 @@ RUN go build -ldflags="-s -w" -o /out/lowkeymediaserver . && \
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim AS ort-fetcher
 
-ARG ONNXRUNTIME_VERSION=1.21.0
+ARG ONNXRUNTIME_VERSION=1.22.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates xz-utils && \
     rm -rf /var/lib/apt/lists/*
