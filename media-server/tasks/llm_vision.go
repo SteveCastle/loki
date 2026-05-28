@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,17 +19,40 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 )
 
+// Inference provider identifiers. Persisted in Config.InferenceProvider and
+// driven from the Inference tab in the config UI. Add a new constant + a
+// matching case in callVisionLLM to wire in a new backend.
+const (
+	InferenceProviderOff    = "off"
+	InferenceProviderOllama = "ollama"
+	InferenceProviderRunPod = "runpod"
+)
+
+// ErrInferenceDisabled is returned by callVisionLLM when the user has set
+// the inference provider to "off". Callers can match on this to surface a
+// friendlier "configure a provider" message instead of treating it as a
+// hard failure.
+var ErrInferenceDisabled = errors.New("inference disabled: set an InferenceProvider in config")
+
 // callVisionLLM is the single entry point for image-conditioned LLM calls
-// (description, autotag). It routes to either RunPod or Ollama based on
-// config: if both RunPodEndpoint and RunPodAPIKey are set the request goes
-// to the RunPod serverless worker, otherwise it falls back to the local
-// Ollama HTTP API. The caller supplies a deadline via ctx.
+// (description, autotag). It dispatches based on the configured inference
+// provider. The caller supplies a deadline via ctx.
 func callVisionLLM(ctx context.Context, imagePath, prompt string) (string, error) {
 	cfg := appconfig.Get()
-	if strings.TrimSpace(cfg.RunPodEndpoint) != "" && strings.TrimSpace(cfg.RunPodAPIKey) != "" {
+	provider := strings.ToLower(strings.TrimSpace(cfg.InferenceProvider))
+	switch provider {
+	case "", InferenceProviderOff:
+		return "", ErrInferenceDisabled
+	case InferenceProviderOllama:
+		return callOllamaVisionRaw(ctx, imagePath, prompt, cfg.OllamaBaseURL, cfg.OllamaModel)
+	case InferenceProviderRunPod:
+		if strings.TrimSpace(cfg.RunPodEndpoint) == "" || strings.TrimSpace(cfg.RunPodAPIKey) == "" {
+			return "", fmt.Errorf("runpod provider selected but endpoint or api key is empty")
+		}
 		return callRunPodVision(ctx, imagePath, prompt, cfg.RunPodEndpoint, cfg.RunPodAPIKey)
+	default:
+		return "", fmt.Errorf("unknown inference provider %q", cfg.InferenceProvider)
 	}
-	return callOllamaVisionRaw(ctx, imagePath, prompt, cfg.OllamaBaseURL, cfg.OllamaModel)
 }
 
 // callOllamaVisionRaw issues an /api/generate request to a local-or-remote

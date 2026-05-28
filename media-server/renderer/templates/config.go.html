@@ -243,6 +243,54 @@
         display: block;
       }
 
+      /* Inference tabs: same visual look as the page-level tabs but
+         scoped to a single config card so the page-level click handler
+         doesn't touch them. Adding a new provider = one .inference-tab
+         + one .inference-panel below; no JS changes required. */
+      .inference-tabs {
+        display: flex;
+        gap: var(--space-1);
+        border-bottom: 1px solid var(--border-subtle);
+        margin-bottom: var(--space-4);
+      }
+
+      .inference-tab {
+        padding: var(--space-2) var(--space-3);
+        background: transparent;
+        border: none;
+        border-bottom: 2px solid transparent;
+        border-radius: 0;
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+        font-weight: 500;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        margin-bottom: -1px;
+      }
+
+      .inference-tab:hover {
+        color: var(--text-primary);
+      }
+
+      .inference-tab.active {
+        color: var(--accent-purple);
+        border-bottom-color: var(--accent-purple);
+      }
+
+      .inference-panel {
+        display: none;
+      }
+
+      .inference-panel.active {
+        display: block;
+      }
+
+      .hint {
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+        line-height: 1.5;
+      }
+
       .config-file-link {
         display: inline-flex;
         align-items: center;
@@ -803,25 +851,121 @@
             </div>
 
             <div class="config-card config-card--purple">
-              <div class="section-title">🧠 Ollama</div>
-              <div class="fields">
-                <div class="field">
-                  <label class="label">Base URL</label>
-                  <input
-                    id="ollama-base-url"
-                    class="input"
-                    type="text"
-                    value="{{.Config.OllamaBaseURL}}"
-                  />
+              <div class="section-title">🧠 Inference</div>
+              <div class="section-subtitle">
+                Picks which backend handles vision LLM calls (describe and
+                auto-tag). The selected tab is the active provider.
+              </div>
+
+              <div
+                class="inference-tabs"
+                role="tablist"
+                id="inference-tabs"
+              >
+                <button
+                  type="button"
+                  class="inference-tab"
+                  data-provider="off"
+                  role="tab"
+                >
+                  Off
+                </button>
+                <button
+                  type="button"
+                  class="inference-tab"
+                  data-provider="ollama"
+                  role="tab"
+                >
+                  Ollama
+                </button>
+                <button
+                  type="button"
+                  class="inference-tab"
+                  data-provider="runpod"
+                  role="tab"
+                >
+                  RunPod
+                </button>
+              </div>
+
+              <input
+                type="hidden"
+                id="inference-provider"
+                value="{{.Config.InferenceProvider}}"
+              />
+
+              <div class="inference-panel" data-provider="off" role="tabpanel">
+                <p class="hint">
+                  Inference is disabled. Vision tasks (image description and
+                  auto-tagging) will return an error until you pick a
+                  provider above.
+                </p>
+              </div>
+
+              <div
+                class="inference-panel"
+                data-provider="ollama"
+                role="tabpanel"
+              >
+                <div class="fields">
+                  <div class="field">
+                    <label class="label">Base URL</label>
+                    <input
+                      id="ollama-base-url"
+                      class="input"
+                      type="text"
+                      value="{{.Config.OllamaBaseURL}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">Model</label>
+                    <select id="ollama-model" class="input">
+                      <option value="{{.Config.OllamaModel}}">
+                        {{.Config.OllamaModel}}
+                      </option>
+                    </select>
+                  </div>
                 </div>
-                <div class="field">
-                  <label class="label">Model</label>
-                  <select id="ollama-model" class="input">
-                    <option value="{{.Config.OllamaModel}}">
-                      {{.Config.OllamaModel}}
-                    </option>
-                  </select>
+              </div>
+
+              <div
+                class="inference-panel"
+                data-provider="runpod"
+                role="tabpanel"
+              >
+                <div class="fields">
+                  <div class="field">
+                    <label class="label">Serverless endpoint</label>
+                    <input
+                      id="runpod-endpoint"
+                      class="input"
+                      type="text"
+                      placeholder="https://api.runpod.ai/v2/&lt;id&gt;/run or /runsync"
+                      value="{{.Config.RunPodEndpoint}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">API key</label>
+                    <input
+                      id="runpod-api-key"
+                      class="input"
+                      type="password"
+                      autocomplete="off"
+                      value="{{.Config.RunPodAPIKey}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <small class="hint">
+                      Model is configured on the RunPod worker side
+                      (OLLAMA_MODEL_NAME env on the worker, per the
+                      SvenBrnn/runpod-worker-ollama convention).
+                    </small>
+                  </div>
                 </div>
+              </div>
+
+              <!-- Prompts apply to whichever provider is active. -->
+              <div class="fields" style="margin-top: var(--space-4)">
                 <div class="field">
                   <label class="label">Describe prompt</label>
                   <textarea id="describe-prompt" class="input" rows="4">
@@ -833,40 +977,6 @@
                   <textarea id="autotag-prompt" class="input" rows="6">
 {{.Config.AutotagPrompt}}</textarea
                   >
-                </div>
-              </div>
-            </div>
-
-            <div class="config-card config-card--purple">
-              <div class="section-title">🚀 RunPod (overrides Ollama when set)</div>
-              <div class="fields">
-                <div class="field">
-                  <label class="label">Serverless endpoint</label>
-                  <input
-                    id="runpod-endpoint"
-                    class="input"
-                    type="text"
-                    placeholder="https://api.runpod.ai/v2/&lt;id&gt;/run or /runsync"
-                    value="{{.Config.RunPodEndpoint}}"
-                  />
-                </div>
-                <div class="field">
-                  <label class="label">API key</label>
-                  <input
-                    id="runpod-api-key"
-                    class="input"
-                    type="password"
-                    autocomplete="off"
-                    value="{{.Config.RunPodAPIKey}}"
-                  />
-                </div>
-                <div class="field">
-                  <small class="hint">
-                    Vision LLM calls (describe / auto-tag) go to RunPod when
-                    both fields are set. Clear either field to fall back to
-                    the Ollama settings above. Model is configured on the
-                    RunPod worker side (OLLAMA_MODEL_NAME env on the worker).
-                  </small>
                 </div>
               </div>
             </div>
@@ -1406,6 +1516,9 @@
           ollamaModel: document.getElementById('ollama-model').value.trim(),
           describePrompt: document.getElementById('describe-prompt').value,
           autotagPrompt: document.getElementById('autotag-prompt').value,
+          inferenceProvider: document
+            .getElementById('inference-provider')
+            .value.trim(),
           runpodEndpoint: document
             .getElementById('runpod-endpoint')
             .value.trim(),
@@ -1476,6 +1589,35 @@
           })
           .catch((err) => setStatus('Error: ' + err, 'error'));
       });
+
+      // Inference provider tabs. Selecting a tab updates the hidden
+      // #inference-provider input — which is what the save payload reads —
+      // and shows the matching panel. Adding a new provider takes one new
+      // .inference-tab button + one .inference-panel; no JS changes needed.
+      (function initInferenceTabs() {
+        const tabs = document.querySelectorAll(
+          '#inference-tabs .inference-tab'
+        );
+        const panels = document.querySelectorAll('.inference-panel');
+        const hidden = document.getElementById('inference-provider');
+
+        function setActive(provider) {
+          const target = provider || 'off';
+          tabs.forEach((t) =>
+            t.classList.toggle('active', t.dataset.provider === target)
+          );
+          panels.forEach((p) =>
+            p.classList.toggle('active', p.dataset.provider === target)
+          );
+          hidden.value = target;
+        }
+
+        tabs.forEach((tab) => {
+          tab.addEventListener('click', () => setActive(tab.dataset.provider));
+        });
+
+        setActive(hidden.value);
+      })();
 
       // Populate Ollama models select
       (function populateOllamaModels() {

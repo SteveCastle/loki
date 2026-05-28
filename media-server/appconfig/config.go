@@ -38,18 +38,25 @@ type Config struct {
 	// Download path for media files
 	DownloadPath string `json:"downloadPath"`
 
+	// Active vision-inference backend. One of: "off", "ollama", "runpod".
+	// Drives the routing in tasks.callVisionLLM — provider-specific fields
+	// below (OllamaBaseURL/Model, RunPodEndpoint/APIKey) are only consulted
+	// for the matching provider. New engines slot in by adding a constant
+	// + a switch case + a config sub-section; the field stays a string so
+	// the on-disk format doesn't break when the set of providers grows.
+	InferenceProvider string `json:"inferenceProvider"`
+
 	// Ollama / LLM settings
 	OllamaBaseURL  string `json:"ollamaBaseUrl"`
 	OllamaModel    string `json:"ollamaModel"`
 	DescribePrompt string `json:"describePrompt"`
 	AutotagPrompt  string `json:"autotagPrompt"`
 
-	// RunPod serverless vision settings. When both RunPodEndpoint and
-	// RunPodAPIKey are set, vision LLM calls (describe / auto-tag) bypass
-	// Ollama and use the RunPod worker instead. The worker is expected to
-	// expose an OpenAI-compatible chat-completions interface (e.g.
-	// SvenBrnn/runpod-worker-ollama). The endpoint may point at either
-	// `/run` (async, polled) or `/runsync` (inline response).
+	// RunPod serverless vision settings. Active when InferenceProvider ==
+	// "runpod". The worker is expected to expose an OpenAI-compatible
+	// chat-completions interface (e.g. SvenBrnn/runpod-worker-ollama).
+	// The endpoint may point at either `/run` (async, polled) or `/runsync`
+	// (inline response).
 	RunPodEndpoint string `json:"runpodEndpoint"`
 	RunPodAPIKey   string `json:"runpodApiKey"`
 
@@ -108,10 +115,11 @@ func DefaultConfigDir() string {
 // defaultConfig returns a Config populated with sensible defaults.
 func defaultConfig() Config {
 	return Config{
-		DBPath:         DefaultDBPath(),
-		DownloadPath:   defaultDownloadPath(),
-		OllamaBaseURL:  "http://localhost:11434",
-		OllamaModel:    "llama3.2-vision",
+		DBPath:            DefaultDBPath(),
+		DownloadPath:      defaultDownloadPath(),
+		InferenceProvider: "ollama",
+		OllamaBaseURL:     "http://localhost:11434",
+		OllamaModel:       "llama3.2-vision",
 		DescribePrompt: "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
 		AutotagPrompt:  "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
 		OnnxTagger: struct {
@@ -260,6 +268,18 @@ func Load() (Config, string, error) {
 	if c.OllamaModel == "" {
 		c.OllamaModel = def.OllamaModel
 	}
+	// InferenceProvider migration: configs predating this field need a
+	// sensible value. If the user already set RunPod credentials assume
+	// they wanted RunPod (matches the old "auto-detect from fields"
+	// behavior); otherwise default to ollama so vision tasks keep working.
+	if c.InferenceProvider == "" {
+		if strings.TrimSpace(c.RunPodEndpoint) != "" && strings.TrimSpace(c.RunPodAPIKey) != "" {
+			c.InferenceProvider = "runpod"
+		} else {
+			c.InferenceProvider = def.InferenceProvider
+		}
+		needsSave = true
+	}
 	if c.DescribePrompt == "" {
 		c.DescribePrompt = def.DescribePrompt
 	}
@@ -344,6 +364,9 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_OLLAMA_MODEL"); v != "" {
 		c.OllamaModel = v
+	}
+	if v := os.Getenv("LOWKEY_INFERENCE_PROVIDER"); v != "" {
+		c.InferenceProvider = strings.ToLower(strings.TrimSpace(v))
 	}
 	if v := os.Getenv("LOWKEY_RUNPOD_ENDPOINT"); v != "" {
 		c.RunPodEndpoint = v
