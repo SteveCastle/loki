@@ -45,6 +45,15 @@ func init() {
 	RegisterTask("ingest", "Ingest Media Files", ingestOptions, ingestTask)
 	RegisterTask("lora-dataset", "Create LoRA Dataset", loraDatasetOptions, loraDatasetTask)
 
+	// Host resolvers. Each entry maps a task command to its concurrency
+	// bucket so jobqueue can rate-limit work per resource. Tasks without
+	// an entry fall through to ResolveHost's "localhost" default. Adding a
+	// new vision-using task is one line: route it through InferenceHost.
+	visionHost := func(string) string { return InferenceHost() }
+	RegisterHostResolver("autotag", visionHost)
+	RegisterHostResolver("metadata", visionHost)
+	RegisterHostResolver("ingest", urlHostResolver)
+
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
 	RegisterTask("ffmpeg-scale", "FFmpeg Scale", ffmpegScaleOptions, ffmpegScaleTask)
 	RegisterTask("ffmpeg-convert", "FFmpeg Convert", ffmpegConvertOptions, ffmpegConvertTask)

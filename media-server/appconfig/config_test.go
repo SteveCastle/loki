@@ -49,6 +49,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.InferenceProvider != "ollama" {
 		t.Errorf("Default InferenceProvider = %q; want \"ollama\"", cfg.InferenceProvider)
 	}
+
+	// Per-provider concurrency defaults: Ollama 1 (local single-GPU),
+	// RunPod 4 (serverless scales).
+	if cfg.InferenceConcurrency.Ollama != 1 {
+		t.Errorf("Default InferenceConcurrency.Ollama = %d; want 1", cfg.InferenceConcurrency.Ollama)
+	}
+	if cfg.InferenceConcurrency.RunPod != 4 {
+		t.Errorf("Default InferenceConcurrency.RunPod = %d; want 4", cfg.InferenceConcurrency.RunPod)
+	}
 }
 
 // TestDefaultDownloadPath verifies the download path generation
@@ -458,9 +467,11 @@ func TestApplyEnvOverrides(t *testing.T) {
 		"LOWKEY_DOWNLOAD_PATH":       "/env/downloads",
 		"LOWKEY_OLLAMA_BASE_URL":     "http://env-ollama:11434",
 		"LOWKEY_OLLAMA_MODEL":        "env-model",
-		"LOWKEY_INFERENCE_PROVIDER":  "runpod",
-		"LOWKEY_RUNPOD_ENDPOINT":     "https://api.runpod.ai/v2/abc123/run",
-		"LOWKEY_RUNPOD_API_KEY":      "env-runpod-key",
+		"LOWKEY_INFERENCE_PROVIDER":           "runpod",
+		"LOWKEY_RUNPOD_ENDPOINT":              "https://api.runpod.ai/v2/abc123/run",
+		"LOWKEY_RUNPOD_API_KEY":               "env-runpod-key",
+		"LOWKEY_INFERENCE_OLLAMA_CONCURRENCY": "2",
+		"LOWKEY_INFERENCE_RUNPOD_CONCURRENCY": "8",
 		"LOWKEY_JWT_SECRET":          "env-secret",
 		"LOWKEY_DISCORD_TOKEN":       "env-discord",
 		"LOWKEY_FASTER_WHISPER_PATH": "/env/whisper",
@@ -491,6 +502,12 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if c.InferenceProvider != "runpod" {
 		t.Errorf("InferenceProvider = %q; want %q", c.InferenceProvider, "runpod")
+	}
+	if c.InferenceConcurrency.Ollama != 2 {
+		t.Errorf("InferenceConcurrency.Ollama = %d; want 2", c.InferenceConcurrency.Ollama)
+	}
+	if c.InferenceConcurrency.RunPod != 8 {
+		t.Errorf("InferenceConcurrency.RunPod = %d; want 8", c.InferenceConcurrency.RunPod)
 	}
 	if c.JWTSecret != "env-secret" {
 		t.Errorf("JWTSecret = %q; want %q", c.JWTSecret, "env-secret")

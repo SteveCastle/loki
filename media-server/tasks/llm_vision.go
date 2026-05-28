@@ -28,6 +28,35 @@ const (
 	InferenceProviderRunPod = "runpod"
 )
 
+// Host buckets used for jobqueue concurrency on inference work. Each
+// provider gets its own bucket so its limit can be tuned independently —
+// Ollama on a single local GPU typically wants 1 at a time, while RunPod
+// serverless can take many in parallel because it scales out per request.
+// A new engine adds one constant here, one case in InferenceHost, one
+// field on appconfig.InferenceConcurrency, and one bump in ApplyHostLimits.
+const (
+	HostBucketOllama = "ollama"
+	HostBucketRunPod = "runpod"
+)
+
+// InferenceHost returns the concurrency bucket name for the currently
+// configured vision provider. Job-creation code calls this (via the
+// tasks.ResolveHost registry) when assigning a job's Host field; the
+// returned bucket is then governed by the matching SetHostLimit cap.
+//
+// The "off" / unknown cases land on "localhost" so the job still claims
+// (and then fails fast inside callVisionLLM with ErrInferenceDisabled).
+func InferenceHost() string {
+	switch strings.ToLower(strings.TrimSpace(appconfig.Get().InferenceProvider)) {
+	case InferenceProviderRunPod:
+		return HostBucketRunPod
+	case InferenceProviderOllama:
+		return HostBucketOllama
+	default:
+		return "localhost"
+	}
+}
+
 // ErrInferenceDisabled is returned by callVisionLLM when the user has set
 // the inference provider to "off". Callers can match on this to surface a
 // friendlier "configure a provider" message instead of treating it as a
