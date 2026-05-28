@@ -150,9 +150,10 @@ func callOllamaVisionForTags(ctx context.Context, imagePath string, availableTag
 	prompt := fmt.Sprintf(appconfig.Get().AutotagPrompt, tagOptions.String())
 	log.Printf("AutoTag Vision Prompt for %s:\n%s", imagePath, prompt)
 
-	// 60s timeout matched the prior http.Client literal; preserved here as
-	// a context deadline so the RunPod async path can also honor it.
-	timeoutCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	// 5 minutes covers a RunPod cold start (observed up to ~2 min) plus
+	// inference time with comfortable headroom. Generous for the local
+	// Ollama path too — only matters as a ceiling on hung requests.
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	response, err := callVisionLLM(timeoutCtx, imagePath, prompt)
 	if err != nil {
