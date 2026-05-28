@@ -42,6 +42,13 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.RunPodAPIKey != "" {
 		t.Errorf("Default RunPodAPIKey = %q; want empty", cfg.RunPodAPIKey)
 	}
+
+	// Default provider is "ollama" so fresh installs match the pre-tab
+	// behavior. Migration in Load() upgrades older configs with RunPod
+	// fields to "runpod" automatically.
+	if cfg.InferenceProvider != "ollama" {
+		t.Errorf("Default InferenceProvider = %q; want \"ollama\"", cfg.InferenceProvider)
+	}
 }
 
 // TestDefaultDownloadPath verifies the download path generation
@@ -451,6 +458,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 		"LOWKEY_DOWNLOAD_PATH":       "/env/downloads",
 		"LOWKEY_OLLAMA_BASE_URL":     "http://env-ollama:11434",
 		"LOWKEY_OLLAMA_MODEL":        "env-model",
+		"LOWKEY_INFERENCE_PROVIDER":  "runpod",
 		"LOWKEY_RUNPOD_ENDPOINT":     "https://api.runpod.ai/v2/abc123/run",
 		"LOWKEY_RUNPOD_API_KEY":      "env-runpod-key",
 		"LOWKEY_JWT_SECRET":          "env-secret",
@@ -480,6 +488,9 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if c.RunPodAPIKey != "env-runpod-key" {
 		t.Errorf("RunPodAPIKey = %q; want %q", c.RunPodAPIKey, "env-runpod-key")
+	}
+	if c.InferenceProvider != "runpod" {
+		t.Errorf("InferenceProvider = %q; want %q", c.InferenceProvider, "runpod")
 	}
 	if c.JWTSecret != "env-secret" {
 		t.Errorf("JWTSecret = %q; want %q", c.JWTSecret, "env-secret")
@@ -782,5 +793,62 @@ func TestDownloadPathMigration(t *testing.T) {
 	}
 	if !c.Roots[0].Default {
 		t.Error("migrated root should be marked default")
+	}
+}
+
+// TestInferenceProviderMigration verifies a pre-tab config that has RunPod
+// credentials but no inferenceProvider field is auto-upgraded to "runpod"
+// instead of silently falling back to Ollama (which would break a working
+// install).
+func TestInferenceProviderMigration(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	legacy := map[string]interface{}{
+		"dbPath":         filepath.Join(dir, "media.db"),
+		"jwtSecret":      "test-secret",
+		"runpodEndpoint": "https://api.runpod.ai/v2/abc123/run",
+		"runpodApiKey":   "sk-test",
+	}
+	data, _ := json.Marshal(legacy)
+	os.WriteFile(cfgFile, data, 0644)
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.InferenceProvider != "runpod" {
+		t.Errorf("InferenceProvider = %q; want %q (migrated from RunPod creds)", c.InferenceProvider, "runpod")
+	}
+}
+
+// TestInferenceProviderMigrationNoRunPod verifies a pre-tab config without
+// RunPod credentials defaults to "ollama" — matches behavior before the
+// tabs existed.
+func TestInferenceProviderMigrationNoRunPod(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	legacy := map[string]interface{}{
+		"dbPath":    filepath.Join(dir, "media.db"),
+		"jwtSecret": "test-secret",
+	}
+	data, _ := json.Marshal(legacy)
+	os.WriteFile(cfgFile, data, 0644)
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.InferenceProvider != "ollama" {
+		t.Errorf("InferenceProvider = %q; want %q (default)", c.InferenceProvider, "ollama")
 	}
 }

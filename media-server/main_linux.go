@@ -1207,6 +1207,7 @@ type updateConfigRequest struct {
 	OllamaModel            string  `json:"ollamaModel"`
 	DescribePrompt         string  `json:"describePrompt"`
 	AutotagPrompt          string  `json:"autotagPrompt"`
+	InferenceProvider      string  `json:"inferenceProvider"`
 	RunPodEndpoint         string  `json:"runpodEndpoint"`
 	RunPodAPIKey           string  `json:"runpodApiKey"`
 	OnnxModelPath          string  `json:"onnxModelPath"`
@@ -1398,8 +1399,13 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.AutotagPrompt != "" {
 				newCfg.AutotagPrompt = req.AutotagPrompt
 			}
-			// RunPod fields: assign unconditionally so an empty value disables
-			// the worker (user clears the field in the UI to fall back to Ollama).
+			// Inference provider: assign unconditionally so changing tabs
+			// (including selecting Off) takes immediate effect.
+			if v := strings.ToLower(strings.TrimSpace(req.InferenceProvider)); v != "" {
+				newCfg.InferenceProvider = v
+			}
+			// RunPod fields: assign unconditionally so clearing the inputs
+			// works. The active provider is what gates whether they're used.
 			newCfg.RunPodEndpoint = strings.TrimSpace(req.RunPodEndpoint)
 			newCfg.RunPodAPIKey = strings.TrimSpace(req.RunPodAPIKey)
 			newCfg.OnnxTagger.ModelPath = strings.TrimSpace(req.OnnxModelPath)
