@@ -1409,10 +1409,17 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.ToLower(strings.TrimSpace(req.InferenceProvider)); v != "" {
 				newCfg.InferenceProvider = v
 			}
-			// RunPod fields: assign unconditionally so clearing the inputs
-			// works. The active provider is what gates whether they're used.
-			newCfg.RunPodEndpoint = strings.TrimSpace(req.RunPodEndpoint)
-			newCfg.RunPodAPIKey = strings.TrimSpace(req.RunPodAPIKey)
+			// RunPod fields: only overwrite when the payload includes a
+			// non-empty value. Matches the protective pattern used for
+			// every other persisted credential field and prevents partial
+			// callers (e.g. the Electron client posting just {dbPath} on
+			// startup) from accidentally wiping saved RunPod creds.
+			if v := strings.TrimSpace(req.RunPodEndpoint); v != "" {
+				newCfg.RunPodEndpoint = v
+			}
+			if v := strings.TrimSpace(req.RunPodAPIKey); v != "" {
+				newCfg.RunPodAPIKey = v
+			}
 			if req.InferenceConcurrency.Ollama > 0 {
 				newCfg.InferenceConcurrency.Ollama = req.InferenceConcurrency.Ollama
 			}
