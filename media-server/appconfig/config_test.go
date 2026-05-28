@@ -50,13 +50,28 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("Default InferenceProvider = %q; want \"ollama\"", cfg.InferenceProvider)
 	}
 
-	// Per-provider concurrency defaults: Ollama 1 (local single-GPU),
-	// RunPod 4 (serverless scales).
+	// Per-provider concurrency defaults: Ollama / LM Studio / llama.cpp
+	// 1 (single-GPU local), RunPod 4 (serverless scales).
 	if cfg.InferenceConcurrency.Ollama != 1 {
 		t.Errorf("Default InferenceConcurrency.Ollama = %d; want 1", cfg.InferenceConcurrency.Ollama)
 	}
 	if cfg.InferenceConcurrency.RunPod != 4 {
 		t.Errorf("Default InferenceConcurrency.RunPod = %d; want 4", cfg.InferenceConcurrency.RunPod)
+	}
+	if cfg.InferenceConcurrency.LMStudio != 1 {
+		t.Errorf("Default InferenceConcurrency.LMStudio = %d; want 1", cfg.InferenceConcurrency.LMStudio)
+	}
+	if cfg.InferenceConcurrency.LlamaCpp != 1 {
+		t.Errorf("Default InferenceConcurrency.LlamaCpp = %d; want 1", cfg.InferenceConcurrency.LlamaCpp)
+	}
+
+	// Defaults for the OpenAI-compatible local backends point at their
+	// upstream default ports.
+	if cfg.LMStudioBaseURL != "http://localhost:1234" {
+		t.Errorf("Default LMStudioBaseURL = %q; want %q", cfg.LMStudioBaseURL, "http://localhost:1234")
+	}
+	if cfg.LlamaCppBaseURL != "http://localhost:8080" {
+		t.Errorf("Default LlamaCppBaseURL = %q; want %q", cfg.LlamaCppBaseURL, "http://localhost:8080")
 	}
 }
 
@@ -470,8 +485,16 @@ func TestApplyEnvOverrides(t *testing.T) {
 		"LOWKEY_INFERENCE_PROVIDER":           "runpod",
 		"LOWKEY_RUNPOD_ENDPOINT":              "https://api.runpod.ai/v2/abc123/run",
 		"LOWKEY_RUNPOD_API_KEY":               "env-runpod-key",
-		"LOWKEY_INFERENCE_OLLAMA_CONCURRENCY": "2",
-		"LOWKEY_INFERENCE_RUNPOD_CONCURRENCY": "8",
+		"LOWKEY_INFERENCE_OLLAMA_CONCURRENCY":   "2",
+		"LOWKEY_INFERENCE_RUNPOD_CONCURRENCY":   "8",
+		"LOWKEY_LMSTUDIO_BASE_URL":              "http://env-lmstudio:1234",
+		"LOWKEY_LMSTUDIO_MODEL":                 "env-llava",
+		"LOWKEY_LMSTUDIO_API_KEY":               "env-lmstudio-key",
+		"LOWKEY_LLAMACPP_BASE_URL":              "http://env-llamacpp:8080",
+		"LOWKEY_LLAMACPP_MODEL":                 "env-llama",
+		"LOWKEY_LLAMACPP_API_KEY":               "env-llamacpp-key",
+		"LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY": "3",
+		"LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY": "5",
 		"LOWKEY_JWT_SECRET":          "env-secret",
 		"LOWKEY_DISCORD_TOKEN":       "env-discord",
 		"LOWKEY_FASTER_WHISPER_PATH": "/env/whisper",
@@ -508,6 +531,30 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if c.InferenceConcurrency.RunPod != 8 {
 		t.Errorf("InferenceConcurrency.RunPod = %d; want 8", c.InferenceConcurrency.RunPod)
+	}
+	if c.LMStudioBaseURL != "http://env-lmstudio:1234" {
+		t.Errorf("LMStudioBaseURL = %q; want %q", c.LMStudioBaseURL, "http://env-lmstudio:1234")
+	}
+	if c.LMStudioModel != "env-llava" {
+		t.Errorf("LMStudioModel = %q; want %q", c.LMStudioModel, "env-llava")
+	}
+	if c.LMStudioAPIKey != "env-lmstudio-key" {
+		t.Errorf("LMStudioAPIKey = %q; want %q", c.LMStudioAPIKey, "env-lmstudio-key")
+	}
+	if c.LlamaCppBaseURL != "http://env-llamacpp:8080" {
+		t.Errorf("LlamaCppBaseURL = %q; want %q", c.LlamaCppBaseURL, "http://env-llamacpp:8080")
+	}
+	if c.LlamaCppModel != "env-llama" {
+		t.Errorf("LlamaCppModel = %q; want %q", c.LlamaCppModel, "env-llama")
+	}
+	if c.LlamaCppAPIKey != "env-llamacpp-key" {
+		t.Errorf("LlamaCppAPIKey = %q; want %q", c.LlamaCppAPIKey, "env-llamacpp-key")
+	}
+	if c.InferenceConcurrency.LMStudio != 3 {
+		t.Errorf("InferenceConcurrency.LMStudio = %d; want 3", c.InferenceConcurrency.LMStudio)
+	}
+	if c.InferenceConcurrency.LlamaCpp != 5 {
+		t.Errorf("InferenceConcurrency.LlamaCpp = %d; want 5", c.InferenceConcurrency.LlamaCpp)
 	}
 	if c.JWTSecret != "env-secret" {
 		t.Errorf("JWTSecret = %q; want %q", c.JWTSecret, "env-secret")

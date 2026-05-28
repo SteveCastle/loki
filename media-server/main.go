@@ -1527,9 +1527,17 @@ type updateConfigRequest struct {
 	InferenceProvider      string  `json:"inferenceProvider"`
 	RunPodEndpoint         string  `json:"runpodEndpoint"`
 	RunPodAPIKey           string  `json:"runpodApiKey"`
+	LMStudioBaseURL        string  `json:"lmstudioBaseUrl"`
+	LMStudioModel          string  `json:"lmstudioModel"`
+	LMStudioAPIKey         string  `json:"lmstudioApiKey"`
+	LlamaCppBaseURL        string  `json:"llamacppBaseUrl"`
+	LlamaCppModel          string  `json:"llamacppModel"`
+	LlamaCppAPIKey         string  `json:"llamacppApiKey"`
 	InferenceConcurrency   struct {
-		Ollama int `json:"ollama"`
-		RunPod int `json:"runpod"`
+		Ollama   int `json:"ollama"`
+		RunPod   int `json:"runpod"`
+		LMStudio int `json:"lmstudio"`
+		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
 	OnnxModelPath          string  `json:"onnxModelPath"`
 	OnnxLabelsPath         string  `json:"onnxLabelsPath"`
@@ -1609,6 +1617,27 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.TrimSpace(req.RunPodAPIKey); v != "" {
 				newCfg.RunPodAPIKey = v
 			}
+			// LM Studio + llama.cpp fields use the same protective pattern as
+			// the other persisted credentials so partial /config POSTs (e.g.
+			// the Electron client's startup dbPath sync) don't wipe them.
+			if v := strings.TrimSpace(req.LMStudioBaseURL); v != "" {
+				newCfg.LMStudioBaseURL = v
+			}
+			if v := strings.TrimSpace(req.LMStudioModel); v != "" {
+				newCfg.LMStudioModel = v
+			}
+			if v := strings.TrimSpace(req.LMStudioAPIKey); v != "" {
+				newCfg.LMStudioAPIKey = v
+			}
+			if v := strings.TrimSpace(req.LlamaCppBaseURL); v != "" {
+				newCfg.LlamaCppBaseURL = v
+			}
+			if v := strings.TrimSpace(req.LlamaCppModel); v != "" {
+				newCfg.LlamaCppModel = v
+			}
+			if v := strings.TrimSpace(req.LlamaCppAPIKey); v != "" {
+				newCfg.LlamaCppAPIKey = v
+			}
 			// Concurrency caps: positive values overwrite, anything else
 			// (zero / negative from a misshaped payload) leaves the stored
 			// value alone so the user can't accidentally stall a bucket.
@@ -1617,6 +1646,12 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if req.InferenceConcurrency.RunPod > 0 {
 				newCfg.InferenceConcurrency.RunPod = req.InferenceConcurrency.RunPod
+			}
+			if req.InferenceConcurrency.LMStudio > 0 {
+				newCfg.InferenceConcurrency.LMStudio = req.InferenceConcurrency.LMStudio
+			}
+			if req.InferenceConcurrency.LlamaCpp > 0 {
+				newCfg.InferenceConcurrency.LlamaCpp = req.InferenceConcurrency.LlamaCpp
 			}
 			newCfg.OnnxTagger.ModelPath = strings.TrimSpace(req.OnnxModelPath)
 			newCfg.OnnxTagger.LabelsPath = strings.TrimSpace(req.OnnxLabelsPath)

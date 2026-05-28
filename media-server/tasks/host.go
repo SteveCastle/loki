@@ -63,6 +63,12 @@ func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	if n := cfg.InferenceConcurrency.RunPod; n > 0 {
 		q.SetHostLimit(HostBucketRunPod, n)
 	}
+	if n := cfg.InferenceConcurrency.LMStudio; n > 0 {
+		q.SetHostLimit(HostBucketLMStudio, n)
+	}
+	if n := cfg.InferenceConcurrency.LlamaCpp; n > 0 {
+		q.SetHostLimit(HostBucketLlamaCpp, n)
+	}
 }
 
 // urlHostResolver pulls the URL hostname out of an input string, falling
