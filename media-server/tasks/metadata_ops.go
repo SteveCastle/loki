@@ -21,7 +21,9 @@ import (
 	"strings"
 	"time"
 
+	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
+	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
 	"github.com/stevecastle/shrike/appconfig"

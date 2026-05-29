@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
@@ -18,7 +19,13 @@ import (
 
 	resize "github.com/nfnt/resize"
 	ort "github.com/yalue/onnxruntime_go"
+	_ "golang.org/x/image/bmp"
 	"golang.org/x/image/draw"
+	_ "golang.org/x/image/tiff"
+	// Side-effect imports register additional decoders so image.Decode below
+	// can handle whatever the autotag task hands us. Matches the formats
+	// autotag_vision.go accepts (.jpg/.jpeg/.png/.bmp/.webp/.gif/.tif/.tiff).
+	_ "golang.org/x/image/webp"
 )
 
 // Options configures how the classifier runs.
