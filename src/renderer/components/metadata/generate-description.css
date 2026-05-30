@@ -1,7 +1,8 @@
 .GenerateDescription {
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: flex-start;
 }
 
 /* Variant modifiers for placement */
@@ -111,12 +112,6 @@
 
 .GenerateDescription .job-status {
   font-style: italic;
-}
-
-.GenerateDescription {
-  flex-direction: column;
-  gap: 8px;
-  justify-content: flex-start;
 }
 
 .GenerateDescription .generate-row {
