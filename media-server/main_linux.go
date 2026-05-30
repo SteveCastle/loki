@@ -371,7 +371,8 @@ func detailHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 type CreateJobHandlerRequest struct {
-	Input string `json:"input"`
+	Input  string            `json:"input"`
+	Fields map[string]string `json:"fields,omitempty"`
 }
 
 func createJobHandler(deps *Dependencies) http.HandlerFunc {
@@ -400,6 +401,8 @@ func createJobHandler(deps *Dependencies) http.HandlerFunc {
 		} else {
 			args = nil
 		}
+
+		args = appendFieldArgs(args, req.Fields)
 
 		id, err := deps.Queue.AddWorkflow(jobqueue.Workflow{
 			Tasks: []jobqueue.WorkflowTask{
