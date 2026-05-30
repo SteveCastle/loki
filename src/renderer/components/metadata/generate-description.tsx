@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useId, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import './generate-description.css';
@@ -28,6 +28,7 @@ export default function GenerateDescription({
     libraryService,
     (state) => state.context.authToken
   );
+  const panelId = `gd-prompt-panel-${useId()}`;
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
     null
   );
@@ -198,12 +199,13 @@ export default function GenerateDescription({
           className="prompt-toggle"
           onClick={() => setPanelOpen((v) => !v)}
           aria-expanded={panelOpen}
+          aria-controls={panelId}
         >
           {panelOpen ? 'Hide prompt' : 'Customize prompt'}
         </button>
       </div>
       {panelOpen && (
-        <div className="prompt-panel">
+        <div className="prompt-panel" id={panelId}>
           <textarea
             className="prompt-textarea"
             value={promptDraft}
@@ -214,8 +216,8 @@ export default function GenerateDescription({
             rows={4}
           />
           <div className="prompt-hint">
-            Leave empty to use the configured default. Uses this prompt for the
-            next generation only — your global config is unchanged.
+            Leave empty to use the configured default. This prompt is remembered
+            for the rest of your session — your global config is unchanged.
           </div>
         </div>
       )}
