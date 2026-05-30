@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -21,6 +22,9 @@ func describePromptHandler(w http.ResponseWriter, r *http.Request) {
 	}{
 		Prompt: appconfig.Get().DescribePrompt,
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("describePromptHandler: failed to encode response: %v", err)
+	}
 }
