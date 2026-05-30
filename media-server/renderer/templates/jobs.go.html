@@ -153,6 +153,46 @@
         margin: var(--space-4) 0;
       }
 
+      .jobs-empty {
+        padding: var(--space-6) var(--space-5);
+        text-align: center;
+        color: var(--text-muted);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: var(--space-3);
+      }
+
+      .jobs-empty .empty-icon {
+        font-size: 32px;
+        opacity: 0.55;
+        line-height: 1;
+      }
+
+      .jobs-empty .empty-title {
+        font-size: var(--text-base);
+        font-weight: 600;
+        color: var(--text-secondary);
+      }
+
+      .jobs-empty .empty-body {
+        font-size: var(--text-sm);
+        color: var(--text-muted);
+        max-width: 440px;
+        line-height: 1.5;
+      }
+
+      .jobs-empty kbd {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-bottom-width: 2px;
+        border-radius: var(--radius-md);
+        padding: 2px 6px;
+        font-family: var(--font-mono);
+        font-size: 0.85em;
+        color: var(--accent-primary);
+      }
+
       @media screen and (max-width: 800px) {
         .jobs-header,
         .jobs-row {
@@ -232,6 +272,18 @@
         </div>
         <div id="jobs" class="table-body">
           {{range .Jobs}} {{template "jobRow" .}} {{end}}
+          {{if not .Jobs}}
+          <div id="jobs-empty" class="jobs-empty">
+            <div class="empty-icon" aria-hidden="true">⚙️</div>
+            <div class="empty-title">No jobs yet</div>
+            <div class="empty-body">
+              Type a command into the box above and press
+              <kbd>Enter</kbd> to queue your first job. Anything you start —
+              transcodes, auto-tag runs, transcriptions — will stream its
+              progress here.
+            </div>
+          </div>
+          {{end}}
         </div>
       </div>
     </div>
@@ -387,6 +439,9 @@
               const node = htmlToNode(newJob.html);
               const jobsElement = document.getElementById('jobs');
               if (jobsElement && node) {
+                // First job arriving — clear the empty-state placeholder.
+                const emptyState = document.getElementById('jobs-empty');
+                if (emptyState) emptyState.remove();
                 jobsElement.insertBefore(node, jobsElement.firstChild);
               }
             });
@@ -410,6 +465,7 @@
               const message = JSON.parse(event.data);
               const jobElement = document.getElementById(message.job?.id);
               if (jobElement) jobElement.remove();
+              maybeRestoreEmptyState();
             });
           } catch (e) {
             console.error('Jobs SSE connect threw', e);
@@ -519,6 +575,9 @@
           .then((response) => response.json())
           .then((result) => {
             console.log('Server responded:', result);
+            // SSE delete events handle the DOM, but if there were no
+            // running jobs left the empty state should reappear.
+            maybeRestoreEmptyState();
           })
           .catch((err) => {
             console.error('Error:', err);
@@ -528,6 +587,29 @@
             button.disabled = false;
             button.textContent = 'Clear All';
           });
+      }
+
+      // Re-inject the empty-state placeholder when the table goes back to
+      // zero rows (last job cleared / removed). Keeps the layout from
+      // collapsing into a blank card after a "Clear All".
+      function maybeRestoreEmptyState() {
+        const jobsElement = document.getElementById('jobs');
+        if (!jobsElement) return;
+        if (jobsElement.querySelector('.jobs-row')) return;
+        if (jobsElement.querySelector('#jobs-empty')) return;
+        const empty = document.createElement('div');
+        empty.id = 'jobs-empty';
+        empty.className = 'jobs-empty';
+        empty.innerHTML =
+          '<div class="empty-icon" aria-hidden="true">⚙️</div>' +
+          '<div class="empty-title">No jobs yet</div>' +
+          '<div class="empty-body">' +
+          'Type a command into the box above and press ' +
+          '<kbd>Enter</kbd> to queue your first job. Anything you start — ' +
+          'transcodes, auto-tag runs, transcriptions — will stream its ' +
+          'progress here.' +
+          '</div>';
+        jobsElement.appendChild(empty);
       }
 
       function htmlToNode(html) {

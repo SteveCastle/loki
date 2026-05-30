@@ -1261,11 +1261,224 @@
           gap: var(--space-3) !important;
         }
       }
+
+      /* ------------------------------------------------------------------
+         Empty-library state. Rendered when the library has zero items AND
+         no search is active. The body picks up `library-empty-mode`, which
+         hides the search / table / grid UI so this card is the focus.
+         When media exists the empty-state element stays in the DOM but
+         display:none, so JS lookups against #library-empty-* never throw.
+         ------------------------------------------------------------------ */
+      .library-empty {
+        display: none;
+        max-width: 720px;
+        margin: var(--space-6) auto;
+        padding: var(--space-6) var(--space-5);
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-xl);
+        text-align: center;
+      }
+
+      body.library-empty-mode .library-empty {
+        display: block;
+      }
+      body.library-empty-mode .search-section,
+      body.library-empty-mode .selection-container,
+      body.library-empty-mode .media-table-wrapper,
+      body.library-empty-mode #media-grid {
+        display: none !important;
+      }
+
+      .library-empty .empty-icon {
+        font-size: 56px;
+        line-height: 1;
+        opacity: 0.6;
+        margin-bottom: var(--space-3);
+      }
+
+      .library-empty .empty-title {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: var(--space-2);
+      }
+
+      .library-empty .empty-body {
+        color: var(--text-muted);
+        font-size: var(--text-sm);
+        line-height: 1.6;
+        margin: 0 auto var(--space-5);
+        max-width: 480px;
+      }
+
+      .library-empty .empty-body code {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-sm);
+        padding: 1px 6px;
+        font-family: var(--font-mono);
+        font-size: 0.9em;
+        color: var(--accent-primary);
+      }
+
+      .library-empty-uploader {
+        position: relative;
+        display: block;
+        border: 2px dashed var(--border-default);
+        border-radius: var(--radius-lg);
+        padding: var(--space-6) var(--space-5);
+        background: var(--bg-surface);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }
+
+      .library-empty-uploader:hover {
+        border-color: var(--accent-primary);
+        background: var(--bg-elevated);
+      }
+
+      .library-empty-uploader.is-dragover {
+        border-color: var(--accent-primary);
+        background: var(--bg-elevated);
+        box-shadow: 0 0 0 3px var(--accent-primary-dim, rgba(99, 102, 241, 0.2));
+      }
+
+      .library-empty-uploader input[type='file'] {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+      }
+
+      .library-empty-uploader-icon {
+        font-size: 32px;
+        opacity: 0.7;
+        margin-bottom: var(--space-2);
+        line-height: 1;
+      }
+
+      .library-empty-uploader-prompt {
+        font-size: var(--text-base);
+        color: var(--text-primary);
+        font-weight: 500;
+        margin-bottom: var(--space-1);
+      }
+
+      .library-empty-uploader-hint {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+      }
+
+      .library-empty-progress {
+        display: none;
+        margin-top: var(--space-4);
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+      }
+
+      .library-empty-progress.is-active {
+        display: block;
+      }
+
+      .library-empty-progress .bar {
+        display: block;
+        width: 100%;
+        height: 4px;
+        background: var(--bg-elevated);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: var(--space-2);
+      }
+
+      .library-empty-progress .bar > span {
+        display: block;
+        height: 100%;
+        background: var(--accent-primary);
+        width: 0%;
+        transition: width 0.15s ease;
+      }
+
+      .library-empty-error {
+        display: none;
+        margin-top: var(--space-3);
+        color: var(--text-error, #ef4444);
+        font-size: var(--text-sm);
+      }
+
+      .library-empty-error.is-active {
+        display: block;
+      }
+
+      .library-empty-tip {
+        margin-top: var(--space-4);
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        line-height: 1.5;
+      }
+
+      .library-empty-tip a {
+        color: var(--accent-primary);
+        text-decoration: none;
+      }
+
+      .library-empty-tip a:hover {
+        text-decoration: underline;
+      }
     </style>
   </head>
-  <body>
+  <body
+    class="{{if and (not .MediaItems) (eq .SearchQuery "")}}library-empty-mode{{end}}"
+  >
     <div class="media-container">
       {{ template "topnav" . }}
+
+      <!-- Library empty state. Shown when there are no media items and no
+           active search; body.library-empty-mode (set above) hides the
+           rest of the page UI so this is the only thing the user sees. -->
+      <div class="library-empty" aria-live="polite">
+        <div class="empty-icon" aria-hidden="true">📁</div>
+        <div class="empty-title">Your library is empty</div>
+        <div class="empty-body">
+          Add some media to start browsing, tagging, and processing it.
+          Drop files below to upload into the default storage root, or
+          queue an <code>ingest</code> job from the Jobs page to pull
+          from YouTube, gallery-dl, or a local directory.
+        </div>
+
+        <label class="library-empty-uploader" id="library-empty-uploader">
+          <input
+            type="file"
+            id="library-empty-input"
+            multiple
+            accept="image/*,video/*,audio/*"
+          />
+          <div class="library-empty-uploader-icon" aria-hidden="true">⬆</div>
+          <div class="library-empty-uploader-prompt">
+            Drop files here or click to browse
+          </div>
+          <div class="library-empty-uploader-hint">
+            Images, video, and audio. Files land in the default storage root.
+          </div>
+        </label>
+
+        <div class="library-empty-progress" id="library-empty-progress">
+          <span id="library-empty-progress-label">Uploading…</span>
+          <span class="bar"
+            ><span id="library-empty-progress-bar"></span
+          ></span>
+        </div>
+
+        <div class="library-empty-error" id="library-empty-error"></div>
+
+        <div class="library-empty-tip">
+          Need more storage locations? Configure additional roots in
+          <a href="/config">Config</a>.
+        </div>
+      </div>
 
       <div class="search-container">
         <form id="search-form" class="search-form">
@@ -4549,6 +4762,108 @@
         input.addEventListener('blur', () => {
           setTimeout(() => hideDropdown(), 150);
         });
+      })();
+
+      // ----------------------------------------------------------------
+      // Library empty-state uploader. Drag-and-drop or click-to-browse;
+      // POSTs to /api/upload with multipart files, then reloads so the
+      // server-rendered table picks up the new rows. No-ops when the
+      // empty-state DOM isn't present (i.e. the library already has
+      // items), so this is safe to run on every page load.
+      // ----------------------------------------------------------------
+      (function setupLibraryEmptyUploader() {
+        const dropzone = document.getElementById('library-empty-uploader');
+        if (!dropzone) return;
+        const input = document.getElementById('library-empty-input');
+        const progress = document.getElementById('library-empty-progress');
+        const progressLabel = document.getElementById(
+          'library-empty-progress-label'
+        );
+        const progressBar = document.getElementById('library-empty-progress-bar');
+        const errorBox = document.getElementById('library-empty-error');
+
+        // Prevent the browser from navigating away when a stray drop misses
+        // the dropzone — easy to do on a small target.
+        ['dragover', 'drop'].forEach((evt) => {
+          window.addEventListener(evt, (e) => {
+            if (e.target.closest('#library-empty-uploader')) return;
+            e.preventDefault();
+          });
+        });
+
+        ['dragenter', 'dragover'].forEach((evt) => {
+          dropzone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            dropzone.classList.add('is-dragover');
+          });
+        });
+        ['dragleave', 'drop'].forEach((evt) => {
+          dropzone.addEventListener(evt, (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('is-dragover');
+          });
+        });
+
+        dropzone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const files = e.dataTransfer && e.dataTransfer.files;
+          if (files && files.length) uploadFiles(files);
+        });
+
+        input.addEventListener('change', () => {
+          if (input.files && input.files.length) uploadFiles(input.files);
+        });
+
+        function uploadFiles(fileList) {
+          errorBox.classList.remove('is-active');
+          errorBox.textContent = '';
+
+          const form = new FormData();
+          for (const f of fileList) form.append('files', f);
+
+          progress.classList.add('is-active');
+          progressBar.style.width = '0%';
+          const n = fileList.length;
+          progressLabel.textContent =
+            'Uploading ' + n + ' file' + (n === 1 ? '' : 's') + '…';
+
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/api/upload');
+          xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100);
+              progressBar.style.width = pct + '%';
+            }
+          });
+          xhr.onreadystatechange = () => {
+            if (xhr.readyState !== 4) return;
+            let body = null;
+            try {
+              body = JSON.parse(xhr.responseText);
+            } catch (_) {}
+            const ok =
+              xhr.status >= 200 &&
+              xhr.status < 300 &&
+              (!body || body.success !== false);
+            if (ok) {
+              progressLabel.textContent = 'Done. Reloading…';
+              progressBar.style.width = '100%';
+              setTimeout(() => window.location.reload(), 400);
+            } else {
+              progress.classList.remove('is-active');
+              const msg =
+                (body && body.error) || 'Upload failed (HTTP ' + xhr.status + ')';
+              errorBox.textContent = msg;
+              errorBox.classList.add('is-active');
+            }
+          };
+          xhr.onerror = () => {
+            progress.classList.remove('is-active');
+            errorBox.textContent = 'Upload failed: network error';
+            errorBox.classList.add('is-active');
+          };
+          xhr.send(form);
+        }
       })();
     </script>
   </body>
