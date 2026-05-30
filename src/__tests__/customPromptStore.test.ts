@@ -35,4 +35,16 @@ describe('customPromptStore', () => {
     setCachedDefaultPrompt('default text');
     expect(getCachedDefaultPrompt()).toBe('default text');
   });
+
+  it('overwrites last prompt when a new non-empty value is submitted', () => {
+    setLastCustomPrompt('first prompt');
+    setLastCustomPrompt('second prompt');
+    expect(getLastCustomPrompt()).toBe('second prompt');
+  });
+
+  it('overwrites the cached default on a subsequent set', () => {
+    setCachedDefaultPrompt('first');
+    setCachedDefaultPrompt('second');
+    expect(getCachedDefaultPrompt()).toBe('second');
+  });
 });
