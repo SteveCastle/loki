@@ -170,3 +170,17 @@ func TestParseOptionsMixed(t *testing.T) {
 		t.Errorf("format: got %v, want png", result["format"])
 	}
 }
+
+func TestParseOptionsPromptValue(t *testing.T) {
+	options := []TaskOption{
+		{Name: "prompt", Type: "string"},
+	}
+	value := `describe this "thing"
+on two lines`
+	j := &jobqueue.Job{Arguments: []string{"--prompt", value}}
+	result := ParseOptions(j, options)
+
+	if result["prompt"] != value {
+		t.Errorf("prompt: got %q, want %q", result["prompt"], value)
+	}
+}

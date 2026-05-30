@@ -16,6 +16,7 @@ var metadataOptions = []TaskOption{
 	{Name: "overwrite", Label: "Overwrite Existing", Type: "bool", Description: "Overwrite existing metadata values"},
 	{Name: "apply", Label: "Apply Scope", Type: "enum", Choices: []string{"new", "all"}, Default: "new", Description: "Apply to new items only or all items"},
 	{Name: "model", Label: "Ollama Model", Type: "string", Description: "Ollama model to use for descriptions"},
+	{Name: "prompt", Label: "Custom Description Prompt", Type: "string", Description: "Override the configured describe prompt for this run"},
 }
 
 // metadataTask generates various metadata for media files
@@ -40,6 +41,7 @@ func metadataTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if ollamaModel == "" {
 		ollamaModel = appconfig.Get().OllamaModel
 	}
+	customDescribePrompt, _ := opts["prompt"].(string)
 
 	if len(metadataTypes) == 0 {
 		metadataTypes = []string{"description", "hash", "dimensions"}
@@ -155,7 +157,7 @@ func metadataTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			var opErr error
 			switch mType {
 			case "description":
-				opErr = processDescriptionForFile(ctx, q, j.ID, filePath, overwrite, ollamaModel, fromQuery)
+				opErr = processDescriptionForFile(ctx, q, j.ID, filePath, overwrite, ollamaModel, customDescribePrompt, fromQuery)
 			case "transcript":
 				opErr = processTranscriptForFile(ctx, q, j.ID, filePath, overwrite, fromQuery)
 			case "hash":

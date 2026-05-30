@@ -66,7 +66,7 @@ func generateDescriptions(ctx context.Context, q *jobqueue.Queue, jobID string, 
 			return ctx.Err()
 		default:
 		}
-		description, err := describeFileWithOllama(ctx, filePath, model)
+		description, err := describeFileWithOllama(ctx, filePath, model, "")
 		if err != nil {
 			q.PushJobStdout(jobID, fmt.Sprintf("Warning: failed to describe %s: %v", filePath, err))
 			continue
@@ -438,7 +438,7 @@ func getVideoMetadata(ctx context.Context, videoPath string) (duration float64, 
 	return duration, frameCount, nil
 }
 
-func describeFileWithOllama(ctx context.Context, mediaPath, model string) (string, error) {
+func describeFileWithOllama(ctx context.Context, mediaPath, model, customPrompt string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(mediaPath))
 	var tempImagePath string
 	var cleanupPaths []string
@@ -462,7 +462,7 @@ func describeFileWithOllama(ctx context.Context, mediaPath, model string) (strin
 	if resizedPath != tempImagePath {
 		cleanupPaths = append(cleanupPaths, resizedPath)
 	}
-	description, err := callOllamaVision(ctx, resizedPath, model)
+	description, err := callOllamaVision(ctx, resizedPath, model, customPrompt)
 	if err != nil {
 		for _, p := range cleanupPaths {
 			_ = os.Remove(p)
@@ -529,13 +529,25 @@ func resizeImageIfNeeded(path string) (string, error) {
 	return tmpPath, nil
 }
 
+// resolveDescribePrompt returns the custom prompt when it has non-whitespace
+// content, otherwise falls back to the prompt stored in app config. Extracted
+// so the fallback rule can be unit-tested without a live vision backend.
+func resolveDescribePrompt(custom string) string {
+	if trimmed := strings.TrimSpace(custom); trimmed != "" {
+		return trimmed
+	}
+	return appconfig.Get().DescribePrompt
+}
+
 // callOllamaVision routes to either RunPod or the local Ollama HTTP API for
 // image description. The 10-minute deadline preserves the upper bound that
-// used to live on the per-request http.Client.
-func callOllamaVision(ctx context.Context, imagePath, _ string) (string, error) {
+// used to live on the per-request http.Client. If customPrompt is non-empty
+// (after trimming) it replaces the configured DescribePrompt for this call
+// only.
+func callOllamaVision(ctx context.Context, imagePath, _ string, customPrompt string) (string, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 600*time.Second)
 	defer cancel()
-	return callVisionLLM(timeoutCtx, imagePath, appconfig.Get().DescribePrompt)
+	return callVisionLLM(timeoutCtx, imagePath, resolveDescribePrompt(customPrompt))
 }
 
 func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string) (string, error) {
@@ -723,7 +735,7 @@ func fileExistsInDatabase(db *sql.DB, path string) (bool, error) {
 // fromQuery parameter: if true, file came from database query so skip DB existence checks
 
 // processDescriptionForFile generates a description for a single file
-func processDescriptionForFile(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string, overwrite bool, model string, fromQuery bool) error {
+func processDescriptionForFile(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string, overwrite bool, model string, customPrompt string, fromQuery bool) error {
 	// If not from query, check if file exists in database first
 	if !fromQuery {
 		exists, err := fileExistsInDatabase(q.Db, filePath)
@@ -745,7 +757,7 @@ func processDescriptionForFile(ctx context.Context, q *jobqueue.Queue, jobID str
 		}
 	}
 
-	description, err := describeFileWithOllama(ctx, filePath, model)
+	description, err := describeFileWithOllama(ctx, filePath, model, customPrompt)
 	if err != nil {
 		return fmt.Errorf("failed to describe: %w", err)
 	}
