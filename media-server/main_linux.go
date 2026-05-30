@@ -2229,6 +2229,7 @@ func main() {
 	mux.HandleFunc("/swipe", renderer.ApplyMiddlewares(swipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/swipe/api", renderer.ApplyMiddlewares(swipeAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/swipe/manifest.json", swipeManifestHandler())
+	mux.HandleFunc("/api/prompts/describe", renderer.ApplyMiddlewares(describePromptHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/config", renderer.ApplyMiddlewares(configHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/stats", renderer.ApplyMiddlewares(statsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
