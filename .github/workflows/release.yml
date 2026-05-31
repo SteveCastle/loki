@@ -4,6 +4,24 @@ on:
   push:
     branches:
       - master
+    # Only release when something that affects a build artifact changes.
+    # Docs-only or tooling-only commits (e.g. docs/**, .gitignore, CLAUDE.md)
+    # no longer kick off the build/release pipeline. Lean inclusive here — a
+    # missed release is worse than a redundant one.
+    paths:
+      - 'src/**' # electron renderer/main; also the SPA embedded in the Go server
+      - 'assets/**' # bundled icons/images
+      - 'release/app/**' # electron-builder app manifest + native deps
+      - '.erb/**' # webpack / build configuration
+      - 'scripts/**' # build helpers (build-server.js, etc.)
+      - 'media-server/**' # Go media server
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+      - 'schema.sql'
+  # Manual trigger so a release can be cut without a code change (e.g. re-run a
+  # failed publish, or release after a tooling-only change).
+  workflow_dispatch:
 
 permissions:
   contents: write
