@@ -15,7 +15,7 @@ export enum FileTypes {
 }
 
 export enum Extensions {
-  Image = 'jpg|jpeg|png|gif|bmp|svg|jfif|pjpeg|pjp|webp',
+  Image = 'jpg|jpeg|png|gif|bmp|svg|jfif|pjpeg|pjp|webp|avif',
   Video = 'mov|mp4|webm|ogg|mkv|m4v',
   Audio = 'mp3|wav|flac|aac|ogg|m4a|opus|wma|aiff|ape',
   Document = 'pdf|doc|docx|xls|xlsx|ppt|pptx|txt|csv',
@@ -31,19 +31,21 @@ export const getFileType = (
     if (gifIsVideo && extension === 'gif') {
       return FileTypes.Video;
     }
-    if (Extensions.Image.includes(extension)) {
+    // Exact extension match (split on '|') rather than substring `includes`,
+    // so e.g. a `.avi` file is not matched by the `avif` entry.
+    if (Extensions.Image.split('|').includes(extension)) {
       return FileTypes.Image;
     }
-    if (Extensions.Video.includes(extension)) {
+    if (Extensions.Video.split('|').includes(extension)) {
       return FileTypes.Video;
     }
-    if (Extensions.Audio.includes(extension)) {
+    if (Extensions.Audio.split('|').includes(extension)) {
       return FileTypes.Audio;
     }
-    if (Extensions.Document.includes(extension)) {
+    if (Extensions.Document.split('|').includes(extension)) {
       return FileTypes.Document;
     }
-    if (Extensions.Archive.includes(extension)) {
+    if (Extensions.Archive.split('|').includes(extension)) {
       return FileTypes.Archive;
     }
   }

@@ -87,7 +87,7 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
       trimmedInput.includes('/') || trimmedInput.includes('\\');
     const hasDriveLetter = /^[a-zA-Z]:/.test(trimmedInput);
     const hasMediaExtension =
-      /\.(mp4|mkv|avi|mov|m4v|webm|mp3|wav|flac|aac|ogg|m4a|opus|jpg|jpeg|jfif|webp|png|gif|vtt|srt|ass)$/i.test(
+      /\.(mp4|mkv|avi|mov|m4v|webm|mp3|wav|flac|aac|ogg|m4a|opus|jpg|jpeg|jfif|webp|avif|png|gif|vtt|srt|ass)$/i.test(
         trimmedInput
       );
 
