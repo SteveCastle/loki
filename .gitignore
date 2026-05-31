@@ -31,3 +31,9 @@ npm-debug.log.*
 media-server/loki-static
 debug_screenshots
 media-server/bin/
+
+# Claude Code / superpowers tooling — kept locally, not tracked
+CLAUDE.md
+.claude/
+.superpowers/
+docs/superpowers/
