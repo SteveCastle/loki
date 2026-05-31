@@ -2,6 +2,7 @@ import { useContext, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import './generate-tags.css';
+import { SparkleIcon } from './section-action-icons';
 
 type Props = {
   path: string;
@@ -83,9 +84,14 @@ export default function GenerateTags({ path }: Props) {
   }
 
   return (
-    <div className="GenerateTags">
-      <button className="generate" onClick={handleGenerateTags}>
-        Generate Tags
+    <div className="GenerateTags section-action">
+      <button
+        className="section-action-pill"
+        onClick={handleGenerateTags}
+        title="Generate tags for this file"
+      >
+        <SparkleIcon />
+        <span>Generate</span>
       </button>
     </div>
   );

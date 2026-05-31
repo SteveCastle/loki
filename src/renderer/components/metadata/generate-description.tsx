@@ -8,11 +8,12 @@ import {
   getLastCustomPrompt,
   setLastCustomPrompt,
 } from './customPromptStore';
+import { SparkleIcon, TuneIcon } from './section-action-icons';
 
 type Props = {
   path: string;
   label?: string;
-  variant?: 'centered' | 'inline';
+  variant?: 'centered' | 'corner';
 };
 
 const FALLBACK_PLACEHOLDER =
@@ -152,7 +153,12 @@ export default function GenerateDescription({
     }
   };
 
+  const isCorner = variant === 'corner';
+
+  // In the corner-pill context we stay quiet until the job service is
+  // confirmed available — no placeholder, no warning box overlapping content.
   if (jobServerAvailable === null) {
+    if (isCorner) return null;
     return (
       <div className={`GenerateDescription ${variant}`}>
         <div className="checking-server">Checking job service...</div>
@@ -161,6 +167,7 @@ export default function GenerateDescription({
   }
 
   if (jobServerAvailable === false) {
+    if (isCorner) return null;
     return (
       <div className={`GenerateDescription ${variant}`}>
         <div className="server-unavailable">
@@ -184,6 +191,57 @@ export default function GenerateDescription({
   const placeholder =
     defaultPrompt ?? 'Loading default prompt…';
 
+  const promptPanel = panelOpen ? (
+    <div className="prompt-panel" id={panelId}>
+      <textarea
+        className="prompt-textarea"
+        value={promptDraft}
+        placeholder={placeholder}
+        onChange={(e) => setPromptDraft(e.target.value)}
+        onKeyDown={(e) => e.stopPropagation()}
+        onKeyUp={(e) => e.stopPropagation()}
+        rows={4}
+      />
+      <div className="prompt-hint">
+        Leave empty to use the configured default. This prompt is remembered for
+        the rest of your session — your global config is unchanged.
+      </div>
+    </div>
+  ) : null;
+
+  // Corner-pill variant: the trigger row floats to the section's top-right
+  // (via `.section-action`), while the optional prompt panel flows in below the
+  // section content so it never overlaps text or gets clipped.
+  if (isCorner) {
+    return (
+      <div className="GenerateDescription corner">
+        <div className="section-action">
+          <button
+            className="section-action-pill"
+            onClick={handleGenerateDescription}
+            disabled={isSubmitting}
+            title={label || 'Regenerate description'}
+          >
+            <SparkleIcon />
+            <span>{label || 'Regenerate'}</span>
+          </button>
+          <button
+            type="button"
+            className="section-action-caret"
+            onClick={() => setPanelOpen((v) => !v)}
+            aria-expanded={panelOpen}
+            aria-controls={panelId}
+            aria-label="Customize prompt"
+            title="Customize prompt"
+          >
+            <TuneIcon />
+          </button>
+        </div>
+        {promptPanel}
+      </div>
+    );
+  }
+
   return (
     <div className={`GenerateDescription ${variant}`}>
       <div className="generate-row">
@@ -204,23 +262,7 @@ export default function GenerateDescription({
           {panelOpen ? 'Hide prompt' : 'Customize prompt'}
         </button>
       </div>
-      {panelOpen && (
-        <div className="prompt-panel" id={panelId}>
-          <textarea
-            className="prompt-textarea"
-            value={promptDraft}
-            placeholder={placeholder}
-            onChange={(e) => setPromptDraft(e.target.value)}
-            onKeyDown={(e) => e.stopPropagation()}
-            onKeyUp={(e) => e.stopPropagation()}
-            rows={4}
-          />
-          <div className="prompt-hint">
-            Leave empty to use the configured default. This prompt is remembered
-            for the rest of your session — your global config is unchanged.
-          </div>
-        </div>
-      )}
+      {promptPanel}
     </div>
   );
 }

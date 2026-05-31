@@ -3,8 +3,8 @@
   width: 100%;
 }
 
-/* When showing text as a <div> */
-.Description > div {
+/* Read view (text shown as a <div>) */
+.Description .description-display {
   min-height: 100px;
   width: 100%;
   padding: 10px;
@@ -14,14 +14,15 @@
   color: #fff;
   white-space: pre-wrap;
   cursor: pointer; /* so users know it's clickable */
+  box-sizing: border-box;
 }
 
-/* When editing as a <textarea> */
-.Description > textarea {
+/* Edit view (<textarea>) — kept visually identical to the read view so
+   flipping between them never moves the text. */
+.Description .description-editor {
   width: 100%;
   min-height: 100px;
   padding: 10px;
-  width: 100%;
   border: 1px solid rgb(53, 53, 59);
   border-radius: 5px;
   background-color: rgb(23, 23, 26);
@@ -30,6 +31,10 @@
   outline: none;
   box-sizing: border-box;
   font-size: 0.7rem;
+}
+
+.Description .description-editor:focus {
+  border-color: rgb(80, 80, 88);
 }
 
 .Description .empty-description {
@@ -45,13 +50,6 @@
   align-items: center;
   gap: 12px;
   text-align: center;
-}
-
-/* Top action bar to place the regenerate button when text exists */
-.Description .description-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 6px;
 }
 
 .Description .placeholder-text {
