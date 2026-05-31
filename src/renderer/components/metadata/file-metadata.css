@@ -54,6 +54,69 @@
   display: flex;
 }
 
+/* Content-generation action, mirrored to the section's top-right corner.
+   The title chip lives top-left; this lives top-right in the same reserved
+   top band, so it never overlaps section content and never shifts it. */
+.FileMetadata .section .section-action {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: stretch;
+  border-radius: 0 2px 0 4px;
+  overflow: hidden;
+}
+
+.FileMetadata .section .section-action-pill,
+.FileMetadata .section .section-action-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin: 0;
+  border: none;
+  outline: none;
+  background: rgba(255, 255, 255, 0.07);
+  color: #c7c7cd;
+  font-size: 0.6rem;
+  font-weight: 500;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.FileMetadata .section .section-action-pill {
+  padding: 0.34rem 0.62rem;
+}
+
+.FileMetadata .section .section-action-caret {
+  padding: 0 0.5rem;
+  border-left: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+/* Hover / active accent borrowed from the CommandPalette action buttons
+   (teal), deliberately different from the section-title green chip. */
+.FileMetadata .section .section-action-pill:hover:not(:disabled),
+.FileMetadata .section .section-action-caret:hover:not(:disabled),
+.FileMetadata .section .section-action-caret[aria-expanded='true'] {
+  background: linear-gradient(135deg, #00c896, #00a67d);
+  color: #fff;
+}
+
+.FileMetadata .section .section-action-pill:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.FileMetadata .section .section-action-icon {
+  display: block;
+  width: 1.05em;
+  height: 1.05em;
+  flex-shrink: 0;
+}
+
 .FileMetadata .general pre {
   font-size: 1rem;
   display: block;

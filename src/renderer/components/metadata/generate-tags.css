@@ -1,27 +1,9 @@
-.GenerateTags {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  margin-top: 8px;
-}
-
-.GenerateTags button {
-  background-color: transparent;
-  color: #aaa;
-  border: 1px solid #555;
-  outline: none;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 400;
-  transition: all 0.2s ease-in-out;
-}
-
-.GenerateTags button:hover {
-  background-color: rgba(255, 255, 255, 0.05);
-  color: #ddd;
-  border-color: #777;
+/* GenerateTags renders as a corner "section action" pill.
+   The pill's appearance and top-right placement come from the shared
+   `.section-action*` rules in file-metadata.css; this file only neutralises
+   the old block-level layout. */
+.GenerateTags.section-action {
+  margin: 0;
 }
 
 .GenerateTags .job-running {
@@ -42,8 +24,12 @@
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .GenerateTags .job-status {

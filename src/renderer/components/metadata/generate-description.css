@@ -6,12 +6,18 @@
 }
 
 /* Variant modifiers for placement */
-.GenerateDescription.inline {
-  justify-content: flex-start;
-}
-
 .GenerateDescription.centered {
   justify-content: center;
+}
+
+/* Corner variant: the trigger floats to the section corner via
+   `.section-action`; only the prompt panel flows in here, below the text. */
+.GenerateDescription.corner {
+  gap: 0;
+}
+
+.GenerateDescription.corner .prompt-panel {
+  margin-top: 8px;
 }
 
 .GenerateDescription button {
@@ -122,10 +128,6 @@
 
 .GenerateDescription.centered .generate-row {
   justify-content: center;
-}
-
-.GenerateDescription.inline .generate-row {
-  justify-content: flex-start;
 }
 
 .GenerateDescription .prompt-toggle {

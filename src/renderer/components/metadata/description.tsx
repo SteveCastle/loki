@@ -50,6 +50,7 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
     <div className="Description">
       {editing ? (
         <textarea
+          className="description-editor"
           ref={textareaRef}
           autoFocus
           value={description}
@@ -68,38 +69,33 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
           }}
         />
       ) : (
-        <div>
-          {description && (
-            <div className="description-actions">
-              <GenerateDescription
-                path={path}
-                label="Regenerate Description"
-                variant="inline"
-              />
+        <div
+          title="Double-click to enter text manually"
+          onDoubleClick={() => setEditing(true)}
+          className={`description-display ${
+            !description ? 'empty-description' : ''
+          }`}
+        >
+          {description ? (
+            description
+          ) : (
+            <div className="empty-content">
+              <span className="placeholder-text">
+                Double-click to enter text or use Generate
+              </span>
             </div>
           )}
-          <div
-            title="Double-click to enter text manually"
-            onDoubleClick={() => setEditing(true)}
-            className={!description ? 'empty-description' : ''}
-          >
-            {description ? (
-              description
-            ) : (
-              <div className="empty-content">
-                <span className="placeholder-text">
-                  Double-click to enter text or generate automatically
-                </span>
-                <GenerateDescription
-                  path={path}
-                  label="Generate Description"
-                  variant="centered"
-                />
-              </div>
-            )}
-          </div>
         </div>
       )}
+      {/* The generate/regenerate action lives in the section's top-right corner
+          (not in the text flow), so the empty, read and edit views all share
+          identical layout — no shift. Same affordance for the initial generate
+          and subsequent regenerate, just a different label. */}
+      <GenerateDescription
+        path={path}
+        label={description ? 'Regenerate' : 'Generate'}
+        variant="corner"
+      />
     </div>
   );
 }
