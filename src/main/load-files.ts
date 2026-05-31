@@ -34,11 +34,11 @@ const filters: Filters = {
   all: {
     label: 'All',
     value:
-      /jpg$|jpeg$|jfif$|webp$|png$|webm$|mp4$|mov$|mpeg$|gif$|mkv|m4v$|mp3$|wav$|flac$|aac$|ogg$|m4a$|opus$|wma$|aiff$|ape$/i,
+      /jpg$|jpeg$|jfif$|webp$|avif$|png$|webm$|mp4$|mov$|mpeg$|gif$|mkv|m4v$|mp3$|wav$|flac$|aac$|ogg$|m4a$|opus$|wma$|aiff$|ape$/i,
   },
   static: {
     label: 'Static',
-    value: /jpg$|jpeg$|webp$|jfif$|png$/i,
+    value: /jpg$|jpeg$|webp$|avif$|jfif$|png$/i,
   },
   video: {
     label: 'Videos',

@@ -9,7 +9,7 @@ import {
 describe('file-types', () => {
   describe('getFileType', () => {
     describe('image files', () => {
-      const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'jfif', 'pjpeg', 'pjp', 'webp'];
+      const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'jfif', 'pjpeg', 'pjp', 'webp', 'avif'];
 
       it.each(imageExtensions)('should identify .%s as Image', (ext) => {
         expect(getFileType(`photo.${ext}`)).toBe(FileTypes.Image);

@@ -435,6 +435,7 @@ ipcMain.handle(
             'pjpeg',
             'pjp',
             'webp',
+            'avif',
             'mp4',
             'mov',
             'mkv',
@@ -457,6 +458,7 @@ ipcMain.handle(
             'pjpeg',
             'pjp',
             'webp',
+            'avif',
           ],
         },
         { name: 'Movies', extensions: ['mp4', 'mkv', 'webm', 'mov'] },
@@ -636,6 +638,7 @@ const gsmMimeTypes: Record<string, string> = {
   '.png': 'image/png',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
+  '.avif': 'image/avif',
   '.bmp': 'image/bmp',
   '.svg': 'image/svg+xml',
 };

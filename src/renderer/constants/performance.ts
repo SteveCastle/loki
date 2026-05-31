@@ -19,7 +19,7 @@ export const PERFORMANCE_CONSTANTS = {
   QUERY_CACHE_TIME: 10 * 60 * 1000, // 10 minutes
   
   // File type checking
-  SUPPORTED_IMAGE_EXTENSIONS: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'jfif', 'pjpeg', 'pjp', 'webp'],
+  SUPPORTED_IMAGE_EXTENSIONS: ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'jfif', 'pjpeg', 'pjp', 'webp', 'avif'],
   SUPPORTED_VIDEO_EXTENSIONS: ['mp4', 'mov', 'mkv', 'webm', 'flv', 'm4v'],
   SUPPORTED_AUDIO_EXTENSIONS: ['mp3', 'wav', 'm4a', 'aac', 'ogg'],
 } as const;
