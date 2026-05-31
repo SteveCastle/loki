@@ -119,7 +119,7 @@
             Support on Patreon
           </a>
         </p>
-        <p class="version">Version 2.12.0</p>
+        <p class="version">Version 2.13.0</p>
         <div class="header-links">
           <a href="./v1/" target="_blank" class="v1">V1 Docs</a>
           <a
@@ -152,13 +152,23 @@
               <a href="#viewer-navigation">Basic Navigation</a>
               <ul>
                 <li><a href="#viewer-open-file">Open a File/Directory</a></li>
+                <li><a href="#viewer-recursive">Recursive File Loading</a></li>
                 <li><a href="#viewer-open-archive">Open a Comic Archive</a></li>
+                <li><a href="#viewer-comic-mode">Comic View Mode</a></li>
                 <li><a href="#viewer-drag-drop">Drag &amp; Drop Import</a></li>
                 <li><a href="#viewer-panels">Using Panels</a></li>
                 <li><a href="#viewer-command">Command Palette</a></li>
                 <li><a href="#viewer-context-palette">Context Palette</a></li>
                 <li><a href="#viewer-grid">Grid Size</a></li>
                 <li><a href="#viewer-shuffle">Shuffle</a></li>
+              </ul>
+            </li>
+            <li>
+              <a href="#viewer-file-management">File Management</a>
+              <ul>
+                <li><a href="#viewer-copy-file">Copy the Active File</a></li>
+                <li><a href="#viewer-copy-all">Copy the Whole List</a></li>
+                <li><a href="#viewer-delete-file">Delete the Active File</a></li>
               </ul>
             </li>
             <li>
@@ -550,6 +560,24 @@
             </p>
             <video src="./static/open-file.mp4" muted loop playsinline controls preload="metadata"></video>
 
+            <h3 id="viewer-recursive">
+              <img class="inline-icon" src="./icons/recursive.svg" alt="" />
+              Recursive File Loading
+            </h3>
+            <p>
+              By default, opening a file loads only the media sitting directly
+              in that file's folder. Toggle <strong>Recursive</strong> mode —
+              the
+              <img class="inline-icon" src="./icons/recursive.svg" alt="recursive" />
+              button in the command palette — to pull in everything from nested
+              subfolders as well, so an entire directory tree loads into a single
+              list view. The button highlights while recursive mode is active,
+              and switching it reloads the current library. Sorting and shuffle
+              then span every file found across the subfolders, which makes it an
+              easy way to browse a deeply nested collection as one continuous
+              set.
+            </p>
+
             <h3 id="viewer-open-archive">
               <img class="inline-icon" src="./icons/folder-5-fill.svg" alt="" />
               Open a Comic Archive
@@ -564,6 +592,21 @@
               binary, so no external dependency is required. Reopening the
               same archive is instant, and the temporary extraction is
               cleaned up when you quit the app.
+            </p>
+
+            <h3 id="viewer-comic-mode">
+              <img class="inline-icon" src="./icons/comic-mode.svg" alt="" />
+              Comic View Mode
+            </h3>
+            <p>
+              <strong>Comic Mode</strong> displays two pages at once in the
+              detail view — the active page on the left and the page that
+              follows it on the right — instead of a single item, so reading
+              <kbd>.cbz</kbd> / <kbd>.cbr</kbd> archives (or any folder of
+              sequential images) feels like an open book. The detail panel
+              splits in half to fit the pair, and moving to the next item slides
+              the spread forward. Turn it on from the image settings in the
+              command palette.
             </p>
 
             <h3 id="viewer-drag-drop">
@@ -630,6 +673,61 @@
               command palette to return to a sorted view.
             </p>
             <video src="./static/shuffle.mp4" muted loop playsinline controls preload="metadata"></video>
+          </section>
+
+          <section id="viewer-file-management">
+            <h2>File Management</h2>
+            <p>
+              Beyond viewing and tagging, Lowkey Media Viewer can act on the
+              underlying files themselves — copy them out to another folder or
+              remove them from disk — without ever leaving the keyboard. These
+              actions work on the <strong>active file</strong> (the item
+              currently in the detail view) or on your whole filtered list.
+            </p>
+
+            <h3 id="viewer-copy-file">
+              <img class="inline-icon" src="./icons/copy.svg" alt="" />
+              Copy the Active File
+            </h3>
+            <p>
+              Press <kbd>Ctrl</kbd> + <kbd>C</kbd> to copy the active file to
+              the system clipboard as a real file reference. Switch to Explorer,
+              Finder, or your Linux file manager and paste
+              (<kbd>Ctrl</kbd> + <kbd>V</kbd>) to drop a copy wherever you like
+              — exactly as if you'd copied the file from the file manager
+              itself.
+            </p>
+
+            <h3 id="viewer-copy-all">
+              <img class="inline-icon" src="./icons/file-list-2-fill.svg" alt="" />
+              Copy the Whole List
+            </h3>
+            <p>
+              Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> to copy
+              <em>every</em> item in your current list view at once. Whatever
+              your active filter, search, or tag selection has narrowed the list
+              down to is placed on the clipboard together, so you can paste the
+              entire set into another folder in a single step — handy for
+              pulling a whole tag or search result out to disk.
+            </p>
+
+            <h3 id="viewer-delete-file">
+              <img class="inline-icon" src="./icons/delete.svg" alt="" />
+              Delete the Active File
+            </h3>
+            <p>
+              Press <kbd>Delete</kbd> to remove the active file. It's sent to
+              your operating system's Recycle Bin / Trash rather than being
+              erased outright, its entry is removed from the library, and the
+              viewer advances to the next item so you can keep moving. If the
+              file can't be moved to the trash for some reason, it's deleted
+              directly — so treat <kbd>Delete</kbd> as a destructive action.
+            </p>
+            <p>
+              All three shortcuts appear in the
+              <a href="#viewer-hotkeys">Keyboard Shortcuts</a> table and can be
+              rebound from the Hotkeys tab of the command palette.
+            </p>
           </section>
 
           <section id="viewer-display">
@@ -1016,7 +1114,7 @@
 
       const el = document.getElementById('downloadButton');
       const RELEASE_BASE =
-        'https://github.com/SteveCastle/loki/releases/download/v2.12.0/';
+        'https://github.com/SteveCastle/loki/releases/download/v2.13.0/';
       const RELEASES_PAGE =
         'https://github.com/SteveCastle/loki/releases/latest';
       const platform = window.navigator.platform || '';
@@ -1026,14 +1124,14 @@
       let label = 'Download | Free';
 
       if (/Win/i.test(platform) || /Windows/i.test(ua)) {
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer.Setup.2.12.0.exe';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer.Setup.2.13.0.exe';
         label = 'Download | Free for Windows';
       } else if (/Mac/i.test(platform) || /Mac OS/i.test(ua)) {
         // Default to Apple Silicon; Intel Macs can grab the x64 .dmg from the releases page.
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.12.0-arm64.dmg';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.13.0-arm64.dmg';
         label = 'Download | Free for Mac';
       } else if (/Linux/i.test(platform) || /Linux/i.test(ua)) {
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.12.0.AppImage';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.13.0.AppImage';
         label = 'Download | Free for Linux';
       }
 
