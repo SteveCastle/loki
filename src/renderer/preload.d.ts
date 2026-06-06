@@ -101,6 +101,7 @@ declare global {
         tags?: string[],
         filteringMode?: string
       ) => Promise<{ path: string }[]>;
+      loadMediaByQuery: (predicates: unknown[], mode: string) => Promise<any>;
       loadDuplicatesByPath: (
         path: string
       ) => Promise<{ library: { path: string }[]; cursor: number }>;

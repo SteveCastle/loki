@@ -8,6 +8,8 @@ import { getFileType } from '../file-types';
 import { IpcMainInvokeEvent, shell } from 'electron';
 import fs from 'fs';
 import { isNetworkPath } from './network-drive-cache';
+import { buildMediaQuery, FilteringMode } from './query-sql';
+import type { Predicate } from '../renderer/query/types';
 
 const MAX_CONCURRENT_LOCAL = 12;
 const MAX_CONCURRENT_NETWORK = 3;
@@ -301,6 +303,27 @@ const loadMediaByDescriptionSearch =
       return { library, cursor: 0 };
     } catch (error) {
       console.error('Error in loadMediaByDescriptionSearch:', error);
+      throw error;
+    }
+  };
+
+const loadMediaByQuery =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: any[]) => {
+    const predicates = (args[0] || []) as Predicate[];
+    const mode = (args[1] || 'AND') as FilteringMode;
+    const { sql, params } = buildMediaQuery(predicates, mode);
+    try {
+      const mediaRows = await db.all(sql, params, 'loadMediaByQuery');
+      const library = mediaRows.map((m: any) => ({
+        path: m.path,
+        description: m.description,
+        elo: m.elo,
+        height: m.height,
+        width: m.width,
+      }));
+      return { library, cursor: 0 };
+    } catch (error) {
+      console.error('Error in loadMediaByQuery:', error);
       throw error;
     }
   };
@@ -648,6 +671,7 @@ const mergeDuplicatesByPath =
 export {
   loadMediaByTags,
   loadMediaByDescriptionSearch,
+  loadMediaByQuery,
   fetchMediaPreview,
   copyFileIntoClipboard,
   deleteMedia,

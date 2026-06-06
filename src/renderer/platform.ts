@@ -363,6 +363,11 @@ export let loadMediaByDescriptionSearch: (
   filteringMode?: string
 ) => Promise<any>;
 
+export let loadMediaByQuery: (
+  predicates: import('./query/types').Predicate[],
+  mode?: string
+) => Promise<any>;
+
 export let fetchMediaPreview: (
   path: string,
   cache: ImageCache,
@@ -428,6 +433,7 @@ if (isElectron) {
   transcript = window.electron.transcript;
   loadMediaFromDB = window.electron.loadMediaFromDB as any;
   loadMediaByDescriptionSearch = window.electron.loadMediaByDescriptionSearch;
+  loadMediaByQuery = window.electron.loadMediaByQuery as any;
   fetchMediaPreview = window.electron.fetchMediaPreview;
   fetchTagPreview = window.electron.fetchTagPreview;
   fetchTagCount = window.electron.fetchTagCount;
@@ -635,6 +641,11 @@ if (isElectron) {
 
   loadMediaByDescriptionSearch = async (description, tags, filteringMode) => {
     const library = await jsonPost('/api/media/search', { description, tags, filteringMode });
+    return { library: library || [], cursor: 0 };
+  };
+
+  loadMediaByQuery = async (predicates, mode = 'AND') => {
+    const library = await jsonPost('/api/media/query', { predicates, mode });
     return { library: library || [], cursor: 0 };
   };
 

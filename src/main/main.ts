@@ -360,6 +360,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('apply-elo-ordering');
   ipcMain.removeHandler('consolidate-tag-files');
   ipcMain.removeHandler('consolidate-category-files');
+  ipcMain.removeHandler('load-media-by-query');
 
   // Dynamically import heavy modules in parallel and register handlers
   const [mediaModule, taxonomyModule, metadataModule, loadFilesModule] =
@@ -378,6 +379,7 @@ ipcMain.handle('load-db', async (event, args) => {
     'load-media-by-description-search',
     mediaModule.loadMediaByDescriptionSearch(db)
   );
+  ipcMain.handle('load-media-by-query', mediaModule.loadMediaByQuery(db));
   ipcMain.handle('update-elo', mediaModule.updateElo(db));
   ipcMain.handle('update-description', mediaModule.updateDescription(db));
   ipcMain.handle(

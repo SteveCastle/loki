@@ -103,6 +103,11 @@ const loadMediaByDescriptionSearch = async (
   return files;
 };
 
+const loadMediaByQuery = async (predicates: unknown[], mode: string) => {
+  const files = await ipcRenderer.invoke('load-media-by-query', [predicates, mode]);
+  return files;
+};
+
 const fetchTagPreview = async (tag: string) => {
   const results = await ipcRenderer.invoke('fetch-tag-preview', [tag]);
   if (!results) return null;
@@ -182,6 +187,7 @@ contextBridge.exposeInMainWorld('electron', {
   },
   loadMediaFromDB,
   loadMediaByDescriptionSearch,
+  loadMediaByQuery,
   fetchTagPreview,
   fetchTagCount,
   fetchMediaPreview,
