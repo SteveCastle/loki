@@ -8,7 +8,7 @@ describe('buildMediaQuery', () => {
   it('returns base query with no predicates', () => {
     const { sql, params } = buildMediaQuery([], 'AND');
     expect(norm(sql)).toBe(
-      norm('SELECT media.path, media.description, media.elo, media.height, media.width, NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at FROM media')
+      norm('SELECT media.path, media.elo, media.height, media.width, NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at FROM media')
     );
     expect(params).toEqual([]);
   });
@@ -21,7 +21,10 @@ describe('buildMediaQuery', () => {
     expect(sql).toContain('FROM media_tag_by_category mtcw');
     expect(sql).toContain('WHERE mtcw.tag_label = ?');
     expect(sql).not.toContain('EXISTS');
-    expect(sql).toContain('ORDER BY mtcw.weight');
+    // Ordering is done in the renderer; no SQL sort, and description is not
+    // returned (only filtered).
+    expect(sql).not.toContain('ORDER BY');
+    expect(sql).not.toContain('description');
     expect(params).toEqual(['portrait']);
   });
 
@@ -46,20 +49,26 @@ describe('buildMediaQuery', () => {
       'AND'
     );
     expect(sql).toContain('media.path LIKE ?');
-    expect(sql).toContain('media.description NOT LIKE ?');
+    expect(sql).toContain('media.description NOT LIKE ?'); // filtered...
+    expect(sql).not.toContain('AS description'); // ...but never returned
     expect(sql).toContain('media.hash LIKE ?');
     expect(params).toEqual(['%a%', '%b%', '%c%']);
   });
 
-  it('joins clauses with OR in OR mode', () => {
-    const { sql } = buildMediaQuery(
+  it('drives an OR-set of include-tags from a tag_label IN lookup', () => {
+    const { sql, params } = buildMediaQuery(
       [
         { type: 'tag', value: 'a', exclude: false },
         { type: 'tag', value: 'b', exclude: false },
       ],
       'OR'
     );
-    expect(norm(sql)).toContain(') OR (');
+    // No media scan: indexed IN over the tag table.
+    expect(sql).toContain('FROM media_tag_by_category mtcw');
+    expect(sql).toContain('WHERE mtcw.tag_label IN (?, ?)');
+    expect(sql).not.toContain('EXISTS');
+    expect(sql).not.toContain('ORDER BY');
+    expect(params).toEqual(['a', 'b']);
   });
 
   it('drives from the first AND-tag and adds other tags as conjunct EXISTS', () => {
@@ -102,16 +111,16 @@ describe('buildMediaQuery', () => {
     expect(params).toEqual(['a', 'b', 'c']); // drive a, then EXISTS b, c
   });
 
-  it('OR-only tags fall back to a media scan with an OR group', () => {
-    const { sql, params } = buildMediaQuery(
+  it('an OR bucket mixing tags with a non-tag falls back to a media scan', () => {
+    const { sql } = buildMediaQuery(
       [
         { type: 'tag', value: 'a', exclude: false, join: 'OR' },
-        { type: 'tag', value: 'b', exclude: false, join: 'OR' },
+        { type: 'path', value: 'p', exclude: false, join: 'OR' },
       ],
       'AND'
     );
-    // Cannot drive from an optional OR-tag — fall back to FROM media + EXISTS.
-    expect(sql).toContain('FROM media LEFT JOIN media_tag_by_category mtcw');
+    // Mixed OR bucket (tag OR path) can't be an indexed tag IN — media scan.
+    expect(sql).toContain('FROM media');
     expect(norm(sql)).toContain(') OR (');
   });
 
@@ -122,7 +131,6 @@ describe('buildMediaQuery', () => {
     );
     expect(sql).toContain('mtcw.time_stamp AS time_stamp');
     expect(sql).toContain('mtcw.weight AS weight');
-    expect(sql).toContain('ORDER BY mtcw.weight');
     expect(params[0]).toBe('cat');
   });
 

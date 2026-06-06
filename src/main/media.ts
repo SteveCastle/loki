@@ -316,7 +316,6 @@ const loadMediaByQuery =
       const mediaRows = await db.all(sql, params, 'loadMediaByQuery');
       const library = mediaRows.map((m: any) => ({
         path: m.path,
-        description: m.description,
         elo: m.elo,
         height: m.height,
         width: m.width,

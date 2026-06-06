@@ -3,8 +3,12 @@ import type { Predicate } from '../renderer/query/types';
 
 export type FilteringMode = 'AND' | 'OR' | 'EXCLUSIVE';
 
-const BASE_COLUMNS =
-  'media.path, media.description, media.elo, media.height, media.width';
+// Columns returned for the library list. NOTE: `media.description` is
+// intentionally NOT selected — it's a large text column the list view doesn't
+// use (the detail/metadata view fetches it on demand). It is still available
+// as a WHERE filter (see clauseFor 'description'). Ordering is done in the
+// renderer, so queries emit no ORDER BY.
+const BASE_COLUMNS = 'media.path, media.elo, media.height, media.width';
 
 function clauseFor(p: Predicate, params: string[]): string {
   const like = `%${p.value}%`;
@@ -85,24 +89,40 @@ export function buildMediaQuery(
     const restWhere = facetedWhere(rest, joinOf, params);
     const extra = restWhere ? ` AND ${restWhere}` : '';
     const sql =
-      `SELECT mtcw.media_path AS path, media.description AS description, ` +
+      `SELECT mtcw.media_path AS path, ` +
       `media.elo AS elo, media.height AS height, media.width AS width, ` +
       `mtcw.weight AS weight, mtcw.tag_label AS tag_label, ` +
       `mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at ` +
       `FROM media_tag_by_category mtcw ` +
       `LEFT JOIN media ON media.path = mtcw.media_path ` +
-      `WHERE mtcw.tag_label = ?${extra} ` +
-      `ORDER BY mtcw.weight`;
+      `WHERE mtcw.tag_label = ?${extra}`;
     return { sql, params };
   }
 
-  // Fallback: no drivable include-tag (OR-only tags, exclude-only, or
-  // non-tag predicates). Scan media; LEFT JOIN the first include-tag, if any,
-  // only to surface weight/tag/timestamp columns.
+  // OR-set of include-tags: every predicate is an include-tag and none is a
+  // required AND driver (so they're an OR bucket) — "media with ANY of these
+  // tags" = tag_label IN (...). Drive from the indexed tag lookup instead of
+  // scanning all of `media` with an OR of EXISTS subqueries.
+  if (valid.every(isIncludeTag)) {
+    const params = valid.map((p) => p.value);
+    const placeholders = valid.map(() => '?').join(', ');
+    const sql =
+      `SELECT mtcw.media_path AS path, ` +
+      `media.elo AS elo, media.height AS height, media.width AS width, ` +
+      `mtcw.weight AS weight, mtcw.tag_label AS tag_label, ` +
+      `mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at ` +
+      `FROM media_tag_by_category mtcw ` +
+      `LEFT JOIN media ON media.path = mtcw.media_path ` +
+      `WHERE mtcw.tag_label IN (${placeholders})`;
+    return { sql, params };
+  }
+
+  // Fallback: no drivable include-tag (exclude-only, or non-tag predicates,
+  // or an OR bucket that mixes tags with non-tags). Scan media; LEFT JOIN the
+  // first include-tag, if any, only to surface weight/tag/timestamp columns.
   const primaryTag = valid.find(isIncludeTag)?.value;
   const params: string[] = [];
   let select: string;
-  let order = '';
   if (primaryTag) {
     select =
       `SELECT ${BASE_COLUMNS}, mtcw.weight AS weight, mtcw.tag_label AS tag_label, ` +
@@ -110,7 +130,6 @@ export function buildMediaQuery(
       `FROM media LEFT JOIN media_tag_by_category mtcw ` +
       `ON mtcw.media_path = media.path AND mtcw.tag_label = ?`;
     params.push(primaryTag); // JOIN param comes first in the SQL
-    order = ' ORDER BY mtcw.weight';
   } else {
     select =
       `SELECT ${BASE_COLUMNS}, NULL AS weight, NULL AS tag_label, ` +
@@ -118,5 +137,5 @@ export function buildMediaQuery(
   }
   const restWhere = facetedWhere(valid, joinOf, params);
   const where = restWhere ? ` WHERE ${restWhere}` : '';
-  return { sql: `${select}${where}${order}`, params };
+  return { sql: `${select}${where}`, params };
 }

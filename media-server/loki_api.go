@@ -284,21 +284,20 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 		items := []map[string]any{}
 		for rows.Next() {
 			var path string
-			var description sql.NullString
 			var elo sql.NullFloat64
 			var height, width sql.NullInt64
 			var weight sql.NullFloat64
 			var tagLabel sql.NullString
 			var timeStamp sql.NullFloat64
 			var createdAt sql.NullInt64
-			if err := rows.Scan(&path, &description, &elo, &height, &width,
+			// 8 columns, matching BuildMediaQuery — description is filtered but
+			// never selected: path, elo, height, width, weight, tag_label,
+			// time_stamp, created_at.
+			if err := rows.Scan(&path, &elo, &height, &width,
 				&weight, &tagLabel, &timeStamp, &createdAt); err != nil {
 				continue
 			}
 			item := map[string]any{"path": path, "mtimeMs": createdAt.Int64}
-			if description.Valid {
-				item["description"] = description.String
-			}
 			if elo.Valid {
 				item["elo"] = elo.Float64
 			}
