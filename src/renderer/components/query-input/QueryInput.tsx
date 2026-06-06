@@ -214,7 +214,7 @@ export default function QueryInput({
     <div className="query-input" ref={containerRef}>
       {query.predicates.length > 0 && (
         <div className="query-chips">
-          {query.predicates.map((p) => {
+          {query.predicates.map((p, index) => {
             const key = predicateKey(p);
             const join = p.join ?? 'AND';
             const chipClass = `query-chip${p.exclude ? ' exclude' : ''}${
@@ -229,19 +229,21 @@ export default function QueryInput({
                   p.exclude ? 'Click to include' : 'Click to exclude'
                 }
               >
-                <button
-                  type="button"
-                  className={`query-chip-join${
-                    join === 'OR' ? ' query-chip-join--or' : ''
-                  }`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSetPredicateJoin(key, join === 'AND' ? 'OR' : 'AND');
-                  }}
-                  title="Toggle AND/OR"
-                >
-                  {join}
-                </button>
+                {index > 0 && (
+                  <button
+                    type="button"
+                    className={`query-chip-join${
+                      join === 'OR' ? ' query-chip-join--or' : ''
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSetPredicateJoin(key, join === 'AND' ? 'OR' : 'AND');
+                    }}
+                    title="Toggle AND/OR"
+                  >
+                    {join}
+                  </button>
+                )}
                 <span className="query-chip-label">
                   {p.exclude ? '−' : ''}
                   {TYPE_GLYPH[p.type]}
