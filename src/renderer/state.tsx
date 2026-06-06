@@ -193,6 +193,30 @@ const capturePrevious = assign<LibraryState, AnyEventObject>({
   previousInitialFile: (context) => context.initialFile,
 });
 
+// Capture the current view into the previous-state slot ONLY if nothing is
+// stored there yet. The query-mutation handlers use this so the first filter
+// applied from a view (typically FS) snapshots that view — letting a later
+// "removed the last predicate" restore it from memory (loadingFromPreviousLibrary).
+// Subsequent edits (slot already full) leave the snapshot intact.
+const capturePreviousIfEmpty = assign<LibraryState, AnyEventObject>({
+  previousLibrary: (c) =>
+    c.previousLibrary.length > 0 ? c.previousLibrary : c.library,
+  previousCursor: (c) =>
+    c.previousLibrary.length > 0 ? c.previousCursor : c.cursor,
+  previousStateType: (c) =>
+    c.previousLibrary.length > 0 ? c.previousStateType : c.currentStateType,
+  previousTextFilter: (c) =>
+    c.previousLibrary.length > 0 ? c.previousTextFilter : c.textFilter,
+  previousDbQuery: (c) =>
+    c.previousLibrary.length > 0 ? c.previousDbQuery : { ...c.dbQuery },
+  previousQuery: (c) =>
+    c.previousLibrary.length > 0
+      ? c.previousQuery
+      : { predicates: [...c.query.predicates] },
+  previousInitialFile: (c) =>
+    c.previousLibrary.length > 0 ? c.previousInitialFile : c.initialFile,
+});
+
 const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
   // Only save previous state if not already saved by an action (check if previousLibrary is empty)
   previousLibrary: (context) =>
@@ -725,24 +749,38 @@ const getInitialContext = (): LibraryState => {
 const queryMutationOn = {
   ADD_PREDICATE: {
     target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>((context, event) => {
-      // EXCLUSIVE mode replaces the entire query with the selected filter,
-      // regardless of predicate type (tag/path/category/description/hash).
-      const q = addPredicateWithMode(
-        context.query,
-        event.data.predicate,
-        context.settings.filteringMode
-      );
-      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
-    }),
+    actions: [
+      // Snapshot the pre-query (e.g. FS) view so clearing back to empty can
+      // restore it from memory.
+      capturePreviousIfEmpty,
+      assign<LibraryState, AnyEventObject>((context, event) => {
+        // EXCLUSIVE mode replaces the entire query with the selected filter,
+        // regardless of predicate type (tag/path/category/description/hash).
+        const q = addPredicateWithMode(
+          context.query,
+          event.data.predicate,
+          context.settings.filteringMode
+        );
+        return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+      }),
+    ],
   },
-  REMOVE_PREDICATE: {
-    target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>((context, event) => {
-      const q = removePredicate(context.query, event.data.key);
-      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
-    }),
-  },
+  REMOVE_PREDICATE: [
+    {
+      // Removing the LAST predicate returns to the previous library (e.g. the
+      // FS view) from memory — mirrors clearing the last tag / the search.
+      target: 'loadingFromPreviousLibrary',
+      cond: (context: LibraryState, event: AnyEventObject) =>
+        removePredicate(context.query, event.data.key).predicates.length === 0,
+    },
+    {
+      target: 'runningQuery',
+      actions: assign<LibraryState, AnyEventObject>((context, event) => {
+        const q = removePredicate(context.query, event.data.key);
+        return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+      }),
+    },
+  ],
   TOGGLE_EXCLUDE: {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
@@ -757,13 +795,24 @@ const queryMutationOn = {
       return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
     }),
   },
-  SET_QUERY: {
-    target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>((_context, event) => {
-      const q = { predicates: parseQuery(event.data.text) };
-      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
-    }),
-  },
+  SET_QUERY: [
+    {
+      // Clearing the text to an empty query returns to the previous library.
+      target: 'loadingFromPreviousLibrary',
+      cond: (_context: LibraryState, event: AnyEventObject) =>
+        parseQuery(event.data.text).length === 0,
+    },
+    {
+      target: 'runningQuery',
+      actions: [
+        capturePreviousIfEmpty,
+        assign<LibraryState, AnyEventObject>((_context, event) => {
+          const q = { predicates: parseQuery(event.data.text) };
+          return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+        }),
+      ],
+    },
+  ],
   CLEAR_QUERY: {
     // No actions: loadingFromPreviousLibrary's entry restores query/library
     // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
