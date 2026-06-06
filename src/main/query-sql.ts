@@ -10,6 +10,11 @@ export type FilteringMode = 'AND' | 'OR' | 'EXCLUSIVE';
 // renderer, so queries emit no ORDER BY.
 const BASE_COLUMNS = 'media.path, media.elo, media.height, media.width';
 
+// Tag columns are NULL for category-driven / no-tag queries (a category spans
+// many tags, so there's no single per-tag weight/timestamp to surface).
+const NULL_TAG_COLS =
+  'NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at';
+
 function clauseFor(p: Predicate, params: string[]): string {
   const like = `%${p.value}%`;
   switch (p.type) {
@@ -73,6 +78,7 @@ export function buildMediaQuery(
   const defaultJoin: 'AND' | 'OR' = mode === 'OR' ? 'OR' : 'AND';
   const joinOf = (p: Predicate): 'AND' | 'OR' => p.join ?? defaultJoin;
   const isIncludeTag = (p: Predicate) => p.type === 'tag' && !p.exclude;
+  const isIncludeCat = (p: Predicate) => p.type === 'category' && !p.exclude;
 
   // Fast path: when a REQUIRED include-tag exists, DRIVE the query from the
   // indexed media_tag_by_category lookup instead of scanning all of `media`.
@@ -99,6 +105,28 @@ export function buildMediaQuery(
     return { sql, params };
   }
 
+  // Category fast path: when a REQUIRED include-category exists (and no
+  // drivable tag), DRIVE from the indexed category lookup instead of scanning
+  // `media`. A category spans many tags, so collapse to DISTINCT media_path
+  // (one row per media) and surface NULL tag columns.
+  const driveCat =
+    valid.find((p) => isIncludeCat(p) && joinOf(p) !== 'OR') ??
+    (valid.length === 1 && isIncludeCat(valid[0]) ? valid[0] : undefined);
+
+  if (driveCat) {
+    const params: string[] = [driveCat.value];
+    const rest = valid.filter((p) => p !== driveCat);
+    const restWhere = facetedWhere(rest, joinOf, params);
+    const where = restWhere ? ` WHERE ${restWhere}` : '';
+    const sql =
+      `SELECT media.path AS path, media.elo AS elo, media.height AS height, ` +
+      `media.width AS width, ${NULL_TAG_COLS} ` +
+      `FROM (SELECT DISTINCT media_path FROM media_tag_by_category ` +
+      `WHERE category_label = ?) cat ` +
+      `JOIN media ON media.path = cat.media_path${where}`;
+    return { sql, params };
+  }
+
   // OR-set of include-tags: every predicate is an include-tag and none is a
   // required AND driver (so they're an OR bucket) — "media with ANY of these
   // tags" = tag_label IN (...). Drive from the indexed tag lookup instead of
@@ -114,6 +142,21 @@ export function buildMediaQuery(
       `FROM media_tag_by_category mtcw ` +
       `LEFT JOIN media ON media.path = mtcw.media_path ` +
       `WHERE mtcw.tag_label IN (${placeholders})`;
+    return { sql, params };
+  }
+
+  // OR-set of include-categories: "media in ANY of these categories" =
+  // category_label IN (...), driven from the indexed category lookup
+  // (DISTINCT media, NULL tag columns).
+  if (valid.every(isIncludeCat)) {
+    const params = valid.map((p) => p.value);
+    const placeholders = valid.map(() => '?').join(', ');
+    const sql =
+      `SELECT media.path AS path, media.elo AS elo, media.height AS height, ` +
+      `media.width AS width, ${NULL_TAG_COLS} ` +
+      `FROM (SELECT DISTINCT media_path FROM media_tag_by_category ` +
+      `WHERE category_label IN (${placeholders})) cat ` +
+      `JOIN media ON media.path = cat.media_path`;
     return { sql, params };
   }
 

@@ -110,6 +110,10 @@ func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
 		return defaultJoin
 	}
 	isIncludeTag := func(p Predicate) bool { return p.Type == "tag" && !p.Exclude }
+	isIncludeCat := func(p Predicate) bool { return p.Type == "category" && !p.Exclude }
+	// Tag columns are NULL for category-driven queries (a category spans many
+	// tags, so there's no single per-tag weight/timestamp).
+	const nullTagCols = "NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at"
 
 	// Fast path: drive from a REQUIRED include-tag (AND-bucket, or the sole
 	// predicate) via the indexed tag lookup instead of scanning `media`.
@@ -143,6 +147,39 @@ func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
 		return sql, params
 	}
 
+	// Category fast path: drive from a REQUIRED include-category (AND-bucket or
+	// the sole predicate) via the indexed category lookup; collapse to DISTINCT
+	// media_path (one row per media) with NULL tag columns.
+	catIdx := -1
+	for i := range valid {
+		if isIncludeCat(valid[i]) && joinOf(valid[i]) != "OR" {
+			catIdx = i
+			break
+		}
+	}
+	if catIdx == -1 && len(valid) == 1 && isIncludeCat(valid[0]) {
+		catIdx = 0
+	}
+	if catIdx >= 0 {
+		params := []any{valid[catIdx].Value}
+		rest := []Predicate{}
+		for i := range valid {
+			if i != catIdx {
+				rest = append(rest, valid[i])
+			}
+		}
+		restWhere := facetedWhere(rest, joinOf, &params)
+		where := ""
+		if restWhere != "" {
+			where = " WHERE " + restWhere
+		}
+		sql := "SELECT media.path AS path, media.elo AS elo, media.height AS height, media.width AS width, " +
+			nullTagCols +
+			" FROM (SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label = ?) cat" +
+			" JOIN media ON media.path = cat.media_path" + where
+		return sql, params
+	}
+
 	// OR-set of include-tags: every predicate is an include-tag (an OR bucket)
 	// — "media with ANY of these tags" = tag_label IN (...). Indexed lookup.
 	allIncludeTags := true
@@ -162,6 +199,29 @@ func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
 		sql := "SELECT " + drivenColumns +
 			" FROM media_tag_by_category mtcw LEFT JOIN media ON media.path = mtcw.media_path" +
 			" WHERE mtcw.tag_label IN (" + strings.Join(placeholders, ", ") + ")"
+		return sql, params
+	}
+
+	// OR-set of include-categories: category_label IN (...), DISTINCT media.
+	allIncludeCats := true
+	for _, p := range valid {
+		if !isIncludeCat(p) {
+			allIncludeCats = false
+			break
+		}
+	}
+	if allIncludeCats {
+		params := []any{}
+		placeholders := []string{}
+		for _, p := range valid {
+			params = append(params, p.Value)
+			placeholders = append(placeholders, "?")
+		}
+		sql := "SELECT media.path AS path, media.elo AS elo, media.height AS height, media.width AS width, " +
+			nullTagCols +
+			" FROM (SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label IN (" +
+			strings.Join(placeholders, ", ") + ")) cat" +
+			" JOIN media ON media.path = cat.media_path"
 		return sql, params
 	}
 

@@ -33,10 +33,38 @@ describe('buildMediaQuery', () => {
     expect(norm(sql)).toContain('NOT EXISTS');
   });
 
-  it('uses category_label for category predicates', () => {
+  it('drives a single category from the indexed category table (DISTINCT, no media scan)', () => {
     const { sql, params } = buildMediaQuery([{ type: 'category', value: 'Studio', exclude: false }], 'AND');
-    expect(sql).toContain('mtc.category_label = ?');
+    expect(sql).toContain('SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label = ?');
+    expect(sql).toContain('JOIN media ON media.path = cat.media_path');
+    expect(sql).toContain('NULL AS weight'); // a category has no single per-tag weight
     expect(params).toEqual(['Studio']);
+  });
+
+  it('drives an OR-set of categories from category_label IN (DISTINCT)', () => {
+    const { sql, params } = buildMediaQuery(
+      [
+        { type: 'category', value: 'A', exclude: false },
+        { type: 'category', value: 'B', exclude: false },
+      ],
+      'OR'
+    );
+    expect(sql).toContain('WHERE category_label IN (?, ?)');
+    expect(sql).toContain('JOIN media ON media.path = cat.media_path');
+    expect(params).toEqual(['A', 'B']);
+  });
+
+  it('a tag drives over a category (category becomes an EXISTS conjunct)', () => {
+    const { sql, params } = buildMediaQuery(
+      [
+        { type: 'tag', value: 't', exclude: false },
+        { type: 'category', value: 'C', exclude: false },
+      ],
+      'AND'
+    );
+    expect(sql).toContain('FROM media_tag_by_category mtcw'); // tag drive
+    expect(sql).toContain('mtc.category_label = ?'); // category as EXISTS
+    expect(params).toEqual(['t', 'C']);
   });
 
   it('wraps path/description/hash values in % for LIKE', () => {

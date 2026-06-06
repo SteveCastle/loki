@@ -109,6 +109,37 @@ func TestBuildMediaQueryFaceted(t *testing.T) {
 	}
 }
 
+func TestBuildMediaQueryCategoryDrivesFromIndex(t *testing.T) {
+	sql, params := BuildMediaQuery([]Predicate{{Type: "category", Value: "Artists"}}, "AND")
+	if !strings.Contains(sql, "SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label = ?") {
+		t.Fatalf("expected DISTINCT category drive: %q", sql)
+	}
+	if !strings.Contains(sql, "JOIN media ON media.path = cat.media_path") {
+		t.Fatalf("expected join to media: %q", sql)
+	}
+	if !strings.Contains(sql, "NULL AS weight") {
+		t.Fatalf("expected NULL tag columns: %q", sql)
+	}
+	if len(params) != 1 || params[0] != "Artists" {
+		t.Fatalf("bad params: %v", params)
+	}
+}
+
+func TestBuildMediaQueryTagDrivesOverCategory(t *testing.T) {
+	sql, params := BuildMediaQuery([]Predicate{
+		{Type: "tag", Value: "t"}, {Type: "category", Value: "C"},
+	}, "AND")
+	if !strings.Contains(sql, "FROM media_tag_by_category mtcw") {
+		t.Fatalf("expected tag drive: %q", sql)
+	}
+	if !strings.Contains(sql, "mtc.category_label = ?") {
+		t.Fatalf("expected category EXISTS conjunct: %q", sql)
+	}
+	if len(params) != 2 || params[0] != "t" || params[1] != "C" {
+		t.Fatalf("bad params: %v", params)
+	}
+}
+
 func TestBuildMediaQueryAndCombo(t *testing.T) {
 	// AND of two tags: drive from the first, second is a conjunct EXISTS.
 	sql, params := BuildMediaQuery([]Predicate{
