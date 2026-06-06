@@ -69,8 +69,8 @@ export default function FileMetadata({ item }: { item: any }) {
         className="section action"
         onClick={() => {
           libraryService.send({
-            type: 'SET_TEXT_FILTER',
-            data: { textFilter: `hash:${data.hash}` },
+            type: 'SET_QUERY',
+            data: { text: `hash:${data.hash}` },
           });
         }}
       >

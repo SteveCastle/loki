@@ -39,7 +39,7 @@ export interface SessionQueryData {
 }
 
 // State type for tracking which mode the library was loaded from
-type LibraryStateType = 'fs' | 'db' | 'search';
+type LibraryStateType = 'fs' | 'db';
 
 export interface SessionPreviousData {
   previousLibrary: Item[];

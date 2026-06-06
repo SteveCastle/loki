@@ -3,7 +3,7 @@
  *
  * Bug: when the state machine enters `loadedFromFS`, the in-memory invariant
  * forces `dbQuery.tags=[]` and `textFilter=''` — but unlike the analogous
- * `loadedFromDB` and `loadedFromSearch` entries, it never mirrors that
+ * `loadedFromDB` entry, it never mirrors that
  * cleared state to the session store. As a result, on-disk session.query
  * could retain stale tags while session.library held an FS-loaded folder.
  * On next boot, `loadingFromPersisted` would route the FS library into

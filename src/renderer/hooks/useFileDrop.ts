@@ -103,8 +103,7 @@ export default function useFileDrop() {
       const snapshot = libraryService.getSnapshot();
       const isLoaded =
         snapshot.matches({ library: 'loadedFromFS' }) ||
-        snapshot.matches({ library: 'loadedFromDB' }) ||
-        snapshot.matches({ library: 'loadedFromSearch' });
+        snapshot.matches({ library: 'loadedFromDB' });
       if (!isLoaded) return;
 
       const nativeFiles = item.files;

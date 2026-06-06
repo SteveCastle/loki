@@ -350,8 +350,7 @@ const ListContextDisplay: React.FC<ListContextDisplayProps> = React.memo(
               onClick={(e) => {
                 stopAll(e);
                 libraryService.send({
-                  type: 'SET_TEXT_FILTER',
-                  data: { textFilter: '' },
+                  type: 'CLEAR_QUERY',
                 });
               }}
             >

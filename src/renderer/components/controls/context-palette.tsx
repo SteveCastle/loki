@@ -108,7 +108,7 @@ function quoteValue(value: string): string {
 function buildQuery(
   target: ContextTarget,
   libraryContext: {
-    currentStateType: 'fs' | 'db' | 'search';
+    currentStateType: 'fs' | 'db';
     dbQuery: { tags: string[] };
     textFilter: string;
     initialFile: string;
@@ -123,21 +123,12 @@ function buildQuery(
     case 'category':
       return `category:${quoteValue(target.category)}`;
     case 'library': {
-      const { currentStateType, dbQuery, textFilter, initialFile, settings } =
+      const { currentStateType, dbQuery, initialFile, settings } =
         libraryContext;
       if (currentStateType === 'db' && dbQuery.tags.length > 0) {
         const joiner =
           settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
         return dbQuery.tags.map((t) => `tag:${quoteValue(t)}`).join(joiner);
-      }
-      if (currentStateType === 'search' && textFilter) {
-        const parts: string[] = [`description:${textFilter}`];
-        if (dbQuery.tags.length > 0) {
-          const joiner =
-            settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
-          parts.push(dbQuery.tags.map((t) => `tag:${t}`).join(joiner));
-        }
-        return parts.join(' AND ');
       }
       return `pathdir:"${getDirFromInitialFile(initialFile)}"`;
     }
@@ -147,7 +138,7 @@ function buildQuery(
 function buildLabel(
   target: ContextTarget,
   libraryContext: {
-    currentStateType: 'fs' | 'db' | 'search';
+    currentStateType: 'fs' | 'db';
     dbQuery: { tags: string[] };
     textFilter: string;
     initialFile: string;
@@ -163,13 +154,10 @@ function buildLabel(
     case 'category':
       return `Category: ${target.category}`;
     case 'library': {
-      const { currentStateType, dbQuery, textFilter, initialFile } =
+      const { currentStateType, dbQuery, initialFile } =
         libraryContext;
       if (currentStateType === 'db' && dbQuery.tags.length > 0) {
         return `${dbQuery.tags.length} tag${dbQuery.tags.length !== 1 ? 's' : ''} selected`;
-      }
-      if (currentStateType === 'search' && textFilter) {
-        return `Search: ${textFilter}`;
       }
       const dir = getDirFromInitialFile(initialFile);
       return `Directory: ${dir.split(/[/\\]/).filter(Boolean).pop() || dir}`;
@@ -560,8 +548,7 @@ export default function ContextPalette() {
   const queryString = buildQuery(target, libraryCtx);
   const isFolderContext =
     target.type === 'library' &&
-    !(currentStateType === 'db' && dbQuery.tags.length > 0) &&
-    !(currentStateType === 'search' && textFilter);
+    !(currentStateType === 'db' && dbQuery.tags.length > 0);
   const encodeQuery64 = (q: string) =>
     btoa(
       new TextEncoder()

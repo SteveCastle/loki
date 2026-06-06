@@ -35,7 +35,6 @@ import {
   clearSessionKeys,
   flushSession,
   hasPersistedLibrary as checkHasPersistedLibrary,
-  hasPersistedTextFilter as checkHasPersistedTextFilter,
   hasPersistedTags as checkHasPersistedTags,
 } from './hooks/useSessionStore';
 // Job management removed - now handled by external job runner service
@@ -57,7 +56,7 @@ type Props = {
 };
 
 // State type for tracking which mode the library was loaded from
-type LibraryStateType = 'fs' | 'db' | 'search';
+type LibraryStateType = 'fs' | 'db';
 
 type LibraryState = {
   initialFile: string;
@@ -444,10 +443,6 @@ const hasPersistedLibrary = (_context: LibraryState): boolean => {
   return checkHasPersistedLibrary();
 };
 
-const hasPersistedTextFilter = (_context: LibraryState): boolean => {
-  return checkHasPersistedTextFilter();
-};
-
 const hasPersistedTags = (_context: LibraryState): boolean => {
   return checkHasPersistedTags();
 };
@@ -740,9 +735,9 @@ const getInitialContext = (): LibraryState => {
 };
 
 // Shared query-mutation handlers. Defined once so they can be applied to both
-// the loaded states (loadedFromFS/loadedFromSearch/loadedFromDB) and the
-// loading states (runningQuery/switchingTag/loadingFromDB/loadingFromSearch/
-// changingSearch). Applying them while a query is in flight makes chip edits
+// the loaded states (loadedFromFS/loadedFromDB) and the
+// loading states (runningQuery/switchingTag/loadingFromDB). Applying them while
+// a query is in flight makes chip edits
 // feel snappy: the assign updates context.query immediately (so the chip UI
 // updates) and targeting runningQuery restarts execution with the latest
 // predicates (latest-wins).
@@ -1467,7 +1462,6 @@ export const libraryMachine = createMachine(
               },
             }),
             always: [
-              { target: 'loadingFromSearch', cond: hasPersistedTextFilter },
               { target: 'loadingFromDB', cond: hasPersistedTags },
               { target: 'selectingDirectory' },
             ],
@@ -1719,56 +1713,6 @@ export const libraryMachine = createMachine(
             },
             on: { ...queryMutationOn },
           },
-          loadingFromSearch: {
-            invoke: {
-              src: (context, event) => {
-                console.log(
-                  'initial search',
-                  context.textFilter,
-                  context.dbQuery.tags,
-                  context.settings.filteringMode
-                );
-                return platformLoadMediaByDescriptionSearch(
-                  context.textFilter,
-                  context.dbQuery.tags,
-                  context.settings.filteringMode
-                );
-              },
-              onDone: {
-                target: 'loadedFromSearch',
-                actions: ['setLibraryWithPrevious'],
-              },
-              onError: {
-                target: 'loadedFromFS',
-              },
-            },
-            on: { ...queryMutationOn },
-          },
-          changingSearch: {
-            invoke: {
-              src: (context, event) => {
-                console.log(
-                  'changing Search',
-                  context.textFilter,
-                  context.dbQuery.tags,
-                  context.settings.filteringMode
-                );
-                return platformLoadMediaByDescriptionSearch(
-                  context.textFilter,
-                  context.dbQuery.tags,
-                  context.settings.filteringMode
-                );
-              },
-              onDone: {
-                target: 'loadedFromSearch',
-                actions: ['setLibrary'],
-              },
-              onError: {
-                target: 'loadedFromFS',
-              },
-            },
-            on: { ...queryMutationOn },
-          },
           switchingTag: {
             invoke: {
               src: (context, event) => {
@@ -1881,7 +1825,6 @@ export const libraryMachine = createMachine(
               libraryLoadId: () => uniqueId(),
             }),
             always: [
-              { target: 'loadedFromSearch', cond: hasPersistedTextFilter },
               { target: 'loadedFromDB', cond: hasPersistedTags },
               { target: 'loadedFromFS' },
             ],
@@ -1942,10 +1885,6 @@ export const libraryMachine = createMachine(
               {
                 target: 'loadedFromDB',
                 cond: (context) => context.currentStateType === 'db',
-              },
-              {
-                target: 'loadedFromSearch',
-                cond: (context) => context.currentStateType === 'search',
               },
               {
                 // If previous library is empty and we're going back to FS mode,
@@ -2129,45 +2068,6 @@ export const libraryMachine = createMachine(
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
                       clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
-                },
-              ],
-              SET_TEXT_FILTER: [
-                {
-                  cond: notEmpty,
-                  target: 'loadingFromSearch',
-                  actions: [
-                    capturePrevious,
-                    persistPreviousState,
-                    assign<LibraryState, AnyEventObject>({
-                      textFilter: (context, event) => {
-                        console.log('SET_TEXT_FILTER', context, event);
-                        return event.data.textFilter;
-                      },
-                      // Clear tag filters when entering search mode (mutually exclusive)
-                      dbQuery: () => ({ tags: [] }),
-                    }),
-                    (context, event) => {
-                      updatePersistedState({
-                        ...context,
-                        textFilter: event.data.textFilter,
-                        dbQuery: { tags: [] },
-                      });
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
-                },
-                {
-                  // Empty text in FS mode is a no-op for the library — just
-                  // clear textFilter without leaving FS or running a search.
-                  cond: isEmpty,
-                  actions: [
-                    assign<LibraryState, AnyEventObject>({
-                      textFilter: () => '',
-                    }),
-                    (context) => {
-                      updatePersistedState({ ...context, textFilter: '' });
                     },
                   ],
                 },
@@ -2393,285 +2293,6 @@ export const libraryMachine = createMachine(
               },
             },
           },
-          loadedFromSearch: {
-            initial: 'idle',
-            // Invariant: in search mode, tag query is empty (search and tags
-            // are mutually exclusive in this app). Force dbQuery.tags=[] on
-            // entry so a stale tag set can't surface alongside search results.
-            entry: [
-              assign<LibraryState, AnyEventObject>({
-                libraryLoadId: () => uniqueId(),
-                currentStateType: () => 'search' as LibraryStateType,
-                dbQuery: () => ({ tags: [] }),
-                query: () => ({ predicates: [] }),
-              }),
-              (context) => updatePersistedState(context),
-            ],
-            states: {
-              idle: {},
-            },
-            on: {
-              ...queryMutationOn,
-              LOAD_FILES_BATCH: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
-                    // Use the sorted/filtered view to look up the current item,
-                    // since cursor is an index into the sorted view, not the raw library
-                    const currentView = filter(
-                      context.libraryLoadId,
-                      context.textFilter,
-                      context.library,
-                      context.settings.filters,
-                      context.settings.sortBy
-                    );
-                    const previousSelectedPath =
-                      context.pinnedPath ||
-                      currentView[context.cursor]?.path;
-                    // Use case-insensitive path matching to avoid duplicates on Windows
-                    const existing = new Set(
-                      context.library.map((item) => item.path.toLowerCase())
-                    );
-                    const incoming = (event.data?.files || []) as Item[];
-                    const newItems = incoming.filter(
-                      (f) => f?.path && !existing.has(f.path.toLowerCase())
-                    );
-                    const updatedLibrary = context.library.concat(newItems);
-
-                    if (previousSelectedPath) {
-                      const tempLibraryLoadId = 'batch-' + uniqueId();
-                      const sorted = filter(
-                        tempLibraryLoadId,
-                        context.textFilter,
-                        updatedLibrary,
-                        context.settings.filters,
-                        (context.streaming
-                          ? 'stream'
-                          : context.settings.sortBy) as any
-                      );
-                      const newIndex = sorted.findIndex(
-                        (item: Item) =>
-                          item?.path &&
-                          path.normalize(item.path).toLowerCase() ===
-                            path.normalize(previousSelectedPath).toLowerCase()
-                      );
-                      if (newIndex !== -1) {
-                        updatePersistedCursor(context, newIndex);
-                        (event as any).__newCursor = newIndex;
-                      }
-                    }
-
-                    return updatedLibrary;
-                  },
-                  cursor: (context, event) => {
-                    const computed = (event as any).__newCursor as
-                      | number
-                      | undefined;
-                    return typeof computed === 'number'
-                      ? computed
-                      : context.cursor;
-                  },
-                  libraryLoadId: () => uniqueId(),
-                  streaming: () => true,
-                }),
-              },
-              // When tag is changed in search mode, clear search and switch to tag-based DB loading
-              SET_QUERY_TAG: [
-                {
-                  target: 'loadingFromDB',
-                  cond: willHaveTag,
-                  actions: [
-                    capturePrevious,
-                    persistPreviousState,
-                    assign<LibraryState, AnyEventObject>({
-                      // Clear text filter when switching to tag mode (mutually exclusive)
-                      textFilter: () => '',
-                      dbQuery: (context, event) => {
-                        console.log(
-                          'SET_QUERY_TAG from search - switching to tag mode',
-                          context,
-                          event.data.tag
-                        );
-                        return { tags: [event.data.tag] };
-                      },
-                      // Mirror the tag click into the unified query model.
-                      query: (context, event) =>
-                        applyTagClick(
-                          context.query,
-                          event.data.tag,
-                          context.settings.filteringMode
-                        ),
-                    }),
-                    (context, event) => {
-                      updatePersistedState({
-                        ...context,
-                        textFilter: '',
-                        dbQuery: { tags: [event.data.tag] },
-                        query: applyTagClick(
-                          context.query,
-                          event.data.tag,
-                          context.settings.filteringMode
-                        ),
-                      });
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
-                },
-                // willHaveNoTag branch removed — search mode invariant is
-                // dbQuery.tags === [], so toggling any new tag yields a
-                // single-tag set (handled above) and the empty-result branch
-                // is unreachable.
-              ],
-              SET_TEXT_FILTER: [
-                {
-                  cond: notEmpty,
-                  target: 'changingSearch',
-                  actions: [
-                    assign<LibraryState, AnyEventObject>({
-                      textFilter: (context, event) => {
-                        console.log('Changing Search', context, event);
-                        return event.data.textFilter;
-                      },
-                      // Ensure tags stay cleared in search mode (mutually exclusive)
-                      dbQuery: () => ({ tags: [] }),
-                    }),
-                    (context, event) => {
-                      updatePersistedState({
-                        ...context,
-                        textFilter: event.data.textFilter,
-                        dbQuery: { tags: [] },
-                      });
-                      // Invalidate persisted library snapshot to avoid query/library mismatch
-                      clearSessionKeys(['library', 'cursor']);
-                    },
-                  ],
-                },
-                {
-                  // Empty text exits search mode. Don't write textFilter or
-                  // dbQuery here — loadingFromPreviousLibrary's entry will
-                  // restore them from previous*. Writing intermediate
-                  // {textFilter: '', dbQuery: {tags: []}} to the session
-                  // store before the restore would briefly persist a
-                  // corrupt query if the app flushed in that window.
-                  cond: isEmpty,
-                  target: 'loadingFromPreviousLibrary',
-                },
-              ],
-              DELETE_FILE: {
-                actions: [
-                  assign<LibraryState, AnyEventObject>({
-                    library: (context, event) => {
-                      console.log('DELETE_FILE', context, event);
-                      try {
-                        invoke('delete-file', [
-                          event.data.path,
-                        ]);
-                      } catch (e) {
-                        console.error(e);
-                      }
-                      const path = event.data.path;
-                      const library = [...context.library];
-                      const index = library.findIndex(
-                        (item) => item.path === path
-                      );
-                      if (index > -1) {
-                        library.splice(index, 1);
-                      }
-                      return library;
-                    },
-                    cursor: (context) => {
-                      // If the cursor was on the last item in the library, decrement it.
-                      if (context.cursor >= context.library.length - 1) {
-                        return context.cursor - 1;
-                      }
-                      return context.cursor;
-                    },
-                    libraryLoadId: () => uniqueId(),
-                  }),
-                  assign<LibraryState, AnyEventObject>({
-                    toasts: (context, event) => {
-                      const filename =
-                        event.data.path.split(/[\\/]/).pop() || event.data.path;
-                      const newToast = {
-                        id: uniqueId(),
-                        type: 'info' as const,
-                        title: 'File deleted',
-                        message: filename,
-                        timestamp: Date.now(),
-                      };
-                      return [...context.toasts, newToast];
-                    },
-                  }),
-                ],
-              },
-              SET_ACTIVE_CATEGORY: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  activeCategory: (context, event) => {
-                    console.log('SET_ACTIVE_CATEGORY', context, event);
-                    store.set('activeCategory', event.data.category);
-                    return event.data.category;
-                  },
-                }),
-              },
-              SELECT_FILE: {
-                target: 'selecting',
-              },
-              SELECT_DIRECTORY: {
-                target: 'selectingDirectory',
-              },
-              SET_FILE: {
-                target: 'loadingFromFS',
-                actions: [
-                  capturePrevious,
-                  persistPreviousState,
-                  assign<LibraryState, AnyEventObject>({
-                    textFilter: () => '',
-                    initialFile: (context, event) => event.path,
-                  }),
-                ],
-              },
-              CHANGE_DB_PATH: {
-                target: 'selectingDB',
-              },
-              UPDATE_FILE_PATH: {
-                target: 'selectingFilePath',
-              },
-              SHUFFLE: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  cursor: 0,
-                  libraryLoadId: () => uniqueId(),
-                  settings: (context, event) => {
-                    console.log('SHUFFLE', context, event);
-                    return {
-                      ...context.settings,
-                      sortBy: 'shuffle',
-                    };
-                  },
-                }),
-              },
-              UPDATE_MEDIA_ELO: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  library: (context, event) => {
-                    console.log('UPDATE_MEDIA_ELO', context, event);
-                    const { path, elo } = event;
-                    const library = [...context.library];
-                    const item = library.find((item) => item.path === path);
-                    if (item) {
-                      item.elo = elo;
-                    }
-                    return library;
-                  },
-                  libraryLoadId: () => uniqueId(),
-                }),
-              },
-              SET_SCROLL_POSITION: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  scrollPosition: (context, event) => {
-                    return event.position;
-                  },
-                }),
-              },
-            },
-          },
           loadedFromDB: {
             initial: 'idle',
             // Invariant: in tag (DB) mode, description search is empty (tags
@@ -2846,31 +2467,6 @@ export const libraryMachine = createMachine(
                   target: 'loadingFromPreviousLibrary',
                 },
               ],
-              SET_TEXT_FILTER: {
-                target: 'loadingFromSearch',
-                actions: [
-                  capturePrevious,
-                  persistPreviousState,
-                  assign<LibraryState, AnyEventObject>({
-                    cursor: 0,
-                    libraryLoadId: () => uniqueId(),
-                    textFilter: (context, event) => {
-                      console.log('SET_TEXT_FILTER', context, event);
-                      return event.data.textFilter;
-                    },
-                    // Clear tag filters when entering search mode (mutually exclusive)
-                    dbQuery: () => ({ tags: [] }),
-                  }),
-                  (context, event) => {
-                    updatePersistedState({
-                      ...context,
-                      textFilter: event.data.textFilter,
-                      dbQuery: { tags: [] },
-                    });
-                    clearSessionKeys(['library', 'cursor']);
-                  },
-                ],
-              },
               SHUFFLE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
