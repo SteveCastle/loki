@@ -2,7 +2,6 @@ import { useState, useContext, useRef, useEffect, useMemo } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { debounce } from 'lodash';
-import Fuse from 'fuse.js';
 import { Tooltip } from 'react-tooltip';
 import { GlobalStateContext } from '../../state';
 import { FilterModeOption, getNextFilterMode } from '../../../settings';
@@ -25,19 +24,17 @@ import Category from './category';
 import SuggestionSections from './suggestion-sections';
 import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
+import { useTagSearch } from '../../hooks/useTagSearch';
 
 const VIRTUALIZE_THRESHOLD = 300;
-// Hard cap on search results. Each rendered <Tag> fires an IPC call to
-// fetch its preview, so an unbounded match list (e.g. 1-char query against
-// a 50k-tag library) used to flood the renderer + main process and freeze
-// the app. Fuse still ranks across the full set; we only render the top N.
-const MAX_SEARCH_RESULTS = 200;
 
 type Concept = {
   label: string;
   category: string;
   weight: number;
-  description: string;
+  // Optional so the shared useTagSearch results (TagConcept, description?:) are
+  // assignable to Concept-typed row renderers.
+  description?: string;
 };
 
 type TagViewMode = 'card' | 'list';
@@ -245,100 +242,11 @@ export default function Taxonomy() {
     }
   }
 
-  // The full-tag list is only fetched lazily for search; defensive filter
-  // drops tags without a label — Fuse and the row components both assume
-  // a non-empty string and would otherwise throw when one slips in.
-  const allTags = useMemo(() => {
-    if (!allTagsData) return [] as Concept[];
-    return allTagsData.filter(
-      (t) => t && typeof t.label === 'string' && t.label.length > 0
-    );
-  }, [allTagsData]);
-
-  // Async tag search. Indexing and fuzzy matching run in a Web Worker so a
-  // large library (tens of thousands of tags) never blocks the input. Each
-  // request carries an id (searchSeq); responses that aren't the latest are
-  // dropped so a slow earlier search can't clobber newer results.
-  const workerRef = useRef<Worker | null>(null);
-  const searchSeq = useRef(0);
-  const [searchResults, setSearchResults] = useState<Concept[]>([]);
-  // Optimistically assume worker support; flip to false if construction fails
-  // (e.g. jsdom in tests) so the synchronous fallback below takes over.
-  const [workerReady, setWorkerReady] = useState<boolean>(
-    typeof Worker !== 'undefined'
-  );
-
-  useEffect(() => {
-    if (typeof Worker === 'undefined') {
-      setWorkerReady(false);
-      return undefined;
-    }
-    let worker: Worker;
-    try {
-      worker = new Worker(new URL('./tag-search.worker.ts', import.meta.url));
-    } catch {
-      setWorkerReady(false);
-      return undefined;
-    }
-    worker.onmessage = (e: MessageEvent) => {
-      const msg = e.data;
-      if (msg?.type === 'result' && msg.id === searchSeq.current) {
-        setSearchResults(msg.items as Concept[]);
-      }
-    };
-    workerRef.current = worker;
-    setWorkerReady(true);
-    return () => {
-      worker.terminate();
-      workerRef.current = null;
-    };
-  }, []);
-
-  // Keep the worker's index in sync with the loaded tag set. The worker
-  // re-runs the outstanding query after re-indexing, so results refresh
-  // automatically once data first arrives or after a tag mutation.
-  useEffect(() => {
-    workerRef.current?.postMessage({ type: 'index', tags: allTags });
-  }, [allTags]);
-
-  // Synchronous Fuse fallback — only built/used when no worker is available.
-  // Keep these options in sync with tag-search.worker.ts.
-  const fallbackFuse = useMemo(() => {
-    if (workerReady) return null;
-    return new Fuse(allTags, {
-      keys: [
-        { name: 'label', weight: 2 },
-        { name: 'category', weight: 1 },
-      ],
-      threshold: 0.4,
-      ignoreLocation: true,
-      minMatchCharLength: 1,
-    });
-  }, [allTags, workerReady]);
-
-  // Dispatch the debounced query. With a worker the match happens off-thread
-  // and arrives via onmessage; without one we fall back to a synchronous
-  // search. Bumping searchSeq invalidates any in-flight worker response.
-  useEffect(() => {
-    const id = (searchSeq.current += 1);
-    if (!tagFilter) {
-      setSearchResults([]);
-    }
-    if (workerRef.current) {
-      workerRef.current.postMessage({
-        type: 'search',
-        id,
-        query: tagFilter,
-        limit: MAX_SEARCH_RESULTS,
-      });
-    } else if (fallbackFuse && tagFilter) {
-      setSearchResults(
-        fallbackFuse
-          .search(tagFilter, { limit: MAX_SEARCH_RESULTS })
-          .map((r) => r.item)
-      );
-    }
-  }, [tagFilter, fallbackFuse]);
+  // Tag search now runs through the shared, pre-warmed singleton index (one
+  // worker for the whole app) via useTagSearch. We pass the already-debounced
+  // tagFilter; the hook debounces again (harmless) and returns ranked,
+  // pre-capped matches across all categories.
+  const { results: searchResults } = useTagSearch(tagFilter, !!tagFilter);
 
   const tags = useMemo(() => {
     if (tagFilter) {
