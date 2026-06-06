@@ -41,4 +41,9 @@ describe('query reducer', () => {
     const start = q([{ type: 'tag', value: 'b', exclude: false }]);
     expect(applyTagClick(start, 'b', 'EXCLUSIVE').predicates).toEqual([]);
   });
+
+  it('applyTagClick in EXCLUSIVE clears when clicking an active tag among several', () => {
+    const start = q([{ type: 'tag', value: 'a', exclude: false }, { type: 'tag', value: 'b', exclude: false }]);
+    expect(applyTagClick(start, 'a', 'EXCLUSIVE').predicates).toEqual([]);
+  });
 });

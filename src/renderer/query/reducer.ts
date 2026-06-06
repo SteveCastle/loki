@@ -27,7 +27,7 @@ export function applyTagClick(q: Query, tag: string, mode: string): Query {
   const key = predicateKey({ type: 'tag', value: tag, exclude: false });
   const exists = q.predicates.some((x) => predicateKey(x) === key);
   if (mode === 'EXCLUSIVE') {
-    if (exists && q.predicates.length === 1) return { predicates: [] };
+    if (exists) return { predicates: [] };
     return { predicates: [{ type: 'tag', value: tag, exclude: false }] };
   }
   if (exists) return removePredicate(q, key);

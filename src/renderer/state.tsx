@@ -16,6 +16,7 @@ import {
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
 import type { Query } from './query/types';
+import { predicateKey } from './query/types';
 import {
   addPredicate,
   removePredicate,
@@ -2049,10 +2050,9 @@ export const libraryMachine = createMachine(
                 }),
               },
               CLEAR_QUERY: {
+                // No actions: loadingFromPreviousLibrary's entry restores query/library
+                // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
                 target: 'loadingFromPreviousLibrary',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: () => ({ predicates: [] }),
-                }),
               },
               SET_TEXT_FILTER: [
                 {
@@ -2324,6 +2324,7 @@ export const libraryMachine = createMachine(
                 libraryLoadId: () => uniqueId(),
                 currentStateType: () => 'search' as LibraryStateType,
                 dbQuery: () => ({ tags: [] }),
+                query: () => ({ predicates: [] }),
               }),
               (context) => updatePersistedState(context),
             ],
@@ -2470,10 +2471,9 @@ export const libraryMachine = createMachine(
                 }),
               },
               CLEAR_QUERY: {
+                // No actions: loadingFromPreviousLibrary's entry restores query/library
+                // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
                 target: 'loadingFromPreviousLibrary',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: () => ({ predicates: [] }),
-                }),
               },
               SET_TEXT_FILTER: [
                 {
@@ -2765,6 +2765,15 @@ export const libraryMachine = createMachine(
                           (t) => t !== event.data.tag
                         ),
                       }),
+                      query: (context, event) =>
+                        removePredicate(
+                          context.query,
+                          predicateKey({
+                            type: 'tag',
+                            value: event.data.tag,
+                            exclude: false,
+                          })
+                        ),
                     }),
                     (context, event) => {
                       const newTags = (context.dbQuery.tags || []).filter(
@@ -2773,6 +2782,14 @@ export const libraryMachine = createMachine(
                       updatePersistedState({
                         ...context,
                         dbQuery: { tags: newTags },
+                        query: removePredicate(
+                          context.query,
+                          predicateKey({
+                            type: 'tag',
+                            value: event.data.tag,
+                            exclude: false,
+                          })
+                        ),
                       });
                       clearSessionKeys(['library', 'cursor']);
                     },
@@ -3004,10 +3021,9 @@ export const libraryMachine = createMachine(
                 }),
               },
               CLEAR_QUERY: {
+                // No actions: loadingFromPreviousLibrary's entry restores query/library
+                // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
                 target: 'loadingFromPreviousLibrary',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: () => ({ predicates: [] }),
-                }),
               },
               DELETED_ASSIGNMENT: {
                 // Removing a tag from an image refreshes the current view; it
