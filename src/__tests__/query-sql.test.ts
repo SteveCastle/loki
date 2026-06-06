@@ -13,12 +13,16 @@ describe('buildMediaQuery', () => {
     expect(params).toEqual([]);
   });
 
-  it('builds an include tag predicate with EXISTS', () => {
+  it('drives a single include-tag query from the indexed tag table (no media scan)', () => {
     const preds: Predicate[] = [{ type: 'tag', value: 'portrait', exclude: false }];
     const { sql, params } = buildMediaQuery(preds, 'AND');
-    expect(sql).toContain('EXISTS');
-    expect(sql).toContain('mtc.tag_label = ?');
-    expect(params).toEqual(['portrait', 'portrait']);
+    // Fast path: FROM media_tag_by_category filtered by tag_label, not a full
+    // `media` scan with a correlated EXISTS subquery.
+    expect(sql).toContain('FROM media_tag_by_category mtcw');
+    expect(sql).toContain('WHERE mtcw.tag_label = ?');
+    expect(sql).not.toContain('EXISTS');
+    expect(sql).toContain('ORDER BY mtcw.weight');
+    expect(params).toEqual(['portrait']);
   });
 
   it('builds exclude tag with NOT EXISTS', () => {
@@ -58,26 +62,32 @@ describe('buildMediaQuery', () => {
     expect(norm(sql)).toContain(') OR (');
   });
 
-  it('joins clauses with AND in AND mode', () => {
-    const { sql } = buildMediaQuery(
+  it('drives from the first AND-tag and adds other tags as conjunct EXISTS', () => {
+    const { sql, params } = buildMediaQuery(
       [
         { type: 'tag', value: 'a', exclude: false },
         { type: 'tag', value: 'b', exclude: false },
       ],
       'AND'
     );
-    expect(norm(sql)).toContain(') AND (');
+    expect(sql).toContain('FROM media_tag_by_category mtcw');
+    expect(sql).toContain('WHERE mtcw.tag_label = ?');
+    expect(sql).toContain('AND (EXISTS');
+    expect(sql).toContain('mtc.tag_label = ?'); // EXISTS for tag b
+    expect(params).toEqual(['a', 'b']); // drive tag a, then EXISTS b
   });
 
-  it('treats EXCLUSIVE like AND for SQL joining', () => {
-    const a = norm(buildMediaQuery(
+  it('treats EXCLUSIVE like AND (drives from first tag)', () => {
+    const { sql, params } = buildMediaQuery(
       [{ type: 'tag', value: 'a', exclude: false }, { type: 'tag', value: 'b', exclude: false }],
       'EXCLUSIVE'
-    ).sql);
-    expect(a).toContain(') AND (');
+    );
+    expect(sql).toContain('FROM media_tag_by_category mtcw');
+    expect(sql).toContain('AND (EXISTS');
+    expect(params).toEqual(['a', 'b']);
   });
 
-  it('faceted: per-predicate join buckets AND-required with OR-group', () => {
+  it('faceted: drives from the AND-tag and ORs the OR-bucket', () => {
     const { sql, params } = buildMediaQuery(
       [
         { type: 'tag', value: 'a', exclude: false, join: 'AND' },
@@ -86,31 +96,34 @@ describe('buildMediaQuery', () => {
       ],
       'AND'
     );
-    expect(norm(sql)).toContain(') AND ((');
-    expect(norm(sql)).toContain(') OR (');
-    expect(params).toEqual(['a', 'a', 'b', 'c']);
+    expect(sql).toContain('FROM media_tag_by_category mtcw');
+    expect(sql).toContain('WHERE mtcw.tag_label = ?');
+    expect(norm(sql)).toContain(') OR ('); // OR-bucket for b/c
+    expect(params).toEqual(['a', 'b', 'c']); // drive a, then EXISTS b, c
   });
 
-  it('per-predicate join overrides the mode argument', () => {
-    const { sql } = buildMediaQuery(
+  it('OR-only tags fall back to a media scan with an OR group', () => {
+    const { sql, params } = buildMediaQuery(
       [
         { type: 'tag', value: 'a', exclude: false, join: 'OR' },
         { type: 'tag', value: 'b', exclude: false, join: 'OR' },
       ],
       'AND'
     );
+    // Cannot drive from an optional OR-tag — fall back to FROM media + EXISTS.
+    expect(sql).toContain('FROM media LEFT JOIN media_tag_by_category mtcw');
     expect(norm(sql)).toContain(') OR (');
   });
 
-  it('LEFT JOINs media_tag_by_category for an include-tag query', () => {
+  it('exposes weight/tag/timestamp columns for an include-tag query', () => {
     const { sql, params } = buildMediaQuery(
       [{ type: 'tag', value: 'cat', exclude: false }],
       'AND'
     );
-    expect(sql).toContain('LEFT JOIN media_tag_by_category mtcw');
     expect(sql).toContain('mtcw.time_stamp AS time_stamp');
+    expect(sql).toContain('mtcw.weight AS weight');
     expect(sql).toContain('ORDER BY mtcw.weight');
-    expect(params[0]).toBe('cat'); // join param first
+    expect(params[0]).toBe('cat');
   });
 
   it('selects NULL tag columns and no join when there is no include tag', () => {
