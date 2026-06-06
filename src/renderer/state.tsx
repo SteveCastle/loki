@@ -22,6 +22,7 @@ import {
   removePredicate,
   toggleExclude,
   applyTagClick,
+  setPredicateJoin,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
 import filter from './filter';
@@ -2041,6 +2042,13 @@ export const libraryMachine = createMachine(
                     toggleExclude(context.query, event.data.key),
                 }),
               },
+              SET_PREDICATE_JOIN: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    setPredicateJoin(context.query, event.data.key, event.data.join),
+                }),
+              },
               SET_QUERY: {
                 target: 'runningQuery',
                 actions: assign<LibraryState, AnyEventObject>({
@@ -2460,6 +2468,13 @@ export const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   query: (context, event) =>
                     toggleExclude(context.query, event.data.key),
+                }),
+              },
+              SET_PREDICATE_JOIN: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    setPredicateJoin(context.query, event.data.key, event.data.join),
                 }),
               },
               SET_QUERY: {
@@ -3010,6 +3025,13 @@ export const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   query: (context, event) =>
                     toggleExclude(context.query, event.data.key),
+                }),
+              },
+              SET_PREDICATE_JOIN: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    setPredicateJoin(context.query, event.data.key, event.data.join),
                 }),
               },
               SET_QUERY: {
