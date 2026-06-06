@@ -1,0 +1,51 @@
+// src/main/query-sql.ts
+import type { Predicate } from '../renderer/query/types';
+
+export type FilteringMode = 'AND' | 'OR' | 'EXCLUSIVE';
+
+const BASE_SELECT =
+  'SELECT media.path, media.description, media.elo, media.height, media.width FROM media';
+
+function clauseFor(p: Predicate, params: string[]): string {
+  const like = `%${p.value}%`;
+  switch (p.type) {
+    case 'tag':
+      params.push(p.value);
+      return p.exclude
+        ? '(NOT EXISTS (SELECT 1 FROM media_tag_by_category mtc WHERE mtc.media_path = media.path AND mtc.tag_label = ?))'
+        : '(EXISTS (SELECT 1 FROM media_tag_by_category mtc WHERE mtc.media_path = media.path AND mtc.tag_label = ?))';
+    case 'category':
+      params.push(p.value);
+      return p.exclude
+        ? '(NOT EXISTS (SELECT 1 FROM media_tag_by_category mtc WHERE mtc.media_path = media.path AND mtc.category_label = ?))'
+        : '(EXISTS (SELECT 1 FROM media_tag_by_category mtc WHERE mtc.media_path = media.path AND mtc.category_label = ?))';
+    case 'path':
+      params.push(like);
+      return p.exclude ? '(media.path NOT LIKE ?)' : '(media.path LIKE ?)';
+    case 'description':
+      params.push(like);
+      return p.exclude ? '(media.description NOT LIKE ?)' : '(media.description LIKE ?)';
+    case 'hash':
+      params.push(like);
+      return p.exclude ? '(media.hash NOT LIKE ?)' : '(media.hash LIKE ?)';
+    default: {
+      const _never: never = p.type as never;
+      throw new Error(`Unknown predicate type: ${_never}`);
+    }
+  }
+}
+
+export function buildMediaQuery(
+  predicates: Predicate[],
+  mode: FilteringMode
+): { sql: string; params: string[] } {
+  const params: string[] = [];
+  const valid = (predicates || []).filter((p) => p && p.value);
+  if (valid.length === 0) {
+    return { sql: BASE_SELECT, params };
+  }
+  const joiner = mode === 'OR' ? ' OR ' : ' AND ';
+  const clauses = valid.map((p) => clauseFor(p, params));
+  const where = clauses.join(joiner);
+  return { sql: `${BASE_SELECT} WHERE ${where}`, params };
+}
