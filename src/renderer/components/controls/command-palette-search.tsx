@@ -5,7 +5,7 @@
 // Paths / Description / Hash). Selecting a result adds a predicate to the SAME
 // query state the taxonomy sidebar drives, so the palette and sidebar stay in
 // lockstep. Kept compact + scrollable to fit the floating palette.
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import type { Predicate } from '../../query/types';
@@ -52,6 +52,19 @@ export default function CommandPaletteSearch({
 
   const { results: tagResults } = useTagSearch(text, text.length > 0);
 
+  // Prioritize curated tags (any category other than the catch-all "Suggested"
+  // autotag bucket) — they're far more useful, so surface them first. Stable
+  // sort preserves fuzzy-match relevance order within each group.
+  const sortedTags = useMemo(
+    () =>
+      [...tagResults].sort(
+        (a, b) =>
+          (a.category === 'Suggested' ? 1 : 0) -
+          (b.category === 'Suggested' ? 1 : 0)
+      ),
+    [tagResults]
+  );
+
   const { data: categories } = useQuery<CategoryLite[], Error>(
     ['taxonomy', 'categories', initSessionId],
     loadCategories,
@@ -85,7 +98,7 @@ export default function CommandPaletteSearch({
         onTextChange={setText}
         onSubmitText={() => {
           // Commit the top tag suggestion as a predicate, then clear text.
-          const top = tagResults[0];
+          const top = sortedTags[0];
           if (top) {
             addTag(top.label);
           }
@@ -110,17 +123,21 @@ export default function CommandPaletteSearch({
 
       {hasText && (
         <div className="commandPaletteSearchResults">
-          {tagResults.length > 0 && (
+          {sortedTags.length > 0 && (
             <div className="suggestion-section">
               <div className="suggestion-section-label">Tags</div>
-              {tagResults.slice(0, PALETTE_TAG_CAP).map((t) => (
+              {sortedTags.slice(0, PALETTE_TAG_CAP).map((t) => (
                 <div
                   key={t.label}
                   className="suggestion-row"
+                  title={t.label}
                   onClick={() => addTag(t.label)}
                 >
                   <span className="suggestion-prefix">#</span>
                   <span className="suggestion-value">{t.label}</span>
+                  {t.category && t.category !== 'Suggested' && (
+                    <span className="suggestion-meta">{t.category}</span>
+                  )}
                 </div>
               ))}
             </div>
