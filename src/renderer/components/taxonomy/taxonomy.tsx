@@ -8,7 +8,6 @@ import { GlobalStateContext } from '../../state';
 import { FilterModeOption, getNextFilterMode } from '../../../settings';
 import restart from '../../../../assets/restart.svg';
 import union from '../../../../assets/union.svg';
-import clear from '../../../../assets/cancel.svg';
 import intersect from '../../../../assets/intersect.svg';
 import selective from '../../../../assets/selective.svg';
 import group from '../../../../assets/group.svg';
@@ -93,10 +92,8 @@ export default function Taxonomy() {
       return state.context.settings;
     });
 
-  const textFilter = useSelector(
-    libraryService,
-    (state) => state.context.textFilter
-  );
+  // The unified query (chips) shown in QueryInput.
+  const query = useSelector(libraryService, (state) => state.context.query);
 
   const state = useSelector(
     libraryService,
@@ -105,21 +102,6 @@ export default function Taxonomy() {
       return a.matches(b);
     }
   );
-  const [newTextFilter, setNewTextFilter] = useState<string>('');
-
-  function setTextFilter(text: string) {
-    libraryService.send({
-      type: 'SET_TEXT_FILTER',
-      data: { textFilter: text },
-    });
-  }
-
-  // If textFilter changes, update the input field
-  useEffect(() => {
-    if (textFilter !== newTextFilter) {
-      setNewTextFilter(textFilter);
-    }
-  }, [textFilter]);
 
   // Two-tier search state: tagFilterInput updates on every keystroke so the
   // input feels responsive; tagFilter is the debounced value dispatched to the
@@ -390,45 +372,50 @@ export default function Taxonomy() {
       >
         <div className="search">
           <QueryInput
-            value={newTextFilter}
-            onChange={setNewTextFilter}
-            onSubmit={(text) => {
-              setNewTextFilter(text);
-              setTextFilter(text);
+            query={query}
+            textValue={tagFilterInput}
+            onTextChange={setTagFilterInput}
+            onFocus={() => setSearchFocused(true)}
+            onSubmitText={() => {
+              // Commit the top tag suggestion as a predicate, then clear text.
+              const top = searchResults[0];
+              if (top) {
+                libraryService.send({
+                  type: 'ADD_PREDICATE',
+                  data: {
+                    predicate: {
+                      type: 'tag',
+                      value: top.label,
+                      exclude: false,
+                    },
+                  },
+                });
+                setTagFilterInput('');
+                setTagFilter('');
+                debouncedSetTagFilter.current.cancel();
+              }
             }}
-            onClear={() => {
-              setNewTextFilter('');
-              setTextFilter('');
+            onRemovePredicate={(key) =>
+              libraryService.send({
+                type: 'REMOVE_PREDICATE',
+                data: { key },
+              })
+            }
+            onToggleExclude={(key) =>
+              libraryService.send({
+                type: 'TOGGLE_EXCLUDE',
+                data: { key },
+              })
+            }
+            onClearAll={() => {
+              libraryService.send({ type: 'CLEAR_QUERY' });
+              setTagFilterInput('');
+              setTagFilter('');
+              debouncedSetTagFilter.current.cancel();
               setEditingTag(null);
             }}
             disabled={isDisabled}
           />
-          <div className="textSearch">
-            <input
-              type="text"
-              placeholder="Search Tags"
-              value={tagFilterInput}
-              onFocus={() => setSearchFocused(true)}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-              }}
-              onKeyUp={(e) => {
-                e.stopPropagation();
-              }}
-              onChange={(e) => setTagFilterInput(e.currentTarget.value)}
-            />
-            <button
-              className="clear-search"
-              onClick={() => {
-                setTagFilterInput('');
-                setTagFilter('');
-                debouncedSetTagFilter.current.cancel();
-                setEditingTag(null);
-              }}
-            >
-              <img src={clear} />
-            </button>
-          </div>
         </div>
         <div className="controls">
           <button

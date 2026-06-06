@@ -1,33 +1,53 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
+import type { Query, Predicate } from '../../query/types';
+import { predicateKey } from '../../query/types';
 import clear from '../../../../assets/cancel.svg';
 import './query-input.css';
 
 interface QueryInputProps {
-  value: string;
-  onChange: (value: string) => void;
-  onSubmit: (value: string) => void;
-  onClear: () => void;
+  query: Query;
+  textValue: string;
+  onTextChange: (value: string) => void;
+  onSubmitText: () => void; // Enter pressed with text present (taxonomy decides what to commit)
+  onRemovePredicate: (key: string) => void;
+  onToggleExclude: (key: string) => void;
+  onClearAll: () => void; // clear chips + text
+  onFocus?: () => void;
   disabled?: boolean;
 }
 
 const CHEAT_SHEET = [
   { syntax: '"quoted phrase"', desc: 'Exact match' },
   { syntax: 'tag:name', desc: 'Search tags' },
+  { syntax: 'in:category', desc: 'Filter by category' },
   { syntax: 'path:dir', desc: 'Search paths' },
   { syntax: 'description:txt', desc: 'Search descriptions' },
   { syntax: 'hash:abc', desc: 'Search by hash' },
   { syntax: '-term', desc: 'Exclude term' },
 ];
 
+// Glyph prefix shown on a chip for each predicate type.
+const TYPE_GLYPH: Record<Predicate['type'], string> = {
+  tag: '#',
+  category: 'in:',
+  path: 'path:',
+  description: 'description:',
+  hash: 'hash:',
+};
+
 const MAX_VISIBLE_RECENT = 5;
 const MAX_VISIBLE_FILTERED = 10;
 
 export default function QueryInput({
-  value,
-  onChange,
-  onSubmit,
-  onClear,
+  query,
+  textValue,
+  onTextChange,
+  onSubmitText,
+  onRemovePredicate,
+  onToggleExclude,
+  onClearAll,
+  onFocus,
   disabled = false,
 }: QueryInputProps) {
   const { history, addSearch, removeSearch, clearAll } = useSearchHistory();
@@ -38,10 +58,10 @@ export default function QueryInput({
   const containerRef = useRef<HTMLDivElement>(null);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filteredHistory = value.trim()
+  const filteredHistory = textValue.trim()
     ? history
         .filter((item) =>
-          item.toLowerCase().includes(value.trim().toLowerCase())
+          item.toLowerCase().includes(textValue.trim().toLowerCase())
         )
         .slice(0, MAX_VISIBLE_FILTERED)
     : history.slice(0, MAX_VISIBLE_RECENT);
@@ -51,7 +71,7 @@ export default function QueryInput({
   // Reset highlight when input changes
   useEffect(() => {
     setHighlightIndex(-1);
-  }, [value]);
+  }, [textValue]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -74,7 +94,8 @@ export default function QueryInput({
       blurTimeoutRef.current = null;
     }
     setIsOpen(true);
-  }, []);
+    onFocus?.();
+  }, [onFocus]);
 
   const handleBlur = useCallback(() => {
     blurTimeoutRef.current = setTimeout(() => {
@@ -83,28 +104,30 @@ export default function QueryInput({
     }, 200);
   }, []);
 
+  // Select a search-history entry: push its text into the input, record it,
+  // then commit it via the taxonomy-owned submit handler.
   const selectItem = useCallback(
-    (query: string) => {
-      onChange(query);
-      addSearch(query);
-      onSubmit(query);
+    (item: string) => {
+      onTextChange(item);
+      addSearch(item);
+      onSubmitText();
       setIsOpen(false);
       setShowCheatSheet(false);
       setHighlightIndex(-1);
     },
-    [onChange, addSearch, onSubmit]
+    [onTextChange, addSearch, onSubmitText]
   );
 
   const handleSubmit = useCallback(() => {
-    const trimmed = value.trim();
+    const trimmed = textValue.trim();
     if (trimmed) {
       addSearch(trimmed);
-      onSubmit(trimmed);
+      onSubmitText();
       setIsOpen(false);
       setShowCheatSheet(false);
       setHighlightIndex(-1);
     }
-  }, [value, addSearch, onSubmit]);
+  }, [textValue, addSearch, onSubmitText]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -151,7 +174,7 @@ export default function QueryInput({
         case 'Delete':
         case 'Backspace':
           if (
-            !value &&
+            !textValue &&
             highlightIndex >= 0 &&
             highlightIndex < filteredHistory.length
           ) {
@@ -171,7 +194,7 @@ export default function QueryInput({
       showCheatSheet,
       highlightIndex,
       filteredHistory,
-      value,
+      textValue,
       handleSubmit,
       selectItem,
       removeSearch,
@@ -179,22 +202,57 @@ export default function QueryInput({
   );
 
   const handleClear = useCallback(() => {
-    onChange('');
-    onClear();
+    onClearAll();
     setHighlightIndex(-1);
-  }, [onChange, onClear]);
+  }, [onClearAll]);
 
   const dropdownOpen = isOpen && hasItems;
 
   return (
     <div className="query-input" ref={containerRef}>
+      {query.predicates.length > 0 && (
+        <div className="query-chips">
+          {query.predicates.map((p) => {
+            const key = predicateKey(p);
+            const chipClass = `query-chip${p.exclude ? ' exclude' : ''}${
+              p.type === 'category' ? ' category' : ''
+            }`;
+            return (
+              <span
+                className={chipClass}
+                key={key}
+                onClick={() => onToggleExclude(key)}
+                title={
+                  p.exclude ? 'Click to include' : 'Click to exclude'
+                }
+              >
+                <span className="query-chip-label">
+                  {p.exclude ? '−' : ''}
+                  {TYPE_GLYPH[p.type]}
+                  {p.value}
+                </span>
+                <button
+                  className="query-chip-remove"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemovePredicate(key);
+                  }}
+                  title="Remove"
+                >
+                  &times;
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      )}
       <div className="query-input-field">
         <input
           ref={inputRef}
           type="text"
-          placeholder="Search Content"
-          value={value}
-          onChange={(e) => onChange(e.currentTarget.value)}
+          placeholder="Search & filter"
+          value={textValue}
+          onChange={(e) => onTextChange(e.currentTarget.value)}
           onKeyDown={handleKeyDown}
           onKeyUp={(e) => e.stopPropagation()}
           onFocus={handleFocus}
@@ -216,7 +274,7 @@ export default function QueryInput({
         <button
           className="query-input-submit"
           onClick={handleSubmit}
-          disabled={!value.trim() || disabled}
+          disabled={!textValue.trim() || disabled}
           title="Search"
         >
           &rarr;
@@ -244,7 +302,9 @@ export default function QueryInput({
           ) : (
             <div className="query-input-history">
               <div className="query-input-section-header">
-                <span>{value.trim() ? 'Search History' : 'Recent Searches'}</span>
+                <span>
+                  {textValue.trim() ? 'Search History' : 'Recent Searches'}
+                </span>
                 {history.length > 0 && (
                   <button
                     className="query-input-clear-all"

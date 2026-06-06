@@ -10,6 +10,59 @@
   position: relative;
 }
 
+/* Chips (active unified query predicates) */
+.query-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0.25rem 0.5rem 0;
+}
+
+.query-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  cursor: pointer;
+  background: #2b3a4a;
+  color: #cfe3f5;
+  border: 1px solid #3d5a78;
+}
+
+.query-chip.exclude {
+  background: #4a2b2b;
+  color: #f5cfcf;
+  border-color: #784040;
+}
+
+.query-chip.category {
+  background: #2b4a38;
+  color: #cff5dc;
+  border-color: #3d785a;
+}
+
+.query-chip-label {
+  white-space: nowrap;
+}
+
+.query-chip-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.query-chip-remove:hover {
+  opacity: 1;
+}
+
 .query-input-field input {
   flex: 1 1 0;
   height: 30px;
