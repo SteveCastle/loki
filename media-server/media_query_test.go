@@ -55,3 +55,34 @@ func TestBuildMediaQueryOrJoin(t *testing.T) {
 		t.Fatalf("expected OR join: %q", sql)
 	}
 }
+
+func TestBuildMediaQueryFaceted(t *testing.T) {
+	sql, params := BuildMediaQuery([]Predicate{
+		{Type: "tag", Value: "a", Join: "AND"},
+		{Type: "tag", Value: "b", Join: "OR"},
+		{Type: "tag", Value: "c", Join: "OR"},
+	}, "AND")
+	n := norm(sql)
+	if !strings.Contains(n, ") AND ((") {
+		t.Fatalf("expected AND-required + OR-group: %q", sql)
+	}
+	if !strings.Contains(n, ") OR (") {
+		t.Fatalf("expected OR group: %q", sql)
+	}
+	want := []any{"a", "b", "c"}
+	for i := range want {
+		if params[i] != want[i] {
+			t.Fatalf("param %d = %v want %v", i, params[i], want[i])
+		}
+	}
+}
+
+func TestBuildMediaQueryJoinOverridesMode(t *testing.T) {
+	sql, _ := BuildMediaQuery([]Predicate{
+		{Type: "tag", Value: "a", Join: "OR"},
+		{Type: "tag", Value: "b", Join: "OR"},
+	}, "AND")
+	if !strings.Contains(norm(sql), ") OR (") {
+		t.Fatalf("expected OR join from per-predicate Join: %q", sql)
+	}
+}

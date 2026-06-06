@@ -8,6 +8,7 @@ type Predicate struct {
 	Type    string `json:"type"`    // tag|category|path|description|hash
 	Value   string `json:"value"`
 	Exclude bool   `json:"exclude"`
+	Join    string `json:"join"` // "AND" | "OR" | "" (empty falls back to mode)
 }
 
 const baseSelect = "SELECT media.path, media.description, media.elo, media.height, media.width FROM media"
@@ -50,25 +51,47 @@ func clauseFor(p Predicate, params *[]any) string {
 }
 
 // BuildMediaQuery returns the SQL and ordered params for the given predicates.
-// mode AND -> AND join, OR -> OR join, EXCLUSIVE -> AND join (single by design).
+// Each predicate's Join field ("AND"/"OR") overrides the global mode for that predicate.
+// AND predicates are required clauses joined by AND; OR predicates are grouped as (c1 OR c2 ...).
+// The final WHERE is: (AND clauses...) AND (OR group), which mirrors the TS faceted query logic.
+// Params are pushed in emission order: AND bucket first, then OR bucket.
 func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
 	params := []any{}
-	clauses := []string{}
+	valid := []Predicate{}
 	for _, p := range predicates {
-		if p.Value == "" {
-			continue
-		}
-		c := clauseFor(p, &params)
-		if c != "" {
-			clauses = append(clauses, c)
+		if p.Value != "" {
+			valid = append(valid, p)
 		}
 	}
-	if len(clauses) == 0 {
+	if len(valid) == 0 {
 		return baseSelect, params
 	}
-	joiner := " AND "
+	defaultJoin := "AND"
 	if mode == "OR" {
-		joiner = " OR "
+		defaultJoin = "OR"
 	}
-	return baseSelect + " WHERE " + strings.Join(clauses, joiner), params
+	joinOf := func(p Predicate) string {
+		if p.Join == "AND" || p.Join == "OR" {
+			return p.Join
+		}
+		return defaultJoin
+	}
+	andClauses := []string{}
+	orClauses := []string{}
+	// Emit AND bucket first, then OR bucket, so params line up with ? placeholders.
+	for _, p := range valid {
+		if joinOf(p) != "OR" {
+			andClauses = append(andClauses, clauseFor(p, &params))
+		}
+	}
+	for _, p := range valid {
+		if joinOf(p) == "OR" {
+			orClauses = append(orClauses, clauseFor(p, &params))
+		}
+	}
+	pieces := append([]string{}, andClauses...)
+	if len(orClauses) > 0 {
+		pieces = append(pieces, "("+strings.Join(orClauses, " OR ")+")")
+	}
+	return baseSelect + " WHERE " + strings.Join(pieces, " AND "), params
 }
