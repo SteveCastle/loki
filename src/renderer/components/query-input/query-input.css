@@ -48,6 +48,33 @@
   white-space: nowrap;
 }
 
+.query-chip-join {
+  border: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  margin-right: 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1;
+  background: #3a3f46;
+  color: #e6e6e6;
+}
+
+.query-chip-join:hover {
+  background: #4a505a;
+}
+
+.query-chip-join--or {
+  background: #5a4a2b;
+  color: #f5e3cf;
+}
+
+.query-chip-join--or:hover {
+  background: #6e5b35;
+}
+
 .query-chip-remove {
   background: none;
   border: none;

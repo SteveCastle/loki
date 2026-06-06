@@ -388,6 +388,7 @@ export default function Taxonomy() {
                       type: 'tag',
                       value: top.label,
                       exclude: false,
+                      join: filteringMode === 'OR' ? 'OR' : 'AND',
                     },
                   },
                 });
@@ -406,6 +407,12 @@ export default function Taxonomy() {
               libraryService.send({
                 type: 'TOGGLE_EXCLUDE',
                 data: { key },
+              })
+            }
+            onSetPredicateJoin={(key, join) =>
+              libraryService.send({
+                type: 'SET_PREDICATE_JOIN',
+                data: { key, join },
               })
             }
             onClearAll={() => {
@@ -634,7 +641,15 @@ export default function Taxonomy() {
             text={tagFilter}
             categories={categories ?? []}
             onAdd={(predicate) =>
-              libraryService.send({ type: 'ADD_PREDICATE', data: { predicate } })
+              libraryService.send({
+                type: 'ADD_PREDICATE',
+                data: {
+                  predicate: {
+                    ...predicate,
+                    join: filteringMode === 'OR' ? 'OR' : 'AND',
+                  },
+                },
+              })
             }
           />
         ) : null}

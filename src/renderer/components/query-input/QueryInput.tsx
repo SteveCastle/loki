@@ -12,6 +12,7 @@ interface QueryInputProps {
   onSubmitText: () => void; // Enter pressed with text present (taxonomy decides what to commit)
   onRemovePredicate: (key: string) => void;
   onToggleExclude: (key: string) => void;
+  onSetPredicateJoin: (key: string, join: 'AND' | 'OR') => void;
   onClearAll: () => void; // clear chips + text
   onFocus?: () => void;
   disabled?: boolean;
@@ -46,6 +47,7 @@ export default function QueryInput({
   onSubmitText,
   onRemovePredicate,
   onToggleExclude,
+  onSetPredicateJoin,
   onClearAll,
   onFocus,
   disabled = false,
@@ -214,6 +216,7 @@ export default function QueryInput({
         <div className="query-chips">
           {query.predicates.map((p) => {
             const key = predicateKey(p);
+            const join = p.join ?? 'AND';
             const chipClass = `query-chip${p.exclude ? ' exclude' : ''}${
               p.type === 'category' ? ' category' : ''
             }`;
@@ -226,6 +229,19 @@ export default function QueryInput({
                   p.exclude ? 'Click to include' : 'Click to exclude'
                 }
               >
+                <button
+                  type="button"
+                  className={`query-chip-join${
+                    join === 'OR' ? ' query-chip-join--or' : ''
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSetPredicateJoin(key, join === 'AND' ? 'OR' : 'AND');
+                  }}
+                  title="Toggle AND/OR"
+                >
+                  {join}
+                </button>
                 <span className="query-chip-label">
                   {p.exclude ? '−' : ''}
                   {TYPE_GLYPH[p.type]}
