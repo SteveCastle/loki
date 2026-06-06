@@ -18,7 +18,7 @@ import {
 import type { Query } from './query/types';
 import { predicateKey } from './query/types';
 import {
-  addPredicate,
+  addPredicateWithMode,
   removePredicate,
   toggleExclude,
   applyTagClick,
@@ -726,7 +726,13 @@ const queryMutationOn = {
   ADD_PREDICATE: {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
-      const q = addPredicate(context.query, event.data.predicate);
+      // EXCLUSIVE mode replaces the entire query with the selected filter,
+      // regardless of predicate type (tag/path/category/description/hash).
+      const q = addPredicateWithMode(
+        context.query,
+        event.data.predicate,
+        context.settings.filteringMode
+      );
       return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
     }),
   },

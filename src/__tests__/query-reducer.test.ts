@@ -1,5 +1,5 @@
 // src/__tests__/query-reducer.test.ts
-import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, tagsFromQuery } from '../renderer/query/reducer';
+import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, tagsFromQuery, addPredicateWithMode } from '../renderer/query/reducer';
 import type { Query } from '../renderer/query/types';
 
 const q = (preds: Query['predicates']): Query => ({ predicates: preds });
@@ -13,6 +13,26 @@ describe('query reducer', () => {
   it('does not duplicate an identical predicate', () => {
     const start = q([{ type: 'tag', value: 'a', exclude: false }]);
     expect(addPredicate(start, { type: 'tag', value: 'a', exclude: false })).toEqual(start);
+  });
+
+  it('addPredicateWithMode appends in AND/OR', () => {
+    const start = q([{ type: 'tag', value: 'a', exclude: false }]);
+    expect(
+      addPredicateWithMode(start, { type: 'path', value: 'p', exclude: false }, 'AND').predicates
+    ).toEqual([
+      { type: 'tag', value: 'a', exclude: false },
+      { type: 'path', value: 'p', exclude: false },
+    ]);
+  });
+
+  it('addPredicateWithMode replaces the whole query in EXCLUSIVE for any predicate type', () => {
+    const start = q([
+      { type: 'tag', value: 'a', exclude: false },
+      { type: 'category', value: 'Studio', exclude: false },
+    ]);
+    expect(
+      addPredicateWithMode(start, { type: 'path', value: 'p', exclude: false }, 'EXCLUSIVE').predicates
+    ).toEqual([{ type: 'path', value: 'p', exclude: false }]);
   });
 
   it('removes a predicate by key', () => {

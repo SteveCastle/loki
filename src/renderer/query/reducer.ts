@@ -35,6 +35,18 @@ export function applyTagClick(q: Query, tag: string, mode: string): Query {
   return addPredicate(q, { type: 'tag', value: tag, exclude: false, join });
 }
 
+// Adding a predicate honors EXCLUSIVE mode: in EXCLUSIVE, selecting ANY filter
+// (tag, path, category, description, hash) replaces the entire query with just
+// that predicate. In AND/OR it appends (deduped).
+export function addPredicateWithMode(
+  q: Query,
+  p: Predicate,
+  mode: string
+): Query {
+  if (mode === 'EXCLUSIVE') return { predicates: [p] };
+  return addPredicate(q, p);
+}
+
 export function setPredicateJoin(q: Query, key: string, join: 'AND' | 'OR'): Query {
   return {
     predicates: q.predicates.map((x) =>
