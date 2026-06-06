@@ -184,6 +184,16 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'GET',
       argsToBody: () => null,
     },
+    'load-path-suggestions': {
+      url: '/api/taxonomy/paths',
+      method: 'GET',
+      argsToBody: (args) => ({ term: args[0] }),
+    },
+    'get-category-count': {
+      url: '/api/taxonomy/category-count',
+      method: 'GET',
+      argsToBody: (args) => ({ category: args[0] }),
+    },
     'create-tag': {
       url: '/api/tags',
       method: 'POST',

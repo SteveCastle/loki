@@ -35,6 +35,8 @@ export type Channels =
   | 'load-category-tags'
   | 'load-all-tags'
   | 'get-tag-count'
+  | 'load-path-suggestions'
+  | 'get-category-count'
   | 'load-file-metadata'
   | 'load-gif-metadata'
   | 'load-tags-by-media-path'

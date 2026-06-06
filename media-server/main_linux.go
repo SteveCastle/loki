@@ -2267,6 +2267,8 @@ func main() {
 	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/taxonomy/paths", renderer.ApplyMiddlewares(lokiPathSuggestHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

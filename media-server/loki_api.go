@@ -1072,6 +1072,36 @@ func lokiTagCountHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func lokiPathSuggestHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		term := "%" + r.URL.Query().Get("term") + "%"
+		rows, err := deps.DB.Query(`SELECT DISTINCT path FROM media WHERE path LIKE ? LIMIT 50`, term)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		paths := []string{}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				continue
+			}
+			paths = append(paths, p)
+		}
+		writeJSON(w, paths)
+	}
+}
+
+func lokiCategoryCountHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		category := r.URL.Query().Get("category")
+		var count int
+		deps.DB.QueryRow(`SELECT COUNT(DISTINCT media_path) FROM media_tag_by_category WHERE category_label = ?`, category).Scan(&count)
+		writeJSON(w, count)
+	}
+}
+
 // ---- Category handlers ----
 
 func lokiCreateCategoryHandler(deps *Dependencies) http.HandlerFunc {
