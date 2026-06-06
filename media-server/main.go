@@ -2456,6 +2456,7 @@ func main() {
 		}
 	}, renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/search", renderer.ApplyMiddlewares(lokiMediaSearchHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/query", renderer.ApplyMiddlewares(lokiMediaQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/metadata", renderer.ApplyMiddlewares(lokiMediaMetadataHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/tags", renderer.ApplyMiddlewares(lokiMediaTagsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/description", renderer.ApplyMiddlewares(lokiUpdateDescriptionHandler(deps), renderer.RoleAdmin))

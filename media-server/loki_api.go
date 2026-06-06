@@ -262,6 +262,53 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
+	type queryRequest struct {
+		Predicates []Predicate `json:"predicates"`
+		Mode       string      `json:"mode"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req queryRequest
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		querySQL, params := BuildMediaQuery(req.Predicates, req.Mode)
+		rows, err := deps.DB.Query(querySQL, params...)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		items := []map[string]any{}
+		for rows.Next() {
+			var path string
+			var description sql.NullString
+			var elo sql.NullFloat64
+			var height, width sql.NullInt64
+			if err := rows.Scan(&path, &description, &elo, &height, &width); err != nil {
+				continue
+			}
+			item := map[string]any{"path": path}
+			if description.Valid {
+				item["description"] = description.String
+			}
+			if elo.Valid {
+				item["elo"] = elo.Float64
+			}
+			if height.Valid {
+				item["height"] = int(height.Int64)
+			}
+			if width.Valid {
+				item["width"] = int(width.Int64)
+			}
+			items = append(items, item)
+		}
+		writeJSON(w, items)
+	}
+}
+
 func lokiMediaMetadataHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest
