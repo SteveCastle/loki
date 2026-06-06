@@ -16,6 +16,8 @@ export interface Predicate {
   value: string;
   // Per-predicate include (false) / exclude (true).
   exclude: boolean;
+  // Faceted combine bucket; undefined falls back to the global mode.
+  join?: 'AND' | 'OR';
 }
 
 export interface Query {

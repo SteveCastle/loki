@@ -76,4 +76,29 @@ describe('buildMediaQuery', () => {
     ).sql);
     expect(a).toContain(') AND (');
   });
+
+  it('faceted: per-predicate join buckets AND-required with OR-group', () => {
+    const { sql, params } = buildMediaQuery(
+      [
+        { type: 'tag', value: 'a', exclude: false, join: 'AND' },
+        { type: 'tag', value: 'b', exclude: false, join: 'OR' },
+        { type: 'tag', value: 'c', exclude: false, join: 'OR' },
+      ],
+      'AND'
+    );
+    expect(norm(sql)).toContain(') AND ((');
+    expect(norm(sql)).toContain(') OR (');
+    expect(params).toEqual(['a', 'b', 'c']);
+  });
+
+  it('per-predicate join overrides the mode argument', () => {
+    const { sql } = buildMediaQuery(
+      [
+        { type: 'tag', value: 'a', exclude: false, join: 'OR' },
+        { type: 'tag', value: 'b', exclude: false, join: 'OR' },
+      ],
+      'AND'
+    );
+    expect(norm(sql)).toContain(') OR (');
+  });
 });

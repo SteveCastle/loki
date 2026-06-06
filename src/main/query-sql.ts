@@ -44,8 +44,16 @@ export function buildMediaQuery(
   if (valid.length === 0) {
     return { sql: BASE_SELECT, params };
   }
-  const joiner = mode === 'OR' ? ' OR ' : ' AND ';
-  const clauses = valid.map((p) => clauseFor(p, params));
-  const where = clauses.join(joiner);
-  return { sql: `${BASE_SELECT} WHERE ${where}`, params };
+  const defaultJoin: 'AND' | 'OR' = mode === 'OR' ? 'OR' : 'AND';
+  const joinOf = (p: Predicate): 'AND' | 'OR' => p.join ?? defaultJoin;
+  const andPreds = valid.filter((p) => joinOf(p) !== 'OR');
+  const orPreds = valid.filter((p) => joinOf(p) === 'OR');
+  // Build in emission order so params line up with placeholders.
+  const andClauses = andPreds.map((p) => clauseFor(p, params));
+  const orClauses = orPreds.map((p) => clauseFor(p, params));
+  const pieces = [...andClauses];
+  if (orClauses.length > 0) {
+    pieces.push('(' + orClauses.join(' OR ') + ')');
+  }
+  return { sql: `${BASE_SELECT} WHERE ${pieces.join(' AND ')}`, params };
 }

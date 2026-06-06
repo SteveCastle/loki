@@ -6,6 +6,7 @@ it('tag click contract produces a tag predicate', () => {
     type: 'tag',
     value: 'x',
     exclude: false,
+    join: 'AND',
   });
 });
 it('add predicate contract', () => {

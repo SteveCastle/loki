@@ -1,5 +1,5 @@
 // src/__tests__/query-reducer.test.ts
-import { addPredicate, removePredicate, toggleExclude, applyTagClick } from '../renderer/query/reducer';
+import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin } from '../renderer/query/reducer';
 import type { Query } from '../renderer/query/types';
 
 const q = (preds: Query['predicates']): Query => ({ predicates: preds });
@@ -27,14 +27,14 @@ describe('query reducer', () => {
   });
 
   it('applyTagClick toggles a tag in non-exclusive modes', () => {
-    expect(applyTagClick(q([]), 'a', 'AND').predicates).toEqual([{ type: 'tag', value: 'a', exclude: false }]);
+    expect(applyTagClick(q([]), 'a', 'AND').predicates).toEqual([{ type: 'tag', value: 'a', exclude: false, join: 'AND' }]);
     const has = q([{ type: 'tag', value: 'a', exclude: false }]);
     expect(applyTagClick(has, 'a', 'AND').predicates).toEqual([]);
   });
 
   it('applyTagClick replaces whole query in EXCLUSIVE mode', () => {
     const start = q([{ type: 'tag', value: 'a', exclude: false }, { type: 'path', value: 'p', exclude: false }]);
-    expect(applyTagClick(start, 'b', 'EXCLUSIVE').predicates).toEqual([{ type: 'tag', value: 'b', exclude: false }]);
+    expect(applyTagClick(start, 'b', 'EXCLUSIVE').predicates).toEqual([{ type: 'tag', value: 'b', exclude: false, join: 'AND' }]);
   });
 
   it('applyTagClick in EXCLUSIVE toggles off when clicking the only active tag', () => {
@@ -45,5 +45,16 @@ describe('query reducer', () => {
   it('applyTagClick in EXCLUSIVE clears when clicking an active tag among several', () => {
     const start = q([{ type: 'tag', value: 'a', exclude: false }, { type: 'tag', value: 'b', exclude: false }]);
     expect(applyTagClick(start, 'a', 'EXCLUSIVE').predicates).toEqual([]);
+  });
+
+  it('applyTagClick sets join to OR in OR mode', () => {
+    expect(applyTagClick(q([]), 'a', 'OR').predicates).toEqual([
+      { type: 'tag', value: 'a', exclude: false, join: 'OR' },
+    ]);
+  });
+
+  it('setPredicateJoin changes a predicate join by key', () => {
+    const start = q([{ type: 'tag', value: 'a', exclude: false, join: 'AND' }]);
+    expect(setPredicateJoin(start, 'tag:a', 'OR').predicates[0].join).toBe('OR');
   });
 });
