@@ -287,10 +287,15 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 			var description sql.NullString
 			var elo sql.NullFloat64
 			var height, width sql.NullInt64
-			if err := rows.Scan(&path, &description, &elo, &height, &width); err != nil {
+			var weight sql.NullFloat64
+			var tagLabel sql.NullString
+			var timeStamp sql.NullFloat64
+			var createdAt sql.NullInt64
+			if err := rows.Scan(&path, &description, &elo, &height, &width,
+				&weight, &tagLabel, &timeStamp, &createdAt); err != nil {
 				continue
 			}
-			item := map[string]any{"path": path}
+			item := map[string]any{"path": path, "mtimeMs": createdAt.Int64}
 			if description.Valid {
 				item["description"] = description.String
 			}
@@ -298,10 +303,19 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 				item["elo"] = elo.Float64
 			}
 			if height.Valid {
-				item["height"] = int(height.Int64)
+				item["height"] = height.Int64
 			}
 			if width.Valid {
-				item["width"] = int(width.Int64)
+				item["width"] = width.Int64
+			}
+			if weight.Valid {
+				item["weight"] = weight.Float64
+			}
+			if tagLabel.Valid {
+				item["tagLabel"] = tagLabel.String
+			}
+			if timeStamp.Valid {
+				item["timeStamp"] = timeStamp.Float64
 			}
 			items = append(items, item)
 		}

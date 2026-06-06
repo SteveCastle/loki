@@ -11,7 +11,7 @@ type Predicate struct {
 	Join    string `json:"join"` // "AND" | "OR" | "" (empty falls back to mode)
 }
 
-const baseSelect = "SELECT media.path, media.description, media.elo, media.height, media.width FROM media"
+const baseColumns = "media.path, media.description, media.elo, media.height, media.width"
 
 func clauseFor(p Predicate, params *[]any) string {
 	like := "%" + p.Value + "%"
@@ -50,22 +50,45 @@ func clauseFor(p Predicate, params *[]any) string {
 	return ""
 }
 
-// BuildMediaQuery returns the SQL and ordered params for the given predicates.
-// Each predicate's Join field ("AND"/"OR") overrides the global mode for that predicate.
-// AND predicates are required clauses joined by AND; OR predicates are grouped as (c1 OR c2 ...).
-// The final WHERE is: (AND clauses...) AND (OR group), which mirrors the TS faceted query logic.
-// Params are pushed in emission order: AND bucket first, then OR bucket.
+// BuildMediaQuery returns SQL + params. Always selects 9 columns (the 4 tag
+// columns are NULL unless there's an include-tag to LEFT JOIN on) so the
+// handler can scan by position regardless of predicate mix.
 func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
-	params := []any{}
 	valid := []Predicate{}
 	for _, p := range predicates {
 		if p.Value != "" {
 			valid = append(valid, p)
 		}
 	}
-	if len(valid) == 0 {
-		return baseSelect, params
+
+	// First INCLUDE tag drives the LEFT JOIN that surfaces weight/tag/timestamp.
+	primaryTag := ""
+	for _, p := range valid {
+		if p.Type == "tag" && !p.Exclude {
+			primaryTag = p.Value
+			break
+		}
 	}
+
+	params := []any{}
+	var selectClause, order string
+	if primaryTag != "" {
+		selectClause = "SELECT " + baseColumns +
+			", mtcw.weight AS weight, mtcw.tag_label AS tag_label, " +
+			"mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at " +
+			"FROM media LEFT JOIN media_tag_by_category mtcw " +
+			"ON mtcw.media_path = media.path AND mtcw.tag_label = ?"
+		params = append(params, primaryTag) // JOIN param first
+		order = " ORDER BY mtcw.weight"
+	} else {
+		selectClause = "SELECT " + baseColumns +
+			", NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at FROM media"
+	}
+
+	if len(valid) == 0 {
+		return selectClause, params
+	}
+
 	defaultJoin := "AND"
 	if mode == "OR" {
 		defaultJoin = "OR"
@@ -78,7 +101,6 @@ func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
 	}
 	andClauses := []string{}
 	orClauses := []string{}
-	// Emit AND bucket first, then OR bucket, so params line up with ? placeholders.
 	for _, p := range valid {
 		if joinOf(p) != "OR" {
 			andClauses = append(andClauses, clauseFor(p, &params))
@@ -93,5 +115,9 @@ func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
 	if len(orClauses) > 0 {
 		pieces = append(pieces, "("+strings.Join(orClauses, " OR ")+")")
 	}
-	return baseSelect + " WHERE " + strings.Join(pieces, " AND "), params
+	where := ""
+	if len(pieces) > 0 {
+		where = " WHERE " + strings.Join(pieces, " AND ")
+	}
+	return selectClause + where + order, params
 }

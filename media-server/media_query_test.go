@@ -23,7 +23,7 @@ func TestBuildMediaQueryTagInclude(t *testing.T) {
 	if !strings.Contains(sql, "EXISTS") || !strings.Contains(sql, "mtc.tag_label = ?") {
 		t.Fatalf("bad tag sql: %q", sql)
 	}
-	if len(params) != 1 || params[0] != "portrait" {
+	if len(params) != 2 || params[0] != "portrait" || params[1] != "portrait" {
 		t.Fatalf("bad params: %v", params)
 	}
 }
@@ -69,7 +69,10 @@ func TestBuildMediaQueryFaceted(t *testing.T) {
 	if !strings.Contains(n, ") OR (") {
 		t.Fatalf("expected OR group: %q", sql)
 	}
-	want := []any{"a", "b", "c"}
+	want := []any{"a", "a", "b", "c"}
+	if len(params) != len(want) {
+		t.Fatalf("expected %d params, got %d: %v", len(want), len(params), params)
+	}
 	for i := range want {
 		if params[i] != want[i] {
 			t.Fatalf("param %d = %v want %v", i, params[i], want[i])
@@ -84,5 +87,18 @@ func TestBuildMediaQueryJoinOverridesMode(t *testing.T) {
 	}, "AND")
 	if !strings.Contains(norm(sql), ") OR (") {
 		t.Fatalf("expected OR join from per-predicate Join: %q", sql)
+	}
+}
+
+func TestBuildMediaQueryIncludeTagJoin(t *testing.T) {
+	sql, params := BuildMediaQuery([]Predicate{{Type: "tag", Value: "cat"}}, "AND")
+	if !strings.Contains(sql, "LEFT JOIN media_tag_by_category mtcw") {
+		t.Fatalf("expected left join: %q", sql)
+	}
+	if !strings.Contains(sql, "ORDER BY mtcw.weight") {
+		t.Fatalf("expected order by weight: %q", sql)
+	}
+	if len(params) == 0 || params[0] != "cat" {
+		t.Fatalf("expected join param first: %v", params)
 	}
 }
