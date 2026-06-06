@@ -714,6 +714,57 @@ const getInitialContext = (): LibraryState => {
   };
 };
 
+// Shared query-mutation handlers. Defined once so they can be applied to both
+// the loaded states (loadedFromFS/loadedFromSearch/loadedFromDB) and the
+// loading states (runningQuery/switchingTag/loadingFromDB/loadingFromSearch/
+// changingSearch). Applying them while a query is in flight makes chip edits
+// feel snappy: the assign updates context.query immediately (so the chip UI
+// updates) and targeting runningQuery restarts execution with the latest
+// predicates (latest-wins).
+const queryMutationOn = {
+  ADD_PREDICATE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>({
+      query: (context, event) =>
+        addPredicate(context.query, event.data.predicate),
+    }),
+  },
+  REMOVE_PREDICATE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>({
+      query: (context, event) =>
+        removePredicate(context.query, event.data.key),
+    }),
+  },
+  TOGGLE_EXCLUDE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>({
+      query: (context, event) =>
+        toggleExclude(context.query, event.data.key),
+    }),
+  },
+  SET_PREDICATE_JOIN: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>({
+      query: (context, event) =>
+        setPredicateJoin(context.query, event.data.key, event.data.join),
+    }),
+  },
+  SET_QUERY: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>({
+      query: (_context, event) => ({
+        predicates: parseQuery(event.data.text),
+      }),
+    }),
+  },
+  CLEAR_QUERY: {
+    // No actions: loadingFromPreviousLibrary's entry restores query/library
+    // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
+    target: 'loadingFromPreviousLibrary',
+  },
+};
+
 export const libraryMachine = createMachine(
   {
     id: 'library',
@@ -1611,6 +1662,7 @@ export const libraryMachine = createMachine(
                 target: 'loadedFromFS',
               },
             },
+            on: { ...queryMutationOn },
           },
           loadingFromSearch: {
             invoke: {
@@ -1635,6 +1687,7 @@ export const libraryMachine = createMachine(
                 target: 'loadedFromFS',
               },
             },
+            on: { ...queryMutationOn },
           },
           changingSearch: {
             invoke: {
@@ -1659,6 +1712,7 @@ export const libraryMachine = createMachine(
                 target: 'loadedFromFS',
               },
             },
+            on: { ...queryMutationOn },
           },
           switchingTag: {
             invoke: {
@@ -1677,6 +1731,7 @@ export const libraryMachine = createMachine(
                 target: 'loadedFromFS',
               },
             },
+            on: { ...queryMutationOn },
           },
           // Unified query loader. Runs the structured `query` predicate list
           // through a single platform service. New query events (ADD_PREDICATE,
@@ -1696,6 +1751,7 @@ export const libraryMachine = createMachine(
                 target: 'loadedFromFS',
               },
             },
+            on: { ...queryMutationOn },
           },
           loadingFromPersisted: {
             entry: assign<LibraryState, AnyEventObject>({
