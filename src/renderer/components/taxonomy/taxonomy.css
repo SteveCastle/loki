@@ -640,3 +640,86 @@
 .Taxonomy .controls button img {
   width: 100%;
 }
+
+/* Type-ahead suggestion sections (categories / paths / description / hash) */
+.suggestion-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 6px;
+}
+
+.suggestion-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.suggestion-section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #777;
+  padding: 2px 8px 4px;
+}
+
+.suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #ddd;
+  cursor: pointer;
+  border-radius: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.suggestion-row:hover {
+  background: #222;
+}
+
+.suggestion-prefix {
+  color: #888;
+  flex: 0 0 auto;
+}
+
+.suggestion-value {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.suggestion-meta {
+  flex: 0 0 auto;
+  color: #777;
+  font-size: 11px;
+}
+
+.suggestion-row-category .suggestion-prefix {
+  color: #5fa978;
+}
+
+.suggestion-add-row {
+  border-left: 2px dashed #4a4a4a;
+  color: #bbb;
+}
+
+.suggestion-add-row:hover {
+  border-left-color: #6a6a6a;
+}
+
+.suggestion-add-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: #333;
+  color: #aaa;
+  font-size: 11px;
+  line-height: 1;
+}

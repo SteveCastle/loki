@@ -22,6 +22,7 @@ import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
 import './taxonomy.css';
 import Category from './category';
+import SuggestionSections from './suggestion-sections';
 import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
 
@@ -628,6 +629,15 @@ export default function Taxonomy() {
             </div>
           );
         })()}
+        {tagFilter ? (
+          <SuggestionSections
+            text={tagFilter}
+            categories={categories ?? []}
+            onAdd={(predicate) =>
+              libraryService.send({ type: 'ADD_PREDICATE', data: { predicate } })
+            }
+          />
+        ) : null}
       </div>
       {activeCategory && addingTag ? (
         <NewTagModal
