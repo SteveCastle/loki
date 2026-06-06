@@ -42,3 +42,11 @@ export function setPredicateJoin(q: Query, key: string, join: 'AND' | 'OR'): Que
     ),
   };
 }
+
+// Project the active (included) tag values from a query — the legacy
+// dbQuery.tags view derives from this so it can never desync from `query`.
+export function tagsFromQuery(q: Query): string[] {
+  return q.predicates
+    .filter((p) => p.type === 'tag' && !p.exclude)
+    .map((p) => p.value);
+}

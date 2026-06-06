@@ -23,6 +23,7 @@ import {
   toggleExclude,
   applyTagClick,
   setPredicateJoin,
+  tagsFromQuery,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
 import filter from './filter';
@@ -724,38 +725,37 @@ const getInitialContext = (): LibraryState => {
 const queryMutationOn = {
   ADD_PREDICATE: {
     target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>({
-      query: (context, event) =>
-        addPredicate(context.query, event.data.predicate),
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = addPredicate(context.query, event.data.predicate);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
     }),
   },
   REMOVE_PREDICATE: {
     target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>({
-      query: (context, event) =>
-        removePredicate(context.query, event.data.key),
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = removePredicate(context.query, event.data.key);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
     }),
   },
   TOGGLE_EXCLUDE: {
     target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>({
-      query: (context, event) =>
-        toggleExclude(context.query, event.data.key),
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = toggleExclude(context.query, event.data.key);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
     }),
   },
   SET_PREDICATE_JOIN: {
     target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>({
-      query: (context, event) =>
-        setPredicateJoin(context.query, event.data.key, event.data.join),
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = setPredicateJoin(context.query, event.data.key, event.data.join);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
     }),
   },
   SET_QUERY: {
     target: 'runningQuery',
-    actions: assign<LibraryState, AnyEventObject>({
-      query: (_context, event) => ({
-        predicates: parseQuery(event.data.text),
-      }),
+    actions: assign<LibraryState, AnyEventObject>((_context, event) => {
+      const q = { predicates: parseQuery(event.data.text) };
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
     }),
   },
   CLEAR_QUERY: {
@@ -1934,6 +1934,7 @@ export const libraryMachine = createMachine(
               (context) => updatePersistedState(context),
             ],
             on: {
+              ...queryMutationOn,
               SELECT_FILE: {
                 target: 'selecting',
               },
@@ -2077,47 +2078,6 @@ export const libraryMachine = createMachine(
                   ],
                 },
               ],
-              ADD_PREDICATE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    addPredicate(context.query, event.data.predicate),
-                }),
-              },
-              REMOVE_PREDICATE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    removePredicate(context.query, event.data.key),
-                }),
-              },
-              TOGGLE_EXCLUDE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    toggleExclude(context.query, event.data.key),
-                }),
-              },
-              SET_PREDICATE_JOIN: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    setPredicateJoin(context.query, event.data.key, event.data.join),
-                }),
-              },
-              SET_QUERY: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (_context, event) => ({
-                    predicates: parseQuery(event.data.text),
-                  }),
-                }),
-              },
-              CLEAR_QUERY: {
-                // No actions: loadingFromPreviousLibrary's entry restores query/library
-                // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
-                target: 'loadingFromPreviousLibrary',
-              },
               SET_TEXT_FILTER: [
                 {
                   cond: notEmpty,
@@ -2396,6 +2356,7 @@ export const libraryMachine = createMachine(
               idle: {},
             },
             on: {
+              ...queryMutationOn,
               LOAD_FILES_BATCH: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
@@ -2505,47 +2466,6 @@ export const libraryMachine = createMachine(
                 // single-tag set (handled above) and the empty-result branch
                 // is unreachable.
               ],
-              ADD_PREDICATE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    addPredicate(context.query, event.data.predicate),
-                }),
-              },
-              REMOVE_PREDICATE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    removePredicate(context.query, event.data.key),
-                }),
-              },
-              TOGGLE_EXCLUDE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    toggleExclude(context.query, event.data.key),
-                }),
-              },
-              SET_PREDICATE_JOIN: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    setPredicateJoin(context.query, event.data.key, event.data.join),
-                }),
-              },
-              SET_QUERY: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (_context, event) => ({
-                    predicates: parseQuery(event.data.text),
-                  }),
-                }),
-              },
-              CLEAR_QUERY: {
-                // No actions: loadingFromPreviousLibrary's entry restores query/library
-                // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
-                target: 'loadingFromPreviousLibrary',
-              },
               SET_TEXT_FILTER: [
                 {
                   cond: notEmpty,
@@ -2711,6 +2631,7 @@ export const libraryMachine = createMachine(
               (context) => updatePersistedState(context),
             ],
             on: {
+              ...queryMutationOn,
               LOAD_FILES_BATCH: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
@@ -3062,47 +2983,6 @@ export const libraryMachine = createMachine(
                   cond: willHaveNoTag,
                 },
               ],
-              ADD_PREDICATE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    addPredicate(context.query, event.data.predicate),
-                }),
-              },
-              REMOVE_PREDICATE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    removePredicate(context.query, event.data.key),
-                }),
-              },
-              TOGGLE_EXCLUDE: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    toggleExclude(context.query, event.data.key),
-                }),
-              },
-              SET_PREDICATE_JOIN: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (context, event) =>
-                    setPredicateJoin(context.query, event.data.key, event.data.join),
-                }),
-              },
-              SET_QUERY: {
-                target: 'runningQuery',
-                actions: assign<LibraryState, AnyEventObject>({
-                  query: (_context, event) => ({
-                    predicates: parseQuery(event.data.text),
-                  }),
-                }),
-              },
-              CLEAR_QUERY: {
-                // No actions: loadingFromPreviousLibrary's entry restores query/library
-                // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
-                target: 'loadingFromPreviousLibrary',
-              },
               DELETED_ASSIGNMENT: {
                 // Removing a tag from an image refreshes the current view; it
                 // doesn't navigate. Capture the current libraryLoadId so the

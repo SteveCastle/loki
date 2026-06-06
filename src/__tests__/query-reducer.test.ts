@@ -1,5 +1,5 @@
 // src/__tests__/query-reducer.test.ts
-import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin } from '../renderer/query/reducer';
+import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, tagsFromQuery } from '../renderer/query/reducer';
 import type { Query } from '../renderer/query/types';
 
 const q = (preds: Query['predicates']): Query => ({ predicates: preds });
@@ -56,5 +56,15 @@ describe('query reducer', () => {
   it('setPredicateJoin changes a predicate join by key', () => {
     const start = q([{ type: 'tag', value: 'a', exclude: false, join: 'AND' }]);
     expect(setPredicateJoin(start, 'tag:a', 'OR').predicates[0].join).toBe('OR');
+  });
+
+  it('tagsFromQuery returns only included tag values', () => {
+    const q2 = q([
+      { type: 'tag', value: 'a', exclude: false },
+      { type: 'tag', value: 'b', exclude: true },
+      { type: 'path', value: 'p', exclude: false },
+      { type: 'tag', value: 'c', exclude: false },
+    ]);
+    expect(tagsFromQuery(q2)).toEqual(['a', 'c']);
   });
 });
