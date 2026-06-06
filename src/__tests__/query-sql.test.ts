@@ -8,7 +8,7 @@ describe('buildMediaQuery', () => {
   it('returns base query with no predicates', () => {
     const { sql, params } = buildMediaQuery([], 'AND');
     expect(norm(sql)).toBe(
-      norm('SELECT media.path, media.description, media.elo, media.height, media.width FROM media')
+      norm('SELECT media.path, media.description, media.elo, media.height, media.width, NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at FROM media')
     );
     expect(params).toEqual([]);
   });
@@ -18,7 +18,7 @@ describe('buildMediaQuery', () => {
     const { sql, params } = buildMediaQuery(preds, 'AND');
     expect(sql).toContain('EXISTS');
     expect(sql).toContain('mtc.tag_label = ?');
-    expect(params).toEqual(['portrait']);
+    expect(params).toEqual(['portrait', 'portrait']);
   });
 
   it('builds exclude tag with NOT EXISTS', () => {
@@ -88,7 +88,7 @@ describe('buildMediaQuery', () => {
     );
     expect(norm(sql)).toContain(') AND ((');
     expect(norm(sql)).toContain(') OR (');
-    expect(params).toEqual(['a', 'b', 'c']);
+    expect(params).toEqual(['a', 'a', 'b', 'c']);
   });
 
   it('per-predicate join overrides the mode argument', () => {
@@ -100,5 +100,25 @@ describe('buildMediaQuery', () => {
       'AND'
     );
     expect(norm(sql)).toContain(') OR (');
+  });
+
+  it('LEFT JOINs media_tag_by_category for an include-tag query', () => {
+    const { sql, params } = buildMediaQuery(
+      [{ type: 'tag', value: 'cat', exclude: false }],
+      'AND'
+    );
+    expect(sql).toContain('LEFT JOIN media_tag_by_category mtcw');
+    expect(sql).toContain('mtcw.time_stamp AS time_stamp');
+    expect(sql).toContain('ORDER BY mtcw.weight');
+    expect(params[0]).toBe('cat'); // join param first
+  });
+
+  it('selects NULL tag columns and no join when there is no include tag', () => {
+    const { sql } = buildMediaQuery(
+      [{ type: 'path', value: 'x', exclude: false }],
+      'AND'
+    );
+    expect(sql).toContain('NULL AS weight');
+    expect(sql).not.toContain('LEFT JOIN');
   });
 });

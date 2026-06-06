@@ -320,6 +320,10 @@ const loadMediaByQuery =
         elo: m.elo,
         height: m.height,
         width: m.width,
+        weight: m.weight ?? undefined,
+        tagLabel: m.tag_label ?? undefined,
+        timeStamp: m.time_stamp ?? undefined,
+        mtimeMs: m.created_at || 0,
       }));
       return { library, cursor: 0 };
     } catch (error) {
