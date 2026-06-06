@@ -687,8 +687,13 @@
 
 .suggestion-value {
   flex: 1 1 auto;
+  /* min-width: 0 lets this flex item shrink below its intrinsic content width
+     so long path/description matches truncate with an ellipsis instead of
+     widening the whole results column. */
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .suggestion-meta {

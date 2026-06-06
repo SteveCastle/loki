@@ -102,6 +102,7 @@ export default function SuggestionSections({
           <div
             key={dir}
             className="suggestion-row"
+            title={dir}
             onClick={() =>
               onAdd({ type: 'path', value: dir, exclude: false })
             }

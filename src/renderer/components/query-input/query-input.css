@@ -30,6 +30,9 @@
   background: #2b3a4a;
   color: #cfe3f5;
   border: 1px solid #3d5a78;
+  /* Never let a long predicate value (e.g. a deep path) widen the chip past
+     the input. */
+  max-width: 100%;
 }
 
 .query-chip.exclude {
@@ -46,6 +49,11 @@
 
 .query-chip-label {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Truncate long values (deep paths, long descriptions) so the chip stays a
+     reasonable width; full value remains in the title tooltip. */
+  max-width: 220px;
 }
 
 .query-chip-join {
