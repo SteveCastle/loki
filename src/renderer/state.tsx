@@ -11,7 +11,6 @@ import {
 } from 'settings';
 import {
   invoke, send, on, store, appArgs, capabilities, isElectron,
-  loadMediaFromDB as platformLoadMediaFromDB,
   loadMediaByDescriptionSearch as platformLoadMediaByDescriptionSearch,
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
@@ -736,7 +735,7 @@ const getInitialContext = (): LibraryState => {
 
 // Shared query-mutation handlers. Defined once so they can be applied to both
 // the loaded states (loadedFromFS/loadedFromDB) and the
-// loading states (runningQuery/switchingTag/loadingFromDB). Applying them while
+// loading states (runningQuery/loadingFromDB). Applying them while
 // a query is in flight makes chip edits
 // feel snappy: the assign updates context.query immediately (so the chip UI
 // updates) and targeting runningQuery restarts execution with the latest
@@ -1696,35 +1695,14 @@ export const libraryMachine = createMachine(
           },
           loadingFromDB: {
             invoke: {
-              src: (context, event) => {
-                console.log('loading from DB', context, event);
-                return platformLoadMediaFromDB(
-                  context.dbQuery.tags,
+              src: (context) =>
+                platformLoadMediaByQuery(
+                  context.query.predicates,
                   context.settings.filteringMode
-                );
-              },
+                ),
               onDone: {
                 target: 'loadedFromDB',
                 actions: ['setLibraryWithPrevious'],
-              },
-              onError: {
-                target: 'loadedFromFS',
-              },
-            },
-            on: { ...queryMutationOn },
-          },
-          switchingTag: {
-            invoke: {
-              src: (context, event) => {
-                console.log('switchingTag', context, event);
-                return platformLoadMediaFromDB(
-                  context.dbQuery.tags,
-                  context.settings.filteringMode
-                );
-              },
-              onDone: {
-                target: 'loadedFromDB',
-                actions: ['setLibrary'],
               },
               onError: {
                 target: 'loadedFromFS',
@@ -2421,11 +2399,11 @@ export const libraryMachine = createMachine(
                     );
                     return remaining.length > 0;
                   },
-                  // Target switchingTag (which uses setLibrary, not
+                  // Target runningQuery (which uses setLibrary, not
                   // setLibraryWithPrevious) so the original entry-mode
                   // previous (e.g. FS → DB) is preserved across within-DB
                   // tag tweaks. Symmetric with SET_QUERY_TAG.
-                  target: 'switchingTag',
+                  target: 'runningQuery',
                   actions: [
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => ({
@@ -2544,7 +2522,7 @@ export const libraryMachine = createMachine(
               },
               SET_QUERY_TAG: [
                 {
-                  target: 'switchingTag',
+                  target: 'runningQuery',
                   cond: willHaveTag,
                   actions: [
                     assign<LibraryState, AnyEventObject>({
@@ -2639,7 +2617,7 @@ export const libraryMachine = createMachine(
                 // doesn't navigate. Capture the current libraryLoadId so the
                 // list can recognize the upcoming setLibrary as an in-place
                 // refresh and preserve scroll instead of jumping to top.
-                target: 'switchingTag',
+                target: 'runningQuery',
                 actions: [
                   assign<LibraryState, AnyEventObject>({
                     preserveScrollFromLoadId: (context) => context.libraryLoadId,
@@ -2648,7 +2626,7 @@ export const libraryMachine = createMachine(
                 ],
               },
               SORTED_WEIGHTS: {
-                target: 'switchingTag',
+                target: 'runningQuery',
                 actions: () => console.log('sorting weights'),
               },
             },

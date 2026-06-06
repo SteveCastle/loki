@@ -50,7 +50,7 @@ export interface SessionQueryData {
 export interface SessionPreviousData {
   previousLibrary: SessionLibraryData['library'];
   previousCursor: number;
-  previousStateType?: 'fs' | 'db' | 'search' | null;
+  previousStateType?: 'fs' | 'db' | null;
   previousTextFilter?: string;
   previousDbQuery?: { tags: string[] };
   previousInitialFile?: string;
