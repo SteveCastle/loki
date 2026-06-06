@@ -13,6 +13,18 @@ export function removePredicate(q: Query, key: string): Query {
 }
 
 export function toggleExclude(q: Query, key: string): Query {
+  const target = q.predicates.find((x) => predicateKey(x) === key);
+  if (!target) return q;
+  // Guard: never produce an all-exclude query (no positive/include anchor).
+  // Such a query has nothing to drive from and scans the entire media table
+  // ("everything except X"), which can hang/crash the app on a large library.
+  // Block toggling the last remaining include predicate to exclude.
+  if (!target.exclude) {
+    const hasOtherInclude = q.predicates.some(
+      (x) => predicateKey(x) !== key && !x.exclude
+    );
+    if (!hasOtherInclude) return q; // would leave zero includes — no-op
+  }
   return {
     predicates: q.predicates.map((x) =>
       predicateKey(x) === key ? { ...x, exclude: !x.exclude } : x

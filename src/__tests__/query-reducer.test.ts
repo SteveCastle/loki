@@ -41,9 +41,31 @@ describe('query reducer', () => {
     expect(removePredicate(start, 'tag:a').predicates).toEqual([{ type: 'path', value: 'p', exclude: false }]);
   });
 
-  it('toggles exclude on a predicate', () => {
+  it('toggles exclude when another include predicate remains', () => {
+    const start = q([
+      { type: 'tag', value: 'a', exclude: false },
+      { type: 'tag', value: 'b', exclude: false },
+    ]);
+    const next = toggleExclude(start, 'tag:a');
+    expect(next.predicates[0].exclude).toBe(true);
+  });
+
+  it('does NOT toggle the only include predicate to exclude (all-exclude scans the whole DB)', () => {
     const start = q([{ type: 'tag', value: 'a', exclude: false }]);
-    expect(toggleExclude(start, 'tag:a').predicates[0].exclude).toBe(true);
+    expect(toggleExclude(start, 'tag:a')).toBe(start); // unchanged no-op
+  });
+
+  it('does NOT toggle the last include to exclude when others are already excluded', () => {
+    const start = q([
+      { type: 'tag', value: 'a', exclude: false },
+      { type: 'tag', value: 'b', exclude: true },
+    ]);
+    expect(toggleExclude(start, 'tag:a')).toBe(start); // would leave zero includes
+  });
+
+  it('always allows toggling an exclude back to include', () => {
+    const start = q([{ type: 'tag', value: 'a', exclude: true }]);
+    expect(toggleExclude(start, '-tag:a').predicates[0].exclude).toBe(false);
   });
 
   it('applyTagClick toggles a tag in non-exclusive modes', () => {

@@ -15,6 +15,7 @@ interface QueryInputProps {
   onSetPredicateJoin: (key: string, join: 'AND' | 'OR') => void;
   onClearAll: () => void; // clear chips + text
   onFocus?: () => void;
+  autoFocus?: boolean; // focus the text input on mount (fast palette workflow)
   disabled?: boolean;
 }
 
@@ -50,6 +51,7 @@ export default function QueryInput({
   onSetPredicateJoin,
   onClearAll,
   onFocus,
+  autoFocus = false,
   disabled = false,
 }: QueryInputProps) {
   const { history, addSearch, removeSearch, clearAll } = useSearchHistory();
@@ -59,6 +61,13 @@ export default function QueryInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Focus the text input on mount when requested (e.g. the command palette
+  // opens) so the user can start typing a query immediately.
+  useEffect(() => {
+    if (autoFocus) inputRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const filteredHistory = textValue.trim()
     ? history

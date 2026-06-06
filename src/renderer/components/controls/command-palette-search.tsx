@@ -79,6 +79,7 @@ export default function CommandPaletteSearch({
   return (
     <div className="commandPaletteSearch">
       <QueryInput
+        autoFocus
         query={query}
         textValue={text}
         onTextChange={setText}
