@@ -743,6 +743,22 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
     }
   }, [display]);
 
+  // Focus the search input as soon as the palette is shown AND positioned, so
+  // the user can start typing immediately. We gate on positionReady (the
+  // palette renders visibility:hidden until then — a hidden element can't take
+  // focus) and defer one frame so the focus lands after paint and after the
+  // event that opened the palette, which could otherwise steal it back.
+  React.useEffect(() => {
+    if (!display || !positionReady) return undefined;
+    const raf = requestAnimationFrame(() => {
+      const input = paletteRef.current?.querySelector<HTMLInputElement>(
+        '.commandPaletteSearch input'
+      );
+      input?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [display, positionReady]);
+
   // Close on Click Outside.
   //
   // In trackpad/touchpad mode the detail view binds its own onClick
