@@ -23,16 +23,14 @@ import {
 } from './sessionStore';
 import { cleanupArchives } from './archives';
 import { registerSubtitleHandlers } from './subtitles';
+import { logEvent, installGlobalErrorHandlers } from './errorLog';
+import { withTimeout } from './async-timeout';
 
 import type { Database } from './database';
 
-// Prevent hard crashes from unhandled errors in the main process
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught exception in main process:', error);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled promise rejection in main process:', reason);
-});
+// Prevent hard crashes from unhandled errors in the main process, and persist
+// them to <userData>/app-log.jsonl so field hangs/crashes can be diagnosed.
+installGlobalErrorHandlers();
 
 // Register custom protocol scheme as privileged (must be done before app ready)
 protocol.registerSchemesAsPrivileged([
@@ -71,6 +69,23 @@ class AppUpdater {
 
 let mainWindow: BrowserWindow | null = null;
 
+// Persist renderer-side errors and load failures to the same app-log.jsonl as
+// main-process errors. The renderer forwards window.onerror, unhandled
+// rejections, and failed IPC invokes here (see preload + platform.ts).
+ipcMain.on('log-event', (_event, entry) => {
+  try {
+    logEvent({
+      level: entry?.level ?? 'error',
+      scope: `renderer:${entry?.scope ?? 'unknown'}`,
+      message: String(entry?.message ?? ''),
+      data: entry?.data ?? null,
+      error: entry?.error ?? null,
+    });
+  } catch {
+    // never let logging throw
+  }
+});
+
 // Make Main Process Args available to renderer process.
 ipcMain.handle('get-main-args', () => {
   return process.argv;
@@ -104,6 +119,11 @@ ipcMain.on('minimize', async () => {
 ipcMain.on('open-external', async (event, args) => {
   const url = args[0];
   shell.openExternal(url);
+});
+
+ipcMain.on('show-item-in-folder', async (event, args) => {
+  const filePath = args[0];
+  if (filePath) shell.showItemInFolder(filePath);
 });
 
 ipcMain.on('toggle-fullscreen', async () => {
@@ -236,8 +256,64 @@ ipcMain.handle('load-db', async (event, args) => {
   await fs.promises.mkdir(dir, { recursive: true });
   // Lazy import database implementation to reduce cold-start cost
   const dbModule = await import('./database');
-  db = new dbModule.Database(dbPath);
-  await dbModule.initDB(db);
+  const { retryAsync, isDatabaseLockedError } = await import('./db-retry');
+
+  // The Go media-server can hold a write lock on the same dream.sqlite while
+  // the app starts. busy_timeout (set in Database) waits each attempt out;
+  // this retry rides out a lock that outlasts a single busy_timeout window so
+  // a transient lock never leaves the renderer stuck on a blank loading screen.
+  //
+  // Overall timeout: a lock SQLite never resolves (or a busy_timeout the driver
+  // ignores for certain lock types) would otherwise leave this promise pending
+  // forever — the renderer's loadingDB state has an onError escape but no way to
+  // react to a hang. The timeout converts that hang into a rejection so the
+  // renderer falls back to manual DB selection instead of spinning forever.
+  // 60s comfortably covers 5 retries (each up to a 5s busy_timeout + backoff).
+  const LOAD_DB_TIMEOUT_MS = 60_000;
+  logEvent({ level: 'info', scope: 'ipc:load-db', message: 'load-db start', data: { dbPath } });
+  try {
+    db = await withTimeout(
+      retryAsync(
+        async () => {
+          const candidate = new dbModule.Database(dbPath);
+          try {
+            await candidate.ready; // open + busy_timeout + WAL before migrating
+            await dbModule.initDB(candidate);
+            return candidate;
+          } catch (e) {
+            // Drop the half-open handle before retrying so we don't leak the
+            // connection or hold our own lock across attempts.
+            await candidate.close().catch(() => undefined);
+            throw e;
+          }
+        },
+        {
+          retries: 5,
+          isRetryable: isDatabaseLockedError,
+          baseDelayMs: 300,
+          onRetry: (err, attempt, delayMs) => {
+            console.warn(
+              `[load-db] database locked, retry ${attempt} in ${delayMs}ms:`,
+              (err as Error)?.message
+            );
+            logEvent({
+              level: 'warn',
+              scope: 'ipc:load-db',
+              message: `database locked, retry ${attempt} in ${delayMs}ms`,
+              error: err,
+            });
+          },
+        }
+      ),
+      LOAD_DB_TIMEOUT_MS,
+      'load-db'
+    );
+  } catch (err) {
+    // Surface to the renderer (onError -> manualSetup) and record why.
+    logEvent({ scope: 'ipc:load-db', message: 'load-db failed', data: { dbPath }, error: err });
+    throw err;
+  }
+  logEvent({ level: 'info', scope: 'ipc:load-db', message: 'load-db ready', data: { dbPath } });
   ipcMain.removeHandler('load-media-by-tags');
   ipcMain.removeHandler('refresh-library');
   ipcMain.removeHandler('load-media-by-description-search');

@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -113,13 +116,12 @@ func callVisionLLM(ctx context.Context, imagePath, prompt string) (string, error
 // {input: ...} envelope and supports async /run polling. If we ever pick up
 // more OpenAI-shaped providers (vLLM, TGI, etc.) they reuse this helper.
 func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL, apiKey, model string) (string, error) {
-	data, err := os.ReadFile(imagePath)
+	img, err := loadImageForInference(imagePath)
 	if err != nil {
-		return "", fmt.Errorf("could not read image for inference: %w", err)
+		return "", fmt.Errorf("inference: %w", err)
 	}
-	b64 := base64.StdEncoding.EncodeToString(data)
-	mime := mimeFromExt(imagePath)
-	dataURI := fmt.Sprintf("data:%s;base64,%s", mime, b64)
+	endpoint := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
+	img.logRequest("openai-compatible", model, endpoint, prompt)
 
 	payload := map[string]any{
 		"model":  model,
@@ -129,7 +131,7 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 				"role": "user",
 				"content": []map[string]any{
 					{"type": "text", "text": prompt},
-					{"type": "image_url", "image_url": map[string]any{"url": dataURI}},
+					{"type": "image_url", "image_url": map[string]any{"url": img.dataURI()}},
 				},
 			},
 		},
@@ -139,7 +141,6 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 		return "", fmt.Errorf("failed to marshal chat-completions payload: %w", err)
 	}
 
-	endpoint := strings.TrimRight(baseURL, "/") + "/v1/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("failed to build request: %w", err)
@@ -183,6 +184,7 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 		return "", fmt.Errorf("inference response missing choices: %s", string(rawBody))
 	}
 	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
+	logVisionResponse("openai-compatible", len(rawBody), content)
 	if content == "" {
 		return "", fmt.Errorf("inference response empty content: %s", string(rawBody))
 	}
@@ -193,14 +195,14 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 // Ollama server and returns the model's response field. Equivalent to the
 // in-line plumbing that used to live in metadata_ops.go and autotag_vision.go.
 func callOllamaVisionRaw(ctx context.Context, imagePath, prompt, baseURL, model string) (string, error) {
-	data, err := os.ReadFile(imagePath)
+	img, err := loadImageForInference(imagePath)
 	if err != nil {
-		return "", fmt.Errorf("could not read image for Ollama: %w", err)
+		return "", fmt.Errorf("ollama: %w", err)
 	}
-	b64 := base64.StdEncoding.EncodeToString(data)
-	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"prompt":%s,"images":["%s"]}`,
-		model, strconv.Quote(prompt), b64)
 	base := strings.TrimRight(baseURL, "/")
+	img.logRequest("ollama", model, base+"/api/generate", prompt)
+	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"prompt":%s,"images":["%s"]}`,
+		model, strconv.Quote(prompt), img.base64())
 	req, err := http.NewRequestWithContext(ctx, "POST", base+"/api/generate", strings.NewReader(reqJSON))
 	if err != nil {
 		return "", fmt.Errorf("failed to build request: %w", err)
@@ -225,6 +227,7 @@ func callOllamaVisionRaw(ctx context.Context, imagePath, prompt, baseURL, model 
 	if err := json.Unmarshal(respData, &response); err != nil {
 		return "", fmt.Errorf("could not unmarshal Ollama response: %w", err)
 	}
+	logVisionResponse("ollama", len(respData), strings.TrimSpace(response.Response))
 	return response.Response, nil
 }
 
@@ -238,13 +241,11 @@ var runPodAsyncEndpoint = regexp.MustCompile(`/run(?:\/?$|\?)`)
 // the model's text response. Mirrors the structure tested in
 // thespian/send-image.js.
 func callRunPodVision(ctx context.Context, imagePath, prompt, endpoint, apiKey string) (string, error) {
-	data, err := os.ReadFile(imagePath)
+	img, err := loadImageForInference(imagePath)
 	if err != nil {
-		return "", fmt.Errorf("could not read image for RunPod: %w", err)
+		return "", fmt.Errorf("runpod: %w", err)
 	}
-	b64 := base64.StdEncoding.EncodeToString(data)
-	mime := mimeFromExt(imagePath)
-	dataURI := fmt.Sprintf("data:%s;base64,%s", mime, b64)
+	img.logRequest("runpod", "", endpoint, prompt)
 
 	payload := map[string]any{
 		"input": map[string]any{
@@ -253,7 +254,7 @@ func callRunPodVision(ctx context.Context, imagePath, prompt, endpoint, apiKey s
 					"role": "user",
 					"content": []map[string]any{
 						{"type": "text", "text": prompt},
-						{"type": "image_url", "image_url": map[string]any{"url": dataURI}},
+						{"type": "image_url", "image_url": map[string]any{"url": img.dataURI()}},
 					},
 				},
 			},
@@ -306,6 +307,7 @@ func callRunPodVision(ctx context.Context, imagePath, prompt, endpoint, apiKey s
 		return "", fmt.Errorf("RunPod job %s (id=%s)", final.Status, final.ID)
 	}
 	text := extractRunPodText(final)
+	logVisionResponse("runpod", len(rawBody), text)
 	if text == "" {
 		// Surface the raw body so a misshaped worker response is debuggable.
 		return "", fmt.Errorf("RunPod response missing text output: %s", string(rawBody))
@@ -398,6 +400,177 @@ func extractRunPodText(r runPodResponse) string {
 		}
 	}
 	return ""
+}
+
+// imagePayload is the validated, instrumented image we hand to a vision
+// backend. It exists so every provider (Ollama, OpenAI-compatible, RunPod)
+// loads bytes the same way, logs the same diagnostics, and labels the MIME
+// type consistently — the three used to each call os.ReadFile + mimeFromExt
+// inline with no logging, which is why a "the model acted like it never got
+// an image" run left nothing to inspect.
+type imagePayload struct {
+	path        string
+	data        []byte
+	extMime     string // MIME guessed from the file extension (mimeFromExt)
+	sniffedMime string // MIME sniffed from the first bytes (http.DetectContentType)
+	format      string // decoded format ("png","jpeg","webp",…); "" if undecodable
+	colorModel  string // decoded color model ("ycbcr","cmyk","rgba",…); "" if undecodable
+	width       int
+	height      int
+}
+
+// colorModelName maps a decoded color.Model to a short label. CMYK is the one
+// worth watching for in JPEGs: Go decodes it fine, but the stb_image-based
+// decoders in several local vision backends mishandle CMYK JPEGs and hand the
+// model a blank/garbage frame — a plausible cause of "the model answered as if
+// it never saw the (jpg) image" that leaves no error behind.
+func colorModelName(m color.Model) string {
+	switch m {
+	case color.YCbCrModel:
+		return "ycbcr"
+	case color.CMYKModel:
+		return "cmyk"
+	case color.RGBAModel:
+		return "rgba"
+	case color.NRGBAModel:
+		return "nrgba"
+	case color.GrayModel:
+		return "gray"
+	case color.Gray16Model:
+		return "gray16"
+	default:
+		return "other"
+	}
+}
+
+// loadImageForInference reads the image, validates it is non-empty, sniffs its
+// real content type, and best-effort decodes its header for the true format +
+// dimensions. A decode failure is NOT fatal (the backend may still accept the
+// raw bytes) but it is a loud signal in the logs. The decoders for
+// png/jpeg/gif/webp/bmp/tiff are registered package-wide via the blank imports
+// in metadata_ops.go, so DecodeConfig here understands every format the
+// describe path can produce.
+func loadImageForInference(imagePath string) (*imagePayload, error) {
+	data, err := os.ReadFile(imagePath)
+	if err != nil {
+		return nil, fmt.Errorf("could not read image %q: %w", imagePath, err)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("image %q is empty (0 bytes) — nothing to send to the model", imagePath)
+	}
+	p := &imagePayload{
+		path:        imagePath,
+		data:        data,
+		extMime:     mimeFromExt(imagePath),
+		sniffedMime: http.DetectContentType(data),
+	}
+	if cfg, format, derr := image.DecodeConfig(bytes.NewReader(data)); derr == nil {
+		p.format, p.width, p.height = format, cfg.Width, cfg.Height
+		p.colorModel = colorModelName(cfg.ColorModel)
+	}
+	return p, nil
+}
+
+// bestMime prefers the type sniffed from the actual bytes over the one guessed
+// from the extension — this fixes mislabeled files and the
+// application/octet-stream fallback. When the sniff can't recognize the bytes
+// as an image (e.g. avif/heic, which http.DetectContentType doesn't know) it
+// falls back to the extension-derived MIME so behavior is never worse than
+// before.
+func (p *imagePayload) bestMime() string {
+	if strings.HasPrefix(p.sniffedMime, "image/") {
+		return p.sniffedMime
+	}
+	return p.extMime
+}
+
+func (p *imagePayload) base64() string {
+	return base64.StdEncoding.EncodeToString(p.data)
+}
+
+func (p *imagePayload) dataURI() string {
+	return fmt.Sprintf("data:%s;base64,%s", p.bestMime(), p.base64())
+}
+
+// logRequest emits a single line confirming exactly what is about to leave for
+// the model: byte count, encoded length, the MIME we attached (and whether the
+// extension disagreed), the decoded format/dimensions, and the prompt length.
+// "decoded=UNDECODABLE" means no registered decoder could read the bytes — a
+// strong hint the backend won't be able to either.
+func (p *imagePayload) logRequest(provider, model, endpoint, prompt string) {
+	decoded := "UNDECODABLE(no registered decoder matched the bytes)"
+	if p.format != "" {
+		decoded = fmt.Sprintf("%s/%s %dx%d", p.format, p.colorModel, p.width, p.height)
+	}
+	mimeNote := p.bestMime()
+	if p.bestMime() != p.extMime {
+		mimeNote = fmt.Sprintf("%s (extension implied %s)", p.bestMime(), p.extMime)
+	}
+	log.Printf("[vision:request] provider=%s model=%q endpoint=%q file=%q bytes=%d base64Len=%d mime=%s decoded=%s promptLen=%d",
+		provider, model, endpoint, filepath.Base(p.path), len(p.data),
+		base64.StdEncoding.EncodedLen(len(p.data)), mimeNote, decoded, len(prompt))
+}
+
+// logVisionResponse records what came back so a blind-but-successful run is
+// distinguishable from a healthy one: the raw HTTP body size, the extracted
+// content length, and a short preview (which surfaces "I don't see an image"
+// style refusals without dumping a whole description into the log).
+func logVisionResponse(provider string, rawLen int, content string) {
+	preview := strings.ReplaceAll(content, "\n", " ")
+	if len(preview) > 200 {
+		preview = preview[:200] + "…"
+	}
+	log.Printf("[vision:response] provider=%s rawBytes=%d contentLen=%d preview=%q",
+		provider, rawLen, len(content), preview)
+}
+
+// noImageResponseMarkers are first-person phrases a vision model emits when it
+// got the prompt but no image — i.e. the backend never handed the image to the
+// model (a non-vision model, or a preprocessor that dropped it, e.g. on an
+// extreme aspect ratio). They are deliberately phrased from the model's "I
+// wasn't given an image" perspective so they don't match descriptions that
+// merely mention images ("a sign that reads no photography").
+var noImageResponseMarkers = []string{
+	"no image was provided",
+	"no image provided",
+	"since no image",
+	"cannot see an image",
+	"can't see an image",
+	"cannot see any image",
+	"can't see any image",
+	"don't see an image",
+	"do not see an image",
+	"don't see any image",
+	"do not see any image",
+	"unable to view the image",
+	"unable to see the image",
+	"unable to view an image",
+	"haven't provided an image",
+	"have not provided an image",
+	"didn't provide an image",
+	"did not provide an image",
+	"wasn't provided an image",
+	"was not provided an image",
+	"wasn't provided with an image",
+	"was not provided with an image",
+	"didn't receive an image",
+	"did not receive an image",
+	"no image attached",
+	"no image was attached",
+}
+
+// looksLikeNoImageResponse reports whether content matches a known "I didn't
+// get an image" pattern. Heuristic by design: it gates saving an obviously
+// blind description, it does not judge correctness. Callers treat a hit as a
+// failure so the bad text is never persisted to the library.
+func looksLikeNoImageResponse(content string) bool {
+	lc := strings.ToLower(content)
+	for _, m := range noImageResponseMarkers {
+		if strings.Contains(lc, m) {
+			return true
+		}
+	}
+	return false
 }
 
 func mimeFromExt(path string) string {

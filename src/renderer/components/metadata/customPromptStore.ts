@@ -19,6 +19,13 @@ export function setLastCustomPrompt(value: string): void {
   lastCustomPrompt = value;
 }
 
+// Explicitly forget the remembered prompt so the next generate falls back to
+// the configured default. Distinct from `setLastCustomPrompt('')`, which is a
+// deliberate no-op — this is the user asking to reset, not an empty submission.
+export function clearLastCustomPrompt(): void {
+  lastCustomPrompt = '';
+}
+
 export function getCachedDefaultPrompt(): string | null {
   return cachedDefaultPrompt;
 }

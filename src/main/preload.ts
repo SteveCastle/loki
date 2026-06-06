@@ -24,6 +24,7 @@ export type Channels =
   | 'select-db'
   | 'load-db'
   | 'open-external'
+  | 'show-item-in-folder'
   | 'toggle-fullscreen'
   | 'set-always-on-top'
   | 'add-media'
@@ -68,7 +69,18 @@ export type Channels =
   | 'apply-elo-ordering'
   | 'consolidate-tag-files'
   | 'consolidate-category-files'
+  | 'log-event'
   | 'find-subtitle';
+
+// Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
+// <userData>/app-log.jsonl alongside main-process errors.
+export interface RendererLogEntry {
+  level?: 'error' | 'warn' | 'info';
+  scope: string;
+  message: string;
+  data?: unknown;
+  error?: unknown;
+}
 
 const loadMediaFromDB = async (
   tags: string[],
@@ -160,6 +172,14 @@ const getGifMetadata = async (filePath: string) => {
 
 contextBridge.exposeInMainWorld('electron', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  // Forward renderer errors/load failures to the main-process file logger.
+  logEvent: (entry: RendererLogEntry) => {
+    try {
+      ipcRenderer.send('log-event', entry);
+    } catch {
+      // never let logging throw
+    }
+  },
   loadMediaFromDB,
   loadMediaByDescriptionSearch,
   fetchTagPreview,

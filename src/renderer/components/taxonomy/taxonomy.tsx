@@ -122,14 +122,21 @@ export default function Taxonomy() {
   }, [textFilter]);
 
   // Two-tier search state: tagFilterInput updates on every keystroke so the
-  // input feels responsive; tagFilter is the debounced value that drives the
-  // (potentially expensive) filter+sort over many tags.
+  // input feels responsive; tagFilter is the debounced value dispatched to the
+  // search worker. The actual fuzzy match runs off-thread (see the worker
+  // setup below), so the debounce only needs to coalesce bursts of keystrokes
+  // rather than guard the main thread — hence a short 150ms window.
   const [tagFilterInput, setTagFilterInput] = useState<string>('');
   const [tagFilter, setTagFilter] = useState<string>('');
+  // Set once the search input has been focused. Used to warm the full-tag
+  // fetch (and worker index) before the first keystroke so the initial search
+  // isn't stalled waiting on the network. Stays true for the session — with
+  // staleTime: Infinity the data is fetched at most once.
+  const [searchFocused, setSearchFocused] = useState<boolean>(false);
   const debouncedSetTagFilter = useRef(
     debounce((value: string) => {
       setTagFilter(value);
-    }, 300)
+    }, 150)
   );
   useEffect(() => {
     debouncedSetTagFilter.current(tagFilterInput);
@@ -190,14 +197,15 @@ export default function Taxonomy() {
       { enabled: !!activeCategory, staleTime: Infinity }
     );
 
-  // Triggered on the first keystroke (tagFilterInput, pre-debounce) so the
-  // network request overlaps with the 300ms debounce window — by the time
-  // tagFilter actually fires Fuse, the data is usually already in cache.
+  // Warmed as soon as the search input gains focus (or, as a fallback, on the
+  // first keystroke) so the fetch + worker indexing overlap with the user
+  // composing their query — by the time they type, the data is usually already
+  // cached and indexed, so the initial search isn't stalled on the network.
   const { data: allTagsData, isFetching: isFetchingAllTags } = useQuery<
     Concept[],
     Error
   >(['taxonomy', 'all-tags', initSessionId], loadAllTags, {
-    enabled: !!tagFilterInput,
+    enabled: searchFocused || !!tagFilterInput,
     staleTime: Infinity,
   });
 
@@ -264,40 +272,102 @@ export default function Taxonomy() {
     );
   }, [allTagsData]);
 
-  const fuse = useMemo(
-    () =>
-      new Fuse(allTags, {
-        // Search the tag's own label and its category name. The label
-        // weight is higher so a direct label match always ranks above a
-        // hit that only matched via the category name (e.g. searching
-        // "Subject" returns every Subject tag, but a Subject tag whose
-        // own label also contains "Subject" lands at the top).
-        keys: [
-          { name: 'label', weight: 2 },
-          { name: 'category', weight: 1 },
-        ],
-        threshold: 0.4,
-        ignoreLocation: true,
-        minMatchCharLength: 1,
-      }),
-    [allTags]
+  // Async tag search. Indexing and fuzzy matching run in a Web Worker so a
+  // large library (tens of thousands of tags) never blocks the input. Each
+  // request carries an id (searchSeq); responses that aren't the latest are
+  // dropped so a slow earlier search can't clobber newer results.
+  const workerRef = useRef<Worker | null>(null);
+  const searchSeq = useRef(0);
+  const [searchResults, setSearchResults] = useState<Concept[]>([]);
+  // Optimistically assume worker support; flip to false if construction fails
+  // (e.g. jsdom in tests) so the synchronous fallback below takes over.
+  const [workerReady, setWorkerReady] = useState<boolean>(
+    typeof Worker !== 'undefined'
   );
+
+  useEffect(() => {
+    if (typeof Worker === 'undefined') {
+      setWorkerReady(false);
+      return undefined;
+    }
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('./tag-search.worker.ts', import.meta.url));
+    } catch {
+      setWorkerReady(false);
+      return undefined;
+    }
+    worker.onmessage = (e: MessageEvent) => {
+      const msg = e.data;
+      if (msg?.type === 'result' && msg.id === searchSeq.current) {
+        setSearchResults(msg.items as Concept[]);
+      }
+    };
+    workerRef.current = worker;
+    setWorkerReady(true);
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, []);
+
+  // Keep the worker's index in sync with the loaded tag set. The worker
+  // re-runs the outstanding query after re-indexing, so results refresh
+  // automatically once data first arrives or after a tag mutation.
+  useEffect(() => {
+    workerRef.current?.postMessage({ type: 'index', tags: allTags });
+  }, [allTags]);
+
+  // Synchronous Fuse fallback — only built/used when no worker is available.
+  // Keep these options in sync with tag-search.worker.ts.
+  const fallbackFuse = useMemo(() => {
+    if (workerReady) return null;
+    return new Fuse(allTags, {
+      keys: [
+        { name: 'label', weight: 2 },
+        { name: 'category', weight: 1 },
+      ],
+      threshold: 0.4,
+      ignoreLocation: true,
+      minMatchCharLength: 1,
+    });
+  }, [allTags, workerReady]);
+
+  // Dispatch the debounced query. With a worker the match happens off-thread
+  // and arrives via onmessage; without one we fall back to a synchronous
+  // search. Bumping searchSeq invalidates any in-flight worker response.
+  useEffect(() => {
+    const id = (searchSeq.current += 1);
+    if (!tagFilter) {
+      setSearchResults([]);
+    }
+    if (workerRef.current) {
+      workerRef.current.postMessage({
+        type: 'search',
+        id,
+        query: tagFilter,
+        limit: MAX_SEARCH_RESULTS,
+      });
+    } else if (fallbackFuse && tagFilter) {
+      setSearchResults(
+        fallbackFuse
+          .search(tagFilter, { limit: MAX_SEARCH_RESULTS })
+          .map((r) => r.item)
+      );
+    }
+  }, [tagFilter, fallbackFuse]);
 
   const tags = useMemo(() => {
     if (tagFilter) {
-      // Fuzzy match across all categories. Fuse returns results pre-sorted
-      // by relevance (best match first). Cap at MAX_SEARCH_RESULTS so a
-      // pathological query can't render thousands of cards at once. When
-      // allTagsData hasn't loaded yet (first search), the Fuse index is
-      // empty and we render no results until it arrives.
-      return fuse
-        .search(tagFilter, { limit: MAX_SEARCH_RESULTS })
-        .map((r) => r.item);
+      // Worker-ranked, pre-capped matches across all categories. Briefly empty
+      // (or showing the prior query's results) until the worker responds —
+      // acceptable for an async search and imperceptible at this debounce.
+      return searchResults;
     }
     return (activeCategoryTags ?? [])
       .slice()
       .sort((a, b) => a.weight - b.weight);
-  }, [tagFilter, activeCategoryTags, fuse]);
+  }, [tagFilter, searchResults, activeCategoryTags]);
 
   if (!categories || state.matches('loadingDB') || state.matches('selectingDB')) {
     return (
@@ -338,6 +408,7 @@ export default function Taxonomy() {
               type="text"
               placeholder="Search Tags"
               value={tagFilterInput}
+              onFocus={() => setSearchFocused(true)}
               onKeyDown={(e) => {
                 e.stopPropagation();
               }}

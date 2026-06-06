@@ -96,6 +96,15 @@ function getDirFromInitialFile(initialFile: string): string {
   return initialFile;
 }
 
+// Wrap a tag/category value in double quotes so multi-word values (e.g.
+// "Exchange Student") survive query parsing. Without quotes the server lexer
+// splits on the space and the query fails to parse — which historically caused
+// the whole library to be selected. Embedded quotes are escaped to keep the
+// token well-formed.
+function quoteValue(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
 function buildQuery(
   target: ContextTarget,
   libraryContext: {
@@ -110,16 +119,16 @@ function buildQuery(
     case 'file':
       return `path:"${target.path}"`;
     case 'tag':
-      return `tag:${target.tag}`;
+      return `tag:${quoteValue(target.tag)}`;
     case 'category':
-      return `category:${target.category}`;
+      return `category:${quoteValue(target.category)}`;
     case 'library': {
       const { currentStateType, dbQuery, textFilter, initialFile, settings } =
         libraryContext;
       if (currentStateType === 'db' && dbQuery.tags.length > 0) {
         const joiner =
           settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
-        return dbQuery.tags.map((t) => `tag:${t}`).join(joiner);
+        return dbQuery.tags.map((t) => `tag:${quoteValue(t)}`).join(joiner);
       }
       if (currentStateType === 'search' && textFilter) {
         const parts: string[] = [`description:${textFilter}`];

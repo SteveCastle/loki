@@ -207,7 +207,7 @@ func getOrGenerateDescription(ctx context.Context, db *sql.DB, filePath string, 
 	}
 
 	// Generate description using Ollama
-	generatedDesc, err := describeFileWithOllama(ctx, filePath, model, "")
+	generatedDesc, err := describeFileWithOllama(ctx, nil, "", filePath, model, "")
 	if err != nil {
 		return "", fmt.Errorf("failed to generate description: %w", err)
 	}

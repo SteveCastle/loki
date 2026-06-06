@@ -1709,8 +1709,14 @@ func GetPathsByQuery(db *sql.DB, searchQuery string) ([]string, error) {
 		var err error
 		rootNode, err = parser.Parse()
 		if err != nil {
+			// Unlike GetItems (which powers the browse UI and can safely degrade
+			// to showing everything), this function feeds batch tasks that ACT on
+			// the result — describe, move, remove, autotag, transcode. Silently
+			// selecting the whole library on a parse error is catastrophic there
+			// (e.g. an unquoted multi-word tag like `tag:Exchange Student`). Fail
+			// loudly so the calling job errors instead of running on everything.
 			log.Printf("Search query parsing failed: %v", err)
-			rootNode = nil
+			return nil, fmt.Errorf("invalid selection query %q: %w", searchQuery, err)
 		}
 	}
 
