@@ -13,7 +13,16 @@ import {
   invoke, send, on, store, appArgs, capabilities, isElectron,
   loadMediaFromDB as platformLoadMediaFromDB,
   loadMediaByDescriptionSearch as platformLoadMediaByDescriptionSearch,
+  loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
+import type { Query } from './query/types';
+import {
+  addPredicate,
+  removePredicate,
+  toggleExclude,
+  applyTagClick,
+} from './query/reducer';
+import { parseQuery } from './query/parse';
 import filter from './filter';
 import {
   initSessionStore,
@@ -61,6 +70,7 @@ type LibraryState = {
   previousStateType: LibraryStateType | null;
   previousTextFilter: string;
   previousDbQuery: { tags: string[] };
+  previousQuery: Query;
   // Path the library was loaded for. Captured alongside previousLibrary
   // so back-restoration keeps the UI's path/filter/search/library
   // coherent — without this, library and initialFile drift apart.
@@ -112,6 +122,7 @@ type LibraryState = {
   dbQuery: {
     tags: string[];
   };
+  query: Query;
   commandPalette: {
     display: boolean;
     position: { x: number; y: number };
@@ -175,6 +186,7 @@ const capturePrevious = assign<LibraryState, AnyEventObject>({
   previousStateType: (context) => context.currentStateType,
   previousTextFilter: (context) => context.textFilter,
   previousDbQuery: (context) => ({ ...context.dbQuery }),
+  previousQuery: (context) => ({ predicates: [...context.query.predicates] }),
   previousInitialFile: (context) => context.initialFile,
 });
 
@@ -200,6 +212,10 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
     context.previousLibrary.length > 0
       ? context.previousDbQuery
       : { ...context.dbQuery },
+  previousQuery: (context) =>
+    context.previousLibrary.length > 0
+      ? context.previousQuery
+      : { predicates: [...context.query.predicates] },
   previousInitialFile: (context) =>
     context.previousLibrary.length > 0
       ? context.previousInitialFile
@@ -223,6 +239,9 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
     const previousDbQuery = hasPrevious
       ? context.previousDbQuery
       : context.dbQuery;
+    const previousQuery = hasPrevious
+      ? context.previousQuery
+      : context.query;
     const previousInitialFile = hasPrevious
       ? context.previousInitialFile
       : context.initialFile;
@@ -237,6 +256,7 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
         previousStateType,
         previousTextFilter,
         previousDbQuery,
+        previousQuery,
         previousInitialFile,
       },
     });
@@ -264,6 +284,7 @@ const updatePersistedState = (context: LibraryState) => {
   // Update query state using session store (async, debounced)
   setSessionValue('query', {
     dbQuery: context.dbQuery,
+    query: context.query,
     mostRecentTag: context.mostRecentTag,
     mostRecentCategory: context.mostRecentCategory,
     textFilter: context.textFilter,
@@ -281,6 +302,7 @@ const persistPreviousState = (context: LibraryState) => {
     previousStateType: context.previousStateType,
     previousTextFilter: context.previousTextFilter,
     previousDbQuery: context.previousDbQuery,
+    previousQuery: context.previousQuery,
     previousInitialFile: context.previousInitialFile,
   });
 };
@@ -312,6 +334,8 @@ const setPath = assign<LibraryState, AnyEventObject>({
     event.data ? '' : context.previousTextFilter,
   previousDbQuery: (context, event) =>
     event.data ? { tags: [] } : context.previousDbQuery,
+  previousQuery: (context, event) =>
+    event.data ? { predicates: [] } : context.previousQuery,
   previousInitialFile: (context, event) =>
     event.data ? '' : context.previousInitialFile,
 });
@@ -375,6 +399,10 @@ const setDB = assign<LibraryState, AnyEventObject>({
     event.data && event.data !== context.dbPath
       ? { tags: [] }
       : context.previousDbQuery,
+  previousQuery: (context, event) =>
+    event.data && event.data !== context.dbPath
+      ? { predicates: [] }
+      : context.previousQuery,
   previousInitialFile: (context, event) =>
     event.data && event.data !== context.dbPath
       ? ''
@@ -545,6 +573,7 @@ const getInitialContext = (): LibraryState => {
     previousStateType: null,
     previousTextFilter: '',
     previousDbQuery: { tags: [] },
+    previousQuery: { predicates: [] },
     previousInitialFile: '',
     scrollPosition: 0,
     previousScrollPosition: 0,
@@ -661,6 +690,7 @@ const getInitialContext = (): LibraryState => {
     dbQuery: {
       tags: [],
     },
+    query: { predicates: [] },
     commandPalette: {
       display: false,
       position: { x: 0, y: 0 },
@@ -1277,6 +1307,10 @@ export const libraryMachine = createMachine(
                 const queryData = getSessionValue('query');
                 return queryData ? queryData.dbQuery : { tags: [] };
               },
+              query: () => {
+                const queryData = getSessionValue('query');
+                return queryData?.query ?? { predicates: [] };
+              },
               mostRecentTag: () => {
                 const queryData = getSessionValue('query');
                 return queryData ? queryData.mostRecentTag : '';
@@ -1314,6 +1348,10 @@ export const libraryMachine = createMachine(
               previousDbQuery: () => {
                 const previousData = getSessionValue('previous');
                 return previousData?.previousDbQuery ?? { tags: [] };
+              },
+              previousQuery: () => {
+                const previousData = getSessionValue('previous');
+                return previousData?.previousQuery ?? { predicates: [] };
               },
               previousInitialFile: () => {
                 const previousData = getSessionValue('previous');
@@ -1368,6 +1406,7 @@ export const libraryMachine = createMachine(
               libraryLoadId: () => uniqueId(),
               cursor: 0,
               dbQuery: () => ({ tags: [] }),
+              query: () => ({ predicates: [] }),
               streaming: () => true,
               pinnedPath: (context) => context.initialFile,
               savedSortByDuringStreaming: (context) => context.settings.sortBy,
@@ -1637,6 +1676,25 @@ export const libraryMachine = createMachine(
               },
             },
           },
+          // Unified query loader. Runs the structured `query` predicate list
+          // through a single platform service. New query events (ADD_PREDICATE,
+          // REMOVE_PREDICATE, TOGGLE_EXCLUDE, SET_QUERY) target this state.
+          runningQuery: {
+            invoke: {
+              src: (context) =>
+                platformLoadMediaByQuery(
+                  context.query.predicates,
+                  context.settings.filteringMode
+                ),
+              onDone: {
+                target: 'loadedFromDB',
+                actions: ['setLibrary'],
+              },
+              onError: {
+                target: 'loadedFromFS',
+              },
+            },
+          },
           loadingFromPersisted: {
             entry: assign<LibraryState, AnyEventObject>({
               library: (context) => {
@@ -1679,6 +1737,10 @@ export const libraryMachine = createMachine(
                 const previousData = getSessionValue('previous');
                 return previousData?.previousDbQuery ?? { tags: [] };
               },
+              previousQuery: () => {
+                const previousData = getSessionValue('previous');
+                return previousData?.previousQuery ?? { predicates: [] };
+              },
               previousInitialFile: () => {
                 const previousData = getSessionValue('previous');
                 return previousData?.previousInitialFile ?? '';
@@ -1686,6 +1748,10 @@ export const libraryMachine = createMachine(
               dbQuery: () => {
                 const queryData = getSessionValue('query');
                 return queryData ? queryData.dbQuery : { tags: [] };
+              },
+              query: () => {
+                const queryData = getSessionValue('query');
+                return queryData?.query ?? { predicates: [] };
               },
               mostRecentTag: () => {
                 const queryData = getSessionValue('query');
@@ -1719,6 +1785,9 @@ export const libraryMachine = createMachine(
                 cursor: (context) => context.previousCursor,
                 textFilter: (context) => context.previousTextFilter,
                 dbQuery: (context) => ({ ...context.previousDbQuery }),
+                query: (context) => ({
+                  predicates: [...context.previousQuery.predicates],
+                }),
                 initialFile: (context) =>
                   context.previousInitialFile || context.initialFile,
                 currentStateType: (context) =>
@@ -1730,6 +1799,7 @@ export const libraryMachine = createMachine(
                 previousStateType: () => null,
                 previousTextFilter: () => '',
                 previousDbQuery: () => ({ tags: [] }),
+                previousQuery: () => ({ predicates: [] }),
                 previousInitialFile: () => '',
               }),
               // Mirror the restored snapshot to the session store. context
@@ -1748,6 +1818,7 @@ export const libraryMachine = createMachine(
                     previousStateType: null,
                     previousTextFilter: '',
                     previousDbQuery: { tags: [] },
+                    previousQuery: { predicates: [] },
                     previousInitialFile: '',
                   },
                 });
@@ -1796,6 +1867,7 @@ export const libraryMachine = createMachine(
                 currentStateType: () => 'fs' as LibraryStateType,
                 textFilter: () => '',
                 dbQuery: () => ({ tags: [] }),
+                query: () => ({ predicates: [] }),
               }),
               // Mirror the cleared invariant to session storage so a folder
               // load can never leave session.query holding stale tags. Without
@@ -1923,11 +1995,23 @@ export const libraryMachine = createMachine(
                         );
                         return { tags: [event.data.tag] };
                       },
+                      // Mirror the tag click into the unified query model.
+                      query: (context, event) =>
+                        applyTagClick(
+                          context.query,
+                          event.data.tag,
+                          context.settings.filteringMode
+                        ),
                     }),
                     (context, event) => {
                       updatePersistedState({
                         ...context,
                         dbQuery: { tags: [event.data.tag] },
+                        query: applyTagClick(
+                          context.query,
+                          event.data.tag,
+                          context.settings.filteringMode
+                        ),
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
                       clearSessionKeys(['library', 'cursor']);
@@ -1935,6 +2019,41 @@ export const libraryMachine = createMachine(
                   ],
                 },
               ],
+              ADD_PREDICATE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    addPredicate(context.query, event.data.predicate),
+                }),
+              },
+              REMOVE_PREDICATE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    removePredicate(context.query, event.data.key),
+                }),
+              },
+              TOGGLE_EXCLUDE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    toggleExclude(context.query, event.data.key),
+                }),
+              },
+              SET_QUERY: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (_context, event) => ({
+                    predicates: parseQuery(event.data.text),
+                  }),
+                }),
+              },
+              CLEAR_QUERY: {
+                target: 'loadingFromPreviousLibrary',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: () => ({ predicates: [] }),
+                }),
+              },
               SET_TEXT_FILTER: [
                 {
                   cond: notEmpty,
@@ -2293,12 +2412,24 @@ export const libraryMachine = createMachine(
                         );
                         return { tags: [event.data.tag] };
                       },
+                      // Mirror the tag click into the unified query model.
+                      query: (context, event) =>
+                        applyTagClick(
+                          context.query,
+                          event.data.tag,
+                          context.settings.filteringMode
+                        ),
                     }),
                     (context, event) => {
                       updatePersistedState({
                         ...context,
                         textFilter: '',
                         dbQuery: { tags: [event.data.tag] },
+                        query: applyTagClick(
+                          context.query,
+                          event.data.tag,
+                          context.settings.filteringMode
+                        ),
                       });
                       clearSessionKeys(['library', 'cursor']);
                     },
@@ -2309,6 +2440,41 @@ export const libraryMachine = createMachine(
                 // single-tag set (handled above) and the empty-result branch
                 // is unreachable.
               ],
+              ADD_PREDICATE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    addPredicate(context.query, event.data.predicate),
+                }),
+              },
+              REMOVE_PREDICATE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    removePredicate(context.query, event.data.key),
+                }),
+              },
+              TOGGLE_EXCLUDE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    toggleExclude(context.query, event.data.key),
+                }),
+              },
+              SET_QUERY: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (_context, event) => ({
+                    predicates: parseQuery(event.data.text),
+                  }),
+                }),
+              },
+              CLEAR_QUERY: {
+                target: 'loadingFromPreviousLibrary',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: () => ({ predicates: [] }),
+                }),
+              },
               SET_TEXT_FILTER: [
                 {
                   cond: notEmpty,
@@ -2757,6 +2923,13 @@ export const libraryMachine = createMachine(
                         }
                         return { tags: Object.keys(activeTags) };
                       },
+                      // Mirror the tag click into the unified query model.
+                      query: (context, event) =>
+                        applyTagClick(
+                          context.query,
+                          event.data.tag,
+                          context.settings.filteringMode
+                        ),
                     }),
                     (context, event) => {
                       // Calculate the new tags for persistence
@@ -2782,6 +2955,11 @@ export const libraryMachine = createMachine(
                       updatePersistedState({
                         ...context,
                         dbQuery: { tags: Object.keys(activeTags) },
+                        query: applyTagClick(
+                          context.query,
+                          event.data.tag,
+                          context.settings.filteringMode
+                        ),
                       });
                       // Invalidate persisted library snapshot to avoid query/library mismatch
                       // Invalidate persisted library snapshot using session store
@@ -2796,6 +2974,41 @@ export const libraryMachine = createMachine(
                   cond: willHaveNoTag,
                 },
               ],
+              ADD_PREDICATE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    addPredicate(context.query, event.data.predicate),
+                }),
+              },
+              REMOVE_PREDICATE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    removePredicate(context.query, event.data.key),
+                }),
+              },
+              TOGGLE_EXCLUDE: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (context, event) =>
+                    toggleExclude(context.query, event.data.key),
+                }),
+              },
+              SET_QUERY: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: (_context, event) => ({
+                    predicates: parseQuery(event.data.text),
+                  }),
+                }),
+              },
+              CLEAR_QUERY: {
+                target: 'loadingFromPreviousLibrary',
+                actions: assign<LibraryState, AnyEventObject>({
+                  query: () => ({ predicates: [] }),
+                }),
+              },
               DELETED_ASSIGNMENT: {
                 // Removing a tag from an image refreshes the current view; it
                 // doesn't navigate. Capture the current libraryLoadId so the

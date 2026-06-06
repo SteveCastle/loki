@@ -30,6 +30,9 @@ export interface SessionQueryData {
   dbQuery: {
     tags: string[];
   };
+  // Unified structured query (flat predicate list). Optional for backward
+  // compatibility with snapshots written before the unified query existed.
+  query?: import('../query/types').Query;
   mostRecentTag: string;
   mostRecentCategory: string;
   textFilter: string;
@@ -45,6 +48,8 @@ export interface SessionPreviousData {
   previousStateType?: LibraryStateType | null;
   previousTextFilter?: string;
   previousDbQuery?: { tags: string[] };
+  // Previous unified structured query, mirrored alongside previousDbQuery.
+  previousQuery?: import('../query/types').Query;
   // Path the library was loaded for, so back-restoration keeps
   // initialFile coherent with the restored library snapshot.
   previousInitialFile?: string;
