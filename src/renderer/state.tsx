@@ -11,7 +11,6 @@ import {
 } from 'settings';
 import {
   invoke, send, on, store, appArgs, capabilities, isElectron,
-  loadMediaByDescriptionSearch as platformLoadMediaByDescriptionSearch,
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
 import type { Query } from './query/types';
