@@ -551,13 +551,13 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
 
     return (
       <div className="menuContent">
-        <CommandPaletteSearch libraryService={libraryService} />
         <ProgressBar
           value={cursor}
           total={libraryLength}
           isLoading={isLoading}
           setCursor={handleSetCursor}
         />
+        <CommandPaletteSearch libraryService={libraryService} />
 
         {renderTabContent()}
       </div>
