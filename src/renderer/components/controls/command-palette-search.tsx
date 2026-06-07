@@ -7,12 +7,14 @@
 // lockstep. Kept compact + scrollable to fit the floating palette.
 import { useMemo, useState } from 'react';
 import { useSelector } from '@xstate/react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Predicate } from '../../query/types';
 import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
+import type { TagConcept } from '../../hooks/useTagSearch';
 import QueryInput from '../query-input/QueryInput';
 import SuggestionSections from '../taxonomy/suggestion-sections';
+import TagPlusIcon from '../icons/tag-plus-icon';
 
 // Compact cap for the palette's Tags section — the sidebar shows far more, but
 // the floating palette is tight on space.
@@ -33,20 +35,66 @@ interface CommandPaletteSearchProps {
   // InterpreterFrom<typeof libraryMachine>; typed loosely to match the rest of
   // command-palette.tsx which threads libraryService as `any`.
   libraryService: any;
+  // The media item under the cursor; the apply-tag button assigns to its path.
+  currentItem?: { path?: string } | null;
 }
 
 export default function CommandPaletteSearch({
   libraryService,
+  currentItem,
 }: CommandPaletteSearchProps) {
+  const queryClient = useQueryClient();
   const query = useSelector(libraryService, (s: any) => s.context.query);
   const filteringMode = useSelector(
     libraryService,
     (s: any) => s.context.settings.filteringMode
   );
+  const applyTagPreview = useSelector(
+    libraryService,
+    (s: any) => s.context.settings.applyTagPreview
+  );
   const initSessionId = useSelector(
     libraryService,
     (s: any) => s.context.initSessionId
   );
+
+  const currentPath = currentItem?.path;
+
+  // Apply a tag to the current media item (an assignment) — distinct from
+  // clicking the row, which adds the tag to the search query.
+  const applyTagToCurrent = async (t: TagConcept) => {
+    if (!currentPath) return;
+    try {
+      await invoke('create-assignment', [
+        [currentPath],
+        t.label,
+        t.category,
+        null,
+        applyTagPreview,
+      ]);
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      queryClient.invalidateQueries({ queryKey: ['taxonomy', 'tag', t.label] });
+      queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: `Applied "${t.label}"`,
+          message: currentPath.split(/[\\/]/).pop(),
+          durationMs: 2000,
+        },
+      });
+    } catch (err) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Tag failed',
+          message: err instanceof Error ? err.message : 'Could not apply tag',
+        },
+      });
+    }
+  };
 
   const [text, setText] = useState('');
 
@@ -137,6 +185,19 @@ export default function CommandPaletteSearch({
                   <span className="suggestion-value">{t.label}</span>
                   {t.category && t.category !== 'Suggested' && (
                     <span className="suggestion-meta">{t.category}</span>
+                  )}
+                  {currentPath && (
+                    <button
+                      type="button"
+                      className="suggestion-apply"
+                      title={`Apply "${t.label}" to the current item`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        applyTagToCurrent(t);
+                      }}
+                    >
+                      <TagPlusIcon />
+                    </button>
                   )}
                 </div>
               ))}

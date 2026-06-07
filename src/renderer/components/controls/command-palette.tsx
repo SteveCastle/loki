@@ -557,7 +557,10 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
           isLoading={isLoading}
           setCursor={handleSetCursor}
         />
-        <CommandPaletteSearch libraryService={libraryService} />
+        <CommandPaletteSearch
+          libraryService={libraryService}
+          currentItem={currentItem}
+        />
 
         {renderTabContent()}
       </div>
