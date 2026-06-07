@@ -17,6 +17,9 @@ type Predicate struct {
 // renderer sorts results, so queries emit no ORDER BY. Mirror of query-sql.ts.
 const baseColumns = "media.path, media.elo, media.height, media.width"
 
+// Tag columns are NULL for category-driven / no-tag queries.
+const nullTagCols = "NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at"
+
 // Aliased column list for the index-driven paths, matching the TS builder so
 // the handler scans the same 8 columns by position regardless of path:
 // path, elo, height, width, weight, tag_label, time_stamp, created_at.
@@ -61,173 +64,23 @@ func clauseFor(p Predicate, params *[]any) string {
 	return ""
 }
 
-// facetedWhere combines predicates: AND-bucket clauses are required, the
-// OR-bucket is grouped as "(a OR b ...)". Returns "" when there are none.
-func facetedWhere(preds []Predicate, joinOf func(Predicate) string, params *[]any) string {
-	andClauses := []string{}
-	orClauses := []string{}
+func isIncludeTag(p Predicate) bool { return p.Type == "tag" && !p.Exclude }
+func isIncludeCat(p Predicate) bool { return p.Type == "category" && !p.Exclude }
+
+// andJoin joins clauses for the conjunct "rest" of an intersection fast path.
+func andJoin(preds []Predicate, params *[]any) string {
+	clauses := []string{}
 	for _, p := range preds {
-		if joinOf(p) != "OR" {
-			andClauses = append(andClauses, clauseFor(p, params))
-		}
+		clauses = append(clauses, clauseFor(p, params))
 	}
-	for _, p := range preds {
-		if joinOf(p) == "OR" {
-			orClauses = append(orClauses, clauseFor(p, params))
-		}
-	}
-	pieces := append([]string{}, andClauses...)
-	if len(orClauses) > 0 {
-		pieces = append(pieces, "("+strings.Join(orClauses, " OR ")+")")
-	}
-	return strings.Join(pieces, " AND ")
+	return strings.Join(clauses, " AND ")
 }
 
-// BuildMediaQuery returns SQL + params for the unified query. It drives tag
-// queries from the indexed media_tag_by_category lookup (avoiding a full
-// `media` scan) wherever semantics allow, mirroring src/main/query-sql.ts.
-func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
-	valid := []Predicate{}
-	for _, p := range predicates {
-		if p.Value != "" {
-			valid = append(valid, p)
-		}
-	}
-
-	if len(valid) == 0 {
-		return "SELECT " + baseColumns +
-			", NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at FROM media", []any{}
-	}
-
-	defaultJoin := "AND"
-	if mode == "OR" {
-		defaultJoin = "OR"
-	}
-	joinOf := func(p Predicate) string {
-		if p.Join == "AND" || p.Join == "OR" {
-			return p.Join
-		}
-		return defaultJoin
-	}
-	isIncludeTag := func(p Predicate) bool { return p.Type == "tag" && !p.Exclude }
-	isIncludeCat := func(p Predicate) bool { return p.Type == "category" && !p.Exclude }
-	// Tag columns are NULL for category-driven queries (a category spans many
-	// tags, so there's no single per-tag weight/timestamp).
-	const nullTagCols = "NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at"
-
-	// Fast path: drive from a REQUIRED include-tag (AND-bucket, or the sole
-	// predicate) via the indexed tag lookup instead of scanning `media`.
-	driveIdx := -1
-	for i := range valid {
-		if isIncludeTag(valid[i]) && joinOf(valid[i]) != "OR" {
-			driveIdx = i
-			break
-		}
-	}
-	if driveIdx == -1 && len(valid) == 1 && isIncludeTag(valid[0]) {
-		driveIdx = 0
-	}
-
-	if driveIdx >= 0 {
-		params := []any{valid[driveIdx].Value} // driving join param first
-		rest := []Predicate{}
-		for i := range valid {
-			if i != driveIdx {
-				rest = append(rest, valid[i])
-			}
-		}
-		restWhere := facetedWhere(rest, joinOf, &params)
-		extra := ""
-		if restWhere != "" {
-			extra = " AND " + restWhere
-		}
-		sql := "SELECT " + drivenColumns +
-			" FROM media_tag_by_category mtcw LEFT JOIN media ON media.path = mtcw.media_path" +
-			" WHERE mtcw.tag_label = ?" + extra
-		return sql, params
-	}
-
-	// Category fast path: drive from a REQUIRED include-category (AND-bucket or
-	// the sole predicate) via the indexed category lookup; collapse to DISTINCT
-	// media_path (one row per media) with NULL tag columns.
-	catIdx := -1
-	for i := range valid {
-		if isIncludeCat(valid[i]) && joinOf(valid[i]) != "OR" {
-			catIdx = i
-			break
-		}
-	}
-	if catIdx == -1 && len(valid) == 1 && isIncludeCat(valid[0]) {
-		catIdx = 0
-	}
-	if catIdx >= 0 {
-		params := []any{valid[catIdx].Value}
-		rest := []Predicate{}
-		for i := range valid {
-			if i != catIdx {
-				rest = append(rest, valid[i])
-			}
-		}
-		restWhere := facetedWhere(rest, joinOf, &params)
-		where := ""
-		if restWhere != "" {
-			where = " WHERE " + restWhere
-		}
-		sql := "SELECT media.path AS path, media.elo AS elo, media.height AS height, media.width AS width, " +
-			nullTagCols +
-			" FROM (SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label = ?) cat" +
-			" JOIN media ON media.path = cat.media_path" + where
-		return sql, params
-	}
-
-	// OR-set of include-tags: every predicate is an include-tag (an OR bucket)
-	// — "media with ANY of these tags" = tag_label IN (...). Indexed lookup.
-	allIncludeTags := true
-	for _, p := range valid {
-		if !isIncludeTag(p) {
-			allIncludeTags = false
-			break
-		}
-	}
-	if allIncludeTags {
-		params := []any{}
-		placeholders := []string{}
-		for _, p := range valid {
-			params = append(params, p.Value)
-			placeholders = append(placeholders, "?")
-		}
-		sql := "SELECT " + drivenColumns +
-			" FROM media_tag_by_category mtcw LEFT JOIN media ON media.path = mtcw.media_path" +
-			" WHERE mtcw.tag_label IN (" + strings.Join(placeholders, ", ") + ")"
-		return sql, params
-	}
-
-	// OR-set of include-categories: category_label IN (...), DISTINCT media.
-	allIncludeCats := true
-	for _, p := range valid {
-		if !isIncludeCat(p) {
-			allIncludeCats = false
-			break
-		}
-	}
-	if allIncludeCats {
-		params := []any{}
-		placeholders := []string{}
-		for _, p := range valid {
-			params = append(params, p.Value)
-			placeholders = append(placeholders, "?")
-		}
-		sql := "SELECT media.path AS path, media.elo AS elo, media.height AS height, media.width AS width, " +
-			nullTagCols +
-			" FROM (SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label IN (" +
-			strings.Join(placeholders, ", ") + ")) cat" +
-			" JOIN media ON media.path = cat.media_path"
-		return sql, params
-	}
-
-	// Fallback: exclude-only, non-tag predicates, or an OR bucket mixing tags
-	// with non-tags. Scan media; LEFT JOIN the first include-tag (if any) only
-	// to surface weight/tag/timestamp columns.
+// mediaScan is the always-correct path: scan media and combine clauses
+// LEFT-TO-RIGHT with the given connectors (connectors[i] joins valid[i+1]),
+// parenthesized left-associatively to match how the chips read. Surfaces tag
+// columns via a LEFT JOIN on the first include-tag (if any).
+func mediaScan(valid []Predicate, connectors []string) (string, []any) {
 	primaryTag := ""
 	for _, p := range valid {
 		if isIncludeTag(p) {
@@ -243,13 +96,157 @@ func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
 			" FROM media LEFT JOIN media_tag_by_category mtcw ON mtcw.media_path = media.path AND mtcw.tag_label = ?"
 		params = append(params, primaryTag)
 	} else {
-		selectClause = "SELECT " + baseColumns +
-			", NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at FROM media"
+		selectClause = "SELECT " + baseColumns + ", " + nullTagCols + " FROM media"
 	}
-	restWhere := facetedWhere(valid, joinOf, &params)
-	where := ""
-	if restWhere != "" {
-		where = " WHERE " + restWhere
+	expr := clauseFor(valid[0], &params)
+	for i := 1; i < len(valid); i++ {
+		expr = "(" + expr + " " + connectors[i-1] + " " + clauseFor(valid[i], &params) + ")"
 	}
-	return selectClause + where, params
+	return selectClause + " WHERE " + expr, params
+}
+
+// BuildMediaQuery returns SQL + params. Predicates combine LEFT-TO-RIGHT: the
+// first is the base, each subsequent predicate's Join connects it to the
+// running result. Homogeneous all-AND / all-OR get index-driven fast paths;
+// mixed operators fall back to a correct media scan. Mirror of query-sql.ts.
+func BuildMediaQuery(predicates []Predicate, mode string) (string, []any) {
+	valid := []Predicate{}
+	for _, p := range predicates {
+		if p.Value != "" {
+			valid = append(valid, p)
+		}
+	}
+
+	if len(valid) == 0 {
+		return "SELECT " + baseColumns + ", " + nullTagCols + " FROM media", []any{}
+	}
+
+	defaultJoin := "AND"
+	if mode == "OR" {
+		defaultJoin = "OR"
+	}
+	joinOf := func(p Predicate) string {
+		if p.Join == "AND" || p.Join == "OR" {
+			return p.Join
+		}
+		return defaultJoin
+	}
+
+	// Connectors join each predicate after the first to the running result.
+	connectors := []string{}
+	for i := 1; i < len(valid); i++ {
+		connectors = append(connectors, joinOf(valid[i]))
+	}
+	allOr := len(connectors) > 0
+	for _, c := range connectors {
+		if c != "OR" {
+			allOr = false
+		}
+	}
+	allAnd := true
+	for _, c := range connectors {
+		if c != "AND" {
+			allAnd = false
+		}
+	}
+
+	allTags := true
+	allCats := true
+	for _, p := range valid {
+		if !isIncludeTag(p) {
+			allTags = false
+		}
+		if !isIncludeCat(p) {
+			allCats = false
+		}
+	}
+
+	// ---- Union (all-OR) via an indexed IN lookup ----
+	if allOr && allTags {
+		params := []any{}
+		placeholders := []string{}
+		for _, p := range valid {
+			params = append(params, p.Value)
+			placeholders = append(placeholders, "?")
+		}
+		sql := "SELECT " + drivenColumns +
+			" FROM media_tag_by_category mtcw LEFT JOIN media ON media.path = mtcw.media_path" +
+			" WHERE mtcw.tag_label IN (" + strings.Join(placeholders, ", ") + ")"
+		return sql, params
+	}
+	if allOr && allCats {
+		params := []any{}
+		placeholders := []string{}
+		for _, p := range valid {
+			params = append(params, p.Value)
+			placeholders = append(placeholders, "?")
+		}
+		sql := "SELECT media.path AS path, media.elo AS elo, media.height AS height, media.width AS width, " +
+			nullTagCols +
+			" FROM (SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label IN (" +
+			strings.Join(placeholders, ", ") + ")) cat" +
+			" JOIN media ON media.path = cat.media_path"
+		return sql, params
+	}
+
+	// ---- Intersection (single predicate or all-AND): drive from an indexed
+	//      tag/category with the rest as AND conjuncts ----
+	if allAnd {
+		driveIdx := -1
+		for i := range valid {
+			if isIncludeTag(valid[i]) {
+				driveIdx = i
+				break
+			}
+		}
+		if driveIdx >= 0 {
+			params := []any{valid[driveIdx].Value}
+			rest := []Predicate{}
+			for i := range valid {
+				if i != driveIdx {
+					rest = append(rest, valid[i])
+				}
+			}
+			restWhere := andJoin(rest, &params)
+			extra := ""
+			if restWhere != "" {
+				extra = " AND " + restWhere
+			}
+			sql := "SELECT " + drivenColumns +
+				" FROM media_tag_by_category mtcw LEFT JOIN media ON media.path = mtcw.media_path" +
+				" WHERE mtcw.tag_label = ?" + extra
+			return sql, params
+		}
+		catIdx := -1
+		for i := range valid {
+			if isIncludeCat(valid[i]) {
+				catIdx = i
+				break
+			}
+		}
+		if catIdx >= 0 {
+			params := []any{valid[catIdx].Value}
+			rest := []Predicate{}
+			for i := range valid {
+				if i != catIdx {
+					rest = append(rest, valid[i])
+				}
+			}
+			restWhere := andJoin(rest, &params)
+			where := ""
+			if restWhere != "" {
+				where = " WHERE " + restWhere
+			}
+			sql := "SELECT media.path AS path, media.elo AS elo, media.height AS height, media.width AS width, " +
+				nullTagCols +
+				" FROM (SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label = ?) cat" +
+				" JOIN media ON media.path = cat.media_path" + where
+			return sql, params
+		}
+		// No drivable tag/category (paths/hash/excludes only) → AND media scan.
+		return mediaScan(valid, connectors)
+	}
+
+	// ---- Mixed AND/OR operators → correct left-to-right media scan ----
+	return mediaScan(valid, connectors)
 }

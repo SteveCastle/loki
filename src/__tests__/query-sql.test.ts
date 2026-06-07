@@ -124,19 +124,46 @@ describe('buildMediaQuery', () => {
     expect(params).toEqual(['a', 'b']);
   });
 
-  it('faceted: drives from the AND-tag and ORs the OR-bucket', () => {
+  it('linear: a second tag with an OR join unions (the reported bug)', () => {
+    // [a, b(OR)] reads "a OR b" — must be a UNION, not an intersection.
     const { sql, params } = buildMediaQuery(
       [
-        { type: 'tag', value: 'a', exclude: false, join: 'AND' },
+        { type: 'tag', value: 'a', exclude: false }, // base (first chip)
+        { type: 'tag', value: 'b', exclude: false, join: 'OR' },
+      ],
+      'AND'
+    );
+    expect(sql).toContain('WHERE mtcw.tag_label IN (?, ?)');
+    expect(sql).not.toContain('EXISTS'); // not an intersection
+    expect(params).toEqual(['a', 'b']);
+  });
+
+  it('linear: all-OR connectors union every tag (first chip join ignored)', () => {
+    const { sql, params } = buildMediaQuery(
+      [
+        { type: 'tag', value: 'a', exclude: false, join: 'AND' }, // base — ignored
         { type: 'tag', value: 'b', exclude: false, join: 'OR' },
         { type: 'tag', value: 'c', exclude: false, join: 'OR' },
       ],
       'AND'
     );
-    expect(sql).toContain('FROM media_tag_by_category mtcw');
-    expect(sql).toContain('WHERE mtcw.tag_label = ?');
-    expect(norm(sql)).toContain(') OR ('); // OR-bucket for b/c
-    expect(params).toEqual(['a', 'b', 'c']); // drive a, then EXISTS b, c
+    expect(sql).toContain('WHERE mtcw.tag_label IN (?, ?, ?)');
+    expect(params).toEqual(['a', 'b', 'c']);
+  });
+
+  it('mixed AND/OR connectors fall back to a left-to-right media scan', () => {
+    // [a, b(OR), c(AND)] reads "(a OR b) AND c".
+    const { sql } = buildMediaQuery(
+      [
+        { type: 'tag', value: 'a', exclude: false },
+        { type: 'tag', value: 'b', exclude: false, join: 'OR' },
+        { type: 'tag', value: 'c', exclude: false, join: 'AND' },
+      ],
+      'AND'
+    );
+    expect(sql).toContain('FROM media');
+    expect(norm(sql)).toContain(') OR ('); // a OR b
+    expect(norm(sql)).toContain(') AND ('); // (...) AND c
   });
 
   it('an OR bucket mixing tags with a non-tag falls back to a media scan', () => {

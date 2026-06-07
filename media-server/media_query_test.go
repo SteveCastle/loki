@@ -81,31 +81,45 @@ func TestBuildMediaQueryOrSetUsesInLookup(t *testing.T) {
 	}
 }
 
-func TestBuildMediaQueryFaceted(t *testing.T) {
-	// a(AND) drives; b/c(OR) become a conjunct OR-group of EXISTS.
+func TestBuildMediaQueryOrJoinUnions(t *testing.T) {
+	// [a, b(OR)] reads "a OR b" — must be a UNION (the reported bug).
 	sql, params := BuildMediaQuery([]Predicate{
+		{Type: "tag", Value: "a"},
+		{Type: "tag", Value: "b", Join: "OR"},
+	}, "AND")
+	if !strings.Contains(sql, "WHERE mtcw.tag_label IN (?, ?)") {
+		t.Fatalf("expected union IN, got %q", sql)
+	}
+	if strings.Contains(sql, "EXISTS") {
+		t.Fatalf("union must not be an intersection: %q", sql)
+	}
+	if len(params) != 2 || params[0] != "a" || params[1] != "b" {
+		t.Fatalf("bad params: %v", params)
+	}
+}
+
+func TestBuildMediaQueryAllOrUnionsEveryTag(t *testing.T) {
+	// First chip's join is ignored (base); all-OR connectors union a,b,c.
+	sql, _ := BuildMediaQuery([]Predicate{
 		{Type: "tag", Value: "a", Join: "AND"},
 		{Type: "tag", Value: "b", Join: "OR"},
 		{Type: "tag", Value: "c", Join: "OR"},
 	}, "AND")
+	if !strings.Contains(sql, "WHERE mtcw.tag_label IN (?, ?, ?)") {
+		t.Fatalf("expected union of all three: %q", sql)
+	}
+}
+
+func TestBuildMediaQueryMixedConnectorsScan(t *testing.T) {
+	// [a, b(OR), c(AND)] reads "(a OR b) AND c" — left-to-right media scan.
+	sql, _ := BuildMediaQuery([]Predicate{
+		{Type: "tag", Value: "a"},
+		{Type: "tag", Value: "b", Join: "OR"},
+		{Type: "tag", Value: "c", Join: "AND"},
+	}, "AND")
 	n := norm(sql)
-	if !strings.Contains(n, "FROM media_tag_by_category mtcw") {
-		t.Fatalf("expected tag-table drive: %q", sql)
-	}
-	if !strings.Contains(n, "WHERE mtcw.tag_label = ?") {
-		t.Fatalf("expected drive filter: %q", sql)
-	}
-	if !strings.Contains(n, ") OR (") {
-		t.Fatalf("expected OR group for b/c: %q", sql)
-	}
-	want := []any{"a", "b", "c"} // drive a, then EXISTS b, c
-	if len(params) != len(want) {
-		t.Fatalf("expected %d params, got %d: %v", len(want), len(params), params)
-	}
-	for i := range want {
-		if params[i] != want[i] {
-			t.Fatalf("param %d = %v want %v", i, params[i], want[i])
-		}
+	if !strings.Contains(n, ") OR (") || !strings.Contains(n, ") AND (") {
+		t.Fatalf("expected left-to-right (a OR b) AND c: %q", sql)
 	}
 }
 
