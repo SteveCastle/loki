@@ -13,7 +13,8 @@ interface QueryInputProps {
   onRemovePredicate: (key: string) => void;
   onToggleExclude: (key: string) => void;
   onSetPredicateJoin: (key: string, join: 'AND' | 'OR') => void;
-  onClearAll: () => void; // clear chips + text
+  onClearAll: () => void; // clear chips + text (resets the library)
+  onClearText: () => void; // clear only the typed text (no-op on the library)
   onFocus?: () => void;
   autoFocus?: boolean; // focus the text input on mount (fast palette workflow)
   disabled?: boolean;
@@ -50,6 +51,7 @@ export default function QueryInput({
   onToggleExclude,
   onSetPredicateJoin,
   onClearAll,
+  onClearText,
   onFocus,
   autoFocus = false,
   disabled = false,
@@ -213,9 +215,16 @@ export default function QueryInput({
   );
 
   const handleClear = useCallback(() => {
-    onClearAll();
+    // Clearing filters resets the library to its pre-filter state. Clearing
+    // only typed text must NOT touch the library — so when there are no
+    // predicates, clear the text alone.
+    if (query.predicates.length > 0) {
+      onClearAll();
+    } else {
+      onClearText();
+    }
     setHighlightIndex(-1);
-  }, [onClearAll]);
+  }, [query.predicates.length, onClearAll, onClearText]);
 
   const dropdownOpen = isOpen && hasItems;
 

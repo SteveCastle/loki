@@ -323,6 +323,12 @@ export default function Taxonomy() {
                 data: { key, join },
               })
             }
+            onClearText={() => {
+              setTagFilterInput('');
+              setTagFilter('');
+              debouncedSetTagFilter.current.cancel();
+              setEditingTag(null);
+            }}
             onClearAll={() => {
               libraryService.send({ type: 'CLEAR_QUERY' });
               setTagFilterInput('');

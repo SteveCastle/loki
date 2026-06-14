@@ -163,6 +163,7 @@ export default function CommandPaletteSearch({
             data: { key, join: j },
           })
         }
+        onClearText={clearText}
         onClearAll={() => {
           libraryService.send({ type: 'CLEAR_QUERY' });
           clearText();
