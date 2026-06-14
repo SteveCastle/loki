@@ -418,155 +418,195 @@ export default function Taxonomy() {
           </div>
         )}
         {(() => {
-          if (!(activeCategory || tagFilter)) {
-            return <div className={`tags`} />;
-          }
-          // Search results span categories — always use card style.
-          // For an active category, honour its persisted tagViewMode.
-          const activeViewMode: TagViewMode = tagFilter
-            ? 'card'
-            : (categoriesByLabel[activeCategory]?.tagViewMode as TagViewMode) ||
-              'card';
-          // Reordering by drag is meaningless when results are sorted by
-          // search relevance — disable DnD while a search is active.
-          const disableReorder = !!tagFilter;
+          // The search-results area holds two panes: the tag results (cards /
+          // list) on the left and the SuggestionSections column (categories /
+          // paths / description / hash) on the right. taxonomy.css drives the
+          // responsive two-column ⇄ stacked behaviour via a container query on
+          // `.search-results`; here we only decide which panes exist so empty
+          // regions collapse instead of reserving blank space.
+          const resultsEl = (() => {
+            if (!(activeCategory || tagFilter)) {
+              return <div className={`tags`} />;
+            }
+            // Search results span categories — always use card style.
+            // For an active category, honour its persisted tagViewMode.
+            const activeViewMode: TagViewMode = tagFilter
+              ? 'card'
+              : (categoriesByLabel[activeCategory]
+                  ?.tagViewMode as TagViewMode) || 'card';
+            // Reordering by drag is meaningless when results are sorted by
+            // search relevance — disable DnD while a search is active.
+            const disableReorder = !!tagFilter;
 
-          // Skeleton placeholder while the per-category tags (or the full
-          // tag list for search) load for the first time. `data === undefined`
-          // means React Query hasn't returned yet; once a category is cached
-          // or after an optimistic mutation we keep prior data and skip this
-          // branch so the panel doesn't flash empty on refetch.
-          const isLoadingTags = tagFilter
-            ? allTagsData === undefined && isFetchingAllTags
-            : activeCategoryTags === undefined && isFetchingCategoryTags;
-          if (isLoadingTags) {
-            if (activeViewMode === 'list') {
+            // Skeleton placeholder while the per-category tags (or the full
+            // tag list for search) load for the first time. `data === undefined`
+            // means React Query hasn't returned yet; once a category is cached
+            // or after an optimistic mutation we keep prior data and skip this
+            // branch so the panel doesn't flash empty on refetch.
+            const isLoadingTags = tagFilter
+              ? allTagsData === undefined && isFetchingAllTags
+              : activeCategoryTags === undefined && isFetchingCategoryTags;
+            if (isLoadingTags) {
+              if (activeViewMode === 'list') {
+                return (
+                  <div className="tag-list-view">
+                    <SkeletonTheme baseColor="#202020" highlightColor="#444">
+                      {Array.from({ length: 16 }).map((_, i) => (
+                        <Skeleton
+                          key={i}
+                          height={28}
+                          style={{ marginBottom: 4 }}
+                        />
+                      ))}
+                    </SkeletonTheme>
+                  </div>
+                );
+              }
               return (
-                <div className="tag-list-view">
+                <div className="tags">
                   <SkeletonTheme baseColor="#202020" highlightColor="#444">
-                    {Array.from({ length: 16 }).map((_, i) => (
-                      <Skeleton
-                        key={i}
-                        height={28}
-                        style={{ marginBottom: 4 }}
-                      />
+                    {Array.from({ length: 18 }).map((_, i) => (
+                      <Skeleton key={i} height={60} />
                     ))}
                   </SkeletonTheme>
                 </div>
               );
             }
-            return (
-              <div className="tags">
-                <SkeletonTheme baseColor="#202020" highlightColor="#444">
-                  {Array.from({ length: 18 }).map((_, i) => (
-                    <Skeleton key={i} height={60} />
-                  ))}
-                </SkeletonTheme>
-              </div>
-            );
-          }
-          if (activeViewMode === 'list') {
-            return (
-              <TagListView
-                tags={tags}
-                selectedTags={selectedTags}
-                isDisabled={isDisabled}
-                handleEditAction={setEditingTag}
-                disableReorder={disableReorder}
-              />
-            );
-          }
-          // Blended search view: when there are matches in the Suggested
-          // category, render non-Suggested results as cards on top and
-          // Suggested results as a compact list below. Both sections are
-          // virtualized — `<Tag>` triggers an IPC preview fetch on mount,
-          // so rendering all matches at once would saturate the IPC layer.
-          if (tagFilter) {
-            const suggestedTags = tags.filter(
-              (t: Concept) => t.category === 'Suggested'
-            );
-            if (suggestedTags.length > 0) {
-              const mainTags = tags.filter(
-                (t: Concept) => t.category !== 'Suggested'
-              );
+            if (activeViewMode === 'list') {
               return (
-                <div className="tags-blended">
-                  {mainTags.length > 0 && (
-                    <div className="tags-blended-cards">
-                      <VirtualizedTagGrid
-                        tags={mainTags}
+                <TagListView
+                  tags={tags}
+                  selectedTags={selectedTags}
+                  isDisabled={isDisabled}
+                  handleEditAction={setEditingTag}
+                  disableReorder={disableReorder}
+                />
+              );
+            }
+            // Blended search view: when there are matches in the Suggested
+            // category, render non-Suggested results as cards on top and
+            // Suggested results as a compact list below. Both sections are
+            // virtualized — `<Tag>` triggers an IPC preview fetch on mount,
+            // so rendering all matches at once would saturate the IPC layer.
+            if (tagFilter) {
+              const suggestedTags = tags.filter(
+                (t: Concept) => t.category === 'Suggested'
+              );
+              if (suggestedTags.length > 0) {
+                const mainTags = tags.filter(
+                  (t: Concept) => t.category !== 'Suggested'
+                );
+                return (
+                  <div className="tags-blended">
+                    {mainTags.length > 0 && (
+                      <div className="tags-blended-cards">
+                        <VirtualizedTagGrid
+                          tags={mainTags}
+                          selectedTags={selectedTags}
+                          isDisabled={isDisabled}
+                          handleEditAction={setEditingTag}
+                          disableReorder={disableReorder}
+                        />
+                      </div>
+                    )}
+                    <div className="suggested-section">
+                      <div className="suggested-heading">Suggested</div>
+                      <TagListView
+                        tags={suggestedTags}
                         selectedTags={selectedTags}
                         isDisabled={isDisabled}
                         handleEditAction={setEditingTag}
                         disableReorder={disableReorder}
                       />
                     </div>
-                  )}
-                  <div className="suggested-section">
-                    <div className="suggested-heading">Suggested</div>
-                    <TagListView
-                      tags={suggestedTags}
-                      selectedTags={selectedTags}
-                      isDisabled={isDisabled}
-                      handleEditAction={setEditingTag}
-                      disableReorder={disableReorder}
-                    />
                   </div>
-                </div>
-              );
+                );
+              }
             }
-          }
-          // Virtualize whenever searching (results can be large and each
-          // <Tag> mounts an IPC preview fetch), or when browsing a
-          // category that exceeds the static threshold.
-          if (tagFilter || tags.length > VIRTUALIZE_THRESHOLD) {
-            return (
-              <VirtualizedTagGrid
-                tags={tags}
-                selectedTags={selectedTags}
-                isDisabled={isDisabled}
-                handleEditAction={setEditingTag}
-                disableReorder={disableReorder}
-              />
-            );
-          }
-          return (
-            <div className={`tags`}>
-              {tags.map((tag: Concept) => (
-                <Tag
-                  isDisabled={isDisabled}
+            // Searching with zero tag matches: collapse the results pane
+            // entirely (return null) so the suggestions column can take the
+            // full width instead of sitting beside an empty grid.
+            if (tagFilter && tags.length === 0) {
+              return null;
+            }
+            // Virtualize whenever searching (results can be large and each
+            // <Tag> mounts an IPC preview fetch), or when browsing a
+            // category that exceeds the static threshold.
+            if (tagFilter || tags.length > VIRTUALIZE_THRESHOLD) {
+              return (
+                <VirtualizedTagGrid
                   tags={tags}
-                  tag={{
-                    label: tag.label,
-                    weight: tag.weight,
-                    category: tag.category,
-                  }}
-                  active={selectedTags.includes(tag.label)}
+                  selectedTags={selectedTags}
+                  isDisabled={isDisabled}
                   handleEditAction={setEditingTag}
                   disableReorder={disableReorder}
-                  key={tag.label}
                 />
-              ))}
+              );
+            }
+            return (
+              <div className={`tags`}>
+                {tags.map((tag: Concept) => (
+                  <Tag
+                    isDisabled={isDisabled}
+                    tags={tags}
+                    tag={{
+                      label: tag.label,
+                      weight: tag.weight,
+                      category: tag.category,
+                    }}
+                    active={selectedTags.includes(tag.label)}
+                    handleEditAction={setEditingTag}
+                    disableReorder={disableReorder}
+                    key={tag.label}
+                  />
+                ))}
+              </div>
+            );
+          })();
+
+          const showSuggestions = !!tagFilter;
+          const hasResults = resultsEl !== null;
+          const wrapperClass = [
+            'search-results',
+            hasResults ? 'has-results' : 'no-results',
+            showSuggestions ? 'has-suggestions' : '',
+          ]
+            .filter(Boolean)
+            .join(' ');
+
+          // The outer .search-results-container exists only to establish the
+          // container-query context: a container query can style a container's
+          // descendants but not the container element itself, so the
+          // stacked⇄two-column switch must live on the inner .search-results.
+          return (
+            <div className="search-results-container">
+              <div className={wrapperClass}>
+                {hasResults && (
+                  <div className="results-pane">{resultsEl}</div>
+                )}
+                {showSuggestions && (
+                  <div className="suggestions-pane">
+                    <SuggestionSections
+                      text={tagFilter}
+                      categories={categories ?? []}
+                      onAdd={(predicate) =>
+                        libraryService.send({
+                          type: 'ADD_PREDICATE',
+                          data: {
+                            predicate: {
+                              ...predicate,
+                              join: filteringMode === 'OR' ? 'OR' : 'AND',
+                            },
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           );
         })()}
-        {tagFilter ? (
-          <SuggestionSections
-            text={tagFilter}
-            categories={categories ?? []}
-            onAdd={(predicate) =>
-              libraryService.send({
-                type: 'ADD_PREDICATE',
-                data: {
-                  predicate: {
-                    ...predicate,
-                    join: filteringMode === 'OR' ? 'OR' : 'AND',
-                  },
-                },
-              })
-            }
-          />
-        ) : null}
       </div>
       {activeCategory && addingTag ? (
         <NewTagModal
