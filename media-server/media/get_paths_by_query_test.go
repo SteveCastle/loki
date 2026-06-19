@@ -67,6 +67,62 @@ func TestGetPathsByQuery_UnparseableQueryErrors(t *testing.T) {
 	}
 }
 
+// seedNestedMedia inserts a directory with a file directly inside it plus a
+// file in a subdirectory, so we can distinguish a one-level match from a
+// recursive one.
+func seedNestedMedia(t *testing.T, db *sql.DB) {
+	t.Helper()
+	paths := []string{
+		"/lib/cats/top.jpg",        // directly in /lib/cats
+		"/lib/cats/sub/nested.jpg", // one level deeper
+		"/lib/dogs/other.jpg",      // sibling dir — never matched
+	}
+	for _, p := range paths {
+		if _, err := db.Exec("INSERT INTO media (path) VALUES (?)", p); err != nil {
+			t.Fatalf("insert media %s: %v", p, err)
+		}
+	}
+}
+
+// TestGetPathsByQuery_PathDirIsOneLevel pins the non-recursive contract the
+// context palette relies on: pathdir matches only files directly in the
+// directory, not files in subdirectories.
+func TestGetPathsByQuery_PathDirIsOneLevel(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedNestedMedia(t, db)
+
+	paths, err := GetPathsByQuery(db, `pathdir:"/lib/cats"`)
+	if err != nil {
+		t.Fatalf("GetPathsByQuery() error = %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "/lib/cats/top.jpg" {
+		t.Fatalf("pathdir matched %v, want only [/lib/cats/top.jpg]", paths)
+	}
+}
+
+// TestGetPathsByQuery_WildcardPathIsRecursive pins the recursive contract: the
+// trailing-wildcard path query the context palette emits when recursive
+// browsing is on matches every file under the directory, at any depth.
+func TestGetPathsByQuery_WildcardPathIsRecursive(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedNestedMedia(t, db)
+
+	paths, err := GetPathsByQuery(db, `path:"/lib/cats/*"`)
+	if err != nil {
+		t.Fatalf("GetPathsByQuery() error = %v", err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("wildcard path matched %d paths, want 2 (top + nested) (%v)", len(paths), paths)
+	}
+	for _, p := range paths {
+		if p == "/lib/dogs/other.jpg" {
+			t.Fatalf("wildcard path leaked a sibling directory: %v", paths)
+		}
+	}
+}
+
 // TestGetPathsByQuery_EmptyQuerySelectsAll confirms the legitimate "no filter"
 // case still returns everything — only parse *failures* are treated as errors.
 func TestGetPathsByQuery_EmptyQuerySelectsAll(t *testing.T) {

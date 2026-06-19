@@ -12,6 +12,7 @@ import { GlobalStateContext } from '../../state';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import filter from '../../filter';
 import LoginWidget from './login-widget';
+import { getDirFromInitialFile, buildLibraryPathQuery } from './context-query';
 import './context-palette.css';
 
 type ActionDef = {
@@ -80,22 +81,6 @@ type ContextTarget =
   | { type: 'tag'; tag: string }
   | { type: 'category'; category: string };
 
-/** If initialFile is a media file path, return its parent directory; otherwise return as-is. */
-function getDirFromInitialFile(initialFile: string): string {
-  const lastSegment = initialFile.split(/[/\\]/).pop() || '';
-  if (lastSegment.includes('.')) {
-    const sep = initialFile.includes('\\') ? '\\' : '/';
-    const idx = initialFile.lastIndexOf(sep);
-    let dir = idx > 0 ? initialFile.slice(0, idx) : initialFile;
-    // Ensure Windows drive-letter roots keep their trailing separator (e.g. "D:" → "D:\")
-    if (/^[A-Za-z]:$/.test(dir)) {
-      dir += sep;
-    }
-    return dir;
-  }
-  return initialFile;
-}
-
 // Wrap a tag/category value in double quotes so multi-word values (e.g.
 // "Exchange Student") survive query parsing. Without quotes the server lexer
 // splits on the space and the query fails to parse — which historically caused
@@ -112,7 +97,7 @@ function buildQuery(
     dbQuery: { tags: string[] };
     textFilter: string;
     initialFile: string;
-    settings: { filteringMode: string };
+    settings: { filteringMode: string; recursive: boolean };
   }
 ): string {
   switch (target.type) {
@@ -130,7 +115,10 @@ function buildQuery(
           settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
         return dbQuery.tags.map((t) => `tag:${quoteValue(t)}`).join(joiner);
       }
-      return `pathdir:"${getDirFromInitialFile(initialFile)}"`;
+      // Filesystem context: match the current list view. When recursive
+      // browsing is on the list spans subdirectories, so match every path
+      // under the directory; otherwise match only its immediate children.
+      return buildLibraryPathQuery(initialFile, settings.recursive);
     }
   }
 }
@@ -401,6 +389,10 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.settings.filteringMode
   );
+  const recursive = useSelector(
+    libraryService,
+    (state) => state.context.settings.recursive
+  );
   const library = useSelector(
     libraryService,
     (state) => state.context.library
@@ -540,7 +532,7 @@ export default function ContextPalette() {
     dbQuery,
     textFilter,
     initialFile,
-    settings: { filteringMode },
+    settings: { filteringMode, recursive },
   };
   const items = filter(libraryLoadId, textFilter, library, filters, sortBy);
   const itemCount = target.type === 'file' ? 1 : items.length;
