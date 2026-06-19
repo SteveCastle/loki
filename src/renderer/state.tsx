@@ -34,6 +34,7 @@ import {
   flushSession,
   hasPersistedLibrary as checkHasPersistedLibrary,
   hasPersistedTags as checkHasPersistedTags,
+  hasPersistedQuery as checkHasPersistedQuery,
 } from './hooks/useSessionStore';
 // Job management removed - now handled by external job runner service
 
@@ -441,8 +442,13 @@ const hasPersistedLibrary = (_context: LibraryState): boolean => {
   return checkHasPersistedLibrary();
 };
 
-const hasPersistedTags = (_context: LibraryState): boolean => {
-  return checkHasPersistedTags();
+// Boot/restore routing guard: true when there is ANY persisted filter to
+// restore — legacy tags OR a unified query holding non-tag predicates (path /
+// category / description / hash). Routing on tags alone misclassified a
+// path-only query as "no filter", sending it to the FS view whose entry then
+// wiped the persisted predicate.
+const hasPersistedFilter = (_context: LibraryState): boolean => {
+  return checkHasPersistedTags() || checkHasPersistedQuery();
 };
 
 const willHaveTag = (context: LibraryState, event: AnyEventObject) => {
@@ -1460,7 +1466,7 @@ export const libraryMachine = createMachine(
               },
             }),
             always: [
-              { target: 'loadingFromDB', cond: hasPersistedTags },
+              { target: 'loadingFromDB', cond: hasPersistedFilter },
               { target: 'selectingDirectory' },
             ],
           },
@@ -1802,7 +1808,7 @@ export const libraryMachine = createMachine(
               libraryLoadId: () => uniqueId(),
             }),
             always: [
-              { target: 'loadedFromDB', cond: hasPersistedTags },
+              { target: 'loadedFromDB', cond: hasPersistedFilter },
               { target: 'loadedFromFS' },
             ],
           },

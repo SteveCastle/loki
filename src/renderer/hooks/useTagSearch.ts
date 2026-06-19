@@ -5,7 +5,7 @@
 // through the module-level singleton in ../search/tag-search-service, so the
 // whole app shares ONE worker + ONE index (warmed at startup by
 // useWarmTagSearch). This keeps the first search from either surface instant.
-import { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { debounce } from 'lodash';
@@ -16,6 +16,7 @@ import {
   searchTags,
   type TagConcept,
 } from '../search/tag-search-service';
+import { SEARCH_DEBOUNCE_MS } from '../search/search-config';
 
 export type { TagConcept } from '../search/tag-search-service';
 
@@ -45,10 +46,10 @@ export function useTagSearch(
     (state) => state.context.initSessionId
   );
 
-  // Debounce the raw text 150ms into the value actually dispatched to search.
+  // Debounce the raw text into the value actually dispatched to search.
   const [debouncedText, setDebouncedText] = useState<string>('');
   const debouncedSet = useRef(
-    debounce((value: string) => setDebouncedText(value), 150)
+    debounce((value: string) => setDebouncedText(value), SEARCH_DEBOUNCE_MS)
   );
   useEffect(() => {
     debouncedSet.current(text);
@@ -66,19 +67,14 @@ export function useTagSearch(
     { enabled, staleTime: Infinity }
   );
 
-  // Defensive filter: drop label-less tags; Fuse and the row renderers assume a
-  // non-empty string and would otherwise throw.
-  const allTags = useMemo(() => {
-    if (!allTagsData) return [] as TagConcept[];
-    return allTagsData.filter(
-      (t) => t && typeof t.label === 'string' && t.label.length > 0
-    );
-  }, [allTagsData]);
-
-  // Keep the shared index in sync with the loaded tag set (idempotent by ref).
+  // Keep the shared index in sync with the loaded tag set. Index off the RAW
+  // React Query array (not a locally-filtered copy): every consumer reads the
+  // same cache entry, so this shared reference lets indexTags dedupe to a single
+  // worker clone instead of re-cloning the whole library on this surface's first
+  // search. The defensive label filter now lives inside indexTags.
   useEffect(() => {
-    indexTags(allTags);
-  }, [allTags]);
+    if (allTagsData) indexTags(allTagsData);
+  }, [allTagsData]);
 
   const [results, setResults] = useState<TagConcept[]>([]);
 
@@ -100,7 +96,7 @@ export function useTagSearch(
       MAX_SEARCH_RESULTS,
       setResultsSafe.current
     );
-  }, [debouncedText, enabled, allTags]);
+  }, [debouncedText, enabled, allTagsData]);
 
   return { results };
 }

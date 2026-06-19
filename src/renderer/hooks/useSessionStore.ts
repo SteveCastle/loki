@@ -172,6 +172,17 @@ export function hasPersistedTags(): boolean {
 }
 
 /**
+ * Check if the session has a persisted unified query with at least one
+ * predicate. Unlike hasPersistedTags, this recognises non-tag filters
+ * (path / category / description / hash) so they are restored as a filtered
+ * (DB) view at boot instead of being dropped as "no filter".
+ */
+export function hasPersistedQuery(): boolean {
+  const data = cache.query;
+  return !!(data && data.query && data.query.predicates.length > 0);
+}
+
+/**
  * Set a value in the session store (debounced async write)
  */
 export function setSessionValue<K extends SessionKey>(

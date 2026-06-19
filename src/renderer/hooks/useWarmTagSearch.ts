@@ -4,7 +4,7 @@
 // full all-tags list is fetched eagerly and pushed into the shared singleton
 // index. By the time the user opens the taxonomy sidebar or the command
 // palette, the index is already warm and the first search is instant.
-import { useContext, useEffect, useMemo } from 'react';
+import { useContext, useEffect } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../state';
@@ -32,17 +32,14 @@ export function useWarmTagSearch(): void {
     { enabled: true, staleTime: Infinity }
   );
 
-  const allTags = useMemo(() => {
-    if (!allTagsData) return [] as TagConcept[];
-    return allTagsData.filter(
-      (t) => t && typeof t.label === 'string' && t.label.length > 0
-    );
-  }, [allTagsData]);
-
-  // Build the shared index ahead of first use.
+  // Build the shared index ahead of first use, off the RAW React Query array so
+  // the same reference is shared with every other consumer (taxonomy, palette).
+  // That shared reference is what lets indexTags clone the library to the worker
+  // exactly once — here at startup — instead of again on each surface's first
+  // search. The defensive label filter lives inside indexTags.
   useEffect(() => {
-    indexTags(allTags);
-  }, [allTags]);
+    if (allTagsData) indexTags(allTagsData);
+  }, [allTagsData]);
 }
 
 export default useWarmTagSearch;

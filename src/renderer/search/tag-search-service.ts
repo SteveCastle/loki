@@ -19,7 +19,8 @@ export interface TagConcept {
 }
 
 // Keep these Fuse options in sync with tag-search.worker.ts and the historical
-// taxonomy fallback.
+// taxonomy fallback. (Not `as const` — Fuse's option types are mutable, and the
+// readonly form trips ts-jest's stricter type check.)
 const FUSE_OPTIONS = {
   keys: [
     { name: 'label', weight: 2 },
@@ -28,7 +29,13 @@ const FUSE_OPTIONS = {
   threshold: 0.4,
   ignoreLocation: true,
   minMatchCharLength: 1,
-} as const;
+};
+
+// Don't dispatch a fuzzy search until the query is at least this long. A 1-char
+// query clears Fuse's threshold against ~every entry in a 175K-tag library, so
+// it both pegs the search and floods the result list with noise. Two characters
+// is the standard type-ahead floor and removes that pathological case.
+const MIN_QUERY_LENGTH = 2;
 
 type ResultCb = (items: TagConcept[]) => void;
 
@@ -39,8 +46,15 @@ let worker: Worker | null = null;
 let useFallback = false;
 // Whether worker setup (or fallback) has been attempted at least once.
 let initialized = false;
-// The last indexed tag array, kept by reference so indexTags can no-op when the
-// same reference is passed again.
+// The raw source array last handed to indexTags, kept by reference so indexing
+// is a no-op when the same reference comes back. All consumers (the startup
+// warmer, the taxonomy sidebar, the command palette) read the SAME React Query
+// cache entry, so they pass an identical reference — meaning the full library is
+// structured-cloned to the worker exactly once, not re-cloned on each surface's
+// first search.
+let indexedSource: TagConcept[] | null = null;
+// The cleaned, indexed tag array (label-less rows dropped). Backs the fallback
+// Fuse instance and isWarm().
 let indexedTags: TagConcept[] | null = null;
 // Synchronous Fuse instance — only built when running without a worker.
 let fallbackFuse: Fuse<TagConcept> | null = null;
@@ -64,46 +78,62 @@ function ensureInit(): void {
     return;
   }
   try {
-    worker = new Worker(
-      new URL('../components/taxonomy/tag-search.worker.ts', import.meta.url)
-    );
+    // Lazy require: the factory carries the `import.meta` worker URL, which the
+    // CommonJS test transform can't parse. We only reach here when a real Worker
+    // exists (never under jsdom), so the test graph never loads that module.
+    // eslint-disable-next-line global-require, @typescript-eslint/no-var-requires
+    const { createTagSearchWorker } = require('./tag-search-worker-factory');
+    worker = createTagSearchWorker();
   } catch {
     worker = null;
     useFallback = true;
     return;
   }
-  worker.onmessage = (e: MessageEvent) => {
-    const msg = e.data;
-    if (msg?.type === 'result') {
-      const cb = pending[msg.id];
-      if (cb) {
-        delete pending[msg.id];
-        cb((msg.items as TagConcept[]) ?? []);
+  if (worker) {
+    worker.onmessage = (e: MessageEvent) => {
+      const msg = e.data;
+      if (msg?.type === 'result') {
+        const cb = pending[msg.id];
+        if (cb) {
+          delete pending[msg.id];
+          cb((msg.items as TagConcept[]) ?? []);
+        }
       }
-    }
-  };
+    };
+  }
 }
 
 /**
- * (Re)index the shared tag set. Idempotent: if the same array reference is
- * passed again it is ignored. Posts the index to the worker, or rebuilds the
- * synchronous Fuse instance when running without a worker.
+ * (Re)index the shared tag set. Idempotent on the SOURCE reference: passing the
+ * same array again is a no-op, so consumers can hand over the raw, shared React
+ * Query array and the full library is cloned to the worker only when the data
+ * actually changes — not once per consumer. Returns whether a (re)index ran.
+ *
+ * The defensive label filter (Fuse and the row renderers assume a non-empty
+ * label) lives here so callers don't each spin up a divergent filtered array,
+ * which is what previously defeated the reference guard.
  */
-export function indexTags(tags: TagConcept[]): void {
+export function indexTags(tags: TagConcept[]): boolean {
   ensureInit();
-  if (tags === indexedTags) return;
-  indexedTags = tags;
+  if (tags === indexedSource) return false;
+  indexedSource = tags;
+  const clean = tags.filter(
+    (t) => t && typeof t.label === 'string' && t.label.length > 0
+  );
+  indexedTags = clean;
   if (worker) {
-    worker.postMessage({ type: 'index', tags });
+    worker.postMessage({ type: 'index', tags: clean });
   } else if (useFallback) {
-    buildFallbackFuse(tags);
+    buildFallbackFuse(clean);
   }
+  return true;
 }
 
 /**
  * Run a search. The callback fires with the ranked results for THIS call.
  * Multiple concurrent callers are routed by an internal incrementing id so
- * they don't clobber each other. An empty query resolves to [] synchronously.
+ * they don't clobber each other. A query shorter than MIN_QUERY_LENGTH (empty
+ * included) resolves to [] synchronously without touching the index.
  */
 export function searchTags(
   query: string,
@@ -111,7 +141,7 @@ export function searchTags(
   cb: ResultCb
 ): void {
   ensureInit();
-  if (!query) {
+  if (!query || query.length < MIN_QUERY_LENGTH) {
     cb([]);
     return;
   }
