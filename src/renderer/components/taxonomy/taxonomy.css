@@ -844,6 +844,21 @@
   color: rgba(255, 255, 255, 0.95);
 }
 
+/* Keyboard-navigation highlight (command palette). Stronger than hover and
+   marked with an accent bar so the active row is unambiguous as arrow keys
+   move through tags and suggestions. Inset box-shadow avoids any layout shift
+   against the row's border-radius/overflow. */
+.suggestion-row.highlighted {
+  background-color: rgba(95, 169, 120, 0.16);
+  color: rgba(255, 255, 255, 0.98);
+  box-shadow: inset 2px 0 0 0 #5fa978;
+}
+
+.suggestion-row.highlighted .suggestion-meta {
+  background-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .suggestion-prefix {
   color: rgba(255, 255, 255, 0.35);
   flex: 0 0 auto;

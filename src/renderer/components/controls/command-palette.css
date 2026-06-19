@@ -662,6 +662,15 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* Keyboard-navigation highlight — matches the palette selector specificity so
+   it wins over the base row color, with an accent bar marking the active row
+   that Enter will commit. */
+.CommandPalette .commandPaletteSearchResults .suggestion-row.highlighted {
+  background: rgba(95, 169, 120, 0.18);
+  color: #fff;
+  box-shadow: inset 2px 0 0 0 #5fa978;
+}
+
 .CommandPalette .commandPaletteSearchResults .suggestion-prefix {
   color: rgba(255, 255, 255, 0.4);
   font-size: 11px;

@@ -54,3 +54,28 @@ describe('QueryInput history dropdown', () => {
     expect(dropdown()).not.toBeNull();
   });
 });
+
+describe('QueryInput result navigation (resultNavCount > 0)', () => {
+  it('routes arrow keys and Enter to the parent result nav', () => {
+    const onResultNavMove = jest.fn();
+    const onResultNavSubmit = jest.fn();
+    const { input } = renderInput({
+      resultNavCount: 3,
+      onResultNavMove,
+      onResultNavSubmit,
+    });
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onResultNavMove.mock.calls).toEqual([[1], [-1]]);
+    expect(onResultNavSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses the history dropdown so it does not overlap the results', () => {
+    const { dropdown, input } = renderInput({ resultNavCount: 3 });
+    // Typing would normally open the dropdown; with result nav active it stays
+    // closed because the parent's results surface is the navigation target.
+    fireEvent.change(input, { target: { value: 'c' } });
+    expect(dropdown()).toBeNull();
+  });
+});

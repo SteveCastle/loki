@@ -18,6 +18,15 @@ interface QueryInputProps {
   onFocus?: () => void;
   autoFocus?: boolean; // focus the text input on mount (fast palette workflow)
   disabled?: boolean;
+  // Result-navigation bridge. When the parent renders its own results surface
+  // (the command palette) and passes resultNavCount > 0, the input forwards
+  // Arrow Up/Down and Enter to the parent so the user can keyboard-navigate the
+  // highlighted result, and the internal history dropdown is suppressed (the
+  // results surface is what the user is navigating). Omitted everywhere else
+  // (e.g. the taxonomy sidebar), which keeps the original history behaviour.
+  resultNavCount?: number;
+  onResultNavMove?: (delta: 1 | -1) => void;
+  onResultNavSubmit?: () => void;
 }
 
 const CHEAT_SHEET = [
@@ -55,8 +64,14 @@ export default function QueryInput({
   onFocus,
   autoFocus = false,
   disabled = false,
+  resultNavCount = 0,
+  onResultNavMove,
+  onResultNavSubmit,
 }: QueryInputProps) {
   const { history, addSearch, removeSearch, clearAll } = useSearchHistory();
+  // The parent owns a navigable results list (command palette). While it has
+  // items, arrow/enter drive that list instead of the history dropdown.
+  const resultNavActive = resultNavCount > 0;
   const [isOpen, setIsOpen] = useState(false);
   const [showCheatSheet, setShowCheatSheet] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
@@ -150,6 +165,27 @@ export default function QueryInput({
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       e.stopPropagation();
 
+      // Result-navigation mode: the parent's results surface owns the
+      // highlight, so arrow/enter drive it instead of the history dropdown.
+      if (resultNavActive) {
+        switch (e.key) {
+          case 'ArrowDown':
+            e.preventDefault();
+            onResultNavMove?.(1);
+            return;
+          case 'ArrowUp':
+            e.preventDefault();
+            onResultNavMove?.(-1);
+            return;
+          case 'Enter':
+            e.preventDefault();
+            onResultNavSubmit?.();
+            return;
+          default:
+            return; // typing and everything else: let the input handle it
+        }
+      }
+
       if (!isOpen || !hasItems || showCheatSheet) {
         if (e.key === 'Enter') {
           handleSubmit();
@@ -224,6 +260,9 @@ export default function QueryInput({
       handleSubmit,
       selectItem,
       removeSearch,
+      resultNavActive,
+      onResultNavMove,
+      onResultNavSubmit,
     ]
   );
 
@@ -239,7 +278,9 @@ export default function QueryInput({
     setHighlightIndex(-1);
   }, [query.predicates.length, onClearAll, onClearText]);
 
-  const dropdownOpen = isOpen && hasItems;
+  // Suppress the history dropdown while the parent's results surface is the
+  // active navigation target, so the two don't overlap or fight for arrow keys.
+  const dropdownOpen = !resultNavActive && isOpen && hasItems;
 
   return (
     <div className="query-input" ref={containerRef}>

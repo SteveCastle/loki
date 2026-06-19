@@ -5,15 +5,17 @@
 // Paths / Description / Hash). Selecting a result adds a predicate to the SAME
 // query state the taxonomy sidebar drives, so the palette and sidebar stay in
 // lockstep. Kept compact + scrollable to fit the floating palette.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Predicate } from '../../query/types';
 import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import type { TagConcept } from '../../hooks/useTagSearch';
+import { useSearchHistory } from '../../hooks/useSearchHistory';
 import QueryInput from '../query-input/QueryInput';
 import SuggestionSections from '../taxonomy/suggestion-sections';
+import type { SuggestionItem } from '../taxonomy/suggestion-sections';
 import TagPlusIcon from '../icons/tag-plus-icon';
 
 // Compact cap for the palette's Tags section — the sidebar shows far more, but
@@ -96,7 +98,15 @@ export default function CommandPaletteSearch({
     }
   };
 
+  const { addSearch } = useSearchHistory();
+
   const [text, setText] = useState('');
+  // Index into `navItems` of the currently highlighted result. Enter commits
+  // it; arrow keys move it; the top result is highlighted by default.
+  const [highlightIndex, setHighlightIndex] = useState(0);
+  // Ordered suggestion rows reported up by SuggestionSections, so the highlight
+  // can span tags *and* suggestions as one list.
+  const [suggestionItems, setSuggestionItems] = useState<SuggestionItem[]>([]);
 
   const { results: tagResults } = useTagSearch(text, text.length > 0);
 
@@ -121,21 +131,65 @@ export default function CommandPaletteSearch({
 
   const join: 'AND' | 'OR' = filteringMode === 'OR' ? 'OR' : 'AND';
 
+  const hasText = text.length > 0;
+
   const clearText = () => setText('');
 
-  const addPredicate = (predicate: Predicate) => {
+  // The tag rows shown in the palette (capped). They lead the navigable list.
+  const cappedTags = useMemo(
+    () => sortedTags.slice(0, PALETTE_TAG_CAP),
+    [sortedTags]
+  );
+
+  // The full, ordered set the keyboard moves through: tags first (in render
+  // order), then the suggestion rows. Empty unless the user is searching.
+  const navItems: SuggestionItem[] = useMemo(() => {
+    if (!hasText) return [];
+    const tagItems: SuggestionItem[] = cappedTags.map((t) => ({
+      key: `tag:${t.label}`,
+      predicate: { type: 'tag', value: t.label, exclude: false },
+    }));
+    return [...tagItems, ...suggestionItems];
+  }, [hasText, cappedTags, suggestionItems]);
+
+  // Clamp the stored index to the live list — the result count changes as the
+  // user types and as async suggestions arrive.
+  const safeIndex =
+    navItems.length === 0
+      ? -1
+      : Math.min(Math.max(highlightIndex, 0), navItems.length - 1);
+  const highlightedKey = safeIndex >= 0 ? navItems[safeIndex].key : null;
+
+  // Snap the highlight back to the top result whenever the query text changes.
+  useEffect(() => {
+    setHighlightIndex(0);
+  }, [text]);
+
+  // Commit a chosen result: add it to the query AND record it in recent
+  // searches (the user selected it — that's the search worth remembering),
+  // then clear the typed text.
+  const commitPredicate = (predicate: Predicate) => {
     libraryService.send({
       type: 'ADD_PREDICATE',
       data: { predicate: { ...predicate, join } },
     });
-  };
-
-  const addTag = (label: string) => {
-    addPredicate({ type: 'tag', value: label, exclude: false });
+    addSearch(predicate.value);
     clearText();
+    setHighlightIndex(0);
   };
 
-  const hasText = text.length > 0;
+  const moveHighlight = (delta: 1 | -1) => {
+    if (navItems.length === 0) return;
+    setHighlightIndex((prev) => {
+      const base = prev < 0 ? 0 : prev;
+      return (base + delta + navItems.length) % navItems.length;
+    });
+  };
+
+  const highlightByKey = (key: string) => {
+    const idx = navItems.findIndex((n) => n.key === key);
+    if (idx >= 0) setHighlightIndex(idx);
+  };
 
   return (
     <div className="commandPaletteSearch">
@@ -145,10 +199,11 @@ export default function CommandPaletteSearch({
         textValue={text}
         onTextChange={setText}
         onSubmitText={() => {
-          // Commit the top tag suggestion as a predicate, then clear text.
+          // Fallback for the brief window before suggestions populate (when
+          // resultNavCount is still 0): commit the top tag if there is one.
           const top = sortedTags[0];
           if (top) {
-            addTag(top.label);
+            commitPredicate({ type: 'tag', value: top.label, exclude: false });
           }
         }}
         onRemovePredicate={(key) =>
@@ -168,19 +223,33 @@ export default function CommandPaletteSearch({
           libraryService.send({ type: 'CLEAR_QUERY' });
           clearText();
         }}
+        resultNavCount={navItems.length}
+        onResultNavMove={moveHighlight}
+        onResultNavSubmit={() => {
+          if (safeIndex >= 0) commitPredicate(navItems[safeIndex].predicate);
+        }}
       />
 
       {hasText && (
         <div className="commandPaletteSearchResults">
-          {sortedTags.length > 0 && (
+          {cappedTags.length > 0 && (
             <div className="suggestion-section">
               <div className="suggestion-section-label">Tags</div>
-              {sortedTags.slice(0, PALETTE_TAG_CAP).map((t) => (
+              {cappedTags.map((t, i) => (
                 <div
                   key={t.label}
-                  className="suggestion-row"
+                  className={`suggestion-row${
+                    safeIndex === i ? ' highlighted' : ''
+                  }`}
                   title={t.label}
-                  onClick={() => addTag(t.label)}
+                  onMouseEnter={() => setHighlightIndex(i)}
+                  onClick={() =>
+                    commitPredicate({
+                      type: 'tag',
+                      value: t.label,
+                      exclude: false,
+                    })
+                  }
                 >
                   <span className="suggestion-prefix">#</span>
                   <span className="suggestion-value">{t.label}</span>
@@ -208,7 +277,10 @@ export default function CommandPaletteSearch({
           <SuggestionSections
             text={text}
             categories={categories ?? []}
-            onAdd={(predicate) => addPredicate(predicate)}
+            onAdd={(predicate) => commitPredicate(predicate)}
+            onItemsChange={setSuggestionItems}
+            highlightedKey={highlightedKey}
+            onHighlightKey={highlightByKey}
           />
         </div>
       )}
