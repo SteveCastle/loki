@@ -339,6 +339,11 @@ export default function Taxonomy() {
             disabled={isDisabled}
           />
         </div>
+        {/* Body row: fills the height left under the search bar so the inner
+            scroll areas size against that remaining height (not the whole
+            panel) and keep their full bottom padding — otherwise their bottoms
+            overhang the panel and the last row hides under the bottom overlay. */}
+        <div className="taxonomy-body">
         <div className="controls">
           <button
             data-tooltip-id="reset-query-tag"
@@ -607,6 +612,7 @@ export default function Taxonomy() {
             </div>
           );
         })()}
+        </div>
       </div>
       {activeCategory && addingTag ? (
         <NewTagModal

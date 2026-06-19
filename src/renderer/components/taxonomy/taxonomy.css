@@ -1,10 +1,26 @@
 .Taxonomy {
   display: flex;
-  flex-wrap: wrap;
+  /* Column: the search bar is an auto-height top row, then .taxonomy-body fills
+     the rest. Previously this was a wrapping flex row where the content items
+     used height:100% — but on the wrapped second line that resolves to the FULL
+     panel height, so the results/list overhung the panel bottom by the search
+     bar's height and the last row was clipped under the bottom overlay. */
+  flex-direction: column;
   margin: 0.3rem 0.2rem;
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+/* Fills the height remaining under the search bar. The content columns
+   (controls / categories / new-tag / results) size their height:100% against
+   THIS row, so their scroll areas keep their full bottom padding. */
+.Taxonomy .taxonomy-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  width: 100%;
 }
 
 .Placeholder {
@@ -21,7 +37,7 @@
 
 .Taxonomy .search {
   display: flex;
-  flex: 1 1 100%;
+  flex: 0 0 auto;
   flex-direction: row;
   margin-bottom: 8px;
 }
@@ -772,7 +788,7 @@
   flex-direction: column;
 }
 
-.Taxonomy > .controls button {
+.Taxonomy .controls button {
   background: none;
   border: none;
   cursor: pointer;
