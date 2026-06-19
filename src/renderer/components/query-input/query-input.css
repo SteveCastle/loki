@@ -89,9 +89,16 @@
   color: inherit;
   cursor: pointer;
   opacity: 0.6;
-  padding: 0;
   font-size: 14px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  /* Enlarge the click target without resizing the chip: pad the hit area, then
+     pull it back with negative margins (right cancels the chip's right padding,
+     left cancels the flex gap, vertical fills the chip height) so the chip's
+     box is unchanged but clicks anywhere around the glyph still remove it. */
+  padding: 5px 8px;
+  margin: -5px -8px -5px -5px;
 }
 
 .query-chip-remove:hover {

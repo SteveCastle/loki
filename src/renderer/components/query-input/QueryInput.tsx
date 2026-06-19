@@ -106,7 +106,11 @@ export default function QueryInput({
       clearTimeout(blurTimeoutRef.current);
       blurTimeoutRef.current = null;
     }
-    setIsOpen(true);
+    // Deliberately do NOT open the dropdown on focus. The command palette
+    // programmatically focuses this input on mount (autoFocus), and opening on
+    // focus made the history dropdown appear before the user interacted at all.
+    // The dropdown opens only on genuine intent: typing, an intentional
+    // mouse-down on the input, or ArrowDown (see below).
     onFocus?.();
   }, [onFocus]);
 
@@ -154,6 +158,15 @@ export default function QueryInput({
         if (e.key === 'Escape') {
           setIsOpen(false);
           setShowCheatSheet(false);
+          return;
+        }
+        // Keyboard affordance: open (and highlight the first row) on ArrowDown
+        // so keyboard-only users can still reach history now that focus alone
+        // no longer opens the dropdown.
+        if (e.key === 'ArrowDown' && hasItems && !showCheatSheet) {
+          e.preventDefault();
+          setIsOpen(true);
+          setHighlightIndex(0);
           return;
         }
         return;
@@ -288,7 +301,16 @@ export default function QueryInput({
           type="text"
           placeholder="Search & filter"
           value={textValue}
-          onChange={(e) => onTextChange(e.currentTarget.value)}
+          onChange={(e) => {
+            // Typing is intent — open the dropdown so matching history shows.
+            setIsOpen(true);
+            onTextChange(e.currentTarget.value);
+          }}
+          onMouseDown={() => {
+            // An intentional click into the input opens the dropdown (focus
+            // alone no longer does, to keep the palette's autoFocus quiet).
+            setIsOpen(true);
+          }}
           onKeyDown={handleKeyDown}
           onKeyUp={(e) => e.stopPropagation()}
           onFocus={handleFocus}
