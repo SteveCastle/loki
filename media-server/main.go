@@ -732,8 +732,10 @@ func mediaSuggestHandler(deps *Dependencies) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(respSimple{Suggestions: suggestions})
 			return
 		case "tag":
-			// Return structured tags with categories for grouping (no pagination - returns all tags)
-			tags, err := media.SuggestTagsWithCategories(deps.DB, prefix)
+			// Return structured tags with categories for grouping, capped by
+			// `limit` so a short substring against a 100k+ tag library can't
+			// return tens of thousands of rows and freeze the typeahead.
+			tags, err := media.SuggestTagsWithCategories(deps.DB, prefix, limit)
 			if err != nil {
 				log.Printf("suggest error kind=%s prefix=%q: %v", kind, prefix, err)
 				http.Error(w, "suggest error", http.StatusInternalServerError)

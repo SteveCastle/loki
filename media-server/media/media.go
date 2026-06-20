@@ -1300,11 +1300,17 @@ func SuggestTagLabels(db *sql.DB, prefix string, limit int) ([]string, error) {
 	return out, nil
 }
 
-// SuggestTagsWithCategories returns tags with their categories, grouped and ordered
-// No limit is applied - returns all matching tags since they are grouped by category
-func SuggestTagsWithCategories(db *sql.DB, prefix string) ([]MediaTag, error) {
+// SuggestTagsWithCategories returns tags with their categories, grouped and
+// ordered, capped at `limit` rows. The cap matters: a library with 100k+ tags
+// matches tens of thousands of them on a short substring, and returning every
+// match froze the typeahead (huge JSON payload + one DOM node per tag in the
+// dropdown). `limit` is clamped to a sane range; pass the request's limit.
+func SuggestTagsWithCategories(db *sql.DB, prefix string, limit int) ([]MediaTag, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not available")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 25
 	}
 	like := "%" + escapeLikePattern(strings.TrimSpace(prefix)) + "%"
 	// Source the list from the `tag` registry (one row per tag) rather than
@@ -1323,7 +1329,8 @@ func SuggestTagsWithCategories(db *sql.DB, prefix string) ([]MediaTag, error) {
         FROM tag
         WHERE label COLLATE NOCASE LIKE ? ESCAPE '\'
         ORDER BY category_label, label
-    `, like)
+        LIMIT ?
+    `, like, limit)
 	if err != nil {
 		return nil, err
 	}
