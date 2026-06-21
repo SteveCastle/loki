@@ -5,6 +5,7 @@ import {
   pixelToTime,
   selectDisplayTime,
   coalescedSeekTarget,
+  seekBy,
   DEFAULT_FPS,
 } from '../renderer/video-frame';
 
@@ -114,6 +115,22 @@ describe('selectDisplayTime', () => {
 
   it('treats a 0 drag time as a real value, not absent', () => {
     expect(selectDisplayTime(true, 0, 5.0)).toBe(0);
+  });
+});
+
+describe('seekBy', () => {
+  it('skips forward and backward by the given seconds', () => {
+    expect(seekBy(20, 10, 100)).toBe(30);
+    expect(seekBy(20, -10, 100)).toBe(10);
+  });
+
+  it('clamps to the start and end', () => {
+    expect(seekBy(5, -10, 100)).toBe(0);
+    expect(seekBy(95, 10, 100)).toBe(100);
+  });
+
+  it('returns 0 when duration is unknown', () => {
+    expect(seekBy(5, 10, 0)).toBe(0);
   });
 });
 

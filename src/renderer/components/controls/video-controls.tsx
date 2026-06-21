@@ -20,6 +20,7 @@ import {
   pixelToTime,
   selectDisplayTime,
   coalescedSeekTarget,
+  seekBy,
 } from '../../video-frame';
 import './video-controls.css';
 
@@ -101,8 +102,14 @@ interface VideoControlsProps {
 
 export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
   const { libraryService } = useContext(GlobalStateContext);
-  const { actualVideoTime, videoLength, loopLength, playing, frameRate } =
-    useSelector(libraryService, (state) => state.context.videoPlayer);
+  const {
+    actualVideoTime,
+    videoLength,
+    loopLength,
+    playing,
+    frameRate,
+    playbackRate,
+  } = useSelector(libraryService, (state) => state.context.videoPlayer);
   const { volume, playSound } = useSelector(
     libraryService,
     (state: any) => state.context.settings
@@ -116,6 +123,14 @@ export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
   const volumeContainerRef = useRef<HTMLDivElement>(null);
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPosition, setHoverPosition] = useState(0);
+
+  // Frame/transport popover: opens after hovering the play button for 3s (long
+  // enough that it doesn't pop up during normal play/pause clicks), and stays
+  // open while the cursor is over the button or the popover — same hover model
+  // as the volume control.
+  const [showFrameControls, setShowFrameControls] = useState(false);
+  const playContainerRef = useRef<HTMLDivElement>(null);
+  const playHoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Refs for smoother scrubbing logic
   const wasPlayingRef = useRef(false); // Store playing state before drag
@@ -199,6 +214,43 @@ export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
     handleSettingChange('playSound', !playSound);
   }, [playSound, handleSettingChange]);
 
+  // --- Frame/transport popover hover logic (3s open delay) ---
+  const handlePlayMouseEnter = useCallback(() => {
+    if (playHoverTimerRef.current) clearTimeout(playHoverTimerRef.current);
+    playHoverTimerRef.current = setTimeout(() => {
+      setShowFrameControls(true);
+    }, 3000);
+  }, []);
+
+  const handlePlayMouseLeave = useCallback(() => {
+    if (playHoverTimerRef.current) {
+      clearTimeout(playHoverTimerRef.current);
+      playHoverTimerRef.current = null;
+    }
+    // Brief grace period so the cursor can travel from the button into the
+    // popover without it closing.
+    setTimeout(() => {
+      if (!playContainerRef.current?.matches(':hover')) {
+        setShowFrameControls(false);
+      }
+    }, 120);
+  }, []);
+
+  const handlePlayContainerMouseLeave = useCallback(() => {
+    if (playHoverTimerRef.current) {
+      clearTimeout(playHoverTimerRef.current);
+      playHoverTimerRef.current = null;
+    }
+    setShowFrameControls(false);
+  }, []);
+
+  // Clear any pending open timer on unmount.
+  useEffect(() => {
+    return () => {
+      if (playHoverTimerRef.current) clearTimeout(playHoverTimerRef.current);
+    };
+  }, []);
+
   // --- Scrubbing Logic ---
 
   const handleProgressHover = useCallback(
@@ -267,6 +319,39 @@ export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
       });
     },
     [videoLength, playing, actualVideoTime, frameRate, libraryService, mediaRef]
+  );
+
+  // Skip forward/back by a fixed number of seconds (rewind / fast-forward),
+  // clamped to the clip. Seeks the element directly and syncs the machine.
+  const SKIP_SECONDS = 10;
+  const skip = useCallback(
+    (deltaSeconds: number) => {
+      if (videoLength <= 0) return;
+      const target = seekBy(actualVideoTime, deltaSeconds, videoLength);
+      const el = mediaRef?.current;
+      if (el) el.currentTime = target;
+      libraryService.send('SET_VIDEO_TIME', {
+        timeStamp: target,
+        eventId: uniqueId(),
+      });
+      libraryService.send('SET_ACTUAL_VIDEO_TIME', {
+        timeStamp: target,
+        eventId: uniqueId(),
+      });
+    },
+    [videoLength, actualVideoTime, libraryService, mediaRef]
+  );
+
+  // Set the playback speed. Applies to the element immediately and persists in
+  // the machine so it survives clip changes within the session.
+  const PLAYBACK_SPEEDS = [0.25, 0.5, 1, 1.5, 2];
+  const setSpeed = useCallback(
+    (rate: number) => {
+      const el = mediaRef?.current;
+      if (el) el.playbackRate = rate;
+      libraryService.send('SET_PLAYBACK_RATE', { playbackRate: rate });
+    },
+    [libraryService, mediaRef]
   );
 
   // Arrow keys step one frame while the slider is focused. Scoped to the slider
@@ -448,39 +533,94 @@ export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
   return (
     <div className="VideoControls">
       <div className="controls-left">
-        <button
-          className="control-button frame-step-button"
-          onClick={() => stepFrame(-1)}
-          disabled={videoLength <= 0}
-          aria-label="Previous frame"
-          title="Previous frame (←)"
+        <div
+          className="playButtonContainer"
+          ref={playContainerRef}
+          onMouseLeave={handlePlayContainerMouseLeave}
         >
-          <span>−1f</span>
-        </button>
-        <button
-          className="control-button"
-          onClick={() => {
-            libraryService.send('SET_PLAYING_STATE', {
-              playing: !playing,
-            });
-          }}
-          aria-label={playing ? 'Pause' : 'Play'}
-        >
-          {playing ? (
-            <img src={pause} alt="Pause" />
-          ) : (
-            <img src={play} alt="Play" />
+          <button
+            className="control-button"
+            onClick={() => {
+              libraryService.send('SET_PLAYING_STATE', {
+                playing: !playing,
+              });
+            }}
+            onMouseEnter={handlePlayMouseEnter}
+            onMouseLeave={handlePlayMouseLeave}
+            aria-label={playing ? 'Pause' : 'Play'}
+          >
+            {playing ? (
+              <img src={pause} alt="Pause" />
+            ) : (
+              <img src={play} alt="Play" />
+            )}
+          </button>
+          {showFrameControls && (
+            // Stop click/double-click from reaching the detail panel, whose
+            // double-click handler collapses panels (switches to list view) —
+            // fast clicks here must not trigger it.
+            <div
+              className="frameControlHover"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <div className="popover-row">
+                <span className="popover-label">Speed</span>
+                {PLAYBACK_SPEEDS.map((rate) => (
+                  <button
+                    key={rate}
+                    className={`popover-button speed-button${
+                      playbackRate === rate ? ' selected' : ''
+                    }`}
+                    onClick={() => setSpeed(rate)}
+                    aria-pressed={playbackRate === rate}
+                  >
+                    {rate}×
+                  </button>
+                ))}
+              </div>
+              <div className="popover-row">
+                <button
+                  className="popover-button transport-button"
+                  onClick={() => skip(-SKIP_SECONDS)}
+                  disabled={videoLength <= 0}
+                  aria-label={`Rewind ${SKIP_SECONDS} seconds`}
+                  title={`Rewind ${SKIP_SECONDS}s`}
+                >
+                  «{SKIP_SECONDS}s
+                </button>
+                <button
+                  className="popover-button transport-button"
+                  onClick={() => stepFrame(-1)}
+                  disabled={videoLength <= 0}
+                  aria-label="Previous frame"
+                  title="Previous frame (←)"
+                >
+                  −1f
+                </button>
+                <button
+                  className="popover-button transport-button"
+                  onClick={() => stepFrame(1)}
+                  disabled={videoLength <= 0}
+                  aria-label="Next frame"
+                  title="Next frame (→)"
+                >
+                  +1f
+                </button>
+                <button
+                  className="popover-button transport-button"
+                  onClick={() => skip(SKIP_SECONDS)}
+                  disabled={videoLength <= 0}
+                  aria-label={`Fast-forward ${SKIP_SECONDS} seconds`}
+                  title={`Fast-forward ${SKIP_SECONDS}s`}
+                >
+                  {SKIP_SECONDS}s»
+                </button>
+              </div>
+            </div>
           )}
-        </button>
-        <button
-          className="control-button frame-step-button"
-          onClick={() => stepFrame(1)}
-          disabled={videoLength <= 0}
-          aria-label="Next frame"
-          title="Next frame (→)"
-        >
-          <span>+1f</span>
-        </button>
+        </div>
       </div>
 
       <div className="controls-center">

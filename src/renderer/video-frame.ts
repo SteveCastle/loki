@@ -99,6 +99,17 @@ export function coalescedSeekTarget(
   return pending;
 }
 
+// Seek a fixed number of seconds from the current time (negative to rewind),
+// clamped to [0, duration]. Returns 0 when the duration is unknown.
+export function seekBy(
+  currentTime: number,
+  deltaSeconds: number,
+  duration: number
+): number {
+  if (!(duration > 0)) return 0;
+  return Math.min(Math.max(currentTime + deltaSeconds, 0), duration);
+}
+
 // Map a horizontal pixel offset on the progress bar to a fractional time in
 // seconds. The clamp keeps the result within [0, duration]. Crucially this
 // does NOT round to whole seconds — that rounding was the original cause of

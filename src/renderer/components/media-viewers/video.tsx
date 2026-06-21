@@ -78,10 +78,8 @@ export function Video({
   useHLS = false,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
-  const { timeStamp, loopLength, loopStartTime, playing } = useSelector(
-    libraryService,
-    (state) => state.context.videoPlayer
-  );
+  const { timeStamp, loopLength, loopStartTime, playing, playbackRate } =
+    useSelector(libraryService, (state) => state.context.videoPlayer);
 
   const eventId = useSelector(
     libraryService,
@@ -358,6 +356,14 @@ export function Video({
       mediaRef.current.volume = clampVolume(volume);
     }
   }, [volume]);
+
+  // Apply the playback-speed setting. Keyed on `path` too so it re-applies when
+  // a new clip mounts (a fresh element defaults back to 1x).
+  useEffect(() => {
+    if (mediaRef && mediaRef.current && settable) {
+      mediaRef.current.playbackRate = playbackRate;
+    }
+  }, [playbackRate, settable, path]);
 
   const hlsRef = useRef<Hls | null>(null);
   const [hlsFailed, setHlsFailed] = useState(false);
