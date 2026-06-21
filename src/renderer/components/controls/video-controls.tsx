@@ -15,7 +15,12 @@ import soundOff from '../../../../assets/sound-off.svg';
 import { uniqueId } from 'xstate/lib/utils';
 import { GlobalStateContext } from '../../state';
 import AudioTrackControls from './audio-track-controls';
-import { frameStep, pixelToTime } from '../../video-frame';
+import {
+  frameStep,
+  pixelToTime,
+  selectDisplayTime,
+  coalescedSeekTarget,
+} from '../../video-frame';
 import './video-controls.css';
 
 // --- Helper Functions (mapRange, getLabel, useElementSize - remain the same) ---
@@ -87,7 +92,14 @@ function getLabel(currentVideoTimeStamp: number): string {
 
 // --- Component ---
 
-export default function VideoControls() {
+interface VideoControlsProps {
+  // The media element being controlled. When supplied, scrubbing seeks the
+  // element directly (fast, coalesced, no per-frame XState churn). When absent,
+  // the component falls back to the XState SET_VIDEO_TIME path.
+  mediaRef?: React.RefObject<HTMLMediaElement>;
+}
+
+export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
   const { libraryService } = useContext(GlobalStateContext);
   const { actualVideoTime, videoLength, loopLength, playing, frameRate } =
     useSelector(libraryService, (state) => state.context.videoPlayer);
@@ -109,6 +121,52 @@ export default function VideoControls() {
   const wasPlayingRef = useRef(false); // Store playing state before drag
   const rafRef = useRef<number | null>(null); // Store requestAnimationFrame ID
   const latestMouseXRef = useRef(0); // Store latest mouse position for rAF
+
+  // Optimistic scrub position. While dragging, the thumb/label render from this
+  // (cursor-locked, instant) instead of actualVideoTime (which only updates
+  // after the seek decodes) — this is what makes scrubbing feel direct.
+  const [dragTime, setDragTime] = useState<number | null>(null);
+  // Latest requested seek time; the `seeked` handler converges to it so we keep
+  // exactly one seek in flight (see coalescedSeekTarget).
+  const pendingSeekRef = useRef<number | null>(null);
+  // Live mirror of actualVideoTime read inside drag callbacks, so those
+  // callbacks (and the global mouse-listener effect) don't re-create every time
+  // actualVideoTime ticks mid-drag — which would re-subscribe the listeners.
+  const actualVideoTimeRef = useRef(actualVideoTime);
+  actualVideoTimeRef.current = actualVideoTime;
+
+  const displayTime = selectDisplayTime(isDragging, dragTime, actualVideoTime);
+
+  // Seek the media element directly with coalescing. Returns false when no
+  // element is available so callers can fall back to the XState path.
+  const seekElement = useCallback(
+    (time: number): boolean => {
+      const el = mediaRef?.current;
+      if (!el) return false;
+      pendingSeekRef.current = time;
+      const target = coalescedSeekTarget(time, el.seeking, el.currentTime);
+      if (target != null) el.currentTime = target;
+      return true;
+    },
+    [mediaRef]
+  );
+
+  // When a coalesced seek completes, immediately seek to the most recent
+  // pending target if the cursor has moved on. Active only during a drag.
+  useEffect(() => {
+    const el = mediaRef?.current;
+    if (!el || !isDragging) return;
+    const onSeeked = () => {
+      const target = coalescedSeekTarget(
+        pendingSeekRef.current,
+        el.seeking,
+        el.currentTime
+      );
+      if (target != null) el.currentTime = target;
+    };
+    el.addEventListener('seeked', onSeeked);
+    return () => el.removeEventListener('seeked', onSeeked);
+  }, [mediaRef, isDragging]);
 
   // --- Volume Logic ---
   const handleSettingChange = useCallback(
@@ -191,12 +249,24 @@ export default function VideoControls() {
         direction,
         videoLength
       );
+      // Seek the element directly for an instant step, then sync the machine
+      // (and every actualVideoTime consumer) to the new position so the thumb
+      // and readout update without waiting on the seek round-trip.
+      const el = mediaRef?.current;
+      if (el) {
+        el.pause();
+        el.currentTime = target;
+      }
       libraryService.send('SET_VIDEO_TIME', {
         timeStamp: target,
         eventId: uniqueId(),
       });
+      libraryService.send('SET_ACTUAL_VIDEO_TIME', {
+        timeStamp: target,
+        eventId: uniqueId(),
+      });
     },
-    [videoLength, playing, actualVideoTime, frameRate, libraryService]
+    [videoLength, playing, actualVideoTime, frameRate, libraryService, mediaRef]
   );
 
   // Arrow keys step one frame while the slider is focused. Scoped to the slider
@@ -224,38 +294,25 @@ export default function VideoControls() {
     const rect = progressBarRef.current.getBoundingClientRect();
     const offsetX = latestMouseXRef.current - rect.left;
 
-    // Fractional seek target — NOT rounded to whole seconds. The previous
-    // Math.round + 0.05 gate is exactly what limited scrubbing to one-second
-    // steps. rAF already throttles sends to ~display rate.
+    // Fractional seek target — NOT rounded to whole seconds.
     const newTimeStamp = pixelToTime(offsetX, progressBarWidth, videoLength);
 
-    // Suppress only truly redundant sends (sub-millisecond), so single-frame
-    // drag movements still go through.
-    if (Math.abs(newTimeStamp - actualVideoTime) > 0.001) {
-      libraryService.send('SET_VIDEO_TIME', {
-        timeStamp: newTimeStamp,
-        eventId: uniqueId(), // Consider if uniqueId is needed here
-      });
-      // Don't update loop during drag for performance, maybe only on mouseup?
-      // If live loop update is needed, uncomment below, but test performance.
-      /*
-            if (loopLength > 0) {
-              libraryService.send('LOOP_VIDEO', {
-                loopStartTime: newTimeStamp,
-                loopLength,
-              });
-            }
-            */
+    // 1) Optimistic, cursor-locked visual feedback — no seek round-trip.
+    setDragTime(newTimeStamp);
+
+    // 2) Move the picture. Prefer a direct, coalesced element seek (fast, no
+    //    app-wide re-render). Only when no element ref is available do we fall
+    //    back to the XState path (which is what makes scrubbing feel laggy).
+    if (!seekElement(newTimeStamp)) {
+      if (Math.abs(newTimeStamp - actualVideoTimeRef.current) > 0.001) {
+        libraryService.send('SET_VIDEO_TIME', {
+          timeStamp: newTimeStamp,
+          eventId: uniqueId(),
+        });
+      }
     }
     rafRef.current = null; // Clear the raf ID after execution
-  }, [
-    progressBarRef,
-    progressBarWidth,
-    videoLength,
-    libraryService,
-    actualVideoTime,
-    // loopLength // Add if uncommenting loop update
-  ]);
+  }, [progressBarRef, progressBarWidth, videoLength, seekElement, libraryService]);
 
   // Function called by the mousemove listener to request an update frame
   const requestUpdateFrame = useCallback(() => {
@@ -274,14 +331,24 @@ export default function VideoControls() {
 
       wasPlayingRef.current = playing; // Store current playing state
       if (playing) {
-        // Pause the video only if it was playing
+        // Pause immediately (element + machine). The direct pause avoids the
+        // video advancing during the first drag frames while the XState round
+        // trip propagates.
+        mediaRef?.current?.pause();
         libraryService.send('SET_PLAYING_STATE', { playing: false });
       }
       setIsDragging(true);
       latestMouseXRef.current = e.clientX; // Store initial position
       performTimeUpdate(); // Perform initial update immediately on click
     },
-    [playing, libraryService, performTimeUpdate, progressBarWidth, videoLength] // Add deps
+    [
+      playing,
+      libraryService,
+      performTimeUpdate,
+      progressBarWidth,
+      videoLength,
+      mediaRef,
+    ]
   );
 
   // Effect to handle global mouse move and up listeners
@@ -300,34 +367,45 @@ export default function VideoControls() {
         rafRef.current = null;
       }
 
-      setIsDragging(false);
+      // Final precise position from the release point.
+      let finalTime = actualVideoTimeRef.current;
+      if (progressBarRef.current && progressBarWidth > 0 && videoLength > 0) {
+        const rect = progressBarRef.current.getBoundingClientRect();
+        const offsetX = e.clientX - rect.left;
+        finalTime = pixelToTime(offsetX, progressBarWidth, videoLength);
+      }
 
-      // Update one last time on mouseUp to ensure final position is set
-      // Use performTimeUpdate directly to ensure it runs
-      latestMouseXRef.current = e.clientX;
-      performTimeUpdate();
+      // Land the element exactly on the release point (covers the case where
+      // the last drag frame was coalesced away while a seek was in flight).
+      const el = mediaRef?.current;
+      if (el) el.currentTime = finalTime;
+
+      // Sync the machine AND actualVideoTime (which the thumb falls back to)
+      // before clearing the optimistic dragTime, so the bar doesn't flash back
+      // to a stale position on release. SET_ACTUAL_VIDEO_TIME also keeps the
+      // transcript / cue / tag-drop consumers in step.
+      libraryService.send('SET_VIDEO_TIME', {
+        timeStamp: finalTime,
+        eventId: uniqueId(),
+      });
+      libraryService.send('SET_ACTUAL_VIDEO_TIME', {
+        timeStamp: finalTime,
+        eventId: uniqueId(),
+      });
+
+      pendingSeekRef.current = null;
+      setIsDragging(false);
+      setDragTime(null);
 
       // Resume playing only if it was playing before dragging started
       if (wasPlayingRef.current) {
         libraryService.send('SET_PLAYING_STATE', { playing: true });
       }
 
-      // Optional: Set final loop position on mouseUp if not done during drag
-      if (
-        loopLength > 0 &&
-        progressBarRef.current &&
-        progressBarWidth > 0 &&
-        videoLength > 0
-      ) {
-        const rect = progressBarRef.current.getBoundingClientRect();
-        const offsetX = e.clientX - rect.left;
-        const finalTimeStamp = pixelToTime(
-          offsetX,
-          progressBarWidth,
-          videoLength
-        );
+      // Set final loop position on mouseUp (not updated live during drag).
+      if (loopLength > 0 && videoLength > 0) {
         libraryService.send('LOOP_VIDEO', {
-          loopStartTime: finalTimeStamp,
+          loopStartTime: finalTime,
           loopLength,
         });
       }
@@ -359,12 +437,12 @@ export default function VideoControls() {
     isDragging,
     requestUpdateFrame,
     libraryService,
-    performTimeUpdate,
+    mediaRef,
     loopLength,
     progressBarRef,
     progressBarWidth,
     videoLength,
-  ]); // Add performTimeUpdate and others to deps
+  ]);
 
   // --- Render (mostly same as before) ---
   return (
@@ -416,8 +494,8 @@ export default function VideoControls() {
             aria-label="Video progress"
             aria-valuemin={0}
             aria-valuemax={videoLength || 0}
-            aria-valuenow={actualVideoTime || 0}
-            aria-valuetext={getLabel(actualVideoTime || 0)}
+            aria-valuenow={displayTime || 0}
+            aria-valuetext={getLabel(displayTime || 0)}
             tabIndex={0} // Make focusable
             onKeyDown={handleSliderKeyDown}
             onMouseMove={handleProgressHover}
@@ -440,7 +518,7 @@ export default function VideoControls() {
                 width:
                   progressBarWidth > 0 && videoLength > 0
                     ? `${mapRange(
-                        actualVideoTime,
+                        displayTime,
                         0,
                         videoLength,
                         0,
@@ -457,7 +535,7 @@ export default function VideoControls() {
                 left:
                   progressBarWidth > 0 && videoLength > 0
                     ? `${mapRange(
-                        actualVideoTime,
+                        displayTime,
                         0,
                         videoLength,
                         0,
@@ -470,7 +548,7 @@ export default function VideoControls() {
             ></div>
           </div>
           <div className="timestamp-label">
-            <span className="value">{getLabel(actualVideoTime)}</span>
+            <span className="value">{getLabel(displayTime)}</span>
             <span className="total value"> / {getLabel(videoLength)}</span>
           </div>
         </div>

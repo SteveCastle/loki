@@ -3,6 +3,8 @@ import {
   snapFrameRate,
   frameStep,
   pixelToTime,
+  selectDisplayTime,
+  coalescedSeekTarget,
   DEFAULT_FPS,
 } from '../renderer/video-frame';
 
@@ -94,5 +96,41 @@ describe('pixelToTime', () => {
   it('returns 0 for invalid bar width or duration', () => {
     expect(pixelToTime(50, 0, 2)).toBe(0);
     expect(pixelToTime(50, 100, 0)).toBe(0);
+  });
+});
+
+describe('selectDisplayTime', () => {
+  it('uses the live drag position while dragging', () => {
+    expect(selectDisplayTime(true, 3.5, 1.0)).toBe(3.5);
+  });
+
+  it('falls back to actual time when dragging but no drag value yet', () => {
+    expect(selectDisplayTime(true, null, 1.0)).toBe(1.0);
+  });
+
+  it('uses actual time when not dragging', () => {
+    expect(selectDisplayTime(false, 3.5, 1.0)).toBe(1.0);
+  });
+
+  it('treats a 0 drag time as a real value, not absent', () => {
+    expect(selectDisplayTime(true, 0, 5.0)).toBe(0);
+  });
+});
+
+describe('coalescedSeekTarget', () => {
+  it('seeks to the pending target when idle and far enough away', () => {
+    expect(coalescedSeekTarget(2.0, false, 1.0)).toBe(2.0);
+  });
+
+  it('waits (null) while a seek is already in flight', () => {
+    expect(coalescedSeekTarget(2.0, true, 1.0)).toBeNull();
+  });
+
+  it('does nothing when there is no pending target', () => {
+    expect(coalescedSeekTarget(null, false, 1.0)).toBeNull();
+  });
+
+  it('does nothing when already at the target (within tolerance)', () => {
+    expect(coalescedSeekTarget(1.0005, false, 1.0)).toBeNull();
   });
 });

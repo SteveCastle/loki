@@ -69,6 +69,36 @@ export function frameStep(
   return Math.min(Math.max(next, 0), maxTime);
 }
 
+// Which time the scrubber should display: the live drag position while
+// dragging (instant, cursor-locked), otherwise the actual decoded time. This
+// decouples the thumb/label from the seek round-trip, which is the main cause
+// of laggy-feeling scrubbing.
+export function selectDisplayTime(
+  isDragging: boolean,
+  dragTime: number | null,
+  actualVideoTime: number
+): number {
+  if (isDragging && dragTime != null) return dragTime;
+  return actualVideoTime;
+}
+
+// Coalesced seeking decision: returns the time to seek to NOW, or null to wait.
+// While a seek is in flight we issue no new seek (prevents a backlog that makes
+// the picture lag behind the cursor); the `seeked` handler re-checks and seeks
+// to the latest pending target once the element is free. This keeps exactly one
+// seek in flight and always converges to `pending`.
+export function coalescedSeekTarget(
+  pending: number | null,
+  isSeeking: boolean,
+  currentTime: number,
+  tolerance = 0.001
+): number | null {
+  if (pending == null) return null;
+  if (isSeeking) return null;
+  if (Math.abs(pending - currentTime) <= tolerance) return null;
+  return pending;
+}
+
 // Map a horizontal pixel offset on the progress bar to a fractional time in
 // seconds. The clamp keeps the result within [0, duration]. Crucially this
 // does NOT round to whole seconds — that rounding was the original cause of
