@@ -101,6 +101,9 @@ type LibraryState = {
     loopLength: number;
     loopStartTime: number;
     loopCount: number;
+    // Detected (or 0 = unknown) frame rate of the loaded video, used to drive
+    // single-frame stepping in the controls. See src/renderer/video-frame.ts.
+    frameRate: number;
   };
   // Audio tracks discovered on the currently-loaded <video> element. Reset
   // to [] when the path changes; populated on `loadedmetadata`. The list
@@ -615,6 +618,7 @@ const getInitialContext = (): LibraryState => {
       loopLength: 0,
       loopStartTime: 0,
       loopCount: 0,
+      frameRate: 0,
     },
     settings: {
       order: batched['sortOrder'] as 'asc' | 'desc',
@@ -1167,6 +1171,16 @@ export const libraryMachine = createMachine(
                 return {
                   ...context.videoPlayer,
                   videoLength: event.videoLength,
+                };
+              },
+            }),
+          },
+          SET_VIDEO_FRAME_RATE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              videoPlayer: (context, event) => {
+                return {
+                  ...context.videoPlayer,
+                  frameRate: event.frameRate,
                 };
               },
             }),
@@ -2695,6 +2709,16 @@ export const libraryMachine = createMachine(
                         return {
                           ...context.videoPlayer,
                           videoLength: event.videoLength,
+                        };
+                      },
+                    }),
+                  },
+                  SET_VIDEO_FRAME_RATE: {
+                    actions: assign<LibraryState, AnyEventObject>({
+                      videoPlayer: (context, event) => {
+                        return {
+                          ...context.videoPlayer,
+                          frameRate: event.frameRate,
                         };
                       },
                     }),

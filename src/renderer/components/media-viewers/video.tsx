@@ -9,6 +9,7 @@ import Hls from 'hls.js';
 import { mediaUrl, hlsUrl, fetchMediaPreview as platformFetchMediaPreview, findSubtitle } from '../../platform';
 import { toVttString, vttBlobUrl } from './subtitle-loader';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
+import { estimateFrameRate } from '../../video-frame';
 
 import './video.css';
 import './sizing.css';
@@ -197,6 +198,56 @@ export function Video({
       video.removeEventListener('timeupdate', handleTimeUpdate);
     };
   }, [onTimestampChange]);
+
+  // Detect the video's frame rate from requestVideoFrameCallback cadence so the
+  // controls can step a single frame. Runs only for the controlling (settable)
+  // player. Resets to 0 (unknown) on path change, then dispatches once a stable
+  // estimate emerges. If rVFC is unavailable or no stable estimate is reached,
+  // frameRate stays 0 and the controls fall back to a 30fps step.
+  useEffect(() => {
+    const video = mediaRef?.current;
+    if (!video || !settable) return;
+
+    // Clear any stale frame rate carried over from the previous clip.
+    libraryService.send('SET_VIDEO_FRAME_RATE', { frameRate: 0 });
+
+    const rvfc = (video as any).requestVideoFrameCallback?.bind(video) as
+      | ((cb: (now: number, metadata: any) => void) => number)
+      | undefined;
+    const cancelRvfc = (video as any).cancelVideoFrameCallback?.bind(video) as
+      | ((handle: number) => void)
+      | undefined;
+    if (!rvfc) return; // Unsupported — leave frameRate 0.
+
+    const samples: number[] = [];
+    let handle: number | null = null;
+    let done = false;
+
+    const onFrame = (_now: number, metadata: any) => {
+      if (done) return;
+      if (typeof metadata?.mediaTime === 'number') {
+        samples.push(metadata.mediaTime);
+      }
+      if (samples.length >= 8) {
+        const fps = estimateFrameRate(samples);
+        if (fps > 0) {
+          libraryService.send('SET_VIDEO_FRAME_RATE', { frameRate: fps });
+          done = true;
+          return;
+        }
+        // Heavy looping/seeking produced only unusable deltas — keep a recent
+        // window and keep sampling rather than growing unbounded.
+        if (samples.length > 64) samples.splice(0, samples.length - 8);
+      }
+      handle = rvfc(onFrame);
+    };
+    handle = rvfc(onFrame);
+
+    return () => {
+      done = true;
+      if (handle != null && cancelRvfc) cancelRvfc(handle);
+    };
+  }, [path, settable, libraryService]);
 
   useEffect(() => {
     const video = mediaRef?.current;

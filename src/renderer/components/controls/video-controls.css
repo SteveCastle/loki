@@ -80,6 +80,26 @@
   opacity: 1;
 }
 
+/* Frame-step buttons show a text label ("−1f"/"+1f") rather than an icon, so
+   they opt out of the icon-oriented invert filter and set their own color. */
+.frame-step-button {
+  filter: none;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 30px;
+  font-variant-numeric: tabular-nums;
+}
+
+.frame-step-button:hover {
+  color: #fff;
+}
+
+.frame-step-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .progressBar {
   width: 100%;
   height: 16px; /* Increased hit area for better interaction */

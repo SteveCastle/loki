@@ -15,6 +15,7 @@ import soundOff from '../../../../assets/sound-off.svg';
 import { uniqueId } from 'xstate/lib/utils';
 import { GlobalStateContext } from '../../state';
 import AudioTrackControls from './audio-track-controls';
+import { frameStep, pixelToTime } from '../../video-frame';
 import './video-controls.css';
 
 // --- Helper Functions (mapRange, getLabel, useElementSize - remain the same) ---
@@ -88,10 +89,8 @@ function getLabel(currentVideoTimeStamp: number): string {
 
 export default function VideoControls() {
   const { libraryService } = useContext(GlobalStateContext);
-  const { actualVideoTime, videoLength, loopLength, playing } = useSelector(
-    libraryService,
-    (state) => state.context.videoPlayer
-  );
+  const { actualVideoTime, videoLength, loopLength, playing, frameRate } =
+    useSelector(libraryService, (state) => state.context.videoPlayer);
   const { volume, playSound } = useSelector(
     libraryService,
     (state: any) => state.context.settings
@@ -177,6 +176,44 @@ export default function VideoControls() {
     setHoverTime(null);
   }, []);
 
+  // Step exactly one frame. Frame inspection implies a paused video, so pause
+  // first if playing, then seek to the fractional frame time. frameStep falls
+  // back to 30fps when the detected rate is unknown (see video-frame.ts).
+  const stepFrame = useCallback(
+    (direction: 1 | -1) => {
+      if (videoLength <= 0) return;
+      if (playing) {
+        libraryService.send('SET_PLAYING_STATE', { playing: false });
+      }
+      const target = frameStep(
+        actualVideoTime,
+        frameRate,
+        direction,
+        videoLength
+      );
+      libraryService.send('SET_VIDEO_TIME', {
+        timeStamp: target,
+        eventId: uniqueId(),
+      });
+    },
+    [videoLength, playing, actualVideoTime, frameRate, libraryService]
+  );
+
+  // Arrow keys step one frame while the slider is focused. Scoped to the slider
+  // (rather than global) so it never hijacks arrow-key media navigation.
+  const handleSliderKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        stepFrame(1);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        stepFrame(-1);
+      }
+    },
+    [stepFrame]
+  );
+
   // Function to perform the actual time update (called within rAF)
   const performTimeUpdate = useCallback(() => {
     if (!progressBarRef.current || progressBarWidth <= 0 || videoLength <= 0) {
@@ -187,13 +224,14 @@ export default function VideoControls() {
     const rect = progressBarRef.current.getBoundingClientRect();
     const offsetX = latestMouseXRef.current - rect.left;
 
-    const newTimeStamp = Math.round(
-      mapRange(offsetX, 0, progressBarWidth, 0, videoLength)
-    );
+    // Fractional seek target — NOT rounded to whole seconds. The previous
+    // Math.round + 0.05 gate is exactly what limited scrubbing to one-second
+    // steps. rAF already throttles sends to ~display rate.
+    const newTimeStamp = pixelToTime(offsetX, progressBarWidth, videoLength);
 
-    // Only send update if time actually changed noticeably to prevent flooding
-    // Allow small threshold for smoother seeking start/end
-    if (Math.abs(newTimeStamp - actualVideoTime) > 0.05) {
+    // Suppress only truly redundant sends (sub-millisecond), so single-frame
+    // drag movements still go through.
+    if (Math.abs(newTimeStamp - actualVideoTime) > 0.001) {
       libraryService.send('SET_VIDEO_TIME', {
         timeStamp: newTimeStamp,
         eventId: uniqueId(), // Consider if uniqueId is needed here
@@ -283,8 +321,10 @@ export default function VideoControls() {
       ) {
         const rect = progressBarRef.current.getBoundingClientRect();
         const offsetX = e.clientX - rect.left;
-        const finalTimeStamp = Math.round(
-          mapRange(offsetX, 0, progressBarWidth, 0, videoLength)
+        const finalTimeStamp = pixelToTime(
+          offsetX,
+          progressBarWidth,
+          videoLength
         );
         libraryService.send('LOOP_VIDEO', {
           loopStartTime: finalTimeStamp,
@@ -331,6 +371,15 @@ export default function VideoControls() {
     <div className="VideoControls">
       <div className="controls-left">
         <button
+          className="control-button frame-step-button"
+          onClick={() => stepFrame(-1)}
+          disabled={videoLength <= 0}
+          aria-label="Previous frame"
+          title="Previous frame (←)"
+        >
+          <span>−1f</span>
+        </button>
+        <button
           className="control-button"
           onClick={() => {
             libraryService.send('SET_PLAYING_STATE', {
@@ -344,6 +393,15 @@ export default function VideoControls() {
           ) : (
             <img src={play} alt="Play" />
           )}
+        </button>
+        <button
+          className="control-button frame-step-button"
+          onClick={() => stepFrame(1)}
+          disabled={videoLength <= 0}
+          aria-label="Next frame"
+          title="Next frame (→)"
+        >
+          <span>+1f</span>
         </button>
       </div>
 
@@ -361,6 +419,7 @@ export default function VideoControls() {
             aria-valuenow={actualVideoTime || 0}
             aria-valuetext={getLabel(actualVideoTime || 0)}
             tabIndex={0} // Make focusable
+            onKeyDown={handleSliderKeyDown}
             onMouseMove={handleProgressHover}
             onMouseLeave={handleProgressLeave}
           >
