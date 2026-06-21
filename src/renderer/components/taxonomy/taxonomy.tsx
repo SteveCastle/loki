@@ -284,6 +284,13 @@ export default function Taxonomy() {
             query={query}
             textValue={tagFilterInput}
             onTextChange={setTagFilterInput}
+            filteringMode={filteringMode}
+            onCycleFilterMode={() =>
+              libraryService.send({
+                type: 'CHANGE_SETTING',
+                data: { filteringMode: getNextFilterMode(filteringMode) },
+              })
+            }
             onFocus={() => setSearchFocused(true)}
             onSubmitText={() => {
               // Commit the top tag suggestion as a predicate, then clear text.

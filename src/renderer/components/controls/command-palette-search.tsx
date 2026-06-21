@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Predicate } from '../../query/types';
+import { getNextFilterMode } from '../../../settings';
 import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import type { TagConcept } from '../../hooks/useTagSearch';
@@ -198,6 +199,13 @@ export default function CommandPaletteSearch({
         query={query}
         textValue={text}
         onTextChange={setText}
+        filteringMode={filteringMode}
+        onCycleFilterMode={() =>
+          libraryService.send({
+            type: 'CHANGE_SETTING',
+            data: { filteringMode: getNextFilterMode(filteringMode) },
+          })
+        }
         onSubmitText={() => {
           // Fallback for the brief window before suggestions populate (when
           // resultNavCount is still 0): commit the top tag if there is one.

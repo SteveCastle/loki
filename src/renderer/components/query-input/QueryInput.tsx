@@ -2,7 +2,11 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
 import type { Query, Predicate } from '../../query/types';
 import { predicateKey } from '../../query/types';
+import type { FilterModeOption } from '../../../settings';
 import clear from '../../../../assets/cancel.svg';
+import union from '../../../../assets/union.svg';
+import intersect from '../../../../assets/intersect.svg';
+import selective from '../../../../assets/selective.svg';
 import './query-input.css';
 
 interface QueryInputProps {
@@ -27,6 +31,13 @@ interface QueryInputProps {
   resultNavCount?: number;
   onResultNavMove?: (delta: 1 | -1) => void;
   onResultNavSubmit?: () => void;
+  // Tag-filtering behaviour toggle. When both are supplied, an icon button is
+  // rendered in the input that cycles Intersection → Union → Exclusive (the
+  // same `filteringMode` setting the taxonomy sidebar toggles). Omitted →
+  // the toggle is not rendered, so callers that don't drive the setting are
+  // unaffected.
+  filteringMode?: FilterModeOption;
+  onCycleFilterMode?: () => void;
 }
 
 const CHEAT_SHEET = [
@@ -48,6 +59,21 @@ const TYPE_GLYPH: Record<Predicate['type'], string> = {
   hash: 'hash:',
 };
 
+// Icons + labels for the three tag-filtering behaviours, mirroring the toggle
+// in the taxonomy sidebar (taxonomy.tsx). The same `filteringMode` setting
+// drives both, so the icon shown here always matches the sidebar toggle.
+const FILTER_MODE_ICONS: Record<FilterModeOption, string> = {
+  OR: union,
+  AND: intersect,
+  EXCLUSIVE: selective,
+};
+
+const FILTER_MODE_LABELS: Record<FilterModeOption, string> = {
+  OR: 'Union',
+  AND: 'Intersection',
+  EXCLUSIVE: 'Exclusive',
+};
+
 const MAX_VISIBLE_RECENT = 5;
 const MAX_VISIBLE_FILTERED = 10;
 
@@ -67,6 +93,8 @@ export default function QueryInput({
   resultNavCount = 0,
   onResultNavMove,
   onResultNavSubmit,
+  filteringMode,
+  onCycleFilterMode,
 }: QueryInputProps) {
   const { history, addSearch, removeSearch, clearAll } = useSearchHistory();
   // The parent owns a navigable results list (command palette). While it has
@@ -358,6 +386,19 @@ export default function QueryInput({
           onBlur={handleBlur}
           disabled={disabled}
         />
+        {filteringMode && onCycleFilterMode && (
+          <button
+            className="query-input-filter-mode"
+            title={`Tag filtering: ${FILTER_MODE_LABELS[filteringMode]} (click to cycle Intersection / Union / Exclusive)`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={onCycleFilterMode}
+          >
+            <img
+              src={FILTER_MODE_ICONS[filteringMode]}
+              alt={FILTER_MODE_LABELS[filteringMode]}
+            />
+          </button>
+        )}
         <button
           className="query-input-help"
           title="Query syntax help"

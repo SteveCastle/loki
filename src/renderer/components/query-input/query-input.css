@@ -112,7 +112,7 @@
   border: none;
   margin: 0.5rem;
   padding: 0.5rem;
-  padding-right: 80px;
+  padding-right: 105px;
   border-radius: 2px;
   color: #fff;
 }
@@ -157,6 +157,26 @@
 
 .query-input-help:hover {
   background: #5a5a5a !important;
+}
+
+/* Tag-filtering behaviour toggle (Intersection / Union / Exclusive). Sits to
+   the left of the query-syntax help button; its icon mirrors the taxonomy
+   sidebar's filtering-mode toggle. */
+.query-input-filter-mode {
+  right: 95px;
+  background: #4a4a4a !important;
+  border-radius: 2px;
+  transition: all 0.2s ease-in-out;
+  padding: 2px !important;
+}
+
+.query-input-filter-mode:hover {
+  background: #5a5a5a !important;
+}
+
+.query-input-filter-mode img {
+  width: 12px;
+  height: 12px;
 }
 
 .query-input-submit {
