@@ -124,7 +124,7 @@ export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const [hoverPosition, setHoverPosition] = useState(0);
 
-  // Frame/transport popover: opens after hovering the play button for 3s (long
+  // Frame/transport popover: opens after hovering the play button for 1s (long
   // enough that it doesn't pop up during normal play/pause clicks), and stays
   // open while the cursor is over the button or the popover — same hover model
   // as the volume control.
@@ -219,7 +219,7 @@ export default function VideoControls({ mediaRef }: VideoControlsProps = {}) {
     if (playHoverTimerRef.current) clearTimeout(playHoverTimerRef.current);
     playHoverTimerRef.current = setTimeout(() => {
       setShowFrameControls(true);
-    }, 3000);
+    }, 1000);
   }, []);
 
   const handlePlayMouseLeave = useCallback(() => {
