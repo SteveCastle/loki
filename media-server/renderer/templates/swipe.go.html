@@ -249,14 +249,16 @@
         white-space: nowrap;
       }
 
-      /* Header toggles hide the description / tag overlays to maximise the
-         media area. Applied via body classes so already-rendered cards update
-         without a re-render. */
+      /* Display toggles (in the filter/settings panel) hide the tag and
+         description overlays to maximise the media area. Applied via body
+         classes so already-rendered cards update without a re-render. Hiding
+         the description also hides the filename path. */
       body.hide-swipe-tags .swipe-tags {
         display: none;
       }
 
-      body.hide-swipe-description .swipe-description {
+      body.hide-swipe-description .swipe-description,
+      body.hide-swipe-description .swipe-path {
         display: none;
       }
 
@@ -369,19 +371,6 @@
         background: rgba(255, 255, 255, 0.2);
       }
 
-      /* Right-aligned cluster of header actions (overlay toggles + filter) so
-         they stay together against the right edge, leaving the rest of the
-         header clear. */
-      .header-actions {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      /* A toggle whose overlay is currently hidden reads as "off": dimmed. */
-      .header-btn.toggled-off {
-        opacity: 0.4;
-      }
 
       /* Filter button: dot indicator + count when a tag filter is active.
          A persisted filter from localStorage can otherwise silently produce
@@ -671,6 +660,41 @@
         font-size: 20px;
         font-weight: 600;
         color: var(--text);
+      }
+
+      /* Display toggles inside the settings/filter panel: hide tag chips or the
+         description+filename overlay to free up screen space. */
+      .display-toggles {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .display-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-radius: 20px;
+        background: rgba(0, 217, 165, 0.15);
+        border: 1px solid rgba(0, 217, 165, 0.3);
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .display-toggle .display-toggle-icon {
+        font-size: 15px;
+        line-height: 1;
+      }
+
+      /* "off" state: the overlay is hidden, so the toggle reads as muted. */
+      .display-toggle.toggled-off {
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.12);
+        color: var(--text-dim);
       }
 
       .filter-close {
@@ -1359,25 +1383,7 @@
       <div class="swipe-header">
         <a href="/media" class="header-btn" title="Back to browser">←</a>
         <span class="swipe-logo">Swipe</span>
-        <div class="header-actions">
-          <button
-            class="header-btn"
-            id="toggleTagsBtn"
-            title="Show/hide tags"
-            aria-pressed="true"
-          >
-            🏷️
-          </button>
-          <button
-            class="header-btn"
-            id="toggleDescBtn"
-            title="Show/hide description"
-            aria-pressed="true"
-          >
-            📝
-          </button>
-          <button class="header-btn" id="filterBtn" title="Filter">⚙</button>
-        </div>
+        <button class="header-btn" id="filterBtn" title="Filter">⚙</button>
       </div>
 
       <div class="progress-bar">
@@ -1445,6 +1451,29 @@
       <div class="filter-header">
         <span class="filter-title">Filter by Tags</span>
         <button class="filter-close" id="filterClose">✕</button>
+      </div>
+
+      <div class="display-toggles">
+        <button
+          type="button"
+          class="display-toggle"
+          id="toggleTagsBtn"
+          aria-pressed="true"
+          title="Show or hide tags on each item"
+        >
+          <span class="display-toggle-icon">🏷️</span>
+          <span>Tags</span>
+        </button>
+        <button
+          type="button"
+          class="display-toggle"
+          id="toggleDescBtn"
+          aria-pressed="true"
+          title="Show or hide the description and filename on each item"
+        >
+          <span class="display-toggle-icon">📝</span>
+          <span>Description</span>
+        </button>
       </div>
 
       <div class="selected-tags" id="selectedTags">
