@@ -249,6 +249,17 @@
         white-space: nowrap;
       }
 
+      /* Header toggles hide the description / tag overlays to maximise the
+         media area. Applied via body classes so already-rendered cards update
+         without a re-render. */
+      body.hide-swipe-tags .swipe-tags {
+        display: none;
+      }
+
+      body.hide-swipe-description .swipe-description {
+        display: none;
+      }
+
       /* Side actions */
       .swipe-actions {
         position: absolute;
@@ -356,6 +367,20 @@
 
       .header-btn:active {
         background: rgba(255, 255, 255, 0.2);
+      }
+
+      /* Right-aligned cluster of header actions (overlay toggles + filter) so
+         they stay together against the right edge, leaving the rest of the
+         header clear. */
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      /* A toggle whose overlay is currently hidden reads as "off": dimmed. */
+      .header-btn.toggled-off {
+        opacity: 0.4;
       }
 
       /* Filter button: dot indicator + count when a tag filter is active.
@@ -1334,7 +1359,25 @@
       <div class="swipe-header">
         <a href="/media" class="header-btn" title="Back to browser">←</a>
         <span class="swipe-logo">Swipe</span>
-        <button class="header-btn" id="filterBtn" title="Filter">⚙</button>
+        <div class="header-actions">
+          <button
+            class="header-btn"
+            id="toggleTagsBtn"
+            title="Show/hide tags"
+            aria-pressed="true"
+          >
+            🏷️
+          </button>
+          <button
+            class="header-btn"
+            id="toggleDescBtn"
+            title="Show/hide description"
+            aria-pressed="true"
+          >
+            📝
+          </button>
+          <button class="header-btn" id="filterBtn" title="Filter">⚙</button>
+        </div>
       </div>
 
       <div class="progress-bar">
@@ -1658,9 +1701,56 @@
       let lastTouchCenter = { x: 0, y: 0 };
 
       // Initialize
+      // --- Overlay visibility toggles (tags / description) ---
+      // Header icon buttons hide the per-item tag chips and description so the
+      // media fills more of the screen. Persisted per-device in localStorage.
+      const HIDE_TAGS_KEY = 'swipe_hide_tags';
+      const HIDE_DESC_KEY = 'swipe_hide_description';
+
+      function applyOverlayVisibility() {
+        const hideTags = localStorage.getItem(HIDE_TAGS_KEY) === '1';
+        const hideDesc = localStorage.getItem(HIDE_DESC_KEY) === '1';
+        document.body.classList.toggle('hide-swipe-tags', hideTags);
+        document.body.classList.toggle('hide-swipe-description', hideDesc);
+        const tagsBtn = document.getElementById('toggleTagsBtn');
+        const descBtn = document.getElementById('toggleDescBtn');
+        if (tagsBtn) {
+          tagsBtn.classList.toggle('toggled-off', hideTags);
+          tagsBtn.setAttribute('aria-pressed', String(!hideTags));
+        }
+        if (descBtn) {
+          descBtn.classList.toggle('toggled-off', hideDesc);
+          descBtn.setAttribute('aria-pressed', String(!hideDesc));
+        }
+      }
+
+      function setupOverlayToggles() {
+        const tagsBtn = document.getElementById('toggleTagsBtn');
+        const descBtn = document.getElementById('toggleDescBtn');
+        if (tagsBtn) {
+          tagsBtn.addEventListener('click', () => {
+            const hidden = localStorage.getItem(HIDE_TAGS_KEY) === '1';
+            localStorage.setItem(HIDE_TAGS_KEY, hidden ? '0' : '1');
+            applyOverlayVisibility();
+          });
+        }
+        if (descBtn) {
+          descBtn.addEventListener('click', () => {
+            const hidden = localStorage.getItem(HIDE_DESC_KEY) === '1';
+            localStorage.setItem(HIDE_DESC_KEY, hidden ? '0' : '1');
+            applyOverlayVisibility();
+          });
+        }
+        applyOverlayVisibility();
+      }
+
       async function init() {
         // Do NOT restore saved position to ensure fresh start every time
         // const savedPath = getSavedPosition();
+
+        // Wire up the tag/description overlay toggles and apply the saved state
+        // before the first render so hidden overlays never flash in.
+        setupOverlayToggles();
 
         // Surface any persisted tag filter from localStorage immediately,
         // before the first fetch, so the user can see why an "empty" view
