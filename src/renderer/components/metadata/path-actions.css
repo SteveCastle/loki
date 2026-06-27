@@ -1,0 +1,68 @@
+/* Action buttons for the Path section, pinned to the section's top-right
+   corner (the title chip lives top-left). No background — just the icons. */
+.path-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0.3rem 0.4rem;
+}
+
+.path-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  margin: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  opacity: 0.6;
+  line-height: 0;
+}
+
+.path-action:hover {
+  opacity: 1;
+}
+
+.path-action .path-action-icon {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
+/* Copy success: pop the button. */
+.path-action.copied {
+  animation: path-action-pop 0.35s ease;
+}
+
+@keyframes path-action-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35);
+  }
+  70% {
+    transform: scale(0.92);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Copy success: draw the checkmark in. */
+.path-action .path-action-icon.check path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: path-action-check-draw 0.4s ease forwards;
+}
+
+@keyframes path-action-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}

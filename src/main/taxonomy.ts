@@ -93,6 +93,26 @@ const getTagCount =
     return results.count;
   };
 
+const loadPathSuggestions =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: [string]) => {
+    const term = `%${args[0] || ''}%`;
+    const rows = await db.all(
+      `SELECT DISTINCT path FROM media WHERE path LIKE $1 LIMIT 50`,
+      [term]
+    );
+    return rows.map((r: any) => r.path);
+  };
+
+const getCategoryCount =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: [string]) => {
+    const category = args[0];
+    const result = await db.get(
+      `SELECT COUNT(DISTINCT media_path) AS count FROM media_tag_by_category WHERE category_label = $1`,
+      [category]
+    );
+    return result?.count ?? 0;
+  };
+
 type TagInput = [string, string];
 
 const createTag =
@@ -732,6 +752,8 @@ export {
   loadCategoryTags,
   loadAllTags,
   getTagCount,
+  loadPathSuggestions,
+  getCategoryCount,
   createTag,
   createAssignment,
   createCategory,

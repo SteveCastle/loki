@@ -504,6 +504,53 @@ func (n *ConditionNode) HasDuplicates() bool {
 	return n.Column == "duplicates"
 }
 
+// tagFilterKind classifies a parsed query for the fast tag-only path.
+type tagFilterKind int
+
+const (
+	tagFilterNone tagFilterKind = iota // not a pure tag query — use the generic path
+	tagFilterLeaf                      // a single tag:"x"
+	tagFilterOr                        // tags joined only by OR (union)
+	tagFilterAnd                       // tags joined only by AND (intersection)
+)
+
+// extractTagFilter reports whether `node` is composed *solely* of `tag:"x"`
+// equality predicates joined by a single boolean operator (all-OR or all-AND).
+// When it is, the swipe filter can be answered with a direct lookup on
+// media_tag_by_category by tag_label, avoiding a full media-table scan with a
+// correlated EXISTS per row. Anything else (wildcards/LIKE, NOT, mixed
+// AND/OR, or any non-tag predicate) returns tagFilterNone so the caller falls
+// back to the generic query builder.
+func extractTagFilter(node Node) (labels []string, kind tagFilterKind) {
+	switch n := node.(type) {
+	case *ConditionNode:
+		if n.Column == "tag" && n.Operator == "=" && n.Value != "" {
+			return []string{n.Value}, tagFilterLeaf
+		}
+		return nil, tagFilterNone
+	case *OrNode:
+		l, lk := extractTagFilter(n.Left)
+		r, rk := extractTagFilter(n.Right)
+		// Both sides must be tag-only and must not contain an AND group —
+		// mixing AND under OR isn't a flat union, so bail to the generic path.
+		if lk == tagFilterNone || rk == tagFilterNone || lk == tagFilterAnd || rk == tagFilterAnd {
+			return nil, tagFilterNone
+		}
+		return append(l, r...), tagFilterOr
+	case *AndNode:
+		l, lk := extractTagFilter(n.Left)
+		r, rk := extractTagFilter(n.Right)
+		// Both sides must be tag-only and must not contain an OR group.
+		if lk == tagFilterNone || rk == tagFilterNone || lk == tagFilterOr || rk == tagFilterOr {
+			return nil, tagFilterNone
+		}
+		return append(l, r...), tagFilterAnd
+	default:
+		// NotNode, nil, or anything else — not a pure tag query.
+		return nil, tagFilterNone
+	}
+}
+
 // Helper functions for comparison
 func compareString(val, op, target string) bool {
 	val = strings.ToLower(val)

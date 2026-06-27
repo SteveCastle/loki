@@ -10,6 +10,101 @@
   position: relative;
 }
 
+/* Chips (active unified query predicates) */
+.query-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 0.25rem 0.5rem 0;
+}
+
+.query-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  cursor: pointer;
+  background: #2b3a4a;
+  color: #cfe3f5;
+  border: 1px solid #3d5a78;
+  /* Never let a long predicate value (e.g. a deep path) widen the chip past
+     the input. */
+  max-width: 100%;
+}
+
+.query-chip.exclude {
+  background: #4a2b2b;
+  color: #f5cfcf;
+  border-color: #784040;
+}
+
+.query-chip.category {
+  background: #2b4a38;
+  color: #cff5dc;
+  border-color: #3d785a;
+}
+
+.query-chip-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Truncate long values (deep paths, long descriptions) so the chip stays a
+     reasonable width; full value remains in the title tooltip. */
+  max-width: 220px;
+}
+
+.query-chip-join {
+  border: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  margin-right: 4px;
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 1;
+  background: #3a3f46;
+  color: #e6e6e6;
+}
+
+.query-chip-join:hover {
+  background: #4a505a;
+}
+
+.query-chip-join--or {
+  background: #5a4a2b;
+  color: #f5e3cf;
+}
+
+.query-chip-join--or:hover {
+  background: #6e5b35;
+}
+
+.query-chip-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  /* Enlarge the click target without resizing the chip: pad the hit area, then
+     pull it back with negative margins (right cancels the chip's right padding,
+     left cancels the flex gap, vertical fills the chip height) so the chip's
+     box is unchanged but clicks anywhere around the glyph still remove it. */
+  padding: 5px 8px;
+  margin: -5px -8px -5px -5px;
+}
+
+.query-chip-remove:hover {
+  opacity: 1;
+}
+
 .query-input-field input {
   flex: 1 1 0;
   height: 30px;
@@ -17,7 +112,7 @@
   border: none;
   margin: 0.5rem;
   padding: 0.5rem;
-  padding-right: 80px;
+  padding-right: 105px;
   border-radius: 2px;
   color: #fff;
 }
@@ -62,6 +157,26 @@
 
 .query-input-help:hover {
   background: #5a5a5a !important;
+}
+
+/* Tag-filtering behaviour toggle (Intersection / Union / Exclusive). Sits to
+   the left of the query-syntax help button; its icon mirrors the taxonomy
+   sidebar's filtering-mode toggle. */
+.query-input-filter-mode {
+  right: 95px;
+  background: #4a4a4a !important;
+  border-radius: 2px;
+  transition: all 0.2s ease-in-out;
+  padding: 2px !important;
+}
+
+.query-input-filter-mode:hover {
+  background: #5a5a5a !important;
+}
+
+.query-input-filter-mode img {
+  width: 12px;
+  height: 12px;
 }
 
 .query-input-submit {

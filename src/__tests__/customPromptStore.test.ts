@@ -1,6 +1,7 @@
 import {
   getLastCustomPrompt,
   setLastCustomPrompt,
+  clearLastCustomPrompt,
   getCachedDefaultPrompt,
   setCachedDefaultPrompt,
   __resetCustomPromptStoreForTests,
@@ -25,6 +26,20 @@ describe('customPromptStore', () => {
     setLastCustomPrompt('');
     setLastCustomPrompt('   ');
     expect(getLastCustomPrompt()).toBe('keep me');
+  });
+
+  it('clears the remembered prompt back to empty (reset to default)', () => {
+    setLastCustomPrompt('a custom override');
+    clearLastCustomPrompt();
+    expect(getLastCustomPrompt()).toBe('');
+  });
+
+  it('keeps the cleared prompt cleared so it does not reappear', () => {
+    setLastCustomPrompt('a custom override');
+    clearLastCustomPrompt();
+    // A no-op empty submission must not resurrect the old value.
+    setLastCustomPrompt('');
+    expect(getLastCustomPrompt()).toBe('');
   });
 
   it('returns null for cached default until set', () => {

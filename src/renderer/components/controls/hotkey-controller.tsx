@@ -566,6 +566,22 @@ export default function HotKeyController() {
   );
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    // While a text input / editable is focused, disable ALL hotkeys (incl. the
+    // shift/control toggle actions and ctrl-combos below) so typing a query in
+    // the search bar or command palette never triggers app shortcuts. Escape
+    // is still allowed through so surfaces can dismiss.
+    const focusTarget = e.target as HTMLElement | null;
+    const isEditing =
+      !!focusTarget &&
+      (focusTarget.tagName === 'INPUT' ||
+        focusTarget.tagName === 'TEXTAREA' ||
+        focusTarget.isContentEditable ||
+        focusTarget.classList?.contains('time-input') ||
+        focusTarget.classList?.contains('text-input'));
+    if (isEditing && e.key.toLowerCase() !== 'escape') {
+      return;
+    }
+
     let mainKey = e.key.toLowerCase();
 
     // Use e.code for digits to ensure consistent behavior across different keyboard layouts
@@ -608,21 +624,7 @@ export default function HotKeyController() {
       return;
     }
 
-    // Check if we're currently focused on any input element
-    const target = e.target as HTMLElement;
-    const isInputElement =
-      target &&
-      (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.contentEditable === 'true' ||
-        target.classList.contains('time-input') ||
-        target.classList.contains('text-input'));
-
-    // For most keys, if we're in an input element, let the input handle it
-    // Exception: Allow Ctrl+combinations and Escape to still work for shortcuts
-    if (isInputElement && !e.ctrlKey && !e.metaKey && mainKey !== 'escape') {
-      return; // Let the input handle the key
-    }
+    // (Input-focus is handled by the early guard at the top of this handler.)
 
     const keys: string[] = [mainKey === 'space' ? ' ' : mainKey];
 

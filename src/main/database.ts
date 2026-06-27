@@ -12,15 +12,30 @@ const now = (): number => {
 export class Database {
   private db: sqlite3.Database;
 
-  constructor(dbPath: string) {
-    this.db = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-        console.error('Error connecting to the database:', err);
-      } else {
-        console.log('Connected to the database');
-        this.db.run('PRAGMA journal_mode = WAL');
-      }
-    });
+  // Resolves once the connection is open and its startup pragmas are applied;
+  // rejects if the file can't be opened. Callers (see load-db in main.ts) must
+  // await this before running migrations so busy_timeout is in effect first.
+  readonly ready: Promise<void>;
+
+  constructor(dbPath: string, busyTimeoutMs = 5000) {
+    this.db = new sqlite3.Database(dbPath);
+    this.ready = this.applyStartupPragmas(busyTimeoutMs);
+  }
+
+  private async applyStartupPragmas(busyTimeoutMs: number): Promise<void> {
+    // busy_timeout needs no lock and must come first: it makes SQLite wait out
+    // a write lock held by the Go media-server (which also opens dream.sqlite)
+    // instead of failing instantly with SQLITE_BUSY and stranding startup.
+    await this.run(
+      `PRAGMA busy_timeout = ${busyTimeoutMs}`,
+      [],
+      'pragma:busy_timeout'
+    );
+    // WAL improves read/write concurrency between the two processes. Switching
+    // journal mode briefly needs an exclusive lock, so it benefits from the
+    // busy_timeout set above. Awaited (via `ready`) rather than fire-and-forget.
+    await this.run('PRAGMA journal_mode = WAL', [], 'pragma:journal_mode');
+    console.log('Connected to the database');
   }
 
   run(

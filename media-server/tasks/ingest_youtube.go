@@ -33,21 +33,27 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Create staging directory for CLI tool output
-	stagingPath, err := stagingDir(j.ID)
+	// Resolve where yt-dlp writes: straight into the final local location (so it
+	// can detect and skip already-downloaded files) or a temp staging dir for
+	// S3 / no-backend setups.
+	target, err := resolveIngestDir(j.ID, "downloads/")
 	if err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating staging directory: %v", err))
+		q.PushJobStdout(j.ID, fmt.Sprintf("Error resolving download directory: %v", err))
 		q.ErrorJob(j.ID)
 		return err
 	}
-	defer cleanupStaging(stagingPath)
+	defer target.cleanup()
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Starting YouTube download: %s", url))
-	q.PushJobStdout(j.ID, fmt.Sprintf("Staging directory: %s", stagingPath))
+	if target.direct {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Download directory (direct): %s", target.dir))
+	} else {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Staging directory: %s", target.dir))
+	}
 
 	// Build yt-dlp arguments
 	// Use --print to get the final filename after download
-	outputTemplate := filepath.Join(stagingPath, "%(title)s [%(id)s].%(ext)s")
+	outputTemplate := filepath.Join(target.dir, "%(title)s [%(id)s].%(ext)s")
 	args := []string{
 		"-o", outputTemplate,
 		"--print", "after_move:filepath", // Print the final file path after download
@@ -161,8 +167,14 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Upload staged files to the default storage backend
-	finalFiles := uploadStagedFiles(ctx, q, j.ID, downloadedFiles, stagingPath, "downloads/")
+	// In direct mode the downloaded paths are already final; otherwise upload
+	// the staged files to the default storage backend.
+	var finalFiles []string
+	if target.direct {
+		finalFiles = downloadedFiles
+	} else {
+		finalFiles = uploadStagedFiles(ctx, q, j.ID, downloadedFiles, target.dir, "downloads/")
+	}
 
 	// Add final files to database
 	var insertedFiles []string

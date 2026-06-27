@@ -604,3 +604,126 @@
   color: rgba(255, 100, 100, 0.7);
   font-size: 8px;
 }
+
+/* --- Unified query search (chip input + type-ahead) --- */
+
+.CommandPalette .commandPaletteSearch {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+/* The chip input lives inside a fixed-width floating palette: let chips wrap
+   and keep the field compact. query-input.css already styles the internals;
+   we only constrain width here. */
+.CommandPalette .commandPaletteSearch .query-input {
+  width: 100%;
+}
+
+/* In-place type-ahead results. Bounded height so a long match list scrolls
+   instead of overflowing the floating palette. */
+.CommandPalette .commandPaletteSearchResults {
+  margin-top: 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 4px;
+}
+
+/* Compact the shared suggestion-section rows for the tight palette. */
+.CommandPalette .commandPaletteSearchResults .suggestion-section {
+  margin-bottom: 6px;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-section-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 2px 6px;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  cursor: pointer;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-row:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Keyboard-navigation highlight — matches the palette selector specificity so
+   it wins over the base row color, with an accent bar marking the active row
+   that Enter will commit. */
+.CommandPalette .commandPaletteSearchResults .suggestion-row.highlighted {
+  background: rgba(95, 169, 120, 0.18);
+  color: #fff;
+  box-shadow: inset 2px 0 0 0 #5fa978;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-prefix {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-add-badge {
+  color: rgba(120, 200, 255, 0.9);
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-meta {
+  margin-left: auto;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* Apply-tag-to-current-item button on a tag result row. Sits at the right
+   edge; pushed there by the flex-growing value (or after the category meta). */
+.CommandPalette .commandPaletteSearchResults .suggestion-apply {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+/* When a category meta is present it already takes margin-left:auto, so the
+   apply button should sit snug after it rather than push again. */
+.CommandPalette
+  .commandPaletteSearchResults
+  .suggestion-meta
+  + .suggestion-apply {
+  margin-left: 4px;
+}
+
+.CommandPalette .commandPaletteSearchResults .suggestion-apply:hover {
+  background: rgba(120, 200, 255, 0.18);
+  color: rgba(160, 215, 255, 0.95);
+}

@@ -34,23 +34,29 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		return err
 	}
 
-	// Create staging directory for CLI tool output
-	stagingPath, err := stagingDir(j.ID)
+	// Resolve where gallery-dl writes: straight into the final local location
+	// (so it can detect and skip already-downloaded files) or a temp staging
+	// dir for S3 / no-backend setups.
+	target, err := resolveIngestDir(j.ID, "downloads/")
 	if err != nil {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Error creating staging directory: %v", err))
+		q.PushJobStdout(j.ID, fmt.Sprintf("Error resolving download directory: %v", err))
 		q.ErrorJob(j.ID)
 		return err
 	}
-	defer cleanupStaging(stagingPath)
+	defer target.cleanup()
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Starting gallery-dl download: %s", url))
-	q.PushJobStdout(j.ID, fmt.Sprintf("Staging directory: %s", stagingPath))
+	if target.direct {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Download directory (direct): %s", target.dir))
+	} else {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Staging directory: %s", target.dir))
+	}
 
 	// Build gallery-dl arguments
 	// -d sets the base download directory
 	// --write-log outputs the downloaded file paths
 	args := []string{
-		"-d", stagingPath,
+		"-d", target.dir,
 		"--write-metadata",
 		url,
 	}
@@ -117,7 +123,7 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 
 			// gallery-dl outputs the file path for each downloaded file
 			// Check if the line looks like a valid file path
-			if line != "" && isDownloadedFilePath(line, stagingPath) {
+			if line != "" && isDownloadedFilePath(line, target.dir) {
 				mu.Lock()
 				downloadedFiles = append(downloadedFiles, line)
 				mu.Unlock()
@@ -180,13 +186,19 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		}
 	}
 
-	// Upload staged files to the default storage backend
-	finalFiles := uploadStagedFiles(ctx, q, j.ID, downloadedFiles, stagingPath, "downloads/")
+	// In direct mode the downloaded paths are already final; otherwise upload
+	// the staged files (and their sidecars) to the default storage backend.
+	var finalFiles []string
+	if target.direct {
+		finalFiles = downloadedFiles
+	} else {
+		finalFiles = uploadStagedFiles(ctx, q, j.ID, downloadedFiles, target.dir, "downloads/")
 
-	// Upload metadata sidecars to the same destination so they sit next to
-	// the media. Not inserted into the media table — they are sidecars only.
-	if len(metadataFiles) > 0 {
-		uploadStagedFiles(ctx, q, j.ID, metadataFiles, stagingPath, "downloads/")
+		// Upload metadata sidecars to the same destination so they sit next to
+		// the media. Not inserted into the media table — they are sidecars only.
+		if len(metadataFiles) > 0 {
+			uploadStagedFiles(ctx, q, j.ID, metadataFiles, target.dir, "downloads/")
+		}
 	}
 
 	// Add final files to database
@@ -214,7 +226,12 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 		}
 		finalToSidecar := make(map[string]string)
 		for _, mediaStaging := range downloadedFiles {
-			predictedFinal := stagedToFinalPath(mediaStaging, stagingPath, "downloads/")
+			// In direct mode the downloaded path is already final; otherwise
+			// predict where the staged file landed in the backend.
+			predictedFinal := mediaStaging
+			if !target.direct {
+				predictedFinal = stagedToFinalPath(mediaStaging, target.dir, "downloads/")
+			}
 			if _, ok := insertedSet[predictedFinal]; !ok {
 				continue
 			}
@@ -247,6 +264,13 @@ func ingestGalleryTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 // isDownloadedFilePath checks if a line looks like a downloaded file path
 // gallery-dl outputs the path of each written file to stdout
 func isDownloadedFilePath(line string, downloadPath string) bool {
+	// gallery-dl prefixes a path with '#' when the file already exists and is
+	// being skipped (not re-downloaded). These are not new files, so they must
+	// not be ingested.
+	if strings.HasPrefix(line, "#") {
+		return false
+	}
+
 	// Check if it's an absolute path or starts with download path
 	if filepath.IsAbs(line) {
 		// Verify it's a media file
@@ -266,12 +290,10 @@ func isDownloadedFilePath(line string, downloadPath string) bool {
 		}
 	}
 
-	// Check if line contains the download path
+	// Check if line contains the download path ('#'-prefixed skip lines are
+	// already rejected above).
 	if strings.Contains(line, downloadPath) {
-		// Extract the path portion if it's a log line
-		// gallery-dl format might be like: "# path/to/file.jpg" or just "path/to/file.jpg"
-		cleanLine := strings.TrimPrefix(line, "# ")
-		if isMediaFile(cleanLine) {
+		if isMediaFile(line) {
 			return true
 		}
 	}

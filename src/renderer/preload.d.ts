@@ -43,7 +43,7 @@ interface SessionQueryData {
 }
 
 // State type for tracking which mode the library was loaded from
-type LibraryStateType = 'fs' | 'db' | 'search';
+type LibraryStateType = 'fs' | 'db';
 
 interface SessionPreviousData {
   previousLibrary: SessionLibraryData['library'];
@@ -101,6 +101,7 @@ declare global {
         tags?: string[],
         filteringMode?: string
       ) => Promise<{ path: string }[]>;
+      loadMediaByQuery: (predicates: unknown[], mode: string) => Promise<any>;
       loadDuplicatesByPath: (
         path: string
       ) => Promise<{ library: { path: string }[]; cursor: number }>;

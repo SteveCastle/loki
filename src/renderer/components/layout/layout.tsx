@@ -170,6 +170,18 @@ const Layout = () => {
     }
   }
 
+  // Collapse only the list panel — leave detail and metadata as-is. Used when
+  // navigating to a single file: the list isn't useful with one item, but the
+  // metadata panel (and its path tree, used to navigate) must stay open.
+  function collapseList() {
+    setRenderID((id) => id + 1);
+    try {
+      listRef.current?.resize('0%');
+    } catch {
+      // Panels not yet registered, ignore
+    }
+  }
+
   function handleDetailClick() {
     try {
       if (listRef.current?.isCollapsed()) {
@@ -188,9 +200,11 @@ const Layout = () => {
 
   useEffect(() => {
     if (library.length === 1) {
-      // Delay to ensure panels are registered
+      // Collapse the list to focus the single file. Only the list collapses;
+      // the metadata panel stays open so its path tree remains usable for
+      // navigation (and doesn't flash-and-vanish on each click).
       const timer = setTimeout(() => {
-        handleListClick();
+        collapseList();
       }, 0);
       return () => clearTimeout(timer);
     }

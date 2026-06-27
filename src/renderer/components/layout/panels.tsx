@@ -2,10 +2,14 @@ import React, { useContext } from 'react';
 import { GlobalStateContext } from '../../state';
 import Layout from './layout';
 import useFileDrop from '../../hooks/useFileDrop';
+import { useWarmTagSearch } from '../../hooks/useWarmTagSearch';
 
 export function Panels() {
   const { libraryService } = useContext(GlobalStateContext);
   const { dropRef, isOver, canDrop } = useFileDrop();
+  // Build the shared tag-search index at startup so the first type-ahead from
+  // the taxonomy sidebar or command palette is instant.
+  useWarmTagSearch();
 
   return (
     <>
