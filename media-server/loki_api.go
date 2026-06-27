@@ -262,6 +262,66 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
+	type queryRequest struct {
+		Predicates []Predicate `json:"predicates"`
+		Mode       string      `json:"mode"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req queryRequest
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		querySQL, params := BuildMediaQuery(req.Predicates, req.Mode)
+		rows, err := deps.DB.Query(querySQL, params...)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+
+		items := []map[string]any{}
+		for rows.Next() {
+			var path string
+			var elo sql.NullFloat64
+			var height, width sql.NullInt64
+			var weight sql.NullFloat64
+			var tagLabel sql.NullString
+			var timeStamp sql.NullFloat64
+			var createdAt sql.NullInt64
+			// 8 columns, matching BuildMediaQuery — description is filtered but
+			// never selected: path, elo, height, width, weight, tag_label,
+			// time_stamp, created_at.
+			if err := rows.Scan(&path, &elo, &height, &width,
+				&weight, &tagLabel, &timeStamp, &createdAt); err != nil {
+				continue
+			}
+			item := map[string]any{"path": path, "mtimeMs": createdAt.Int64}
+			if elo.Valid {
+				item["elo"] = elo.Float64
+			}
+			if height.Valid {
+				item["height"] = height.Int64
+			}
+			if width.Valid {
+				item["width"] = width.Int64
+			}
+			if weight.Valid {
+				item["weight"] = weight.Float64
+			}
+			if tagLabel.Valid {
+				item["tagLabel"] = tagLabel.String
+			}
+			if timeStamp.Valid {
+				item["timeStamp"] = timeStamp.Float64
+			}
+			items = append(items, item)
+		}
+		writeJSON(w, items)
+	}
+}
+
 func lokiMediaMetadataHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest
@@ -1022,6 +1082,36 @@ func lokiTagCountHandler(deps *Dependencies) http.HandlerFunc {
 			SELECT COUNT(DISTINCT media_path) FROM media_tag_by_category
 			WHERE tag_label = ?`, req.Label).Scan(&count)
 		writeJSON(w, map[string]int{"count": count})
+	}
+}
+
+func lokiPathSuggestHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		term := "%" + r.URL.Query().Get("term") + "%"
+		rows, err := deps.DB.Query(`SELECT DISTINCT path FROM media WHERE path LIKE ? LIMIT 50`, term)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer rows.Close()
+		paths := []string{}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				continue
+			}
+			paths = append(paths, p)
+		}
+		writeJSON(w, paths)
+	}
+}
+
+func lokiCategoryCountHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		category := r.URL.Query().Get("category")
+		var count int
+		deps.DB.QueryRow(`SELECT COUNT(DISTINCT media_path) FROM media_tag_by_category WHERE category_label = ?`, category).Scan(&count)
+		writeJSON(w, count)
 	}
 }
 

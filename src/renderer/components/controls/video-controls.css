@@ -80,6 +80,7 @@
   opacity: 1;
 }
 
+
 .progressBar {
   width: 100%;
   height: 16px; /* Increased hit area for better interaction */
@@ -226,6 +227,78 @@
   font-size: 11px;
   font-weight: 500;
   opacity: 0.8;
+}
+
+/* Frame/transport popover above the play button (same hover model + look as the
+   volume popover). */
+.VideoControls .playButtonContainer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding-top: 15px; /* Space for the popover */
+  margin-top: -15px; /* Compensate so the button doesn't shift */
+}
+
+.VideoControls .playButtonContainer .frameControlHover {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 10px;
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 10001;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: all;
+}
+
+.frameControlHover .popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.frameControlHover .popover-label {
+  color: white;
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.8;
+  margin-right: 2px;
+}
+
+.frameControlHover .popover-button {
+  filter: none;
+  border: none;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 7px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.15s, color 0.15s;
+}
+
+.frameControlHover .popover-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.frameControlHover .popover-button.selected {
+  background: rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+
+.frameControlHover .popover-button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .volumeSliderHover {

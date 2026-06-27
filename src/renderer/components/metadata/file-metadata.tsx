@@ -8,6 +8,7 @@ import Tags from './tags';
 import PathTree from './path-tree';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import { Description } from './description';
+import PathActions from './path-actions';
 import { useContext } from 'react';
 import { GlobalStateContext } from '../../state';
 
@@ -36,6 +37,7 @@ export default function FileMetadata({ item }: { item: any }) {
       <div className="FileMetadata">
         <div className="section">
           <h2>Path</h2>
+          {item?.path && <PathActions path={item.path} />}
           {item?.path && <PathTree path={item?.path} />}
         </div>
         <div className="section">
@@ -60,14 +62,15 @@ export default function FileMetadata({ item }: { item: any }) {
     <div className="FileMetadata">
       <div className="section">
         <h2>Path</h2>
+        {item?.path && <PathActions path={item.path} />}
         {item?.path && <PathTree path={item?.path} />}
       </div>
       <div
         className="section action"
         onClick={() => {
           libraryService.send({
-            type: 'SET_TEXT_FILTER',
-            data: { textFilter: `hash:${data.hash}` },
+            type: 'SET_QUERY',
+            data: { text: `hash:${data.hash}` },
           });
         }}
       >

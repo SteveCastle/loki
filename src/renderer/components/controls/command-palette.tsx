@@ -23,6 +23,7 @@ import DbPathWidget from './db-path';
 import GridSizePicker from './gridsize-picker';
 import CacheSetting from './cache-setting';
 import LoginWidget from './login-widget';
+import CommandPaletteSearch from './command-palette-search';
 
 // Assets (Icons)
 import soundIcon from '../../../../assets/sound-high.svg';
@@ -47,34 +48,6 @@ import { invoke, send, capabilities } from '../../platform';
 
 // Styles
 import './command-palette.css';
-
-// --- Helper Functions ---
-
-/**
- * Extracts the directory path from a full file path.
- * If the path is a file (has extension), returns the parent directory.
- * If the path is a directory (no extension), returns the path as-is.
- * @param path The full file path or directory path.
- * @returns The directory path.
- */
-function getDirectory(path: string): string {
-  if (!path) return '';
-  const separator = /[\\/]/;
-  const components = path.split(separator);
-  const lastComponent = components[components.length - 1];
-
-  // Check if the last component has a file extension
-  // A file extension is indicated by a dot followed by alphanumeric characters
-  const hasExtension = /\.[a-zA-Z0-9]+$/.test(lastComponent);
-
-  if (hasExtension) {
-    // It's a file, remove the filename to get the directory
-    components.pop();
-  }
-  // If no extension, assume it's already a directory path
-
-  return components.join('/');
-}
 
 // --- Types ---
 
@@ -114,12 +87,6 @@ interface ActionButtonsProps {
 interface MenuBarProps extends ActionButtonsProps {
   windowControlsProps: WindowControlsProps;
 }
-interface ListContextDisplayProps {
-  textFilter: string;
-  tags: string[];
-  activeDirectory: string;
-  libraryService: any;
-}
 interface SettingsListProps {
   filterType: 'image' | 'general' | 'autoplay' | 'listView';
   battleMode: boolean;
@@ -130,7 +97,6 @@ interface MenuContentAreaProps extends SettingsListProps {
   cursor: number;
   libraryLength: number;
   isLoading: boolean;
-  listContextProps: ListContextDisplayProps;
   libraryService: any; // Consider specific type
   storedCategories: { [key: string]: string };
   storedTags: { [key: string]: string[] };
@@ -323,81 +289,6 @@ const MenuBar: React.FC<MenuBarProps> = React.memo(
 );
 MenuBar.displayName = 'MenuBar'; // Add display name
 
-const ListContextDisplay: React.FC<ListContextDisplayProps> = React.memo(
-  ({ textFilter, tags, activeDirectory, libraryService }) => {
-    const hasTextFilter = !!textFilter;
-    const hasTags = Array.isArray(tags) && tags.length > 0;
-
-    // Stop the native event from reaching window-level listeners
-    // (specifically the palette's outside-click closer) so removing a
-    // pill never closes the palette as a side-effect.
-    const stopAll = (e: React.SyntheticEvent) => {
-      e.stopPropagation();
-      (e.nativeEvent as Event).stopImmediatePropagation?.();
-    };
-
-    if (hasTextFilter) {
-      return (
-        <span className="listContext">
-          <span className="contextPill contextPill--search">
-            <span className="contextPill__prefix">Search</span>
-            <span className="contextPill__label">{textFilter}</span>
-            <button
-              type="button"
-              className="contextPill__remove"
-              title="Clear search"
-              onMouseDown={stopAll}
-              onClick={(e) => {
-                stopAll(e);
-                libraryService.send({
-                  type: 'SET_TEXT_FILTER',
-                  data: { textFilter: '' },
-                });
-              }}
-            >
-              ×
-            </button>
-          </span>
-        </span>
-      );
-    }
-
-    if (hasTags) {
-      return (
-        <span className="listContext">
-          {tags.map((tag) => (
-            <span key={tag} className="contextPill contextPill--tag">
-              <span className="contextPill__label">{tag}</span>
-              <button
-                type="button"
-                className="contextPill__remove"
-                title={`Remove ${tag}`}
-                onMouseDown={stopAll}
-                onClick={(e) => {
-                  stopAll(e);
-                  libraryService.send({
-                    type: 'REMOVE_QUERY_TAG',
-                    data: { tag },
-                  });
-                }}
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </span>
-      );
-    }
-
-    return (
-      <span className="listContext">
-        {getDirectory(activeDirectory) || 'No Context'}
-      </span>
-    );
-  }
-);
-ListContextDisplay.displayName = 'ListContextDisplay'; // Add display name
-
 const SettingsList: React.FC<SettingsListProps> = React.memo(
   ({ filterType, battleMode, currentItem }) => {
     const settingKeys = useMemo(() => {
@@ -576,7 +467,6 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
     cursor,
     libraryLength,
     isLoading,
-    listContextProps,
     libraryService,
     battleMode,
     currentItem,
@@ -661,12 +551,15 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
 
     return (
       <div className="menuContent">
-        <ListContextDisplay {...listContextProps} />
         <ProgressBar
           value={cursor}
           total={libraryLength}
           isLoading={isLoading}
           setCursor={handleSetCursor}
+        />
+        <CommandPaletteSearch
+          libraryService={libraryService}
+          currentItem={currentItem}
         />
 
         {renderTabContent()}
@@ -747,17 +640,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
   );
 
   // Selectors for Library and Settings State
-  const tags = useSelector(
-    libraryService,
-    (state) => state.context.dbQuery.tags
-  );
   const textFilter = useSelector(
     libraryService,
     (state) => state.context.textFilter
-  );
-  const activeDirectory = useSelector(
-    libraryService,
-    (state) => state.context.initialFile
   );
   const cursor = useSelector(libraryService, (state) => state.context.cursor);
   const settings = useSelector(
@@ -861,6 +746,22 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
     }
   }, [display]);
 
+  // Focus the search input as soon as the palette is shown AND positioned, so
+  // the user can start typing immediately. We gate on positionReady (the
+  // palette renders visibility:hidden until then — a hidden element can't take
+  // focus) and defer one frame so the focus lands after paint and after the
+  // event that opened the palette, which could otherwise steal it back.
+  React.useEffect(() => {
+    if (!display || !positionReady) return undefined;
+    const raf = requestAnimationFrame(() => {
+      const input = paletteRef.current?.querySelector<HTMLInputElement>(
+        '.commandPaletteSearch input'
+      );
+      input?.focus();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [display, positionReady]);
+
   // Close on Click Outside.
   //
   // In trackpad/touchpad mode the detail view binds its own onClick
@@ -933,20 +834,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
     alwaysOnTop: settings.alwaysOnTop,
   };
 
-  const listContextProps: ListContextDisplayProps = {
-    textFilter,
-    tags,
-    activeDirectory,
-    libraryService,
-  };
-
   const menuContentAreaProps: Omit<
     MenuContentAreaProps,
     | 'activeTab'
     | 'cursor'
     | 'libraryLength'
     | 'isLoading'
-    | 'listContextProps'
     | 'libraryService'
   > = {
     battleMode: settings.battleMode,
@@ -987,7 +880,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
           cursor={cursor}
           libraryLength={library.length}
           isLoading={isLoading}
-          listContextProps={listContextProps}
           libraryService={libraryService}
           {...menuContentAreaProps} // Pass battleMode and currentItem
         />

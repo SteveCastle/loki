@@ -724,8 +724,10 @@ func mediaSuggestHandler(deps *Dependencies) http.HandlerFunc {
 			_ = json.NewEncoder(w).Encode(respSimple{Suggestions: suggestions})
 			return
 		case "tag":
-			// Return structured tags with categories for grouping (no pagination - returns all tags)
-			tags, err := media.SuggestTagsWithCategories(deps.DB, prefix)
+			// Return structured tags with categories for grouping, capped by
+			// `limit` so a short substring against a 100k+ tag library can't
+			// return tens of thousands of rows and freeze the typeahead.
+			tags, err := media.SuggestTagsWithCategories(deps.DB, prefix, limit)
 			if err != nil {
 				log.Printf("suggest error kind=%s prefix=%q: %v", kind, prefix, err)
 				http.Error(w, "suggest error", http.StatusInternalServerError)
@@ -2256,6 +2258,7 @@ func main() {
 		}
 	}, renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/search", renderer.ApplyMiddlewares(lokiMediaSearchHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/query", renderer.ApplyMiddlewares(lokiMediaQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/metadata", renderer.ApplyMiddlewares(lokiMediaMetadataHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/tags", renderer.ApplyMiddlewares(lokiMediaTagsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/description", renderer.ApplyMiddlewares(lokiUpdateDescriptionHandler(deps), renderer.RoleAdmin))
@@ -2266,6 +2269,8 @@ func main() {
 	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/taxonomy/paths", renderer.ApplyMiddlewares(lokiPathSuggestHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

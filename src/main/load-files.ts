@@ -5,8 +5,47 @@ import { IpcMainInvokeEvent } from 'electron';
 import { insertBulkMedia } from './media';
 import fsPromises from 'fs/promises';
 import os from 'os';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { isArchivePath, extractArchive } from './archives';
+import { logEvent } from './errorLog';
+
+// A directory scan delegates to an external process (PowerShell on Windows,
+// `find` on macOS). If that child stalls — a disconnected network drive, a
+// wedged shell — it can emit nothing and never close, leaving the scan promise
+// pending forever and stranding the renderer on a permanent loading spinner.
+// This watchdog kills a child that has produced no output for too long so the
+// promise always settles (with whatever partial results we have).
+const SCAN_INACTIVITY_MS = 30_000;
+
+function watchChildInactivity(
+  child: ChildProcess,
+  label: string,
+  rootDir: string,
+  onStall: () => void
+): { bump: () => void; clear: () => void } {
+  let last = Date.now();
+  const interval = setInterval(() => {
+    if (Date.now() - last < SCAN_INACTIVITY_MS) return;
+    clearInterval(interval);
+    logEvent({
+      scope: 'ipc:load-files',
+      message: `${label} produced no output for ${SCAN_INACTIVITY_MS}ms; killing stalled child`,
+      data: { pid: child.pid, rootDir },
+    });
+    try {
+      child.kill();
+    } catch {
+      // best-effort
+    }
+    onStall();
+  }, 5000);
+  return {
+    bump: () => {
+      last = Date.now();
+    },
+    clear: () => clearInterval(interval),
+  };
+}
 
 type File = {
   path: string;
@@ -134,8 +173,21 @@ async function listFilesFastDarwin(
     console.log('[fastest-mac] child pid:', child.pid);
 
     let buffer = '';
-    let filesQueued: string[] = [];
+    const filesQueued: string[] = [];
     let activeStats = 0;
+    let settled = false;
+    // Control holder breaks the settle<->watchdog cycle so watchdog can be const.
+    const ctl: { settle: () => void } = { settle: () => undefined };
+    const watchdog = watchChildInactivity(child, 'find scan', rootDir, () =>
+      ctl.settle()
+    );
+    ctl.settle = () => {
+      if (settled) return;
+      settled = true;
+      watchdog.clear();
+      resolve();
+    };
+    const settle = ctl.settle;
     const MAX_CONC_STATS = needMtime ? 32 : 0;
 
     const trySchedule = () => {
@@ -170,6 +222,7 @@ async function listFilesFastDarwin(
     };
 
     child.stdout.on('data', (chunk: Buffer) => {
+      watchdog.bump();
       buffer += chunk.toString('utf8');
       let idx;
       while ((idx = buffer.indexOf('\0')) !== -1) {
@@ -183,13 +236,19 @@ async function listFilesFastDarwin(
     });
     const finalize = () => {
       const onIdle = () => {
-        if (activeStats === 0) resolve();
+        if (activeStats === 0) settle();
         else setTimeout(onIdle, 10);
       };
       onIdle();
     };
     child.on('error', (err) => {
       console.log('[fastest-mac] child error:', err);
+      logEvent({
+        scope: 'ipc:load-files',
+        message: 'find scan child error',
+        data: { rootDir },
+        error: err,
+      });
       finalize();
     });
     child.on('close', () => {
@@ -229,7 +288,21 @@ async function listFilesFastWindows(
     let buffer = '';
     let totalBytes = 0;
     let lineCount = 0;
+    let settled = false;
+    // Control holder breaks the settle<->watchdog cycle so watchdog can be const.
+    const ctl: { settle: () => void } = { settle: () => undefined };
+    const watchdog = watchChildInactivity(child, 'powershell scan', rootDir, () =>
+      ctl.settle()
+    );
+    ctl.settle = () => {
+      if (settled) return;
+      settled = true;
+      watchdog.clear();
+      resolve();
+    };
+    const settle = ctl.settle;
     child.stdout.on('data', (chunk: Buffer) => {
+      watchdog.bump();
       totalBytes += chunk.length;
       buffer += chunk.toString('utf8');
       let idx;
@@ -283,11 +356,17 @@ async function listFilesFastWindows(
         'lines:',
         lineCount
       );
-      resolve();
+      settle();
     });
     child.on('error', (err) => {
       console.log('[fastest] child error:', err);
-      resolve();
+      logEvent({
+        scope: 'ipc:load-files',
+        message: 'powershell scan child error',
+        data: { rootDir },
+        error: err,
+      });
+      settle();
     });
     child.on('close', (code, signal) => {
       flushRemainder();
@@ -297,7 +376,7 @@ async function listFilesFastWindows(
         bytes: totalBytes,
         lines: lineCount,
       });
-      resolve();
+      settle();
     });
   });
 }
@@ -350,6 +429,17 @@ export const loadFiles =
     }
 
     const effectiveRecursive = archiveExtracted ? true : recursive;
+    logEvent({
+      level: 'info',
+      scope: 'ipc:load-files',
+      message: 'load-files start',
+      data: {
+        filePath,
+        folderPath,
+        recursive: effectiveRecursive,
+        fastest: !!options.fastest,
+      },
+    });
 
     // Stream the directory and emit batches to the renderer for incremental UI updates
     const files: File[] = [];
@@ -449,6 +539,13 @@ export const loadFiles =
       db,
       sortedFiles.map((file) => file.path)
     );
+
+    logEvent({
+      level: 'info',
+      scope: 'ipc:load-files',
+      message: 'load-files done',
+      data: { total: sortedFiles.length, cursor },
+    });
 
     try {
       console.log('[loader] sending done', {

@@ -66,7 +66,7 @@ func generateDescriptions(ctx context.Context, q *jobqueue.Queue, jobID string, 
 			return ctx.Err()
 		default:
 		}
-		description, err := describeFileWithOllama(ctx, filePath, model, "")
+		description, err := describeFileWithOllama(ctx, q, jobID, filePath, model, "")
 		if err != nil {
 			q.PushJobStdout(jobID, fmt.Sprintf("Warning: failed to describe %s: %v", filePath, err))
 			continue
@@ -438,10 +438,11 @@ func getVideoMetadata(ctx context.Context, videoPath string) (duration float64, 
 	return duration, frameCount, nil
 }
 
-func describeFileWithOllama(ctx context.Context, mediaPath, model, customPrompt string) (string, error) {
+func describeFileWithOllama(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath, model, customPrompt string) (string, error) {
 	ext := strings.ToLower(filepath.Ext(mediaPath))
 	var tempImagePath string
 	var cleanupPaths []string
+	source := "image"
 	if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".webp" {
 		tempImagePath = mediaPath
 	} else {
@@ -451,6 +452,7 @@ func describeFileWithOllama(ctx context.Context, mediaPath, model, customPrompt 
 		}
 		cleanupPaths = append(cleanupPaths, screenshotPath)
 		tempImagePath = screenshotPath
+		source = "video-frame:" + filepath.Base(screenshotPath)
 	}
 	resizedPath, err := resizeImageIfNeeded(tempImagePath)
 	if err != nil {
@@ -462,6 +464,7 @@ func describeFileWithOllama(ctx context.Context, mediaPath, model, customPrompt 
 	if resizedPath != tempImagePath {
 		cleanupPaths = append(cleanupPaths, resizedPath)
 	}
+	logImageParseToJob(q, jobID, mediaPath, source, tempImagePath, resizedPath)
 	description, err := callOllamaVision(ctx, resizedPath, model, customPrompt)
 	if err != nil {
 		for _, p := range cleanupPaths {
@@ -472,13 +475,62 @@ func describeFileWithOllama(ctx context.Context, mediaPath, model, customPrompt 
 	for _, p := range cleanupPaths {
 		_ = os.Remove(p)
 	}
+	// Guard against a "blind" reply: the backend returned 200 with prose, but
+	// the prose says it never got an image. Treat it as a failure so this text
+	// is not persisted as the file's description — a silent save here is how the
+	// bug hid for so long. No retry (caller decides); the job log shows it.
+	if looksLikeNoImageResponse(description) {
+		preview := strings.ReplaceAll(description, "\n", " ")
+		if len(preview) > 160 {
+			preview = preview[:160] + "…"
+		}
+		return "", fmt.Errorf("model returned a no-image response (image was not ingested by the backend): %q", preview)
+	}
 	return description, nil
 }
 
-// resizeImageIfNeeded ensures the image fed to Ollama has its long side at
-// most maxLongSide pixels. Returns the original path unchanged if it already
-// fits, otherwise writes a downscaled PNG to a uniquely-named temp file and
-// returns that path; caller is responsible for removing it.
+// logImageParseToJob pushes one line into the per-job stdout (visible in the
+// Jobs UI) confirming the image was located, decoded, and what is about to be
+// handed to the vision backend. A healthy run and a "model went in blind" run
+// previously produced identical job logs ("description: generated"); this line
+// makes the difference inspectable: the true decoded format/dimensions, whether
+// the file was resized/re-encoded, and the byte count actually sent. Pair it
+// with the [vision:request]/[vision:response] lines in the server log.
+func logImageParseToJob(q *jobqueue.Queue, jobID, originalPath, source, framePath, sentPath string) {
+	if q == nil {
+		return
+	}
+	var sentBytes int64
+	if info, err := os.Stat(sentPath); err == nil {
+		sentBytes = info.Size()
+	}
+	format, cm, w, h := "UNDECODABLE", "", 0, 0
+	if f, err := os.Open(sentPath); err == nil {
+		if cfg, fm, derr := image.DecodeConfig(f); derr == nil {
+			format, cm, w, h = fm, colorModelName(cfg.ColorModel), cfg.Width, cfg.Height
+		}
+		_ = f.Close()
+	}
+	normalized := "no"
+	if sentPath != framePath {
+		normalized = "yes→" + filepath.Base(sentPath)
+	}
+	q.PushJobStdout(jobID, fmt.Sprintf(
+		"  image: %s | source=%s | decoded=%s/%s %dx%d | normalized=%s | bytesSent=%d",
+		filepath.Base(originalPath), source, format, cm, w, h, normalized, sentBytes))
+}
+
+// resizeImageIfNeeded normalizes an image for a vision backend: it guarantees
+// the bytes handed to the model are in a universally-decodable format (PNG) and
+// no larger than maxLongSide on the long edge.
+//
+// The original path is returned unchanged ONLY when the source is already a
+// model-safe format (JPEG/PNG) AND within size. Anything else — webp, bmp,
+// gif, tiff — is re-encoded to a PNG temp file even when it doesn't need
+// resizing, so every backend gets a format it can decode.
+//
+// The caller is responsible for removing any returned temp file (it differs
+// from the input path exactly when re-encoding happened).
 func resizeImageIfNeeded(path string) (string, error) {
 	const maxLongSide = 1280
 
@@ -487,7 +539,7 @@ func resizeImageIfNeeded(path string) (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	img, _, err := image.Decode(f)
+	img, format, err := image.Decode(f)
 	if err != nil {
 		return "", fmt.Errorf("image decode failed: %w", err)
 	}
@@ -496,21 +548,30 @@ func resizeImageIfNeeded(path string) (string, error) {
 	if b.Dy() > longSide {
 		longSide = b.Dy()
 	}
-	if longSide <= maxLongSide {
+
+	// JPEG and PNG are accepted by every vision backend we target; leave them
+	// untouched when they also fit the size budget. Every other decoded format
+	// is normalized below.
+	safeFormat := format == "jpeg" || format == "png"
+	if safeFormat && longSide <= maxLongSide {
 		return path, nil
 	}
 
-	scale := float64(maxLongSide) / float64(longSide)
-	w := int(float64(b.Dx()) * scale)
-	h := int(float64(b.Dy()) * scale)
-	if w < 1 {
-		w = 1
+	dst := img
+	if longSide > maxLongSide {
+		scale := float64(maxLongSide) / float64(longSide)
+		w := int(float64(b.Dx()) * scale)
+		h := int(float64(b.Dy()) * scale)
+		if w < 1 {
+			w = 1
+		}
+		if h < 1 {
+			h = 1
+		}
+		resized := image.NewRGBA(image.Rect(0, 0, w, h))
+		xdraw.CatmullRom.Scale(resized, resized.Bounds(), img, b, xdraw.Over, nil)
+		dst = resized
 	}
-	if h < 1 {
-		h = 1
-	}
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Over, nil)
 
 	out, err := os.CreateTemp("", "ollama_resize_*.png")
 	if err != nil {
@@ -757,7 +818,7 @@ func processDescriptionForFile(ctx context.Context, q *jobqueue.Queue, jobID str
 		}
 	}
 
-	description, err := describeFileWithOllama(ctx, filePath, model, customPrompt)
+	description, err := describeFileWithOllama(ctx, q, jobID, filePath, model, customPrompt)
 	if err != nil {
 		return fmt.Errorf("failed to describe: %w", err)
 	}

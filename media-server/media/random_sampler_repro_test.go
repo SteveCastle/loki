@@ -40,6 +40,15 @@ func TestSamplerQueryPathsSorted(t *testing.T) {
 		"/m/charlie.jpg",
 	}
 	for _, p := range insertOrder {
+		// queryPaths now requires a matching media row (it excludes dangling
+		// tags so the swipe page→item mapping stays 1:1), so each tagged path
+		// must also exist in media for this test to exercise real output.
+		if _, err := db.Exec(
+			`INSERT INTO media (path, description, size, hash, width, height) VALUES (?, NULL, 1, ?, 10, 10)`,
+			p, p,
+		); err != nil {
+			t.Fatalf("seed media insert: %v", err)
+		}
 		if _, err := db.Exec(
 			`INSERT INTO media_tag_by_category (media_path, tag_label, category_label) VALUES (?, 'x', 'c')`,
 			p,
@@ -48,10 +57,30 @@ func TestSamplerQueryPathsSorted(t *testing.T) {
 		}
 	}
 
+	// A dangling tag (no media row) must be excluded from the universe — leaving
+	// it in makes swipe pages return fewer items than the window they consume,
+	// which drifts the client's offset and re-serves items.
+	if _, err := db.Exec(
+		`INSERT INTO media_tag_by_category (media_path, tag_label, category_label) VALUES ('/m/orphan.jpg', 'x', 'c')`,
+	); err != nil {
+		t.Fatalf("seed orphan: %v", err)
+	}
+
 	s := &randomSampler{}
 	got, err := s.queryPaths(db)
 	if err != nil {
 		t.Fatalf("queryPaths: %v", err)
+	}
+
+	// Guard against the change silently returning nothing: the sort check below
+	// is vacuous on an empty slice. The orphan must not appear.
+	if len(got) != len(insertOrder) {
+		t.Fatalf("queryPaths returned %d paths, want %d (every seeded path has a media row; the orphan must be excluded)", len(got), len(insertOrder))
+	}
+	for _, p := range got {
+		if p == "/m/orphan.jpg" {
+			t.Fatalf("queryPaths returned dangling tag /m/orphan.jpg; paths without a media row must be excluded")
+		}
 	}
 
 	for i := 1; i < len(got); i++ {

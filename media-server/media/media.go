@@ -259,6 +259,22 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 		}
 	}
 
+	// Fast path for pure tag union/intersection queries — the swipe filter
+	// case (`tag:"X"` or `tag:"X" OR tag:"Y"`). Resolve matching paths straight
+	// from media_tag_by_category by tag_label instead of scanning the whole
+	// media table with a correlated EXISTS per row. Downstream shuffle/paginate
+	// is shared with the generic path so behaviour is identical.
+	if labels, kind := extractTagFilter(rootNode); kind != tagFilterNone {
+		allPaths, err := getTaggedPathsByLabels(db, labels, kind == tagFilterAnd)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(allPaths) == 0 {
+			return nil, false, nil
+		}
+		return assembleRandomItemsFromPaths(db, allPaths, offset, limit, seed)
+	}
+
 	// Build WHERE clause
 	if rootNode != nil {
 		sqlPart, sqlArgs := rootNode.ToSQL()
@@ -327,6 +343,96 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 	}
 	stopPaths(len(allPaths), nil)
 
+	if len(allPaths) == 0 {
+		return nil, false, nil
+	}
+
+	return assembleRandomItemsFromPaths(db, allPaths, offset, limit, seed)
+}
+
+// getTaggedPathsByLabels resolves the media paths carrying the given tag labels
+// straight from media_tag_by_category, ordered by path for a stable shuffle
+// input. This avoids the generic path's full media-table scan with a correlated
+// EXISTS per row — the swipe filter only needs tag_label. With intersect=false
+// (union) it returns paths having *any* of the labels; with intersect=true it
+// returns only paths having *all* of them.
+func getTaggedPathsByLabels(db *sql.DB, labels []string, intersect bool) ([]string, error) {
+	// De-duplicate labels (and drop empties) so the IN-list and the
+	// intersection HAVING count are correct.
+	seen := make(map[string]struct{}, len(labels))
+	uniq := make([]string, 0, len(labels))
+	for _, l := range labels {
+		if l == "" {
+			continue
+		}
+		if _, ok := seen[l]; ok {
+			continue
+		}
+		seen[l] = struct{}{}
+		uniq = append(uniq, l)
+	}
+	if len(uniq) == 0 {
+		return nil, nil
+	}
+
+	placeholders := strings.Repeat("?,", len(uniq))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]interface{}, 0, len(uniq)+1)
+	for _, l := range uniq {
+		args = append(args, l)
+	}
+
+	// EXISTS(media) is load-bearing for pagination, not just a tidiness filter:
+	// media_tag_by_category can hold paths whose media row was deleted (dangling
+	// tags). Such a path produces no item from the downstream wide SELECT, so
+	// including it makes a page return fewer items than the shuffle window it
+	// consumed. The swipe client advances its offset by items received while the
+	// server advances by `limit`; the two then diverge and windows overlap,
+	// re-serving the same items — the "swipe loops over the same set" bug, acute
+	// for high-orphan tags. Constraining the universe to paths with a media row
+	// keeps the 1:1 path→item mapping the client's offset assumes.
+	var query string
+	if intersect && len(uniq) > 1 {
+		query = `SELECT media_path FROM media_tag_by_category WHERE tag_label IN (` +
+			placeholders + `) AND EXISTS (SELECT 1 FROM media m WHERE m.path = media_path)` +
+			` GROUP BY media_path HAVING COUNT(DISTINCT tag_label) = ? ORDER BY media_path`
+		args = append(args, len(uniq))
+	} else {
+		query = `SELECT DISTINCT media_path FROM media_tag_by_category WHERE tag_label IN (` +
+			placeholders + `) AND EXISTS (SELECT 1 FROM media m WHERE m.path = media_path)` +
+			` ORDER BY media_path`
+	}
+
+	stop := querylog.Start("GetRandomItems.tagfast.paths", query, args)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		stop(-1, err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	paths := make([]string, 0, 1024)
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			stop(len(paths), err)
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	if err := rows.Err(); err != nil {
+		stop(len(paths), err)
+		return nil, err
+	}
+	stop(len(paths), nil)
+	return paths, nil
+}
+
+// assembleRandomItemsFromPaths shuffles allPaths deterministically by seed,
+// paginates [offset, offset+limit), fetches the full media rows for that page
+// via PK point lookups, attaches tags, and checks file existence. Shared by the
+// generic filtered path and the fast tag-only path so both behave identically.
+func assembleRandomItemsFromPaths(db *sql.DB, allPaths []string, offset, limit int, seed int64) ([]MediaItem, bool, error) {
 	if len(allPaths) == 0 {
 		return nil, false, nil
 	}
@@ -1300,11 +1406,17 @@ func SuggestTagLabels(db *sql.DB, prefix string, limit int) ([]string, error) {
 	return out, nil
 }
 
-// SuggestTagsWithCategories returns tags with their categories, grouped and ordered
-// No limit is applied - returns all matching tags since they are grouped by category
-func SuggestTagsWithCategories(db *sql.DB, prefix string) ([]MediaTag, error) {
+// SuggestTagsWithCategories returns tags with their categories, grouped and
+// ordered, capped at `limit` rows. The cap matters: a library with 100k+ tags
+// matches tens of thousands of them on a short substring, and returning every
+// match froze the typeahead (huge JSON payload + one DOM node per tag in the
+// dropdown). `limit` is clamped to a sane range; pass the request's limit.
+func SuggestTagsWithCategories(db *sql.DB, prefix string, limit int) ([]MediaTag, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not available")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 25
 	}
 	like := "%" + escapeLikePattern(strings.TrimSpace(prefix)) + "%"
 	// Source the list from the `tag` registry (one row per tag) rather than
@@ -1323,7 +1435,8 @@ func SuggestTagsWithCategories(db *sql.DB, prefix string) ([]MediaTag, error) {
         FROM tag
         WHERE label COLLATE NOCASE LIKE ? ESCAPE '\'
         ORDER BY category_label, label
-    `, like)
+        LIMIT ?
+    `, like, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1709,8 +1822,14 @@ func GetPathsByQuery(db *sql.DB, searchQuery string) ([]string, error) {
 		var err error
 		rootNode, err = parser.Parse()
 		if err != nil {
+			// Unlike GetItems (which powers the browse UI and can safely degrade
+			// to showing everything), this function feeds batch tasks that ACT on
+			// the result — describe, move, remove, autotag, transcode. Silently
+			// selecting the whole library on a parse error is catastrophic there
+			// (e.g. an unquoted multi-word tag like `tag:Exchange Student`). Fail
+			// loudly so the calling job errors instead of running on everything.
 			log.Printf("Search query parsing failed: %v", err)
-			rootNode = nil
+			return nil, fmt.Errorf("invalid selection query %q: %w", searchQuery, err)
 		}
 	}
 

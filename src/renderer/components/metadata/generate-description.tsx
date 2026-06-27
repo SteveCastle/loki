@@ -7,6 +7,7 @@ import {
   setCachedDefaultPrompt,
   getLastCustomPrompt,
   setLastCustomPrompt,
+  clearLastCustomPrompt,
 } from './customPromptStore';
 import { SparkleIcon, TuneIcon } from './section-action-icons';
 
@@ -153,6 +154,16 @@ export default function GenerateDescription({
     }
   };
 
+  // Forget the remembered override so this and future generates use the
+  // configured default again. Clears both the live draft and the session store
+  // so the reset survives the panel/component remounting.
+  const handleResetPrompt = () => {
+    setPromptDraft('');
+    clearLastCustomPrompt();
+  };
+
+  const hasCustomPrompt = promptDraft.trim() !== '';
+
   const isCorner = variant === 'corner';
 
   // In the corner-pill context we stay quiet until the job service is
@@ -202,9 +213,21 @@ export default function GenerateDescription({
         onKeyUp={(e) => e.stopPropagation()}
         rows={4}
       />
-      <div className="prompt-hint">
-        Leave empty to use the configured default. This prompt is remembered for
-        the rest of your session — your global config is unchanged.
+      <div className="prompt-footer">
+        <div className="prompt-hint">
+          Leave empty to use the configured default. This prompt is remembered
+          for the rest of your session — your global config is unchanged.
+        </div>
+        {hasCustomPrompt && (
+          <button
+            type="button"
+            className="prompt-reset"
+            onClick={handleResetPrompt}
+            title="Clear the custom prompt and use the configured default"
+          >
+            Reset to default
+          </button>
+        )}
       </div>
     </div>
   ) : null;

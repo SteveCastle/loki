@@ -30,13 +30,16 @@ export interface SessionQueryData {
   dbQuery: {
     tags: string[];
   };
+  // Unified structured query (flat predicate list). Optional for backward
+  // compatibility with snapshots written before the unified query existed.
+  query?: import('../query/types').Query;
   mostRecentTag: string;
   mostRecentCategory: string;
   textFilter: string;
 }
 
 // State type for tracking which mode the library was loaded from
-type LibraryStateType = 'fs' | 'db' | 'search';
+type LibraryStateType = 'fs' | 'db';
 
 export interface SessionPreviousData {
   previousLibrary: Item[];
@@ -45,6 +48,8 @@ export interface SessionPreviousData {
   previousStateType?: LibraryStateType | null;
   previousTextFilter?: string;
   previousDbQuery?: { tags: string[] };
+  // Previous unified structured query, mirrored alongside previousDbQuery.
+  previousQuery?: import('../query/types').Query;
   // Path the library was loaded for, so back-restoration keeps
   // initialFile coherent with the restored library snapshot.
   previousInitialFile?: string;
@@ -164,6 +169,17 @@ export function hasPersistedTags(): boolean {
     data.dbQuery.tags &&
     data.dbQuery.tags.length > 0
   );
+}
+
+/**
+ * Check if the session has a persisted unified query with at least one
+ * predicate. Unlike hasPersistedTags, this recognises non-tag filters
+ * (path / category / description / hash) so they are restored as a filtered
+ * (DB) view at boot instead of being dropped as "no filter".
+ */
+export function hasPersistedQuery(): boolean {
+  const data = cache.query;
+  return !!(data && data.query && data.query.predicates.length > 0);
 }
 
 /**

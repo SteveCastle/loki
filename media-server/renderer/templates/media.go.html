@@ -4633,7 +4633,11 @@
             return;
           }
           const encPrefix = encodeURIComponent(info.valuePrefix || '');
-          fetch(`/media/suggest?kind=${kind}&prefix=${encPrefix}`)
+          // Cap the result set. With a 100k+ tag library a short substring
+          // matches tens of thousands of tags; returning them all froze the
+          // dropdown (huge payload + one DOM node per row). Paired with the
+          // 150ms input debounce above, this keeps the typeahead snappy.
+          fetch(`/media/suggest?kind=${kind}&prefix=${encPrefix}&limit=50`)
             .then((r) => r.json())
             .then((data) => {
               if (reqId !== lastReqId) return;

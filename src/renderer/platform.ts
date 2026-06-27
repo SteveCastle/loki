@@ -13,6 +13,70 @@ export const capabilities = {
   shutdown: isElectron,
 };
 
+// Diagnostics: forward renderer errors/load failures to the main-process file
+// logger (app-log.jsonl) in Electron; in web mode just log to the console.
+export interface RendererLogEntry {
+  level?: 'error' | 'warn' | 'info';
+  scope: string;
+  message: string;
+  data?: unknown;
+  error?: unknown;
+}
+
+export function logEvent(entry: RendererLogEntry): void {
+  try {
+    if (isElectron && (window as any).electron?.logEvent) {
+      (window as any).electron.logEvent({
+        ...entry,
+        error:
+          entry.error instanceof Error
+            ? {
+                name: entry.error.name,
+                message: entry.error.message,
+                stack: entry.error.stack,
+              }
+            : entry.error,
+      });
+    } else {
+      // eslint-disable-next-line no-console
+      console.error('[log]', entry.scope, entry.message, entry.error ?? '');
+    }
+  } catch {
+    // never let logging throw
+  }
+}
+
+// Channels whose handler living in the main process could, in a pathological
+// state, never settle (e.g. a DB lock SQLite doesn't time out). A renderer-side
+// backstop converts that into a rejection so the XState machine's onError fires
+// instead of spinning forever. Generous values: this is a safety net, not the
+// primary timeout (those live in the main process). load-files is intentionally
+// absent — recursive scans of huge trees are legitimately long; its hang case
+// is handled at the source by the child-process inactivity watchdog.
+const INVOKE_TIMEOUT_MS: Record<string, number> = {
+  'load-db': 75_000,
+};
+
+function invokeTimeout<T>(channel: string, promise: Promise<T>): Promise<T> {
+  const ms = INVOKE_TIMEOUT_MS[channel];
+  if (!ms) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`invoke('${channel}') timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
 // ---- Types ----
 
 type ThumbnailCache =
@@ -119,6 +183,16 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       url: '/api/taxonomy/tags',
       method: 'GET',
       argsToBody: () => null,
+    },
+    'load-path-suggestions': {
+      url: '/api/taxonomy/paths',
+      method: 'GET',
+      argsToBody: (args) => ({ term: args[0] }),
+    },
+    'get-category-count': {
+      url: '/api/taxonomy/category-count',
+      method: 'GET',
+      argsToBody: (args) => ({ category: args[0] }),
     },
     'create-tag': {
       url: '/api/tags',
@@ -299,6 +373,11 @@ export let loadMediaByDescriptionSearch: (
   filteringMode?: string
 ) => Promise<any>;
 
+export let loadMediaByQuery: (
+  predicates: import('./query/types').Predicate[],
+  mode?: string
+) => Promise<any>;
+
 export let fetchMediaPreview: (
   path: string,
   cache: ImageCache,
@@ -335,8 +414,19 @@ export let findSubtitle: (
 
 if (isElectron) {
   // Electron mode: delegate to window.electron.*
-  invoke = (channel, args) =>
-    window.electron.ipcRenderer.invoke(channel as any, args ?? []);
+  invoke = (channel, args) => {
+    const p = window.electron.ipcRenderer.invoke(channel as any, args ?? []);
+    return invokeTimeout(channel, p).catch((err) => {
+      // Record every failed/timed-out IPC call so a stuck load leaves a trail
+      // in app-log.jsonl. Re-throw so existing onError handling is unchanged.
+      logEvent({
+        scope: `invoke:${channel}`,
+        message: `invoke('${channel}') failed`,
+        error: err,
+      });
+      throw err;
+    });
+  };
   send = (channel, args) =>
     window.electron.ipcRenderer.sendMessage(channel as any, args ?? []);
   on = (channel, cb) => window.electron.ipcRenderer.on(channel, cb) ?? (() => {});
@@ -353,6 +443,7 @@ if (isElectron) {
   transcript = window.electron.transcript;
   loadMediaFromDB = window.electron.loadMediaFromDB as any;
   loadMediaByDescriptionSearch = window.electron.loadMediaByDescriptionSearch;
+  loadMediaByQuery = window.electron.loadMediaByQuery as any;
   fetchMediaPreview = window.electron.fetchMediaPreview;
   fetchTagPreview = window.electron.fetchTagPreview;
   fetchTagCount = window.electron.fetchTagCount;
@@ -560,6 +651,11 @@ if (isElectron) {
 
   loadMediaByDescriptionSearch = async (description, tags, filteringMode) => {
     const library = await jsonPost('/api/media/search', { description, tags, filteringMode });
+    return { library: library || [], cursor: 0 };
+  };
+
+  loadMediaByQuery = async (predicates, mode = 'AND') => {
+    const library = await jsonPost('/api/media/query', { predicates, mode });
     return { library: library || [], cursor: 0 };
   };
 

@@ -171,7 +171,14 @@ const configuration: webpack.Configuration = {
       debug: true,
     }),
 
-    new ReactRefreshWebpackPlugin(),
+    // Exclude Web Workers (*.worker.ts) from React Refresh. The refresh
+    // runtime references browser/HMR globals and gets pulled into the worker
+    // bundle, which then fails to `importScripts` the refresh runtime chunk in
+    // WorkerGlobalScope (Uncaught NetworkError on startup). Workers don't need
+    // HMR, so skip refresh injection for them.
+    new ReactRefreshWebpackPlugin({
+      exclude: [/node_modules/, /\.worker\.[jt]sx?$/],
+    }),
 
     new HtmlWebpackPlugin({
       filename: path.join('index.html'),

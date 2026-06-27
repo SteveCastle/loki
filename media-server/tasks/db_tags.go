@@ -82,13 +82,27 @@ func insertTagsForFile(db *sql.DB, filePath string, tags []TagInfo) error {
 	if err := EnsureTagsExist(db, tags); err != nil {
 		return err
 	}
-	stmt := `INSERT INTO media_tag_by_category (media_path, tag_label, category_label) VALUES (?, ?, ?)`
+	// time_stamp is the in-media offset, not a wall clock; 0 means "tags the
+	// media in general". Always write 0 here so auto-tagged rows match the 0
+	// convention used everywhere else (AddTag, createAssignment, etc.).
+	//
+	// INSERT OR IGNORE: a tag the file already carries collides with the
+	// (media_path, tag_label, category_label, time_stamp) primary key. Re-tagging
+	// a file (e.g. running the ONNX tagger again) must not abort the whole job on
+	// that collision — silently skip the pre-existing assignment and insert only
+	// the genuinely new tags.
+	stmt := `INSERT OR IGNORE INTO media_tag_by_category (media_path, tag_label, category_label, time_stamp) VALUES (?, ?, ?, 0)`
 	inserted := 0
 	for _, t := range tags {
-		if _, err := db.Exec(stmt, filePath, t.Label, t.Category); err != nil {
+		res, err := db.Exec(stmt, filePath, t.Label, t.Category)
+		if err != nil {
 			return fmt.Errorf("failed to insert tag %s/%s: %w", t.Category, t.Label, err)
 		}
-		inserted++
+		// RowsAffected is 0 when the row was an ignored duplicate, so this counts
+		// only tags actually added — keeping the cache invalidation below honest.
+		if n, err := res.RowsAffected(); err == nil {
+			inserted += int(n)
+		}
 	}
 	// New tag rows may make a previously-untagged path eligible for the
 	// swipe pool. Without this, auto-tagged paths never appear there until

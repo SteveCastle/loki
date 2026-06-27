@@ -44,8 +44,7 @@ const ext = process.platform === 'win32' ? '.exe' : '';
 // when the user launches the .exe. `-H=windowsgui` switches the PE subsystem
 // to GUI so Windows won't allocate a console for the process. No effect on
 // macOS or Linux — those linkers ignore the flag.
-const ldflags =
-  process.platform === 'win32' ? ' -ldflags="-H=windowsgui"' : '';
+const ldflags = process.platform === 'win32' ? '' : '';
 run(`go build${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
 
 console.log(`\n✓ Server built: media-server/media-server${ext}`);

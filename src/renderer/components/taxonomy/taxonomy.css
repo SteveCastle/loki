@@ -1,10 +1,26 @@
 .Taxonomy {
   display: flex;
-  flex-wrap: wrap;
+  /* Column: the search bar is an auto-height top row, then .taxonomy-body fills
+     the rest. Previously this was a wrapping flex row where the content items
+     used height:100% — but on the wrapped second line that resolves to the FULL
+     panel height, so the results/list overhung the panel bottom by the search
+     bar's height and the last row was clipped under the bottom overlay. */
+  flex-direction: column;
   margin: 0.3rem 0.2rem;
   width: 100%;
   height: 100%;
   overflow: hidden;
+}
+
+/* Fills the height remaining under the search bar. The content columns
+   (controls / categories / new-tag / results) size their height:100% against
+   THIS row, so their scroll areas keep their full bottom padding. */
+.Taxonomy .taxonomy-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+  width: 100%;
 }
 
 .Placeholder {
@@ -21,7 +37,7 @@
 
 .Taxonomy .search {
   display: flex;
-  flex: 1 1 100%;
+  flex: 0 0 auto;
   flex-direction: row;
   margin-bottom: 8px;
 }
@@ -210,7 +226,11 @@
   grid-template-rows: none;
   grid-gap: 0.5rem;
   flex: 8 1 0;
-  overflow: auto;
+  /* Vertical-only: these are width-fitting grids/lists that should never
+     scroll sideways. `overflow: auto` on both axes produced a phantom
+     horizontal scrollbar once the vertical scrollbar claimed its ~6px. */
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-bottom: 77px;
   height: 100%;
 }
@@ -218,7 +238,8 @@
 .Taxonomy .tags.virtualized {
   display: block;
   flex: 8 1 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-bottom: 77px;
   height: 100%;
 }
@@ -226,14 +247,17 @@
 .Taxonomy .tag-list-view {
   display: block;
   flex: 8 1 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-bottom: 77px;
   height: 100%;
   /* Block flex items default to min-height: auto (= content size).
      The virtualized inner div is thousands of px tall, which would
      otherwise expand this container and disable scrolling. */
   min-height: 0;
-  background-color: #161416;
+  /* No solid background: rows are now individual pills with transparent gaps,
+     so the panel shows through between them. */
+  background-color: transparent;
 }
 
 /* Blended search view: card grid on top (locked, scrolls within its own
@@ -266,9 +290,23 @@
 .Taxonomy .tags-blended .suggested-section {
   display: flex;
   flex-direction: column;
-  flex: 1 1 0;
+  /* Size to content instead of filling the remaining height — a handful of
+     suggested tags should not reserve the whole lower half of the panel. */
+  flex: 0 1 auto;
   min-height: 0;
   margin-top: 0.5rem;
+}
+
+/* The suggested list is virtualized, so it needs a bounded scroll height —
+   but only as a CAP. height: auto lets it shrink to its actual content (the
+   virtualizer's intrinsic sizer height) when there are just a few items, and
+   max-height caps it so long lists scroll instead of growing without bound.
+   Drop the 77px bottom padding here: this list isn't against the panel edge. */
+.Taxonomy .tags-blended .suggested-section .tag-list-view {
+  flex: 0 1 auto;
+  height: auto;
+  max-height: 400px;
+  padding-bottom: 0;
 }
 
 .Taxonomy .tags-blended .suggested-heading {
@@ -279,6 +317,133 @@
   padding: 0.6rem 0.4rem 0.35rem;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   flex: 0 0 auto;
+}
+
+/* ── Search-results area ──────────────────────────────────────────────────
+   Holds two panes: the tag results (cards / list) and the SuggestionSections
+   column (categories / paths / description / hash). This replaces what used
+   to be two separate flex children of .Taxonomy.
+
+   It is a container-query context (`container-type: inline-size`) so it reacts
+   to its OWN width rather than the viewport — the taxonomy panel is
+   user-resizable and docks either left (tall/narrow) or bottom (wide/short),
+   so viewport media queries can't capture how much room these panes actually
+   have. Default is a single stacked column; it splits into two columns only
+   when wide enough (see the @container block below).
+
+   Empty regions collapse rather than reserve blank space: the panes are
+   rendered conditionally in taxonomy.tsx (`has-results` / `has-suggestions`),
+   so whichever pane is present grows to fill. */
+/* Outer wrapper exists ONLY to establish the container-query context. A
+   container query can style a container's DESCENDANTS but not the container
+   element itself — so the stacked⇄row switch below must live on the inner
+   .search-results, which is a descendant of this wrapper. */
+.Taxonomy .search-results-container {
+  flex: 8 1 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.Taxonomy .search-results {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.Taxonomy .search-results .results-pane,
+.Taxonomy .search-results .suggestions-pane {
+  display: flex;
+  flex-direction: column;
+  /* min-* lets the panes shrink below content width so long paths can
+     ellipsis-truncate and the inner virtualized lists can scroll. */
+  min-width: 0;
+  min-height: 0;
+}
+
+.Taxonomy .search-results .results-pane {
+  flex: 1 1 0;
+  overflow: hidden;
+}
+
+/* Stacked layout with BOTH panes: size the results to their content (capped)
+   rather than filling the column, so the suggestions sit directly beneath the
+   results instead of being pushed to the bottom behind a large empty gap.
+   .search-results has a definite height, so this 65% cap resolves; once the
+   results exceed it the inner grid scrolls internally. (The two-column row
+   layout overrides this back to fill — see the @container block.) */
+.Taxonomy .search-results.has-results.has-suggestions .results-pane {
+  flex: 0 1 auto;
+  max-height: 65%;
+}
+
+/* The inner result elements were authored as direct children of .Taxonomy
+   (flex: 8, height: 100%). Inside the results-pane they fill it — but with
+   flex-basis auto (not 0) so the pane can also size to this content in the
+   stacked case above. */
+.Taxonomy .search-results .results-pane > .tags,
+.Taxonomy .search-results .results-pane > .tags.virtualized,
+.Taxonomy .search-results .results-pane > .tag-list-view,
+.Taxonomy .search-results .results-pane > .tags-blended {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+/* Suggestions pane. When it is the only pane (no tag matches) it fills the
+   whole area; when shown alongside results in the STACKED layout it is capped
+   so the results stay visible above it. */
+.Taxonomy .search-results .suggestions-pane {
+  flex: 1 1 0;
+  /* Never scroll horizontally — long paths/descriptions truncate with an
+     ellipsis instead (see .suggestion-value). */
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* Clear the floating controls/overlay at the bottom of the panel so the
+     last rows can scroll into view instead of sitting underneath it
+     (matches the padding the other scroll areas use). */
+  padding-bottom: 77px;
+}
+
+.Taxonomy .search-results.has-results .suggestions-pane {
+  flex: 0 1 auto;
+  max-height: 45%;
+}
+
+/* Wide enough for two side-by-side columns. We split with flex-direction:row
+   (NOT grid): the pane heights then come from flex cross-axis stretch, the
+   same robust mechanism the original .tags layout used. A grid with
+   `grid-template-rows: 100%` resolves to an indefinite height here and
+   collapses the virtualized grid's scroll element to 0 — which made the tags
+   disappear at wide sizes. Only applies when BOTH panes are present;
+   otherwise the single pane keeps the full width via the stacked rules. */
+@container (min-width: 440px) {
+  .Taxonomy .search-results.has-results.has-suggestions {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  /* Two columns: results fill the left at full height (via stretch) — NOT the
+     content-sized/capped behaviour used when stacked. */
+  .Taxonomy .search-results.has-results.has-suggestions .results-pane {
+    flex: 1 1 0;
+    max-height: none;
+  }
+
+  /* Fixed-width right column so long path matches can't widen it; the
+     results pane (flex: 1 1 0, min-width: 0) takes the rest. */
+  .Taxonomy .search-results.has-results.has-suggestions .suggestions-pane {
+    flex: 0 0 clamp(180px, 30%, 280px);
+    max-height: none;
+  }
 }
 
 
@@ -341,31 +506,35 @@
 .Taxonomy .tag-list-row {
   display: flex;
   align-items: center;
-  height: 100%;
+  /* The virtualizer gives each row a fixed 30px slot. We inset the row inside
+     that slot (height + vertical margin) so consecutive items are separated by
+     a transparent gap and read as individual pills rather than a solid list. */
+  height: calc(100% - 4px);
+  margin: 2px 0;
   padding: 0 96px 0 14px;
-  background-color: transparent;
+  background-color: rgba(255, 255, 255, 0.035);
+  border-radius: 4px;
   color: rgba(255, 255, 255, 0.62);
   cursor: pointer;
   position: relative;
   font-size: 0.78rem;
   letter-spacing: 0.1px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   transition: background-color 0.12s ease, color 0.12s ease;
 }
 
 .Taxonomy .tag-list-row:hover {
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.95);
 }
 
 .Taxonomy .tag-list-row.active {
-  background-color: rgba(110, 90, 140, 0.28);
+  background-color: rgba(110, 90, 140, 0.3);
   color: #fff;
   box-shadow: inset 2px 0 0 rgb(150, 110, 180);
 }
 
 .Taxonomy .tag-list-row.active:hover {
-  background-color: rgba(120, 100, 150, 0.34);
+  background-color: rgba(120, 100, 150, 0.36);
 }
 
 .Taxonomy .tag-list-row.disabled {
@@ -374,15 +543,17 @@
 }
 
 .Taxonomy .tag-list-row .label {
-  display: block;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
   flex: 1 1 0;
   min-width: 0;
   text-align: left;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  line-height: 30px;
-  align-self: center;
+  line-height: 1;
+  align-self: stretch;
 }
 
 .Taxonomy .tag-list-row .actions {
@@ -617,7 +788,7 @@
   flex-direction: column;
 }
 
-.Taxonomy > .controls button {
+.Taxonomy .controls button {
   background: none;
   border: none;
   cursor: pointer;
@@ -639,4 +810,129 @@
 
 .Taxonomy .controls button img {
   width: 100%;
+}
+
+/* Type-ahead suggestion sections (categories / paths / description / hash).
+   Styled to match the tag list view: the pane has no panel background of its
+   own, and each row is an individual pill with a subtle background and a
+   transparent gap between items. */
+.suggestion-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.suggestion-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.suggestion-section-label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 0 6px 2px 14px;
+}
+
+.suggestion-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 10px 0 14px;
+  font-size: 0.78rem;
+  letter-spacing: 0.1px;
+  color: rgba(255, 255, 255, 0.62);
+  background-color: rgba(255, 255, 255, 0.035);
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.suggestion-row:hover {
+  background-color: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+/* Keyboard-navigation highlight (command palette). Stronger than hover and
+   marked with an accent bar so the active row is unambiguous as arrow keys
+   move through tags and suggestions. Inset box-shadow avoids any layout shift
+   against the row's border-radius/overflow. */
+.suggestion-row.highlighted {
+  background-color: rgba(95, 169, 120, 0.16);
+  color: rgba(255, 255, 255, 0.98);
+  box-shadow: inset 2px 0 0 0 #5fa978;
+}
+
+.suggestion-row.highlighted .suggestion-meta {
+  background-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.suggestion-prefix {
+  color: rgba(255, 255, 255, 0.35);
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+}
+
+.suggestion-value {
+  flex: 1 1 auto;
+  /* min-width: 0 lets this flex item shrink below its intrinsic content width
+     so long path/description matches truncate with an ellipsis instead of
+     widening the whole results column. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.suggestion-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 1px 7px;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  background-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
+  border-radius: 9px;
+}
+
+.suggestion-row:hover .suggestion-meta {
+  background-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.suggestion-row-category .suggestion-prefix {
+  color: #5fa978;
+}
+
+.suggestion-add-row {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.suggestion-add-row .suggestion-value {
+  font-style: italic;
+}
+
+.suggestion-add-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 12px;
+  line-height: 1;
 }

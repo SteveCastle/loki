@@ -24,6 +24,7 @@ export type Channels =
   | 'select-db'
   | 'load-db'
   | 'open-external'
+  | 'show-item-in-folder'
   | 'toggle-fullscreen'
   | 'set-always-on-top'
   | 'add-media'
@@ -34,6 +35,8 @@ export type Channels =
   | 'load-category-tags'
   | 'load-all-tags'
   | 'get-tag-count'
+  | 'load-path-suggestions'
+  | 'get-category-count'
   | 'load-file-metadata'
   | 'load-gif-metadata'
   | 'load-tags-by-media-path'
@@ -68,7 +71,18 @@ export type Channels =
   | 'apply-elo-ordering'
   | 'consolidate-tag-files'
   | 'consolidate-category-files'
+  | 'log-event'
   | 'find-subtitle';
+
+// Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
+// <userData>/app-log.jsonl alongside main-process errors.
+export interface RendererLogEntry {
+  level?: 'error' | 'warn' | 'info';
+  scope: string;
+  message: string;
+  data?: unknown;
+  error?: unknown;
+}
 
 const loadMediaFromDB = async (
   tags: string[],
@@ -88,6 +102,11 @@ const loadMediaByDescriptionSearch = async (
     tags,
     filteringMode,
   ]);
+  return files;
+};
+
+const loadMediaByQuery = async (predicates: unknown[], mode: string) => {
+  const files = await ipcRenderer.invoke('load-media-by-query', [predicates, mode]);
   return files;
 };
 
@@ -160,8 +179,17 @@ const getGifMetadata = async (filePath: string) => {
 
 contextBridge.exposeInMainWorld('electron', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  // Forward renderer errors/load failures to the main-process file logger.
+  logEvent: (entry: RendererLogEntry) => {
+    try {
+      ipcRenderer.send('log-event', entry);
+    } catch {
+      // never let logging throw
+    }
+  },
   loadMediaFromDB,
   loadMediaByDescriptionSearch,
+  loadMediaByQuery,
   fetchTagPreview,
   fetchTagCount,
   fetchMediaPreview,

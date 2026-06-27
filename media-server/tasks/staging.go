@@ -25,6 +25,46 @@ func stagingDir(jobID string) (string, error) {
 	return dir, nil
 }
 
+// ingestTarget describes where a CLI download tool (gallery-dl, yt-dlp) writes
+// files for an ingest job, and how to finalize them afterwards.
+type ingestTarget struct {
+	// dir is the directory handed to the CLI tool (gallery-dl -d / yt-dlp -o).
+	dir string
+	// direct is true when dir is the final on-disk location (local backend):
+	// downloaded files need no upload step and their absolute paths are already
+	// the paths to persist. When false, dir is a temp staging dir whose contents
+	// must be uploaded via uploadStagedFiles.
+	direct bool
+	// cleanup removes the staging dir; a no-op in direct mode.
+	cleanup func()
+}
+
+// resolveIngestDir decides whether an ingest job downloads straight into its
+// final local location or into a temporary staging dir.
+//
+// When the default backend is local, the CLI tool writes directly into
+// <root>/<destPrefix>. Downloading into the real destination lets gallery-dl /
+// yt-dlp see previously-downloaded files and skip them — which a fresh per-job
+// staging dir would defeat. For S3, or when no backend is configured, we fall
+// back to staging + upload (unchanged behavior).
+func resolveIngestDir(jobID, destPrefix string) (ingestTarget, error) {
+	if backend := defaultBackend(); backend != nil {
+		if root := backend.Root(); root.Type == "local" {
+			dir := filepath.Join(root.Path, filepath.FromSlash(strings.Trim(destPrefix, "/")))
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return ingestTarget{}, fmt.Errorf("create download dir: %w", err)
+			}
+			return ingestTarget{dir: dir, direct: true, cleanup: func() {}}, nil
+		}
+	}
+
+	dir, err := stagingDir(jobID)
+	if err != nil {
+		return ingestTarget{}, err
+	}
+	return ingestTarget{dir: dir, direct: false, cleanup: func() { cleanupStaging(dir) }}, nil
+}
+
 // uploadStagedFiles copies every file from stagingDir into the default storage
 // backend under destPrefix (e.g. "downloads/"). It returns the list of final
 // paths as they exist in the backend (for database insertion).

@@ -214,7 +214,14 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         container.removeEventListener('wheel', handleScroll);
       }
     };
-  }, [containerRef.current, settings.controlMode]);
+    // Key on `item?.path` (not `containerRef.current`): the container is only
+    // rendered once `item` is truthy (see the `if (!item) return null` early
+    // return), and ref assignment doesn't trigger a re-render. Depending on the
+    // ref meant the effect ran once while the ref was still null (on the initial
+    // mount before the library loaded) and never re-ran when the container
+    // mounted — so the wheel listener never attached until an unrelated re-render
+    // (e.g. toggling controlMode) happened to re-run it.
+  }, [item?.path, settings.controlMode]);
 
   function handleClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
     const rect = containerRef.current!.getBoundingClientRect();
@@ -375,7 +382,9 @@ export function Detail({ offset = 0 }: { offset?: number }) {
         (getFileType(item.path) === 'video' ||
           getFileType(item.path) === 'audio') && (
           <div className="videoControls">
-            <VideoControls />
+            <VideoControls
+              mediaRef={mediaRef as React.RefObject<HTMLMediaElement>}
+            />
           </div>
         )}
       {settings.showTags === 'all' || settings.showTags === 'detail' ? (

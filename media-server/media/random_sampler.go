@@ -181,7 +181,15 @@ func (s *randomSampler) runBuild(db *sql.DB, ch chan struct{}) {
 // Sorting pins the input order so the same seed always reproduces the
 // same shuffle for an unchanged universe.
 func (s *randomSampler) queryPaths(db *sql.DB) ([]string, error) {
-	const q = `SELECT DISTINCT media_path FROM media_tag_by_category ORDER BY media_path`
+	// EXISTS(media) excludes dangling tags (a media_path whose media row was
+	// deleted). Such a path yields no row from the downstream IN-list lookup, so
+	// leaving it in the universe makes a page return fewer items than the
+	// shuffle window it consumed — the swipe client (offset = items received)
+	// then drifts behind the server's window and re-sees items. Keeping the
+	// universe to paths with a media row preserves the 1:1 path→item mapping.
+	const q = `SELECT DISTINCT mtbc.media_path FROM media_tag_by_category mtbc ` +
+		`WHERE EXISTS (SELECT 1 FROM media m WHERE m.path = mtbc.media_path) ` +
+		`ORDER BY mtbc.media_path`
 	stop := querylog.Start("randomSampler.build", q, nil)
 	rows, err := db.Query(q)
 	if err != nil {

@@ -249,6 +249,19 @@
         white-space: nowrap;
       }
 
+      /* Display toggles (in the filter/settings panel) hide the tag and
+         description overlays to maximise the media area. Applied via body
+         classes so already-rendered cards update without a re-render. Hiding
+         the description also hides the filename path. */
+      body.hide-swipe-tags .swipe-tags {
+        display: none;
+      }
+
+      body.hide-swipe-description .swipe-description,
+      body.hide-swipe-description .swipe-path {
+        display: none;
+      }
+
       /* Side actions */
       .swipe-actions {
         position: absolute;
@@ -357,6 +370,7 @@
       .header-btn:active {
         background: rgba(255, 255, 255, 0.2);
       }
+
 
       /* Filter button: dot indicator + count when a tag filter is active.
          A persisted filter from localStorage can otherwise silently produce
@@ -648,6 +662,41 @@
         color: var(--text);
       }
 
+      /* Display toggles inside the settings/filter panel: hide tag chips or the
+         description+filename overlay to free up screen space. */
+      .display-toggles {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .display-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-radius: 20px;
+        background: rgba(0, 217, 165, 0.15);
+        border: 1px solid rgba(0, 217, 165, 0.3);
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .display-toggle .display-toggle-icon {
+        font-size: 15px;
+        line-height: 1;
+      }
+
+      /* "off" state: the overlay is hidden, so the toggle reads as muted. */
+      .display-toggle.toggled-off {
+        background: rgba(255, 255, 255, 0.06);
+        border-color: rgba(255, 255, 255, 0.12);
+        color: var(--text-dim);
+      }
+
       .filter-close {
         width: 36px;
         height: 36px;
@@ -875,6 +924,37 @@
 
       .tag-category-items {
         padding: 8px;
+      }
+
+      /* Collapsible category header (browse mode) */
+      .tag-category-header.collapsible {
+        cursor: pointer;
+        gap: 8px;
+        user-select: none;
+      }
+
+      .tag-category-header.collapsible:active {
+        background: rgba(0, 0, 0, 0.85);
+      }
+
+      .tag-category-chevron {
+        display: inline-block;
+        width: 12px;
+        font-size: 11px;
+        color: var(--accent);
+        opacity: 0.8;
+      }
+
+      /* Loading / empty placeholder row inside an expanded category */
+      .tag-item-placeholder {
+        color: var(--text-dim);
+        opacity: 0.6;
+        cursor: default;
+        font-style: italic;
+      }
+
+      .tag-item-placeholder:active {
+        transform: none;
       }
 
       .tag-item {
@@ -1373,6 +1453,29 @@
         <button class="filter-close" id="filterClose">✕</button>
       </div>
 
+      <div class="display-toggles">
+        <button
+          type="button"
+          class="display-toggle"
+          id="toggleTagsBtn"
+          aria-pressed="true"
+          title="Show or hide tags on each item"
+        >
+          <span class="display-toggle-icon">🏷️</span>
+          <span>Tags</span>
+        </button>
+        <button
+          type="button"
+          class="display-toggle"
+          id="toggleDescBtn"
+          aria-pressed="true"
+          title="Show or hide the description and filename on each item"
+        >
+          <span class="display-toggle-icon">📝</span>
+          <span>Description</span>
+        </button>
+      </div>
+
       <div class="selected-tags" id="selectedTags">
         <!-- Selected tag chips will be inserted here -->
       </div>
@@ -1468,10 +1571,23 @@
       const longPressIndicator = document.getElementById('longPressIndicator');
       const tagToast = document.getElementById('tagToast');
 
+      // The catch-all autotag bucket. Excluded everywhere in the swipe route's
+      // tag UI (filter list, search, quick-add menu).
+      const EXCLUDED_CATEGORY = 'Suggested';
+
       // Tag filter state
-      let allTags = [];
+      let allTags = []; // full tag list, loaded lazily only when searching
       let selectedTags = new Set();
-      let filteredTags = [];
+      let filteredTags = []; // search results (search mode only)
+
+      // Browse-mode (collapsed categories) state for the filter list.
+      let tagCategoriesList = []; // [{label}] excluding EXCLUDED_CATEGORY
+      let tagCategoriesLoaded = false;
+      let tagCategoriesLoading = null;
+      const expandedCategories = new Set();
+      const categoryTagsCache = {}; // label -> [{label, category}]
+      const categoryTagsLoading = {}; // label -> Promise (dedupe)
+      let tagSearchTerm = '';
 
       // Long press / Quick tag menu state
       let tagMenuCategories = [];
@@ -1614,9 +1730,56 @@
       let lastTouchCenter = { x: 0, y: 0 };
 
       // Initialize
+      // --- Overlay visibility toggles (tags / description) ---
+      // Header icon buttons hide the per-item tag chips and description so the
+      // media fills more of the screen. Persisted per-device in localStorage.
+      const HIDE_TAGS_KEY = 'swipe_hide_tags';
+      const HIDE_DESC_KEY = 'swipe_hide_description';
+
+      function applyOverlayVisibility() {
+        const hideTags = localStorage.getItem(HIDE_TAGS_KEY) === '1';
+        const hideDesc = localStorage.getItem(HIDE_DESC_KEY) === '1';
+        document.body.classList.toggle('hide-swipe-tags', hideTags);
+        document.body.classList.toggle('hide-swipe-description', hideDesc);
+        const tagsBtn = document.getElementById('toggleTagsBtn');
+        const descBtn = document.getElementById('toggleDescBtn');
+        if (tagsBtn) {
+          tagsBtn.classList.toggle('toggled-off', hideTags);
+          tagsBtn.setAttribute('aria-pressed', String(!hideTags));
+        }
+        if (descBtn) {
+          descBtn.classList.toggle('toggled-off', hideDesc);
+          descBtn.setAttribute('aria-pressed', String(!hideDesc));
+        }
+      }
+
+      function setupOverlayToggles() {
+        const tagsBtn = document.getElementById('toggleTagsBtn');
+        const descBtn = document.getElementById('toggleDescBtn');
+        if (tagsBtn) {
+          tagsBtn.addEventListener('click', () => {
+            const hidden = localStorage.getItem(HIDE_TAGS_KEY) === '1';
+            localStorage.setItem(HIDE_TAGS_KEY, hidden ? '0' : '1');
+            applyOverlayVisibility();
+          });
+        }
+        if (descBtn) {
+          descBtn.addEventListener('click', () => {
+            const hidden = localStorage.getItem(HIDE_DESC_KEY) === '1';
+            localStorage.setItem(HIDE_DESC_KEY, hidden ? '0' : '1');
+            applyOverlayVisibility();
+          });
+        }
+        applyOverlayVisibility();
+      }
+
       async function init() {
         // Do NOT restore saved position to ensure fresh start every time
         // const savedPath = getSavedPosition();
+
+        // Wire up the tag/description overlay toggles and apply the saved state
+        // before the first render so hidden overlays never flash in.
+        setupOverlayToggles();
 
         // Surface any persisted tag filter from localStorage immediately,
         // before the first fetch, so the user can see why an "empty" view
@@ -2697,42 +2860,111 @@
         }
       }
 
-      // Tag filtering functions
-      // Module-level cache state: once loaded, allTags persists for the
-      // page's lifetime. With up to ~10k tags, the network + JSON parse
-      // shouldn't repeat every time the filter modal opens.
-      let allTagsLoaded = false;
-      let allTagsLoading = null; // in-flight Promise to dedupe concurrent opens
+      // Tag loading. The filter list opens in "browse" mode showing collapsed
+      // category headers only — no tags are fetched until a category is
+      // expanded. Searching switches to "search" mode, which lazily loads the
+      // full tag list once and filters it client-side. The catch-all
+      // "Suggested" category is excluded throughout.
 
-      async function loadAllTags(force = false) {
-        if (!force && allTagsLoaded) {
+      // Load the category list (collapsed headers). Cached for the page life.
+      async function loadCategories(force = false) {
+        if (!force && tagCategoriesLoaded) {
           renderTagList();
           return;
         }
-        if (allTagsLoading) {
-          return allTagsLoading;
-        }
-        tagList.innerHTML = '<div class="tag-list-empty">Loading tags...</div>';
-        allTagsLoading = (async () => {
+        if (tagCategoriesLoading) return tagCategoriesLoading;
+        tagList.innerHTML =
+          '<div class="tag-list-empty">Loading categories...</div>';
+        tagCategoriesLoading = (async () => {
           try {
-            const response = await fetch('/media/suggest?kind=tag&prefix=');
+            const response = await fetch('/api/taxonomy/categories');
             const data = await response.json();
-            allTags = (data.tags || []).map((tag) => ({
-              label: tag.label,
-              category: tag.category,
-            }));
-            filteredTags = [...allTags];
-            allTagsLoaded = true;
+            tagCategoriesList = (data || [])
+              .filter((c) => c.label && c.label !== EXCLUDED_CATEGORY)
+              .map((c) => ({ label: c.label }));
+            tagCategoriesLoaded = true;
             renderTagList();
           } catch (err) {
-            console.error('Failed to load tags:', err);
+            console.error('Failed to load categories:', err);
             tagList.innerHTML =
-              '<div class="tag-list-empty">Failed to load tags</div>';
+              '<div class="tag-list-empty">Failed to load categories</div>';
+          } finally {
+            tagCategoriesLoading = null;
+          }
+        })();
+        return tagCategoriesLoading;
+      }
+
+      // Load every tag in one category (only when it's expanded). Cached.
+      async function loadCategoryTags(category) {
+        if (categoryTagsCache[category]) return categoryTagsCache[category];
+        if (categoryTagsLoading[category]) return categoryTagsLoading[category];
+        categoryTagsLoading[category] = (async () => {
+          try {
+            const response = await fetch(
+              '/api/taxonomy/tags?category=' + encodeURIComponent(category)
+            );
+            const data = await response.json();
+            const tags = (data || [])
+              .filter((t) => t.category !== EXCLUDED_CATEGORY)
+              .map((t) => ({ label: t.label, category: t.category }));
+            categoryTagsCache[category] = tags;
+            return tags;
+          } catch (err) {
+            console.error('Failed to load tags for category:', category, err);
+            return [];
+          } finally {
+            categoryTagsLoading[category] = null;
+          }
+        })();
+        return categoryTagsLoading[category];
+      }
+
+      // Lazily load the full tag list (used by search so it can match the
+      // entire library, not just what's been expanded). Cached for the page.
+      let allTagsLoaded = false;
+      let allTagsLoading = null;
+      async function loadAllTagsForSearch() {
+        if (allTagsLoaded) return allTags;
+        if (allTagsLoading) return allTagsLoading;
+        allTagsLoading = (async () => {
+          try {
+            const response = await fetch('/api/taxonomy/tags');
+            const data = await response.json();
+            allTags = (data || [])
+              .filter((t) => t.category !== EXCLUDED_CATEGORY)
+              .map((t) => ({ label: t.label, category: t.category }));
+            allTagsLoaded = true;
+            return allTags;
+          } catch (err) {
+            console.error('Failed to load tags:', err);
+            return [];
           } finally {
             allTagsLoading = null;
           }
         })();
         return allTagsLoading;
+      }
+
+      // Expand/collapse a category in browse mode; lazily fetch its tags the
+      // first time it's opened.
+      async function toggleCategory(category) {
+        if (expandedCategories.has(category)) {
+          expandedCategories.delete(category);
+          renderTagList(false);
+          return;
+        }
+        expandedCategories.add(category);
+        if (!categoryTagsCache[category]) {
+          renderTagList(false); // show the "Loading…" placeholder row immediately
+          await loadCategoryTags(category);
+          // Only re-render if it's still expanded and we're still browsing.
+          if (expandedCategories.has(category) && !tagSearchTerm) {
+            renderTagList(false);
+          }
+        } else {
+          renderTagList(false);
+        }
       }
 
       function renderSelectedTags() {
@@ -2780,29 +3012,71 @@
       function buildVirtualRows() {
         virtualRows = [];
         virtualTotalHeight = 0;
-        if (filteredTags.length === 0) return;
 
-        const byCategory = {};
-        filteredTags.forEach((tag) => {
-          const cat = tag.category || 'Other';
-          if (!byCategory[cat]) byCategory[cat] = [];
-          byCategory[cat].push(tag);
-        });
-        const categories = Object.keys(byCategory).sort();
-
-        let y = 0;
-        categories.forEach((cat) => {
-          virtualRows.push({ type: 'header', y, category: cat });
-          y += VLIST_HEADER_H;
-          byCategory[cat].forEach((tag) => {
-            virtualRows.push({
-              type: 'item',
-              y,
-              label: tag.label,
-              category: tag.category,
-            });
-            y += VLIST_ITEM_H;
+        // Search mode: flat results grouped by category (non-interactive
+        // headers), matching across the whole library.
+        if (tagSearchTerm) {
+          if (filteredTags.length === 0) return;
+          const byCategory = {};
+          filteredTags.forEach((tag) => {
+            const cat = tag.category || 'Other';
+            if (!byCategory[cat]) byCategory[cat] = [];
+            byCategory[cat].push(tag);
           });
+          const categories = Object.keys(byCategory).sort();
+          let y = 0;
+          categories.forEach((cat) => {
+            virtualRows.push({ type: 'header', y, category: cat });
+            y += VLIST_HEADER_H;
+            byCategory[cat].forEach((tag) => {
+              virtualRows.push({
+                type: 'item',
+                y,
+                label: tag.label,
+                category: tag.category,
+              });
+              y += VLIST_ITEM_H;
+            });
+            y += VLIST_SECTION_GAP;
+          });
+          virtualTotalHeight = y;
+          return;
+        }
+
+        // Browse mode: collapsible category headers. A category's tags are only
+        // emitted (and its height counted) once it's expanded.
+        let y = 0;
+        tagCategoriesList.forEach((cat) => {
+          const label = cat.label;
+          const isOpen = expandedCategories.has(label);
+          virtualRows.push({
+            type: 'header',
+            y,
+            category: label,
+            collapsible: true,
+            expanded: isOpen,
+          });
+          y += VLIST_HEADER_H;
+          if (isOpen) {
+            const tags = categoryTagsCache[label];
+            if (!tags) {
+              virtualRows.push({ type: 'loading', y, category: label });
+              y += VLIST_ITEM_H;
+            } else if (tags.length === 0) {
+              virtualRows.push({ type: 'loading', y, empty: true });
+              y += VLIST_ITEM_H;
+            } else {
+              tags.forEach((tag) => {
+                virtualRows.push({
+                  type: 'item',
+                  y,
+                  label: tag.label,
+                  category: tag.category,
+                });
+                y += VLIST_ITEM_H;
+              });
+            }
+          }
           y += VLIST_SECTION_GAP;
         });
         virtualTotalHeight = y;
@@ -2850,10 +3124,28 @@
         for (let i = firstIdx; i < lastIdx; i++) {
           const row = virtualRows[i];
           if (row.type === 'header') {
+            if (row.collapsible) {
+              // Browse-mode header: a chevron + click-to-expand affordance.
+              const chevron = row.expanded ? '▾' : '▸';
+              inner +=
+                `<div class="tag-category-header collapsible${
+                  row.expanded ? ' expanded' : ''
+                }" style="top:${row.y}px;" onclick="toggleCategory('${escapeAttr(
+                  row.category
+                )}')"><span class="tag-category-chevron">${chevron}</span><span>` +
+                escapeHtml(row.category) +
+                '</span></div>';
+            } else {
+              inner +=
+                `<div class="tag-category-header" style="top:${row.y}px;">` +
+                escapeHtml(row.category) +
+                '</div>';
+            }
+          } else if (row.type === 'loading') {
             inner +=
-              `<div class="tag-category-header" style="top:${row.y}px;">` +
-              escapeHtml(row.category) +
-              '</div>';
+              `<div class="tag-item tag-item-placeholder" style="top:${row.y}px;"><span>` +
+              (row.empty ? 'No tags in this category' : 'Loading…') +
+              '</span></div>';
           } else {
             const sel = selectedTags.has(row.label) ? ' selected' : '';
             inner +=
@@ -2887,12 +3179,13 @@
         virtualListenerInstalled = true;
       }
 
-      function renderTagList() {
+      function renderTagList(resetScroll = true) {
         ensureVirtualScrollListener();
         buildVirtualRows();
-        // Reset scroll on full rebuild (e.g. after filter change) so the
-        // user sees the top of the new result set.
-        tagList.scrollTop = 0;
+        // Reset scroll on a full rebuild (mode/filter change) so the user sees
+        // the top of the new result set. Expand/collapse passes false to keep
+        // the current scroll position.
+        if (resetScroll) tagList.scrollTop = 0;
         renderVirtualWindow();
       }
 
@@ -2949,17 +3242,28 @@
         applyFilter();
       }
 
-      function filterTagList(searchTerm) {
+      async function filterTagList(searchTerm) {
         const term = searchTerm.toLowerCase().trim();
+        tagSearchTerm = term;
         if (!term) {
-          filteredTags = [...allTags];
-        } else {
-          filteredTags = allTags.filter(
-            (tag) =>
-              tag.label.toLowerCase().includes(term) ||
-              (tag.category && tag.category.toLowerCase().includes(term))
-          );
+          // Back to browse mode (collapsed categories).
+          renderTagList();
+          return;
         }
+        // Search across the entire library. Load the full tag list once
+        // (lazily) so matches aren't limited to expanded categories.
+        if (!allTagsLoaded) {
+          tagList.innerHTML =
+            '<div class="tag-list-empty">Loading tags…</div>';
+          await loadAllTagsForSearch();
+          // The query may have changed while loading; bail if so.
+          if (tagSearchTerm !== term) return;
+        }
+        filteredTags = allTags.filter(
+          (tag) =>
+            tag.label.toLowerCase().includes(term) ||
+            (tag.category && tag.category.toLowerCase().includes(term))
+        );
         renderTagList();
       }
 
@@ -2967,7 +3271,8 @@
       document.getElementById('filterBtn').addEventListener('click', () => {
         filterModal.classList.add('show');
         tagSearch.value = ''; // Clear search input
-        loadAllTags();
+        tagSearchTerm = '';
+        loadCategories();
         renderSelectedTags();
         // Don't auto-focus search to avoid keyboard pop-up on mobile
       });
@@ -3024,6 +3329,7 @@
       window.toggleTag = toggleTag;
       window.removeTag = removeTag;
       window.clearAllTags = clearAllTags;
+      window.toggleCategory = toggleCategory;
 
       // Action buttons
       likeBtn.addEventListener('click', toggleLike);
@@ -3188,17 +3494,20 @@
         longPressIndicator.classList.remove('active');
       }
 
-      // Load tags for the menu (grouped by category)
+      // Load tags for the menu (grouped by category). Uses the full taxonomy
+      // tag list (not the capped typeahead) so nothing is cut off, and excludes
+      // the "Suggested" catch-all category.
       async function loadTagMenuData() {
         try {
-          const response = await fetch('/media/suggest?kind=tag&prefix=');
+          const response = await fetch('/api/taxonomy/tags');
           const data = await response.json();
-          const tags = data.tags || [];
+          const tags = data || [];
 
-          // Group by category
+          // Group by category, skipping the excluded category.
           const categoryMap = {};
-          tags.forEach(tag => {
+          tags.forEach((tag) => {
             const cat = tag.category || 'Other';
+            if (cat === EXCLUDED_CATEGORY) return;
             if (!categoryMap[cat]) {
               categoryMap[cat] = [];
             }
