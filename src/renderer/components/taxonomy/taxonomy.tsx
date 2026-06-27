@@ -4,11 +4,8 @@ import { useQuery } from '@tanstack/react-query';
 import { debounce } from 'lodash';
 import { Tooltip } from 'react-tooltip';
 import { GlobalStateContext } from '../../state';
-import { FilterModeOption, getNextFilterMode } from '../../../settings';
+import { getNextFilterMode } from '../../../settings';
 import restart from '../../../../assets/restart.svg';
-import union from '../../../../assets/union.svg';
-import intersect from '../../../../assets/intersect.svg';
-import selective from '../../../../assets/selective.svg';
 import group from '../../../../assets/group.svg';
 import addMediaImage from '../../../../assets/add-media-image.svg';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
@@ -46,10 +43,6 @@ type Category = {
   tagViewMode?: TagViewMode;
 };
 
-type FilterModeIconMap = {
-  [key in FilterModeOption]: string;
-};
-
 // Loaders for the three taxonomy slices. Each is a separate React Query so
 // the panel can fetch categories cheaply, then lazy-load per-category tags
 // and the full tag list (for search) only when needed.
@@ -68,12 +61,6 @@ async function loadAllTags(): Promise<Concept[]> {
   const result = await invoke('load-all-tags', []);
   return (result as Concept[]) ?? [];
 }
-
-const filteringModeIcons: FilterModeIconMap = {
-  OR: union,
-  AND: intersect,
-  EXCLUSIVE: selective,
-};
 
 export default function Taxonomy() {
   const categoryListRef = useRef<HTMLDivElement>(null);
@@ -164,17 +151,22 @@ export default function Taxonomy() {
   // broad invalidations (`queryClient.invalidateQueries(['taxonomy'])`) keep
   // working. staleTime: Infinity means remounts within a session never refetch
   // — mutations and DB swaps (initSessionId) are what trigger reloads.
+  // All three taxonomy fetches are gated on initSessionId, which the state
+  // machine only assigns once it reaches its post-DB `init` state. The taxonomy
+  // sidebar mounts during boot, so without this gate these queries fire before
+  // load-db registers their IPC handlers and fail with "No handler registered"
+  // on every launch (the fetch then succeeds on retry, but the error is logged).
   const { data: categories } = useQuery<Category[], Error>(
     ['taxonomy', 'categories', initSessionId],
     loadCategories,
-    { staleTime: Infinity }
+    { enabled: !!initSessionId, staleTime: Infinity }
   );
 
   const { data: activeCategoryTags, isFetching: isFetchingCategoryTags } =
     useQuery<Concept[], Error>(
       ['taxonomy', 'category-tags', activeCategory, initSessionId],
       () => loadCategoryTags(activeCategory),
-      { enabled: !!activeCategory, staleTime: Infinity }
+      { enabled: !!activeCategory && !!initSessionId, staleTime: Infinity }
     );
 
   // Warmed as soon as the search input gains focus (or, as a fallback, on the
@@ -185,7 +177,7 @@ export default function Taxonomy() {
     Concept[],
     Error
   >(['taxonomy', 'all-tags', initSessionId], loadAllTags, {
-    enabled: searchFocused || !!tagFilterInput,
+    enabled: (searchFocused || !!tagFilterInput) && !!initSessionId,
     staleTime: Infinity,
   });
 
@@ -362,19 +354,6 @@ export default function Taxonomy() {
             }
           >
             <img src={restart} />
-          </button>
-          <button
-            className={'active'}
-            data-tooltip-id="filtering-mode"
-            data-tooltip-delay-show={500}
-            onClick={() =>
-              libraryService.send({
-                type: 'CHANGE_SETTING',
-                data: { filteringMode: getNextFilterMode(filteringMode) },
-              })
-            }
-          >
-            <img src={filteringModeIcons[filteringMode]} />
           </button>
           <button
             className={`${applyTagToAll ? 'active' : ''}`}
@@ -676,11 +655,6 @@ export default function Taxonomy() {
       <Tooltip
         id="reset-query-tag"
         content={`Reset tag filter.`}
-        place="right"
-      />
-      <Tooltip
-        id="filtering-mode"
-        content={`Filtering mode. (Exclusive, Intersection, Union)`}
         place="right"
       />
       <Tooltip

@@ -382,14 +382,25 @@ func getTaggedPathsByLabels(db *sql.DB, labels []string, intersect bool) ([]stri
 		args = append(args, l)
 	}
 
+	// EXISTS(media) is load-bearing for pagination, not just a tidiness filter:
+	// media_tag_by_category can hold paths whose media row was deleted (dangling
+	// tags). Such a path produces no item from the downstream wide SELECT, so
+	// including it makes a page return fewer items than the shuffle window it
+	// consumed. The swipe client advances its offset by items received while the
+	// server advances by `limit`; the two then diverge and windows overlap,
+	// re-serving the same items — the "swipe loops over the same set" bug, acute
+	// for high-orphan tags. Constraining the universe to paths with a media row
+	// keeps the 1:1 path→item mapping the client's offset assumes.
 	var query string
 	if intersect && len(uniq) > 1 {
 		query = `SELECT media_path FROM media_tag_by_category WHERE tag_label IN (` +
-			placeholders + `) GROUP BY media_path HAVING COUNT(DISTINCT tag_label) = ? ORDER BY media_path`
+			placeholders + `) AND EXISTS (SELECT 1 FROM media m WHERE m.path = media_path)` +
+			` GROUP BY media_path HAVING COUNT(DISTINCT tag_label) = ? ORDER BY media_path`
 		args = append(args, len(uniq))
 	} else {
 		query = `SELECT DISTINCT media_path FROM media_tag_by_category WHERE tag_label IN (` +
-			placeholders + `) ORDER BY media_path`
+			placeholders + `) AND EXISTS (SELECT 1 FROM media m WHERE m.path = media_path)` +
+			` ORDER BY media_path`
 	}
 
 	stop := querylog.Start("GetRandomItems.tagfast.paths", query, args)

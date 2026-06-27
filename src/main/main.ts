@@ -63,7 +63,19 @@ class AppUpdater {
   constructor() {
     log.transports.file.level = 'info';
     autoUpdater.logger = log;
-    autoUpdater.checkForUpdatesAndNotify();
+    // checkForUpdatesAndNotify rejects when the release has no update manifest
+    // (e.g. a 404 on latest.yml for a build published without one). That
+    // rejection is fire-and-forget here, so without this catch it surfaces as a
+    // main-process unhandledRejection on every launch. Swallow it: a failed
+    // update check is non-fatal and shouldn't pollute the error log.
+    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+      logEvent({
+        level: 'warn',
+        scope: 'main:autoUpdater',
+        message: 'update check failed',
+        error: err,
+      });
+    });
   }
 }
 

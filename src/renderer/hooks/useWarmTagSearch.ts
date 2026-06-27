@@ -24,12 +24,16 @@ export function useWarmTagSearch(): void {
   );
 
   // Same key + loader as useTagSearch / taxonomy so this primes the shared
-  // cache. enabled: true kicks the fetch off at startup; staleTime: Infinity
-  // means it runs at most once per session (re-keyed on initSessionId).
+  // cache. Gated on initSessionId (assigned only once the machine reaches its
+  // post-DB `init` state) so the fetch never races ahead of the load-db handler
+  // registration — firing earlier just yields a guaranteed "No handler
+  // registered for 'load-all-tags'" rejection on every launch. staleTime:
+  // Infinity means it then runs at most once per session (re-keyed on
+  // initSessionId).
   const { data: allTagsData } = useQuery<TagConcept[], Error>(
     ['taxonomy', 'all-tags', initSessionId],
     loadAllTags,
-    { enabled: true, staleTime: Infinity }
+    { enabled: !!initSessionId, staleTime: Infinity }
   );
 
   // Build the shared index ahead of first use, off the RAW React Query array so
