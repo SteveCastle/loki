@@ -43,10 +43,10 @@ func (h *hnswIndex) Search(query []float32, k int) []SearchHit {
 	nodes := h.g.Search(query, k)
 	hits := make([]SearchHit, 0, len(nodes))
 	for _, n := range nodes {
-		// CosineDistance returns lower-is-closer; convert to higher-is-better.
+		// Distance returns lower-is-closer; convert to higher-is-better.
 		hits = append(hits, SearchHit{
 			Path:  n.ID(),
-			Score: 1 - hnsw.CosineDistance(query, n.Embedding()),
+			Score: 1 - h.g.Distance(query, n.Embedding()),
 		})
 	}
 	return hits
