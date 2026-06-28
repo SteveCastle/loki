@@ -1141,6 +1141,15 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 		batchMediaRemoved, _ := mediaResult.RowsAffected()
 		totalMediaRemoved += batchMediaRemoved
 
+		// Remove embeddings for the same batch (visual-similarity sidecar table).
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM media_embedding WHERE media_path IN (%s)`, strings.Join(placeholders, ",")), args...); err != nil {
+			tx.Rollback()
+			result.Errors = append(result.Errors, fmt.Errorf("failed to remove embeddings for batch: %w", err))
+			result.MediaItemsRemoved = totalMediaRemoved
+			result.TagsRemoved = totalTagsRemoved
+			return result, err
+		}
+
 		// Commit this batch
 		if err := tx.Commit(); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("failed to commit transaction for batch: %w", err))

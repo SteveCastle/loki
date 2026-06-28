@@ -34,7 +34,10 @@ func HasEmbedding(db *sql.DB, path, model string) (bool, error) {
 	if err == sql.ErrNoRows {
 		return false, nil
 	}
-	return err == nil, err
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // GetEmbedding returns the decoded vector for path/model.

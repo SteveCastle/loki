@@ -668,8 +668,10 @@ func lokiMediaDeleteHandler(deps *Dependencies) http.HandlerFunc {
 		// Delete from database
 		deps.DB.Exec("DELETE FROM media_tag_by_category WHERE media_path = ?", req.Path)
 		deps.DB.Exec("DELETE FROM media WHERE path = ?", req.Path)
-		// Path removed — drop it from the swipe sampler.
+		deps.DB.Exec("DELETE FROM media_embedding WHERE media_path = ?", req.Path)
+		// Path removed — drop it from the swipe sampler and ANN index.
 		media.InvalidateRandomSampleCache()
+		tasks.IndexDelete(req.Path)
 		writeJSON(w, map[string]string{})
 	}
 }

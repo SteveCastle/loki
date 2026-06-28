@@ -52,6 +52,7 @@ func removeFromDB(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, fmt.Sprintf("Removed %d media items from database", result.MediaItemsRemoved))
 	for _, p := range result.ProcessedPaths {
 		q.RegisterOutputFile(j.ID, p)
+		IndexDelete(p)
 	}
 	if result.MediaItemsRemoved == 0 {
 		q.PushJobStdout(j.ID, "No matching media items found in database")

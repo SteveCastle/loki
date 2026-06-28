@@ -45,3 +45,45 @@ func TestIndexLen(t *testing.T) {
 		t.Fatalf("expected Len 2 after two Adds, got %d", idx.Len())
 	}
 }
+
+// TestAddIsIdempotent verifies that re-adding an existing key with a different
+// vector does not panic and leaves exactly one node with the updated vector.
+func TestAddIsIdempotent(t *testing.T) {
+	idx := New()
+	vec1 := embedvec.Normalize([]float32{1, 0})
+	vec2 := embedvec.Normalize([]float32{0, 1})
+	idx.Add("a", vec1)
+	// Re-add same key with a different vector — must not panic.
+	idx.Add("a", vec2)
+	if idx.Len() != 1 {
+		t.Fatalf("expected Len 1 after idempotent Add, got %d", idx.Len())
+	}
+	hits := idx.Search(vec2, 1)
+	if len(hits) != 1 || hits[0].Path != "a" {
+		t.Fatalf("expected Search to return 'a' after re-add, got %+v", hits)
+	}
+}
+
+// TestDeleteRemovesNode verifies Delete removes a node from the index and that
+// deleting a missing key is a safe no-op.
+func TestDeleteRemovesNode(t *testing.T) {
+	idx := New()
+	vecA := embedvec.Normalize([]float32{1, 0})
+	vecB := embedvec.Normalize([]float32{0, 1})
+	idx.Add("a", vecA)
+	idx.Add("b", vecB)
+
+	// Delete "a" — safe no-op on a missing key must also not panic.
+	idx.Delete("zzz")
+	idx.Delete("a")
+
+	if idx.Len() != 1 {
+		t.Fatalf("expected Len 1 after Delete, got %d", idx.Len())
+	}
+	hits := idx.Search(vecA, 2)
+	for _, h := range hits {
+		if h.Path == "a" {
+			t.Errorf("deleted node 'a' still appears in Search results: %+v", hits)
+		}
+	}
+}
