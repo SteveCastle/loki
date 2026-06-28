@@ -378,7 +378,8 @@ export let loadMediaByDescriptionSearch: (
 
 export let loadMediaByQuery: (
   predicates: import('./query/types').Predicate[],
-  mode?: string
+  mode?: string,
+  authToken?: string | null
 ) => Promise<any>;
 
 export let fetchMediaPreview: (
@@ -446,7 +447,39 @@ if (isElectron) {
   transcript = window.electron.transcript;
   loadMediaFromDB = window.electron.loadMediaFromDB as any;
   loadMediaByDescriptionSearch = window.electron.loadMediaByDescriptionSearch;
-  loadMediaByQuery = window.electron.loadMediaByQuery as any;
+  const electronLoadMediaByQuery = window.electron.loadMediaByQuery as any;
+  loadMediaByQuery = async (predicates, mode = 'AND', authToken) => {
+    const hasVisual = predicates.some(
+      (p) => p.type === 'similar' || p.type === 'visual'
+    );
+    if (!hasVisual) {
+      // Normal queries stay on the fast local SQLite path.
+      return electronLoadMediaByQuery(predicates, mode);
+    }
+    // Visual similarity needs the embedding backend, which only the media
+    // server has. Electron and the server share the same SQLite DB, so we
+    // route just these queries to the local server. Requires being logged in.
+    if (!authToken) {
+      throw new Error(
+        'Visual search requires logging in to the local media server.'
+      );
+    }
+    const res = await fetch('http://localhost:8090/api/media/query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ predicates, mode }),
+    });
+    if (!res.ok) {
+      throw new Error(
+        `Visual search failed (HTTP ${res.status}). Is the media server running?`
+      );
+    }
+    const library = await res.json();
+    return { library: library || [], cursor: 0 };
+  };
   fetchMediaPreview = window.electron.fetchMediaPreview;
   fetchTagPreview = window.electron.fetchTagPreview;
   fetchTagCount = window.electron.fetchTagCount;
@@ -657,7 +690,7 @@ if (isElectron) {
     return { library: library || [], cursor: 0 };
   };
 
-  loadMediaByQuery = async (predicates, mode = 'AND') => {
+  loadMediaByQuery = async (predicates, mode = 'AND', _authToken) => {
     const library = await jsonPost('/api/media/query', { predicates, mode });
     return { library: library || [], cursor: 0 };
   };
