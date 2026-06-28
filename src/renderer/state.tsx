@@ -1765,7 +1765,8 @@ export const libraryMachine = createMachine(
               src: (context) =>
                 platformLoadMediaByQuery(
                   context.query.predicates,
-                  context.settings.filteringMode
+                  context.settings.filteringMode,
+                  context.authToken
                 ),
               onDone: {
                 target: 'loadedFromDB',
@@ -1773,6 +1774,7 @@ export const libraryMachine = createMachine(
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: ['addQueryErrorToast'],
               },
             },
             on: { ...queryMutationOn },
@@ -1785,7 +1787,8 @@ export const libraryMachine = createMachine(
               src: (context) =>
                 platformLoadMediaByQuery(
                   context.query.predicates,
-                  context.settings.filteringMode
+                  context.settings.filteringMode,
+                  context.authToken
                 ),
               onDone: {
                 target: 'loadedFromDB',

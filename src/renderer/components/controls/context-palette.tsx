@@ -652,7 +652,8 @@ export default function ContextPalette() {
         )}
       </div>
 
-      {capabilities.visualSearch && similarTargetPath && (
+      {(capabilities.visualSearch || (serverAvailable && authToken)) &&
+        similarTargetPath && (
         <div className="context-palette-actions">
           <div className="action-group">
             <span className="action-group-title">Visual Search</span>
