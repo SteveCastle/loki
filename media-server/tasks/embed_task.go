@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -24,6 +25,40 @@ const EmbedModelID = "siglip-base-patch16-224"
 // EmbedDim is the SigLIP base embedding dimension. Confirm against the chosen
 // ONNX export (Task 7) and update if different.
 const EmbedDim = 768
+
+// SimilarHit is one ranked similarity result.
+type SimilarHit struct {
+	Path  string  `json:"path"`
+	Score float32 `json:"score"`
+}
+
+// SimilarByPath returns the top-limit most similar media to path, by brute-force
+// cosine over all stored embeddings for model. The query path is excluded.
+func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, error) {
+	query, ok, err := media.GetEmbedding(db, path, model)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("no embedding for %q (model %q)", path, model)
+	}
+	all, err := media.LoadAllEmbeddings(db, model)
+	if err != nil {
+		return nil, err
+	}
+	hits := make([]SimilarHit, 0, len(all))
+	for _, e := range all {
+		if e.Path == path {
+			continue
+		}
+		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.Cosine(query, e.Vec)})
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+	if limit > 0 && len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
 
 func shouldSkipEmbed(db *sql.DB, path, model string) bool {
 	ok, err := media.HasEmbedding(db, path, model)
