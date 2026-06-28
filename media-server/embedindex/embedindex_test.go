@@ -47,7 +47,7 @@ func TestIndexLen(t *testing.T) {
 }
 
 // TestAddIsIdempotent verifies that re-adding an existing key with a different
-// vector does not panic and leaves exactly one node with the updated vector.
+// vector does not panic and leaves exactly one active node.
 func TestAddIsIdempotent(t *testing.T) {
 	idx := New()
 	vec1 := embedvec.Normalize([]float32{1, 0})
@@ -85,5 +85,58 @@ func TestDeleteRemovesNode(t *testing.T) {
 		if h.Path == "a" {
 			t.Errorf("deleted node 'a' still appears in Search results: %+v", hits)
 		}
+	}
+}
+
+// TestAddRefreshesVectorForActiveKey verifies that re-adding an active key with
+// a different vector updates the authoritative overlay, so Search scores against
+// the new vector rather than the stale graph position.
+func TestAddRefreshesVectorForActiveKey(t *testing.T) {
+	idx := New()
+	idx.Add("a", embedvec.Normalize([]float32{1, 0}))
+	// Re-add active key with a vector pointing elsewhere.
+	idx.Add("a", embedvec.Normalize([]float32{0, 1}))
+	if idx.Len() != 1 {
+		t.Fatalf("expected Len 1, got %d", idx.Len())
+	}
+	// Query aligned with the NEW vector should score ~1.0.
+	hits := idx.Search(embedvec.Normalize([]float32{0, 1}), 1)
+	if len(hits) != 1 || hits[0].Score < 0.9 {
+		t.Fatalf("expected score to reflect refreshed vector (~1.0), got %+v", hits)
+	}
+}
+
+// TestReactivateUsesNewVector verifies that after Delete+Add (ghost reactivation)
+// the Search score uses the new overlay vector, not the stale graph position.
+//
+// With k=2 both nodes are fetched regardless of graph topology, so the test is
+// deterministic even on tiny 2-node graphs. "a" is inserted at {1,0} in the
+// graph but the overlay is {-1,0} after reactivation; scoring against the
+// overlay yields ~1.0, whereas scoring against node.Embedding() would yield ~-1.0.
+func TestReactivateUsesNewVector(t *testing.T) {
+	idx := New()
+	idx.Add("a", embedvec.Normalize([]float32{1, 0}))
+	idx.Add("b", embedvec.Normalize([]float32{0, 1})) // keep graph non-trivial
+	idx.Delete("a")
+	idx.Add("a", embedvec.Normalize([]float32{-1, 0})) // reactivate with new vector
+
+	// Request k=2 so both nodes are fetched regardless of topology. Find "a" in
+	// results and assert its score reflects the overlay {-1,0}, not the stale
+	// graph position {1,0}.
+	hits := idx.Search(embedvec.Normalize([]float32{-1, 0}), 2)
+	var aHit *SearchHit
+	for i := range hits {
+		if hits[i].Path == "a" {
+			aHit = &hits[i]
+			break
+		}
+	}
+	if aHit == nil {
+		t.Fatalf("expected 'a' in Search results, got %+v", hits)
+	}
+	// cos({-1,0},{-1,0})=1 → score≈1.0 (overlay correct)
+	// cos({-1,0},{1,0})=-1 → score≈-1.0 (stale graph vector — would catch pre-fix bug)
+	if aHit.Score < 0.9 {
+		t.Fatalf("score reflects stale graph vector; got Score=%v, expected ~1.0 (overlay vector)", aHit.Score)
 	}
 }
