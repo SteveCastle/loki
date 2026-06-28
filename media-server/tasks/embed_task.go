@@ -21,10 +21,15 @@ import (
 )
 
 // EmbedModelID is the active embedding model; vectors are stored keyed by it.
-const EmbedModelID = "siglip-base-patch16-224"
+// SigLIP 2 (google/siglip2-base-patch16-224): same image preprocessing as v1
+// base (224x224, RGB, NCHW, mean/std 0.5 -> [-1,1]), but the text encoder uses
+// the Gemma multilingual SentencePiece tokenizer (Phase 3). Re-embedding to a
+// different model just changes this key — storage is model-keyed, non-destructive.
+const EmbedModelID = "siglip2-base-patch16-224"
 
-// EmbedDim is the SigLIP base embedding dimension. Confirm against the chosen
-// ONNX export (Task 7) and update if different.
+// EmbedDim is the SigLIP 2 base embedding dimension (768). Other variants:
+// large=1024, so400m=1152, giant=1536. Confirm against the chosen ONNX export
+// (deferred Task 7) and update if a different variant is selected.
 const EmbedDim = 768
 
 // SimilarHit is one ranked similarity result.
