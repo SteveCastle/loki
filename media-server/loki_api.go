@@ -285,6 +285,28 @@ func lokiSimilarHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func lokiVisualSearchHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if q == "" {
+			httpError(w, "q is required", http.StatusBadRequest)
+			return
+		}
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		hits, err := tasks.SearchByText(r.Context(), deps.DB, q, limit)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, hits)
+	}
+}
+
 func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 	type queryRequest struct {
 		Predicates []Predicate `json:"predicates"`
