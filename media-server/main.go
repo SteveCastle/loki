@@ -2398,6 +2398,17 @@ func main() {
 		Storage: storageReg,
 	}
 
+	// ––– embedding ANN index (best-effort, non-fatal) –––
+	// Build the HNSW index from all stored vectors so SimilarByPath uses
+	// ANN search instead of brute-force from the first request.  If the
+	// media_embedding table is empty (or missing) this logs and continues.
+	if idx, err := tasks.BuildIndexFromDB(db, tasks.EmbedModelID); err == nil {
+		tasks.SetVectorIndex(idx)
+		log.Printf("embedding index loaded: %d vectors", idx.Len())
+	} else {
+		log.Printf("embedding index unavailable, using brute-force: %v", err)
+	}
+
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
 		return authMiddleware(deps, next, role)

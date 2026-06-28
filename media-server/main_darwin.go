@@ -2201,6 +2201,14 @@ func main() {
 		Storage: storageReg,
 	}
 
+	// ––– embedding ANN index (best-effort, non-fatal) –––
+	if idx, err := tasks.BuildIndexFromDB(db, tasks.EmbedModelID); err == nil {
+		tasks.SetVectorIndex(idx)
+		log.Printf("embedding index loaded: %d vectors", idx.Len())
+	} else {
+		log.Printf("embedding index unavailable, using brute-force: %v", err)
+	}
+
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
 		return authMiddleware(deps, next, role)

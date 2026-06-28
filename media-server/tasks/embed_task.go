@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/embedindex"
 	"github.com/stevecastle/shrike/embedvec"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
@@ -32,8 +33,58 @@ type SimilarHit struct {
 	Score float32 `json:"score"`
 }
 
-// SimilarByPath returns the top-limit most similar media to path, by brute-force
-// cosine over all stored embeddings for model. The query path is excluded.
+// -----------------------------------------------------------------------------
+// Package-level ANN index — serialised behind a single mutex so concurrent
+// embed workers can call indexAdd without data-racing on the HNSW graph.
+// -----------------------------------------------------------------------------
+
+var (
+	vectorIndexMu sync.Mutex
+	vectorIndex   embedindex.VectorIndex
+)
+
+// SetVectorIndex installs the active ANN index (nil disables it → brute-force).
+func SetVectorIndex(idx embedindex.VectorIndex) {
+	vectorIndexMu.Lock()
+	vectorIndex = idx
+	vectorIndexMu.Unlock()
+}
+
+// indexSearch runs a locked ANN search. ok is false when no index is installed.
+func indexSearch(query []float32, k int) ([]embedindex.SearchHit, bool) {
+	vectorIndexMu.Lock()
+	defer vectorIndexMu.Unlock()
+	if vectorIndex == nil {
+		return nil, false
+	}
+	return vectorIndex.Search(query, k), true
+}
+
+// indexAdd inserts one vector into the active index under lock (no-op if none).
+func indexAdd(path string, vec []float32) {
+	vectorIndexMu.Lock()
+	defer vectorIndexMu.Unlock()
+	if vectorIndex != nil {
+		vectorIndex.Add(path, vec)
+	}
+}
+
+// BuildIndexFromDB constructs an ANN index from all stored vectors for model.
+func BuildIndexFromDB(db *sql.DB, model string) (embedindex.VectorIndex, error) {
+	all, err := media.LoadAllEmbeddings(db, model)
+	if err != nil {
+		return nil, err
+	}
+	idx := embedindex.New()
+	for _, e := range all {
+		idx.Add(e.Path, e.Vec)
+	}
+	return idx, nil
+}
+
+// SimilarByPath returns the top-limit most similar media to path. When an ANN
+// index is installed it uses that; otherwise it falls back to brute-force
+// cosine over all stored embeddings. The query path is always excluded.
 func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, error) {
 	query, ok, err := media.GetEmbedding(db, path, model)
 	if err != nil {
@@ -42,6 +93,23 @@ func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, err
 	if !ok {
 		return nil, fmt.Errorf("no embedding for %q (model %q)", path, model)
 	}
+
+	// Fast path: ANN index is installed.
+	if raw, ok := indexSearch(query, limit+1); ok {
+		hits := make([]SimilarHit, 0, limit)
+		for _, h := range raw {
+			if h.Path == path {
+				continue
+			}
+			hits = append(hits, SimilarHit{Path: h.Path, Score: h.Score})
+			if len(hits) == limit {
+				break
+			}
+		}
+		return hits, nil
+	}
+
+	// Slow path: brute-force cosine over all stored embeddings.
 	all, err := media.LoadAllEmbeddings(db, model)
 	if err != nil {
 		return nil, err
@@ -188,6 +256,9 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			q.ErrorJob(j.ID)
 			return err
 		}
+		// Incrementally insert into the ANN index so newly-embedded media
+		// becomes immediately searchable without a restart.
+		indexAdd(mediaPath, embedvec.Normalize(vec))
 		processed++
 		q.RegisterOutputFile(j.ID, mediaPath)
 	}
