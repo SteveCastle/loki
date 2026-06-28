@@ -69,6 +69,16 @@ func indexAdd(path string, vec []float32) {
 	}
 }
 
+// IndexDelete removes a path from the active index under lock (no-op if none).
+// It is exported so loki_api.go (package main) can call it on single-item deletion.
+func IndexDelete(path string) {
+	vectorIndexMu.Lock()
+	defer vectorIndexMu.Unlock()
+	if vectorIndex != nil {
+		vectorIndex.Delete(path)
+	}
+}
+
 // BuildIndexFromDB constructs an ANN index from all stored vectors for model.
 func BuildIndexFromDB(db *sql.DB, model string) (embedindex.VectorIndex, error) {
 	all, err := media.LoadAllEmbeddings(db, model)
