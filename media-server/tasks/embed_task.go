@@ -77,7 +77,7 @@ func BuildIndexFromDB(db *sql.DB, model string) (embedindex.VectorIndex, error) 
 	}
 	idx := embedindex.New()
 	for _, e := range all {
-		idx.Add(e.Path, e.Vec)
+		idx.Add(e.Path, embedvec.Normalize(e.Vec))
 	}
 	return idx, nil
 }
