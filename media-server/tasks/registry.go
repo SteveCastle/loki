@@ -52,8 +52,8 @@ func init() {
 	// new vision-using task is one line: route it through InferenceHost.
 	visionHost := func(string) string { return InferenceHost() }
 	RegisterHostResolver("autotag", visionHost)
-	RegisterHostResolver("embed", visionHost)
 	RegisterHostResolver("metadata", visionHost)
+	RegisterHostResolver("embed", visionHost)
 	RegisterHostResolver("ingest", urlHostResolver)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
