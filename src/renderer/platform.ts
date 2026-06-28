@@ -11,6 +11,9 @@ export const capabilities = {
   windowControls: isElectron,
   autoUpdate: isElectron,
   shutdown: isElectron,
+  // Visual similarity search requires the media-server embedding backend;
+  // it is unavailable in the local-only Electron path.
+  visualSearch: !isElectron,
 };
 
 // Diagnostics: forward renderer errors/load failures to the main-process file

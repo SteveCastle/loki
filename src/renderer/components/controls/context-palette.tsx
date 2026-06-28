@@ -9,6 +9,7 @@ import React, {
 import { useSelector } from '@xstate/react';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
+import { capabilities } from '../../platform';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import filter from '../../filter';
 import LoginWidget from './login-widget';
@@ -414,6 +415,9 @@ export default function ContextPalette() {
     (state) => state.context.authToken
   );
 
+  // Narrow the right-clicked file path; empty string when the target is not a file.
+  const similarTargetPath = target.type === 'file' ? target.path : '';
+
   const paletteRef = useRef<HTMLDivElement>(null);
   const { width, height } = useComponentSize(paletteRef);
 
@@ -634,6 +638,35 @@ export default function ContextPalette() {
           <span className="context-count">1 file</span>
         )}
       </div>
+
+      {capabilities.visualSearch && similarTargetPath && (
+        <div className="context-palette-actions">
+          <div className="action-group">
+            <span className="action-group-title">Visual Search</span>
+            <div className="action-buttons">
+              <button
+                className="action-btn"
+                onClick={() => {
+                  libraryService.send({
+                    type: 'ADD_PREDICATE',
+                    data: {
+                      predicate: {
+                        type: 'similar',
+                        value: similarTargetPath,
+                        exclude: false,
+                        join: filteringMode === 'OR' ? 'OR' : 'AND',
+                      },
+                    },
+                  });
+                  libraryService.send('HIDE_CONTEXT_PALETTE');
+                }}
+              >
+                Find similar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {serverAvailable === false && (
         <div className="context-palette-unavailable">
