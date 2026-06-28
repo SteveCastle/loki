@@ -95,7 +95,12 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fmt.Errorf("model %s not installed", EmbedModelID)
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
-	embedBin := deps.MustBundled("embed")
+	embedBin := deps.BundledOrEmpty("embed")
+	if embedBin == "" {
+		q.PushJobStdout(j.ID, "embed binary not installed; install it from Dependencies")
+		q.ErrorJob(j.ID)
+		return fmt.Errorf("embed binary not installed")
+	}
 
 	processed, skipped := 0, 0
 	for idx, mediaPath := range paths {
