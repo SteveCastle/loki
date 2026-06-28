@@ -38,6 +38,7 @@ func init() {
 	RegisterTask("remove", "Remove Media", nil, removeFromDB)
 	RegisterTask("cleanup", "CleanUp", nil, cleanUpFn)
 	RegisterTask("autotag", "Auto Tag (ONNX)", nil, autotagTask)
+	RegisterTask("embed", "Visual Embedding (ONNX)", nil, embedTask)
 
 	RegisterTask("metadata", "Generate Metadata", metadataOptions, metadataTask)
 	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
@@ -51,6 +52,7 @@ func init() {
 	// new vision-using task is one line: route it through InferenceHost.
 	visionHost := func(string) string { return InferenceHost() }
 	RegisterHostResolver("autotag", visionHost)
+	RegisterHostResolver("embed", visionHost)
 	RegisterHostResolver("metadata", visionHost)
 	RegisterHostResolver("ingest", urlHostResolver)
 
