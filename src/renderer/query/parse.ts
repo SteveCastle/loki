@@ -27,6 +27,8 @@ const PREFIXES: Array<{ prefix: string; type: PredicateType }> = [
   { prefix: 'path:', type: 'path' },
   { prefix: 'description:', type: 'description' },
   { prefix: 'hash:', type: 'hash' },
+  { prefix: 'similar:', type: 'similar' },
+  { prefix: 'visual:', type: 'visual' },
 ];
 
 // Strip surrounding quotes that survived tokenization of a prefixed value
@@ -71,6 +73,8 @@ const TYPE_PREFIX: Record<PredicateType, string> = {
   path: 'path:',
   description: 'description:',
   hash: 'hash:',
+  similar: 'similar:',
+  visual: 'visual:',
 };
 
 export function serializePredicate(p: Predicate): string {

@@ -41,4 +41,30 @@ describe('parseQuery', () => {
   it('ignores empty tokens', () => {
     expect(parseQuery('   ')).toEqual([]);
   });
+
+  it('parses visual: prefix with quoted phrase', () => {
+    expect(parseQuery('visual:"red car"')).toEqual<Predicate[]>([
+      { type: 'visual', value: 'red car', exclude: false },
+    ]);
+  });
+
+  it('parses similar: prefix with a path', () => {
+    expect(parseQuery('similar:/a/b.jpg')).toEqual<Predicate[]>([
+      { type: 'similar', value: '/a/b.jpg', exclude: false },
+    ]);
+  });
+
+  it('honors leading - as exclude on visual:', () => {
+    expect(parseQuery('-visual:cats')).toEqual<Predicate[]>([
+      { type: 'visual', value: 'cats', exclude: true },
+    ]);
+  });
+
+  it('round-trips visual: through serializeQuery', () => {
+    const preds: Predicate[] = [
+      { type: 'visual', value: 'red car', exclude: false },
+    ];
+    expect(serializeQuery({ predicates: preds })).toBe('visual:"red car"');
+    expect(parseQuery(serializeQuery({ predicates: preds }))).toEqual(preds);
+  });
 });
