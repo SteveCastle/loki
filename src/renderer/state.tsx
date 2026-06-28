@@ -13,7 +13,7 @@ import {
   invoke, send, on, store, appArgs, capabilities, isElectron,
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
-import type { Query } from './query/types';
+import type { Query, Predicate } from './query/types';
 import { predicateKey } from './query/types';
 import {
   addPredicateWithMode,
@@ -48,6 +48,7 @@ export type Item = {
   description?: string;
   height?: number | null;
   width?: number | null;
+  score?: number;
 };
 
 type Props = {
@@ -167,6 +168,23 @@ type LibraryState = {
   // Cache for masonry layout dimensions to maintain stable layout across view switches
   masonryDimensionsCache: Record<string, { width: number; height: number }>;
 };
+
+const queryHasVisual = (predicates: Predicate[] = []): boolean =>
+  predicates.some((p) => p.type === 'similar' || p.type === 'visual');
+
+const applySimilaritySort = assign<LibraryState, AnyEventObject>({
+  settings: (context) => {
+    const hasVisual = queryHasVisual(context.query?.predicates);
+    if (hasVisual) {
+      return { ...context.settings, sortBy: 'similarity' };
+    }
+    // Leaving a visual query: if we were on 'similarity', fall back to 'name'.
+    if (context.settings.sortBy === 'similarity') {
+      return { ...context.settings, sortBy: 'name' };
+    }
+    return context.settings;
+  },
+});
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
@@ -1754,7 +1772,7 @@ export const libraryMachine = createMachine(
                 ),
               onDone: {
                 target: 'loadedFromDB',
-                actions: ['setLibrary'],
+                actions: ['setLibrary', 'applySimilaritySort'],
               },
               onError: {
                 target: 'loadedFromFS',
@@ -2779,6 +2797,7 @@ export const libraryMachine = createMachine(
   {
     actions: {
       setLibrary,
+      applySimilaritySort,
       setLibraryWithPrevious,
       setPath,
       setDB,
