@@ -327,6 +327,11 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 		Predicates []Predicate `json:"predicates"`
 		Mode       string      `json:"mode"`
 	}
+	// Candidate cap for visual predicates: we pull the top-N most similar paths
+	// from the ANN/brute-force search, then compose them with the other SQL
+	// predicates. A composite like `visual:x AND tag:y` therefore only considers
+	// the top-N by similarity — a `y` match ranked beyond N is not returned.
+	// 1000 balances recall vs. the SQL IN-list size (well under SQLite's 32766 var cap).
 	const visualCandidateLimit = 1000
 
 	return func(w http.ResponseWriter, r *http.Request) {
