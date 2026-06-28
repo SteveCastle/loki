@@ -50,3 +50,12 @@ func TestCosineLengthMismatch(t *testing.T) {
 		t.Errorf("mismatched lengths should return 0, got %v", got)
 	}
 }
+
+func TestNormalizeZeroVector(t *testing.T) {
+	z := Normalize([]float32{0, 0, 0})
+	for _, x := range z {
+		if x != 0 {
+			t.Fatalf("zero vector mutated: got %v", z)
+		}
+	}
+}

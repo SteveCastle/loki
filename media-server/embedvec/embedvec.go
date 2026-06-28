@@ -41,10 +41,10 @@ func Normalize(v []float32) []float32 {
 		copy(out, v)
 		return out
 	}
-	inv := float32(1.0 / math.Sqrt(sum))
+	norm := math.Sqrt(sum)
 	out := make([]float32, len(v))
 	for i, x := range v {
-		out[i] = x * inv
+		out[i] = float32(float64(x) / norm)
 	}
 	return out
 }
@@ -55,9 +55,9 @@ func Cosine(a, b []float32) float32 {
 	if len(a) != len(b) {
 		return 0
 	}
-	var dot float32
+	var dot float64
 	for i := range a {
-		dot += a[i] * b[i]
+		dot += float64(a[i]) * float64(b[i])
 	}
-	return dot
+	return float32(dot)
 }
