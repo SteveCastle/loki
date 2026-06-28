@@ -3,6 +3,7 @@ import { useSearchHistory } from '../../hooks/useSearchHistory';
 import type { Query, Predicate } from '../../query/types';
 import { predicateKey } from '../../query/types';
 import type { FilterModeOption } from '../../../settings';
+import { capabilities } from '../../platform';
 import clear from '../../../../assets/cancel.svg';
 import union from '../../../../assets/union.svg';
 import intersect from '../../../../assets/intersect.svg';
@@ -47,8 +48,8 @@ const CHEAT_SHEET = [
   { syntax: 'path:dir', desc: 'Search paths' },
   { syntax: 'description:txt', desc: 'Search descriptions' },
   { syntax: 'hash:abc', desc: 'Search by hash' },
-  { syntax: 'visual:"red car"', desc: 'Visual search by text' },
-  { syntax: 'similar:path', desc: 'Find visually similar media' },
+  { syntax: 'visual:"red car"', desc: 'Visual search by text', visualOnly: true },
+  { syntax: 'similar:path', desc: 'Find visually similar media', visualOnly: true },
   { syntax: '-term', desc: 'Exclude term' },
 ];
 
@@ -432,7 +433,7 @@ export default function QueryInput({
           {showCheatSheet ? (
             <div className="query-input-cheatsheet">
               <div className="query-input-section-header">Query Syntax</div>
-              {CHEAT_SHEET.map((entry) => (
+              {CHEAT_SHEET.filter((e) => capabilities.visualSearch || !e.visualOnly).map((entry) => (
                 <div className="query-input-cheatsheet-row" key={entry.syntax}>
                   <span className="query-input-cheatsheet-syntax">
                     {entry.syntax}

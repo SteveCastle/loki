@@ -16,10 +16,10 @@ func BuildTextInputIDs(proc *sentencepiece.Processor, text string, seqLen int) [
 	for _, t := range toks {
 		ids = append(ids, int64(t.ID))
 	}
-	ids = append(ids, int64(info.EndOfSentenceID))
-	if len(ids) > seqLen {
-		ids = ids[:seqLen]
+	if len(ids) > seqLen-1 {
+		ids = ids[:seqLen-1]
 	}
+	ids = append(ids, int64(info.EndOfSentenceID))
 	for len(ids) < seqLen {
 		ids = append(ids, int64(info.PadID))
 	}

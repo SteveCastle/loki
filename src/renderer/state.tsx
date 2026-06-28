@@ -186,6 +186,23 @@ const applySimilaritySort = assign<LibraryState, AnyEventObject>({
   },
 });
 
+const addQueryErrorToast = assign<LibraryState, AnyEventObject>({
+  toasts: (context, event) => {
+    const err = event.data;
+    const message =
+      'Query failed: ' +
+      (err?.message ?? (typeof err === 'string' ? err : 'unknown error'));
+    const newToast = {
+      id: uniqueId(),
+      type: 'error' as const,
+      title: 'Query Error',
+      message,
+      timestamp: Date.now(),
+    };
+    return [...context.toasts, newToast];
+  },
+});
+
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
     const library = event.data.library;
@@ -1776,6 +1793,7 @@ export const libraryMachine = createMachine(
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: ['addQueryErrorToast'],
               },
             },
             on: { ...queryMutationOn },
@@ -2798,6 +2816,7 @@ export const libraryMachine = createMachine(
     actions: {
       setLibrary,
       applySimilaritySort,
+      addQueryErrorToast,
       setLibraryWithPrevious,
       setPath,
       setDB,
