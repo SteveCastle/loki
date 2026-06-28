@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
 	github.com/aws/smithy-go v1.24.2
 	github.com/coder/hnsw v0.1.0
+	github.com/eliben/go-sentencepiece v0.7.0
 	github.com/getlantern/systray v1.2.2
 	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/google/uuid v1.6.0
@@ -54,6 +55,7 @@ require (
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/tools v0.39.0 // indirect
+	google.golang.org/protobuf v1.34.2 // indirect
 	modernc.org/libc v1.65.10 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
