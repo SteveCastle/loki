@@ -4,12 +4,16 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/stevecastle/shrike/embedindex"
 	"github.com/stevecastle/shrike/media"
 	_ "modernc.org/sqlite"
 )
 
 func TestBuildIndexFromDBAndSimilarUsesIt(t *testing.T) {
-	db, _ := sql.Open("sqlite", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 	if err := media.InitializeSchema(db); err != nil {
 		t.Fatal(err)
@@ -31,5 +35,32 @@ func TestBuildIndexFromDBAndSimilarUsesIt(t *testing.T) {
 	}
 	if len(hits) != 1 || hits[0].Path != "a.jpg" {
 		t.Errorf("expected a.jpg via index, got %+v", hits)
+	}
+}
+
+func TestIncrementalInsertIsSearchable(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := media.InitializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	// Seed the query row in the DB (SimilarByPath reads the query vector from the DB).
+	_ = media.UpsertEmbedding(db, "q.jpg", EmbedModelID, embedvecNormalize([]float32{1, 0}), 0)
+
+	// Empty index installed; then incrementally insert two candidates.
+	SetVectorIndex(embedindex.New())
+	defer SetVectorIndex(nil)
+	indexAdd("a.jpg", embedvecNormalize([]float32{0.9, 0.1}))
+	indexAdd("b.jpg", embedvecNormalize([]float32{-1, 0}))
+
+	hits, err := SimilarByPath(db, EmbedModelID, "q.jpg", 1)
+	if err != nil {
+		t.Fatalf("similar: %v", err)
+	}
+	if len(hits) != 1 || hits[0].Path != "a.jpg" {
+		t.Errorf("expected a.jpg via incremental index, got %+v", hits)
 	}
 }
