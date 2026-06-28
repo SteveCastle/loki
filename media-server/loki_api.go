@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -307,17 +308,64 @@ func lokiVisualSearchHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+// sortItemsByScore orders items (each a map with "path") by descending score
+// from scoreByPath, attaching item["score"]. Stable for equal scores.
+func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
+	for _, it := range items {
+		p, _ := it["path"].(string)
+		it["score"] = scoreByPath[p]
+	}
+	sort.SliceStable(items, func(a, b int) bool {
+		return scoreByPath[items[a]["path"].(string)] > scoreByPath[items[b]["path"].(string)]
+	})
+}
+
 func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 	type queryRequest struct {
 		Predicates []Predicate `json:"predicates"`
 		Mode       string      `json:"mode"`
 	}
+	const visualCandidateLimit = 1000
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req queryRequest
 		if err := readJSON(r, &req); err != nil {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
+
+		// Resolve visual predicates (similar/visual) into path sets before
+		// BuildMediaQuery, which is pure and cannot call the model.
+		scoreByPath := map[string]float32{}
+		hasVisual := false
+		for i := range req.Predicates {
+			pt := req.Predicates[i].Type
+			val := req.Predicates[i].Value
+			if (pt == "similar" || pt == "visual") && val != "" {
+				hasVisual = true
+				var hits []tasks.SimilarHit
+				var err error
+				if pt == "similar" {
+					hits, err = tasks.SimilarByPath(deps.DB, tasks.EmbedModelID, val, visualCandidateLimit)
+				} else {
+					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
+				}
+				if err != nil {
+					httpError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				paths := make([]string, 0, len(hits))
+				for _, h := range hits {
+					paths = append(paths, h.Path)
+					// Merge scores with MAX so multi-predicate composites keep the best.
+					if s, ok := scoreByPath[h.Path]; !ok || h.Score > s {
+						scoreByPath[h.Path] = h.Score
+					}
+				}
+				req.Predicates[i].Resolved = paths
+			}
+		}
+
 		querySQL, params := BuildMediaQuery(req.Predicates, req.Mode)
 		rows, err := deps.DB.Query(querySQL, params...)
 		if err != nil {
@@ -363,6 +411,11 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			items = append(items, item)
 		}
+
+		if hasVisual {
+			sortItemsByScore(items, scoreByPath)
+		}
+
 		writeJSON(w, items)
 	}
 }
