@@ -8,11 +8,15 @@ export type PredicateType =
   | 'category'
   | 'path'
   | 'description'
-  | 'hash';
+  | 'hash'
+  | 'similar'
+  | 'visual';
 
 export interface Predicate {
   type: PredicateType;
   // Exact value for 'tag'/'category'; substring for 'path'/'description'/'hash'.
+  // 'similar' = a media path (find visually similar media via embedding backend).
+  // 'visual' = free text query (text→image search via embedding backend).
   value: string;
   // Per-predicate include (false) / exclude (true).
   exclude: boolean;

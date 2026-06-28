@@ -47,6 +47,8 @@ const CHEAT_SHEET = [
   { syntax: 'path:dir', desc: 'Search paths' },
   { syntax: 'description:txt', desc: 'Search descriptions' },
   { syntax: 'hash:abc', desc: 'Search by hash' },
+  { syntax: 'visual:"red car"', desc: 'Visual search by text' },
+  { syntax: 'similar:path', desc: 'Find visually similar media' },
   { syntax: '-term', desc: 'Exclude term' },
 ];
 
@@ -57,6 +59,8 @@ const TYPE_GLYPH: Record<Predicate['type'], string> = {
   path: 'path:',
   description: 'description:',
   hash: 'hash:',
+  similar: 'similar:',
+  visual: 'visual:',
 };
 
 // Icons + labels for the three tag-filtering behaviours, mirroring the toggle
