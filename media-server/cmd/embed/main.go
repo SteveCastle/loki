@@ -24,7 +24,7 @@ func main() {
 	flag.StringVar(&imagePath, "image", "", "Path to input image")
 	flag.StringVar(&ortLibPath, "ort", "", "Path to onnxruntime shared library")
 	flag.StringVar(&inputName, "input", "pixel_values", "Model input tensor name")
-	flag.StringVar(&outputName, "output", "image_embeds", "Model output tensor name")
+	flag.StringVar(&outputName, "output", "pooler_output", "Model output tensor name (SigLIP 2 vision/text encoders both emit pooler_output)")
 	flag.IntVar(&width, "width", 224, "Model input width")
 	flag.IntVar(&height, "height", 224, "Model input height")
 	flag.IntVar(&dim, "dim", 0, "Output embedding dimension (required)")
