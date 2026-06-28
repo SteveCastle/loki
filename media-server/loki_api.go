@@ -316,7 +316,9 @@ func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
 		it["score"] = scoreByPath[p]
 	}
 	sort.SliceStable(items, func(a, b int) bool {
-		return scoreByPath[items[a]["path"].(string)] > scoreByPath[items[b]["path"].(string)]
+		pa, _ := items[a]["path"].(string)
+		pb, _ := items[b]["path"].(string)
+		return scoreByPath[pa] > scoreByPath[pb]
 	})
 }
 
