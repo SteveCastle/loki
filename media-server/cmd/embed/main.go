@@ -19,6 +19,10 @@ func main() {
 		width, height, dim               int
 		meanStr, stdStr                  string
 		showVersion                      bool
+		// text mode flags
+		textStr, textModel, tokenizerPath string
+		textInput, textOutput             string
+		seqLen                            int
 	)
 	flag.StringVar(&modelPath, "model", "", "Path to ONNX embedding model")
 	flag.StringVar(&imagePath, "image", "", "Path to input image")
@@ -31,13 +35,49 @@ func main() {
 	flag.StringVar(&meanStr, "mean", "0.5,0.5,0.5", "Normalization mean RGB")
 	flag.StringVar(&stdStr, "std", "0.5,0.5,0.5", "Normalization stddev RGB")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
+	// text mode
+	flag.StringVar(&textStr, "text", "", "Text to encode (enables text mode)")
+	flag.StringVar(&textModel, "text-model", "", "Path to ONNX text encoder model (required in text mode)")
+	flag.StringVar(&tokenizerPath, "tokenizer", "", "Path to SentencePiece tokenizer.model (required in text mode)")
+	flag.StringVar(&textInput, "text-input", "input_ids", "Text encoder input tensor name")
+	flag.StringVar(&textOutput, "text-output", "pooler_output", "Text encoder output tensor name")
+	flag.IntVar(&seqLen, "seq-len", 64, "Sequence length for text tokenization")
 	flag.Parse()
 
 	if showVersion {
 		fmt.Println("embed local-build")
 		os.Exit(0)
 	}
-	if modelPath == "" || imagePath == "" || dim <= 0 {
+
+	if dim <= 0 {
+		fmt.Fprintln(os.Stderr, "Error: --dim is required")
+		flag.Usage()
+		os.Exit(2)
+	}
+
+	// Text mode: --text is non-empty
+	if textStr != "" {
+		if textModel == "" || tokenizerPath == "" {
+			fmt.Fprintln(os.Stderr, "Error: --text-model and --tokenizer are required in text mode")
+			flag.Usage()
+			os.Exit(2)
+		}
+		opts := onnxtag.DefaultOptions()
+		opts.InputName = textInput
+		opts.OutputName = textOutput
+		opts.ORTSharedLibraryPath = ortLibPath
+
+		vec, err := onnxtag.EmbedText(textModel, tokenizerPath, textStr, opts, dim, seqLen)
+		if err != nil {
+			log.Fatalf("embed text failed: %v", err)
+		}
+		norm := embedvec.Normalize(vec)
+		fmt.Println(base64.StdEncoding.EncodeToString(embedvec.Encode(norm)))
+		return
+	}
+
+	// Image mode (existing behavior)
+	if modelPath == "" || imagePath == "" {
 		fmt.Fprintln(os.Stderr, "Error: --model, --image and --dim are required")
 		flag.Usage()
 		os.Exit(2)
