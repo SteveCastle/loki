@@ -74,6 +74,19 @@ const ACTION_GROUPS: ActionGroup[] = [
       },
     ],
   },
+  {
+    title: 'Visual Embeddings',
+    actions: [
+      {
+        // Generates SigLIP 2 embeddings for visual similarity search. Resumable
+        // (skips media already embedded for the active model), so re-running is
+        // cheap. Works over the current selection: the library query (list view,
+        // shift+right-click) or the focused file (detail view).
+        label: 'Generate',
+        command: (q) => `embed --query64=${q}`,
+      },
+    ],
+  },
 ];
 
 type ContextTarget =
