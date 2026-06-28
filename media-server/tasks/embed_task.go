@@ -97,6 +97,33 @@ func BuildIndexFromDB(db *sql.DB, model string) (embedindex.VectorIndex, error) 
 	return idx, nil
 }
 
+// SearchByVector returns the top-limit most similar media to query using the
+// installed ANN index (when present) or brute-force cosine over all stored
+// embeddings. No self-exclusion is performed — callers that need it (e.g.
+// SimilarByPath) must filter afterward.
+func SearchByVector(db *sql.DB, model string, query []float32, limit int) ([]SimilarHit, error) {
+	if raw, ok := indexSearch(query, limit); ok {
+		hits := make([]SimilarHit, 0, len(raw))
+		for _, h := range raw {
+			hits = append(hits, SimilarHit{Path: h.Path, Score: h.Score})
+		}
+		return hits, nil
+	}
+	all, err := media.LoadAllEmbeddings(db, model)
+	if err != nil {
+		return nil, err
+	}
+	hits := make([]SimilarHit, 0, len(all))
+	for _, e := range all {
+		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.Cosine(query, e.Vec)})
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+	if limit > 0 && len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
 // SimilarByPath returns the top-limit most similar media to path. When an ANN
 // index is installed it uses that; otherwise it falls back to brute-force
 // cosine over all stored embeddings. The query path is always excluded.
@@ -109,36 +136,20 @@ func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, err
 		return nil, fmt.Errorf("no embedding for %q (model %q)", path, model)
 	}
 
-	// Fast path: ANN index is installed.
-	if raw, ok := indexSearch(query, limit+1); ok {
-		hits := make([]SimilarHit, 0, limit)
-		for _, h := range raw {
-			if h.Path == path {
-				continue
-			}
-			hits = append(hits, SimilarHit{Path: h.Path, Score: h.Score})
-			if len(hits) == limit {
-				break
-			}
-		}
-		return hits, nil
-	}
-
-	// Slow path: brute-force cosine over all stored embeddings.
-	all, err := media.LoadAllEmbeddings(db, model)
+	// Request limit+1 so there is room to drop the self entry.
+	all, err := SearchByVector(db, model, query, limit+1)
 	if err != nil {
 		return nil, err
 	}
-	hits := make([]SimilarHit, 0, len(all))
-	for _, e := range all {
-		if e.Path == path {
+	hits := make([]SimilarHit, 0, limit)
+	for _, h := range all {
+		if h.Path == path {
 			continue
 		}
-		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.Cosine(query, e.Vec)})
-	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
-	if limit > 0 && len(hits) > limit {
-		hits = hits[:limit]
+		hits = append(hits, h)
+		if len(hits) == limit {
+			break
+		}
 	}
 	return hits, nil
 }
@@ -171,6 +182,57 @@ func runEmbedSubprocess(ctx context.Context, embedBin, model, ortLib, imagePath 
 		return nil, fmt.Errorf("decode base64 vector: %w", err)
 	}
 	return embedvec.Decode(raw)
+}
+
+// runEmbedTextSubprocess invokes embed.exe for one text query and returns the
+// decoded, already-L2-normalized vector. It mirrors runEmbedSubprocess but
+// passes --text/--text-model/--tokenizer instead of --model/--image.
+func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer, ortLib, text string, dim int) ([]float32, error) {
+	args := []string{
+		"--text=" + text,
+		"--text-model=" + textModel,
+		"--tokenizer=" + tokenizer,
+		fmt.Sprintf("--dim=%d", dim),
+	}
+	if ortLib != "" {
+		args = append(args, "--ort="+ortLib)
+	}
+	cmd := exec.CommandContext(ctx, embedBin, args...)
+	platform.HideSubprocessWindow(cmd)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	line := strings.TrimSpace(string(out))
+	raw, err := base64.StdEncoding.DecodeString(line)
+	if err != nil {
+		return nil, fmt.Errorf("decode base64 vector: %w", err)
+	}
+	return embedvec.Decode(raw)
+}
+
+// SearchByText encodes text via the SigLIP 2 text encoder subprocess and
+// returns the top-limit most similar media by cosine similarity. Returns an
+// error (not a panic) when the model, tokenizer, or embed binary is absent.
+func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
+	textModel, err := deps.ModelPath(EmbedModelID, "text_model.onnx")
+	if err != nil || textModel == "" {
+		return nil, fmt.Errorf("text model not installed: %w", err)
+	}
+	tokenizer, err := deps.ModelPath(EmbedModelID, "tokenizer.model")
+	if err != nil || tokenizer == "" {
+		return nil, fmt.Errorf("tokenizer not installed: %w", err)
+	}
+	ortLib := deps.BundledOrEmpty("onnxruntime")
+	embedBin := deps.BundledOrEmpty("embed")
+	if embedBin == "" {
+		return nil, fmt.Errorf("embed binary not installed")
+	}
+	vec, err := runEmbedTextSubprocess(ctx, embedBin, textModel, tokenizer, ortLib, text, EmbedDim)
+	if err != nil {
+		return nil, err
+	}
+	return SearchByVector(db, EmbedModelID, vec, limit)
 }
 
 func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
