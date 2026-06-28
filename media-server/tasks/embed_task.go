@@ -216,12 +216,18 @@ func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer,
 // error (not a panic) when the model, tokenizer, or embed binary is absent.
 func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
 	textModel, err := deps.ModelPath(EmbedModelID, "text_model.onnx")
-	if err != nil || textModel == "" {
+	if err != nil {
 		return nil, fmt.Errorf("text model not installed: %w", err)
 	}
+	if textModel == "" {
+		return nil, fmt.Errorf("text model not installed")
+	}
 	tokenizer, err := deps.ModelPath(EmbedModelID, "tokenizer.model")
-	if err != nil || tokenizer == "" {
+	if err != nil {
 		return nil, fmt.Errorf("tokenizer not installed: %w", err)
+	}
+	if tokenizer == "" {
+		return nil, fmt.Errorf("tokenizer not installed")
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")
