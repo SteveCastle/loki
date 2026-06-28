@@ -18,6 +18,7 @@ import (
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/storage"
+	"github.com/stevecastle/shrike/tasks"
 )
 
 func formatFileSize(bytes int64) string {
@@ -259,6 +260,28 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 			items = []map[string]any{}
 		}
 		writeJSON(w, items)
+	}
+}
+
+func lokiSimilarHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Query().Get("path")
+		if path == "" {
+			httpError(w, "path is required", http.StatusBadRequest)
+			return
+		}
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		hits, err := tasks.SimilarByPath(deps.DB, tasks.EmbedModelID, path, limit)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, hits)
 	}
 }
 
