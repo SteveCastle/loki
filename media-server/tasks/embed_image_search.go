@@ -17,8 +17,11 @@ func SearchByImage(ctx context.Context, db *sql.DB, image []byte, limit int) ([]
 		return nil, fmt.Errorf("empty image")
 	}
 	imageModel, err := deps.ModelPath(EmbedModelID, "image_model.onnx")
-	if err != nil || imageModel == "" {
+	if err != nil {
 		return nil, fmt.Errorf("image model not installed: %w", err)
+	}
+	if imageModel == "" {
+		return nil, fmt.Errorf("image model not installed")
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")

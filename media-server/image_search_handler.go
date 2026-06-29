@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"io"
 	"net/http"
 
@@ -42,7 +43,15 @@ func enrichScoredItems(db *sql.DB, hits []tasks.SimilarHit) ([]map[string]any, e
 func lokiImageSearchHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		image, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20)) // 32 MB cap
-		if err != nil || len(image) == 0 {
+		if err != nil {
+			if errors.As(err, new(*http.MaxBytesError)) {
+				httpError(w, "image too large (max 32 MB)", http.StatusRequestEntityTooLarge)
+			} else {
+				httpError(w, "image body required", http.StatusBadRequest)
+			}
+			return
+		}
+		if len(image) == 0 {
 			httpError(w, "image body required", http.StatusBadRequest)
 			return
 		}
