@@ -241,7 +241,7 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
           onClick={() => libraryService.send('SHUFFLE')}
           tooltipId="shuffle"
         />
-        {hasVisual && (
+        {(hasVisual || sortBy === 'similarity') && (
           <ActionButton
             icon={rulerIcon}
             onClick={() => libraryService.send('SORTED_SCORE')}
