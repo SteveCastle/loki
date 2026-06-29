@@ -2136,6 +2136,16 @@ export const libraryMachine = createMachine(
                   },
                 }),
               },
+              SORTED_SCORE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'similarity',
+                  }),
+                }),
+              },
             },
             states: {
               idle: {
@@ -2529,6 +2539,16 @@ export const libraryMachine = createMachine(
                       sortBy: 'shuffle',
                     };
                   },
+                }),
+              },
+              SORTED_SCORE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'similarity',
+                  }),
                 }),
               },
               UPDATE_MEDIA_ELO: {

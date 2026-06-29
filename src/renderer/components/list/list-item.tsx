@@ -288,6 +288,9 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
           </span>
         </div>
       ) : null}
+      {sortBy === 'similarity' && typeof item.score === 'number' ? (
+        <div className="score-badge">{Math.round(item.score * 100)}%</div>
+      ) : null}
     </div>
   );
 }
@@ -301,7 +304,8 @@ export const ListItem = React.memo(
       prevProps.height === nextProps.height &&
       prevProps.item.timeStamp === nextProps.item.timeStamp &&
       prevProps.item.elo === nextProps.item.elo &&
-      prevProps.item.weight === nextProps.item.weight
+      prevProps.item.weight === nextProps.item.weight &&
+      prevProps.item.score === nextProps.item.score
     );
   }
 );
