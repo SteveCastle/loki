@@ -50,6 +50,21 @@
           "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2"
         }
       ]
+    },
+    {
+      "id": "dinov2-base",
+      "name": "DINOv2 base",
+      "description": "Self-supervised image encoder for visual similarity search (image->image only; no text encoder). Image preprocessing: ImageNet mean/std, center-crop 224, patch14. Embedding is the 768-dim CLS token of last_hidden_state.",
+      "version": "1.0.0",
+      "consumers": ["embed"],
+      "size_bytes": 346608174,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/dinov2-base-ONNX/resolve/main/onnx/model.onnx",
+          "rel_path": "image_model.onnx",
+          "sha256": "f16115e628d65b7cc7b1e16c504e2af682169aabf3fff4edfe906118f522e204"
+        }
+      ]
     }
   ]
 }

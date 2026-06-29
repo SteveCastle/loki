@@ -277,7 +277,7 @@ func lokiSimilarHandler(deps *Dependencies) http.HandlerFunc {
 				limit = n
 			}
 		}
-		hits, err := tasks.SimilarByPath(deps.DB, tasks.EmbedModelID, path, limit)
+		hits, err := tasks.SimilarByPath(deps.DB, tasks.ActiveEmbedModel().ID, path, limit)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -353,7 +353,7 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 				var hits []tasks.SimilarHit
 				var err error
 				if pt == "similar" {
-					hits, err = tasks.SimilarByPath(deps.DB, tasks.EmbedModelID, val, visualCandidateLimit)
+					hits, err = tasks.SimilarByPath(deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
 				} else {
 					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
 				}

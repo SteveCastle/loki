@@ -1203,6 +1203,32 @@
               </div>
             </div>
 
+            <div class="config-card config-card--cyan">
+              <div class="section-title">🖼️ Visual Embedding</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Model (indexing + similarity search)</label>
+                  <select id="embedding-model" class="input">
+                    {{range .EmbeddingModels}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.EmbeddingModel}}selected{{end}}
+                    >{{.DisplayName}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    Governs both new indexing (the <code>embed</code> task) and
+                    image→image similarity search. Text→image search always uses
+                    SigLIP&nbsp;2. Embeddings are stored per model, so switching
+                    never deletes existing vectors — switching back is instant.
+                    Changing this rebuilds the search index in the background;
+                    media must be embedded under a model before that model can
+                    search it.
+                  </small>
+                </div>
+              </div>
+            </div>
+
             <div class="config-card config-card--pink">
               <div class="section-title">🎙️ Whisper</div>
               <div class="fields">
@@ -1740,6 +1766,9 @@
           onnxCharacterThreshold: parseFloat(
             document.getElementById('onnx-char-thresh').value
           ),
+          embeddingModel: document
+            .getElementById('embedding-model')
+            .value.trim(),
           fasterWhisperPath: document
             .getElementById('faster-whisper-path')
             .value.trim(),

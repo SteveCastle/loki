@@ -1517,9 +1517,10 @@ func formatBytes(bytes int64) string {
 // -----------------------------------------------------------------------------
 
 type configTemplateData struct {
-	Config       appconfig.Config
-	ConfigPath   string
-	ActiveDBPath string
+	Config          appconfig.Config
+	ConfigPath      string
+	ActiveDBPath    string
+	EmbeddingModels []tasks.EmbedModel
 }
 
 type updateConfigRequest struct {
@@ -1550,6 +1551,7 @@ type updateConfigRequest struct {
 	OnnxORTSharedLibPath   string  `json:"onnxOrtSharedLibPath"`
 	OnnxGeneralThreshold   float64 `json:"onnxGeneralThreshold"`
 	OnnxCharacterThreshold float64 `json:"onnxCharacterThreshold"`
+	EmbeddingModel         string   `json:"embeddingModel"`
 	FasterWhisperPath      string   `json:"fasterWhisperPath"`
 	DiscordToken           string   `json:"discordToken"`
 	Roots                  []appconfig.StorageRoot `json:"roots"`
@@ -1566,9 +1568,10 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			currentConfig = cfg
 			data := configTemplateData{
-				Config:       cfg,
-				ConfigPath:   cfgPath,
-				ActiveDBPath: cfg.DBPath,
+				Config:          cfg,
+				ConfigPath:      cfgPath,
+				ActiveDBPath:    cfg.DBPath,
+				EmbeddingModels: tasks.EmbedModelList(),
 			}
 			if err := renderer.Templates().ExecuteTemplate(w, "config", data); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1587,6 +1590,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 
 			oldCfg := currentConfig
 			oldDBPath := currentConfig.DBPath
+			oldEmbeddingModel := currentConfig.EmbeddingModel
 			newCfg := currentConfig
 			newCfg.DBPath = req.DBPath
 			if strings.TrimSpace(req.DownloadPath) != "" {
@@ -1668,6 +1672,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.OnnxCharacterThreshold > 0 {
 				newCfg.OnnxTagger.CharacterThreshold = req.OnnxCharacterThreshold
 			}
+			if v := strings.TrimSpace(req.EmbeddingModel); v != "" {
+				newCfg.EmbeddingModel = v
+			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
 			}
@@ -1702,6 +1709,22 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				log.Println("Auth session cleared due to database switch")
 			}
 			currentConfig = newCfg
+
+			// If the active embedding model changed, rebuild the ANN index for
+			// the new model in the background. Vectors are model-keyed in the DB
+			// (no re-inference needed); this just reloads the stored vectors for
+			// the now-active model. Done off the request goroutine because a
+			// large library can take a while to load.
+			if newCfg.EmbeddingModel != oldEmbeddingModel {
+				go func(db *sql.DB) {
+					model, n, err := tasks.RebuildActiveIndex(db)
+					if err != nil {
+						log.Printf("embedding index rebuild after model switch failed (model %s): %v", model, err)
+						return
+					}
+					log.Printf("embedding index rebuilt after model switch: %d vectors (model %s)", n, model)
+				}(deps.DB)
+			}
 
 			// Rebuild storage backends from new config
 			newReg, regErrs := storage.BuildRegistry(newCfg.Roots)
@@ -2402,11 +2425,10 @@ func main() {
 	// Build the HNSW index from all stored vectors so SimilarByPath uses
 	// ANN search instead of brute-force from the first request.  If the
 	// media_embedding table is empty (or missing) this logs and continues.
-	if idx, err := tasks.BuildIndexFromDB(db, tasks.EmbedModelID); err == nil {
-		tasks.SetVectorIndex(idx)
-		log.Printf("embedding index loaded: %d vectors", idx.Len())
+	if model, n, err := tasks.RebuildActiveIndex(db); err == nil {
+		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
 	} else {
-		log.Printf("embedding index unavailable, using brute-force: %v", err)
+		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
 	}
 
 	// Initialize renderer auth middleware
