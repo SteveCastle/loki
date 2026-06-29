@@ -14,6 +14,7 @@ export const capabilities = {
   // Visual similarity search requires the media-server embedding backend;
   // it is unavailable in the local-only Electron path.
   visualSearch: !isElectron,
+  regionCapture: isElectron,
 };
 
 // Diagnostics: forward renderer errors/load failures to the main-process file
@@ -414,6 +415,10 @@ export let findSubtitle: (
   videoPath: string
 ) => Promise<{ ext: 'srt' | 'vtt'; content: string } | null>;
 
+export let captureRegion:
+  | ((rect: { x: number; y: number; width: number; height: number }) => Promise<Uint8Array | null>)
+  | undefined;
+
 // ---- Platform initialization ----
 
 if (isElectron) {
@@ -493,6 +498,7 @@ if (isElectron) {
   getGifMetadata = window.electron.getGifMetadata;
   findSubtitle = ((videoPath: string) =>
     window.electron.ipcRenderer.invoke('find-subtitle', [videoPath])) as any;
+  captureRegion = (window.electron as any).captureRegion;
 } else {
   // Web mode
 

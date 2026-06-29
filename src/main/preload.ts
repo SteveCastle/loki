@@ -177,6 +177,16 @@ const getGifMetadata = async (filePath: string) => {
   return result as { frameCount: number; duration: number } | null;
 };
 
+const captureRegion = async (rect: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): Promise<Uint8Array | null> => {
+  const png = await ipcRenderer.invoke('capture-region', [rect]);
+  return png ? new Uint8Array(png) : null;
+};
+
 contextBridge.exposeInMainWorld('electron', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   // Forward renderer errors/load failures to the main-process file logger.
@@ -198,6 +208,7 @@ contextBridge.exposeInMainWorld('electron', {
   loadDuplicatesByPath,
   mergeDuplicatesByPath,
   getGifMetadata,
+  captureRegion,
   async loadTranscript(filePath: string) {
     const mod = await ensureTranscriptModule();
     return mod.loadTranscript(filePath);

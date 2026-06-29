@@ -107,6 +107,20 @@ ipcMain.handle('get-mac-path', () => {
   return macPath;
 });
 
+ipcMain.handle('capture-region', async (_event, [rect]) => {
+  if (!mainWindow) return null;
+  // rect is in renderer CSS pixels; capturePage expects the same space.
+  const r = {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+  if (r.width <= 0 || r.height <= 0) return null;
+  const image = await mainWindow.webContents.capturePage(r);
+  return image.toPNG(); // Buffer; serialized to the renderer as a Uint8Array
+});
+
 // Window Controls
 ipcMain.on('shutdown', async () => {
   // Shutdown the app.
