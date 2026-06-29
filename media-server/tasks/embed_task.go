@@ -124,9 +124,11 @@ func SearchByVector(db *sql.DB, model string, query []float32, limit int) ([]Sim
 	return hits, nil
 }
 
-// SimilarByPath returns the top-limit most similar media to path. When an ANN
-// index is installed it uses that; otherwise it falls back to brute-force
-// cosine over all stored embeddings. The query path is always excluded.
+// SimilarByPath returns the top-limit most similar media to path, INCLUDING the
+// query item itself — it has cosine similarity 1.0, so it ranks first, which is
+// the desired "find similar" UX (you see the source item, then its neighbours).
+// When an ANN index is installed it uses that; otherwise it falls back to
+// brute-force cosine over all stored embeddings.
 func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, error) {
 	query, ok, err := media.GetEmbedding(db, path, model)
 	if err != nil {
@@ -135,23 +137,7 @@ func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, err
 	if !ok {
 		return nil, fmt.Errorf("no embedding for %q (model %q)", path, model)
 	}
-
-	// Request limit+1 so there is room to drop the self entry.
-	all, err := SearchByVector(db, model, query, limit+1)
-	if err != nil {
-		return nil, err
-	}
-	hits := make([]SimilarHit, 0, limit)
-	for _, h := range all {
-		if h.Path == path {
-			continue
-		}
-		hits = append(hits, h)
-		if len(hits) == limit {
-			break
-		}
-	}
-	return hits, nil
+	return SearchByVector(db, model, query, limit)
 }
 
 func shouldSkipEmbed(db *sql.DB, path, model string) bool {

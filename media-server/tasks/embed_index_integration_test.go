@@ -29,12 +29,13 @@ func TestBuildIndexFromDBAndSimilarUsesIt(t *testing.T) {
 	SetVectorIndex(idx)
 	defer SetVectorIndex(nil)
 
-	hits, err := SimilarByPath(db, EmbedModelID, "q.jpg", 1)
+	hits, err := SimilarByPath(db, EmbedModelID, "q.jpg", 2)
 	if err != nil {
 		t.Fatalf("similar: %v", err)
 	}
-	if len(hits) != 1 || hits[0].Path != "a.jpg" {
-		t.Errorf("expected a.jpg via index, got %+v", hits)
+	// Self (q.jpg) is included and ranks first; a.jpg is the nearest neighbour.
+	if len(hits) != 2 || hits[0].Path != "q.jpg" || hits[1].Path != "a.jpg" {
+		t.Errorf("expected [q.jpg, a.jpg] via index, got %+v", hits)
 	}
 }
 

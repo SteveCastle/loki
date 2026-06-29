@@ -34,11 +34,15 @@ func TestSimilarByPathRanksByCosine(t *testing.T) {
 	if err != nil {
 		t.Fatalf("similar: %v", err)
 	}
-	if len(hits) != 3 {
-		t.Fatalf("expected 3 hits (self excluded), got %d", len(hits))
+	// The query item itself is INCLUDED (cosine 1.0 → ranks first).
+	if len(hits) != 4 {
+		t.Fatalf("expected 4 hits (self included), got %d", len(hits))
 	}
-	if hits[0].Path != "a.jpg" {
-		t.Errorf("expected a.jpg first, got %s", hits[0].Path)
+	if hits[0].Path != "q.jpg" {
+		t.Errorf("expected q.jpg first (self, score ~1.0), got %s", hits[0].Path)
+	}
+	if hits[1].Path != "a.jpg" {
+		t.Errorf("expected a.jpg second, got %s", hits[1].Path)
 	}
 	if hits[len(hits)-1].Path != "c.jpg" {
 		t.Errorf("expected c.jpg last, got %s", hits[len(hits)-1].Path)
