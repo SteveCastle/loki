@@ -10,10 +10,17 @@ import { useSelector } from '@xstate/react';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
 import { capabilities } from '../../platform';
+import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import filter from '../../filter';
 import LoginWidget from './login-widget';
-import { getDirFromInitialFile, buildLibraryPathQuery } from './context-query';
+import {
+  getDirFromInitialFile,
+  buildLibraryPathQuery,
+  buildLegacyQuery,
+  quoteValue,
+  LEGACY_PREFIX,
+} from './context-query';
 import './context-palette.css';
 
 type ActionDef = {
@@ -95,20 +102,11 @@ type ContextTarget =
   | { type: 'tag'; tag: string }
   | { type: 'category'; category: string };
 
-// Wrap a tag/category value in double quotes so multi-word values (e.g.
-// "Exchange Student") survive query parsing. Without quotes the server lexer
-// splits on the space and the query fails to parse — which historically caused
-// the whole library to be selected. Embedded quotes are escaped to keep the
-// token well-formed.
-function quoteValue(value: string): string {
-  return `"${value.replace(/"/g, '\\"')}"`;
-}
-
 function buildQuery(
   target: ContextTarget,
   libraryContext: {
     currentStateType: 'fs' | 'db';
-    dbQuery: { tags: string[] };
+    predicates: Predicate[];
     textFilter: string;
     initialFile: string;
     settings: { filteringMode: string; recursive: boolean };
@@ -122,16 +120,14 @@ function buildQuery(
     case 'category':
       return `category:${quoteValue(target.category)}`;
     case 'library': {
-      const { currentStateType, dbQuery, initialFile, settings } =
-        libraryContext;
-      if (currentStateType === 'db' && dbQuery.tags.length > 0) {
-        const joiner =
-          settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
-        return dbQuery.tags.map((t) => `tag:${quoteValue(t)}`).join(joiner);
-      }
-      // Filesystem context: match the current list view. When recursive
-      // browsing is on the list spans subdirectories, so match every path
-      // under the directory; otherwise match only its immediate children.
+      const { predicates, initialFile, settings } = libraryContext;
+      // Match the FULL unified query the search input shows — every predicate
+      // type, excludes (NOT), and per-predicate AND/OR joins — not just tags.
+      const legacy = buildLegacyQuery(predicates, settings.filteringMode);
+      if (legacy) return legacy;
+      // No representable predicates (filesystem browsing): match the current
+      // list view. When recursive browsing is on the list spans subdirectories,
+      // so match every path under the directory; otherwise its immediate children.
       return buildLibraryPathQuery(initialFile, settings.recursive);
     }
   }
@@ -141,7 +137,7 @@ function buildLabel(
   target: ContextTarget,
   libraryContext: {
     currentStateType: 'fs' | 'db';
-    dbQuery: { tags: string[] };
+    predicates: Predicate[];
     textFilter: string;
     initialFile: string;
   }
@@ -156,10 +152,10 @@ function buildLabel(
     case 'category':
       return `Category: ${target.category}`;
     case 'library': {
-      const { currentStateType, dbQuery, initialFile } =
-        libraryContext;
-      if (currentStateType === 'db' && dbQuery.tags.length > 0) {
-        return `${dbQuery.tags.length} tag${dbQuery.tags.length !== 1 ? 's' : ''} selected`;
+      const { predicates, initialFile } = libraryContext;
+      const n = predicates.filter((p) => LEGACY_PREFIX[p.type] && p.value).length;
+      if (n > 0) {
+        return `${n} filter${n !== 1 ? 's' : ''} selected`;
       }
       const dir = getDirFromInitialFile(initialFile);
       return `Directory: ${dir.split(/[/\\]/).filter(Boolean).pop() || dir}`;
@@ -391,6 +387,10 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.dbQuery
   );
+  const predicates = useSelector(
+    libraryService,
+    (state) => state.context.query.predicates
+  );
   const textFilter = useSelector(
     libraryService,
     (state) => state.context.textFilter
@@ -546,7 +546,7 @@ export default function ContextPalette() {
   // Derived data
   const libraryCtx = {
     currentStateType,
-    dbQuery,
+    predicates,
     textFilter,
     initialFile,
     settings: { filteringMode, recursive },
