@@ -1,0 +1,109 @@
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useSelector } from '@xstate/react';
+import { GlobalStateContext } from '../../state';
+import { rectFromDrag, runRegionSearch, Rect } from '../../region-search';
+import { capabilities } from '../../platform';
+
+const MIN_SIZE = 8;
+
+export default function RegionSelect() {
+  const { libraryService } = useContext(GlobalStateContext);
+  const authToken = useSelector(libraryService, (s) => s.context.authToken);
+  const [altHeld, setAltHeld] = useState(false);
+  const [box, setBox] = useState<Rect | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Track Alt key globally.
+  useEffect(() => {
+    if (!capabilities.regionCapture) return; // desktop only
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') setAltHeld(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Alt') {
+        setAltHeld(false);
+        startRef.current = null;
+        setBox(null);
+      }
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        startRef.current = null;
+        setBox(null);
+      }
+    };
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('keydown', esc);
+    };
+  }, []);
+
+  const onMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (!altHeld) return;
+      e.preventDefault();
+      startRef.current = { x: e.clientX, y: e.clientY };
+      setBox({ x: e.clientX, y: e.clientY, width: 0, height: 0 });
+    },
+    [altHeld]
+  );
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!startRef.current) return;
+    setBox(rectFromDrag(startRef.current, { x: e.clientX, y: e.clientY }));
+  }, []);
+
+  const onMouseUp = useCallback(
+    async (e: React.MouseEvent) => {
+      const start = startRef.current;
+      startRef.current = null;
+      if (!start) return;
+      const rect = rectFromDrag(start, { x: e.clientX, y: e.clientY });
+      setBox(null); // hide BEFORE capture so we grab the media under the box
+      if (rect.width < MIN_SIZE || rect.height < MIN_SIZE) return;
+      // Wait one frame so the box is gone from the composited page.
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      try {
+        await runRegionSearch(rect, authToken, (ev) => libraryService.send(ev));
+      } catch (err: any) {
+        libraryService.send({
+          type: 'ADD_TOAST',
+          data: { type: 'error', title: 'Region search', message: 'Region search failed: ' + (err?.message ?? 'unknown error') },
+        });
+      }
+    },
+    [authToken, libraryService]
+  );
+
+  if (!capabilities.regionCapture || !altHeld) return null;
+
+  return (
+    <div
+      className="region-select-overlay"
+      style={{ position: 'fixed', inset: 0, zIndex: 10000, cursor: 'crosshair' }}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+    >
+      {box && (
+        <div
+          className="region-select-box"
+          style={{
+            position: 'fixed',
+            left: box.x,
+            top: box.y,
+            width: box.width,
+            height: box.height,
+            border: '2px solid #4af',
+            background: 'rgba(68,170,255,0.12)',
+            pointerEvents: 'none',
+          }}
+        />
+      )}
+    </div>
+  );
+}
