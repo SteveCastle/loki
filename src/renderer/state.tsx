@@ -2136,6 +2136,17 @@ export const libraryMachine = createMachine(
                   },
                 }),
               },
+              REGION_SEARCH_RESULTS: {
+                actions: [
+                  capturePrevious,
+                  assign<LibraryState, AnyEventObject>({
+                    library: (_context, event) => event.data.items as Item[],
+                    cursor: 0,
+                    libraryLoadId: () => uniqueId(),
+                    settings: (context) => ({ ...context.settings, sortBy: 'similarity' }),
+                  }),
+                ],
+              },
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
@@ -2540,6 +2551,17 @@ export const libraryMachine = createMachine(
                     };
                   },
                 }),
+              },
+              REGION_SEARCH_RESULTS: {
+                actions: [
+                  capturePrevious,
+                  assign<LibraryState, AnyEventObject>({
+                    library: (_context, event) => event.data.items as Item[],
+                    cursor: 0,
+                    libraryLoadId: () => uniqueId(),
+                    settings: (context) => ({ ...context.settings, sortBy: 'similarity' }),
+                  }),
+                ],
               },
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({
