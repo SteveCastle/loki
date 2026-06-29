@@ -3,6 +3,7 @@ package tasks
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/stevecastle/shrike/media"
 )
@@ -91,10 +92,15 @@ func insertTagsForFile(db *sql.DB, filePath string, tags []TagInfo) error {
 	// a file (e.g. running the ONNX tagger again) must not abort the whole job on
 	// that collision — silently skip the pre-existing assignment and insert only
 	// the genuinely new tags.
-	stmt := `INSERT OR IGNORE INTO media_tag_by_category (media_path, tag_label, category_label, time_stamp) VALUES (?, ?, ?, 0)`
+	//
+	// created_at records WHEN the tag was applied (Unix seconds, matching
+	// createAssignment/AddTag), so tag-driven views can date-sort by application
+	// time. Previously auto-tagged rows left this NULL → they all read as time 0.
+	createdAt := time.Now().Unix()
+	stmt := `INSERT OR IGNORE INTO media_tag_by_category (media_path, tag_label, category_label, time_stamp, created_at) VALUES (?, ?, ?, 0, ?)`
 	inserted := 0
 	for _, t := range tags {
-		res, err := db.Exec(stmt, filePath, t.Label, t.Category)
+		res, err := db.Exec(stmt, filePath, t.Label, t.Category, createdAt)
 		if err != nil {
 			return fmt.Errorf("failed to insert tag %s/%s: %w", t.Category, t.Label, err)
 		}
