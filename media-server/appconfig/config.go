@@ -18,10 +18,10 @@ import (
 
 // StorageRoot represents a single storage root, either a local filesystem path or an S3-compatible bucket.
 type StorageRoot struct {
-	Type            string `json:"type"`                      // "local" or "s3"
-	Path            string `json:"path,omitempty"`            // local filesystem path
-	Label           string `json:"label"`                     // display name in UI
-	Default         bool   `json:"default,omitempty"`         // true = destination for uploads/downloads
+	Type            string `json:"type"`              // "local" or "s3"
+	Path            string `json:"path,omitempty"`    // local filesystem path
+	Label           string `json:"label"`             // display name in UI
+	Default         bool   `json:"default,omitempty"` // true = destination for uploads/downloads
 	Endpoint        string `json:"endpoint,omitempty"`
 	Region          string `json:"region,omitempty"`
 	Bucket          string `json:"bucket,omitempty"`
@@ -36,6 +36,11 @@ type StorageRoot struct {
 // Kept as a literal here (not imported from tasks) so appconfig stays a leaf
 // package with no dependency cycle.
 const DefaultEmbeddingModel = "siglip2-base-patch16-224"
+
+// DefaultAutotagModel is the auto-tagging model used when none is configured.
+// Must match an ID in the tasks package's tagger-model registry. Literal here
+// (not imported from tasks) to keep appconfig a leaf package.
+const DefaultAutotagModel = "wd-eva02-large-tagger-v3"
 
 // Config holds application configuration including database path, LLM prompts, and AI model paths.
 type Config struct {
@@ -114,6 +119,42 @@ type Config struct {
 	// regardless of this setting.
 	EmbeddingModel string `json:"embeddingModel"`
 
+	// Embedding execution provider: "cpu" or "directml" (GPU, Windows DX12).
+	// "directml" requires the optional GPU runtime to be installed; absent it,
+	// the embed task falls back to CPU.
+	EmbeddingProvider string `json:"embeddingProvider"`
+
+	// Embedding performance preset governing parallelism: "low" (~25% of cores,
+	// keeps the system responsive), "balanced" (~50%), "max" (all but one core),
+	// or "custom" (use EmbeddingWorkers / EmbeddingThreadsPerWorker).
+	EmbeddingPerformance string `json:"embeddingPerformance"`
+
+	// Advanced overrides used when EmbeddingPerformance == "custom" (0 = derive
+	// from the preset). Workers is the number of parallel embed worker processes;
+	// ThreadsPerWorker is the ONNX Runtime intra-op thread count per worker.
+	EmbeddingWorkers          int `json:"embeddingWorkers"`
+	EmbeddingThreadsPerWorker int `json:"embeddingThreadsPerWorker"`
+
+	// Active auto-tagging model ID. Must be a known ID from the tasks package's
+	// tagger-model registry (e.g. "wd-eva02-large-tagger-v3"); empty falls back
+	// to the default. Switchable like EmbeddingModel.
+	AutotagModel string `json:"autotagModel"`
+
+	// Auto-tagging (ONNX) execution provider + performance, mirroring the
+	// embedding settings so tagging can be tuned independently. Provider is
+	// "cpu" or "directml" (shares the same GPU runtime as embedding).
+	AutotagProvider         string `json:"autotagProvider"`
+	AutotagPerformance      string `json:"autotagPerformance"`
+	AutotagWorkers          int    `json:"autotagWorkers"`
+	AutotagThreadsPerWorker int    `json:"autotagThreadsPerWorker"`
+
+	// Per-file processing timeout (seconds) for the local ONNX tasks (embed,
+	// autotag). A single file that exceeds this — e.g. a corrupt image stuck in
+	// decode or a bad video stuck in frame extraction — is skipped and the job
+	// continues (the stuck worker is killed and replaced). <= 0 disables the
+	// timeout.
+	OnnxFileTimeoutSeconds int `json:"onnxFileTimeoutSeconds"`
+
 	// Optional path to faster-whisper executable
 	FasterWhisperPath string `json:"fasterWhisperPath"`
 
@@ -159,16 +200,22 @@ func DefaultConfigDir() string {
 // defaultConfig returns a Config populated with sensible defaults.
 func defaultConfig() Config {
 	return Config{
-		DBPath:            DefaultDBPath(),
-		DownloadPath:      defaultDownloadPath(),
-		InferenceProvider: "ollama",
-		EmbeddingModel:    DefaultEmbeddingModel,
-		OllamaBaseURL:     "http://localhost:11434",
-		OllamaModel:       "llama3.2-vision",
-		DescribePrompt: "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
-		AutotagPrompt:  "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
-		LMStudioBaseURL: "http://localhost:1234",
-		LlamaCppBaseURL: "http://localhost:8080",
+		DBPath:                 DefaultDBPath(),
+		DownloadPath:           defaultDownloadPath(),
+		InferenceProvider:      "ollama",
+		EmbeddingModel:         DefaultEmbeddingModel,
+		EmbeddingProvider:      "cpu",
+		EmbeddingPerformance:   "balanced",
+		AutotagModel:           DefaultAutotagModel,
+		AutotagProvider:        "cpu",
+		AutotagPerformance:     "balanced",
+		OnnxFileTimeoutSeconds: 120,
+		OllamaBaseURL:          "http://localhost:11434",
+		OllamaModel:            "llama3.2-vision",
+		DescribePrompt:         "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
+		AutotagPrompt:          "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
+		LMStudioBaseURL:        "http://localhost:1234",
+		LlamaCppBaseURL:        "http://localhost:8080",
 		InferenceConcurrency: struct {
 			Ollama   int `json:"ollama"`
 			RunPod   int `json:"runpod"`
@@ -348,6 +395,32 @@ func Load() (Config, string, error) {
 		c.EmbeddingModel = def.EmbeddingModel
 		needsSave = true
 	}
+	if c.EmbeddingProvider == "" {
+		c.EmbeddingProvider = def.EmbeddingProvider
+		needsSave = true
+	}
+	if c.EmbeddingPerformance == "" {
+		c.EmbeddingPerformance = def.EmbeddingPerformance
+		needsSave = true
+	}
+	if c.AutotagModel == "" {
+		c.AutotagModel = def.AutotagModel
+		needsSave = true
+	}
+	if c.AutotagProvider == "" {
+		c.AutotagProvider = def.AutotagProvider
+		needsSave = true
+	}
+	if c.AutotagPerformance == "" {
+		c.AutotagPerformance = def.AutotagPerformance
+		needsSave = true
+	}
+	if c.OnnxFileTimeoutSeconds == 0 {
+		// 0 = unset (pre-existing config). Fill the default so the timeout is on.
+		// A negative value is preserved and means "disabled" at use time.
+		c.OnnxFileTimeoutSeconds = def.OnnxFileTimeoutSeconds
+		needsSave = true
+	}
 	if c.OnnxTagger.GeneralThreshold == 0 {
 		c.OnnxTagger.GeneralThreshold = def.OnnxTagger.GeneralThreshold
 	}
@@ -517,6 +590,46 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_EMBEDDING_MODEL"); v != "" {
 		c.EmbeddingModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_PROVIDER"); v != "" {
+		c.EmbeddingProvider = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_PERFORMANCE"); v != "" {
+		c.EmbeddingPerformance = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.EmbeddingWorkers = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_THREADS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.EmbeddingThreadsPerWorker = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_MODEL"); v != "" {
+		c.AutotagModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_PROVIDER"); v != "" {
+		c.AutotagProvider = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_PERFORMANCE"); v != "" {
+		c.AutotagPerformance = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.AutotagWorkers = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_THREADS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.AutotagThreadsPerWorker = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_ONNX_FILE_TIMEOUT"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			c.OnnxFileTimeoutSeconds = n
+		}
 	}
 
 	// Storage roots from environment variables.

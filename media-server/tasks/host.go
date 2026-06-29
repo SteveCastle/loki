@@ -69,6 +69,11 @@ func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	if n := cfg.InferenceConcurrency.LlamaCpp; n > 0 {
 		q.SetHostLimit(HostBucketLlamaCpp, n)
 	}
+	// One embed job at a time; the job parallelizes internally via its worker
+	// pool, so additional concurrent embed jobs would just oversubscribe.
+	q.SetHostLimit(HostBucketEmbed, 1)
+	// Likewise one autotag job at a time (internally parallel via its pool).
+	q.SetHostLimit(HostBucketAutotag, 1)
 }
 
 // urlHostResolver pulls the URL hostname out of an input string, falling

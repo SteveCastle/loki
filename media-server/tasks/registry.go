@@ -51,9 +51,13 @@ func init() {
 	// an entry fall through to ResolveHost's "localhost" default. Adding a
 	// new vision-using task is one line: route it through InferenceHost.
 	visionHost := func(string) string { return InferenceHost() }
-	RegisterHostResolver("autotag", visionHost)
+	// Auto-tagging is a local ONNX task with its own concurrency bucket — like
+	// embed, it parallelizes internally and must not share the LLM cap.
+	RegisterHostResolver("autotag", func(string) string { return HostBucketAutotag })
 	RegisterHostResolver("metadata", visionHost)
-	RegisterHostResolver("embed", visionHost)
+	// Embedding is a local ONNX task with its own concurrency bucket — it must
+	// not share the LLM inference cap (it parallelizes internally instead).
+	RegisterHostResolver("embed", func(string) string { return HostBucketEmbed })
 	RegisterHostResolver("ingest", urlHostResolver)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
