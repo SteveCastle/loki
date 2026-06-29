@@ -1,4 +1,5 @@
 import React, { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { rectFromDrag, runRegionSearch, Rect } from '../../region-search';
@@ -63,9 +64,13 @@ export default function RegionSelect() {
       startRef.current = null;
       if (!start) return;
       const rect = rectFromDrag(start, { x: e.clientX, y: e.clientY });
-      setBox(null); // hide BEFORE capture so we grab the media under the box
+      // Hide the box SYNCHRONOUSLY before capture so capturePage grabs the media
+      // under it, not the outline. flushSync forces the DOM commit before the
+      // requestAnimationFrame below (React 18 concurrent mode does not otherwise
+      // guarantee the setState flushes before the rAF callback fires).
+      flushSync(() => setBox(null));
       if (rect.width < MIN_SIZE || rect.height < MIN_SIZE) return;
-      // Wait one frame so the box is gone from the composited page.
+      // Wait one frame so the now-removed box is composited out of the page.
       await new Promise((r) => requestAnimationFrame(() => r(null)));
       try {
         await runRegionSearch(rect, authToken, (ev) => libraryService.send(ev));
