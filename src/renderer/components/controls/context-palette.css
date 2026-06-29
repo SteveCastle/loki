@@ -1,17 +1,29 @@
 .ContextPalette {
+  /* Local accent tokens — consolidates the previously-scattered green literals
+     and adds a caution accent used when the Generate mode is "All" (replace). */
+  --ctx-accent: #00c896;
+  --ctx-accent-soft: rgba(0, 200, 150, 0.15);
+  --ctx-accent-strong: rgba(0, 200, 150, 0.3);
+  --ctx-caution: #e6a23c;
+  --ctx-caution-soft: rgba(230, 162, 60, 0.18);
+  --ctx-caution-strong: rgba(230, 162, 60, 0.32);
+  --ctx-hairline: rgba(255, 255, 255, 0.1);
+
   color: white;
   background-color: var(--controls-background-color);
-  border-radius: 4px;
+  border-radius: 6px;
   display: flex;
   flex-direction: column;
+  gap: 6px;
   z-index: 9999;
-  padding: 10px 14px;
+  padding: 10px 12px;
   position: fixed;
   user-select: none;
-  opacity: 0.95;
-  min-width: 260px;
+  opacity: 0.97;
+  min-width: 248px;
+  max-width: 320px;
   font-size: 13px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 /* ── Header ── */
@@ -19,10 +31,10 @@
 .context-palette-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
+  gap: 8px;
   padding-bottom: 8px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid var(--ctx-hairline);
 }
 
 .context-label {
@@ -32,15 +44,47 @@
   overflow: hidden;
   text-overflow: ellipsis;
   flex: 1;
-  margin-right: 12px;
+  min-width: 0;
   color: rgba(255, 255, 255, 0.7);
 }
 
+.context-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .context-count {
-  color: #00c896;
+  color: var(--ctx-accent);
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+.find-similar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: var(--ctx-accent-soft);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ctx-accent);
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.find-similar-btn:hover {
+  background: var(--ctx-accent-strong);
+  border-color: var(--ctx-accent);
+  color: white;
+}
+
+.find-similar-btn:active {
+  transform: translateY(0.5px);
 }
 
 /* ── States ── */
@@ -51,79 +95,136 @@
 
 .context-palette-unavailable,
 .context-palette-checking {
-  padding: 10px 0;
+  padding: 8px 0;
   color: rgba(255, 255, 255, 0.4);
   text-align: center;
   font-size: 12px;
 }
 
-/* ── Action rows ── */
+/* ── Generate block (mode toggle + type chips) ── */
 
-.context-palette-actions {
+.generate-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
-.action-group {
+.generate-mode-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
 }
 
-.action-group-title {
+.generate-label {
   font-size: 12px;
+  font-weight: 600;
   color: rgba(255, 255, 255, 0.7);
   white-space: nowrap;
-  flex-shrink: 0;
 }
 
-.action-buttons {
+.mode-toggle {
   display: flex;
-  border-radius: 3px;
+  border: 1px solid var(--ctx-hairline);
+  border-radius: 5px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.action-btn {
+.mode-opt {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.75);
-  padding: 4px 10px;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 3px 12px;
   cursor: pointer;
   font-size: 11px;
   font-family: inherit;
   white-space: nowrap;
-  transition: background-color 0.1s, color 0.1s;
+  transition: background-color 0.12s, color 0.12s;
 }
 
-.action-btn + .action-btn {
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+.mode-opt + .mode-opt {
+  border-left: 1px solid var(--ctx-hairline);
 }
 
-.action-btn:hover {
-  background-color: rgba(0, 200, 150, 0.15);
+.mode-opt:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.mode-opt.active {
+  background: var(--ctx-accent-soft);
   color: white;
 }
 
-.action-btn:active {
-  background-color: rgba(0, 200, 150, 0.3);
+/* When "All" (replace) is selected, the whole block shifts to the caution
+   accent so a destructive regenerate reads as distinct from a fill-the-gaps run. */
+.generate-block.caution .mode-opt.active {
+  background: var(--ctx-caution-soft);
+  color: #ffe7c2;
+}
+
+.type-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.type-chip {
+  flex: 1 1 calc(50% - 3px);
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--ctx-hairline);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.8);
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  transition: background-color 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.type-chip:hover {
+  background: var(--ctx-accent-soft);
+  border-color: var(--ctx-accent);
+  color: white;
+}
+
+.type-chip:active {
+  background: var(--ctx-accent-strong);
+}
+
+.generate-block.caution .type-chip:hover {
+  background: var(--ctx-caution-soft);
+  border-color: var(--ctx-caution);
+  color: #fff3e2;
+}
+
+.generate-block.caution .type-chip:active {
+  background: var(--ctx-caution-strong);
 }
 
 /* ── Workflow picker ── */
 
 .context-palette-workflows {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin-top: 6px;
-  padding-top: 6px;
+  border-top: 1px solid var(--ctx-hairline);
+  padding-top: 8px;
 }
 
 .workflow-picker-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+}
+
+.action-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
 }
 
 .workflow-count {
@@ -136,13 +237,13 @@
   width: 100%;
   box-sizing: border-box;
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+  border: 1px solid var(--ctx-hairline);
+  border-radius: 5px;
   color: rgba(255, 255, 255, 0.85);
   font-family: inherit;
   font-size: 11px;
-  padding: 4px 6px;
-  margin-bottom: 4px;
+  padding: 5px 8px;
+  margin-bottom: 6px;
   outline: none;
   transition: border-color 0.15s;
 }
@@ -152,7 +253,7 @@
 }
 
 .workflow-search:focus {
-  border-color: rgba(0, 200, 150, 0.4);
+  border-color: var(--ctx-accent);
 }
 
 .workflow-list {
@@ -172,10 +273,10 @@
 }
 
 .workflow-item {
-  padding: 4px 6px;
+  padding: 5px 8px;
   font-size: 11px;
   color: rgba(255, 255, 255, 0.7);
-  border-radius: 2px;
+  border-radius: 4px;
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -185,12 +286,12 @@
 
 .workflow-item:hover,
 .workflow-item.selected {
-  background: rgba(0, 200, 150, 0.12);
+  background: var(--ctx-accent-soft);
   color: rgba(255, 255, 255, 0.95);
 }
 
 .workflow-item:active {
-  background: rgba(0, 200, 150, 0.25);
+  background: var(--ctx-accent-strong);
 }
 
 .workflow-empty {
@@ -203,9 +304,8 @@
 /* ── Jobs footer ── */
 
 .context-palette-footer {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  margin-top: 8px;
-  padding-top: 6px;
+  border-top: 1px solid var(--ctx-hairline);
+  padding-top: 8px;
 }
 
 .footer-title {
@@ -252,7 +352,7 @@
 }
 
 .job-indicator.in_progress {
-  background-color: #00c896;
+  background-color: var(--ctx-accent);
   animation: ctx-pulse 1.5s ease-in-out infinite;
 }
 

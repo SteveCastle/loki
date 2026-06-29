@@ -1,0 +1,25 @@
+ok  	github.com/stevecastle/shrike	0.172s
+ok  	github.com/stevecastle/shrike/appconfig	0.487s
+?   	github.com/stevecastle/shrike/auth	[no test files]
+?   	github.com/stevecastle/shrike/cmd/dbcopy	[no test files]
+?   	github.com/stevecastle/shrike/cmd/embed	[no test files]
+?   	github.com/stevecastle/shrike/cmd/onnxtag	[no test files]
+?   	github.com/stevecastle/shrike/cmd/sbs	[no test files]
+?   	github.com/stevecastle/shrike/deps	[no test files]
+ok  	github.com/stevecastle/shrike/deps/bundled	0.370s
+ok  	github.com/stevecastle/shrike/deps/models	1.176s
+ok  	github.com/stevecastle/shrike/deps/optional	0.421s
+ok  	github.com/stevecastle/shrike/deps/status	2.884s
+ok  	github.com/stevecastle/shrike/embedindex	0.354s
+ok  	github.com/stevecastle/shrike/embedvec	(cached)
+ok  	github.com/stevecastle/shrike/handlers	3.145s
+ok  	github.com/stevecastle/shrike/jobqueue	0.184s
+ok  	github.com/stevecastle/shrike/media	(cached)
+ok  	github.com/stevecastle/shrike/onnxtag	1.013s
+?   	github.com/stevecastle/shrike/platform	[no test files]
+?   	github.com/stevecastle/shrike/querylog	[no test files]
+ok  	github.com/stevecastle/shrike/renderer	0.628s
+ok  	github.com/stevecastle/shrike/runners	31.515s
+ok  	github.com/stevecastle/shrike/storage	0.196s
+ok  	github.com/stevecastle/shrike/stream	0.559s
+ok  	github.com/stevecastle/shrike/tasks	1.230s

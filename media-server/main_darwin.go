@@ -2202,11 +2202,10 @@ func main() {
 	}
 
 	// ––– embedding ANN index (best-effort, non-fatal) –––
-	if idx, err := tasks.BuildIndexFromDB(db, tasks.EmbedModelID); err == nil {
-		tasks.SetVectorIndex(idx)
-		log.Printf("embedding index loaded: %d vectors", idx.Len())
+	if model, n, err := tasks.RebuildActiveIndex(db); err == nil {
+		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
 	} else {
-		log.Printf("embedding index unavailable, using brute-force: %v", err)
+		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
 	}
 
 	// Initialize renderer auth middleware

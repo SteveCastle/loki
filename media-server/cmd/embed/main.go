@@ -18,6 +18,8 @@ func main() {
 		inputName, outputName            string
 		width, height, dim               int
 		meanStr, stdStr                  string
+		pooling, cropMode                string
+		cropPct                          float64
 		showVersion                      bool
 		// text mode flags
 		textStr, textModel, tokenizerPath string
@@ -34,6 +36,9 @@ func main() {
 	flag.IntVar(&dim, "dim", 0, "Output embedding dimension (required)")
 	flag.StringVar(&meanStr, "mean", "0.5,0.5,0.5", "Normalization mean RGB")
 	flag.StringVar(&stdStr, "std", "0.5,0.5,0.5", "Normalization stddev RGB")
+	flag.StringVar(&pooling, "pooling", "none", "Output pooling: \"none\" (output is already [1,dim]) or \"cls\" (take token 0 of a [1,N,dim] sequence output, e.g. DINOv2)")
+	flag.Float64Var(&cropPct, "crop-pct", 1.0, "Center-crop fraction before resize (1.0 disables; e.g. 0.875 for DINOv2)")
+	flag.StringVar(&cropMode, "crop-mode", "", "Crop mode: \"center\" enables center crop when --crop-pct < 1")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	// text mode
 	flag.StringVar(&textStr, "text", "", "Text to encode (enables text mode)")
@@ -118,8 +123,16 @@ func main() {
 	}
 	opts.NormalizeMeanRGB = mean
 	opts.NormalizeStddevRGB = std
+	opts.CropPct = float32(cropPct)
+	opts.CropMode = cropMode
 
-	vec, err := onnxtag.EmbedImage(modelPath, imagePath, opts, dim)
+	var vec []float32
+	switch strings.ToLower(strings.TrimSpace(pooling)) {
+	case "cls":
+		vec, err = onnxtag.EmbedImageCLS(modelPath, imagePath, opts, dim)
+	default: // "none"/"" — output is already a pooled [1,dim] vector
+		vec, err = onnxtag.EmbedImage(modelPath, imagePath, opts, dim)
+	}
 	if err != nil {
 		log.Fatalf("embed failed: %v", err)
 	}

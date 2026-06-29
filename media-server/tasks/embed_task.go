@@ -20,16 +20,16 @@ import (
 	"github.com/stevecastle/shrike/platform"
 )
 
-// EmbedModelID is the active embedding model; vectors are stored keyed by it.
-// SigLIP 2 (google/siglip2-base-patch16-224): same image preprocessing as v1
-// base (224x224, RGB, NCHW, mean/std 0.5 -> [-1,1]), but the text encoder uses
-// the Gemma multilingual SentencePiece tokenizer (Phase 3). Re-embedding to a
-// different model just changes this key — storage is model-keyed, non-destructive.
-const EmbedModelID = "siglip2-base-patch16-224"
+// EmbedModelID is the default (SigLIP 2) embedding model ID. The *active* model
+// is resolved at runtime from config via ActiveEmbedModel() — this constant is
+// the canonical default identity and is what tests embed under. Vectors are
+// stored keyed by model ID, so models coexist non-destructively. See
+// embedmodels.go for the registry of supported models.
+const EmbedModelID = DefaultEmbedModelID
 
-// EmbedDim is the SigLIP 2 base embedding dimension (768). Other variants:
-// large=1024, so400m=1152, giant=1536. Confirm against the chosen ONNX export
-// (deferred Task 7) and update if a different variant is selected.
+// EmbedDim is the default (SigLIP 2 base) embedding dimension. Per-model
+// dimensions live in the registry (EmbedModel.Dim); this remains for the
+// default-model code paths and tests.
 const EmbedDim = 768
 
 // SimilarHit is one ranked similarity result.
@@ -46,32 +46,64 @@ type SimilarHit struct {
 var (
 	vectorIndexMu sync.Mutex
 	vectorIndex   embedindex.VectorIndex
+	// vectorIndexModel records which embedding model the installed index holds.
+	// "" is a wildcard (matches any model) — used by tests and the legacy
+	// SetVectorIndex entry point. Production installs an index for a specific
+	// model so searches for a *different* model fall back to brute-force rather
+	// than querying the wrong model's vectors.
+	vectorIndexModel string
 )
 
-// SetVectorIndex installs the active ANN index (nil disables it → brute-force).
+// SetVectorIndex installs a model-agnostic (wildcard) ANN index. Prefer
+// SetVectorIndexForModel in production; this is retained for tests and callers
+// that operate on a single known model. nil disables it → brute-force.
 func SetVectorIndex(idx embedindex.VectorIndex) {
+	SetVectorIndexForModel(idx, "")
+}
+
+// SetVectorIndexForModel installs the active ANN index and records the model it
+// was built for. Searches whose model differs skip the index (brute-force).
+func SetVectorIndexForModel(idx embedindex.VectorIndex, model string) {
 	vectorIndexMu.Lock()
 	vectorIndex = idx
+	vectorIndexModel = model
 	vectorIndexMu.Unlock()
 }
 
-// indexSearch runs a locked ANN search. ok is false when no index is installed.
-func indexSearch(query []float32, k int) ([]embedindex.SearchHit, bool) {
+// IndexedModel returns the model ID the installed index was built for ("" when
+// none or wildcard).
+func IndexedModel() string {
+	vectorIndexMu.Lock()
+	defer vectorIndexMu.Unlock()
+	return vectorIndexModel
+}
+
+// indexSearch runs a locked ANN search for model. ok is false when no index is
+// installed or the index holds a different model's vectors (caller brute-forces).
+func indexSearch(model string, query []float32, k int) ([]embedindex.SearchHit, bool) {
 	vectorIndexMu.Lock()
 	defer vectorIndexMu.Unlock()
 	if vectorIndex == nil {
 		return nil, false
 	}
+	if vectorIndexModel != "" && vectorIndexModel != model {
+		return nil, false
+	}
 	return vectorIndex.Search(query, k), true
 }
 
-// indexAdd inserts one vector into the active index under lock (no-op if none).
-func indexAdd(path string, vec []float32) {
+// indexAdd inserts one vector into the active index under lock, but only when
+// the index holds the same model (or is a wildcard). No-op if no index.
+func indexAdd(model, path string, vec []float32) {
 	vectorIndexMu.Lock()
 	defer vectorIndexMu.Unlock()
-	if vectorIndex != nil {
-		vectorIndex.Add(path, vec)
+	if vectorIndex == nil {
+		return
 	}
+	if vectorIndexModel != "" && vectorIndexModel != model {
+		return
+	}
+	vectorIndex.Add(path, vec)
 }
 
 // IndexDelete removes a path from the active index under lock (no-op if none).
@@ -82,6 +114,20 @@ func IndexDelete(path string) {
 	if vectorIndex != nil {
 		vectorIndex.Delete(path)
 	}
+}
+
+// RebuildActiveIndex builds the ANN index for the currently-configured active
+// model and installs it (tagged with that model). Used at startup and after the
+// active model changes in config. Returns the installed model ID and vector
+// count, or an error (in which case the previous index is left untouched).
+func RebuildActiveIndex(db *sql.DB) (string, int, error) {
+	model := ActiveEmbedModel()
+	idx, err := BuildIndexFromDB(db, model.ID)
+	if err != nil {
+		return model.ID, 0, err
+	}
+	SetVectorIndexForModel(idx, model.ID)
+	return model.ID, idx.Len(), nil
 }
 
 // BuildIndexFromDB constructs an ANN index from all stored vectors for model.
@@ -102,7 +148,7 @@ func BuildIndexFromDB(db *sql.DB, model string) (embedindex.VectorIndex, error) 
 // embeddings. No self-exclusion is performed — callers that need it (e.g.
 // SimilarByPath) must filter afterward.
 func SearchByVector(db *sql.DB, model string, query []float32, limit int) ([]SimilarHit, error) {
-	if raw, ok := indexSearch(query, limit); ok {
+	if raw, ok := indexSearch(model, query, limit); ok {
 		hits := make([]SimilarHit, 0, len(raw))
 		for _, h := range raw {
 			hits = append(hits, SimilarHit{Path: h.Path, Score: h.Score})
@@ -146,12 +192,28 @@ func shouldSkipEmbed(db *sql.DB, path, model string) bool {
 }
 
 // runEmbedSubprocess invokes embed.exe for one image and returns the decoded,
-// already-L2-normalized vector.
-func runEmbedSubprocess(ctx context.Context, embedBin, model, ortLib, imagePath string, dim int) ([]float32, error) {
+// already-L2-normalized vector. The model profile drives preprocessing
+// (mean/std, crop, input/output tensor names, dimension, pooling) so different
+// models — e.g. SigLIP 2 (pooled output) vs DINOv2 (CLS of last_hidden_state) —
+// share one binary. imageModelPath is the on-disk path to the model's image
+// encoder.
+func runEmbedSubprocess(ctx context.Context, embedBin, imageModelPath, ortLib, imagePath string, m EmbedModel) ([]float32, error) {
 	args := []string{
-		"--model=" + model,
+		"--model=" + imageModelPath,
 		"--image=" + imagePath,
-		fmt.Sprintf("--dim=%d", dim),
+		fmt.Sprintf("--dim=%d", m.Dim),
+		"--input=" + m.ImgInput,
+		"--output=" + m.ImgOutput,
+		fmt.Sprintf("--width=%d", m.Width),
+		fmt.Sprintf("--height=%d", m.Height),
+		fmt.Sprintf("--mean=%g,%g,%g", m.Mean[0], m.Mean[1], m.Mean[2]),
+		fmt.Sprintf("--std=%g,%g,%g", m.Std[0], m.Std[1], m.Std[2]),
+	}
+	if m.CropPct > 0 && m.CropPct < 1 {
+		args = append(args, fmt.Sprintf("--crop-pct=%g", m.CropPct), "--crop-mode="+m.CropMode)
+	}
+	if m.Pooling != "" {
+		args = append(args, "--pooling="+m.Pooling)
 	}
 	if ortLib != "" {
 		args = append(args, "--ort="+ortLib)
@@ -173,12 +235,21 @@ func runEmbedSubprocess(ctx context.Context, embedBin, model, ortLib, imagePath 
 // runEmbedTextSubprocess invokes embed.exe for one text query and returns the
 // decoded, already-L2-normalized vector. It mirrors runEmbedSubprocess but
 // passes --text/--text-model/--tokenizer instead of --model/--image.
-func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer, ortLib, text string, dim int) ([]float32, error) {
+func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer, ortLib, text string, m EmbedModel) ([]float32, error) {
 	args := []string{
 		"--text=" + text,
 		"--text-model=" + textModel,
 		"--tokenizer=" + tokenizer,
-		fmt.Sprintf("--dim=%d", dim),
+		fmt.Sprintf("--dim=%d", m.Dim),
+	}
+	if m.TextInput != "" {
+		args = append(args, "--text-input="+m.TextInput)
+	}
+	if m.TextOutput != "" {
+		args = append(args, "--text-output="+m.TextOutput)
+	}
+	if m.SeqLen > 0 {
+		args = append(args, fmt.Sprintf("--seq-len=%d", m.SeqLen))
 	}
 	if ortLib != "" {
 		args = append(args, "--ort="+ortLib)
@@ -201,14 +272,21 @@ func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer,
 // returns the top-limit most similar media by cosine similarity. Returns an
 // error (not a panic) when the model, tokenizer, or embed binary is absent.
 func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
-	textModel, err := deps.ModelPath(EmbedModelID, "text_model.onnx")
+	// Text->image search needs a text encoder; resolve the multimodal model
+	// (the active model if it's multimodal, otherwise SigLIP 2). Vectors are
+	// matched against this model's image embeddings.
+	m := TextSearchModel()
+	if !m.Multimodal || m.TextModelFile == "" {
+		return nil, fmt.Errorf("model %q does not support text search", m.ID)
+	}
+	textModel, err := deps.ModelPath(m.ID, m.TextModelFile)
 	if err != nil {
 		return nil, fmt.Errorf("text model not installed: %w", err)
 	}
 	if textModel == "" {
 		return nil, fmt.Errorf("text model not installed")
 	}
-	tokenizer, err := deps.ModelPath(EmbedModelID, "tokenizer.model")
+	tokenizer, err := deps.ModelPath(m.ID, m.TokenizerFile)
 	if err != nil {
 		return nil, fmt.Errorf("tokenizer not installed: %w", err)
 	}
@@ -220,11 +298,31 @@ func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]Si
 	if embedBin == "" {
 		return nil, fmt.Errorf("embed binary not installed")
 	}
-	vec, err := runEmbedTextSubprocess(ctx, embedBin, textModel, tokenizer, ortLib, text, EmbedDim)
+	vec, err := runEmbedTextSubprocess(ctx, embedBin, textModel, tokenizer, ortLib, text, m)
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, EmbedModelID, vec, limit)
+	return SearchByVector(db, m.ID, vec, limit)
+}
+
+// embedModelOverrideFromJob returns an explicit `--model=<id>` (or `--model
+// <id>`) from the job arguments when present. Lets an embed job target a model
+// other than the configured active one (background migration).
+func embedModelOverrideFromJob(j *jobqueue.Job) (string, bool) {
+	for i := 0; i < len(j.Arguments); i++ {
+		arg := j.Arguments[i]
+		if strings.HasPrefix(arg, "--model=") {
+			if v := strings.TrimSpace(arg[len("--model="):]); v != "" {
+				return v, true
+			}
+		}
+		if arg == "--model" && i+1 < len(j.Arguments) {
+			if v := strings.TrimSpace(j.Arguments[i+1]); v != "" {
+				return v, true
+			}
+		}
+	}
+	return "", false
 }
 
 func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
@@ -259,12 +357,26 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return nil
 	}
 
+	// Resolve the embedding model. An explicit `--model=<id>` in the job
+	// overrides the configured active model — this enables zero-downtime
+	// migration: embed the whole library under a new model in the background
+	// while the active model still serves search, then flip the config.
+	model := ActiveEmbedModel()
+	if id, ok := embedModelOverrideFromJob(j); ok {
+		if m, known := EmbedModelByID(id); known {
+			model = m
+		} else {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Unknown --model %q; using active model %q", id, model.ID))
+		}
+	}
+	q.PushJobStdout(j.ID, fmt.Sprintf("Embedding model: %s (dim %d)", model.ID, model.Dim))
+
 	// Resolve model + runtime + binary (deps first, like autotag).
-	imageModel, _ := deps.ModelPath(EmbedModelID, "image_model.onnx")
+	imageModel, _ := deps.ModelPath(model.ID, model.ImageModelFile)
 	if imageModel == "" {
-		q.PushJobStdout(j.ID, "SigLIP model not installed; install it from Dependencies")
+		q.PushJobStdout(j.ID, fmt.Sprintf("%s not installed; install it from Dependencies", model.DisplayName))
 		q.ErrorJob(j.ID)
-		return fmt.Errorf("model %s not installed", EmbedModelID)
+		return fmt.Errorf("model %s not installed", model.ID)
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")
@@ -284,7 +396,7 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		default:
 		}
 
-		if shouldSkipEmbed(q.Db, mediaPath, EmbedModelID) {
+		if shouldSkipEmbed(q.Db, mediaPath, model.ID) {
 			skipped++
 			continue
 		}
@@ -311,7 +423,7 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 
 		q.PushJobStdout(j.ID, fmt.Sprintf("[%d/%d] Embedding: %s", idx+1, len(paths), filepath.Base(mediaPath)))
-		vec, err := runEmbedSubprocess(ctx, embedBin, imageModel, ortLib, imagePath, EmbedDim)
+		vec, err := runEmbedSubprocess(ctx, embedBin, imageModel, ortLib, imagePath, model)
 		if tempFramePath != "" {
 			_ = os.Remove(tempFramePath)
 		}
@@ -320,14 +432,16 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			skipped++
 			continue
 		}
-		if err := media.UpsertEmbedding(q.Db, mediaPath, EmbedModelID, vec, 0); err != nil {
+		if err := media.UpsertEmbedding(q.Db, mediaPath, model.ID, vec, 0); err != nil {
 			q.PushJobStdout(j.ID, "  Failed to store embedding: "+err.Error())
 			q.ErrorJob(j.ID)
 			return err
 		}
 		// Incrementally insert into the ANN index so newly-embedded media
-		// becomes immediately searchable without a restart.
-		indexAdd(mediaPath, embedvec.Normalize(vec))
+		// becomes immediately searchable without a restart. indexAdd is a no-op
+		// when the live index holds a different model (e.g. a background
+		// migration embedding a non-active model).
+		indexAdd(model.ID, mediaPath, embedvec.Normalize(vec))
 		processed++
 		q.RegisterOutputFile(j.ID, mediaPath)
 	}

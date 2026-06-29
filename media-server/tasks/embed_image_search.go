@@ -10,13 +10,14 @@ import (
 )
 
 // SearchByImage embeds an arbitrary image (e.g. a captured screen region) with
-// the SigLIP 2 image encoder and returns the top-limit most similar media.
+// the active model's image encoder and returns the top-limit most similar media.
 // Returns an error (not a panic) when the model or embed binary is absent.
 func SearchByImage(ctx context.Context, db *sql.DB, image []byte, limit int) ([]SimilarHit, error) {
 	if len(image) == 0 {
 		return nil, fmt.Errorf("empty image")
 	}
-	imageModel, err := deps.ModelPath(EmbedModelID, "image_model.onnx")
+	model := ActiveEmbedModel()
+	imageModel, err := deps.ModelPath(model.ID, model.ImageModelFile)
 	if err != nil {
 		return nil, fmt.Errorf("image model not installed: %w", err)
 	}
@@ -43,9 +44,9 @@ func SearchByImage(ctx context.Context, db *sql.DB, image []byte, limit int) ([]
 		return nil, err
 	}
 
-	vec, err := runEmbedSubprocess(ctx, embedBin, imageModel, ortLib, tmpPath, EmbedDim)
+	vec, err := runEmbedSubprocess(ctx, embedBin, imageModel, ortLib, tmpPath, model)
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, EmbedModelID, vec, limit)
+	return SearchByVector(db, model.ID, vec, limit)
 }

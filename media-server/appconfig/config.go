@@ -31,6 +31,12 @@ type StorageRoot struct {
 	ThumbnailPrefix string `json:"thumbnailPrefix,omitempty"`
 }
 
+// DefaultEmbeddingModel is the visual-embedding model used when none is
+// configured. Must match an ID in the tasks package's embed-model registry.
+// Kept as a literal here (not imported from tasks) so appconfig stays a leaf
+// package with no dependency cycle.
+const DefaultEmbeddingModel = "siglip2-base-patch16-224"
+
 // Config holds application configuration including database path, LLM prompts, and AI model paths.
 type Config struct {
 	DBPath string `json:"dbPath"`
@@ -98,6 +104,16 @@ type Config struct {
 		CharacterThreshold   float64 `json:"characterThreshold"`
 	} `json:"onnxTagger"`
 
+	// Active visual-embedding model ID. Governs both indexing (the `embed`
+	// task) and image->image similarity search. Vectors are stored keyed by
+	// model, so switching is non-destructive — previously-embedded vectors are
+	// retained and become searchable again on switch-back (only the in-memory
+	// ANN index rebuilds). Must be a known ID from tasks' embed-model registry
+	// (e.g. "siglip2-base-patch16-224", "dinov2-base"); empty falls back to the
+	// default. Text->image search always uses a multimodal model (SigLIP 2)
+	// regardless of this setting.
+	EmbeddingModel string `json:"embeddingModel"`
+
 	// Optional path to faster-whisper executable
 	FasterWhisperPath string `json:"fasterWhisperPath"`
 
@@ -146,6 +162,7 @@ func defaultConfig() Config {
 		DBPath:            DefaultDBPath(),
 		DownloadPath:      defaultDownloadPath(),
 		InferenceProvider: "ollama",
+		EmbeddingModel:    DefaultEmbeddingModel,
 		OllamaBaseURL:     "http://localhost:11434",
 		OllamaModel:       "llama3.2-vision",
 		DescribePrompt: "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
@@ -327,6 +344,10 @@ func Load() (Config, string, error) {
 	if c.AutotagPrompt == "" {
 		c.AutotagPrompt = def.AutotagPrompt
 	}
+	if c.EmbeddingModel == "" {
+		c.EmbeddingModel = def.EmbeddingModel
+		needsSave = true
+	}
 	if c.OnnxTagger.GeneralThreshold == 0 {
 		c.OnnxTagger.GeneralThreshold = def.OnnxTagger.GeneralThreshold
 	}
@@ -493,6 +514,9 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_FASTER_WHISPER_PATH"); v != "" {
 		c.FasterWhisperPath = v
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_MODEL"); v != "" {
+		c.EmbeddingModel = strings.TrimSpace(v)
 	}
 
 	// Storage roots from environment variables.

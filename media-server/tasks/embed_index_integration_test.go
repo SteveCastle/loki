@@ -54,8 +54,8 @@ func TestIncrementalInsertIsSearchable(t *testing.T) {
 	// Empty index installed; then incrementally insert two candidates.
 	SetVectorIndex(embedindex.New())
 	defer SetVectorIndex(nil)
-	indexAdd("a.jpg", embedvecNormalize([]float32{0.9, 0.1}))
-	indexAdd("b.jpg", embedvecNormalize([]float32{-1, 0}))
+	indexAdd(EmbedModelID, "a.jpg", embedvecNormalize([]float32{0.9, 0.1}))
+	indexAdd(EmbedModelID, "b.jpg", embedvecNormalize([]float32{-1, 0}))
 
 	hits, err := SimilarByPath(db, EmbedModelID, "q.jpg", 1)
 	if err != nil {
