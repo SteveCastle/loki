@@ -39,6 +39,7 @@ import recursiveIcon from '../../../../assets/recursive.svg';
 import folderIcon from '../../../../assets/folder-open-fill.svg';
 import lockIcon from '../../../../assets/lock-fill.svg';
 import tag from '../../../../assets/tag.svg';
+import rulerIcon from '../../../../assets/ruler-2-fill.svg';
 
 // Settings & Types
 import { SETTINGS, SettingKey, clampVolume } from 'settings'; // Assuming SETTINGS is an object and SettingKey is a type
@@ -159,6 +160,19 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
       (state: any) => state.context.settings.volume
     );
 
+    const sortBy = useSelector(
+      libraryService,
+      (state: any) => state.context.settings.sortBy
+    );
+
+    const hasVisual = useSelector(libraryService, (state: any) => {
+      const predicates: Array<{ type: string }> =
+        state.context.query?.predicates ?? [];
+      return predicates.some(
+        (p) => p.type === 'similar' || p.type === 'visual'
+      );
+    });
+
     const handleSettingChange = useCallback(
       (key: SettingKey, value: any, reload = false) => {
         const eventType = reload
@@ -227,6 +241,14 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
           onClick={() => libraryService.send('SHUFFLE')}
           tooltipId="shuffle"
         />
+        {hasVisual && (
+          <ActionButton
+            icon={rulerIcon}
+            onClick={() => libraryService.send('SORTED_SCORE')}
+            isSelected={sortBy === 'similarity'}
+            tooltipId="sort-score"
+          />
+        )}
         <ActionButton
           icon={lockIcon}
           onClick={() => handleSettingChange('alwaysOnTop', !alwaysOnTop)}
@@ -607,6 +629,11 @@ const CommandPaletteTooltips: React.FC = React.memo(() => (
       place="top"
     />
     <Tooltip id="shuffle" content="Shuffle items in the list." place="top" />
+    <Tooltip
+      id="sort-score"
+      content="Sort by visual similarity score."
+      place="top"
+    />
     <Tooltip
       id="always-on-top"
       content="Keep window always on top."
