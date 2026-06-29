@@ -17,15 +17,16 @@ export default function RegionSelect() {
   // Track Alt key globally.
   useEffect(() => {
     if (!capabilities.regionCapture) return; // desktop only
+    const reset = () => {
+      setAltHeld(false);
+      startRef.current = null;
+      setBox(null);
+    };
     const down = (e: KeyboardEvent) => {
       if (e.key === 'Alt') setAltHeld(true);
     };
     const up = (e: KeyboardEvent) => {
-      if (e.key === 'Alt') {
-        setAltHeld(false);
-        startRef.current = null;
-        setBox(null);
-      }
+      if (e.key === 'Alt') reset();
     };
     const esc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
@@ -36,10 +37,15 @@ export default function RegionSelect() {
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     window.addEventListener('keydown', esc);
+    // Alt+Tab (or any focus loss) swallows the Alt keyup, which would leave
+    // altHeld stuck true and the full-screen overlay blocking the whole UI.
+    // Reset on blur so the overlay can never get wedged.
+    window.addEventListener('blur', reset);
     return () => {
       window.removeEventListener('keydown', down);
       window.removeEventListener('keyup', up);
       window.removeEventListener('keydown', esc);
+      window.removeEventListener('blur', reset);
     };
   }, []);
 
@@ -70,8 +76,12 @@ export default function RegionSelect() {
       // guarantee the setState flushes before the rAF callback fires).
       flushSync(() => setBox(null));
       if (rect.width < MIN_SIZE || rect.height < MIN_SIZE) return;
-      // Wait one frame so the now-removed box is composited out of the page.
-      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      // Wait two frames: the box removal paints on the next frame, and we
+      // capture on the one after — so the captured composite never contains the
+      // outline even on a slow compositor.
+      await new Promise((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => r(null)))
+      );
       try {
         await runRegionSearch(rect, authToken, (ev) => libraryService.send(ev));
       } catch (err: any) {
