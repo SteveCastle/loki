@@ -1132,7 +1132,7 @@ func workflowDetailHandler(deps *Dependencies) http.HandlerFunc {
 
 		case http.MethodPut:
 			var req struct {
-				Name string                 `json:"name"`
+				Name string                  `json:"name"`
 				DAG  []jobqueue.WorkflowTask `json:"dag"`
 			}
 			if err := readJSONBody(r, &req); err != nil {
@@ -1172,7 +1172,7 @@ func workflowCreateHandler(deps *Dependencies) http.HandlerFunc {
 		}
 
 		var req struct {
-			Name string                 `json:"name"`
+			Name string                  `json:"name"`
 			DAG  []jobqueue.WorkflowTask `json:"dag"`
 		}
 		if err := readJSONBody(r, &req); err != nil {
@@ -1517,44 +1517,78 @@ func formatBytes(bytes int64) string {
 // -----------------------------------------------------------------------------
 
 type configTemplateData struct {
-	Config          appconfig.Config
-	ConfigPath      string
-	ActiveDBPath    string
-	EmbeddingModels []tasks.EmbedModel
+	Config            appconfig.Config
+	ConfigPath        string
+	ActiveDBPath      string
+	EmbeddingModels   []tasks.EmbedModel
+	TaggerModels      []tasks.TaggerModel
+	DirectMLInstalled bool
 }
 
 type updateConfigRequest struct {
-	DBPath                 string  `json:"dbPath"`
-	DownloadPath           string  `json:"downloadPath"`
-	OllamaBaseURL          string  `json:"ollamaBaseUrl"`
-	OllamaModel            string  `json:"ollamaModel"`
-	DescribePrompt         string  `json:"describePrompt"`
-	AutotagPrompt          string  `json:"autotagPrompt"`
-	InferenceProvider      string  `json:"inferenceProvider"`
-	RunPodEndpoint         string  `json:"runpodEndpoint"`
-	RunPodAPIKey           string  `json:"runpodApiKey"`
-	LMStudioBaseURL        string  `json:"lmstudioBaseUrl"`
-	LMStudioModel          string  `json:"lmstudioModel"`
-	LMStudioAPIKey         string  `json:"lmstudioApiKey"`
-	LlamaCppBaseURL        string  `json:"llamacppBaseUrl"`
-	LlamaCppModel          string  `json:"llamacppModel"`
-	LlamaCppAPIKey         string  `json:"llamacppApiKey"`
-	InferenceConcurrency   struct {
+	DBPath               string `json:"dbPath"`
+	DownloadPath         string `json:"downloadPath"`
+	OllamaBaseURL        string `json:"ollamaBaseUrl"`
+	OllamaModel          string `json:"ollamaModel"`
+	DescribePrompt       string `json:"describePrompt"`
+	AutotagPrompt        string `json:"autotagPrompt"`
+	InferenceProvider    string `json:"inferenceProvider"`
+	RunPodEndpoint       string `json:"runpodEndpoint"`
+	RunPodAPIKey         string `json:"runpodApiKey"`
+	LMStudioBaseURL      string `json:"lmstudioBaseUrl"`
+	LMStudioModel        string `json:"lmstudioModel"`
+	LMStudioAPIKey       string `json:"lmstudioApiKey"`
+	LlamaCppBaseURL      string `json:"llamacppBaseUrl"`
+	LlamaCppModel        string `json:"llamacppModel"`
+	LlamaCppAPIKey       string `json:"llamacppApiKey"`
+	InferenceConcurrency struct {
 		Ollama   int `json:"ollama"`
 		RunPod   int `json:"runpod"`
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
-	OnnxModelPath          string  `json:"onnxModelPath"`
-	OnnxLabelsPath         string  `json:"onnxLabelsPath"`
-	OnnxConfigPath         string  `json:"onnxConfigPath"`
-	OnnxORTSharedLibPath   string  `json:"onnxOrtSharedLibPath"`
-	OnnxGeneralThreshold   float64 `json:"onnxGeneralThreshold"`
-	OnnxCharacterThreshold float64 `json:"onnxCharacterThreshold"`
-	EmbeddingModel         string   `json:"embeddingModel"`
-	FasterWhisperPath      string   `json:"fasterWhisperPath"`
-	DiscordToken           string   `json:"discordToken"`
-	Roots                  []appconfig.StorageRoot `json:"roots"`
+	OnnxModelPath             string                  `json:"onnxModelPath"`
+	OnnxLabelsPath            string                  `json:"onnxLabelsPath"`
+	OnnxConfigPath            string                  `json:"onnxConfigPath"`
+	OnnxORTSharedLibPath      string                  `json:"onnxOrtSharedLibPath"`
+	OnnxGeneralThreshold      float64                 `json:"onnxGeneralThreshold"`
+	OnnxCharacterThreshold    float64                 `json:"onnxCharacterThreshold"`
+	EmbeddingModel            string                  `json:"embeddingModel"`
+	EmbeddingProvider         string                  `json:"embeddingProvider"`
+	EmbeddingPerformance      string                  `json:"embeddingPerformance"`
+	EmbeddingWorkers          int                     `json:"embeddingWorkers"`
+	EmbeddingThreadsPerWorker int                     `json:"embeddingThreadsPerWorker"`
+	AutotagModel              string                  `json:"autotagModel"`
+	AutotagProvider           string                  `json:"autotagProvider"`
+	AutotagPerformance        string                  `json:"autotagPerformance"`
+	AutotagWorkers            int                     `json:"autotagWorkers"`
+	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
+	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
+	FasterWhisperPath         string                  `json:"fasterWhisperPath"`
+	DiscordToken              string                  `json:"discordToken"`
+	Roots                     []appconfig.StorageRoot `json:"roots"`
+}
+
+// directMLInstallHandler downloads + installs the optional GPU (DirectML) ONNX
+// Runtime so the embed task can use provider=directml. GET reports install
+// state; POST performs the install.
+func directMLInstallHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(w, map[string]any{"installed": tasks.DirectMLRuntimeInstalled()})
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := tasks.InstallDirectMLRuntime(func(msg string) { log.Printf("[directml-install] %s", msg) }); err != nil {
+			log.Printf("DirectML runtime install failed: %v", err)
+			writeJSON(w, map[string]any{"installed": tasks.DirectMLRuntimeInstalled(), "error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]any{"installed": tasks.DirectMLRuntimeInstalled()})
+	}
 }
 
 func configHandler(deps *Dependencies) http.HandlerFunc {
@@ -1568,10 +1602,12 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			currentConfig = cfg
 			data := configTemplateData{
-				Config:          cfg,
-				ConfigPath:      cfgPath,
-				ActiveDBPath:    cfg.DBPath,
-				EmbeddingModels: tasks.EmbedModelList(),
+				Config:            cfg,
+				ConfigPath:        cfgPath,
+				ActiveDBPath:      cfg.DBPath,
+				EmbeddingModels:   tasks.EmbedModelList(),
+				TaggerModels:      tasks.TaggerModelList(),
+				DirectMLInstalled: tasks.DirectMLRuntimeInstalled(),
 			}
 			if err := renderer.Templates().ExecuteTemplate(w, "config", data); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1674,6 +1710,37 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if v := strings.TrimSpace(req.EmbeddingModel); v != "" {
 				newCfg.EmbeddingModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.EmbeddingProvider)); v != "" {
+				newCfg.EmbeddingProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.EmbeddingPerformance)); v != "" {
+				newCfg.EmbeddingPerformance = v
+			}
+			if req.EmbeddingWorkers > 0 {
+				newCfg.EmbeddingWorkers = req.EmbeddingWorkers
+			}
+			if req.EmbeddingThreadsPerWorker > 0 {
+				newCfg.EmbeddingThreadsPerWorker = req.EmbeddingThreadsPerWorker
+			}
+			if v := strings.TrimSpace(req.AutotagModel); v != "" {
+				newCfg.AutotagModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.AutotagProvider)); v != "" {
+				newCfg.AutotagProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.AutotagPerformance)); v != "" {
+				newCfg.AutotagPerformance = v
+			}
+			if req.AutotagWorkers > 0 {
+				newCfg.AutotagWorkers = req.AutotagWorkers
+			}
+			if req.AutotagThreadsPerWorker > 0 {
+				newCfg.AutotagThreadsPerWorker = req.AutotagThreadsPerWorker
+			}
+			if req.OnnxFileTimeoutSeconds != 0 {
+				// non-zero so a partial POST doesn't clobber it; negative = disabled.
+				newCfg.OnnxFileTimeoutSeconds = req.OnnxFileTimeoutSeconds
 			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
@@ -2463,6 +2530,7 @@ func main() {
 	mux.HandleFunc("/swipe/manifest.json", swipeManifestHandler())
 	mux.HandleFunc("/api/prompts/describe", renderer.ApplyMiddlewares(describePromptHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/config", renderer.ApplyMiddlewares(configHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/embedding/directml/install", renderer.ApplyMiddlewares(directMLInstallHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/upload", renderer.ApplyMiddlewares(uploadHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))

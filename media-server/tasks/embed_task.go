@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -378,7 +376,6 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		q.ErrorJob(j.ID)
 		return fmt.Errorf("model %s not installed", model.ID)
 	}
-	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
 		q.PushJobStdout(j.ID, "embed binary not installed; install it from Dependencies")
@@ -386,64 +383,18 @@ func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fmt.Errorf("embed binary not installed")
 	}
 
-	processed, skipped := 0, 0
-	for idx, mediaPath := range paths {
-		select {
-		case <-ctx.Done():
+	// Embed via a pool of persistent workers (model loaded once per worker, not
+	// per image). The pool size + ONNX threads come from the performance config.
+	processed, skipped, err := runEmbedPool(ctx, j, q, paths, fromQuery, model, imageModel, embedBin)
+	if err != nil {
+		if ctx.Err() != nil {
 			q.PushJobStdout(j.ID, "Task canceled")
 			_ = q.CancelJob(j.ID)
-			return ctx.Err()
-		default:
-		}
-
-		if shouldSkipEmbed(q.Db, mediaPath, model.ID) {
-			skipped++
-			continue
-		}
-		if !fromQuery {
-			if _, err := os.Stat(mediaPath); os.IsNotExist(err) {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Skipping (not found): %s", filepath.Base(mediaPath)))
-				skipped++
-				continue
-			}
-		}
-
-		imagePath := mediaPath
-		var tempFramePath string
-		switch strings.ToLower(filepath.Ext(mediaPath)) {
-		case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".gif":
-			framePath, err := extractVideoFrame(ctx, mediaPath, "")
-			if err != nil {
-				q.PushJobStdout(j.ID, fmt.Sprintf("  Failed to extract frame: %v", err))
-				skipped++
-				continue
-			}
-			tempFramePath = framePath
-			imagePath = framePath
-		}
-
-		q.PushJobStdout(j.ID, fmt.Sprintf("[%d/%d] Embedding: %s", idx+1, len(paths), filepath.Base(mediaPath)))
-		vec, err := runEmbedSubprocess(ctx, embedBin, imageModel, ortLib, imagePath, model)
-		if tempFramePath != "" {
-			_ = os.Remove(tempFramePath)
-		}
-		if err != nil {
-			q.PushJobStdout(j.ID, "  embed failed: "+err.Error())
-			skipped++
-			continue
-		}
-		if err := media.UpsertEmbedding(q.Db, mediaPath, model.ID, vec, 0); err != nil {
-			q.PushJobStdout(j.ID, "  Failed to store embedding: "+err.Error())
-			q.ErrorJob(j.ID)
 			return err
 		}
-		// Incrementally insert into the ANN index so newly-embedded media
-		// becomes immediately searchable without a restart. indexAdd is a no-op
-		// when the live index holds a different model (e.g. a background
-		// migration embedding a non-active model).
-		indexAdd(model.ID, mediaPath, embedvec.Normalize(vec))
-		processed++
-		q.RegisterOutputFile(j.ID, mediaPath)
+		q.PushJobStdout(j.ID, "Embedding failed: "+err.Error())
+		q.ErrorJob(j.ID)
+		return err
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d embedded, %d skipped", processed, skipped))

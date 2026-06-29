@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
@@ -33,6 +34,10 @@ func main() {
 		generalThresh float64
 		charThresh    float64
 		showVersion   bool
+		serve         bool
+		provider      string
+		device        int
+		threads       int
 	)
 
 	flag.StringVar(&modelPath, "model", "", "Path to ONNX model file")
@@ -56,6 +61,10 @@ func main() {
 	flag.Float64Var(&generalThresh, "general-thresh", 0.35, "General tags threshold (wd style)")
 	flag.Float64Var(&charThresh, "character-thresh", 0.85, "Character tags threshold (wd style)")
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
+	flag.BoolVar(&serve, "serve", false, "Persistent worker: stream image paths on stdin, framed tag lists on stdout")
+	flag.StringVar(&provider, "provider", "cpu", "Execution provider: \"cpu\" or \"directml\" (GPU)")
+	flag.IntVar(&device, "device", 0, "GPU device id for --provider=directml")
+	flag.IntVar(&threads, "threads", 0, "CPU intra-op threads (0 = ONNX Runtime default)")
 	flag.Parse()
 
 	if showVersion {
@@ -63,7 +72,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	if modelPath == "" || imagePath == "" {
+	if modelPath == "" || (imagePath == "" && !serve) {
 		fmt.Fprintln(os.Stderr, "Error: --model and --image are required")
 		flag.Usage()
 		os.Exit(2)
@@ -155,6 +164,16 @@ func main() {
 		}
 	}
 
+	// Serve mode: load the model once and stream. Per image path on stdin,
+	// respond with a length-framed tag list: "OK <n>" then n tag lines, or
+	// "ERR <msg>". The first output line is "READY" once the model has loaded.
+	if serve {
+		if err := runServe(modelPath, opts, provider, device, threads); err != nil {
+			log.Fatalf("serve: %v", err)
+		}
+		return
+	}
+
 	tags, err := onnxtag.ClassifyImage(modelPath, imagePath, opts)
 	if err != nil {
 		log.Fatalf("classification failed: %v", err)
@@ -164,4 +183,50 @@ func main() {
 	for _, t := range tags {
 		fmt.Println(t)
 	}
+}
+
+func runServe(modelPath string, opts onnxtag.Options, provider string, device, threads int) error {
+	clf, err := onnxtag.NewClassifier(onnxtag.ClassifierConfig{
+		ModelPath: modelPath,
+		Opts:      opts,
+		Provider:  onnxtag.EmbedProvider(strings.ToLower(strings.TrimSpace(provider))),
+		Threads:   threads,
+		Device:    device,
+		ORTLib:    opts.ORTSharedLibraryPath,
+	})
+	if err != nil {
+		return err
+	}
+	defer clf.Close()
+
+	in := bufio.NewScanner(os.Stdin)
+	in.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // tolerate long paths
+	out := bufio.NewWriter(os.Stdout)
+	defer out.Flush()
+
+	fmt.Fprintln(out, "READY")
+	if err := out.Flush(); err != nil {
+		return err
+	}
+
+	for in.Scan() {
+		path := strings.TrimSpace(in.Text())
+		if path == "" {
+			fmt.Fprintln(out, "ERR empty path")
+			out.Flush()
+			continue
+		}
+		tags, err := clf.Classify(path)
+		if err != nil {
+			fmt.Fprintln(out, "ERR "+strings.ReplaceAll(err.Error(), "\n", " "))
+			out.Flush()
+			continue
+		}
+		fmt.Fprintf(out, "OK %d\n", len(tags))
+		for _, t := range tags {
+			fmt.Fprintln(out, t)
+		}
+		out.Flush()
+	}
+	return in.Err()
 }

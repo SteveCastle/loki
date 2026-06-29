@@ -45,21 +45,25 @@ func TestInferenceHostMapping(t *testing.T) {
 	}
 }
 
-// TestResolveHostVisionTasks confirms the registered resolvers for the
-// vision tasks delegate to InferenceHost so the provider tab controls
-// their concurrency bucket.
+// TestResolveHostVisionTasks confirms the LLM-backed metadata task delegates to
+// InferenceHost (so the provider tab controls its bucket), while the local ONNX
+// tasks (autotag, embed) route to their own dedicated buckets and are NOT
+// affected by the LLM provider setting.
 func TestResolveHostVisionTasks(t *testing.T) {
 	setProvider(t, InferenceProviderRunPod)
-	for _, command := range []string{"autotag", "metadata"} {
-		if got := ResolveHost(command, "/tmp/whatever.jpg"); got != HostBucketRunPod {
-			t.Errorf("ResolveHost(%q) = %q; want %q", command, got, HostBucketRunPod)
-		}
+	if got := ResolveHost("metadata", "/tmp/whatever.jpg"); got != HostBucketRunPod {
+		t.Errorf("ResolveHost(metadata) = %q; want %q", got, HostBucketRunPod)
 	}
 	setProvider(t, InferenceProviderOllama)
-	for _, command := range []string{"autotag", "metadata"} {
-		if got := ResolveHost(command, "/tmp/whatever.jpg"); got != HostBucketOllama {
-			t.Errorf("ResolveHost(%q) = %q; want %q", command, got, HostBucketOllama)
-		}
+	if got := ResolveHost("metadata", "/tmp/whatever.jpg"); got != HostBucketOllama {
+		t.Errorf("ResolveHost(metadata) = %q; want %q", got, HostBucketOllama)
+	}
+	// Local ONNX tasks have fixed dedicated buckets regardless of provider.
+	if got := ResolveHost("autotag", "/tmp/whatever.jpg"); got != HostBucketAutotag {
+		t.Errorf("ResolveHost(autotag) = %q; want %q", got, HostBucketAutotag)
+	}
+	if got := ResolveHost("embed", "/tmp/whatever.jpg"); got != HostBucketEmbed {
+		t.Errorf("ResolveHost(embed) = %q; want %q", got, HostBucketEmbed)
 	}
 }
 
@@ -116,8 +120,11 @@ func TestApplyHostLimitsConcurrentClaims(t *testing.T) {
 	cfg.InferenceConcurrency.Ollama = 1
 	ApplyHostLimits(q, cfg)
 
+	// Use "metadata" (an LLM-backed task) — it routes to the RunPod inference
+	// bucket. autotag/embed now have their own buckets and would not exercise
+	// the inference cap here.
 	for i := 0; i < 3; i++ {
-		if _, err := q.AddJob("", "autotag", nil, "/tmp/whatever.jpg", nil); err != nil {
+		if _, err := q.AddJob("", "metadata", nil, "/tmp/whatever.jpg", nil); err != nil {
 			t.Fatalf("AddJob %d: %v", i, err)
 		}
 	}
