@@ -449,8 +449,11 @@ if (isElectron) {
   loadMediaByDescriptionSearch = window.electron.loadMediaByDescriptionSearch;
   const electronLoadMediaByQuery = window.electron.loadMediaByQuery as any;
   loadMediaByQuery = async (predicates, mode = 'AND', authToken) => {
+    // Match the server's guard (loki_api.go): only a visual predicate with a
+    // non-empty value is resolved via the embedding backend, so only route
+    // (and require auth) when there's actually a visual query to run.
     const hasVisual = predicates.some(
-      (p) => p.type === 'similar' || p.type === 'visual'
+      (p) => (p.type === 'similar' || p.type === 'visual') && p.value !== ''
     );
     if (!hasVisual) {
       // Normal queries stay on the fast local SQLite path.
