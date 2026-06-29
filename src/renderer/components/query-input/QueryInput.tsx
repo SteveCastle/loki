@@ -47,8 +47,8 @@ const CHEAT_SHEET = [
   { syntax: 'path:dir', desc: 'Search paths' },
   { syntax: 'description:txt', desc: 'Search descriptions' },
   { syntax: 'hash:abc', desc: 'Search by hash' },
-  { syntax: 'visual:"red car"', desc: 'Visual search by text', visualOnly: true },
-  { syntax: 'similar:path', desc: 'Find visually similar media', visualOnly: true },
+  { syntax: 'visual:"red car"', desc: 'Visual search by text' },
+  { syntax: 'similar:path', desc: 'Find visually similar media' },
   { syntax: '-term', desc: 'Exclude term' },
 ];
 
