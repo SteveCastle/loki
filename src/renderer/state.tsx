@@ -1770,7 +1770,9 @@ export const libraryMachine = createMachine(
                 ),
               onDone: {
                 target: 'loadedFromDB',
-                actions: ['setLibraryWithPrevious'],
+                // applySimilaritySort here too (not just on runningQuery) so a
+                // loaded/restored visual query also auto-sorts by similarity.
+                actions: ['setLibraryWithPrevious', 'applySimilaritySort'],
               },
               onError: {
                 target: 'loadedFromFS',
