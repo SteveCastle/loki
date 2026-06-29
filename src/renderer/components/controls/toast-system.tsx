@@ -33,8 +33,17 @@ interface JobToastProps {
   onClear: () => void;
 }
 
-const getJobTitle = (command: string): string => {
-  switch (command) {
+// parseFlag pulls a CLI flag value out of a job's raw input string, e.g.
+// parseFlag('metadata --type description --apply all', 'type') === 'description'.
+const parseFlag = (input: string, flag: string): string | null => {
+  if (!input) return null;
+  const m = input.match(new RegExp(`--${flag}[=\\s]+([\\w-]+)`));
+  return m ? m[1] : null;
+};
+
+// getJobTitle returns a short, human-readable title for a background job.
+const getJobTitle = (job: JobRunnerJob): string => {
+  switch (job.command) {
     case 'wait':
       return 'Wait';
     case 'gallery-dl':
@@ -44,21 +53,74 @@ const getJobTitle = (command: string): string => {
     case 'yt-dlp':
       return 'Video Download';
     case 'ffmpeg':
-      return 'Media Processing';
+      return 'Processing Media';
     case 'remove':
-      return 'Remove Media';
+      return 'Removing Media';
     case 'cleanup':
-      return 'Cleanup';
+      return 'Cleaning Up';
     case 'ingest':
-      return 'Ingest Media';
-    case 'metadata':
-      return 'Generate Metadata';
+      return 'Importing Media';
     case 'move':
-      return 'Move Media';
+      return 'Moving Media';
+    case 'embed':
+      return 'Visual Embedding';
     case 'autotag':
-      return 'Autotag Media';
+      return 'Auto-Tagging';
+    case 'metadata':
+      switch (parseFlag(job.input, 'type')) {
+        case 'description':
+          return 'Generating Descriptions';
+        case 'transcript':
+          return 'Transcribing Audio';
+        case 'hash':
+          return 'Hashing Files';
+        case 'dimensions':
+          return 'Reading Dimensions';
+        default:
+          return 'Generating Metadata';
+      }
     default:
-      return command;
+      return job.command;
+  }
+};
+
+// getJobSubtitle returns a one-line description of what the job is doing and why
+// — context that reassures the user the right thing was kicked off.
+const getJobSubtitle = (job: JobRunnerJob): string | null => {
+  switch (job.command) {
+    case 'embed':
+      return 'Indexing images so you can search by visual similarity.';
+    case 'autotag':
+      return 'Detecting tags from each image’s content.';
+    case 'metadata':
+      switch (parseFlag(job.input, 'type')) {
+        case 'description':
+          return 'Writing AI descriptions of your media.';
+        case 'transcript':
+          return 'Transcribing speech into searchable text.';
+        case 'hash':
+          return 'Computing content hashes to find duplicates.';
+        case 'dimensions':
+          return 'Reading the width & height of your media.';
+        default:
+          return 'Generating metadata for your media.';
+      }
+    case 'ingest':
+      return 'Scanning and importing files into your library.';
+    case 'move':
+      return 'Relocating files on disk.';
+    case 'cleanup':
+      return 'Removing orphaned entries from the library.';
+    case 'remove':
+      return 'Removing media from the library.';
+    case 'ffmpeg':
+      return 'Transcoding media.';
+    case 'yt-dlp':
+      return 'Downloading video from the web.';
+    case 'gallery-dl':
+      return 'Downloading a gallery from the web.';
+    default:
+      return null;
   }
 };
 
@@ -66,7 +128,8 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
   const { libraryService } = useContext(GlobalStateContext);
   const library = useSelector(libraryService, (state) => state.context.library);
   const status = job.state;
-  const title = getJobTitle(job.command);
+  const title = getJobTitle(job);
+  const subtitle = getJobSubtitle(job);
 
   // Extract file path from input - look for quoted paths or file-like arguments
   const extractFilePath = (input: string): string | null => {
@@ -131,6 +194,7 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
         ></div>
         <div className="toast-text">
           <span className="toast-title">{title}</span>
+          {subtitle && <span className="toast-message">{subtitle}</span>}
           {filePath && (
             <div className="toast-file-path-container">
               <span

@@ -154,7 +154,8 @@ interface JobInfo {
 
 const JOB_TITLES: Record<string, string> = {
   metadata: 'Metadata',
-  autotag: 'Auto-tag',
+  autotag: 'Auto-Tagging',
+  embed: 'Visual Embedding',
 };
 
 function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
