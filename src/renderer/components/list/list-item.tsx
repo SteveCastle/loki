@@ -288,8 +288,8 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
           </span>
         </div>
       ) : null}
-      {sortBy === 'similarity' && typeof item.score === 'number' ? (
-        <div className="score-badge">{Math.round(item.score * 100)}%</div>
+      {sortBy === 'similarity' && Number.isFinite(item.score) ? (
+        <div className="score-badge">{Math.round((item.score as number) * 100)}%</div>
       ) : null}
     </div>
   );
