@@ -95,6 +95,9 @@ export default function Taxonomy() {
   // rather than guard the main thread — hence a short 150ms window.
   const [tagFilterInput, setTagFilterInput] = useState<string>('');
   const [tagFilter, setTagFilter] = useState<string>('');
+  // "Search by meaning" mode: typed text commits as a visual: (text→image)
+  // predicate instead of filtering the tag tree. Mirrors the command palette.
+  const [meaningMode, setMeaningMode] = useState<boolean>(false);
   // Set once the search input has been focused. Used to warm the full-tag
   // fetch (and worker index) before the first keystroke so the initial search
   // isn't stalled waiting on the network. Stays true for the session — with
@@ -106,8 +109,10 @@ export default function Taxonomy() {
     }, 150)
   );
   useEffect(() => {
+    // In meaning mode the text drives a semantic query, not tag-tree filtering.
+    if (meaningMode) return;
     debouncedSetTagFilter.current(tagFilterInput);
-  }, [tagFilterInput]);
+  }, [tagFilterInput, meaningMode]);
   useEffect(() => {
     const debounced = debouncedSetTagFilter.current;
     return () => {
@@ -322,6 +327,30 @@ export default function Taxonomy() {
                 data: { key, join },
               })
             }
+            onMeaningModeChange={(on) => {
+              setMeaningMode(on);
+              if (on) {
+                // Stop filtering the tag tree by the (now semantic) text.
+                setTagFilter('');
+                debouncedSetTagFilter.current.cancel();
+              }
+            }}
+            onSubmitVisual={(t) => {
+              libraryService.send({
+                type: 'ADD_PREDICATE',
+                data: {
+                  predicate: {
+                    type: 'visual',
+                    value: t,
+                    exclude: false,
+                    join: filteringMode === 'OR' ? 'OR' : 'AND',
+                  },
+                },
+              });
+              setTagFilterInput('');
+              setTagFilter('');
+              debouncedSetTagFilter.current.cancel();
+            }}
             onClearText={() => {
               setTagFilterInput('');
               setTagFilter('');

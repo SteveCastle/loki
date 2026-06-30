@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -114,13 +115,18 @@ func IndexDelete(path string) {
 	}
 }
 
+// IndexProgress is called during a build with the number of vectors added so
+// far and the total, so callers can render progress. nil disables reporting.
+type IndexProgress func(done, total int)
+
 // RebuildActiveIndex builds the ANN index for the currently-configured active
 // model and installs it (tagged with that model). Used at startup and after the
-// active model changes in config. Returns the installed model ID and vector
-// count, or an error (in which case the previous index is left untouched).
-func RebuildActiveIndex(db *sql.DB) (string, int, error) {
+// active model changes in config. onProgress (may be nil) is invoked as the
+// index builds. Returns the installed model ID and vector count, or an error (in
+// which case the previous index is left untouched).
+func RebuildActiveIndex(db *sql.DB, onProgress IndexProgress) (string, int, error) {
 	model := ActiveEmbedModel()
-	idx, err := BuildIndexFromDB(db, model.ID)
+	idx, err := BuildIndexFromDB(db, model.ID, onProgress)
 	if err != nil {
 		return model.ID, 0, err
 	}
@@ -128,15 +134,24 @@ func RebuildActiveIndex(db *sql.DB) (string, int, error) {
 	return model.ID, idx.Len(), nil
 }
 
-// BuildIndexFromDB constructs an ANN index from all stored vectors for model.
-func BuildIndexFromDB(db *sql.DB, model string) (embedindex.VectorIndex, error) {
+// BuildIndexFromDB constructs an ANN index from all stored vectors for model,
+// reporting progress to onProgress (may be nil) as vectors are inserted.
+func BuildIndexFromDB(db *sql.DB, model string, onProgress IndexProgress) (embedindex.VectorIndex, error) {
 	all, err := media.LoadAllEmbeddings(db, model)
 	if err != nil {
 		return nil, err
 	}
 	idx := embedindex.New()
-	for _, e := range all {
+	total := len(all)
+	if onProgress != nil {
+		onProgress(0, total) // start the bar (covers the empty-DB case too)
+	}
+	for i, e := range all {
 		idx.Add(e.Path, embedvec.Normalize(e.Vec))
+		// Throttle callback frequency; always fire on the last item.
+		if onProgress != nil && ((i+1)%512 == 0 || i+1 == total) {
+			onProgress(i+1, total)
+		}
 	}
 	return idx, nil
 }
@@ -184,6 +199,44 @@ func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, err
 	return SearchByVector(db, model, query, limit)
 }
 
+// SimilarByPathOrEmbed is like SimilarByPath but, when the query item has no
+// stored embedding for the model yet, it embeds the file on the fly so
+// "find similar" works on any media — not only already-indexed items — and
+// persists the result so subsequent searches are instant.
+func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string, limit int) ([]SimilarHit, error) {
+	vec, ok, err := media.GetEmbedding(db, path, modelID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return SearchByVector(db, modelID, vec, limit)
+	}
+	m, found := EmbedModelByID(modelID)
+	if !found {
+		m = ActiveEmbedModel()
+	}
+	fresh, err := embedFileWithModel(ctx, path, m)
+	if err != nil {
+		return nil, fmt.Errorf("embed query item %q: %w", path, err)
+	}
+	// Persist + index so future searches over this item are instant.
+	if uerr := media.UpsertEmbedding(db, path, m.ID, fresh, 0); uerr == nil {
+		indexAdd(m.ID, path, embedvec.Normalize(fresh))
+	}
+	return SearchByVector(db, m.ID, fresh, limit)
+}
+
+// embedSubprocessError wraps a failed embed-subprocess run, surfacing the
+// subprocess's stderr (captured into ExitError.Stderr by cmd.Output) so the real
+// cause is visible instead of a bare "exit status 1".
+func embedSubprocessError(err error) error {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+		return fmt.Errorf("embed subprocess failed: %s: %w", strings.TrimSpace(string(ee.Stderr)), err)
+	}
+	return fmt.Errorf("embed subprocess failed: %w", err)
+}
+
 func shouldSkipEmbed(db *sql.DB, path, model string) bool {
 	ok, err := media.HasEmbedding(db, path, model)
 	return err == nil && ok
@@ -220,7 +273,7 @@ func runEmbedSubprocess(ctx context.Context, embedBin, imageModelPath, ortLib, i
 	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, embedSubprocessError(err)
 	}
 	line := strings.TrimSpace(string(out))
 	raw, err := base64.StdEncoding.DecodeString(line)
@@ -256,7 +309,7 @@ func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer,
 	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, embedSubprocessError(err)
 	}
 	line := strings.TrimSpace(string(out))
 	raw, err := base64.StdEncoding.DecodeString(line)

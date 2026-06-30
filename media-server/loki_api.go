@@ -277,8 +277,9 @@ func lokiSimilarHandler(deps *Dependencies) http.HandlerFunc {
 				limit = n
 			}
 		}
-		hits, err := tasks.SimilarByPath(deps.DB, tasks.ActiveEmbedModel().ID, path, limit)
+		hits, err := tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, path, limit)
 		if err != nil {
+			log.Printf("similar search failed (path=%q model=%q): %v", path, tasks.ActiveEmbedModel().ID, err)
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -301,6 +302,7 @@ func lokiVisualSearchHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		hits, err := tasks.SearchByText(r.Context(), deps.DB, q, limit)
 		if err != nil {
+			log.Printf("visual (text) search failed (q=%q): %v", q, err)
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -353,11 +355,12 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 				var hits []tasks.SimilarHit
 				var err error
 				if pt == "similar" {
-					hits, err = tasks.SimilarByPath(deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
+					hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
 				} else {
 					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
 				}
 				if err != nil {
+					log.Printf("query: %s predicate %q failed (model=%q): %v", pt, val, tasks.ActiveEmbedModel().ID, err)
 					httpError(w, err.Error(), http.StatusInternalServerError)
 					return
 				}

@@ -22,7 +22,7 @@ func TestBuildIndexFromDBAndSimilarUsesIt(t *testing.T) {
 	_ = media.UpsertEmbedding(db, "a.jpg", EmbedModelID, embedvecNormalize([]float32{0.9, 0.1}), 0)
 	_ = media.UpsertEmbedding(db, "b.jpg", EmbedModelID, embedvecNormalize([]float32{-1, 0}), 0)
 
-	idx, err := BuildIndexFromDB(db, EmbedModelID)
+	idx, err := BuildIndexFromDB(db, EmbedModelID, nil)
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
