@@ -2202,7 +2202,8 @@ func main() {
 	}
 
 	// ––– embedding ANN index (best-effort, non-fatal) –––
-	if model, n, err := tasks.RebuildActiveIndex(db); err == nil {
+	log.Printf("Building embedding search index…")
+	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
 		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
 	} else {
 		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)

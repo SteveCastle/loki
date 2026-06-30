@@ -83,6 +83,31 @@ func directMLRuntimeLib() string {
 	return ""
 }
 
+// embedFileWithModel computes an embedding for a single media file using model
+// m's image encoder (extracting a video frame first when needed). Used to embed
+// a "find similar" query item on the fly when it isn't indexed yet.
+func embedFileWithModel(ctx context.Context, path string, m EmbedModel) ([]float32, error) {
+	imageModel, err := deps.ModelPath(m.ID, m.ImageModelFile)
+	if err != nil || imageModel == "" {
+		return nil, fmt.Errorf("%s image model not installed: %w", m.DisplayName, err)
+	}
+	embedBin := deps.BundledOrEmpty("embed")
+	if embedBin == "" {
+		return nil, fmt.Errorf("embed binary not installed")
+	}
+	ortLib := deps.BundledOrEmpty("onnxruntime")
+
+	imagePath, tempFrame, ferr := extractFrameForFile(ctx, path, 0)
+	if ferr != nil {
+		return nil, fmt.Errorf("extract frame from %q: %w", path, ferr)
+	}
+	vec, err := runEmbedSubprocess(ctx, embedBin, imageModel, ortLib, imagePath, m)
+	if tempFrame != "" {
+		_ = os.Remove(tempFrame)
+	}
+	return vec, err
+}
+
 // DirectMLRuntimeInstalled reports whether the optional GPU (DirectML) runtime
 // is present in the data dir.
 func DirectMLRuntimeInstalled() bool { return directMLRuntimeLib() != "" }

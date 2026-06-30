@@ -50,9 +50,10 @@ func jsonFunc(v interface{}) (template.JS, error) {
 func initTemplates() *template.Template {
 	tmpl, err := template.New("").
 		Funcs(template.FuncMap{
-			"formatTime": formatTime,
-			"htmlAttr":   htmlAttr,
-			"json":       jsonFunc,
+			"formatTime":   formatTime,
+			"htmlAttr":     htmlAttr,
+			"json":         jsonFunc,
+			"jobInputView": jobInputView,
 		}).
 		ParseFS(templatesFS, templateGlob)
 	if err != nil {

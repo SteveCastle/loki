@@ -1784,7 +1784,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			// large library can take a while to load.
 			if newCfg.EmbeddingModel != oldEmbeddingModel {
 				go func(db *sql.DB) {
-					model, n, err := tasks.RebuildActiveIndex(db)
+					model, n, err := tasks.RebuildActiveIndex(db, nil)
 					if err != nil {
 						log.Printf("embedding index rebuild after model switch failed (model %s): %v", model, err)
 						return
@@ -2492,7 +2492,8 @@ func main() {
 	// Build the HNSW index from all stored vectors so SimilarByPath uses
 	// ANN search instead of brute-force from the first request.  If the
 	// media_embedding table is empty (or missing) this logs and continues.
-	if model, n, err := tasks.RebuildActiveIndex(db); err == nil {
+	log.Printf("Building embedding search index…")
+	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
 		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
 	} else {
 		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)

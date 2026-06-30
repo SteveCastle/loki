@@ -47,6 +47,34 @@
   border-color: #3d785a;
 }
 
+/* Semantic ("search by meaning") chip — distinct purple to read as special. */
+.query-chip.visual {
+  background: #332b4a;
+  color: #e0d6ff;
+  border-color: #5a4d8a;
+}
+
+.query-chip-icon {
+  margin-right: 2px;
+}
+
+/* Image-similarity chip shows a thumbnail + filename instead of a raw path. */
+.query-chip.similar {
+  background: #2b3f4a;
+  color: #d6ecff;
+  border-color: #3d6378;
+}
+
+.query-chip-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+  margin-right: 4px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 .query-chip-label {
   white-space: nowrap;
   overflow: hidden;
@@ -112,9 +140,19 @@
   border: none;
   margin: 0.5rem;
   padding: 0.5rem;
-  padding-right: 105px;
+  padding-right: 120px;
   border-radius: 2px;
   color: #fff;
+}
+
+/* When "search by meaning" is on, tint the input so the mode is obvious. */
+.query-input-field.meaning-mode input {
+  box-shadow: inset 0 0 0 1px #6c5cff;
+  background: #2b2940;
+}
+
+.query-input-field.meaning-mode input::placeholder {
+  color: #b9b2ff;
 }
 
 .query-input-field input:focus {
@@ -145,25 +183,10 @@
   opacity: 1;
 }
 
-.query-input-help {
-  right: 70px;
-  background: #4a4a4a !important;
-  border-radius: 2px;
-  color: #fff;
-  font-size: 11px;
-  font-weight: bold;
-  transition: all 0.2s ease-in-out;
-}
-
-.query-input-help:hover {
-  background: #5a5a5a !important;
-}
-
-/* Tag-filtering behaviour toggle (Intersection / Union / Exclusive). Sits to
-   the left of the query-syntax help button; its icon mirrors the taxonomy
-   sidebar's filtering-mode toggle. */
+/* Tag-filtering behaviour toggle (Intersection / Union / Exclusive). Its icon
+   mirrors the taxonomy sidebar's filtering-mode toggle. */
 .query-input-filter-mode {
-  right: 95px;
+  right: 70px;
   background: #4a4a4a !important;
   border-radius: 2px;
   transition: all 0.2s ease-in-out;
@@ -177,6 +200,25 @@
 .query-input-filter-mode img {
   width: 12px;
   height: 12px;
+}
+
+/* "Search by meaning" toggle (✨). Sits left of the filter-mode button. */
+.query-input-meaning {
+  right: 95px;
+  background: #4a4a4a !important;
+  border-radius: 2px;
+  color: #fff;
+  font-size: 12px;
+  transition: all 0.2s ease-in-out;
+}
+
+.query-input-meaning:hover {
+  background: #5a5a5a !important;
+}
+
+.query-input-meaning.active {
+  background: #6c5cff !important;
+  opacity: 1;
 }
 
 .query-input-submit {
