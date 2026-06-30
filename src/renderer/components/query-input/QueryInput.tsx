@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
+import { mediaUrl } from '../../platform';
 import type { Query, Predicate } from '../../query/types';
 import { predicateKey } from '../../query/types';
 import type { FilterModeOption } from '../../../settings';
@@ -38,17 +39,13 @@ interface QueryInputProps {
   // unaffected.
   filteringMode?: FilterModeOption;
   onCycleFilterMode?: () => void;
+  // Semantic ("search by meaning") support. When onSubmitVisual is provided a
+  // ✨ toggle is shown; with it ON, submitting commits the typed text as a
+  // `visual:` (text→image embedding) predicate instead of the normal parse.
+  // onMeaningModeChange lets the parent react (e.g. hide tag suggestions).
+  onSubmitVisual?: (text: string) => void;
+  onMeaningModeChange?: (on: boolean) => void;
 }
-
-const CHEAT_SHEET = [
-  { syntax: '"quoted phrase"', desc: 'Exact match' },
-  { syntax: 'tag:name', desc: 'Search tags' },
-  { syntax: 'in:category', desc: 'Filter by category' },
-  { syntax: 'path:dir', desc: 'Search paths' },
-  { syntax: 'description:txt', desc: 'Search descriptions' },
-  { syntax: 'hash:abc', desc: 'Search by hash' },
-  { syntax: '-term', desc: 'Exclude term' },
-];
 
 // Glyph prefix shown on a chip for each predicate type.
 const TYPE_GLYPH: Record<Predicate['type'], string> = {
@@ -57,6 +54,8 @@ const TYPE_GLYPH: Record<Predicate['type'], string> = {
   path: 'path:',
   description: 'description:',
   hash: 'hash:',
+  similar: 'similar:',
+  visual: 'visual:',
 };
 
 // Icons + labels for the three tag-filtering behaviours, mirroring the toggle
@@ -95,13 +94,24 @@ export default function QueryInput({
   onResultNavSubmit,
   filteringMode,
   onCycleFilterMode,
+  onSubmitVisual,
+  onMeaningModeChange,
 }: QueryInputProps) {
   const { history, addSearch, removeSearch, clearAll } = useSearchHistory();
+  // "Search by meaning" mode: typed text commits as a visual: predicate.
+  const [meaningMode, setMeaningMode] = useState(false);
+  const toggleMeaningMode = useCallback(() => {
+    setMeaningMode((prev) => {
+      const next = !prev;
+      onMeaningModeChange?.(next);
+      return next;
+    });
+    inputRef.current?.focus();
+  }, [onMeaningModeChange]);
   // The parent owns a navigable results list (command palette). While it has
   // items, arrow/enter drive that list instead of the history dropdown.
   const resultNavActive = resultNavCount > 0;
   const [isOpen, setIsOpen] = useState(false);
-  const [showCheatSheet, setShowCheatSheet] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -122,7 +132,7 @@ export default function QueryInput({
         .slice(0, MAX_VISIBLE_FILTERED)
     : history.slice(0, MAX_VISIBLE_RECENT);
 
-  const hasItems = showCheatSheet || filteredHistory.length > 0;
+  const hasItems = filteredHistory.length > 0;
 
   // Reset highlight when input changes
   useEffect(() => {
@@ -137,7 +147,6 @@ export default function QueryInput({
         !containerRef.current.contains(e.target as Node)
       ) {
         setIsOpen(false);
-        setShowCheatSheet(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -160,7 +169,6 @@ export default function QueryInput({
   const handleBlur = useCallback(() => {
     blurTimeoutRef.current = setTimeout(() => {
       setIsOpen(false);
-      setShowCheatSheet(false);
     }, 200);
   }, []);
 
@@ -172,7 +180,6 @@ export default function QueryInput({
       addSearch(item);
       onSubmitText();
       setIsOpen(false);
-      setShowCheatSheet(false);
       setHighlightIndex(-1);
     },
     [onTextChange, addSearch, onSubmitText]
@@ -182,12 +189,16 @@ export default function QueryInput({
     const trimmed = textValue.trim();
     if (trimmed) {
       addSearch(trimmed);
-      onSubmitText();
+      if (meaningMode && onSubmitVisual) {
+        // Commit the raw text as a visual (text→image) embedding search.
+        onSubmitVisual(trimmed);
+      } else {
+        onSubmitText();
+      }
       setIsOpen(false);
-      setShowCheatSheet(false);
       setHighlightIndex(-1);
     }
-  }, [textValue, addSearch, onSubmitText]);
+  }, [textValue, addSearch, onSubmitText, meaningMode, onSubmitVisual]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -207,27 +218,29 @@ export default function QueryInput({
             return;
           case 'Enter':
             e.preventDefault();
-            onResultNavSubmit?.();
+            // In meaning mode, Enter commits the visual search rather than the
+            // highlighted tag suggestion.
+            if (meaningMode && onSubmitVisual) handleSubmit();
+            else onResultNavSubmit?.();
             return;
           default:
             return; // typing and everything else: let the input handle it
         }
       }
 
-      if (!isOpen || !hasItems || showCheatSheet) {
+      if (!isOpen || !hasItems) {
         if (e.key === 'Enter') {
           handleSubmit();
           return;
         }
         if (e.key === 'Escape') {
           setIsOpen(false);
-          setShowCheatSheet(false);
           return;
         }
         // Keyboard affordance: open (and highlight the first row) on ArrowDown
         // so keyboard-only users can still reach history now that focus alone
         // no longer opens the dropdown.
-        if (e.key === 'ArrowDown' && hasItems && !showCheatSheet) {
+        if (e.key === 'ArrowDown' && hasItems) {
           e.preventDefault();
           setIsOpen(true);
           setHighlightIndex(0);
@@ -258,7 +271,6 @@ export default function QueryInput({
           break;
         case 'Escape':
           setIsOpen(false);
-          setShowCheatSheet(false);
           setHighlightIndex(-1);
           break;
         case 'Delete':
@@ -281,7 +293,6 @@ export default function QueryInput({
     [
       isOpen,
       hasItems,
-      showCheatSheet,
       highlightIndex,
       filteredHistory,
       textValue,
@@ -291,6 +302,8 @@ export default function QueryInput({
       resultNavActive,
       onResultNavMove,
       onResultNavSubmit,
+      meaningMode,
+      onSubmitVisual,
     ]
   );
 
@@ -317,9 +330,14 @@ export default function QueryInput({
           {query.predicates.map((p, index) => {
             const key = predicateKey(p);
             const join = p.join ?? 'AND';
+            const isVisual = p.type === 'visual';
+            const isSimilar = p.type === 'similar';
             const chipClass = `query-chip${p.exclude ? ' exclude' : ''}${
               p.type === 'category' ? ' category' : ''
-            }`;
+            }${isVisual ? ' visual' : ''}${isSimilar ? ' similar' : ''}`;
+            const baseName = isSimilar
+              ? p.value.split(/[/\\]/).pop() || p.value
+              : '';
             return (
               <span
                 className={chipClass}
@@ -344,10 +362,33 @@ export default function QueryInput({
                     {join}
                   </button>
                 )}
-                <span className="query-chip-label">
+                <span className="query-chip-label" title={p.value}>
                   {p.exclude ? '−' : ''}
-                  {TYPE_GLYPH[p.type]}
-                  {p.value}
+                  {isVisual ? (
+                    <>
+                      <span className="query-chip-icon" aria-hidden="true">
+                        ✨
+                      </span>
+                      {p.value}
+                    </>
+                  ) : isSimilar ? (
+                    <>
+                      <img
+                        className="query-chip-thumb"
+                        src={mediaUrl(p.value)}
+                        alt=""
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                      {baseName}
+                    </>
+                  ) : (
+                    <>
+                      {TYPE_GLYPH[p.type]}
+                      {p.value}
+                    </>
+                  )}
                 </span>
                 <button
                   className="query-chip-remove"
@@ -364,11 +405,17 @@ export default function QueryInput({
           })}
         </div>
       )}
-      <div className="query-input-field">
+      <div
+        className={`query-input-field${meaningMode ? ' meaning-mode' : ''}`}
+      >
         <input
           ref={inputRef}
           type="text"
-          placeholder="Search & filter"
+          placeholder={
+            meaningMode
+              ? 'Describe what you’re looking for…'
+              : 'Search & filter'
+          }
           value={textValue}
           onChange={(e) => {
             // Typing is intent — open the dropdown so matching history shows.
@@ -399,18 +446,22 @@ export default function QueryInput({
             />
           </button>
         )}
-        <button
-          className="query-input-help"
-          title="Query syntax help"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
-            setShowCheatSheet((prev) => !prev);
-            setIsOpen(true);
-            inputRef.current?.focus();
-          }}
-        >
-          ?
-        </button>
+        {onSubmitVisual && (
+          <button
+            type="button"
+            className={`query-input-meaning${meaningMode ? ' active' : ''}`}
+            title={
+              meaningMode
+                ? 'Search by meaning is ON — type a description and press Enter (off: normal filter)'
+                : 'Search by meaning — describe images in words (SigLIP 2 text→image)'
+            }
+            aria-pressed={meaningMode}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={toggleMeaningMode}
+          >
+            ✨
+          </button>
+        )}
         <button
           className="query-input-submit"
           onClick={handleSubmit}
@@ -425,21 +476,7 @@ export default function QueryInput({
       </div>
       {dropdownOpen && (
         <div className="query-input-dropdown">
-          {showCheatSheet ? (
-            <div className="query-input-cheatsheet">
-              <div className="query-input-section-header">Query Syntax</div>
-              {CHEAT_SHEET.map((entry) => (
-                <div className="query-input-cheatsheet-row" key={entry.syntax}>
-                  <span className="query-input-cheatsheet-syntax">
-                    {entry.syntax}
-                  </span>
-                  <span className="query-input-cheatsheet-desc">
-                    {entry.desc}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
+          {
             <div className="query-input-history">
               <div className="query-input-section-header">
                 <span>
@@ -486,7 +523,7 @@ export default function QueryInput({
                 ))
               )}
             </div>
-          )}
+          }
         </div>
       )}
     </div>

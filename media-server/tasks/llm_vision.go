@@ -44,6 +44,16 @@ const (
 	HostBucketRunPod   = "runpod"
 	HostBucketLMStudio = "lmstudio"
 	HostBucketLlamaCpp = "llamacpp"
+	// HostBucketEmbed is the local visual-embedding bucket. It is intentionally
+	// separate from the LLM inference buckets so embedding doesn't compete with
+	// autotag/description jobs and isn't capped by the LLM provider's setting.
+	// One embed job at a time is enough: each job parallelizes internally via
+	// its own worker pool (see runEmbedPool).
+	HostBucketEmbed = "embed"
+	// HostBucketAutotag is the local ONNX auto-tagging bucket, separate from the
+	// LLM inference bucket for the same reasons as embed. Each autotag job
+	// parallelizes internally via its own worker pool (see runAutotagPool).
+	HostBucketAutotag = "autotag"
 )
 
 // InferenceHost returns the concurrency bucket name for the currently

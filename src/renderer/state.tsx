@@ -13,7 +13,7 @@ import {
   invoke, send, on, store, appArgs, capabilities, isElectron,
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
-import type { Query } from './query/types';
+import type { Query, Predicate } from './query/types';
 import { predicateKey } from './query/types';
 import {
   addPredicateWithMode,
@@ -48,6 +48,7 @@ export type Item = {
   description?: string;
   height?: number | null;
   width?: number | null;
+  score?: number;
 };
 
 type Props = {
@@ -167,6 +168,40 @@ type LibraryState = {
   // Cache for masonry layout dimensions to maintain stable layout across view switches
   masonryDimensionsCache: Record<string, { width: number; height: number }>;
 };
+
+const queryHasVisual = (predicates: Predicate[] = []): boolean =>
+  predicates.some((p) => p.type === 'similar' || p.type === 'visual');
+
+const applySimilaritySort = assign<LibraryState, AnyEventObject>({
+  settings: (context) => {
+    const hasVisual = queryHasVisual(context.query?.predicates);
+    if (hasVisual) {
+      return { ...context.settings, sortBy: 'similarity' };
+    }
+    // Leaving a visual query: if we were on 'similarity', fall back to 'name'.
+    if (context.settings.sortBy === 'similarity') {
+      return { ...context.settings, sortBy: 'name' };
+    }
+    return context.settings;
+  },
+});
+
+const addQueryErrorToast = assign<LibraryState, AnyEventObject>({
+  toasts: (context, event) => {
+    const err = event.data;
+    const message =
+      'Query failed: ' +
+      (err?.message ?? (typeof err === 'string' ? err : 'unknown error'));
+    const newToast = {
+      id: uniqueId(),
+      type: 'error' as const,
+      title: 'Query Error',
+      message,
+      timestamp: Date.now(),
+    };
+    return [...context.toasts, newToast];
+  },
+});
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
@@ -1730,14 +1765,18 @@ export const libraryMachine = createMachine(
               src: (context) =>
                 platformLoadMediaByQuery(
                   context.query.predicates,
-                  context.settings.filteringMode
+                  context.settings.filteringMode,
+                  context.authToken
                 ),
               onDone: {
                 target: 'loadedFromDB',
-                actions: ['setLibraryWithPrevious'],
+                // applySimilaritySort here too (not just on runningQuery) so a
+                // loaded/restored visual query also auto-sorts by similarity.
+                actions: ['setLibraryWithPrevious', 'applySimilaritySort'],
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: ['addQueryErrorToast'],
               },
             },
             on: { ...queryMutationOn },
@@ -1750,14 +1789,16 @@ export const libraryMachine = createMachine(
               src: (context) =>
                 platformLoadMediaByQuery(
                   context.query.predicates,
-                  context.settings.filteringMode
+                  context.settings.filteringMode,
+                  context.authToken
                 ),
               onDone: {
                 target: 'loadedFromDB',
-                actions: ['setLibrary'],
+                actions: ['setLibrary', 'applySimilaritySort'],
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: ['addQueryErrorToast'],
               },
             },
             on: { ...queryMutationOn },
@@ -2093,6 +2134,27 @@ export const libraryMachine = createMachine(
                       sortBy: 'shuffle',
                     };
                   },
+                }),
+              },
+              REGION_SEARCH_RESULTS: {
+                actions: [
+                  capturePrevious,
+                  assign<LibraryState, AnyEventObject>({
+                    library: (_context, event) => event.data.items as Item[],
+                    cursor: 0,
+                    libraryLoadId: () => uniqueId(),
+                    settings: (context) => ({ ...context.settings, sortBy: 'similarity' }),
+                  }),
+                ],
+              },
+              SORTED_SCORE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'similarity',
+                  }),
                 }),
               },
             },
@@ -2490,6 +2552,27 @@ export const libraryMachine = createMachine(
                   },
                 }),
               },
+              REGION_SEARCH_RESULTS: {
+                actions: [
+                  capturePrevious,
+                  assign<LibraryState, AnyEventObject>({
+                    library: (_context, event) => event.data.items as Item[],
+                    cursor: 0,
+                    libraryLoadId: () => uniqueId(),
+                    settings: (context) => ({ ...context.settings, sortBy: 'similarity' }),
+                  }),
+                ],
+              },
+              SORTED_SCORE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'similarity',
+                  }),
+                }),
+              },
               UPDATE_MEDIA_ELO: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
@@ -2779,6 +2862,8 @@ export const libraryMachine = createMachine(
   {
     actions: {
       setLibrary,
+      applySimilaritySort,
+      addQueryErrorToast,
       setLibraryWithPrevious,
       setPath,
       setDB,

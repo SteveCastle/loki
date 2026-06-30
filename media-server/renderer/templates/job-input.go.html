@@ -1,0 +1,4 @@
+{{/* Display-only humanized rendering of a job's input. Pass jobInputView .Input.
+     Inline-only markup so it's valid inside both block (<div>) and inline
+     (<span>) contexts. html/template auto-escapes all values. */}}
+{{define "jobInput"}}{{if eq .Kind "query"}}{{if .Prefix}}<span class="job-input-prefix" style="opacity:.55">{{.Prefix}}</span> {{end}}<span class="job-input-query" style="font-family:monospace;white-space:pre-wrap;word-break:break-word">{{.Query}}</span>{{else if eq .Kind "paths"}}{{range $i, $p := .Paths}}{{if $i}}<br>{{end}}<span class="job-input-path" style="font-family:monospace;word-break:break-all">{{$p}}</span>{{end}}{{else}}<span class="job-input-raw" style="word-break:break-word">{{.Raw}}</span>{{end}}{{end}}

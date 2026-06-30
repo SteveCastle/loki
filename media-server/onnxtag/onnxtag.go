@@ -231,7 +231,14 @@ func ClassifyImage(modelPath, imagePath string, opts Options) ([]string, error) 
 	}
 
 	scores := outputTensor.GetData()
+	return scoresToTags(scores, opts), nil
+}
 
+// scoresToTags converts a model's raw class scores into the ranked tag strings
+// ("name:score" for WD-style, or top-K names otherwise) according to opts. It is
+// shared by the one-shot ClassifyImage and the persistent Classifier so both
+// produce identical output.
+func scoresToTags(scores []float32, opts Options) []string {
 	// wd-style postprocessing if category indices are provided
 	if (len(opts.GeneralIndices) > 0 || len(opts.CharacterIndices) > 0) && len(opts.Labels) > 0 {
 		// Characters first
@@ -266,16 +273,14 @@ func ClassifyImage(modelPath, imagePath string, opts Options) ([]string, error) 
 			name := opts.Labels[gi.Index]
 			out = append(out, fmt.Sprintf("%s:%.5f", name, gi.Score))
 		}
-		return out, nil
+		return out
 	}
 
 	// Fallback: top-K across all classes
 	if len(opts.SelectedClassNames) > 0 {
-		tags := topKSelected(scores, opts.SelectedClassNames, opts.Labels, opts.TopK)
-		return tags, nil
+		return topKSelected(scores, opts.SelectedClassNames, opts.Labels, opts.TopK)
 	}
-	tags := topK(scores, opts.Labels, opts.TopK)
-	return tags, nil
+	return topK(scores, opts.Labels, opts.TopK)
 }
 
 func loadImageAsTensor(path string, opts Options) (ort.Value, error) {

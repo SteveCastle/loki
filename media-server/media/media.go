@@ -1141,6 +1141,15 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 		batchMediaRemoved, _ := mediaResult.RowsAffected()
 		totalMediaRemoved += batchMediaRemoved
 
+		// Remove embeddings for the same batch (visual-similarity sidecar table).
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM media_embedding WHERE media_path IN (%s)`, strings.Join(placeholders, ",")), args...); err != nil {
+			tx.Rollback()
+			result.Errors = append(result.Errors, fmt.Errorf("failed to remove embeddings for batch: %w", err))
+			result.MediaItemsRemoved = totalMediaRemoved
+			result.TagsRemoved = totalTagsRemoved
+			return result, err
+		}
+
 		// Commit this batch
 		if err := tx.Commit(); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("failed to commit transaction for batch: %w", err))
@@ -2027,6 +2036,29 @@ func InitializeSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_mtc_tag_label ON media_tag_by_category(tag_label)`,
 	); err != nil {
 		log.Printf("warning: failed to create idx_mtc_tag_label (will retry on next start): %v", err)
+	}
+
+	// Create media_embedding table (visual similarity search). Sidecar table,
+	// model-keyed so re-embedding with a new model is non-destructive and
+	// multiple models can coexist. vector is little-endian float32 (see
+	// embedvec.Encode), L2-normalized.
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS media_embedding (
+			media_path TEXT NOT NULL,
+			model      TEXT NOT NULL,
+			dim        INTEGER NOT NULL,
+			vector     BLOB NOT NULL,
+			created_at INTEGER,
+			PRIMARY KEY (media_path, model)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create media_embedding table: %w", err)
+	}
+	if _, err := db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_media_embedding_model ON media_embedding(model)`,
+	); err != nil {
+		log.Printf("warning: failed to create idx_media_embedding_model: %v", err)
 	}
 
 	log.Println("Database schema initialized successfully")

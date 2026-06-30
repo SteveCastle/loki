@@ -3,6 +3,7 @@ package tasks
 import (
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -90,5 +91,33 @@ func TestInsertTagsForFile_SkipsExistingInsertsNew(t *testing.T) {
 	}
 	if hasBeach != 1 {
 		t.Fatalf("expected the new 'beach' tag to be inserted, got %d", hasBeach)
+	}
+}
+
+// insertTagsForFile stamps created_at with the tag-application time (Unix
+// seconds) so tag-driven views can date-sort by when the tag was applied.
+func TestInsertTagsForFile_StampsCreatedAt(t *testing.T) {
+	db := setupTagDB(t)
+	const path = "/media/a.jpg"
+	before := time.Now().Unix()
+
+	if err := insertTagsForFile(db, path, []TagInfo{
+		{Label: "sunset", Category: "Suggested"},
+	}); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	var createdAt sql.NullInt64
+	if err := db.QueryRow(
+		`SELECT created_at FROM media_tag_by_category WHERE media_path = ? AND tag_label = 'sunset'`,
+		path,
+	).Scan(&createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if !createdAt.Valid {
+		t.Fatal("created_at was NULL; expected the apply time to be stamped")
+	}
+	if createdAt.Int64 < before {
+		t.Fatalf("expected created_at >= %d (apply time), got %d", before, createdAt.Int64)
 	}
 }

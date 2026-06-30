@@ -2201,6 +2201,14 @@ func main() {
 		Storage: storageReg,
 	}
 
+	// ––– embedding ANN index (best-effort, non-fatal) –––
+	log.Printf("Building embedding search index…")
+	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
+		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
+	} else {
+		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
+	}
+
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
 		return authMiddleware(deps, next, role)
@@ -2265,6 +2273,9 @@ func main() {
 	mux.HandleFunc("/api/media/preview", renderer.ApplyMiddlewares(lokiMediaPreviewHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/delete", renderer.ApplyMiddlewares(lokiMediaDeleteHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/gif-metadata", renderer.ApplyMiddlewares(lokiGifMetadataHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/similar", renderer.ApplyMiddlewares(lokiSimilarHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/search/visual", renderer.ApplyMiddlewares(lokiVisualSearchHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/search/image", renderer.ApplyMiddlewares(lokiImageSearchHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RoleAdmin))

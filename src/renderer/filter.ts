@@ -89,6 +89,8 @@ function filter(
       return (a.weight || 0) - (b.weight || 0);
     } else if (sortBy === 'elo') {
       return (b.elo ?? 1500) - (a.elo ?? 1500);
+    } else if (sortBy === 'similarity') {
+      return (b.score ?? 0) - (a.score ?? 0);
     }
 
     return 0;

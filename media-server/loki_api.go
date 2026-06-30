@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/storage"
+	"github.com/stevecastle/shrike/tasks"
 )
 
 func formatFileSize(bytes int64) string {
@@ -262,17 +264,118 @@ func lokiMediaSearchHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+func lokiSimilarHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Query().Get("path")
+		if path == "" {
+			httpError(w, "path is required", http.StatusBadRequest)
+			return
+		}
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		hits, err := tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, path, limit)
+		if err != nil {
+			log.Printf("similar search failed (path=%q model=%q): %v", path, tasks.ActiveEmbedModel().ID, err)
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, hits)
+	}
+}
+
+func lokiVisualSearchHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if q == "" {
+			httpError(w, "q is required", http.StatusBadRequest)
+			return
+		}
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		hits, err := tasks.SearchByText(r.Context(), deps.DB, q, limit)
+		if err != nil {
+			log.Printf("visual (text) search failed (q=%q): %v", q, err)
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, hits)
+	}
+}
+
+// sortItemsByScore orders items (each a map with "path") by descending score
+// from scoreByPath, attaching item["score"]. Stable for equal scores.
+func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
+	for _, it := range items {
+		p, _ := it["path"].(string)
+		it["score"] = scoreByPath[p]
+	}
+	sort.SliceStable(items, func(a, b int) bool {
+		pa, _ := items[a]["path"].(string)
+		pb, _ := items[b]["path"].(string)
+		return scoreByPath[pa] > scoreByPath[pb]
+	})
+}
+
 func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 	type queryRequest struct {
 		Predicates []Predicate `json:"predicates"`
 		Mode       string      `json:"mode"`
 	}
+	// Candidate cap for visual predicates: we pull the top-N most similar paths
+	// from the ANN/brute-force search, then compose them with the other SQL
+	// predicates. A composite like `visual:x AND tag:y` therefore only considers
+	// the top-N by similarity — a `y` match ranked beyond N is not returned.
+	// 1000 balances recall vs. the SQL IN-list size (well under SQLite's 32766 var cap).
+	const visualCandidateLimit = 1000
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req queryRequest
 		if err := readJSON(r, &req); err != nil {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
+
+		// Resolve visual predicates (similar/visual) into path sets before
+		// BuildMediaQuery, which is pure and cannot call the model.
+		scoreByPath := map[string]float32{}
+		hasVisual := false
+		for i := range req.Predicates {
+			pt := req.Predicates[i].Type
+			val := req.Predicates[i].Value
+			if (pt == "similar" || pt == "visual") && val != "" {
+				hasVisual = true
+				var hits []tasks.SimilarHit
+				var err error
+				if pt == "similar" {
+					hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
+				} else {
+					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
+				}
+				if err != nil {
+					log.Printf("query: %s predicate %q failed (model=%q): %v", pt, val, tasks.ActiveEmbedModel().ID, err)
+					httpError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				paths := make([]string, 0, len(hits))
+				for _, h := range hits {
+					paths = append(paths, h.Path)
+					// Merge scores with MAX so multi-predicate composites keep the best.
+					if s, ok := scoreByPath[h.Path]; !ok || h.Score > s {
+						scoreByPath[h.Path] = h.Score
+					}
+				}
+				req.Predicates[i].Resolved = paths
+			}
+		}
+
 		querySQL, params := BuildMediaQuery(req.Predicates, req.Mode)
 		rows, err := deps.DB.Query(querySQL, params...)
 		if err != nil {
@@ -318,6 +421,11 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			items = append(items, item)
 		}
+
+		if hasVisual {
+			sortItemsByScore(items, scoreByPath)
+		}
+
 		writeJSON(w, items)
 	}
 }
@@ -645,8 +753,10 @@ func lokiMediaDeleteHandler(deps *Dependencies) http.HandlerFunc {
 		// Delete from database
 		deps.DB.Exec("DELETE FROM media_tag_by_category WHERE media_path = ?", req.Path)
 		deps.DB.Exec("DELETE FROM media WHERE path = ?", req.Path)
-		// Path removed — drop it from the swipe sampler.
+		deps.DB.Exec("DELETE FROM media_embedding WHERE media_path = ?", req.Path)
+		// Path removed — drop it from the swipe sampler and ANN index.
 		media.InvalidateRandomSampleCache()
+		tasks.IndexDelete(req.Path)
 		writeJSON(w, map[string]string{})
 	}
 }

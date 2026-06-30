@@ -9,69 +9,65 @@ import React, {
 import { useSelector } from '@xstate/react';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
+import { capabilities } from '../../platform';
+import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import filter from '../../filter';
 import LoginWidget from './login-widget';
-import { getDirFromInitialFile, buildLibraryPathQuery } from './context-query';
+import {
+  getDirFromInitialFile,
+  buildLibraryPathQuery,
+  buildLegacyQuery,
+  quoteValue,
+  LEGACY_PREFIX,
+} from './context-query';
 import './context-palette.css';
 
-type ActionDef = {
+// Generation mode for the metadata chips. `missing` only fills gaps; `all`
+// replaces existing metadata (passes `--overwrite`). The mode is chosen once
+// via the panel-wide toggle and applied to whichever chip is clicked.
+type GenMode = 'missing' | 'all';
+
+type MetadataType = {
   label: string;
-  command: (query64: string) => string;
-  // When true and the current context is a folder (pathdir query), append
-  // `tagcount:<3` to the query before base64 encoding so already-tagged
-  // media are skipped.
+  // Builds the CLI-style command for the given encoded query and mode. For most
+  // types `all` adds `--overwrite`; Embeddings ignores the mode (see below).
+  command: (query64: string, mode: GenMode) => string;
+  // When true and the current context is a folder (pathdir query), the `missing`
+  // mode appends `tagcount:<3` to the query before base64 encoding so already-
+  // tagged media are skipped.
   skipTaggedInFolder?: boolean;
 };
 
-type ActionGroup = {
-  title: string;
-  actions: ActionDef[];
-};
-
-const ACTION_GROUPS: ActionGroup[] = [
+const METADATA_TYPES: MetadataType[] = [
   {
-    title: 'Transcripts',
-    actions: [
-      {
-        label: 'Generate',
-        command: (q) => `metadata --type transcript --apply all --query64=${q}`,
-      },
-      {
-        label: 'Regenerate',
-        command: (q) =>
-          `metadata --type transcript --apply all --overwrite --query64=${q}`,
-      },
-    ],
+    label: 'Tags',
+    command: (q, mode) =>
+      mode === 'all'
+        ? `autotag --overwrite --query64=${q}`
+        : `autotag --query64=${q}`,
+    skipTaggedInFolder: true,
   },
   {
-    title: 'Tags',
-    actions: [
-      {
-        label: 'Generate',
-        command: (q) => `autotag --query64=${q}`,
-        skipTaggedInFolder: true,
-      },
-      {
-        label: 'Regenerate',
-        command: (q) => `autotag --overwrite --query64=${q}`,
-      },
-    ],
+    label: 'Descriptions',
+    command: (q, mode) =>
+      `metadata --type description --apply all${
+        mode === 'all' ? ' --overwrite' : ''
+      } --query64=${q}`,
   },
   {
-    title: 'Descriptions',
-    actions: [
-      {
-        label: 'Generate',
-        command: (q) =>
-          `metadata --type description --apply all --query64=${q}`,
-      },
-      {
-        label: 'Regenerate',
-        command: (q) =>
-          `metadata --type description --apply all --overwrite --query64=${q}`,
-      },
-    ],
+    label: 'Transcripts',
+    command: (q, mode) =>
+      `metadata --type transcript --apply all${
+        mode === 'all' ? ' --overwrite' : ''
+      } --query64=${q}`,
+  },
+  {
+    // SigLIP 2 embeddings for visual similarity search. Always incremental —
+    // `embed` skips media already embedded for the active model — so there is
+    // no overwrite variant and the mode toggle is ignored for this chip.
+    label: 'Embeddings',
+    command: (q) => `embed --query64=${q}`,
   },
 ];
 
@@ -81,20 +77,11 @@ type ContextTarget =
   | { type: 'tag'; tag: string }
   | { type: 'category'; category: string };
 
-// Wrap a tag/category value in double quotes so multi-word values (e.g.
-// "Exchange Student") survive query parsing. Without quotes the server lexer
-// splits on the space and the query fails to parse — which historically caused
-// the whole library to be selected. Embedded quotes are escaped to keep the
-// token well-formed.
-function quoteValue(value: string): string {
-  return `"${value.replace(/"/g, '\\"')}"`;
-}
-
 function buildQuery(
   target: ContextTarget,
   libraryContext: {
     currentStateType: 'fs' | 'db';
-    dbQuery: { tags: string[] };
+    predicates: Predicate[];
     textFilter: string;
     initialFile: string;
     settings: { filteringMode: string; recursive: boolean };
@@ -108,16 +95,14 @@ function buildQuery(
     case 'category':
       return `category:${quoteValue(target.category)}`;
     case 'library': {
-      const { currentStateType, dbQuery, initialFile, settings } =
-        libraryContext;
-      if (currentStateType === 'db' && dbQuery.tags.length > 0) {
-        const joiner =
-          settings.filteringMode === 'EXCLUSIVE' ? ' AND ' : ' OR ';
-        return dbQuery.tags.map((t) => `tag:${quoteValue(t)}`).join(joiner);
-      }
-      // Filesystem context: match the current list view. When recursive
-      // browsing is on the list spans subdirectories, so match every path
-      // under the directory; otherwise match only its immediate children.
+      const { predicates, initialFile, settings } = libraryContext;
+      // Match the FULL unified query the search input shows — every predicate
+      // type, excludes (NOT), and per-predicate AND/OR joins — not just tags.
+      const legacy = buildLegacyQuery(predicates, settings.filteringMode);
+      if (legacy) return legacy;
+      // No representable predicates (filesystem browsing): match the current
+      // list view. When recursive browsing is on the list spans subdirectories,
+      // so match every path under the directory; otherwise its immediate children.
       return buildLibraryPathQuery(initialFile, settings.recursive);
     }
   }
@@ -127,7 +112,7 @@ function buildLabel(
   target: ContextTarget,
   libraryContext: {
     currentStateType: 'fs' | 'db';
-    dbQuery: { tags: string[] };
+    predicates: Predicate[];
     textFilter: string;
     initialFile: string;
   }
@@ -142,10 +127,10 @@ function buildLabel(
     case 'category':
       return `Category: ${target.category}`;
     case 'library': {
-      const { currentStateType, dbQuery, initialFile } =
-        libraryContext;
-      if (currentStateType === 'db' && dbQuery.tags.length > 0) {
-        return `${dbQuery.tags.length} tag${dbQuery.tags.length !== 1 ? 's' : ''} selected`;
+      const { predicates, initialFile } = libraryContext;
+      const n = predicates.filter((p) => LEGACY_PREFIX[p.type] && p.value).length;
+      if (n > 0) {
+        return `${n} filter${n !== 1 ? 's' : ''} selected`;
       }
       const dir = getDirFromInitialFile(initialFile);
       return `Directory: ${dir.split(/[/\\]/).filter(Boolean).pop() || dir}`;
@@ -169,7 +154,8 @@ interface JobInfo {
 
 const JOB_TITLES: Record<string, string> = {
   metadata: 'Metadata',
-  autotag: 'Auto-tag',
+  autotag: 'Auto-Tagging',
+  embed: 'Visual Embedding',
 };
 
 function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
@@ -377,6 +363,10 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.dbQuery
   );
+  const predicates = useSelector(
+    libraryService,
+    (state) => state.context.query.predicates
+  );
   const textFilter = useSelector(
     libraryService,
     (state) => state.context.textFilter
@@ -414,11 +404,21 @@ export default function ContextPalette() {
     (state) => state.context.authToken
   );
 
+  // Narrow the right-clicked file path; empty string when the target is not a file.
+  const similarTargetPath = target.type === 'file' ? target.path : '';
+
   const paletteRef = useRef<HTMLDivElement>(null);
   const { width, height } = useComponentSize(paletteRef);
 
   const activeJobs = useActiveJobs(display, authToken);
   const savedWorkflows = useSavedWorkflows(display, authToken);
+
+  // Generation mode for the metadata chips. Resets to the non-destructive
+  // `missing` on every open so a previous `all` (replace) choice is never sticky.
+  const [genMode, setGenMode] = useState<GenMode>('missing');
+  useEffect(() => {
+    if (display) setGenMode('missing');
+  }, [display]);
 
   // Server health
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
@@ -529,7 +529,7 @@ export default function ContextPalette() {
   // Derived data
   const libraryCtx = {
     currentStateType,
-    dbQuery,
+    predicates,
     textFilter,
     initialFile,
     settings: { filteringMode, recursive },
@@ -549,15 +549,35 @@ export default function ContextPalette() {
     );
   const query64 = encodeQuery64(queryString);
 
-  // Action handler
-  const handleAction = async (action: ActionDef) => {
+  // Visual/vector similarity search for the right-clicked file. Adds a `similar`
+  // predicate to the unified query (no server job) and closes the palette.
+  const handleFindSimilar = () => {
+    libraryService.send({
+      type: 'ADD_PREDICATE',
+      data: {
+        predicate: {
+          type: 'similar',
+          value: similarTargetPath,
+          exclude: false,
+          join: filteringMode === 'OR' ? 'OR' : 'AND',
+        },
+      },
+    });
+    libraryService.send('HIDE_CONTEXT_PALETTE');
+  };
+
+  // Action handler — runs a metadata generation job for one type in the current
+  // mode. `missing` fills gaps; `all` replaces (adds `--overwrite`).
+  const handleAction = async (meta: MetadataType, mode: GenMode) => {
+    // tagcount:<3 only makes sense when filling gaps over a folder, never on a
+    // full replace.
     const effectiveQuery =
-      action.skipTaggedInFolder && isFolderContext
+      meta.skipTaggedInFolder && isFolderContext && mode === 'missing'
         ? `${queryString} tagcount:<3`
         : queryString;
     const effectiveQuery64 =
       effectiveQuery === queryString ? query64 : encodeQuery64(effectiveQuery);
-    const input = action.command(effectiveQuery64);
+    const input = meta.command(effectiveQuery64, mode);
     try {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -627,12 +647,40 @@ export default function ContextPalette() {
     <div className="ContextPalette" ref={paletteRef} style={style}>
       <div className="context-palette-header">
         <span className="context-label">{contextLabel}</span>
-        {target.type === 'library' && (
-          <span className="context-count">{itemCount} items</span>
-        )}
-        {target.type === 'file' && (
-          <span className="context-count">1 file</span>
-        )}
+        <div className="context-header-right">
+          {target.type === 'library' && (
+            <span className="context-count">{itemCount} items</span>
+          )}
+          {target.type === 'file' && (
+            <span className="context-count">1 file</span>
+          )}
+          {(capabilities.visualSearch ||
+            (serverAvailable && authToken)) &&
+            similarTargetPath && (
+              <button
+                className="find-similar-btn"
+                onClick={handleFindSimilar}
+                title="Find visually similar"
+                aria-label="Find visually similar"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <line x1="21" y1="21" x2="16.5" y2="16.5" />
+                  <path d="M11 8l.9 1.8 1.9.3-1.4 1.4.3 1.9-1.7-.9-1.7.9.3-1.9L8.2 10.1l1.9-.3z" />
+                </svg>
+              </button>
+            )}
+        </div>
       </div>
 
       {serverAvailable === false && (
@@ -654,23 +702,50 @@ export default function ContextPalette() {
       )}
 
       {serverAvailable && authToken && (
-        <div className="context-palette-actions">
-          {ACTION_GROUPS.map((group) => (
-            <div key={group.title} className="action-group">
-              <span className="action-group-title">{group.title}</span>
-              <div className="action-buttons">
-                {group.actions.map((action) => (
-                  <button
-                    key={action.label}
-                    className="action-btn"
-                    onClick={() => handleAction(action)}
-                  >
-                    {action.label}
-                  </button>
-                ))}
-              </div>
+        <div
+          className={`generate-block${genMode === 'all' ? ' caution' : ''}`}
+        >
+          <div className="generate-mode-row">
+            <span className="generate-label">Generate</span>
+            <div className="mode-toggle" role="radiogroup" aria-label="Generation mode">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={genMode === 'missing'}
+                className={`mode-opt${genMode === 'missing' ? ' active' : ''}`}
+                onClick={() => setGenMode('missing')}
+              >
+                Missing
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={genMode === 'all'}
+                className={`mode-opt${genMode === 'all' ? ' active' : ''}`}
+                onClick={() => setGenMode('all')}
+              >
+                All
+              </button>
             </div>
-          ))}
+          </div>
+          <div className="type-chips">
+            {METADATA_TYPES.map((meta) => (
+              <button
+                key={meta.label}
+                className="type-chip"
+                onClick={() => handleAction(meta, genMode)}
+                title={
+                  meta.label === 'Embeddings'
+                    ? 'Generate visual embeddings (always incremental)'
+                    : genMode === 'all'
+                    ? `Replace ${meta.label.toLowerCase()} for all items`
+                    : `Generate missing ${meta.label.toLowerCase()}`
+                }
+              >
+                {meta.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

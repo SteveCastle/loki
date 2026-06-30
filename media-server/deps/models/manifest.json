@@ -25,6 +25,46 @@
           "sha256": "1db05aefb1a245533818e33bea22852300ac647a64636854095d1a313cd2e9dc"
         }
       ]
+    },
+    {
+      "id": "siglip2-base-patch16-224",
+      "name": "SigLIP 2 base patch16 224",
+      "description": "Joint image/text encoder for visual similarity search (image->image and text->image). Image preprocessing: 224x224, RGB, mean/std 0.5. Both encoders emit a 768-dim pooler_output. Text encoder uses the Gemma multilingual SentencePiece tokenizer.",
+      "version": "1.0.0",
+      "consumers": ["embed"],
+      "size_bytes": 1505518412,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/vision_model.onnx",
+          "rel_path": "image_model.onnx",
+          "sha256": "c0573e3f4140c3a7c4e9cc5912bd6b26a033b46a6a8e8af26cbea262b163bcad"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/text_model.onnx",
+          "rel_path": "text_model.onnx",
+          "sha256": "baf12d941beabafafb14f7b4adb38dc15be18681b964a84410ec53d9d65e6293"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/tokenizer.model",
+          "rel_path": "tokenizer.model",
+          "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2"
+        }
+      ]
+    },
+    {
+      "id": "dinov2-base",
+      "name": "DINOv2 base",
+      "description": "Self-supervised image encoder for visual similarity search (image->image only; no text encoder). Image preprocessing: ImageNet mean/std, center-crop 224, patch14. Embedding is the 768-dim CLS token of last_hidden_state.",
+      "version": "1.0.0",
+      "consumers": ["embed"],
+      "size_bytes": 346608174,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/dinov2-base-ONNX/resolve/main/onnx/model.onnx",
+          "rel_path": "image_model.onnx",
+          "sha256": "f16115e628d65b7cc7b1e16c504e2af682169aabf3fff4edfe906118f522e204"
+        }
+      ]
     }
   ]
 }

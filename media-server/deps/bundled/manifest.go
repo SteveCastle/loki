@@ -20,6 +20,7 @@ var Manifest = func() []Bundled {
 		{ID: "ffprobe", Name: "FFprobe", RelPath: "ffprobe" + exe, VersionArgs: []string{"-version"}},
 		{ID: "exiftool", Name: "ExifTool", RelPath: "exiftool" + exe, VersionArgs: []string{"-ver"}},
 		{ID: "onnxtag", Name: "ONNX Tagger", RelPath: "onnxtag" + exe, VersionArgs: []string{"--version"}},
+		{ID: "embed", Name: "ONNX Embedder", RelPath: "embed" + exe, VersionArgs: []string{"--version"}},
 		{ID: "onnxruntime", Name: "ONNX Runtime", RelPath: "onnxruntime" + libExt, VersionArgs: nil},
 	}
 	if runtime.GOOS != "darwin" {
