@@ -314,13 +314,14 @@ func cmdJobWait(a *App, args []string) int {
 	fs := flag.NewFlagSet("job wait", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	timeout := fs.Duration("timeout", 0, "give up after this long (0 = wait forever)")
-	if err := fs.Parse(args); err != nil {
-		return a.Usage(fs, err.Error())
-	}
-	if fs.NArg() != 1 {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return a.Usage(fs, "usage: lokictl job wait <id> [--timeout D]")
 	}
-	job, code := waitForJob(a, fs.Arg(0), *timeout)
+	id := args[0]
+	if err := fs.Parse(args[1:]); err != nil {
+		return a.Usage(fs, err.Error())
+	}
+	job, code := waitForJob(a, id, *timeout)
 	if job != nil {
 		if pc := a.PrintJSON(job); code == 0 && pc != 0 {
 			return pc
