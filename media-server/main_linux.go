@@ -2253,6 +2253,7 @@ func main() {
 	mux.HandleFunc("/workflows/{id}", renderer.ApplyMiddlewares(workflowDetailHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflows/{id}/run", renderer.ApplyMiddlewares(workflowRunHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
 	// Auth routes
 	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps), renderer.RolePublic))
