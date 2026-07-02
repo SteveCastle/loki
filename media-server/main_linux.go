@@ -2248,6 +2248,10 @@ func main() {
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows", renderer.ApplyMiddlewares(workflowsListHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows/create", renderer.ApplyMiddlewares(workflowCreateHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows/{id}", renderer.ApplyMiddlewares(workflowDetailHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows/{id}/run", renderer.ApplyMiddlewares(workflowRunHandler(deps), renderer.RoleAdmin))
 
 	// Auth routes
 	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps), renderer.RolePublic))
