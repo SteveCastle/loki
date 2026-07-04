@@ -10,6 +10,7 @@ import {
   clearLastCustomPrompt,
 } from './customPromptStore';
 import { SparkleIcon, TuneIcon } from './section-action-icons';
+import { useDepRequirement } from '../../onboarding/useDepRequirement';
 
 type Props = {
   path: string;
@@ -42,6 +43,19 @@ export default function GenerateDescription({
   const [defaultPrompt, setDefaultPrompt] = useState<string | null>(() =>
     getCachedDefaultPrompt()
   );
+  // Non-blocking: descriptions can use other configured providers (LM Studio,
+  // RunPod, llama.cpp), so a missing Ollama is only worth a hint, not a gate.
+  const ollama = useDepRequirement('ollama');
+  const ollamaHint =
+    ollama.dep && ollama.dep.state === 'not_installed' ? (
+      <div className="prompt-hint" style={{ marginTop: 4 }}>
+        Uses your configured AI provider — Ollama not detected.{' '}
+        <a href="https://ollama.com/download" target="_blank" rel="noreferrer">
+          Get Ollama
+        </a>{' '}
+        if descriptions fail.
+      </div>
+    ) : null;
 
   useEffect(() => {
     const checkJobServer = async () => {
@@ -285,6 +299,7 @@ export default function GenerateDescription({
           {panelOpen ? 'Hide prompt' : 'Customize prompt'}
         </button>
       </div>
+      {ollamaHint}
       {promptPanel}
     </div>
   );

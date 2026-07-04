@@ -80,8 +80,18 @@ func HandleModelVerify(w http.ResponseWriter, r *http.Request) {
 		ID    string            `json:"id"`
 		Files map[string]string `json:"files"`
 	}{ID: id, Files: map[string]string{}}
-	for _, f := range m.Files {
+	for _, f := range m.EffectiveFiles() {
 		path := filepath.Join(models.ModelDir(id), f.RelPath)
+		if f.Archive != "" {
+			// The checksum covers the (discarded) archive, not the extracted
+			// binary — presence is the only meaningful post-install check.
+			if _, err := os.Stat(path); err != nil {
+				result.Files[f.RelPath] = "missing"
+			} else {
+				result.Files[f.RelPath] = "ok (extracted from checksum-verified archive)"
+			}
+			continue
+		}
 		if err := models.VerifySHA256(path, f.SHA256); err != nil {
 			if errors.Is(err, os.ErrNotExist) {
 				result.Files[f.RelPath] = "missing"

@@ -4,7 +4,8 @@
     {
       "id": "wd-eva02-large-tagger-v3",
       "name": "WD EVA02 Large Tagger v3",
-      "description": "Image autotagging classifier (general + character tags).",
+      "feature": "Auto-tagging",
+      "description": "Automatically tag your images. Image autotagging classifier (general + character tags).",
       "version": "1.0.0",
       "consumers": ["autotag"],
       "size_bytes": 1257385984,
@@ -29,7 +30,8 @@
     {
       "id": "siglip2-base-patch16-224",
       "name": "SigLIP 2 base patch16 224",
-      "description": "Joint image/text encoder for visual similarity search (image->image and text->image). Image preprocessing: 224x224, RGB, mean/std 0.5. Both encoders emit a 768-dim pooler_output. Text encoder uses the Gemma multilingual SentencePiece tokenizer.",
+      "feature": "Visual similarity search",
+      "description": "Find visually similar images and search your library by text. Joint image/text encoder for visual similarity search (image->image and text->image). Image preprocessing: 224x224, RGB, mean/std 0.5. Both encoders emit a 768-dim pooler_output. Text encoder uses the Gemma multilingual SentencePiece tokenizer.",
       "version": "1.0.0",
       "consumers": ["embed"],
       "size_bytes": 1505518412,
@@ -54,7 +56,8 @@
     {
       "id": "dinov2-base",
       "name": "DINOv2 base",
-      "description": "Self-supervised image encoder for visual similarity search (image->image only; no text encoder). Image preprocessing: ImageNet mean/std, center-crop 224, patch14. Embedding is the 768-dim CLS token of last_hidden_state.",
+      "feature": "Visual similarity search (image-only alternative)",
+      "description": "Alternative image-only similarity model; smaller than SigLIP 2 but cannot search by text. Self-supervised image encoder for visual similarity search (image->image only; no text encoder). Image preprocessing: ImageNet mean/std, center-crop 224, patch14. Embedding is the 768-dim CLS token of last_hidden_state.",
       "version": "1.0.0",
       "consumers": ["embed"],
       "size_bytes": 346608174,
@@ -63,6 +66,48 @@
           "url": "https://huggingface.co/onnx-community/dinov2-base-ONNX/resolve/main/onnx/model.onnx",
           "rel_path": "image_model.onnx",
           "sha256": "f16115e628d65b7cc7b1e16c504e2af682169aabf3fff4edfe906118f522e204"
+        }
+      ]
+    },
+    {
+      "id": "faster-whisper",
+      "name": "Faster-Whisper (standalone)",
+      "category": "tool",
+      "feature": "Transcription",
+      "description": "Transcribe speech in your videos and audio files. Purfview standalone CPU build; the first transcription also downloads the large-v2 speech model (~3 GB) automatically. Setting fasterWhisperPath in config overrides this download.",
+      "version": "r192.3",
+      "consumers": ["metadata"],
+      "size_bytes": 106093648,
+      "files": [
+        {
+          "url": "https://github.com/Purfview/whisper-standalone-win/releases/download/faster-whisper/Whisper-Faster_r192.3_windows.zip",
+          "rel_path": "whisper-faster.exe",
+          "sha256": "8150ad257fd8e46d817bb7e667260c2ce4c493d9e58973862e6409c592b44ba5",
+          "os": "windows",
+          "size_bytes": 87654143,
+          "archive": "zip",
+          "archive_member": "Whisper-Faster/whisper-faster.exe",
+          "exec": true
+        },
+        {
+          "url": "https://github.com/Purfview/whisper-standalone-win/releases/download/faster-whisper/Whisper-Faster_r189.1_linux.zip",
+          "rel_path": "whisper-faster",
+          "sha256": "f32f5e7abbb53300e569ca5ab3e9dd286b63b5e212209c12d47bdd9c72f923dd",
+          "os": "linux",
+          "size_bytes": 106093648,
+          "archive": "zip",
+          "archive_member": "Whisper-Faster/whisper-faster",
+          "exec": true
+        },
+        {
+          "url": "https://github.com/Purfview/whisper-standalone-win/releases/download/faster-whisper/Whisper-Faster_r186.1_macOS-x86-64.zip",
+          "rel_path": "whisper-faster",
+          "sha256": "863e9d41cd889bfd5417bec5d8d48f04d0a0e6c97b6f45c7910a85e08798a3bc",
+          "os": "darwin",
+          "size_bytes": 82515821,
+          "archive": "zip",
+          "archive_member": "Whisper-Faster/whisper-faster",
+          "exec": true
         }
       ]
     }

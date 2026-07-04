@@ -1,6 +1,8 @@
 import { useContext, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
+import { useDepRequirement } from '../../onboarding/useDepRequirement';
+import { fmtSize } from '../../onboarding/requirements';
 import './generate-tags.css';
 import { SparkleIcon } from './section-action-icons';
 
@@ -17,6 +19,7 @@ export default function GenerateTags({ path }: Props) {
   const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
     null
   );
+  const tagger = useDepRequirement('wd-eva02-large-tagger-v3');
 
   useEffect(() => {
     const checkJobServer = async () => {
@@ -81,6 +84,32 @@ export default function GenerateTags({ path }: Props) {
   // Don't show anything if server is not available
   if (jobServerAvailable !== true) {
     return null;
+  }
+
+  // Auto-tagging needs the tagger model; offer the one-time download in place.
+  if (tagger.needsDownload) {
+    return (
+      <div className="GenerateTags section-action">
+        <button
+          className="section-action-pill"
+          onClick={() => tagger.download().catch(() => {})}
+          title={`One-time model download (${fmtSize(tagger.dep?.size_bytes)}); tagging runs locally`}
+        >
+          <SparkleIcon />
+          <span>Get model ({fmtSize(tagger.dep?.size_bytes)})</span>
+        </button>
+      </div>
+    );
+  }
+  if (tagger.downloading) {
+    return (
+      <div className="GenerateTags section-action">
+        <button className="section-action-pill" disabled>
+          <SparkleIcon />
+          <span>Downloading… {tagger.pct}%</span>
+        </button>
+      </div>
+    );
   }
 
   return (

@@ -5,15 +5,18 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"runtime"
 )
 
 //go:embed manifest.json
 var manifestJSON []byte
 
-// Model is one downloadable model bundle.
+// Model is one downloadable model bundle (or standalone tool — see Category).
 type Model struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
+	Category    string   `json:"category,omitempty"` // "" == "model"; "tool" for downloadable binaries
+	Feature     string   `json:"feature,omitempty"`  // user-facing capability this unlocks
 	Description string   `json:"description"`
 	Version     string   `json:"version"`
 	Consumers   []string `json:"consumers"`
@@ -21,11 +24,51 @@ type Model struct {
 	Files       []File   `json:"files"`
 }
 
-// File is one downloadable file within a model.
+// File is one downloadable file within a model. When OS is set the file only
+// applies to that GOOS. When Archive is set the download is an archive whose
+// ArchiveMember gets extracted to RelPath (and the archive is discarded);
+// SHA256 covers the archive as downloaded.
 type File struct {
-	URL     string `json:"url"`
-	RelPath string `json:"rel_path"`
-	SHA256  string `json:"sha256"`
+	URL           string `json:"url"`
+	RelPath       string `json:"rel_path"`
+	SHA256        string `json:"sha256"`
+	OS            string `json:"os,omitempty"`
+	SizeBytes     int64  `json:"size_bytes,omitempty"`
+	Archive       string `json:"archive,omitempty"` // only "zip" supported
+	ArchiveMember string `json:"archive_member,omitempty"`
+	Exec          bool   `json:"exec,omitempty"` // chmod +x after install
+}
+
+// EffectiveCategory normalizes the optional Category field.
+func (m Model) EffectiveCategory() string {
+	if m.Category == "" {
+		return "model"
+	}
+	return m.Category
+}
+
+// EffectiveFiles returns the files applicable to the current OS.
+func (m Model) EffectiveFiles() []File {
+	out := make([]File, 0, len(m.Files))
+	for _, f := range m.Files {
+		if f.OS == "" || f.OS == runtime.GOOS {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// EffectiveSizeBytes sums per-file sizes for this OS when present, falling
+// back to the model-level total.
+func (m Model) EffectiveSizeBytes() int64 {
+	var sum int64
+	for _, f := range m.EffectiveFiles() {
+		sum += f.SizeBytes
+	}
+	if sum > 0 {
+		return sum
+	}
+	return m.SizeBytes
 }
 
 // Manifest is the parsed model registry.

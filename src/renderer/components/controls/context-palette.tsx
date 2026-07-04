@@ -21,6 +21,18 @@ import {
   quoteValue,
   LEGACY_PREFIX,
 } from './context-query';
+import {
+  fetchStatus,
+  startModelDownload,
+  isDownloadableState,
+  isDownloadingState,
+  type DepStatus,
+} from '../../onboarding/api';
+import {
+  TASK_REQUIREMENTS,
+  depsApiBase,
+  fmtSize,
+} from '../../onboarding/requirements';
 import './context-palette.css';
 
 // Generation mode for the metadata chips. `missing` only fills gaps; `all`
@@ -260,6 +272,114 @@ function useSavedWorkflows(
   return workflows;
 }
 
+// Dependency state for the Generate chips — polls only while the palette is
+// open, so a closed palette costs nothing. Progress rides along in `detail`
+// (no EventSource: palette sessions are short and connection slots are scarce).
+function useDeps(isOpen: boolean): {
+  deps: Map<string, DepStatus>;
+  refreshDeps: () => void;
+} {
+  const [deps, setDeps] = useState<Map<string, DepStatus>>(new Map());
+
+  const refreshDeps = useCallback(async () => {
+    try {
+      const items = await fetchStatus(depsApiBase);
+      setDeps(new Map(items.map((d) => [d.id, d])));
+    } catch {
+      // Deps API unavailable — chips stay ungated and jobs fail with their
+      // own (polite) in-log errors, same as before this feature existed.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    refreshDeps();
+    const t = window.setInterval(refreshDeps, 3000);
+    return () => window.clearInterval(t);
+  }, [isOpen, refreshDeps]);
+
+  return { deps, refreshDeps };
+}
+
+// One row per Generate chip whose dependency needs attention: a Download
+// button for missing models/tools, live progress while installing, and a
+// non-blocking hint for external tools like Ollama.
+function DepRequirementRows({
+  deps,
+  onChange,
+}: {
+  deps: Map<string, DepStatus>;
+  onChange: () => void;
+}) {
+  const rows = Object.entries(TASK_REQUIREMENTS)
+    .map(([label, req]) => ({ label, req, dep: deps.get(req.depId) }))
+    .filter(({ req, dep }) => {
+      if (!dep) return false;
+      if (req.kind === 'external') return dep.state === 'not_installed';
+      return isDownloadableState(dep.state) || isDownloadingState(dep.state);
+    });
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="dep-rows">
+      {rows.map(({ label, req, dep }) => {
+        const d = dep!;
+        if (req.kind === 'external') {
+          return (
+            <div key={label} className="dep-row hint">
+              <span>
+                {req.feature} uses your configured AI provider — Ollama not
+                detected.{' '}
+                <a href="https://ollama.com/download" target="_blank" rel="noreferrer">
+                  Get Ollama
+                </a>
+              </span>
+            </div>
+          );
+        }
+        if (isDownloadingState(d.state)) {
+          const inst = d.detail || {};
+          const done: number = inst.bytes_done ?? 0;
+          const total: number = inst.bytes_total ?? d.size_bytes ?? 0;
+          const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+          return (
+            <div key={label} className="dep-row">
+              <span>
+                {req.feature}: downloading… {fmtSize(done)} / {fmtSize(total)} ({pct}%)
+              </span>
+              <div className="dep-progress">
+                <div className="dep-progress-fill" style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div key={label} className="dep-row">
+            <span>
+              {req.feature} needs a one-time download ({fmtSize(d.size_bytes)}).
+              {d.state === 'failed' && d.error ? ` Last attempt failed: ${d.error}` : ''}
+            </span>
+            <button
+              type="button"
+              className="dep-download-btn"
+              onClick={async () => {
+                try {
+                  await startModelDownload(req.depId, depsApiBase);
+                } catch {
+                  /* row will show failed state on next poll */
+                }
+                onChange();
+              }}
+            >
+              {d.state === 'failed' ? 'Retry download' : 'Download'}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function WorkflowPicker({
   workflows,
   onRun,
@@ -412,6 +532,7 @@ export default function ContextPalette() {
 
   const activeJobs = useActiveJobs(display, authToken);
   const savedWorkflows = useSavedWorkflows(display, authToken);
+  const { deps, refreshDeps } = useDeps(display);
 
   // Generation mode for the metadata chips. Resets to the non-destructive
   // `missing` on every open so a previous `all` (replace) choice is never sticky.
@@ -569,6 +690,33 @@ export default function ContextPalette() {
   // Action handler — runs a metadata generation job for one type in the current
   // mode. `missing` fills gaps; `all` replaces (adds `--overwrite`).
   const handleAction = async (meta: MetadataType, mode: GenMode) => {
+    // Point-of-use gate: a job whose model/tool isn't installed would only
+    // fail later inside its log where casual users never look. Downloadable
+    // deps show a Download button right under the chip instead.
+    const req = TASK_REQUIREMENTS[meta.label];
+    const dep = req ? deps.get(req.depId) : undefined;
+    if (req && req.kind === 'downloadable' && dep && isDownloadableState(dep.state)) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'info',
+          title: `${req.feature} needs a one-time download`,
+          message: `Use the Download button under the ${meta.label} chip (${fmtSize(dep.size_bytes)}).`,
+        },
+      });
+      return;
+    }
+    if (req && dep && isDownloadingState(dep.state)) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'info',
+          title: `${req.feature} is still downloading`,
+          message: 'Run this again once the download finishes.',
+        },
+      });
+      return;
+    }
     // tagcount:<3 only makes sense when filling gaps over a folder, never on a
     // full replace.
     const effectiveQuery =
@@ -729,23 +877,35 @@ export default function ContextPalette() {
             </div>
           </div>
           <div className="type-chips">
-            {METADATA_TYPES.map((meta) => (
-              <button
-                key={meta.label}
-                className="type-chip"
-                onClick={() => handleAction(meta, genMode)}
-                title={
-                  meta.label === 'Embeddings'
-                    ? 'Generate visual embeddings (always incremental)'
-                    : genMode === 'all'
-                    ? `Replace ${meta.label.toLowerCase()} for all items`
-                    : `Generate missing ${meta.label.toLowerCase()}`
-                }
-              >
-                {meta.label}
-              </button>
-            ))}
+            {METADATA_TYPES.map((meta) => {
+              const req = TASK_REQUIREMENTS[meta.label];
+              const dep = req ? deps.get(req.depId) : undefined;
+              const needsDownload =
+                !!req && req.kind === 'downloadable' && !!dep && isDownloadableState(dep.state);
+              const downloading = !!req && !!dep && isDownloadingState(dep.state);
+              return (
+                <button
+                  key={meta.label}
+                  className={`type-chip${needsDownload ? ' needs-dep' : ''}`}
+                  onClick={() => handleAction(meta, genMode)}
+                  title={
+                    needsDownload
+                      ? `${req!.feature} needs a one-time download first`
+                      : meta.label === 'Embeddings'
+                      ? 'Generate visual embeddings (always incremental)'
+                      : genMode === 'all'
+                      ? `Replace ${meta.label.toLowerCase()} for all items`
+                      : `Generate missing ${meta.label.toLowerCase()}`
+                  }
+                >
+                  {meta.label}
+                  {needsDownload && <span className="dep-badge">setup</span>}
+                  {downloading && <span className="dep-badge downloading">…</span>}
+                </button>
+              );
+            })}
           </div>
+          <DepRequirementRows deps={deps} onChange={refreshDeps} />
         </div>
       )}
 

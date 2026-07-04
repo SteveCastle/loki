@@ -206,6 +206,83 @@
   background: var(--ctx-caution-strong);
 }
 
+/* ── Dependency requirements under the Generate chips ── */
+
+.type-chip.needs-dep {
+  color: rgba(255, 255, 255, 0.45);
+  border-style: dashed;
+}
+
+.dep-badge {
+  margin-left: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: var(--ctx-accent-soft);
+  color: white;
+  vertical-align: 1px;
+}
+
+.dep-badge.downloading {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.dep-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.dep-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--ctx-hairline);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.dep-row.hint {
+  border-style: dashed;
+}
+
+.dep-row a {
+  color: var(--ctx-accent);
+}
+
+.dep-download-btn {
+  align-self: flex-start;
+  background: var(--ctx-accent-soft);
+  border: 1px solid var(--ctx-accent);
+  border-radius: 5px;
+  color: white;
+  padding: 3px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.dep-download-btn:hover {
+  background: var(--ctx-accent-strong);
+}
+
+.dep-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.dep-progress-fill {
+  height: 100%;
+  background: var(--ctx-accent);
+  transition: width 0.3s;
+}
+
 /* ── Workflow picker ── */
 
 .context-palette-workflows {

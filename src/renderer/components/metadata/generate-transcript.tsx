@@ -1,6 +1,8 @@
 import { useContext, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
+import { useDepRequirement } from '../../onboarding/useDepRequirement';
+import { fmtSize } from '../../onboarding/requirements';
 import './generate-transcript.css';
 
 type Props = {
@@ -23,6 +25,7 @@ export default function GenerateTranscript({
     null
   );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const whisper = useDepRequirement('faster-whisper');
 
   useEffect(() => {
     const checkJobServer = async () => {
@@ -120,6 +123,31 @@ export default function GenerateTranscript({
             </p>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // Transcription needs the Faster-Whisper tool; offer the one-time download
+  // right here instead of letting the job fail in its log.
+  if (whisper.needsDownload) {
+    return (
+      <div className={`GenerateTranscript ${variant}`}>
+        <button
+          className="generate"
+          onClick={() => whisper.download().catch(() => {})}
+          title="One-time download; transcription runs locally"
+        >
+          Download transcription tool ({fmtSize(whisper.dep?.size_bytes)})
+        </button>
+      </div>
+    );
+  }
+  if (whisper.downloading) {
+    return (
+      <div className={`GenerateTranscript ${variant}`}>
+        <button className="generate" disabled>
+          Downloading transcription tool… {whisper.pct}%
+        </button>
       </div>
     );
   }

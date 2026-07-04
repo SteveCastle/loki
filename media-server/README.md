@@ -225,7 +225,7 @@ Prebuilt binaries for Windows (x64), macOS (arm64 + amd64), and Linux (amd64) ar
 
    - [Download model files for the ONNX tagger](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/tree/main)
    - [Install Ollama for LLM-based descriptions and tagging](https://ollama.com/)
-   - [Faster-Whisper standalone builds](https://github.com/Purfview/whisper-standalone-win) (or install from PyPI on Linux/macOS)
+   - Faster-Whisper for transcription downloads with one click from the wizard's AI features step (or bring your own [standalone build](https://github.com/Purfview/whisper-standalone-win) via `fasterWhisperPath`)
 
    <img width="1233" height="1693" alt="Screenshot 2025-09-20 080416" src="https://github.com/user-attachments/assets/5eb008ae-88fb-4519-af03-4e55afbb6601" />
 
@@ -296,8 +296,8 @@ For full functionality you'll want the following tools. Bundled ones ship with t
 | FFmpeg / FFprobe / FFplay | Media probing, conversion, HLS, thumbnails | Bundled in the release |
 | ExifTool | Image and video metadata extraction | Bundled in the release |
 | ONNX Runtime + ONNX Tagger binary | ML inference plumbing | Bundled in the release |
-| WD-EVA02-Large-Tagger v3 (model files) | Image auto-tagging | Welcome wizard → AI models |
-| Faster-Whisper | Video transcription | Configure path in settings (binary not bundled in this release) |
+| WD-EVA02-Large-Tagger v3 (model files) | Image auto-tagging | Welcome wizard → AI features |
+| Faster-Whisper | Video transcription | Welcome wizard → AI features (one-click download), or set `fasterWhisperPath` to your own binary |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | YouTube and other video downloads | Optional — install via `brew`/`winget`/`pipx`; wizard shows the command |
 | [gallery-dl](https://github.com/mikf/gallery-dl) | Image gallery downloads | Optional — install via `brew`/`pip`/`pipx`; wizard shows the command |
 | [Ollama](https://ollama.com/) | LLM-based image descriptions / vision tagging | Optional — install via the official installer |

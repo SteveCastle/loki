@@ -612,21 +612,24 @@ func callOllamaVision(ctx context.Context, imagePath, _ string, customPrompt str
 }
 
 func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string) (string, error) {
-	// Faster-Whisper is not bundled in this build. Caller falls back to user-configured path.
-	exePath := deps.BundledOrEmpty("faster-whisper")
-	var err error
+	// Resolution order: explicit config path wins, then the binary installed
+	// via the Dependencies downloader, then anything on PATH.
+	exePath := strings.TrimSpace(appconfig.Get().FasterWhisperPath)
 	if exePath == "" {
-		err = fmt.Errorf("faster-whisper not bundled; configure FasterWhisperPath in settings to enable transcription")
+		if p, err := deps.ModelPath("faster-whisper", "whisper-faster"+platform.BinaryExtension()); err == nil {
+			exePath = p
+		}
 	}
-	if err != nil {
-		// Fall back to config if dependency system doesn't have it
-		if q != nil && jobID != "" {
-			q.PushJobStdout(jobID, fmt.Sprintf("[whisper] dependency lookup failed: %v; falling back to config FasterWhisperPath", err))
+	if exePath == "" {
+		if p, err := exec.LookPath("whisper-faster"); err == nil {
+			exePath = p
 		}
-		exePath = appconfig.Get().FasterWhisperPath
-		if strings.TrimSpace(exePath) == "" {
-			return "", fmt.Errorf("faster-whisper not found: dependency not installed and FasterWhisperPath not configured. Please install faster-whisper from the Dependencies page")
-		}
+	}
+	if exePath == "" {
+		return "", fmt.Errorf("faster-whisper not found: download it from the Dependencies page (Transcription), set FasterWhisperPath in settings, or put whisper-faster on PATH")
+	}
+	if q != nil && jobID != "" {
+		q.PushJobStdout(jobID, fmt.Sprintf("[whisper] using %s", exePath))
 	}
 
 	// --vad_filter trims non-speech, which dramatically reduces hallucinations
