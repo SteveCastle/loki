@@ -47,8 +47,8 @@
     padding: 8px; pointer-events: none; box-shadow: 0 8px 28px rgba(0,0,0,0.55);
   }
   #preview.pinned { border-color: var(--accent); }
-  #preview img { width: 248px; height: 186px; object-fit: contain; display: block;
-    background: #05070b; border-radius: 6px; }
+  #preview img, #preview video { width: 248px; height: 186px; object-fit: contain;
+    display: block; background: #05070b; border-radius: 6px; }
   #preview .name { margin-top: 6px; font-weight: 600; word-break: break-all; }
   #preview .path { color: var(--dim); font-size: 11px; word-break: break-all; }
   #preview .noimg { width: 248px; height: 186px; display: none; align-items: center;
@@ -87,6 +87,7 @@
 
 <div id="preview">
   <img id="pimg" alt="">
+  <video id="pvid" muted autoplay loop playsinline preload="metadata" style="display:none"></video>
   <div class="noimg" id="pnoimg">no preview</div>
   <div class="name" id="pname"></div>
   <div class="path" id="ppath"></div>
@@ -111,6 +112,7 @@ const modelSel = document.getElementById('model');
 const sampleSel = document.getElementById('sample');
 const preview = document.getElementById('preview');
 const pimg = document.getElementById('pimg');
+const pvid = document.getElementById('pvid');
 const pnoimg = document.getElementById('pnoimg');
 const pname = document.getElementById('pname');
 const ppath = document.getElementById('ppath');
@@ -325,19 +327,60 @@ function setHovered(i) {
   canvas.style.cursor = i >= 0 ? 'pointer' : '';
 }
 
+const VIDEO_EXTS = ['.mp4', '.webm', '.ogg', '.avi', '.mov', '.wmv', '.flv', '.mkv', '.m4v'];
+function isVideoFile(p) {
+  const dot = p.lastIndexOf('.');
+  return dot >= 0 && VIDEO_EXTS.includes(p.toLowerCase().slice(dot));
+}
+
+function stopVideo() {
+  pvid.pause();
+  pvid.removeAttribute('src');
+  pvid.load(); // abort any in-flight stream
+  pvid.style.display = 'none';
+}
+
 function showPreview(i) {
+  stopVideo();
   if (i < 0) { preview.style.display = 'none'; return; }
   const p = paths[i];
   const base = p.replace(/\\/g, '/').split('/').pop();
   pname.textContent = base;
   ppath.textContent = p;
-  pimg.style.display = 'block';
+  pimg.style.display = 'none';
   pnoimg.style.display = 'none';
-  pimg.src = '/media/thumbnail?path=' + encodeURIComponent(p) + '&cache=thumbnail_path_600';
+  const thumbURL = '/media/thumbnail?path=' + encodeURIComponent(p) + '&cache=thumbnail_path_600';
+  if (isVideoFile(p)) {
+    // Play the video itself, with the server-generated thumbnail as the
+    // poster so something shows while the stream starts. If the browser
+    // can't play the codec (e.g. some .avi/.wmv), fall back to the thumbnail.
+    pvid.style.display = 'block';
+    pvid.poster = thumbURL;
+    pvid.src = '/media/file?path=' + encodeURIComponent(p);
+  } else {
+    pimg.style.display = 'block';
+    pimg.src = thumbURL;
+  }
   preview.style.display = 'block';
   positionPreview();
 }
 pimg.onerror = () => { pimg.style.display = 'none'; pnoimg.style.display = 'flex'; };
+// Start playback once data is ready — an immediate play() after setting src
+// gets aborted by the in-flight load when hover moves quickly between points.
+pvid.addEventListener('canplay', () => {
+  if (pvid.style.display !== 'none') pvid.play().catch(() => {});
+});
+pvid.onerror = () => {
+  // MEDIA_ERR_ABORTED (1) is just a canceled load from hover churn — not a
+  // playback problem. Real codec/stream failures fall back to the static
+  // thumbnail (the server can extract a frame from formats the browser
+  // can't play).
+  if (!pvid.error || pvid.error.code === 1) return;
+  const poster = pvid.poster;
+  stopVideo();
+  if (poster) { pimg.style.display = 'block'; pimg.src = poster; }
+  else { pnoimg.style.display = 'flex'; }
+};
 
 function positionPreview() {
   const pad = 18, w = 268, h = 262;
