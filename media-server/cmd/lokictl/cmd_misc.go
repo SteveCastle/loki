@@ -24,13 +24,13 @@ func init() {
 		},
 	})
 	register(command{
-		group: "stats", summary: "Library statistics (GET /api/stats; Windows servers only)",
+		group: "stats", summary: "Library statistics (GET /api/stats; snapshot-based — {\"ready\":false} while the first count runs)",
 		run: func(a *App, args []string) int {
 			var out any
 			if err := a.Client.DoJSON("GET", "/api/stats", nil, &out); err != nil {
 				var apiErr *APIError
 				if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
-					apiErr.Hint = "the stats API is only registered on Windows servers"
+					apiErr.Hint = "the server predates the shared stats API; update it"
 				}
 				return a.Fail(err)
 			}

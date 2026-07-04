@@ -127,11 +127,11 @@ func CheckFileExists(path string) bool {
 	return !os.IsNotExist(err)
 }
 
-// FileExistenceResult holds the result of a file existence check
-type FileExistenceResult struct {
-	Path   string
-	Exists bool
-}
+// statConcurrency bounds the parallel os.Stat fan-out. Stats are I/O-bound so
+// modest parallelism helps, but one-goroutine-per-path (the old behavior)
+// stampedes network shares with a thousand concurrent SMB round-trips per
+// batch and wins nothing on local disks past a few dozen workers.
+const statConcurrency = 64
 
 // CheckFilesExistConcurrent checks file existence for multiple paths concurrently
 // This is more efficient than checking files sequentially when dealing with many files
@@ -140,31 +140,34 @@ func CheckFilesExistConcurrent(paths []string) map[string]bool {
 		return make(map[string]bool)
 	}
 
-	results := make(chan FileExistenceResult, len(paths))
+	workers := statConcurrency
+	if workers > len(paths) {
+		workers = len(paths)
+	}
+
+	// Workers write disjoint indexes, so no locking is needed.
+	exists := make([]bool, len(paths))
+	indexes := make(chan int)
 	var wg sync.WaitGroup
-
-	// Launch goroutines to check file existence
-	for _, path := range paths {
+	for w := 0; w < workers; w++ {
 		wg.Add(1)
-		go func(p string) {
+		go func() {
 			defer wg.Done()
-			exists := CheckFileExists(p)
-			results <- FileExistenceResult{Path: p, Exists: exists}
-		}(path)
+			for i := range indexes {
+				exists[i] = CheckFileExists(paths[i])
+			}
+		}()
 	}
-
-	// Close results channel when all goroutines are done
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	existenceMap := make(map[string]bool)
-	for result := range results {
-		existenceMap[result.Path] = result.Exists
+	for i := range paths {
+		indexes <- i
 	}
+	close(indexes)
+	wg.Wait()
 
+	existenceMap := make(map[string]bool, len(paths))
+	for i, p := range paths {
+		existenceMap[p] = exists[i]
+	}
 	return existenceMap
 }
 
@@ -1036,6 +1039,25 @@ type RemovalResult struct {
 	TagsRemoved       int64
 	ProcessedPaths    []string
 	Errors            []error
+	// SkippedUnavailable counts missing-on-disk items that were NOT removed
+	// because their whole volume is offline (see StreamingCleanupNonExistentItems).
+	SkippedUnavailable int64
+	// UnavailableRoots lists the offline volume roots behind SkippedUnavailable.
+	UnavailableRoots []string
+}
+
+// mediaRemovalHook is invoked with each batch of paths whose database rows
+// (media + tags + embeddings) were just deleted and committed. The tasks
+// package registers a hook that evicts the paths from the in-memory vector
+// index — without it, similarity search keeps returning deleted items until
+// the next index rebuild. Set once at init (tasks/registry.go) before any
+// jobs run; nil means no-op.
+var mediaRemovalHook func(paths []string)
+
+// SetMediaRemovalHook registers the post-removal callback. Call during
+// package initialization only — it is read without synchronization.
+func SetMediaRemovalHook(fn func(paths []string)) {
+	mediaRemovalHook = fn
 }
 
 // RemoveItemsFromDB removes media items and their associated tags from the database
@@ -1157,6 +1179,13 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 			result.TagsRemoved = totalTagsRemoved
 			return result, err
 		}
+
+		// Rows are gone from the DB; let the registered hook evict them from
+		// derived in-memory state (vector index). Paths that weren't present
+		// are harmless no-ops there.
+		if mediaRemovalHook != nil {
+			mediaRemovalHook(batch)
+		}
 	}
 
 	result.MediaItemsRemoved = totalMediaRemoved
@@ -1232,8 +1261,28 @@ func GetNonExistentItems(ctx context.Context, db *sql.DB) ([]string, error) {
 	return nonExistentPaths, nil
 }
 
+// volumeRoot returns the filesystem root that must exist for a "file is
+// missing" classification to be trusted: `C:\` for drive paths, `\\host\share\`
+// for UNC paths. Empty string means the path carries no volume (relative or
+// unix-style) and no guard applies.
+func volumeRoot(path string) string {
+	vol := filepath.VolumeName(path)
+	if vol == "" {
+		return ""
+	}
+	return vol + string(filepath.Separator)
+}
+
 // StreamingCleanupNonExistentItems finds and removes non-existent media items in streaming batches
 // This avoids memory issues and provides progress feedback during the operation
+//
+// Offline-volume guard: a path on an unmounted drive or unreachable network
+// share stats exactly like a deleted file, so without a guard, running cleanup
+// while one volume is offline would silently purge that volume's entire
+// library (tags, descriptions, transcripts — unrecoverable). A missing file is
+// therefore only treated as orphaned when its volume root still exists;
+// otherwise it is counted in SkippedUnavailable and left alone. Root existence
+// is checked once per volume per run.
 func StreamingCleanupNonExistentItems(ctx context.Context, db *sql.DB, progressCallback func(found, removed int)) (*RemovalResult, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not available")
@@ -1245,6 +1294,7 @@ func StreamingCleanupNonExistentItems(ctx context.Context, db *sql.DB, progressC
 	result := &RemovalResult{}
 	totalFound := 0
 	totalRemoved := 0
+	rootAvailable := map[string]bool{} // volume root → exists (cached per run)
 
 	// Use cursor-based pagination to avoid skipping items when deletions occur.
 	// Using OFFSET-based pagination with deletions would skip items because
@@ -1301,12 +1351,29 @@ func StreamingCleanupNonExistentItems(ctx context.Context, db *sql.DB, progressC
 		// Check file existence for this batch
 		existenceMap := CheckFilesExistConcurrent(batchPaths)
 
-		// Collect non-existent paths from this batch
+		// Collect non-existent paths from this batch, skipping any whose
+		// volume is offline (see the guard note in the function comment).
 		var nonExistentPaths []string
 		for path, exists := range existenceMap {
-			if !exists {
-				nonExistentPaths = append(nonExistentPaths, path)
+			if exists {
+				continue
 			}
+			if root := volumeRoot(path); root != "" {
+				available, checked := rootAvailable[root]
+				if !checked {
+					_, statErr := os.Stat(root)
+					available = statErr == nil
+					rootAvailable[root] = available
+					if !available {
+						result.UnavailableRoots = append(result.UnavailableRoots, root)
+					}
+				}
+				if !available {
+					result.SkippedUnavailable++
+					continue
+				}
+			}
+			nonExistentPaths = append(nonExistentPaths, path)
 		}
 
 		totalFound += len(nonExistentPaths)
@@ -1329,10 +1396,11 @@ func StreamingCleanupNonExistentItems(ctx context.Context, db *sql.DB, progressC
 					return result, err
 				}
 
-				// Accumulate results
+				// Accumulate counts only — retaining every removed path for
+				// the whole run costs unbounded memory on large cleanups and
+				// no caller of the streaming variant uses the paths.
 				result.MediaItemsRemoved += batchResult.MediaItemsRemoved
 				result.TagsRemoved += batchResult.TagsRemoved
-				result.ProcessedPaths = append(result.ProcessedPaths, batchResult.ProcessedPaths...)
 				result.Errors = append(result.Errors, batchResult.Errors...)
 
 				totalRemoved += len(removeBatch)

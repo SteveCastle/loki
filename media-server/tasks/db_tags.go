@@ -115,6 +115,16 @@ func insertTagsForFile(db *sql.DB, filePath string, tags []TagInfo) error {
 	// the sampler's TTL expires.
 	if inserted > 0 {
 		media.InvalidateRandomSampleCache()
+		// The "with tags" coverage stat counts items with ≥1 tag, so it only
+		// advances when this file went from untagged to tagged. If every tag
+		// the file now carries was inserted just now, this call was that
+		// transition. (PK-indexed count — one cheap lookup per tagged file.)
+		var total int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM media_tag_by_category WHERE media_path = ?`, filePath,
+		).Scan(&total); err == nil && total == inserted {
+			notifyProgress(ProgressTags, 1)
+		}
 	}
 	return nil
 }

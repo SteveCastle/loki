@@ -1,0 +1,12 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - heading "Lowkey Media Server" [level=1] [ref=e4]
+    - paragraph [ref=e5]: Please sign in to continue
+  - generic [ref=e6]:
+    - generic [ref=e7]:
+      - generic [ref=e8] [cursor=pointer]: Username
+      - textbox "Username" [ref=e9]
+    - generic [ref=e10]:
+      - generic [ref=e11] [cursor=pointer]: Password
+      - textbox "Password" [ref=e12]
+    - button "Sign In" [ref=e13] [cursor=pointer]

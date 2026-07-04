@@ -267,6 +267,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		CREATE TABLE media (
 			path TEXT PRIMARY KEY,
 			description TEXT,
+			transcript TEXT,
 			size INTEGER,
 			hash TEXT,
 			width INTEGER,

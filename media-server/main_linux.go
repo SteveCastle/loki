@@ -2257,6 +2257,9 @@ func main() {
 	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
+	// Library stats API (stats_api.go) — powers the home page coverage cards
+	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RoleAdmin))
+
 	// Embeddings index + library data API (index_api.go / library_api.go)
 	mux.HandleFunc("/api/index/status", renderer.ApplyMiddlewares(indexStatusHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/index/models", renderer.ApplyMiddlewares(indexModelsHandler(deps), renderer.RoleAdmin))

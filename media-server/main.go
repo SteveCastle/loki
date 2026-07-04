@@ -1161,57 +1161,6 @@ func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Stats page handler
-// -----------------------------------------------------------------------------
-
-type statsAPIResponse struct {
-	TotalMedia      int `json:"totalMedia"`
-	WithDescription int `json:"withDescription"`
-	WithHash        int `json:"withHash"`
-	WithSize        int `json:"withSize"`
-	WithTags        int `json:"withTags"`
-}
-
-func statsAPIHandler(deps *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
-			return
-		}
-
-		db := deps.DB
-
-		var total, withDesc, withHash, withSize, withTags int
-
-		// Single round-trip to fetch all counts
-		err := db.QueryRow(`
-            SELECT
-                (SELECT COUNT(*) FROM media) AS total,
-                (SELECT COUNT(*) FROM media WHERE description IS NOT NULL AND TRIM(description) <> '') AS with_desc,
-                (SELECT COUNT(*) FROM media WHERE hash IS NOT NULL AND TRIM(hash) <> '') AS with_hash,
-                (SELECT COUNT(*) FROM media WHERE size IS NOT NULL) AS with_size,
-                (SELECT COUNT(*) FROM media m WHERE EXISTS (SELECT 1 FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path)) AS with_tags
-        `).Scan(&total, &withDesc, &withHash, &withSize, &withTags)
-		if err != nil {
-			log.Printf("stats counts error: %v", err)
-			http.Error(w, "Failed to fetch stats", http.StatusInternalServerError)
-			return
-		}
-
-		data := statsAPIResponse{
-			TotalMedia:      total,
-			WithDescription: withDesc,
-			WithHash:        withHash,
-			WithSize:        withSize,
-			WithTags:        withTags,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(data)
-	}
-}
-
-// -----------------------------------------------------------------------------
 // File Upload handler
 // -----------------------------------------------------------------------------
 

@@ -330,6 +330,26 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 			return "m.description IS NULL", nil
 		}
 		return "m.description " + op + " ?", []interface{}{val}
+	case "transcript":
+		if strings.EqualFold(val, "null") && op == "=" {
+			return "m.transcript IS NULL", nil
+		}
+		return "m.transcript " + op + " ?", []interface{}{val}
+	case "filetype":
+		// filetype:video / filetype:image — classify by path extension so batch
+		// jobs (e.g. transcription) can target only the media kind they can
+		// process. Extension lists mirror tasks' isMediaFile / transcript sets.
+		exts := extensionsForFiletype(val)
+		if len(exts) == 0 {
+			return "1=0", nil
+		}
+		clauses := make([]string, len(exts))
+		args := make([]interface{}, len(exts))
+		for i, ext := range exts {
+			clauses[i] = "LOWER(m.path) LIKE ?"
+			args[i] = "%" + ext
+		}
+		return "(" + strings.Join(clauses, " OR ") + ")", args
 	case "size":
 		if strings.EqualFold(val, "null") && op == "=" {
 			return "m.size IS NULL", nil
@@ -491,8 +511,36 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 		// Note: The SQL does strictly one level.
 		// Go's filepath.Dir gives the parent.
 		return strings.EqualFold(dir, target)
+	case "transcript":
+		// MediaItem doesn't carry the transcript column (GetItems never selects
+		// it), so in-memory evaluation can't check it. The SQL side already
+		// filtered; treat as satisfied rather than dropping every row on the
+		// exists-condition slow path.
+		return true
+	case "filetype":
+		ext := strings.ToLower(filepath.Ext(item.Path))
+		for _, e := range extensionsForFiletype(n.Value) {
+			if ext == e {
+				return true
+			}
+		}
+		return false
 	default:
 		return true
+	}
+}
+
+// extensionsForFiletype maps a filetype: query value to the path extensions it
+// covers. The video set mirrors what the transcript task can process; the image
+// set mirrors tasks' isMediaFile. Unknown values return nil (matches nothing).
+func extensionsForFiletype(val string) []string {
+	switch strings.ToLower(val) {
+	case "video":
+		return []string{".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv"}
+	case "image":
+		return []string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff"}
+	default:
+		return nil
 	}
 }
 

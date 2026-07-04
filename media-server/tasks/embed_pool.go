@@ -283,6 +283,9 @@ func runEmbedPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths
 	// Collector: single goroutine owns all DB writes (avoids sqlite write
 	// contention) and ANN index inserts.
 	var processed, skipped int
+	// The live coverage counter tracks the ACTIVE model only; a --model
+	// override run (background migration) must not advance it.
+	countsForStats := model.ID == ActiveEmbedModel().ID
 	var collectorWG sync.WaitGroup
 	collectorWG.Add(1)
 	go func() {
@@ -299,6 +302,9 @@ func runEmbedPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths
 			}
 			indexAdd(model.ID, r.mediaPath, r.vec) // index normalizes internally
 			q.RegisterOutputFile(j.ID, r.mediaPath)
+			if countsForStats {
+				notifyProgress(ProgressEmbedding, 1)
+			}
 			processed++
 			if (processed+skipped)%50 == 0 {
 				q.PushJobStdout(j.ID, fmt.Sprintf("Progress: %d embedded, %d skipped (of %d)", processed, skipped, len(paths)))

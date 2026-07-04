@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/storage"
 )
 
@@ -33,6 +34,16 @@ func SetStorageRegistry(r *storage.Registry) {
 }
 
 func init() {
+	// Whenever media rows are deleted (cleanup task, remove task, or any other
+	// RemoveItemsFromDB caller), evict the paths from the live vector index so
+	// similarity search stops returning deleted items immediately instead of
+	// after the next index rebuild.
+	media.SetMediaRemovalHook(func(paths []string) {
+		for _, p := range paths {
+			IndexDelete(p)
+		}
+	})
+
 	// Register built-in tasks
 	RegisterTask("wait", "Wait", nil, waitFn)
 	RegisterTask("remove", "Remove Media", nil, removeFromDB)

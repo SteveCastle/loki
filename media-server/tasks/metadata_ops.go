@@ -828,6 +828,7 @@ func processDescriptionForFile(ctx context.Context, q *jobqueue.Queue, jobID str
 	if err := updateMediaMetadata(q.Db, filePath, "description", description); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	notifyProgress(ProgressDescription, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  description: generated"))
 	return nil
 }
@@ -870,6 +871,7 @@ func processTranscriptForFile(ctx context.Context, q *jobqueue.Queue, jobID stri
 	if err := updateMediaMetadata(q.Db, filePath, "transcript", transcript); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	notifyProgress(ProgressTranscript, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  transcript: generated"))
 	return nil
 }
@@ -917,6 +919,9 @@ func processHashForFile(ctx context.Context, q *jobqueue.Queue, jobID string, fi
 	if err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	// One UPDATE sets both columns, so both coverage counters advance.
+	notifyProgress(ProgressHash, 1)
+	notifyProgress(ProgressSize, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  hash: generated"))
 	return nil
 }
@@ -969,6 +974,7 @@ func processDimensionsForFile(ctx context.Context, q *jobqueue.Queue, jobID stri
 	if err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	notifyProgress(ProgressDimensions, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  dimensions: %dx%d", width, height))
 	return nil
 }
