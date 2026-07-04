@@ -2355,6 +2355,7 @@ func main() {
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	RegisterDepsRoutes(mux)
+	RegisterVizRoutes(mux, deps)
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/events", renderer.ApplyMiddlewares(eventsHandler(), renderer.RoleAdmin))

@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embedding Space — Lowkey Media Server</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: rgba(17, 22, 32, 0.92);
+    --border: #232b3b;
+    --text: #d7dce6;
+    --dim: #8a93a6;
+    --accent: #6ea8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg);
+    font: 13px/1.45 system-ui, "Segoe UI", sans-serif; color: var(--text); }
+  #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
+  #gl.dragging { cursor: grabbing; }
+
+  #toolbar {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 10px; backdrop-filter: blur(6px);
+  }
+  #toolbar label { color: var(--dim); }
+  select, button {
+    background: #151b28; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer;
+  }
+  select:hover, button:hover { border-color: #35415a; }
+  button:disabled { opacity: 0.5; cursor: default; }
+
+  #stats { position: absolute; top: 12px; right: 12px; z-index: 10; text-align: right;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 12px; color: var(--dim); }
+  #stats b { color: var(--text); font-weight: 600; }
+
+  #help { position: absolute; bottom: 10px; left: 12px; z-index: 10; color: var(--dim);
+    font-size: 12px; text-shadow: 0 1px 2px #000; user-select: none; }
+
+  #preview {
+    position: absolute; z-index: 20; display: none; width: 264px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px; pointer-events: none; box-shadow: 0 8px 28px rgba(0,0,0,0.55);
+  }
+  #preview.pinned { border-color: var(--accent); }
+  #preview img { width: 248px; height: 186px; object-fit: contain; display: block;
+    background: #05070b; border-radius: 6px; }
+  #preview .name { margin-top: 6px; font-weight: 600; word-break: break-all; }
+  #preview .path { color: var(--dim); font-size: 11px; word-break: break-all; }
+  #preview .noimg { width: 248px; height: 186px; display: none; align-items: center;
+    justify-content: center; color: var(--dim); background: #05070b; border-radius: 6px; }
+
+  #overlay { position: absolute; inset: 0; z-index: 30; display: none;
+    align-items: center; justify-content: center; background: rgba(11,14,20,0.55); }
+  #overlay .msg { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 22px; }
+  #overlay .msg a { color: var(--accent); }
+  .spin { display: inline-block; width: 12px; height: 12px; margin-right: 8px;
+    border: 2px solid var(--dim); border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="toolbar">
+  <label for="model">Model</label>
+  <select id="model"></select>
+  <label for="sample">Points</label>
+  <select id="sample">
+    <option value="2000">2,000</option>
+    <option value="4000" selected>4,000</option>
+    <option value="8000">8,000</option>
+    <option value="20000">20,000</option>
+  </select>
+  <button id="reload" title="Reload projection">Reload</button>
+  <button id="reset" title="Reset camera">Reset view</button>
+</div>
+
+<div id="stats">loading…</div>
+<div id="help">drag&nbsp;rotate&nbsp;&middot;&nbsp;wheel&nbsp;zoom&nbsp;&middot;&nbsp;shift/right-drag&nbsp;pan&nbsp;&middot;&nbsp;hover&nbsp;preview&nbsp;&middot;&nbsp;click&nbsp;pin</div>
+
+<div id="preview">
+  <img id="pimg" alt="">
+  <div class="noimg" id="pnoimg">no preview</div>
+  <div class="name" id="pname"></div>
+  <div class="path" id="ppath"></div>
+</div>
+
+<div id="overlay"><div class="msg" id="overlaymsg"></div></div>
+
+<script>
+'use strict';
+// ============================================================================
+// Embedding-space visualization: WebGL point cloud of a PCA 3D projection of
+// the media embedding vectors. No external libraries — raw WebGL1 + a small
+// mat4 helper set, so the page works offline and embeds in the Go binary.
+// ============================================================================
+
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl', { antialias: true });
+const overlay = document.getElementById('overlay');
+const overlayMsg = document.getElementById('overlaymsg');
+const statsEl = document.getElementById('stats');
+const modelSel = document.getElementById('model');
+const sampleSel = document.getElementById('sample');
+const preview = document.getElementById('preview');
+const pimg = document.getElementById('pimg');
+const pnoimg = document.getElementById('pnoimg');
+const pname = document.getElementById('pname');
+const ppath = document.getElementById('ppath');
+
+if (!gl) {
+  overlay.style.display = 'flex';
+  overlayMsg.textContent = 'WebGL is not available in this browser.';
+  throw new Error('no webgl');
+}
+
+// ---------------------------------------------------------------- mat4 utils
+function perspective(fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), out = new Float32Array(16);
+  out[0] = f / aspect; out[5] = f;
+  out[10] = (far + near) / (near - far); out[11] = -1;
+  out[14] = (2 * far * near) / (near - far);
+  return out;
+}
+function mul(a, b) { // a*b, column-major
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  }
+  return o;
+}
+function lookAt(eye, target, up) {
+  let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+  let zl = Math.hypot(zx, zy, zz); zx /= zl; zy /= zl; zz /= zl;
+  let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
+  const xl = Math.hypot(xx, xy, xz); xx /= xl; xy /= xl; xz /= xl;
+  const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  return new Float32Array([
+    xx, yx, zx, 0,
+    xy, yy, zy, 0,
+    xz, yz, zz, 0,
+    -(xx * eye[0] + xy * eye[1] + xz * eye[2]),
+    -(yx * eye[0] + yy * eye[1] + yz * eye[2]),
+    -(zx * eye[0] + zy * eye[1] + zz * eye[2]), 1,
+  ]);
+}
+
+// ---------------------------------------------------------------- gl program
+function makeProgram(vsSrc, fsSrc) {
+  const compile = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const pointProg = makeProgram(`
+  attribute vec3 aPos;
+  uniform mat4 uMVP;
+  uniform float uSize;      // point size at distance 1
+  uniform float uMaxSize;
+  varying vec3 vColor;
+  void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+    float s = uSize / max(gl_Position.w, 0.0001);
+    gl_PointSize = clamp(s, 1.5, uMaxSize);
+    // Position-derived pastel color: nearby (= similar) media share hue, so
+    // clusters read as color patches.
+    vColor = 0.52 + 0.42 * aPos;
+  }`, `
+  precision mediump float;
+  varying vec3 vColor;
+  uniform vec3 uOverride;   // when uUseOverride=1, flat highlight color
+  uniform float uUseOverride;
+  void main() {
+    vec2 d = gl_PointCoord - vec2(0.5);
+    if (dot(d, d) > 0.25) discard;
+    vec3 c = mix(vColor, uOverride, uUseOverride);
+    gl_FragColor = vec4(c, 1.0);
+  }`);
+
+const lineProg = makeProgram(`
+  attribute vec3 aPos;
+  uniform mat4 uMVP;
+  void main() { gl_Position = uMVP * vec4(aPos, 1.0); }`, `
+  precision mediump float;
+  uniform vec4 uColor;
+  void main() { gl_FragColor = uColor; }`);
+
+const aPosPoint = gl.getAttribLocation(pointProg, 'aPos');
+const uMVPPoint = gl.getUniformLocation(pointProg, 'uMVP');
+const uSize = gl.getUniformLocation(pointProg, 'uSize');
+const uMaxSize = gl.getUniformLocation(pointProg, 'uMaxSize');
+const uOverride = gl.getUniformLocation(pointProg, 'uOverride');
+const uUseOverride = gl.getUniformLocation(pointProg, 'uUseOverride');
+const aPosLine = gl.getAttribLocation(lineProg, 'aPos');
+const uMVPLine = gl.getUniformLocation(lineProg, 'uMVP');
+const uColorLine = gl.getUniformLocation(lineProg, 'uColor');
+
+const pointBuf = gl.createBuffer();
+const axisBuf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, axisBuf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1.1, 0, 0,  1.1, 0, 0,
+  0, -1.1, 0,  0, 1.1, 0,
+  0, 0, -1.1,  0, 0, 1.1,
+]), gl.STATIC_DRAW);
+const maxPointSize = Math.min(64, gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]);
+
+// ---------------------------------------------------------------- app state
+let positions = new Float32Array(0); // xyz triples
+let paths = [];
+let count = 0;
+let hovered = -1, pinned = -1;
+const cam = { yaw: 0.6, pitch: 0.35, dist: 3.2, tx: 0, ty: 0, tz: 0 };
+const CAM_HOME = { ...cam };
+let mvp = new Float32Array(16);
+let mouse = { x: -1, y: -1, moved: false };
+let needPick = false;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.round(canvas.clientWidth * dpr), h = Math.round(canvas.clientHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+    gl.viewport(0, 0, w, h);
+  }
+}
+
+function camEye() {
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  return [
+    cam.tx + cam.dist * cp * sy,
+    cam.ty + cam.dist * sp,
+    cam.tz + cam.dist * cp * cy,
+  ];
+}
+
+function draw() {
+  resize();
+  const aspect = canvas.width / Math.max(1, canvas.height);
+  const proj = perspective(0.9, aspect, 0.01, 100);
+  const view = lookAt(camEye(), [cam.tx, cam.ty, cam.tz], [0, 1, 0]);
+  mvp = mul(proj, view);
+
+  gl.clearColor(0.043, 0.055, 0.078, 1);
+  gl.enable(gl.DEPTH_TEST);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  // Axes.
+  gl.useProgram(lineProg);
+  gl.uniformMatrix4fv(uMVPLine, false, mvp);
+  gl.uniform4f(uColorLine, 0.25, 0.3, 0.4, 1);
+  gl.bindBuffer(gl.ARRAY_BUFFER, axisBuf);
+  gl.enableVertexAttribArray(aPosLine);
+  gl.vertexAttribPointer(aPosLine, 3, gl.FLOAT, false, 0, 0);
+  gl.drawArrays(gl.LINES, 0, 6);
+
+  if (count > 0) {
+    gl.useProgram(pointProg);
+    gl.uniformMatrix4fv(uMVPPoint, false, mvp);
+    gl.uniform1f(uSize, 12 * (window.devicePixelRatio || 1));
+    gl.uniform1f(uMaxSize, maxPointSize);
+    gl.uniform1f(uUseOverride, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, pointBuf);
+    gl.enableVertexAttribArray(aPosPoint);
+    gl.vertexAttribPointer(aPosPoint, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.POINTS, 0, count);
+
+    // Highlight pass: pinned (accent) then hovered (white) on top.
+    gl.disable(gl.DEPTH_TEST);
+    for (const [idx, col] of [[pinned, [0.43, 0.66, 1.0]], [hovered, [1, 1, 1]]]) {
+      if (idx < 0) continue;
+      gl.uniform1f(uUseOverride, 1);
+      gl.uniform3f(uOverride, col[0], col[1], col[2]);
+      gl.uniform1f(uSize, 22 * (window.devicePixelRatio || 1));
+      gl.drawArrays(gl.POINTS, idx, 1);
+    }
+  }
+}
+
+// ------------------------------------------------------------------- picking
+function pick() {
+  if (count === 0) { setHovered(-1); return; }
+  const dpr = window.devicePixelRatio || 1;
+  const mx = mouse.x * dpr, my = mouse.y * dpr;
+  const radius = 14 * dpr, r2 = radius * radius;
+  const w2 = canvas.width / 2, h2 = canvas.height / 2;
+  const m = mvp;
+  let best = -1, bestScore = Infinity;
+  for (let i = 0; i < count; i++) {
+    const x = positions[i * 3], y = positions[i * 3 + 1], z = positions[i * 3 + 2];
+    const cw = m[3] * x + m[7] * y + m[11] * z + m[15];
+    if (cw <= 0) continue; // behind camera
+    const sx = ((m[0] * x + m[4] * y + m[8] * z + m[12]) / cw) * w2 + w2;
+    const sy = h2 - ((m[1] * x + m[5] * y + m[9] * z + m[13]) / cw) * h2;
+    const dx = sx - mx, dy = sy - my;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > r2) continue;
+    const score = d2 + cw * 0.01; // prefer closer points on near-ties
+    if (score < bestScore) { bestScore = score; best = i; }
+  }
+  setHovered(best);
+}
+
+function setHovered(i) {
+  if (i === hovered) return;
+  hovered = i;
+  if (pinned < 0) showPreview(i);
+  canvas.style.cursor = i >= 0 ? 'pointer' : '';
+}
+
+function showPreview(i) {
+  if (i < 0) { preview.style.display = 'none'; return; }
+  const p = paths[i];
+  const base = p.replace(/\\/g, '/').split('/').pop();
+  pname.textContent = base;
+  ppath.textContent = p;
+  pimg.style.display = 'block';
+  pnoimg.style.display = 'none';
+  pimg.src = '/media/thumbnail?path=' + encodeURIComponent(p) + '&cache=thumbnail_path_600';
+  preview.style.display = 'block';
+  positionPreview();
+}
+pimg.onerror = () => { pimg.style.display = 'none'; pnoimg.style.display = 'flex'; };
+
+function positionPreview() {
+  const pad = 18, w = 268, h = 262;
+  let x = mouse.x + pad, y = mouse.y + pad;
+  if (x + w > window.innerWidth) x = mouse.x - w - pad;
+  if (y + h > window.innerHeight) y = Math.max(8, mouse.y - h - pad);
+  preview.style.left = x + 'px';
+  preview.style.top = y + 'px';
+}
+
+// ------------------------------------------------------------------ controls
+let dragging = false, panning = false, lastX = 0, lastY = 0;
+canvas.addEventListener('mousedown', (e) => {
+  dragging = true;
+  panning = e.button === 2 || e.shiftKey;
+  lastX = e.clientX; lastY = e.clientY;
+  canvas.classList.add('dragging');
+});
+window.addEventListener('mouseup', (e) => {
+  const wasDrag = Math.hypot(e.clientX - lastX, e.clientY - lastY) > 3;
+  canvas.classList.remove('dragging');
+  if (!dragging) return;
+  dragging = false;
+  if (wasDrag || e.button === 2) return;
+  // Plain click: toggle pin on the hovered point.
+  if (hovered >= 0) {
+    pinned = pinned === hovered ? -1 : hovered;
+    preview.classList.toggle('pinned', pinned >= 0);
+    showPreview(pinned >= 0 ? pinned : hovered);
+  } else if (pinned >= 0) {
+    pinned = -1;
+    preview.classList.remove('pinned');
+    showPreview(-1);
+  }
+});
+window.addEventListener('mousemove', (e) => {
+  const nx = e.clientX, ny = e.clientY;
+  if (dragging) {
+    const dx = nx - lastX, dy = ny - lastY;
+    lastX = nx; lastY = ny;
+    if (panning) {
+      const s = cam.dist * 0.0016;
+      const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+      // Pan in the camera's screen plane (right + up vectors).
+      cam.tx -= (cy * dx) * s; cam.tz += (sy * dx) * s;
+      cam.ty += dy * s;
+    } else {
+      cam.yaw -= dx * 0.006;
+      cam.pitch = Math.min(1.5, Math.max(-1.5, cam.pitch + dy * 0.006));
+    }
+  }
+  mouse.x = nx; mouse.y = ny;
+  needPick = true;
+  if (preview.style.display === 'block' && pinned < 0) positionPreview();
+});
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  cam.dist = Math.min(12, Math.max(0.25, cam.dist * Math.exp(e.deltaY * 0.0011)));
+}, { passive: false });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && pinned >= 0) {
+    pinned = -1;
+    preview.classList.remove('pinned');
+    showPreview(hovered);
+  }
+});
+document.getElementById('reset').addEventListener('click', () => Object.assign(cam, CAM_HOME));
+
+// ---------------------------------------------------------------- data layer
+function setOverlay(html) {
+  overlay.style.display = html ? 'flex' : 'none';
+  overlayMsg.innerHTML = html || '';
+}
+
+async function apiJSON(url) {
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('auth: <a href="/login">log in</a> to view the embedding space');
+  }
+  if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + (await res.text()).slice(0, 200));
+  return res.json();
+}
+
+async function loadModels() {
+  const [registry, status] = await Promise.all([
+    apiJSON('/api/index/models'),
+    apiJSON('/api/index/status'),
+  ]);
+  const counts = {};
+  for (const s of status.embeddings || []) counts[s.model] = s.count;
+  modelSel.innerHTML = '';
+  const seen = new Set();
+  for (const m of registry.models || []) {
+    seen.add(m.id);
+    const opt = document.createElement('option');
+    opt.value = m.id;
+    const n = counts[m.id] || 0;
+    opt.textContent = `${m.display_name} — ${n.toLocaleString()} vectors`;
+    opt.disabled = n === 0;
+    if (m.active && n > 0) opt.selected = true;
+    modelSel.appendChild(opt);
+  }
+  // Models present in the DB but no longer in the registry (legacy runs) are
+  // still selectable so they can be compared against current models.
+  for (const [id, n] of Object.entries(counts)) {
+    if (seen.has(id)) continue;
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = `${id} (legacy) — ${n.toLocaleString()} vectors`;
+    modelSel.appendChild(opt);
+  }
+  if (!modelSel.value) {
+    const first = [...modelSel.options].find((o) => !o.disabled);
+    if (first) first.selected = true;
+  }
+}
+
+async function loadProjection() {
+  const model = modelSel.value;
+  if (!model) {
+    statsEl.textContent = 'no embedded media — run an Embeddings job first';
+    return;
+  }
+  setOverlay('<span class="spin"></span>projecting ' + model + '…');
+  document.getElementById('reload').disabled = true;
+  try {
+    const data = await apiJSON(
+      `/api/embeddings/projection?model=${encodeURIComponent(model)}&limit=${sampleSel.value}`);
+    paths = data.paths || [];
+    count = data.count || 0;
+    positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      positions[i * 3] = data.points[i][0];
+      positions[i * 3 + 1] = data.points[i][1];
+      positions[i * 3 + 2] = data.points[i][2];
+    }
+    hovered = -1; pinned = -1;
+    preview.style.display = 'none';
+    preview.classList.remove('pinned');
+    gl.bindBuffer(gl.ARRAY_BUFFER, pointBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+    const v = (data.variance || []).map((x) => (x * 100).toFixed(1) + '%').join(' / ');
+    statsEl.innerHTML =
+      `<b>${count.toLocaleString()}</b> of ${data.total.toLocaleString()} vectors` +
+      ` &middot; dim ${data.dim}<br>PCA variance ${v || 'n/a'}`;
+    setOverlay('');
+  } catch (err) {
+    setOverlay(String(err.message || err));
+  } finally {
+    document.getElementById('reload').disabled = false;
+  }
+}
+
+modelSel.addEventListener('change', loadProjection);
+sampleSel.addEventListener('change', loadProjection);
+document.getElementById('reload').addEventListener('click', loadProjection);
+
+// ---------------------------------------------------------------- main loop
+function frame() {
+  draw();
+  if (needPick && !dragging) { needPick = false; pick(); }
+  requestAnimationFrame(frame);
+}
+
+(async () => {
+  try {
+    await loadModels();
+    await loadProjection();
+  } catch (err) {
+    setOverlay(String(err.message || err));
+  }
+  frame();
+})();
+</script>
+</body>
+</html>
