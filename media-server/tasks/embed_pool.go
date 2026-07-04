@@ -297,7 +297,7 @@ func runEmbedPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths
 				skipped++
 				continue
 			}
-			indexAdd(model.ID, r.mediaPath, embedvec.Normalize(r.vec))
+			indexAdd(model.ID, r.mediaPath, r.vec) // index normalizes internally
 			q.RegisterOutputFile(j.ID, r.mediaPath)
 			processed++
 			if (processed+skipped)%50 == 0 {

@@ -13,7 +13,7 @@ import (
 //
 //   GET    /api/index/status      — installed index + per-model DB stats
 //   GET    /api/index/models      — embed model registry
-//   POST   /api/index/rebuild     — rebuild ANN index for the active model
+//   POST   /api/index/rebuild     — rebuild vector index for the active model
 //   GET    /api/index/missing     — media paths lacking an embedding
 //   GET    /api/embeddings        — stored embedding rows for one path
 //   DELETE /api/embeddings        — delete stored embedding rows for one path

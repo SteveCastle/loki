@@ -38,8 +38,8 @@ type SimilarHit struct {
 }
 
 // -----------------------------------------------------------------------------
-// Package-level ANN index — serialised behind a single mutex so concurrent
-// embed workers can call indexAdd without data-racing on the HNSW graph.
+// Package-level vector index — serialised behind a single mutex so concurrent
+// embed workers can call indexAdd without data-racing on the index.
 // -----------------------------------------------------------------------------
 
 var (
@@ -159,7 +159,7 @@ func BuildIndexFromDB(db *sql.DB, model string, onProgress IndexProgress) (embed
 		onProgress(0, total) // start the bar (covers the empty-DB case too)
 	}
 	for i, e := range all {
-		idx.Add(e.Path, embedvec.Normalize(e.Vec))
+		idx.Add(e.Path, e.Vec) // Add L2-normalizes internally
 		// Throttle callback frequency; always fire on the last item.
 		if onProgress != nil && ((i+1)%512 == 0 || i+1 == total) {
 			onProgress(i+1, total)
@@ -186,7 +186,9 @@ func SearchByVector(db *sql.DB, model string, query []float32, limit int) ([]Sim
 	}
 	hits := make([]SimilarHit, 0, len(all))
 	for _, e := range all {
-		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.Cosine(query, e.Vec)})
+		// CosineSim (not raw dot) so legacy rows stored before the embed binary
+		// normalized its output still rank correctly.
+		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.CosineSim(query, e.Vec)})
 	}
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if limit > 0 && len(hits) > limit {
@@ -233,7 +235,7 @@ func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string,
 	}
 	// Persist + index so future searches over this item are instant.
 	if uerr := media.UpsertEmbedding(db, path, m.ID, fresh, 0); uerr == nil {
-		indexAdd(m.ID, path, embedvec.Normalize(fresh))
+		indexAdd(m.ID, path, fresh) // index normalizes internally
 	}
 	return SearchByVector(db, m.ID, fresh, limit)
 }

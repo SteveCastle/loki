@@ -17,7 +17,7 @@ func init() {
 		summary: "Embedding model registry with active/indexed flags (GET /api/index/models)",
 		run:     cmdIndexModels})
 	register(command{group: "index", name: "rebuild",
-		summary: "Rebuild the ANN index for the active model (POST /api/index/rebuild); large libraries need --timeout",
+		summary: "Rebuild the vector index for the active model (POST /api/index/rebuild); large libraries need --timeout",
 		run:     cmdIndexRebuild})
 	register(command{group: "index", name: "missing", args: "[--model M] [--limit N]",
 		summary: "Media paths lacking an embedding (GET /api/index/missing)",

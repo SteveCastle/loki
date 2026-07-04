@@ -2357,9 +2357,9 @@ func main() {
 		Storage: storageReg,
 	}
 
-	// ––– embedding ANN index (best-effort, non-fatal) –––
-	// Build the HNSW index from all stored vectors so SimilarByPath uses
-	// ANN search instead of brute-force from the first request.  If the
+	// ––– embedding vector index (best-effort, non-fatal) –––
+	// Build the in-memory index from all stored vectors so SimilarByPath
+	// searches RAM instead of re-reading the DB on every request.  If the
 	// media_embedding table is empty (or missing) this logs and continues.
 	log.Printf("Building embedding search index…")
 	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {

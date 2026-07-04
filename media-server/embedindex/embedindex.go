@@ -1,9 +1,32 @@
-// Package embedindex wraps a pure-Go HNSW graph behind a small interface so
-// the rest of the server depends only on VectorIndex, not the ANN library.
+// Package embedindex provides the in-memory vector index used for visual
+// similarity search. It performs an EXACT, parallelized cosine scan over all
+// vectors rather than approximate nearest-neighbour search.
+//
+// Why exact scan and not ANN: the index previously wrapped coder/hnsw v0.1.0,
+// which delivered very poor recall in practice — its default EfSearch (20) was
+// far below the k values the server requests (50 for "find similar", 1000 for
+// visual predicates in composed queries), and its search loop terminates as
+// soon as one expansion fails to improve the single best hit, so everything
+// beyond the top few results was whatever nodes the greedy descent happened to
+// visit. Symptoms: the query image itself often missing from its own results,
+// and clearly-similar items outranked by dissimilar ones. The graph also could
+// not delete nodes or update vectors in place, forcing ghost/tombstone
+// workarounds here.
+//
+// The exact scan fixes all of that with the same memory footprint (the HNSW
+// graph already kept every vector in RAM): scores are true cosine
+// similarities, ranking is exact (the query item scores ~1.0 and ranks first),
+// deletes are real, and re-adding a path updates its vector immediately. Cost
+// is O(N·dim) per search, parallelized across CPUs — roughly 1ms per 10k
+// vectors at dim 768, comfortably interactive at library scale.
 package embedindex
 
 import (
-	"github.com/coder/hnsw"
+	"runtime"
+	"sort"
+	"sync"
+
+	"github.com/stevecastle/shrike/embedvec"
 )
 
 // SearchHit is a single result from a Search call.
@@ -12,114 +35,154 @@ type SearchHit struct {
 	Score float32 // cosine similarity: higher is more similar (1.0 = identical)
 }
 
-// VectorIndex is the narrow interface the server uses for ANN vector search.
+// VectorIndex is the narrow interface the server uses for vector search.
 // Implementations are NOT internally synchronized; callers must serialize all
 // Add/Delete/Search calls (the server does this via tasks.vectorIndexMu).
 type VectorIndex interface {
+	// Add inserts or replaces the vector for path. The vector is L2-normalized
+	// internally, so callers may pass raw model output.
 	Add(path string, vec []float32)
+	// Delete removes path from the index (safe no-op if absent).
 	Delete(path string)
+	// Search returns up to k nearest neighbours to query, ordered by
+	// descending cosine similarity. The query is L2-normalized internally.
 	Search(query []float32, k int) []SearchHit
+	// Len returns the number of vectors in the index.
 	Len() int
 }
 
-// hnswIndex wraps the HNSW graph with two auxiliary sets:
-//   - keys   — paths that are actively present. Search results are filtered to
-//     this set, and Len() reports its size.
-//   - ghosts — paths removed via Delete but still resident in the underlying
-//     graph, because hnsw v0.1.0 does not update its entry-point pointer on
-//     deletion (calling g.Delete can leave a subsequent Search/Add starting
-//     from an isolated node and panic). Ghosts are filtered out of Search
-//     results and cleared when the index is rebuilt from the DB on restart.
-//
-// Memory: exactly ONE copy of each vector is kept — inside the HNSW graph.
-// Search scores against node.Embedding() (the graph's own copy), so the index
-// does not keep a second full copy of every vector (which at millions of items
-// would cost gigabytes). The cost of this choice is a known, bounded staleness:
-// hnsw v0.1.0 cannot move or replace a node's vector once inserted, so re-adding
-// an already-present path (active, or reactivated from a soft-delete) does NOT
-// update its vector until the next startup rebuild from the DB (which always
-// reflects the current vector). In normal operation this never bites — the embed
-// task skips already-embedded paths — and it only matters for delete-then-
-// re-embed of the SAME path within a single session, where that path keeps
-// scoring against its pre-delete vector until restart.
-type hnswIndex struct {
-	g      *hnsw.Graph[hnsw.Vector]
-	keys   map[string]struct{} // active paths
-	ghosts map[string]struct{} // tombstoned paths still in g
+// exactIndex stores one normalized vector per path in parallel slices (for
+// cache-friendly scanning) plus a path→slot map for O(1) update and delete
+// (delete swap-removes the last slot into the hole).
+type exactIndex struct {
+	paths []string
+	vecs  [][]float32
+	slot  map[string]int
 }
 
-// New returns a fresh, empty VectorIndex backed by a cosine-distance HNSW graph.
+// New returns a fresh, empty exact-scan VectorIndex.
 func New() VectorIndex {
-	g := hnsw.NewGraph[hnsw.Vector]()
-	g.Distance = hnsw.CosineDistance
-	return &hnswIndex{
-		g:      g,
-		keys:   map[string]struct{}{},
-		ghosts: map[string]struct{}{},
-	}
+	return &exactIndex{slot: map[string]int{}}
 }
 
-// Add inserts a vector for path. Re-adding an already-active path is a no-op,
-// and re-adding a soft-deleted (ghost) path reactivates it in place; in both
-// cases hnsw v0.1.0 cannot update the stored vector, so the node keeps its
-// original vector until the next rebuild-from-DB at startup (see the type doc).
-//
-// vec must already be L2-normalised.
-func (h *hnswIndex) Add(path string, vec []float32) {
-	if _, exists := h.keys[path]; exists {
-		return // already active; vector cannot be updated in place (see type doc)
-	}
-	if _, isGhost := h.ghosts[path]; isGhost {
-		// Reactivate a soft-deleted node (g.Add of an existing key panics in
-		// hnsw v0.1.0). The node retains its original graph vector.
-		delete(h.ghosts, path)
-		h.keys[path] = struct{}{}
+func (x *exactIndex) Add(path string, vec []float32) {
+	v := embedvec.Normalize(vec)
+	if i, ok := x.slot[path]; ok {
+		x.vecs[i] = v // in-place vector update (e.g. re-embed after edit)
 		return
 	}
-	h.g.Add(hnsw.MakeVector(path, vec))
-	h.keys[path] = struct{}{}
+	x.slot[path] = len(x.paths)
+	x.paths = append(x.paths, path)
+	x.vecs = append(x.vecs, v)
 }
 
-// Delete removes path from the active set (a safe no-op if absent). The node is
-// tombstoned rather than removed from the graph — see the type doc for why.
-func (h *hnswIndex) Delete(path string) {
-	if _, exists := h.keys[path]; !exists {
+func (x *exactIndex) Delete(path string) {
+	i, ok := x.slot[path]
+	if !ok {
 		return
 	}
-	delete(h.keys, path)
-	h.ghosts[path] = struct{}{}
+	last := len(x.paths) - 1
+	if i != last {
+		x.paths[i] = x.paths[last]
+		x.vecs[i] = x.vecs[last]
+		x.slot[x.paths[i]] = i
+	}
+	x.paths = x.paths[:last]
+	x.vecs = x.vecs[:last]
+	delete(x.slot, path)
 }
 
-// Search returns up to k nearest active neighbours to query, ordered by
-// descending cosine similarity. query must already be L2-normalised.
-func (h *hnswIndex) Search(query []float32, k int) []SearchHit {
-	gLen := h.g.Len()
-	if gLen == 0 {
+func (x *exactIndex) Len() int { return len(x.paths) }
+
+func (x *exactIndex) Search(query []float32, k int) []SearchHit {
+	n := len(x.paths)
+	if n == 0 || k <= 0 {
 		return nil
 	}
-	// Over-fetch by the ghost count so soft-deleted nodes ranking ahead of live
-	// ones don't cause us to return fewer than k active results.
-	fetch := k + len(h.ghosts)
-	if fetch > gLen {
-		fetch = gLen
+	q := embedvec.Normalize(query)
+
+	// Score every vector, parallelized in contiguous chunks.
+	scores := make([]float32, n)
+	workers := runtime.NumCPU()
+	if workers > n {
+		workers = n
 	}
-	nodes := h.g.Search(query, fetch)
+	chunk := (n + workers - 1) / workers
+	var wg sync.WaitGroup
+	for lo := 0; lo < n; lo += chunk {
+		hi := lo + chunk
+		if hi > n {
+			hi = n
+		}
+		wg.Add(1)
+		go func(lo, hi int) {
+			defer wg.Done()
+			for i := lo; i < hi; i++ {
+				scores[i] = embedvec.Cosine(q, x.vecs[i])
+			}
+		}(lo, hi)
+	}
+	wg.Wait()
+
+	if k > n {
+		k = n
+	}
+	top := topKIndices(scores, k)
+
 	hits := make([]SearchHit, 0, k)
-	for _, node := range nodes {
-		id := node.ID()
-		if _, active := h.keys[id]; !active {
-			continue // ghost / not active
-		}
-		hits = append(hits, SearchHit{
-			Path:  id,
-			Score: 1 - h.g.Distance(query, node.Embedding()),
-		})
-		if len(hits) == k {
-			break
-		}
+	for _, i := range top {
+		hits = append(hits, SearchHit{Path: x.paths[i], Score: scores[i]})
 	}
+	// Deterministic order: score descending, then path ascending on ties.
+	sort.Slice(hits, func(a, b int) bool {
+		if hits[a].Score != hits[b].Score {
+			return hits[a].Score > hits[b].Score
+		}
+		return hits[a].Path < hits[b].Path
+	})
 	return hits
 }
 
-// Len returns the number of active (non-deleted) vectors in the index.
-func (h *hnswIndex) Len() int { return len(h.keys) }
+// topKIndices selects the indices of the k largest scores using a min-heap of
+// size k (O(N log k)); most items short-circuit on a single compare with the
+// heap root.
+func topKIndices(scores []float32, k int) []int {
+	h := make([]int, 0, k) // heap of indices; h[0] holds the smallest score
+	siftDown := func(pos int) {
+		for {
+			l, r := 2*pos+1, 2*pos+2
+			small := pos
+			if l < len(h) && scores[h[l]] < scores[h[small]] {
+				small = l
+			}
+			if r < len(h) && scores[h[r]] < scores[h[small]] {
+				small = r
+			}
+			if small == pos {
+				return
+			}
+			h[pos], h[small] = h[small], h[pos]
+			pos = small
+		}
+	}
+	siftUp := func(pos int) {
+		for pos > 0 {
+			parent := (pos - 1) / 2
+			if scores[h[parent]] <= scores[h[pos]] {
+				return
+			}
+			h[pos], h[parent] = h[parent], h[pos]
+			pos = parent
+		}
+	}
+	for i := range scores {
+		if len(h) < k {
+			h = append(h, i)
+			siftUp(len(h) - 1)
+		} else if scores[i] > scores[h[0]] {
+			h[0] = i
+			siftDown(0)
+		}
+	}
+	return h
+}

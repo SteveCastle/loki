@@ -2203,7 +2203,7 @@ func main() {
 		Storage: storageReg,
 	}
 
-	// ––– embedding ANN index (best-effort, non-fatal) –––
+	// ––– embedding vector index (best-effort, non-fatal) –––
 	log.Printf("Building embedding search index…")
 	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
 		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
