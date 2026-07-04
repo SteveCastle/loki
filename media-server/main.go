@@ -39,6 +39,7 @@ import (
 	"github.com/stevecastle/shrike/storage"
 	"github.com/stevecastle/shrike/stream"
 	"github.com/stevecastle/shrike/tasks"
+	"github.com/stevecastle/shrike/transcribe"
 )
 
 // -----------------------------------------------------------------------------
@@ -1337,12 +1338,14 @@ func formatBytes(bytes int64) string {
 // -----------------------------------------------------------------------------
 
 type configTemplateData struct {
-	Config            appconfig.Config
-	ConfigPath        string
-	ActiveDBPath      string
-	EmbeddingModels   []tasks.EmbedModel
-	TaggerModels      []tasks.TaggerModel
-	DirectMLInstalled bool
+	Config                 appconfig.Config
+	ConfigPath             string
+	ActiveDBPath           string
+	EmbeddingModels        []tasks.EmbedModel
+	TaggerModels           []tasks.TaggerModel
+	DirectMLInstalled      bool
+	TranscriptionProviders []transcribe.Provider
+	TranscriptionModels    []transcribe.ModelChoice
 }
 
 type updateConfigRequest struct {
@@ -1384,6 +1387,10 @@ type updateConfigRequest struct {
 	AutotagWorkers            int                     `json:"autotagWorkers"`
 	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
 	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
+	TranscriptionProvider     string                  `json:"transcriptionProvider"`
+	TranscriptionModel        string                  `json:"transcriptionModel"`
+	TranscriptionLanguage     *string                 `json:"transcriptionLanguage"`
+	TranscriptionVADFilter    *bool                   `json:"transcriptionVadFilter"`
 	FasterWhisperPath         string                  `json:"fasterWhisperPath"`
 	DiscordToken              string                  `json:"discordToken"`
 	Roots                     []appconfig.StorageRoot `json:"roots"`
@@ -1422,12 +1429,16 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			currentConfig = cfg
 			data := configTemplateData{
-				Config:            cfg,
-				ConfigPath:        cfgPath,
-				ActiveDBPath:      cfg.DBPath,
-				EmbeddingModels:   tasks.EmbedModelList(),
-				TaggerModels:      tasks.TaggerModelList(),
-				DirectMLInstalled: tasks.DirectMLRuntimeInstalled(),
+				Config:                 cfg,
+				ConfigPath:             cfgPath,
+				ActiveDBPath:           cfg.DBPath,
+				EmbeddingModels:        tasks.EmbedModelList(),
+				TaggerModels:           tasks.TaggerModelList(),
+				DirectMLInstalled:      tasks.DirectMLRuntimeInstalled(),
+				TranscriptionProviders: transcribe.Providers(),
+			}
+			if p, err := transcribe.Active(); err == nil {
+				data.TranscriptionModels = p.Models()
 			}
 			if err := renderer.Templates().ExecuteTemplate(w, "config", data); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1561,6 +1572,22 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.OnnxFileTimeoutSeconds != 0 {
 				// non-zero so a partial POST doesn't clobber it; negative = disabled.
 				newCfg.OnnxFileTimeoutSeconds = req.OnnxFileTimeoutSeconds
+			}
+			// Transcription: provider/model use the protective non-empty
+			// pattern; language and VAD are pointers so an explicit empty
+			// language ("auto-detect") or unchecked VAD box persists, while
+			// partial POSTs that omit the fields leave them alone.
+			if v := strings.ToLower(strings.TrimSpace(req.TranscriptionProvider)); v != "" {
+				newCfg.TranscriptionProvider = v
+			}
+			if v := strings.TrimSpace(req.TranscriptionModel); v != "" {
+				newCfg.TranscriptionModel = v
+			}
+			if req.TranscriptionLanguage != nil {
+				newCfg.TranscriptionLanguage = strings.TrimSpace(*req.TranscriptionLanguage)
+			}
+			if req.TranscriptionVADFilter != nil {
+				newCfg.TranscriptionVADFilter = *req.TranscriptionVADFilter
 			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)

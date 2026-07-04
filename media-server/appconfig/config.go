@@ -37,6 +37,14 @@ type StorageRoot struct {
 // package with no dependency cycle.
 const DefaultEmbeddingModel = "siglip2-base-patch16-224"
 
+// DefaultTranscriptionProvider / DefaultTranscriptionModel are used when the
+// transcription section is empty. The provider id must match a registration
+// in the transcribe package; the model id is provider-specific.
+const (
+	DefaultTranscriptionProvider = "whisper-cli"
+	DefaultTranscriptionModel    = "large-v2"
+)
+
 // DefaultAutotagModel is the auto-tagging model used when none is configured.
 // Must match an ID in the tasks package's tagger-model registry. Literal here
 // (not imported from tasks) to keep appconfig a leaf package.
@@ -155,7 +163,18 @@ type Config struct {
 	// timeout.
 	OnnxFileTimeoutSeconds int `json:"onnxFileTimeoutSeconds"`
 
-	// Optional path to faster-whisper executable
+	// Transcription settings. Provider names an implementation in the
+	// transcribe package's registry ("whisper-cli" today; HTTP or other
+	// engines can register later). Model is provider-specific ("" = provider
+	// default), Language is an ISO hint ("" = auto-detect), VADFilter trims
+	// non-speech before transcribing.
+	TranscriptionProvider  string `json:"transcriptionProvider"`
+	TranscriptionModel     string `json:"transcriptionModel"`
+	TranscriptionLanguage  string `json:"transcriptionLanguage"`
+	TranscriptionVADFilter bool   `json:"transcriptionVadFilter"`
+
+	// Optional path to a user-supplied faster-whisper executable. Overrides
+	// the binary installed via the Dependencies downloader.
 	FasterWhisperPath string `json:"fasterWhisperPath"`
 
 	// Discord authentication token for media export
@@ -210,6 +229,10 @@ func defaultConfig() Config {
 		AutotagProvider:        "cpu",
 		AutotagPerformance:     "balanced",
 		OnnxFileTimeoutSeconds: 120,
+		TranscriptionProvider:  DefaultTranscriptionProvider,
+		TranscriptionModel:     DefaultTranscriptionModel,
+		TranscriptionLanguage:  "en",
+		TranscriptionVADFilter: true,
 		OllamaBaseURL:          "http://localhost:11434",
 		OllamaModel:            "llama3.2-vision",
 		DescribePrompt:         "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
@@ -439,6 +462,17 @@ func Load() (Config, string, error) {
 		c.OnnxFileTimeoutSeconds = def.OnnxFileTimeoutSeconds
 		needsSave = true
 	}
+	// Transcription migration: configs predating the section get the full
+	// default block (including VADFilter=true). An empty provider is the
+	// "section unset" signal, so an explicitly saved VADFilter=false with a
+	// provider present is preserved.
+	if c.TranscriptionProvider == "" {
+		c.TranscriptionProvider = def.TranscriptionProvider
+		c.TranscriptionModel = def.TranscriptionModel
+		c.TranscriptionLanguage = def.TranscriptionLanguage
+		c.TranscriptionVADFilter = def.TranscriptionVADFilter
+		needsSave = true
+	}
 	if c.OnnxTagger.GeneralThreshold == 0 {
 		c.OnnxTagger.GeneralThreshold = def.OnnxTagger.GeneralThreshold
 	}
@@ -595,6 +629,25 @@ func applyEnvOverrides(c *Config) {
 			c.InferenceConcurrency.LlamaCpp = n
 		} else {
 			log.Printf("Warning: LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY=%q is not a positive integer; ignored", v)
+		}
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_PROVIDER"); v != "" {
+		c.TranscriptionProvider = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_MODEL"); v != "" {
+		c.TranscriptionModel = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_LANGUAGE"); v != "" {
+		c.TranscriptionLanguage = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_VAD"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1", "yes", "on":
+			c.TranscriptionVADFilter = true
+		case "false", "0", "no", "off":
+			c.TranscriptionVADFilter = false
+		default:
+			log.Printf("Warning: LOWKEY_TRANSCRIPTION_VAD=%q is not a boolean; ignored", v)
 		}
 	}
 	if v := os.Getenv("LOWKEY_JWT_SECRET"); v != "" {

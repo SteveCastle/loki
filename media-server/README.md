@@ -478,7 +478,11 @@ Most settings can also be set via environment variables (see the Docker section 
     "characterThreshold": 0.85
   },
 
-  "fasterWhisperPath": "C:\\path\\to\\faster-whisper-xxl.exe",
+  "transcriptionProvider": "whisper-cli",
+  "transcriptionModel": "large-v2",
+  "transcriptionLanguage": "en",
+  "transcriptionVadFilter": true,
+  "fasterWhisperPath": "C:\\optional\\override\\faster-whisper-xxl.exe",
 
   "storageRoots": [
     { "type": "local", "path": "C:\\Media\\Photos", "label": "Photos" },

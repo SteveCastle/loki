@@ -1355,18 +1355,84 @@
             </div>
 
             <div class="config-card config-card--pink">
-              <div class="section-title">🎙️ Whisper</div>
+              <div class="section-title">🎙️ Transcription</div>
               <div class="fields">
                 <div class="field">
-                  <label class="label">Faster-Whisper executable</label>
-                  <input
-                    disabled
-                    id="faster-whisper-path"
-                    class="input"
-                    type="text"
-                    value="{{.Config.FasterWhisperPath}}"
-                  />
+                  <label class="label">Provider</label>
+                  <select id="transcription-provider" class="input">
+                    {{range .TranscriptionProviders}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.TranscriptionProvider}}selected{{end}}
+                    >{{.DisplayName}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    How speech-to-text runs. Additional providers (HTTP
+                    services, other engines) can plug in here later.
+                  </small>
                 </div>
+                <div class="field">
+                  <label class="label">Model</label>
+                  <select id="transcription-model" class="input">
+                    {{range .TranscriptionModels}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.TranscriptionModel}}selected{{end}}
+                    >{{.DisplayName}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    The speech model is downloaded automatically on first use.
+                    Install the transcription engine itself from the
+                    Dependencies tab.
+                  </small>
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label class="label">Language</label>
+                    <input
+                      id="transcription-language"
+                      class="input"
+                      type="text"
+                      value="{{.Config.TranscriptionLanguage}}"
+                      placeholder="auto-detect"
+                    />
+                    <small class="hint">
+                      ISO code like <code>en</code>, <code>ja</code>,
+                      <code>de</code>. Leave empty to auto-detect per file.
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">Voice activity detection</label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer">
+                      <input
+                        id="transcription-vad"
+                        type="checkbox"
+                        {{if .Config.TranscriptionVADFilter}}checked{{end}}
+                      />
+                      <small class="hint">Skip non-speech (reduces hallucinations)</small>
+                    </label>
+                  </div>
+                </div>
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Advanced (custom binary)</summary>
+                  <div class="field" style="margin-top:6px">
+                    <label class="label">Faster-Whisper executable (override)</label>
+                    <input
+                      disabled
+                      id="faster-whisper-path"
+                      class="input"
+                      type="text"
+                      value="{{.Config.FasterWhisperPath}}"
+                    />
+                    <small class="hint">
+                      Bring your own build (e.g. Faster-Whisper-XXL with CUDA)
+                      by setting <code>fasterWhisperPath</code> in config.json;
+                      otherwise the binary from the Dependencies tab is used.
+                    </small>
+                  </div>
+                </details>
               </div>
             </div>
 
@@ -1773,8 +1839,12 @@
 
       function renderDependencies(items) {
         const root = document.getElementById('dependencies-content');
-        const groups = { bundled: [], optional: [], model: [] };
+        const groups = { bundled: [], optional: [], model: [], tool: [] };
         items.forEach((it) => { if (groups[it.category]) groups[it.category].push(it); });
+
+        // Tools (e.g. Faster-Whisper) download through the same machinery as
+        // models, so they share the AI-features section and card renderer.
+        const downloadable = groups.model.concat(groups.tool);
 
         root.innerHTML = `
           <div class="dep-section">
@@ -1788,9 +1858,9 @@
             <div class="dep-cards">${groups.optional.map(optionalCard).join('')}</div>
           </div>
           <div class="dep-section">
-            <h3>AI models</h3>
-            <p class="dep-section-desc">Downloaded on demand. Checksummed and resumable.</p>
-            <div class="dep-cards">${groups.model.map(modelCard).join('')}</div>
+            <h3>AI features</h3>
+            <p class="dep-section-desc">Models and tools downloaded on demand. Checksummed and resumable. Each unlocks a feature.</p>
+            <div class="dep-cards">${downloadable.map(modelCard).join('')}</div>
           </div>
         `;
         wireDepActions();
@@ -1847,9 +1917,12 @@
         const path = it.path
           ? `<div class="dep-path" title="${escDep(it.path)}"><code>${escDep(it.path)}</code></div>`
           : '';
+        const title = it.feature
+          ? `${escDep(it.feature)} <span class="dep-version">${escDep(it.name)}</span>`
+          : escDep(it.name);
         return `<div class="dep-card" data-cat="model" data-id="${escDep(it.id)}">
           <div class="dep-row">
-            <strong>${escDep(it.name)}</strong>
+            <strong>${title}</strong>
             ${stateBadge(it.state)}
             ${it.size_bytes ? `<span class="dep-version">${escDep(fmtBytes(it.size_bytes))}</span>` : ''}
             <div class="dep-actions">${actions}</div>
@@ -2026,6 +2099,17 @@
             document.getElementById('onnx-file-timeout').value || '0',
             10
           ),
+          transcriptionProvider: document
+            .getElementById('transcription-provider')
+            .value.trim(),
+          transcriptionModel: document
+            .getElementById('transcription-model')
+            .value.trim(),
+          transcriptionLanguage: document
+            .getElementById('transcription-language')
+            .value.trim(),
+          transcriptionVadFilter: document.getElementById('transcription-vad')
+            .checked,
           fasterWhisperPath: document
             .getElementById('faster-whisper-path')
             .value.trim(),

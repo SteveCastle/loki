@@ -40,6 +40,7 @@ import (
 	"github.com/stevecastle/shrike/storage"
 	"github.com/stevecastle/shrike/stream"
 	"github.com/stevecastle/shrike/tasks"
+	"github.com/stevecastle/shrike/transcribe"
 )
 
 // -----------------------------------------------------------------------------
@@ -1205,42 +1206,62 @@ func formatBytes(bytes int64) string {
 // -----------------------------------------------------------------------------
 
 type configTemplateData struct {
-	Config       appconfig.Config
-	ConfigPath   string
-	ActiveDBPath string
+	Config                 appconfig.Config
+	ConfigPath             string
+	ActiveDBPath           string
+	EmbeddingModels        []tasks.EmbedModel
+	TaggerModels           []tasks.TaggerModel
+	DirectMLInstalled      bool
+	TranscriptionProviders []transcribe.Provider
+	TranscriptionModels    []transcribe.ModelChoice
 }
 
 type updateConfigRequest struct {
-	DBPath                 string  `json:"dbPath"`
-	DownloadPath           string  `json:"downloadPath"`
-	OllamaBaseURL          string  `json:"ollamaBaseUrl"`
-	OllamaModel            string  `json:"ollamaModel"`
-	DescribePrompt         string  `json:"describePrompt"`
-	AutotagPrompt          string  `json:"autotagPrompt"`
-	InferenceProvider      string  `json:"inferenceProvider"`
-	RunPodEndpoint         string  `json:"runpodEndpoint"`
-	RunPodAPIKey           string  `json:"runpodApiKey"`
-	LMStudioBaseURL        string  `json:"lmstudioBaseUrl"`
-	LMStudioModel          string  `json:"lmstudioModel"`
-	LMStudioAPIKey         string  `json:"lmstudioApiKey"`
-	LlamaCppBaseURL        string  `json:"llamacppBaseUrl"`
-	LlamaCppModel          string  `json:"llamacppModel"`
-	LlamaCppAPIKey         string  `json:"llamacppApiKey"`
-	InferenceConcurrency   struct {
+	DBPath               string `json:"dbPath"`
+	DownloadPath         string `json:"downloadPath"`
+	OllamaBaseURL        string `json:"ollamaBaseUrl"`
+	OllamaModel          string `json:"ollamaModel"`
+	DescribePrompt       string `json:"describePrompt"`
+	AutotagPrompt        string `json:"autotagPrompt"`
+	InferenceProvider    string `json:"inferenceProvider"`
+	RunPodEndpoint       string `json:"runpodEndpoint"`
+	RunPodAPIKey         string `json:"runpodApiKey"`
+	LMStudioBaseURL      string `json:"lmstudioBaseUrl"`
+	LMStudioModel        string `json:"lmstudioModel"`
+	LMStudioAPIKey       string `json:"lmstudioApiKey"`
+	LlamaCppBaseURL      string `json:"llamacppBaseUrl"`
+	LlamaCppModel        string `json:"llamacppModel"`
+	LlamaCppAPIKey       string `json:"llamacppApiKey"`
+	InferenceConcurrency struct {
 		Ollama   int `json:"ollama"`
 		RunPod   int `json:"runpod"`
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
-	OnnxModelPath          string  `json:"onnxModelPath"`
-	OnnxLabelsPath         string  `json:"onnxLabelsPath"`
-	OnnxConfigPath         string  `json:"onnxConfigPath"`
-	OnnxORTSharedLibPath   string  `json:"onnxOrtSharedLibPath"`
-	OnnxGeneralThreshold   float64 `json:"onnxGeneralThreshold"`
-	OnnxCharacterThreshold float64 `json:"onnxCharacterThreshold"`
-	FasterWhisperPath      string                  `json:"fasterWhisperPath"`
-	DiscordToken           string                  `json:"discordToken"`
-	Roots                  []appconfig.StorageRoot `json:"roots"`
+	OnnxModelPath             string                  `json:"onnxModelPath"`
+	OnnxLabelsPath            string                  `json:"onnxLabelsPath"`
+	OnnxConfigPath            string                  `json:"onnxConfigPath"`
+	OnnxORTSharedLibPath      string                  `json:"onnxOrtSharedLibPath"`
+	OnnxGeneralThreshold      float64                 `json:"onnxGeneralThreshold"`
+	OnnxCharacterThreshold    float64                 `json:"onnxCharacterThreshold"`
+	EmbeddingModel            string                  `json:"embeddingModel"`
+	EmbeddingProvider         string                  `json:"embeddingProvider"`
+	EmbeddingPerformance      string                  `json:"embeddingPerformance"`
+	EmbeddingWorkers          int                     `json:"embeddingWorkers"`
+	EmbeddingThreadsPerWorker int                     `json:"embeddingThreadsPerWorker"`
+	AutotagModel              string                  `json:"autotagModel"`
+	AutotagProvider           string                  `json:"autotagProvider"`
+	AutotagPerformance        string                  `json:"autotagPerformance"`
+	AutotagWorkers            int                     `json:"autotagWorkers"`
+	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
+	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
+	TranscriptionProvider     string                  `json:"transcriptionProvider"`
+	TranscriptionModel        string                  `json:"transcriptionModel"`
+	TranscriptionLanguage     *string                 `json:"transcriptionLanguage"`
+	TranscriptionVADFilter    *bool                   `json:"transcriptionVadFilter"`
+	FasterWhisperPath         string                  `json:"fasterWhisperPath"`
+	DiscordToken              string                  `json:"discordToken"`
+	Roots                     []appconfig.StorageRoot `json:"roots"`
 }
 
 // -----------------------------------------------------------------------------
@@ -1383,9 +1404,16 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			currentConfig = cfg
 			data := configTemplateData{
-				Config:       cfg,
-				ConfigPath:   cfgPath,
-				ActiveDBPath: cfg.DBPath,
+				Config:                 cfg,
+				ConfigPath:             cfgPath,
+				ActiveDBPath:           cfg.DBPath,
+				EmbeddingModels:        tasks.EmbedModelList(),
+				TaggerModels:           tasks.TaggerModelList(),
+				DirectMLInstalled:      tasks.DirectMLRuntimeInstalled(),
+				TranscriptionProviders: transcribe.Providers(),
+			}
+			if p, err := transcribe.Active(); err == nil {
+				data.TranscriptionModels = p.Models()
 			}
 			if err := renderer.Templates().ExecuteTemplate(w, "config", data); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1404,6 +1432,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 
 			oldCfg := currentConfig
 			oldDBPath := currentConfig.DBPath
+			oldEmbeddingModel := currentConfig.EmbeddingModel
 			newCfg := currentConfig
 			newCfg.DBPath = req.DBPath
 			if strings.TrimSpace(req.DownloadPath) != "" {
@@ -1477,6 +1506,56 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.OnnxCharacterThreshold > 0 {
 				newCfg.OnnxTagger.CharacterThreshold = req.OnnxCharacterThreshold
 			}
+			if v := strings.TrimSpace(req.EmbeddingModel); v != "" {
+				newCfg.EmbeddingModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.EmbeddingProvider)); v != "" {
+				newCfg.EmbeddingProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.EmbeddingPerformance)); v != "" {
+				newCfg.EmbeddingPerformance = v
+			}
+			if req.EmbeddingWorkers > 0 {
+				newCfg.EmbeddingWorkers = req.EmbeddingWorkers
+			}
+			if req.EmbeddingThreadsPerWorker > 0 {
+				newCfg.EmbeddingThreadsPerWorker = req.EmbeddingThreadsPerWorker
+			}
+			if v := strings.TrimSpace(req.AutotagModel); v != "" {
+				newCfg.AutotagModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.AutotagProvider)); v != "" {
+				newCfg.AutotagProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.AutotagPerformance)); v != "" {
+				newCfg.AutotagPerformance = v
+			}
+			if req.AutotagWorkers > 0 {
+				newCfg.AutotagWorkers = req.AutotagWorkers
+			}
+			if req.AutotagThreadsPerWorker > 0 {
+				newCfg.AutotagThreadsPerWorker = req.AutotagThreadsPerWorker
+			}
+			if req.OnnxFileTimeoutSeconds != 0 {
+				// non-zero so a partial POST doesn't clobber it; negative = disabled.
+				newCfg.OnnxFileTimeoutSeconds = req.OnnxFileTimeoutSeconds
+			}
+			// Transcription: provider/model use the protective non-empty
+			// pattern; language and VAD are pointers so an explicit empty
+			// language ("auto-detect") or unchecked VAD box persists, while
+			// partial POSTs that omit the fields leave them alone.
+			if v := strings.ToLower(strings.TrimSpace(req.TranscriptionProvider)); v != "" {
+				newCfg.TranscriptionProvider = v
+			}
+			if v := strings.TrimSpace(req.TranscriptionModel); v != "" {
+				newCfg.TranscriptionModel = v
+			}
+			if req.TranscriptionLanguage != nil {
+				newCfg.TranscriptionLanguage = strings.TrimSpace(*req.TranscriptionLanguage)
+			}
+			if req.TranscriptionVADFilter != nil {
+				newCfg.TranscriptionVADFilter = *req.TranscriptionVADFilter
+			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
 			}
@@ -1511,6 +1590,22 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				log.Println("Auth session cleared due to database switch")
 			}
 			currentConfig = newCfg
+
+			// If the active embedding model changed, rebuild the ANN index for
+			// the new model in the background. Vectors are model-keyed in the DB
+			// (no re-inference needed); this just reloads the stored vectors for
+			// the now-active model. Done off the request goroutine because a
+			// large library can take a while to load.
+			if newCfg.EmbeddingModel != oldEmbeddingModel {
+				go func(db *sql.DB) {
+					model, n, err := tasks.RebuildActiveIndex(db, nil)
+					if err != nil {
+						log.Printf("embedding index rebuild after model switch failed (model %s): %v", model, err)
+						return
+					}
+					log.Printf("embedding index rebuilt after model switch: %d vectors (model %s)", n, model)
+				}(deps.DB)
+			}
 
 			// Rebuild storage backends from new config
 			newReg, regErrs := storage.BuildRegistry(newCfg.Roots)
