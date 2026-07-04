@@ -42,6 +42,16 @@ func init() {
 		summary: "Raw escape hatch — call any server endpoint with auth attached",
 		run:     cmdAPI,
 	})
+	register(command{
+		group: "whoami", summary: "Who the current token authenticates as (GET /auth/status)",
+		run: func(a *App, args []string) int {
+			var out any
+			if err := a.Client.DoJSON("GET", "/auth/status", nil, &out); err != nil {
+				return a.Fail(err)
+			}
+			return a.PrintJSON(out)
+		},
+	})
 }
 
 // readBodyArg resolves --body values: literal JSON, @file, or - for stdin.

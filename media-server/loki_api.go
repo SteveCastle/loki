@@ -846,8 +846,10 @@ type assignmentRequest struct {
 }
 
 type deleteAssignmentRequest struct {
-	MediaPath string `json:"mediaPath"`
-	Tag       struct {
+	// MediaPaths (bulk) takes precedence over MediaPath when non-empty.
+	MediaPaths []string `json:"mediaPaths"`
+	MediaPath  string   `json:"mediaPath"`
+	Tag        struct {
 		TagLabel  string  `json:"tag_label"`
 		TimeStamp float64 `json:"time_stamp"`
 	} `json:"tag"`
@@ -1361,16 +1363,22 @@ func lokiDeleteAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		tagLabel := req.Tag.TagLabel
 		timeStamp := req.Tag.TimeStamp
-		if timeStamp != 0 {
-			// Delete specific timestamped assignment
-			deps.DB.Exec(`DELETE FROM media_tag_by_category
-				WHERE media_path = ? AND tag_label = ? AND time_stamp = ?`,
-				req.MediaPath, tagLabel, timeStamp)
-		} else {
-			// Delete all assignments for this tag
-			deps.DB.Exec(`DELETE FROM media_tag_by_category
-				WHERE media_path = ? AND tag_label = ?`,
-				req.MediaPath, tagLabel)
+		paths := req.MediaPaths
+		if len(paths) == 0 {
+			paths = []string{req.MediaPath}
+		}
+		for _, p := range paths {
+			if timeStamp != 0 {
+				// Delete specific timestamped assignment
+				deps.DB.Exec(`DELETE FROM media_tag_by_category
+					WHERE media_path = ? AND tag_label = ? AND time_stamp = ?`,
+					p, tagLabel, timeStamp)
+			} else {
+				// Delete all assignments for this tag
+				deps.DB.Exec(`DELETE FROM media_tag_by_category
+					WHERE media_path = ? AND tag_label = ?`,
+					p, tagLabel)
+			}
 		}
 		// Removing the path's last tag drops it from the swipe pool.
 		media.InvalidateRandomSampleCache()

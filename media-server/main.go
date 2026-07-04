@@ -303,6 +303,10 @@ func homeHandler(deps *Dependencies) http.HandlerFunc {
 				http.Error(w, "bad json", http.StatusBadRequest)
 				return
 			}
+			if len(c.Arguments) == 0 {
+				http.Error(w, "arguments required: last element is the task input", http.StatusBadRequest)
+				return
+			}
 			workflow := jobqueue.Workflow{
 				Tasks: []jobqueue.WorkflowTask{
 					{
@@ -2022,11 +2026,10 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			return
 		}
 
-		// Check Authorization header first (Bearer token)
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if claims, err := deps.Auth.VerifyToken(tokenString); err == nil {
+		// Check header credentials first (Authorization Bearer JWT or lk_
+		// API key, or the X-API-Key header)
+		if tokenString := requestAuthToken(r); tokenString != "" {
+			if claims, err := verifyCredential(deps, tokenString); err == nil {
 				// Check if user setup is required (logged in as default admin)
 				if claims.Username == auth.DefaultAdminUsername {
 					setupRequired, _ := deps.Auth.IsSetupRequired()
@@ -2215,11 +2218,10 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Check Authorization header first (Bearer token)
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if claims, err := deps.Auth.VerifyToken(tokenString); err == nil {
+		// Check header credentials first (Authorization Bearer JWT or lk_
+		// API key, or the X-API-Key header)
+		if tokenString := requestAuthToken(r); tokenString != "" {
+			if claims, err := verifyCredential(deps, tokenString); err == nil {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"loggedIn": true,
@@ -2415,12 +2417,24 @@ func main() {
 	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
+	// Embeddings index + library data API (index_api.go / library_api.go)
+	mux.HandleFunc("/api/index/status", renderer.ApplyMiddlewares(indexStatusHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/index/models", renderer.ApplyMiddlewares(indexModelsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/index/rebuild", renderer.ApplyMiddlewares(indexRebuildHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/index/missing", renderer.ApplyMiddlewares(indexMissingHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/embeddings", renderer.ApplyMiddlewares(embeddingsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/embeddings/prune", renderer.ApplyMiddlewares(embeddingsPruneHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/transcript", renderer.ApplyMiddlewares(mediaTranscriptHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/rating", renderer.ApplyMiddlewares(mediaRatingHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/list", renderer.ApplyMiddlewares(tagsListHandler(deps), renderer.RoleAdmin))
+
 	// Auth routes
 	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/login", renderer.ApplyMiddlewares(loginAPIHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/logout", renderer.ApplyMiddlewares(logoutHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps), renderer.RolePublic))
+	mux.HandleFunc("/auth/keys", renderer.ApplyMiddlewares(apiKeysHandler(deps), renderer.RoleAdmin))
 
 	// ---- Loki Web Client API ----
 	mux.HandleFunc("/api/media", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {

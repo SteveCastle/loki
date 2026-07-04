@@ -35,7 +35,20 @@ lokictl login --password <pw>             # default --username admin
 # token is stored at <UserConfigDir>/lokictl/config.json (0600)
 ```
 
-A `401` on any command means: run `lokictl login` again.
+For automation, prefer a long-lived **API key** over the login JWT. Keys are
+`lk_`-prefixed, tied to a user, revocable, and accepted anywhere a token is
+(`--token`, `LOKICTL_TOKEN`, config file, `Authorization: Bearer`, or an
+`X-API-Key` header). Create one in the web UI (Config → API Keys) or:
+
+```sh
+lokictl login --password <pw>             # bootstrap once
+lokictl key create --name ci --save       # mint a key and store it as the CLI token
+lokictl key list                          # id, owner, prefix, created, last used
+lokictl key revoke --id 3
+```
+
+A `401` on any command means: run `lokictl login` again (or the API key was
+revoked — create a new one).
 
 ## Command reference
 
@@ -46,16 +59,19 @@ Run `lokictl help` for the always-current list. Highlights:
 | Discovery | `health`, `stats`, `task list`, `task show <id>`, `lokictl help` |
 | Jobs | `job run <task> [args...] [--field k=v] [--wait] [--follow] [--timeout D]`, `job list [--state S]`, `job get/wait/logs/cancel/copy/remove <id>`, `job clear --yes` |
 | Workflows | `workflow list/get/create/update/delete/run`, `workflow run-adhoc --dag FILE\|-` |
-| Library queries | `media query [--tag ... --visual ... --similar ...]`, `media search/similar/visual/metadata/tags/describe/delete` |
+| Library queries | `media query [--tag ... --visual ... --similar ...]`, `media search/similar/visual/image-search/metadata/tags/delete` |
+| Media data | `media describe <path> (--text D\|--clear)`, `media transcript <path> [--text T\|--clear]`, `media rate <path> [--elo E --views N --wins N --losses N]`, `media thumbs <path> [--regenerate]`, `media generate <path> --type T [--wait]` |
+| Embeddings index | `index status/models/rebuild`, `index missing [--model M]`, `index get <path> [--vector]`, `index delete <path> --yes`, `index prune --yes`, `index embed [args...] [--wait]` |
 | Raw SQL (read-only) | `db query "SELECT ..." [--arg V]`, `db tables`, `db schema [table]` |
-| Taxonomy | `taxonomy [--category C]`, `tag create/delete/rename/move/assign/unassign`, `category create/delete/rename` |
+| Taxonomy | `taxonomy [--category C]`, `tag create/delete/rename/move/assign/unassign/assign-bulk/unassign-bulk`, `tag list/count/weight/has/timestamp/assignment-weight`, `category create/delete/rename/count` |
 | Dependencies | `deps status`, `deps download <model-id> --wait`, `deps verify/delete` |
-| Server admin | `config get`, `config set --json '{...}'`, `fs list/scan`, `upload <file>...` |
+| Server admin | `config get`, `config set --json '{...}'`, `fs list/scan`, `upload <file>...`, `whoami` |
+| API keys | `key create --name N [--username U] [--save]`, `key list`, `key revoke --id N` |
 | Escape hatch | `api <METHOD> <path> [--body JSON\|@file\|-]` — any endpoint, auth attached |
 
 Destructive commands (`job clear`, `media delete`, `tag delete`,
-`category delete`, `workflow delete`, `deps delete`) refuse to run without
-`--yes` (exit 2).
+`tag unassign-bulk`, `category delete`, `workflow delete`, `deps delete`,
+`index delete`, `index prune`) refuse to run without `--yes` (exit 2).
 
 ## Agent cookbook
 
@@ -84,12 +100,41 @@ lokictl db query "SELECT hash, COUNT(*) n, GROUP_CONCAT(path, CHAR(10)) paths FR
 lokictl db query "SELECT tag_label, COUNT(*) n FROM media_tag_by_category GROUP BY tag_label ORDER BY n DESC" --limit 25
 ```
 
-**Search the library three ways:**
+**Search the library four ways:**
 
 ```sh
 lokictl media query --tag sunset --exclude-tag blurry --mode AND
 lokictl media visual "a red car in the snow" --limit 20      # text -> image embeddings
-lokictl media similar "C:/pics/x.jpg"                        # image -> image
+lokictl media similar "C:/pics/x.jpg"                        # image -> image (library item)
+lokictl media image-search "C:/downloads/some.jpg"           # image -> image (any local file)
+```
+
+**Keep the embedding index healthy:**
+
+```sh
+lokictl index status                       # coverage, orphans, per-model vector counts
+lokictl index missing --limit 0            # how many items still need embeddings
+lokictl index embed --query "SELECT path FROM media" --wait  # or: index embed <paths...>
+lokictl index prune --yes                  # drop vectors for deleted media
+lokictl index rebuild --timeout 10m        # rebuild ANN index (also runs at startup)
+```
+
+**Curate tags in bulk** (pipe any path list — one per line — into `--stdin`):
+
+```sh
+lokictl tag list -o table                                    # every tag with usage counts
+lokictl db query "SELECT path FROM media WHERE path LIKE '%/vacation/%'" -q \
+  | jq -r '.rows[][]' | lokictl tag assign-bulk vacation --category trips --stdin
+lokictl tag unassign-bulk blurry --stdin --yes < paths.txt
+```
+
+**Write metadata directly, or have AI generate it:**
+
+```sh
+lokictl media describe "C:/pics/x.jpg" --text "Two dogs on a beach"
+lokictl media transcript "C:/vids/talk.mp4"                  # read
+lokictl media generate "C:/vids/talk.mp4" --type transcript --wait
+lokictl media rate "C:/pics/x.jpg" --elo 1600
 ```
 
 **Run a saved workflow and wait for every job it spawns:**

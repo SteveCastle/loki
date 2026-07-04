@@ -62,23 +62,32 @@ The server is a single statically-linked Go binary. SQLite uses `modernc.org/sql
 
 ## Docker Quick Start
 
-The fastest way to run the server is with Docker. The compose stack handles persistence, sane defaults, and an optional MinIO bucket for testing S3 workflows.
+The fastest way to run the server is with Docker. The compose stack handles persistence, sane defaults, and a MinIO instance wired in as the default S3 storage root so everything works out of the box.
+
+> **Build context note:** the image build needs the **repo root** as its context (the React SPA source lives there), not `media-server/`. The compose file handles this for you; for manual builds pass `-f media-server/Dockerfile` from the repo root.
 
 ### 1. Build and run
 
-```bash
-# Using docker compose (recommended)
-docker compose up -d
+**With docker compose (recommended)** — from the `media-server/` directory:
 
-# Or build and run manually
-docker build -t lowkey-media-server .
+```bash
+cd media-server
+docker compose up -d --build
+```
+
+Open **http://localhost:18090** (set `LOWKEY_PORT` to change the host port), log in as `admin` / `admin`, and follow the setup wizard to create your real account.
+
+**Or build and run manually** — from the **repo root**:
+
+```bash
+docker build -f media-server/Dockerfile -t lowkey-media-server .
 docker run -d --name lowkey-media-server \
   -p 8090:8090 \
   -v lowkey-data:/data \
   lowkey-media-server
 ```
 
-Open **http://localhost:8090**, log in as `admin` / `admin`, and follow the setup wizard to create your real account.
+Then open **http://localhost:8090**. The manual container has no storage roots until you configure some (next section); the compose stack comes with MinIO preconfigured.
 
 ### 2. Mount your media
 
@@ -102,7 +111,7 @@ All configuration can be set via environment variables — no config file needed
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOWKEY_DB_PATH` | `/data/db/media.db` | SQLite database path |
-| `LOWKEY_DOWNLOAD_PATH` | `/data/media` | Download directory (deprecated — prefer a default root) |
+| `LOWKEY_DOWNLOAD_PATH` | `/data/downloads` | Download directory (deprecated — prefer a default root) |
 | `LOWKEY_OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
 | `LOWKEY_OLLAMA_MODEL` | `llama3.2-vision` | Vision model for descriptions and tagging |
 | `LOWKEY_JWT_SECRET` | auto-generated and persisted | JWT signing secret. Override to share sessions across replicas. |
@@ -152,31 +161,28 @@ docker run -d --name lowkey-media-server \
 
 > When `LOWKEY_ROOTS` is set, it takes priority over any `LOWKEY_ROOT_<N>` variables. Either way, environment roots replace roots from the config file.
 
-### 4. Testing with MinIO (S3-compatible storage)
+### 4. MinIO (S3-compatible storage)
 
-The compose stack includes a MinIO instance for testing S3 workflows locally.
-
-```bash
-make up-minio
-```
-
-This gives you:
+The compose stack includes a MinIO instance wired in as the server's default storage root, so `docker compose up` gives you working S3 storage with nothing to configure:
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
-| Media Server | http://localhost:8090 | `admin` / `admin` on first run; reset via setup wizard |
-| MinIO Console | http://localhost:9001 | `minioadmin` / `minioadmin` |
-| MinIO S3 API | http://localhost:9000 | same |
+| Media Server | http://localhost:18090 | `admin` / `admin` on first run; replaced via setup wizard |
+| MinIO Console | http://localhost:19001 | `admin` / `adminadmin` |
+| MinIO S3 API | http://localhost:19000 | same |
 
-The setup container automatically creates `media` and `media-thumbnails` buckets. Upload files through the MinIO console at http://localhost:9001 and they'll appear in the media server's file browser.
+The one-shot `minio-setup` container creates the `media` and `media-thumbnails` buckets automatically. Upload files through the MinIO console and they'll appear in the media server's file browser.
 
-To stop everything: `make down`
+To use real S3 / Cloudflare R2 / local mounts instead, override `LOWKEY_ROOTS` (see above).
+
+Stop everything with `make down` (or `docker compose down`; add `-v` to also delete the data volumes).
 
 ### 5. Makefile shortcuts
 
+Run these from the `media-server/` directory (requires `make`; on Windows use the underlying `docker compose` / `docker` commands shown above):
+
 ```bash
-make up               # Build and start all services (compose)
-make up-minio         # Start with MinIO wired as S3 storage root
+make up               # Build and start all services (media server + MinIO)
 make down             # Stop all services
 make docker-build     # Build the image only
 make docker-run       # Run standalone container (detached)
@@ -192,13 +198,14 @@ All server state lives in the `/data` volume:
 
 ```
 /data/
-  db/media.db        # SQLite database (jobs, workflows, users, media, tags)
-  media/             # Downloaded media (when no S3 / explicit roots configured)
-  config/            # Auto-generated config and JWT secret
-  models/            # On-demand AI model files (downloaded via the wizard)
+  db/media.db                    # SQLite database (jobs, workflows, users, media, tags)
+  downloads/                     # Downloaded media (when no S3 / explicit roots configured)
+  lowkey-media-viewer/
+    config.json                  # Auto-generated config incl. the JWT secret
+    models/                      # On-demand AI model files (downloaded via the wizard)
 ```
 
-The named volume `lowkey-data` survives container restarts and rebuilds.
+The named volumes (`media-server_lowkey-data`, `media-server_minio-data`) survive container restarts and rebuilds.
 
 ---
 

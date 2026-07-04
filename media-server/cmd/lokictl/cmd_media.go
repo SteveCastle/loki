@@ -41,8 +41,18 @@ func init() {
 	register(command{group: "media", name: "tags", args: "<path>",
 		summary: "Tags on one media item (POST /api/media/tags)",
 		run:     mediaPathCommand("/api/media/tags")})
-	register(command{group: "media", name: "describe", args: "<path> --text D",
-		summary: "Set a media item's description (POST /api/media/description)", run: cmdMediaDescribe})
+	register(command{group: "media", name: "describe", args: "<path> (--text D | --clear)",
+		summary: "Set or clear a media item's description (POST /api/media/description)", run: cmdMediaDescribe})
+	register(command{group: "media", name: "transcript", args: "<path> [--text T | --clear]",
+		summary: "Read, set, or clear a media item's transcript (POST /api/media/transcript)", run: cmdMediaTranscript})
+	register(command{group: "media", name: "rate", args: "<path> [--elo E] [--views N] [--wins N] [--losses N]",
+		summary: "Read or set rating fields; no flags reads (POST /api/media/rating)", run: cmdMediaRate})
+	register(command{group: "media", name: "thumbs", args: "<path> [--regenerate] [--cache C] [--timestamp S]",
+		summary: "List thumbnails (POST /api/thumbnails) or regenerate one (POST /api/thumbnails/regenerate)", run: cmdMediaThumbs})
+	register(command{group: "media", name: "image-search", args: "<image-file>",
+		summary: "Reverse image search with a local file (POST /api/media/search/image)", run: cmdMediaImageSearch})
+	register(command{group: "media", name: "generate", args: "<path> --type T [--field k=v]... [--wait] [--follow] [--timeout D]",
+		summary: `AI metadata generation — runs the "metadata" job (type: description, transcript, hash, ...)`, run: cmdMediaGenerate})
 	register(command{group: "media", name: "delete", args: "<path> --yes",
 		summary: "Delete a media item (POST /api/media/delete)", run: cmdMediaDelete})
 }
@@ -178,21 +188,181 @@ func mediaPathCommand(urlPath string) func(a *App, args []string) int {
 func cmdMediaDescribe(a *App, args []string) int {
 	fs := flag.NewFlagSet("media describe", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	text := fs.String("text", "", "the description to set (required)")
+	text := fs.String("text", "", "the description to set")
+	clear := fs.Bool("clear", false, "clear the description")
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return a.Usage(fs, "usage: lokictl media describe <path> --text D")
+		return a.Usage(fs, "usage: lokictl media describe <path> (--text D | --clear)")
 	}
 	path := args[0]
 	if err := fs.Parse(args[1:]); err != nil {
 		return a.Usage(fs, err.Error())
 	}
-	if *text == "" {
-		return a.Usage(fs, "--text is required")
+	if *text == "" && !*clear {
+		return a.Usage(fs, "pass --text D to set or --clear to clear")
+	}
+	if *text != "" && *clear {
+		return a.Usage(fs, "--text and --clear are mutually exclusive")
 	}
 	if err := a.Client.DoJSON("POST", "/api/media/description", map[string]string{"path": path, "description": *text}, nil); err != nil {
 		return a.Fail(err)
 	}
 	return a.PrintJSON(map[string]string{"status": "ok", "path": path})
+}
+
+func cmdMediaTranscript(a *App, args []string) int {
+	fs := flag.NewFlagSet("media transcript", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	text := fs.String("text", "", "the transcript to set")
+	clear := fs.Bool("clear", false, "clear the transcript")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return a.Usage(fs, "usage: lokictl media transcript <path> [--text T | --clear]")
+	}
+	path := args[0]
+	if err := fs.Parse(args[1:]); err != nil {
+		return a.Usage(fs, err.Error())
+	}
+	if *text != "" && *clear {
+		return a.Usage(fs, "--text and --clear are mutually exclusive")
+	}
+
+	// No flags — read the transcript via the metadata endpoint.
+	if *text == "" && !*clear {
+		var meta struct {
+			Transcript *string `json:"transcript"`
+		}
+		if err := a.Client.DoJSON("POST", "/api/media/metadata", map[string]string{"path": path}, &meta); err != nil {
+			return a.Fail(err)
+		}
+		out := map[string]any{"path": path, "transcript": nil}
+		if meta.Transcript != nil {
+			out["transcript"] = *meta.Transcript
+		}
+		return a.PrintJSON(out)
+	}
+
+	if err := a.Client.DoJSON("POST", "/api/media/transcript", map[string]string{"path": path, "transcript": *text}, nil); err != nil {
+		return a.Fail(err)
+	}
+	return a.PrintJSON(map[string]string{"status": "ok", "path": path})
+}
+
+func cmdMediaRate(a *App, args []string) int {
+	fs := flag.NewFlagSet("media rate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	elo := fs.Float64("elo", 0, "set the elo rating")
+	views := fs.Int64("views", 0, "set the view count")
+	wins := fs.Int64("wins", 0, "set the win count")
+	losses := fs.Int64("losses", 0, "set the loss count")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return a.Usage(fs, "usage: lokictl media rate <path> [--elo E] [--views N] [--wins N] [--losses N]")
+	}
+	path := args[0]
+	if err := fs.Parse(args[1:]); err != nil {
+		return a.Usage(fs, err.Error())
+	}
+
+	// Only send fields the user explicitly set — the endpoint reads otherwise.
+	body := map[string]any{"path": path}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "elo":
+			body["elo"] = *elo
+		case "views":
+			body["views"] = *views
+		case "wins":
+			body["wins"] = *wins
+		case "losses":
+			body["losses"] = *losses
+		}
+	})
+	var out any
+	if err := a.Client.DoJSON("POST", "/api/media/rating", body, &out); err != nil {
+		return a.Fail(err)
+	}
+	return a.PrintJSON(out)
+}
+
+func cmdMediaThumbs(a *App, args []string) int {
+	fs := flag.NewFlagSet("media thumbs", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	regenerate := fs.Bool("regenerate", false, "regenerate instead of list")
+	cache := fs.String("cache", "thumbnail_path_600", "which thumbnail: thumbnail_path_100, _600, or _1200")
+	timestamp := fs.Float64("timestamp", 0, "video frame time in seconds")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return a.Usage(fs, "usage: lokictl media thumbs <path> [--regenerate] [--cache C] [--timestamp S]")
+	}
+	path := args[0]
+	if err := fs.Parse(args[1:]); err != nil {
+		return a.Usage(fs, err.Error())
+	}
+
+	if !*regenerate {
+		var out any
+		if err := a.Client.DoJSON("POST", "/api/thumbnails", map[string]string{"path": path}, &out); err != nil {
+			return a.Fail(err)
+		}
+		return a.PrintJSON(out)
+	}
+	var generated any
+	body := map[string]any{"path": path, "cache": *cache, "timeStamp": *timestamp}
+	if err := a.Client.DoJSON("POST", "/api/thumbnails/regenerate", body, &generated); err != nil {
+		return a.Fail(err)
+	}
+	return a.PrintJSON(map[string]any{"status": "ok", "path": path, "thumbnail": generated})
+}
+
+func cmdMediaImageSearch(a *App, args []string) int {
+	if len(args) != 1 {
+		return a.Usage(nil, "usage: lokictl media image-search <image-file>")
+	}
+	f, err := os.Open(args[0])
+	if err != nil {
+		return a.Fail(err)
+	}
+	defer f.Close()
+	resp, err := a.Client.DoRaw("POST", "/api/media/search/image", "application/octet-stream", f)
+	if err != nil {
+		return a.Fail(err)
+	}
+	defer resp.Body.Close()
+	var out any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return a.Fail(fmt.Errorf("server sent invalid JSON: %w", err))
+	}
+	return a.PrintJSON(out)
+}
+
+// cmdMediaGenerate is sugar over "job run metadata": it queues AI metadata
+// generation for one media path.
+func cmdMediaGenerate(a *App, args []string) int {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return a.Usage(nil, "usage: lokictl media generate <path> --type T [--field k=v]... [--wait] [--follow] [--timeout D]")
+	}
+	path := args[0]
+	rest := args[1:]
+
+	// Lift --type into the job's --field type=... argument; everything else
+	// (--field/--wait/--follow/--timeout) passes through to job run.
+	var jobArgs []string
+	genType := ""
+	for i := 0; i < len(rest); i++ {
+		name, val, hasEq := strings.Cut(rest[i], "=")
+		if name == "--type" {
+			if hasEq {
+				genType = val
+			} else if i+1 < len(rest) {
+				i++
+				genType = rest[i]
+			}
+			continue
+		}
+		jobArgs = append(jobArgs, rest[i])
+	}
+	if genType == "" {
+		return a.Usage(nil, "--type is required (e.g. description, transcript, hash)")
+	}
+	jobArgs = append([]string{"metadata", path, "--field", "type=" + genType}, jobArgs...)
+	return cmdJobRun(a, jobArgs)
 }
 
 func cmdMediaDelete(a *App, args []string) int {

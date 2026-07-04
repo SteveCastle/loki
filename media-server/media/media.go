@@ -2020,6 +2020,23 @@ func InitializeSchema(db *sql.DB) error {
 		return fmt.Errorf("failed to create users table: %w", err)
 	}
 
+	// Create api_keys table (long-lived credentials for lokictl / automation;
+	// plaintext keys are never stored, only their SHA-256 hash)
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS api_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			key_hash TEXT UNIQUE NOT NULL,
+			prefix TEXT NOT NULL,
+			created_at INTEGER,
+			last_used_at INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create api_keys table: %w", err)
+	}
+
 	// Index on tag_label for the typed-query hot paths. The composite PK on
 	// (media_path, tag_label, ...) only helps queries that lead with
 	// media_path; a standalone tag_label index is needed so `WHERE

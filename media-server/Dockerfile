@@ -3,7 +3,7 @@
 # =============================================================================
 # Multi-stage:
 #   1. node-builder   — webpack-builds the React SPA into media-server/loki-static
-#   2. go-builder     — builds lowkeymediaserver + the onnxtag CLI with the SPA embedded
+#   2. go-builder     — builds lowkeymediaserver + the onnxtag/embed CLIs with the SPA embedded
 #   3. ort-fetcher    — downloads the ONNX Runtime shared library
 #   4. runtime        — Debian slim with ffmpeg/exiftool/yt-dlp/gallery-dl pre-installed,
 #                       all "bundled" binaries arranged under /opt/lowkey/bin/ so
@@ -70,7 +70,8 @@ COPY --from=node-builder /src/media-server/loki-static ./loki-static
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 RUN go build -ldflags="-s -w" -o /out/lowkeymediaserver . && \
-    go build -ldflags="-s -w" -o /out/onnxtag ./cmd/onnxtag
+    go build -ldflags="-s -w" -o /out/onnxtag ./cmd/onnxtag && \
+    go build -ldflags="-s -w" -o /out/embed ./cmd/embed
 
 # -----------------------------------------------------------------------------
 # Stage 3 — fetch ONNX Runtime shared library (matches bundled-versions.json)
@@ -122,8 +123,9 @@ RUN ln -sf /usr/bin/ffmpeg     /opt/lowkey/bin/ffmpeg && \
 
 COPY --from=go-builder    /out/lowkeymediaserver /opt/lowkey/lowkeymediaserver
 COPY --from=go-builder    /out/onnxtag           /opt/lowkey/bin/onnxtag
+COPY --from=go-builder    /out/embed             /opt/lowkey/bin/embed
 COPY --from=ort-fetcher   /out/onnxruntime.so    /opt/lowkey/bin/onnxruntime.so
-RUN chmod +x /opt/lowkey/lowkeymediaserver /opt/lowkey/bin/onnxtag && \
+RUN chmod +x /opt/lowkey/lowkeymediaserver /opt/lowkey/bin/onnxtag /opt/lowkey/bin/embed && \
     chown -R lowkey:lowkey /opt/lowkey
 
 # ---- Optional tools — installed for the lowkey user via pipx ----

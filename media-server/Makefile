@@ -5,15 +5,15 @@ PORT        ?= 8090
 DATA_VOLUME ?= lowkey-data
 
 .PHONY: docker-build docker-run docker-stop docker-logs docker-clean docker-rebuild \
-       up up-minio down
+       up down
 
-## Build the Docker image
+## Build the Docker image (context is the repo root — the SPA source lives there)
 docker-build:
-	docker build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	docker build -f Dockerfile -t $(IMAGE_NAME):$(IMAGE_TAG) ..
 
 ## Rebuild from scratch (no cache)
 docker-rebuild:
-	docker build --no-cache -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	docker build --no-cache -f Dockerfile -t $(IMAGE_NAME):$(IMAGE_TAG) ..
 
 ## Run the container (detached)
 docker-run:
@@ -45,13 +45,9 @@ docker-clean:
 	-docker rmi $(IMAGE_NAME):$(IMAGE_TAG) 2>/dev/null
 	@echo "Note: data volume '$(DATA_VOLUME)' preserved. Remove with: docker volume rm $(DATA_VOLUME)"
 
-## Compose: build and start all services
+## Compose: build and start all services (media server + MinIO S3 storage)
 up:
 	docker compose up -d --build
-
-## Compose: start with MinIO wired as S3 storage root
-up-minio:
-	docker compose -f docker-compose.yml -f docker-compose.minio.yml up -d --build
 
 ## Compose: stop all services
 down:

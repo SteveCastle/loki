@@ -714,6 +714,49 @@ func TestLoadNewConfig(t *testing.T) {
 	}
 }
 
+// TestLoadNewConfigAppliesEnvOverrides verifies env vars are honored on the
+// very first Load (no config file yet) — a fresh Docker container must come
+// up with LOWKEY_DB_PATH / LOWKEY_ROOTS applied, not pure defaults.
+func TestLoadNewConfigAppliesEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	envDB := filepath.Join(dir, "db", "media.db")
+	t.Setenv("LOWKEY_DB_PATH", envDB)
+	t.Setenv("LOWKEY_ROOTS", `[{"type":"local","path":"/mnt/photos","label":"Photos","default":true}]`)
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DBPath != envDB {
+		t.Errorf("DBPath = %q; want env override %q", c.DBPath, envDB)
+	}
+	if len(c.Roots) != 1 || c.Roots[0].Label != "Photos" {
+		t.Errorf("Roots = %+v; want the single LOWKEY_ROOTS entry", c.Roots)
+	}
+	if _, err := os.Stat(filepath.Dir(envDB)); err != nil {
+		t.Errorf("db directory for env override not created: %v", err)
+	}
+
+	// The file on disk should hold defaults, not env values — env stays env.
+	data, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+	var onDisk Config
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("parse config file: %v", err)
+	}
+	if onDisk.DBPath == envDB {
+		t.Errorf("env override leaked into persisted config: %q", onDisk.DBPath)
+	}
+}
+
 // TestConfigConcurrency tests concurrent access to Get/Set
 func TestConfigConcurrency(t *testing.T) {
 	// Save original and restore after test

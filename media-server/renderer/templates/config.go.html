@@ -1416,6 +1416,77 @@
                 </div>
               </div>
             </div>
+
+            <div class="config-card config-card--pink">
+              <div class="section-title">🔑 API Keys</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Create API Key</label>
+                  <div class="field-row">
+                    <input
+                      id="new-key-name"
+                      class="input"
+                      type="text"
+                      placeholder="Key name (e.g. lokictl)"
+                    />
+                    <select id="new-key-user" class="input"></select>
+                    <button class="btn btn-secondary" id="create-key-btn">
+                      Create
+                    </button>
+                  </div>
+                </div>
+                <div class="field" id="new-key-result" style="display: none">
+                  <label class="label"
+                    >New key — copy it now, it won't be shown again</label
+                  >
+                  <div class="field-row">
+                    <input
+                      id="new-key-value"
+                      class="input"
+                      type="text"
+                      readonly
+                      style="font-family: monospace"
+                    />
+                    <button class="btn btn-secondary" id="copy-key-btn">
+                      Copy
+                    </button>
+                  </div>
+                  <div
+                    style="
+                      color: var(--text-muted);
+                      font-size: 12px;
+                      margin-top: var(--space-2);
+                    "
+                  >
+                    Use it as <code>lokictl --token &lt;key&gt;</code> (or the
+                    <code>LOKICTL_TOKEN</code> env var), an
+                    <code>Authorization: Bearer</code> header, or an
+                    <code>X-API-Key</code> header.
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="label">Existing Keys</label>
+                  <div
+                    class="value"
+                    style="background: transparent; border: none; padding: 0"
+                  >
+                    <ul
+                      id="key-list"
+                      style="
+                        list-style: none;
+                        padding: 0;
+                        margin: 0;
+                        display: flex;
+                        flex-direction: column;
+                        gap: var(--space-2);
+                      "
+                    >
+                      <!-- Keys populated via JS -->
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -2091,6 +2162,14 @@
               `;
               userListEl.appendChild(li);
             });
+            // Also populate the API-key owner dropdown
+            keyUserSelect.innerHTML = '';
+            data.users.forEach((user) => {
+              const opt = document.createElement('option');
+              opt.value = user.username;
+              opt.textContent = user.username;
+              keyUserSelect.appendChild(opt);
+            });
           })
           .catch((err) => console.error('Failed to load users', err));
       }
@@ -2143,8 +2222,107 @@
           .catch((err) => setStatus('Error creating user: ' + err, 'error'));
       });
 
+      // API Keys
+      const keyListEl = document.getElementById('key-list');
+      const keyUserSelect = document.getElementById('new-key-user');
+      const createKeyBtn = document.getElementById('create-key-btn');
+
+      function fmtEpoch(secs) {
+        return secs ? new Date(secs * 1000).toLocaleString() : 'never';
+      }
+
+      function loadKeys() {
+        fetch('/auth/keys')
+          .then((r) => r.json())
+          .then((data) => {
+            keyListEl.innerHTML = '';
+            (data.keys || []).forEach((key) => {
+              const li = document.createElement('li');
+              li.style.cssText =
+                'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);';
+              li.innerHTML = `
+                <span>
+                  <strong>${esc(key.name)}</strong> — ${esc(key.username)} · <code>${esc(key.prefix)}…</code><br/>
+                  <span style="color: var(--text-muted); font-size: 12px">created ${fmtEpoch(key.created_at)} · last used ${fmtEpoch(key.last_used_at)}</span>
+                </span>
+                <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px; color: var(--status-error); border-color: var(--status-error);" onclick="deleteKey(${key.id}, '${esc(key.name)}')">Revoke</button>
+              `;
+              keyListEl.appendChild(li);
+            });
+          })
+          .catch((err) => console.error('Failed to load API keys', err));
+      }
+
+      function deleteKey(id, name) {
+        if (
+          !confirm(
+            'Revoke API key "' +
+              name +
+              '"? Clients using it will stop working.'
+          )
+        )
+          return;
+        fetch('/auth/keys?id=' + id, { method: 'DELETE' })
+          .then((r) => r.json())
+          .then((res) => {
+            if (res.status === 'deleted') {
+              setStatus('API key revoked', 'success');
+              loadKeys();
+            } else {
+              setStatus(
+                'Failed to revoke key: ' + (res.error || 'Unknown error'),
+                'error'
+              );
+            }
+          })
+          .catch((err) => setStatus('Error revoking key: ' + err, 'error'));
+      }
+
+      createKeyBtn.addEventListener('click', () => {
+        const name = document.getElementById('new-key-name').value.trim();
+        const username = keyUserSelect.value;
+        if (!name) {
+          setStatus('Key name required', 'error');
+          return;
+        }
+        fetch('/auth/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, username }),
+        })
+          .then(async (r) => {
+            if (r.ok) return r.json();
+            const text = await r.text();
+            throw new Error(text || r.statusText);
+          })
+          .then((res) => {
+            document.getElementById('new-key-name').value = '';
+            document.getElementById('new-key-value').value = res.key;
+            document.getElementById('new-key-result').style.display = '';
+            setStatus('API key created — copy it now', 'success');
+            loadKeys();
+          })
+          .catch((err) => setStatus('Error creating key: ' + err, 'error'));
+      });
+
+      document.getElementById('copy-key-btn').addEventListener('click', () => {
+        const input = document.getElementById('new-key-value');
+        input.select();
+        const done = () => setStatus('Key copied to clipboard', 'success');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(input.value).then(done, () => {
+            document.execCommand('copy');
+            done();
+          });
+        } else {
+          document.execCommand('copy');
+          done();
+        }
+      });
+
       // Initial load
       loadUsers();
+      loadKeys();
     </script>
   </body>
 </html>

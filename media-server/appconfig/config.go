@@ -317,17 +317,35 @@ func Load() (Config, string, error) {
 			// Config file doesn't exist - create it with defaults
 			def := defaultConfig()
 
-			// Ensure the database directory exists
+			// Save the default config (without env overrides — env vars stay
+			// in the environment; the file only records persistent choices)
+			savedPath, saveErr := Save(def)
+			if saveErr != nil {
+				return Config{}, path, fmt.Errorf("failed to create default config file: %v", saveErr)
+			}
+
+			// Apply env overrides on first run too, or a fresh container
+			// would boot once on pure defaults (wrong DB path, no storage
+			// roots) and then silently switch on the next restart.
+			applyEnvOverrides(&def)
+
+			// Ensure the database directory exists (after overrides so an
+			// env-provided LOWKEY_DB_PATH gets its directory created)
 			dbDir := filepath.Dir(def.DBPath)
 			if err := os.MkdirAll(dbDir, 0755); err != nil {
 				return Config{}, "", fmt.Errorf("failed to create database directory %s: %v", dbDir, err)
 			}
 
-			// Save the default config
-			savedPath, saveErr := Save(def)
-			if saveErr != nil {
-				return Config{}, path, fmt.Errorf("failed to create default config file: %v", saveErr)
+			// Same DownloadPath → default-root migration as the existing-file path
+			if len(def.Roots) == 0 && def.DownloadPath != "" {
+				def.Roots = []StorageRoot{{
+					Type:    "local",
+					Path:    def.DownloadPath,
+					Label:   "Downloads",
+					Default: true,
+				}}
 			}
+
 			Set(def)
 			return def, savedPath, nil
 		}

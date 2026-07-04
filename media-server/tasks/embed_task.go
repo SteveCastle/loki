@@ -77,6 +77,18 @@ func IndexedModel() string {
 	return vectorIndexModel
 }
 
+// IndexSize returns the number of active (non-tombstoned) vectors in the
+// installed index, or 0 when none is installed. Exported for the index-status
+// API alongside IndexedModel.
+func IndexSize() int {
+	vectorIndexMu.Lock()
+	defer vectorIndexMu.Unlock()
+	if vectorIndex == nil {
+		return 0
+	}
+	return vectorIndex.Len()
+}
+
 // indexSearch runs a locked ANN search for model. ok is false when no index is
 // installed or the index holds a different model's vectors (caller brute-forces).
 func indexSearch(model string, query []float32, k int) ([]embedindex.SearchHit, bool) {
