@@ -464,3 +464,60 @@
 .job-cancel:hover {
   color: rgb(211, 3, 72);
 }
+
+/* ── Person actions (People-category tag targets) ── */
+
+.context-palette-person {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ctx-hairline);
+}
+
+.person-rename-row {
+  display: flex;
+  gap: 6px;
+}
+
+.person-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--ctx-hairline);
+  border-radius: 5px;
+  color: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.person-rename-input:focus {
+  outline: none;
+  border-color: var(--ctx-accent);
+}
+
+.person-rename-btn {
+  background: var(--ctx-accent-soft);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ctx-accent);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.person-rename-btn:hover:not(:disabled) {
+  background: var(--ctx-accent-strong);
+  border-color: var(--ctx-accent);
+  color: white;
+}
+
+.person-rename-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cluster-row {
+  display: flex;
+  margin-top: 6px;
+}

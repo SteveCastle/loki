@@ -16,6 +16,10 @@ import VirtualizedTagGrid from './virtualized-tag-grid';
 import TagListView from './tag-list-view';
 import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
+import PeopleGrid, {
+  PEOPLE_CATEGORY,
+  PersonEditModal,
+} from './people-grid';
 import './taxonomy.css';
 import Category from './category';
 import SuggestionSections from './suggestion-sections';
@@ -129,6 +133,7 @@ export default function Taxonomy() {
   }, []);
 
   const [addingTag, setAddingTag] = useState<boolean>(false);
+  const [addingPerson, setAddingPerson] = useState<boolean>(false);
   const [addingCategory, setAddingCategory] = useState<boolean>(false);
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
@@ -439,7 +444,17 @@ export default function Taxonomy() {
           </div>
         </div>
         {activeCategory && (
-          <div className={`new-tag`} onClick={() => setAddingTag(true)}>
+          <div
+            className={`new-tag`}
+            onClick={() =>
+              // People is face-managed: "+" creates a person (which creates
+              // its tag through the server bridge), not a bare tag — a bare
+              // tag in People would have no person row behind it.
+              activeCategory === PEOPLE_CATEGORY
+                ? setAddingPerson(true)
+                : setAddingTag(true)
+            }
+          >
             <div className="tag-label">+</div>
           </div>
         )}
@@ -453,6 +468,14 @@ export default function Taxonomy() {
           const resultsEl = (() => {
             if (!(activeCategory || tagFilter)) {
               return <div className={`tags`} />;
+            }
+            // People is a special case of a tag category: person names are
+            // real tags (kept in sync server-side), but browsing the category
+            // shows person cards with face crops and person-aware management
+            // (rename/merge/delete through /api/people). Search results still
+            // show People tags as ordinary tag cards, which behave correctly.
+            if (!tagFilter && activeCategory === PEOPLE_CATEGORY) {
+              return <PeopleGrid isDisabled={isDisabled} />;
             }
             // Search results span categories — always use card style.
             // For an active category, honour its persisted tagViewMode.
@@ -639,6 +662,13 @@ export default function Taxonomy() {
         <NewTagModal
           categoryLabel={activeCategory}
           handleClose={() => setAddingTag(false)}
+        />
+      ) : null}
+      {addingPerson ? (
+        <PersonEditModal
+          person={null}
+          people={[]}
+          handleClose={() => setAddingPerson(false)}
         />
       ) : null}
       {addingCategory ? (

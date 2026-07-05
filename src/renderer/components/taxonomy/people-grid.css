@@ -1,0 +1,152 @@
+/* People category — face-identity grid inside the taxonomy panel. Cards echo
+   the tag-card layout (image, label, count, hover edit) so People reads as a
+   normal category with a different preview. */
+
+.people-grid-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  padding: 4px 6px 40px 4px;
+  height: 100%;
+}
+
+.people-grid-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.people-cluster-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.people-cluster-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.people-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.people-grid-heading {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.55);
+  margin-top: 6px;
+}
+
+.people-grid-empty {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+  padding: 12px 4px;
+}
+
+.person-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.04);
+  transition: border-color 0.1s, background 0.1s;
+}
+
+.person-card:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.person-card.active {
+  border-color: rgb(211, 3, 72);
+}
+
+.person-card.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.person-card-face {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.person-card-face--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.person-card-face--empty svg {
+  width: 40%;
+  height: 40%;
+}
+
+.person-card-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.person-card-name {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-card-count {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+  flex-shrink: 0;
+}
+
+.person-card-edit {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.person-card:hover .person-card-edit {
+  opacity: 1;
+}
+
+.person-card-edit:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.person-merge-select {
+  margin-top: 6px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: inherit;
+  font-size: 12px;
+  padding: 4px 6px;
+}

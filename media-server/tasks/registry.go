@@ -41,6 +41,7 @@ func init() {
 	media.SetMediaRemovalHook(func(paths []string) {
 		for _, p := range paths {
 			IndexDelete(p)
+			FaceIndexDeletePath(p)
 		}
 	})
 
@@ -50,6 +51,8 @@ func init() {
 	RegisterTask("cleanup", "CleanUp", nil, cleanUpFn)
 	RegisterTask("autotag", "Auto Tag (ONNX)", nil, autotagTask)
 	RegisterTask("embed", "Visual Embedding (ONNX)", nil, embedTask)
+	RegisterTask("faces", "Detect Faces (ONNX)", nil, facesTask)
+	RegisterTask("faces-cluster", "Cluster Faces into People", nil, facesClusterTask)
 
 	RegisterTask("metadata", "Generate Metadata", metadataOptions, metadataTask)
 	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
@@ -69,6 +72,11 @@ func init() {
 	// Embedding is a local ONNX task with its own concurrency bucket — it must
 	// not share the LLM inference cap (it parallelizes internally instead).
 	RegisterHostResolver("embed", func(string) string { return HostBucketEmbed })
+	// Face scanning is a local ONNX task with its own concurrency bucket — like
+	// embed/autotag, it parallelizes internally via its worker pool. Clustering
+	// shares the bucket so a scan and a recluster never run concurrently.
+	RegisterHostResolver("faces", func(string) string { return HostBucketFaces })
+	RegisterHostResolver("faces-cluster", func(string) string { return HostBucketFaces })
 	RegisterHostResolver("ingest", urlHostResolver)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)

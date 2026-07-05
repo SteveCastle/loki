@@ -31,11 +31,42 @@ type StorageRoot struct {
 	ThumbnailPrefix string `json:"thumbnailPrefix,omitempty"`
 }
 
+// ByoFaceModel declares a bring-your-own face recognizer: a user-supplied
+// ONNX model (typically a research-licensed ArcFace/AdaFace export that can't
+// be shipped) usable as the active FaceModel. Detected faces are aligned to
+// the standard 112×112 five-landmark template and fed to this model.
+type ByoFaceModel struct {
+	ID   string `json:"id"`             // unique; face vectors are stored keyed by this
+	Name string `json:"name,omitempty"` // display name (defaults to ID)
+	// ModelPath is the absolute path to the recognizer ONNX file on disk.
+	ModelPath string `json:"modelPath"`
+	Dim       int    `json:"dim"` // embedding dimension (512 for ArcFace-family)
+	// Tensor names; default "data"/"fc1" when empty.
+	InputName  string `json:"inputName,omitempty"`
+	OutputName string `json:"outputName,omitempty"`
+	// Mean/Std are per-channel RGB on the 0..255 pixel scale; ArcFace-family
+	// models want 127.5/127.5. Empty means raw pixels (mean 0, std 1).
+	Mean []float64 `json:"mean,omitempty"`
+	Std  []float64 `json:"std,omitempty"`
+	// ColorOrder is "RGB" (ArcFace-family) or "BGR"; default "BGR".
+	ColorOrder string `json:"colorOrder,omitempty"`
+	// MatchThreshold is the cosine similarity at/above which two faces are
+	// considered the same person by clustering. 0 uses a conservative default,
+	// but recognizers differ (SFace and ArcFace have different score
+	// distributions) so BYO entries should set it explicitly.
+	MatchThreshold float64 `json:"matchThreshold,omitempty"`
+}
+
 // DefaultEmbeddingModel is the visual-embedding model used when none is
 // configured. Must match an ID in the tasks package's embed-model registry.
 // Kept as a literal here (not imported from tasks) so appconfig stays a leaf
 // package with no dependency cycle.
 const DefaultEmbeddingModel = "siglip2-base-patch16-224"
+
+// DefaultFaceModel is the face-identity recognizer used when none is
+// configured: SFace (OpenCV Zoo, Apache-2.0). Must match an ID in the tasks
+// package's face-model registry or a ByoFaceModels entry.
+const DefaultFaceModel = "sface"
 
 // DefaultTranscriptionProvider / DefaultTranscriptionModel are used when the
 // transcription section is empty. The provider id must match a registration
@@ -168,6 +199,24 @@ type Config struct {
 	AutotagWorkers          int    `json:"autotagWorkers"`
 	AutotagThreadsPerWorker int    `json:"autotagThreadsPerWorker"`
 
+	// Active face-identity recognizer ID: "sface" (built-in, Apache-2.0,
+	// downloadable from Dependencies) or the ID of a ByoFaceModels entry.
+	// Face vectors are stored keyed by model, so switching is non-destructive.
+	// Detection is always YuNet regardless of this setting.
+	FaceModel string `json:"faceModel"`
+
+	// Face task execution provider + performance, mirroring the embedding
+	// settings ("cpu" or "directml"; presets low/balanced/max/custom).
+	FaceProvider         string `json:"faceProvider"`
+	FacePerformance      string `json:"facePerformance"`
+	FaceWorkers          int    `json:"faceWorkers"`
+	FaceThreadsPerWorker int    `json:"faceThreadsPerWorker"`
+
+	// Bring-your-own face recognizers (research-licensed models like ArcFace
+	// or AdaFace exports that can't be shipped). The user supplies the ONNX
+	// file; entries here make it selectable as FaceModel.
+	ByoFaceModels []ByoFaceModel `json:"byoFaceModels,omitempty"`
+
 	// Per-file processing timeout (seconds) for the local ONNX tasks (embed,
 	// autotag). A single file that exceeds this — e.g. a corrupt image stuck in
 	// decode or a bad video stuck in frame extraction — is skipped and the job
@@ -241,6 +290,9 @@ func defaultConfig() Config {
 		AutotagModel:           DefaultAutotagModel,
 		AutotagProvider:        "cpu",
 		AutotagPerformance:     "balanced",
+		FaceModel:              DefaultFaceModel,
+		FaceProvider:           "cpu",
+		FacePerformance:        "balanced",
 		OnnxFileTimeoutSeconds: 120,
 		TranscriptionProvider:  DefaultTranscriptionProvider,
 		TranscriptionModel:     DefaultTranscriptionModel,
@@ -483,6 +535,18 @@ func Load() (Config, string, error) {
 	}
 	if c.AutotagPerformance == "" {
 		c.AutotagPerformance = def.AutotagPerformance
+		needsSave = true
+	}
+	if c.FaceModel == "" {
+		c.FaceModel = def.FaceModel
+		needsSave = true
+	}
+	if c.FaceProvider == "" {
+		c.FaceProvider = def.FaceProvider
+		needsSave = true
+	}
+	if c.FacePerformance == "" {
+		c.FacePerformance = def.FacePerformance
 		needsSave = true
 	}
 	if c.OnnxFileTimeoutSeconds == 0 {
@@ -731,6 +795,25 @@ func applyEnvOverrides(c *Config) {
 	if v := os.Getenv("LOWKEY_AUTOTAG_THREADS"); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
 			c.AutotagThreadsPerWorker = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_FACE_MODEL"); v != "" {
+		c.FaceModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("LOWKEY_FACE_PROVIDER"); v != "" {
+		c.FaceProvider = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_FACE_PERFORMANCE"); v != "" {
+		c.FacePerformance = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_FACE_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.FaceWorkers = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_FACE_THREADS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.FaceThreadsPerWorker = n
 		}
 	}
 	if v := os.Getenv("LOWKEY_ONNX_FILE_TIMEOUT"); v != "" {

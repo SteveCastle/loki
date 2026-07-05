@@ -1,0 +1,186 @@
+package media
+
+import (
+	"database/sql"
+	"fmt"
+
+	"github.com/stevecastle/shrike/embedvec"
+)
+
+// Face is one stored face row. Bbox coordinates are relative ([0,1] of the
+// image dimensions); Vec is the L2-normalized identity embedding. PersonID is
+// 0 while unassigned; AssignedBy is "auto" (clustering) or "user" (manual
+// label — ground truth that reclustering must never overwrite).
+type Face struct {
+	ID         int64
+	MediaPath  string
+	Model      string
+	FrameTS    float64
+	X, Y, W, H float64
+	Score      float64
+	Vec        []float32
+	PersonID   int64
+	AssignedBy string
+	CreatedAt  int64
+}
+
+// NewFace is one detected face to persist (ID assigned by the DB).
+type NewFace struct {
+	FrameTS    float64
+	X, Y, W, H float64
+	Score      float64
+	Vec        []float32
+}
+
+// ReplaceFaces atomically replaces all stored faces for (path, model) with
+// faces and records the scan in face_scan. Replacing (not appending) makes a
+// rescan idempotent; the scan marker distinguishes "scanned, no faces" from
+// "never scanned". Person assignments on the old rows are dropped by design —
+// a rescan means the old detections are stale. Returns the inserted row IDs
+// (parallel to faces) so callers can update the in-memory face index.
+func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int64) ([]int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM face WHERE media_path=? AND model=?`, path, model); err != nil {
+		return nil, fmt.Errorf("clear stale faces: %w", err)
+	}
+	ids := make([]int64, 0, len(faces))
+	for _, f := range faces {
+		res, err := tx.Exec(
+			`INSERT INTO face (media_path, model, frame_ts, bbox_x, bbox_y, bbox_w, bbox_h, det_score, vector, created_at)
+			 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+			path, model, f.FrameTS, f.X, f.Y, f.W, f.H, f.Score, embedvec.Encode(f.Vec), scannedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("insert face: %w", err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return nil, fmt.Errorf("read face id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO face_scan (media_path, model, face_count, scanned_at)
+		 VALUES (?,?,?,?)
+		 ON CONFLICT(media_path, model)
+		 DO UPDATE SET face_count=excluded.face_count, scanned_at=excluded.scanned_at`,
+		path, model, len(faces), scannedAt,
+	); err != nil {
+		return nil, fmt.Errorf("mark face scan: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// HasFaceScan reports whether path was already scanned under model.
+func HasFaceScan(db *sql.DB, path, model string) (bool, error) {
+	var one int
+	err := db.QueryRow(
+		`SELECT 1 FROM face_scan WHERE media_path=? AND model=? LIMIT 1`,
+		path, model,
+	).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// GetFaces returns all stored faces for (path, model), detection-score
+// descending.
+func GetFaces(db *sql.DB, path, model string) ([]Face, error) {
+	rows, err := db.Query(
+		`SELECT id, media_path, model, frame_ts, bbox_x, bbox_y, bbox_w, bbox_h,
+		        det_score, vector, COALESCE(person_id, 0), COALESCE(assigned_by, ''), COALESCE(created_at, 0)
+		 FROM face WHERE media_path=? AND model=? ORDER BY det_score DESC`,
+		path, model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFaceRows(rows)
+}
+
+// LoadAllFaces returns every stored face for model (vector decoded). Used by
+// the face index builder and clustering.
+func LoadAllFaces(db *sql.DB, model string) ([]Face, error) {
+	rows, err := db.Query(
+		`SELECT id, media_path, model, frame_ts, bbox_x, bbox_y, bbox_w, bbox_h,
+		        det_score, vector, COALESCE(person_id, 0), COALESCE(assigned_by, ''), COALESCE(created_at, 0)
+		 FROM face WHERE model=?`,
+		model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFaceRows(rows)
+}
+
+// GetFaceByID returns one face row (vector decoded).
+func GetFaceByID(db *sql.DB, id int64) (Face, bool, error) {
+	rows, err := db.Query(
+		`SELECT id, media_path, model, frame_ts, bbox_x, bbox_y, bbox_w, bbox_h,
+		        det_score, vector, COALESCE(person_id, 0), COALESCE(assigned_by, ''), COALESCE(created_at, 0)
+		 FROM face WHERE id=?`,
+		id,
+	)
+	if err != nil {
+		return Face{}, false, err
+	}
+	defer rows.Close()
+	faces, err := scanFaceRows(rows)
+	if err != nil || len(faces) == 0 {
+		return Face{}, false, err
+	}
+	return faces[0], true, nil
+}
+
+// DeleteFacesForMedia removes all face rows and scan markers for a media path
+// (all models). Called when media is deleted from the library.
+func DeleteFacesForMedia(db *sql.DB, path string) error {
+	if _, err := db.Exec(`DELETE FROM face WHERE media_path=?`, path); err != nil {
+		return err
+	}
+	_, err := db.Exec(`DELETE FROM face_scan WHERE media_path=?`, path)
+	return err
+}
+
+// CountFaceScans returns how many media items have been scanned under model.
+func CountFaceScans(db *sql.DB, model string) (int, error) {
+	var n int
+	err := db.QueryRow(`SELECT COUNT(*) FROM face_scan WHERE model=?`, model).Scan(&n)
+	return n, err
+}
+
+func scanFaceRows(rows *sql.Rows) ([]Face, error) {
+	var out []Face
+	for rows.Next() {
+		var f Face
+		var blob []byte
+		if err := rows.Scan(
+			&f.ID, &f.MediaPath, &f.Model, &f.FrameTS,
+			&f.X, &f.Y, &f.W, &f.H,
+			&f.Score, &blob, &f.PersonID, &f.AssignedBy, &f.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		vec, err := embedvec.Decode(blob)
+		if err != nil {
+			return nil, err
+		}
+		f.Vec = vec
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}

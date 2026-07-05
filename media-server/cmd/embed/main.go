@@ -29,6 +29,13 @@ func main() {
 		textStr, textModel, tokenizerPath string
 		textInput, textOutput             string
 		seqLen                            int
+		// faces mode flags
+		facesMode                          bool
+		detectModel                        string
+		faceInput, faceOutput              string
+		faceMean, faceStd, faceColor       string
+		faceMinScore                       float64
+		faceMinSize                        int
 	)
 	flag.StringVar(&modelPath, "model", "", "Path to ONNX embedding model")
 	flag.StringVar(&imagePath, "image", "", "Path to input image")
@@ -58,6 +65,19 @@ func main() {
 	flag.StringVar(&textInput, "text-input", "input_ids", "Text encoder input tensor name")
 	flag.StringVar(&textOutput, "text-output", "pooler_output", "Text encoder output tensor name")
 	flag.IntVar(&seqLen, "seq-len", 64, "Sequence length for text tokenization")
+	// faces mode: detect faces (YuNet), align to the 112x112 five-landmark
+	// template, and embed each with a face-identity model (SFace by default;
+	// BYO ArcFace-family models via the --face-* preprocessing flags). Output
+	// is one JSON line per image; --model is the RECOGNIZER model path here.
+	flag.BoolVar(&facesMode, "faces", false, "Face mode: detect+align+embed faces; --model is the recognizer, --detect-model the YuNet detector")
+	flag.StringVar(&detectModel, "detect-model", "", "Path to the YuNet face-detection ONNX model (faces mode)")
+	flag.StringVar(&faceInput, "face-input", "data", "Recognizer input tensor name (faces mode)")
+	flag.StringVar(&faceOutput, "face-output", "fc1", "Recognizer output tensor name (faces mode)")
+	flag.StringVar(&faceMean, "face-mean", "0,0,0", "Recognizer per-channel RGB mean on the 0..255 scale (127.5 for ArcFace-family)")
+	flag.StringVar(&faceStd, "face-std", "1,1,1", "Recognizer per-channel RGB stddev on the 0..255 scale (127.5 for ArcFace-family)")
+	flag.StringVar(&faceColor, "face-color", "BGR", "Recognizer channel order: BGR (SFace) or RGB (ArcFace-family)")
+	flag.Float64Var(&faceMinScore, "min-score", 0.7, "Minimum detection confidence (faces mode)")
+	flag.IntVar(&faceMinSize, "min-size", 40, "Minimum face bbox edge in original-image pixels (faces mode)")
 	flag.Parse()
 
 	if showVersion {
@@ -69,6 +89,32 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Error: --dim is required")
 		flag.Usage()
 		os.Exit(2)
+	}
+
+	// Faces mode: detect + align + embed. Handled before image/text modes.
+	if facesMode {
+		err := runFaces(facesFlags{
+			detectModel: detectModel,
+			recModel:    modelPath,
+			dim:         dim,
+			faceInput:   faceInput,
+			faceOutput:  faceOutput,
+			faceMean:    faceMean,
+			faceStd:     faceStd,
+			faceColor:   faceColor,
+			minScore:    faceMinScore,
+			minSize:     faceMinSize,
+			ortLib:      ortLibPath,
+			provider:    provider,
+			device:      device,
+			threads:     threads,
+			serve:       serve,
+			imagePath:   imagePath,
+		})
+		if err != nil {
+			log.Fatalf("faces: %v", err)
+		}
+		return
 	}
 
 	// Text mode: --text is non-empty

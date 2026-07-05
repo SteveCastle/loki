@@ -29,6 +29,7 @@ const PREFIXES: Array<{ prefix: string; type: PredicateType }> = [
   { prefix: 'hash:', type: 'hash' },
   { prefix: 'similar:', type: 'similar' },
   { prefix: 'visual:', type: 'visual' },
+  { prefix: 'face:', type: 'face' },
 ];
 
 // Strip surrounding quotes that survived tokenization of a prefixed value
@@ -78,6 +79,7 @@ const TYPE_PREFIX: Record<PredicateType, string> = {
   // Not parseable from typed text (the value is a PNG data URL); serialization
   // only — the query persists as JSON, never through parseQuery.
   clip: 'clip:',
+  face: 'face:',
 };
 
 export function serializePredicate(p: Predicate): string {

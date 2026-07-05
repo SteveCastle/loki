@@ -1172,6 +1172,21 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 			return result, err
 		}
 
+		// Remove face rows + scan markers (face-identity sidecar tables). The
+		// registered removal hook evicts them from the in-memory face index.
+		for _, stmt := range []string{
+			`DELETE FROM face WHERE media_path IN (%s)`,
+			`DELETE FROM face_scan WHERE media_path IN (%s)`,
+		} {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(stmt, strings.Join(placeholders, ",")), args...); err != nil {
+				tx.Rollback()
+				result.Errors = append(result.Errors, fmt.Errorf("failed to remove face rows for batch: %w", err))
+				result.MediaItemsRemoved = totalMediaRemoved
+				result.TagsRemoved = totalTagsRemoved
+				return result, err
+			}
+		}
+
 		// Commit this batch
 		if err := tx.Commit(); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("failed to commit transaction for batch: %w", err))
@@ -2144,6 +2159,72 @@ func InitializeSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_media_embedding_model ON media_embedding(model)`,
 	); err != nil {
 		log.Printf("warning: failed to create idx_media_embedding_model: %v", err)
+	}
+
+	// Face identity tables (face detection/recognition feature). Decided up
+	// front because they're hard to reverse:
+	//   - bbox coordinates are RELATIVE ([0,1] of the image dimensions) so
+	//     video overlays and multi-frame scanning need no migration;
+	//   - frame_ts is the video timestamp the face was sampled from (0 for
+	//     images and single-frame scans);
+	//   - vectors are keyed by model so recognizers coexist non-destructively
+	//     (shipped SFace 128-dim vs BYO ArcFace-family 512-dim);
+	//   - assigned_by records whether person_id came from clustering ('auto')
+	//     or the user ('user') — reclustering must never overwrite 'user'.
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			media_path  TEXT NOT NULL,
+			model       TEXT NOT NULL,
+			frame_ts    REAL NOT NULL DEFAULT 0,
+			bbox_x      REAL NOT NULL,
+			bbox_y      REAL NOT NULL,
+			bbox_w      REAL NOT NULL,
+			bbox_h      REAL NOT NULL,
+			det_score   REAL NOT NULL,
+			vector      BLOB NOT NULL,
+			person_id   INTEGER,
+			assigned_by TEXT,
+			created_at  INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face table: %w", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS person (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			name          TEXT UNIQUE,
+			cover_face_id INTEGER,
+			created_at    INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create person table: %w", err)
+	}
+	// face_scan marks media already scanned under a model so no-face media
+	// isn't rescanned on every run (absence of face rows can't distinguish
+	// "no faces" from "never scanned").
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_scan (
+			media_path TEXT NOT NULL,
+			model      TEXT NOT NULL,
+			face_count INTEGER NOT NULL DEFAULT 0,
+			scanned_at INTEGER,
+			PRIMARY KEY (media_path, model)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_scan table: %w", err)
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_face_media_path ON face(media_path)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_model ON face(model)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_person ON face(person_id)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("warning: failed to create face index (will retry on next start): %v", err)
+		}
 	}
 
 	log.Println("Database schema initialized successfully")

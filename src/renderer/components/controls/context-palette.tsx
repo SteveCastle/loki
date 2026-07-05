@@ -81,6 +81,13 @@ const METADATA_TYPES: MetadataType[] = [
     label: 'Embeddings',
     command: (q) => `embed --query64=${q}`,
   },
+  {
+    // Face detection + identity embeddings (people search/clustering). Like
+    // Embeddings it is always incremental — `faces` skips media already
+    // scanned under the active recognizer — so the mode toggle is ignored.
+    label: 'Faces',
+    command: (q) => `faces --query64=${q}`,
+  },
 ];
 
 type ContextTarget =
@@ -168,6 +175,8 @@ const JOB_TITLES: Record<string, string> = {
   metadata: 'Metadata',
   autotag: 'Auto-Tagging',
   embed: 'Visual Embedding',
+  faces: 'Face Scan',
+  'faces-cluster': 'Face Clustering',
 };
 
 function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
@@ -687,6 +696,127 @@ export default function ContextPalette() {
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
+  // Face-identity search for the right-clicked file: "show me more of this
+  // person". Adds a `face` predicate (the server scans the file on the fly if
+  // needed, takes its largest face, and matches against the face index).
+  const handleFindPerson = () => {
+    libraryService.send({
+      type: 'ADD_PREDICATE',
+      data: {
+        predicate: {
+          type: 'face',
+          value: similarTargetPath,
+          exclude: false,
+          join: filteringMode === 'OR' ? 'OR' : 'AND',
+        },
+      },
+    });
+    libraryService.send('HIDE_CONTEXT_PALETTE');
+  };
+
+  // Person context: when the right-clicked tag is a person (its name exists
+  // in /api/people — i.e. a People-category tag), the palette offers person
+  // actions (rename) that keep the person table and its taxonomy tag in sync.
+  // Renaming through the normal tag editor would desync them.
+  const [personTarget, setPersonTarget] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const [personRename, setPersonRename] = useState('');
+  useEffect(() => {
+    setPersonTarget(null);
+    setPersonRename('');
+    if (!display || target.type !== 'tag' || !authToken) return;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${mediaServerBase}/api/people`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const people = (await res.json()) as Array<{ id: number; name: string }>;
+        const match = people.find((p) => p.name === (target as { tag: string }).tag);
+        if (match) {
+          setPersonTarget(match);
+          setPersonRename(match.name);
+        }
+      } catch {
+        // server unavailable — no person section
+      }
+    })();
+    return () => controller.abort();
+  }, [display, target, authToken]);
+
+  const handleRenamePerson = async () => {
+    if (!personTarget || !personRename.trim() || personRename === personTarget.name) {
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${mediaServerBase}/api/people/${personTarget.id}/rename`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+          },
+          body: JSON.stringify({ name: personRename.trim() }),
+        }
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `HTTP ${res.status}`);
+      }
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: 'Person renamed',
+          message: `${personTarget.name} → ${personRename.trim()}`,
+        },
+      });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch (e) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Rename failed',
+          message: e instanceof Error ? e.message : 'Could not rename person',
+        },
+      });
+    }
+  };
+
+  // Regroup faces into people (server-wide job; incremental over existing
+  // assignments, never overwrites manual labels).
+  const handleClusterFaces = async () => {
+    try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(`${mediaServerBase}/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ input: 'faces-cluster' }),
+        signal: AbortSignal.timeout(10000),
+        redirect: 'error',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Create Job',
+          message: 'Could not communicate with job service',
+        },
+      });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    }
+  };
+
   // Action handler — runs a metadata generation job for one type in the current
   // mode. `missing` fills gaps; `all` replaces (adds `--overwrite`).
   const handleAction = async (meta: MetadataType, mode: GenMode) => {
@@ -805,31 +935,84 @@ export default function ContextPalette() {
           {(capabilities.visualSearch ||
             (serverAvailable && authToken)) &&
             similarTargetPath && (
-              <button
-                className="find-similar-btn"
-                onClick={handleFindSimilar}
-                title="Find visually similar"
-                aria-label="Find visually similar"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+              <>
+                <button
+                  className="find-similar-btn"
+                  onClick={handleFindSimilar}
+                  title="Find visually similar"
+                  aria-label="Find visually similar"
                 >
-                  <circle cx="11" cy="11" r="7" />
-                  <line x1="21" y1="21" x2="16.5" y2="16.5" />
-                  <path d="M11 8l.9 1.8 1.9.3-1.4 1.4.3 1.9-1.7-.9-1.7.9.3-1.9L8.2 10.1l1.9-.3z" />
-                </svg>
-              </button>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="11" cy="11" r="7" />
+                    <line x1="21" y1="21" x2="16.5" y2="16.5" />
+                    <path d="M11 8l.9 1.8 1.9.3-1.4 1.4.3 1.9-1.7-.9-1.7.9.3-1.9L8.2 10.1l1.9-.3z" />
+                  </svg>
+                </button>
+                <button
+                  className="find-similar-btn"
+                  onClick={handleFindPerson}
+                  title="Find this person (face match)"
+                  aria-label="Find this person"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="8" r="4" />
+                    <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
+                  </svg>
+                </button>
+              </>
             )}
         </div>
       </div>
+
+      {personTarget && serverAvailable && authToken && (
+        <div className="context-palette-person">
+          <span className="action-group-title">Person</span>
+          <div className="person-rename-row">
+            <input
+              className="person-rename-input"
+              type="text"
+              value={personRename}
+              onChange={(e) => setPersonRename(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenamePerson();
+                e.stopPropagation();
+              }}
+              placeholder="Person name"
+              aria-label="Rename person"
+            />
+            <button
+              type="button"
+              className="person-rename-btn"
+              onClick={handleRenamePerson}
+              disabled={
+                !personRename.trim() || personRename === personTarget.name
+              }
+            >
+              Rename
+            </button>
+          </div>
+        </div>
+      )}
 
       {serverAvailable === false && (
         <div className="context-palette-unavailable">
@@ -906,6 +1089,16 @@ export default function ContextPalette() {
             })}
           </div>
           <DepRequirementRows deps={deps} onChange={refreshDeps} />
+          <div className="cluster-row">
+            <button
+              type="button"
+              className="type-chip"
+              onClick={handleClusterFaces}
+              title="Group scanned faces into people (never overwrites your manual labels)"
+            >
+              Cluster Faces → People
+            </button>
+          </div>
         </div>
       )}
 

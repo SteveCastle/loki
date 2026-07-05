@@ -66,7 +66,7 @@ func clauseFor(p Predicate, params *[]any) string {
 			return "(media.hash NOT LIKE ?)"
 		}
 		return "(media.hash LIKE ?)"
-	case "similar", "visual", "clip":
+	case "similar", "visual", "clip", "face":
 		// Resolved is the path set produced by the handler (similarity search).
 		// Empty set: an include matches nothing; an exclude removes nothing.
 		if len(p.Resolved) == 0 {

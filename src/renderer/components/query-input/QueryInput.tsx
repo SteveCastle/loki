@@ -65,6 +65,7 @@ const TYPE_GLYPH: Record<Predicate['type'], string> = {
   similar: 'similar:',
   visual: 'visual:',
   clip: 'clip:', // never shown — clip chips render a thumbnail instead
+  face: 'face:', // never shown — face chips render a thumbnail instead
 };
 
 // Icons + labels for the three tag-filtering behaviours, mirroring the toggle
@@ -410,12 +411,19 @@ export default function QueryInput({
             // A captured screen region (PNG data URL) — renders like a similar:
             // chip but with the clip itself as the thumbnail.
             const isClip = p.type === 'clip';
+            // Face-identity search: value is a media path or a captured
+            // region data URL; renders like similar/clip with a person icon.
+            const isFace = p.type === 'face';
+            const isFaceClip = isFace && p.value.startsWith('data:');
             const chipClass = `query-chip${p.exclude ? ' exclude' : ''}${
               p.type === 'category' ? ' category' : ''
-            }${isVisual ? ' visual' : ''}${isSimilar || isClip ? ' similar' : ''}`;
-            const baseName = isSimilar
-              ? p.value.split(/[/\\]/).pop() || p.value
-              : '';
+            }${isVisual ? ' visual' : ''}${
+              isSimilar || isClip || isFace ? ' similar' : ''
+            }`;
+            const baseName =
+              isSimilar || (isFace && !isFaceClip)
+                ? p.value.split(/[/\\]/).pop() || p.value
+                : '';
             // Image chips (similar/clip) can blend in a text query: hovering
             // opens a popover with a text input + image↔text weight slider.
             const isImage = isSimilar || isClip;
@@ -454,7 +462,13 @@ export default function QueryInput({
                 )}
                 <span
                   className="query-chip-label"
-                  title={isClip ? 'Screen clip' : p.value}
+                  title={
+                    isClip || isFaceClip
+                      ? isFace
+                        ? 'Face clip'
+                        : 'Screen clip'
+                      : p.value
+                  }
                 >
                   {p.exclude ? '−' : ''}
                   {isVisual ? (
@@ -463,6 +477,34 @@ export default function QueryInput({
                         ✨
                       </span>
                       {p.value}
+                    </>
+                  ) : isFace ? (
+                    <>
+                      <span className="query-chip-icon" aria-hidden="true">
+                        👤
+                      </span>
+                      {isFaceClip ? (
+                        <>
+                          <img
+                            className="query-chip-thumb"
+                            src={p.value}
+                            alt=""
+                          />
+                          Face clip
+                        </>
+                      ) : (
+                        <>
+                          <img
+                            className="query-chip-thumb"
+                            src={mediaUrl(p.value)}
+                            alt=""
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                          {baseName}
+                        </>
+                      )}
                     </>
                   ) : isClip ? (
                     <>

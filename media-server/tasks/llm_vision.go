@@ -54,6 +54,9 @@ const (
 	// LLM inference bucket for the same reasons as embed. Each autotag job
 	// parallelizes internally via its own worker pool (see runAutotagPool).
 	HostBucketAutotag = "autotag"
+	// HostBucketFaces is the local ONNX face-scanning bucket, separate for the
+	// same reasons. Each faces job parallelizes internally (see runFacesPool).
+	HostBucketFaces = "faces"
 )
 
 // InferenceHost returns the concurrency bucket name for the currently

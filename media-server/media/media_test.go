@@ -305,6 +305,38 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("Failed to create media_embedding table: %v", err)
 	}
 
+	// Create face + face_scan tables (required by RemoveItemsFromDB).
+	if _, err := db.Exec(`
+		CREATE TABLE face (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			media_path  TEXT NOT NULL,
+			model       TEXT NOT NULL,
+			frame_ts    REAL NOT NULL DEFAULT 0,
+			bbox_x      REAL NOT NULL,
+			bbox_y      REAL NOT NULL,
+			bbox_w      REAL NOT NULL,
+			bbox_h      REAL NOT NULL,
+			det_score   REAL NOT NULL,
+			vector      BLOB NOT NULL,
+			person_id   INTEGER,
+			assigned_by TEXT,
+			created_at  INTEGER
+		)
+	`); err != nil {
+		t.Fatalf("Failed to create face table: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TABLE face_scan (
+			media_path TEXT NOT NULL,
+			model      TEXT NOT NULL,
+			face_count INTEGER NOT NULL DEFAULT 0,
+			scanned_at INTEGER,
+			PRIMARY KEY (media_path, model)
+		)
+	`); err != nil {
+		t.Fatalf("Failed to create face_scan table: %v", err)
+	}
+
 	return db
 }
 

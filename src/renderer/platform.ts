@@ -466,7 +466,10 @@ if (isElectron) {
     // (and require auth) when there's actually a visual query to run.
     const hasVisual = predicates.some(
       (p) =>
-        (p.type === 'similar' || p.type === 'visual' || p.type === 'clip') &&
+        (p.type === 'similar' ||
+          p.type === 'visual' ||
+          p.type === 'clip' ||
+          p.type === 'face') &&
         p.value !== ''
     );
     if (!hasVisual) {

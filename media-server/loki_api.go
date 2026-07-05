@@ -382,7 +382,7 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 		for i := range req.Predicates {
 			pt := req.Predicates[i].Type
 			val := req.Predicates[i].Value
-			if (pt == "similar" || pt == "visual" || pt == "clip") && val != "" {
+			if (pt == "similar" || pt == "visual" || pt == "clip" || pt == "face") && val != "" {
 				hasVisual = true
 				var hits []tasks.SimilarHit
 				var err error
@@ -407,14 +407,28 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)
 						}
 					}
+				case "face":
+					// Face identity: the value is a library path ("find this
+					// person") or a captured-region PNG data URL. Matches by
+					// face embedding, collapsed to one hit per media item.
+					var faceHits []tasks.FaceHit
+					if strings.HasPrefix(val, "data:") {
+						var image []byte
+						if image, err = decodeImageDataURL(val); err == nil {
+							faceHits, err = tasks.SearchFacesByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+						}
+					} else {
+						faceHits, err = tasks.SearchFacesByMediaPath(r.Context(), deps.DB, val, visualCandidateLimit)
+					}
+					hits = tasks.FaceHitsToMediaHits(faceHits)
 				default:
 					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
 				}
 				if err != nil {
-					// A clip value is a multi-hundred-KB data URL — log its size, not the payload.
+					// A clip/face value can be a multi-hundred-KB data URL — log its size, not the payload.
 					logVal := val
-					if pt == "clip" {
-						logVal = fmt.Sprintf("<clip %d bytes>", len(val))
+					if pt == "clip" || strings.HasPrefix(val, "data:") {
+						logVal = fmt.Sprintf("<%s %d bytes>", pt, len(val))
 					}
 					log.Printf("query: %s predicate %q failed (model=%q): %v", pt, logVal, tasks.ActiveEmbedModel().ID, err)
 					httpError(w, err.Error(), http.StatusInternalServerError)

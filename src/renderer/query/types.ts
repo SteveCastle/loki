@@ -11,7 +11,8 @@ export type PredicateType =
   | 'hash'
   | 'similar'
   | 'visual'
-  | 'clip';
+  | 'clip'
+  | 'face';
 
 export interface Predicate {
   type: PredicateType;
@@ -20,6 +21,9 @@ export interface Predicate {
   // 'visual' = free text query (text→image search via embedding backend).
   // 'clip' = a captured screen region as a PNG data URL (image→image search
   //   via embedding backend); the data URL doubles as the chip thumbnail.
+  // 'face' = person search by face identity: a media path ("find this person")
+  //   or a captured region as a PNG data URL; matched against the face
+  //   embedding index, not the whole-image one.
   value: string;
   // Per-predicate include (false) / exclude (true).
   exclude: boolean;

@@ -74,6 +74,8 @@ func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	q.SetHostLimit(HostBucketEmbed, 1)
 	// Likewise one autotag job at a time (internally parallel via its pool).
 	q.SetHostLimit(HostBucketAutotag, 1)
+	// Likewise one faces job at a time (internally parallel via its pool).
+	q.SetHostLimit(HostBucketFaces, 1)
 }
 
 // urlHostResolver pulls the URL hostname out of an input string, falling
