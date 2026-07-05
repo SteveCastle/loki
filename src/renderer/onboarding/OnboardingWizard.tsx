@@ -16,7 +16,7 @@ export const OnboardingWizard: React.FC<Props> = ({ onDismiss, embedded }) => {
   const steps = [
     { title: 'Welcome', render: () => <BundledPanel items={status} /> },
     { title: 'Optional tools', render: () => <OptionalPanel items={status} /> },
-    { title: 'AI models', render: () => <ModelsPanel items={status} onChange={refresh} /> },
+    { title: 'AI features', render: () => <ModelsPanel items={status} onChange={refresh} /> },
   ];
   const last = step === steps.length - 1;
 

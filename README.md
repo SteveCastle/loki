@@ -136,7 +136,7 @@ cd media-server
 ./media-server          # or media-server.exe on Windows
 ```
 
-Then open <http://localhost:8090> and log in as `admin` / `admin`.
+Then open <http://localhost:10111> and log in as `admin` / `admin`.
 
 For faster iteration:
 

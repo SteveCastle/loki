@@ -4,7 +4,8 @@
     {
       "id": "wd-eva02-large-tagger-v3",
       "name": "WD EVA02 Large Tagger v3",
-      "description": "Image autotagging classifier (general + character tags).",
+      "feature": "Auto-tagging",
+      "description": "Automatically tag your images. Image autotagging classifier (general + character tags).",
       "version": "1.0.0",
       "consumers": ["autotag"],
       "size_bytes": 1257385984,
@@ -23,6 +24,90 @@
           "url": "https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/resolve/main/config.json",
           "rel_path": "config.json",
           "sha256": "1db05aefb1a245533818e33bea22852300ac647a64636854095d1a313cd2e9dc"
+        }
+      ]
+    },
+    {
+      "id": "siglip2-base-patch16-224",
+      "name": "SigLIP 2 base patch16 224",
+      "feature": "Visual similarity search",
+      "description": "Find visually similar images and search your library by text. Joint image/text encoder for visual similarity search (image->image and text->image). Image preprocessing: 224x224, RGB, mean/std 0.5. Both encoders emit a 768-dim pooler_output. Text encoder uses the Gemma multilingual SentencePiece tokenizer.",
+      "version": "1.0.0",
+      "consumers": ["embed"],
+      "size_bytes": 1505518412,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/vision_model.onnx",
+          "rel_path": "image_model.onnx",
+          "sha256": "c0573e3f4140c3a7c4e9cc5912bd6b26a033b46a6a8e8af26cbea262b163bcad"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/text_model.onnx",
+          "rel_path": "text_model.onnx",
+          "sha256": "baf12d941beabafafb14f7b4adb38dc15be18681b964a84410ec53d9d65e6293"
+        },
+        {
+          "url": "https://huggingface.co/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/tokenizer.model",
+          "rel_path": "tokenizer.model",
+          "sha256": "61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2"
+        }
+      ]
+    },
+    {
+      "id": "dinov2-base",
+      "name": "DINOv2 base",
+      "feature": "Visual similarity search (image-only alternative)",
+      "description": "Alternative image-only similarity model; smaller than SigLIP 2 but cannot search by text. Self-supervised image encoder for visual similarity search (image->image only; no text encoder). Image preprocessing: ImageNet mean/std, center-crop 224, patch14. Embedding is the 768-dim CLS token of last_hidden_state.",
+      "version": "1.0.0",
+      "consumers": ["embed"],
+      "size_bytes": 346608174,
+      "files": [
+        {
+          "url": "https://huggingface.co/onnx-community/dinov2-base-ONNX/resolve/main/onnx/model.onnx",
+          "rel_path": "image_model.onnx",
+          "sha256": "f16115e628d65b7cc7b1e16c504e2af682169aabf3fff4edfe906118f522e204"
+        }
+      ]
+    },
+    {
+      "id": "faster-whisper",
+      "name": "Faster-Whisper XXL (standalone)",
+      "category": "tool",
+      "feature": "Transcription",
+      "description": "Transcribe speech in your videos and audio files. Purfview Faster-Whisper-XXL bundle (CPU everywhere; CUDA GPU used automatically on NVIDIA). Supports the fast large-v3-turbo model. ~1.4 GB download, ~4.7 GB installed; the first transcription also downloads the selected speech model (~1.6 GB for large-v3-turbo). On macOS a legacy CPU-only build without turbo is used. Setting fasterWhisperPath in config overrides this download.",
+      "version": "r245.4",
+      "consumers": ["metadata"],
+      "size_bytes": 1424256246,
+      "files": [
+        {
+          "url": "https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_windows.7z",
+          "rel_path": "xxl",
+          "sha256": "237dee23939cdabfc96ef859fc5e584b842c3a5557e0d2ca744e1f87c14c5844",
+          "os": "windows",
+          "size_bytes": 1424256246,
+          "archive": "7z",
+          "archive_member": "Faster-Whisper-XXL/",
+          "exec": true
+        },
+        {
+          "url": "https://github.com/Purfview/whisper-standalone-win/releases/download/Faster-Whisper-XXL/Faster-Whisper-XXL_r245.4_linux.7z",
+          "rel_path": "xxl",
+          "sha256": "510ee48ed73a7d4779fa8a7531437513ae109a76d934e983cbdaea3fc248c4f4",
+          "os": "linux",
+          "size_bytes": 1657690937,
+          "archive": "7z",
+          "archive_member": "Faster-Whisper-XXL/",
+          "exec": true
+        },
+        {
+          "url": "https://github.com/Purfview/whisper-standalone-win/releases/download/faster-whisper/Whisper-Faster_r186.1_macOS-x86-64.zip",
+          "rel_path": "whisper-faster",
+          "sha256": "863e9d41cd889bfd5417bec5d8d48f04d0a0e6c97b6f45c7910a85e08798a3bc",
+          "os": "darwin",
+          "size_bytes": 82515821,
+          "archive": "zip",
+          "archive_member": "Whisper-Faster/whisper-faster",
+          "exec": true
         }
       ]
     }

@@ -20,7 +20,7 @@ def main():
                 preview_results.append(f"[{response.status}] {body}")
         page.on("response", on_response)
 
-        page.goto("http://localhost:8090/app/")
+        page.goto("http://localhost:10111/app/")
         page.wait_for_timeout(2000)
         if "login" in page.url.lower():
             form = page.locator("#loginForm")
@@ -29,7 +29,7 @@ def main():
             form.locator("button[type='submit']").click()
             page.wait_for_timeout(3000)
             if "/app" not in page.url:
-                page.goto("http://localhost:8090/app/")
+                page.goto("http://localhost:10111/app/")
                 page.wait_for_timeout(3000)
         page.wait_for_timeout(8000)
 

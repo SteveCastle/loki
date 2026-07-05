@@ -51,10 +51,21 @@ func InstallModel(ctx context.Context, id string, progress ProgressFn) error {
 	l.Lock()
 	defer l.Unlock()
 
-	for _, f := range m.Files {
+	for _, f := range m.EffectiveFiles() {
 		dst := filepath.Join(ModelDir(id), f.RelPath)
+		if f.Archive != "" {
+			if err := installArchiveFile(ctx, f, dst, progress); err != nil {
+				return fmt.Errorf("file %s: %w", f.RelPath, err)
+			}
+			continue
+		}
 		if _, err := downloadFileWithRetry(ctx, f.URL, dst, f.SHA256, progress); err != nil {
 			return fmt.Errorf("file %s: %w", f.RelPath, err)
+		}
+		if f.Exec {
+			if err := markExecutable(dst); err != nil {
+				return fmt.Errorf("file %s: %w", f.RelPath, err)
+			}
 		}
 	}
 	return writeMeta(id, m)

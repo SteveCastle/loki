@@ -19,6 +19,7 @@ import Taxonomy from '../taxonomy/taxonomy';
 import Metadata from '../metadata/metadata';
 import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
+import RegionSelect from '../controls/region-select';
 
 function VerticalHandle() {
   return (
@@ -214,6 +215,7 @@ const Layout = () => {
     <>
       <CommandPalette />
       <ContextPalette />
+      <RegionSelect />
       <PanelGroup
         orientation="vertical"
         id="main-group"

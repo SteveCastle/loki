@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Create Lowkey Media Server tasks from the current page URL with custom arguments",
   "permissions": ["activeTab", "storage"],
-  "host_permissions": ["http://localhost:8090/*"],
+  "host_permissions": ["http://localhost:10111/*"],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {

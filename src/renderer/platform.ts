@@ -5,12 +5,25 @@ export const isElectron =
   typeof window !== 'undefined' &&
   typeof (window as any).electron !== 'undefined';
 
+// Base URL of the local Lowkey Media Server (job queue, deps, AI tasks).
+// In web mode the SPA is served by that same server, so relative URLs work
+// and this is ''. In Electron the preload discovers the configured port
+// (LOWKEY_PORT env > the server's config.json > default 10111 "L0K1") and
+// exposes the base; fall back to the default if the preload predates it.
+export const mediaServerBase: string = isElectron
+  ? (window as any).electron?.mediaServerBase || 'http://localhost:10111'
+  : '';
+
 export const capabilities = {
   fileSystemAccess: true,
   clipboard: isElectron,
   windowControls: isElectron,
   autoUpdate: isElectron,
   shutdown: isElectron,
+  // Visual similarity search requires the media-server embedding backend;
+  // it is unavailable in the local-only Electron path.
+  visualSearch: !isElectron,
+  regionCapture: isElectron,
 };
 
 // Diagnostics: forward renderer errors/load failures to the main-process file
@@ -184,15 +197,10 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'GET',
       argsToBody: () => null,
     },
-    'load-path-suggestions': {
-      url: '/api/taxonomy/paths',
-      method: 'GET',
-      argsToBody: (args) => ({ term: args[0] }),
-    },
     'get-category-count': {
       url: '/api/taxonomy/category-count',
       method: 'GET',
-      argsToBody: (args) => ({ category: args[0] }),
+      argsToBody: (args) => ({ category: args[0], cap: args[1] }),
     },
     'create-tag': {
       url: '/api/tags',
@@ -375,7 +383,8 @@ export let loadMediaByDescriptionSearch: (
 
 export let loadMediaByQuery: (
   predicates: import('./query/types').Predicate[],
-  mode?: string
+  mode?: string,
+  authToken?: string | null
 ) => Promise<any>;
 
 export let fetchMediaPreview: (
@@ -410,6 +419,10 @@ export let findSubtitle: (
   videoPath: string
 ) => Promise<{ ext: 'srt' | 'vtt'; content: string } | null>;
 
+export let captureRegion:
+  | ((rect: { x: number; y: number; width: number; height: number }) => Promise<Uint8Array | null>)
+  | undefined;
+
 // ---- Platform initialization ----
 
 if (isElectron) {
@@ -443,7 +456,44 @@ if (isElectron) {
   transcript = window.electron.transcript;
   loadMediaFromDB = window.electron.loadMediaFromDB as any;
   loadMediaByDescriptionSearch = window.electron.loadMediaByDescriptionSearch;
-  loadMediaByQuery = window.electron.loadMediaByQuery as any;
+  const electronLoadMediaByQuery = window.electron.loadMediaByQuery as any;
+  loadMediaByQuery = async (predicates, mode = 'AND', authToken) => {
+    // Match the server's guard (loki_api.go): only a visual predicate with a
+    // non-empty value is resolved via the embedding backend, so only route
+    // (and require auth) when there's actually a visual query to run.
+    const hasVisual = predicates.some(
+      (p) =>
+        (p.type === 'similar' || p.type === 'visual' || p.type === 'clip') &&
+        p.value !== ''
+    );
+    if (!hasVisual) {
+      // Normal queries stay on the fast local SQLite path.
+      return electronLoadMediaByQuery(predicates, mode);
+    }
+    // Visual similarity needs the embedding backend, which only the media
+    // server has. Electron and the server share the same SQLite DB, so we
+    // route just these queries to the local server. Requires being logged in.
+    if (!authToken) {
+      throw new Error(
+        'Visual search requires logging in to the local media server.'
+      );
+    }
+    const res = await fetch(`${mediaServerBase}/api/media/query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ predicates, mode }),
+    });
+    if (!res.ok) {
+      throw new Error(
+        `Visual search failed (HTTP ${res.status}). Is the media server running?`
+      );
+    }
+    const library = await res.json();
+    return { library: library || [], cursor: 0 };
+  };
   fetchMediaPreview = window.electron.fetchMediaPreview;
   fetchTagPreview = window.electron.fetchTagPreview;
   fetchTagCount = window.electron.fetchTagCount;
@@ -454,6 +504,7 @@ if (isElectron) {
   getGifMetadata = window.electron.getGifMetadata;
   findSubtitle = ((videoPath: string) =>
     window.electron.ipcRenderer.invoke('find-subtitle', [videoPath])) as any;
+  captureRegion = (window.electron as any).captureRegion;
 } else {
   // Web mode
 
@@ -654,7 +705,7 @@ if (isElectron) {
     return { library: library || [], cursor: 0 };
   };
 
-  loadMediaByQuery = async (predicates, mode = 'AND') => {
+  loadMediaByQuery = async (predicates, mode = 'AND', _authToken) => {
     const library = await jsonPost('/api/media/query', { predicates, mode });
     return { library: library || [], cursor: 0 };
   };

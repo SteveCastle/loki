@@ -267,6 +267,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		CREATE TABLE media (
 			path TEXT PRIMARY KEY,
 			description TEXT,
+			transcript TEXT,
 			size INTEGER,
 			hash TEXT,
 			width INTEGER,
@@ -288,6 +289,20 @@ func setupTestDB(t *testing.T) *sql.DB {
 	`
 	if _, err := db.Exec(tagTableQuery); err != nil {
 		t.Fatalf("Failed to create media_tag_by_category table: %v", err)
+	}
+
+	// Create media_embedding table (required by RemoveItemsFromDB).
+	if _, err := db.Exec(`
+		CREATE TABLE media_embedding (
+			media_path TEXT NOT NULL,
+			model      TEXT NOT NULL,
+			dim        INTEGER NOT NULL,
+			vector     BLOB NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (media_path, model)
+		)
+	`); err != nil {
+		t.Fatalf("Failed to create media_embedding table: %v", err)
 	}
 
 	return db

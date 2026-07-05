@@ -506,21 +506,23 @@ export async function insertBulkMedia(
   db: Database,
   filePaths: string[]
 ): Promise<void> {
-  await db.run('BEGIN TRANSACTION');
-  const insertStatement = await db.prepare(
-    `
+  await db.withTransaction(async () => {
+    const insertStatement = await db.prepare(
+      `
     INSERT INTO media (path)
     VALUES (?)
     ON CONFLICT(path)
     DO NOTHING
     `
-  );
-
-  for (const filePath of filePaths) {
-    await insertStatement.run(filePath);
-  }
-
-  await db.run('COMMIT');
+    );
+    try {
+      for (const filePath of filePaths) {
+        await insertStatement.run(filePath);
+      }
+    } finally {
+      await insertStatement.finalize().catch(() => {});
+    }
+  });
 }
 
 // Main function
@@ -617,29 +619,28 @@ const mergeDuplicatesByPath =
 
       // Copy tags from each duplicate into target
       let copiedTags = 0;
-      await db.run('BEGIN TRANSACTION');
-      const insertTagStmt = await db.prepare(
-        `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+      await db.withTransaction(async () => {
+        const insertTagStmt = await db.prepare(
+          `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
          SELECT $1, tag_label, category_label, weight, time_stamp, created_at
          FROM media_tag_by_category
          WHERE media_path = $2
          ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
-      );
-
-      for (const dupPath of duplicatePaths) {
+        );
         try {
-          // Insert-select returns no rowcount here; optionally count source rows
-          const countRow = await db.get(
-            `SELECT COUNT(*) AS cnt FROM media_tag_by_category WHERE media_path = $1`,
-            [dupPath]
-          );
-          await insertTagStmt.run(targetPath, dupPath);
-          copiedTags += Number(countRow?.cnt || 0);
-        } catch (e) {
-          console.error('Error copying tags from', dupPath, e);
+          for (const dupPath of duplicatePaths) {
+            // Insert-select returns no rowcount here; optionally count source rows
+            const countRow = await db.get(
+              `SELECT COUNT(*) AS cnt FROM media_tag_by_category WHERE media_path = $1`,
+              [dupPath]
+            );
+            await insertTagStmt.run(targetPath, dupPath);
+            copiedTags += Number(countRow?.cnt || 0);
+          }
+        } finally {
+          await insertTagStmt.finalize().catch(() => {});
         }
-      }
-      await db.run('COMMIT');
+      });
 
       // After copying, delete the duplicates (file + db rows)
       const deleted: string[] = [];
@@ -849,39 +850,40 @@ const importFiles =
          VALUES (?, ?, ?, ?, 0, ?)
          ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
       );
-      await db.run('BEGIN TRANSACTION');
       try {
-        for (const tag of tags) {
-          // Resolve category from DB if not provided
-          let categoryLabel = tag.category;
-          if (!categoryLabel) {
-            const tagRow = await db.get(
-              `SELECT category_label FROM tag WHERE label = ?`,
+        await db.withTransaction(async () => {
+          for (const tag of tags) {
+            // Resolve category from DB if not provided
+            let categoryLabel = tag.category;
+            if (!categoryLabel) {
+              const tagRow = await db.get(
+                `SELECT category_label FROM tag WHERE label = ?`,
+                [tag.label]
+              );
+              categoryLabel = tagRow?.category_label || '';
+            }
+
+            const maxRow = await db.get(
+              `SELECT MAX(weight) AS maxWeight FROM media_tag_by_category WHERE tag_label = ?`,
               [tag.label]
             );
-            categoryLabel = tagRow?.category_label || '';
+            let weight = (maxRow?.maxWeight || 0) + 1;
+            for (const mediaPath of imported) {
+              await insertStmt.run(
+                mediaPath,
+                tag.label,
+                categoryLabel,
+                weight,
+                Date.now()
+              );
+              weight++;
+            }
           }
-
-          const maxRow = await db.get(
-            `SELECT MAX(weight) AS maxWeight FROM media_tag_by_category WHERE tag_label = ?`,
-            [tag.label]
-          );
-          let weight = (maxRow?.maxWeight || 0) + 1;
-          for (const mediaPath of imported) {
-            await insertStmt.run(
-              mediaPath,
-              tag.label,
-              categoryLabel,
-              weight,
-              Date.now()
-            );
-            weight++;
-          }
-        }
-        await db.run('COMMIT');
+        });
       } catch (err) {
-        await db.run('ROLLBACK');
         console.error('Failed to apply tags:', err);
+      } finally {
+        await insertStmt.finalize().catch(() => {});
       }
     }
 

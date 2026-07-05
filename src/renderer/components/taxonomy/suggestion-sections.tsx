@@ -30,17 +30,30 @@ interface SuggestionSectionsProps {
 
 const SECTION_CAP = 8;
 
+// Distinct-media counts stop counting here. Counting DISTINCT media_path is a
+// per-row table walk in SQLite, and the huge autotag "Suggested" bucket
+// (hundreds of thousands of items) took 20+ seconds per keystroke, stalling
+// every other query on the shared connection. Every curated category is well
+// under this cap, so their counts stay exact; capped ones render as "25000+".
+const CATEGORY_COUNT_CAP = 25000;
+
 // Lazy media count for a single rendered category row. Only mounted for
 // categories that are actually shown, so we never fetch counts for the
-// filtered-out / capped categories.
+// filtered-out / capped categories. staleTime: Infinity — the count is
+// decoration, so one (possibly ~0.5s) query per category per session.
 function CategoryCount({ label }: { label: string }) {
   const { data: count } = useQuery<number, Error>(
     ['suggest', 'category-count', label],
-    () => invoke('get-category-count', [label]) as Promise<number>,
-    { refetchOnWindowFocus: false }
+    () =>
+      invoke('get-category-count', [label, CATEGORY_COUNT_CAP]) as Promise<number>,
+    { refetchOnWindowFocus: false, staleTime: Infinity }
   );
   if (count === undefined) return null;
-  return <span className="suggestion-meta">{count}</span>;
+  return (
+    <span className="suggestion-meta">
+      {count >= CATEGORY_COUNT_CAP ? `${CATEGORY_COUNT_CAP}+` : count}
+    </span>
+  );
 }
 
 export default function SuggestionSections({
@@ -51,8 +64,8 @@ export default function SuggestionSections({
   highlightedKey,
   onHighlightKey,
 }: SuggestionSectionsProps) {
-  // Debounce the term that drives the IPC-backed suggestions (path lookups and
-  // the per-category counts mounted below) so they don't fire on every
+  // Debounce the term that drives the category matching (and with it the
+  // per-category count IPCs mounted below) so they don't fire on every
   // keystroke — the command palette passes the raw, un-debounced text. The
   // "contains X" add-rows keep using the live `text` so the echoed term stays
   // instant.
@@ -77,35 +90,10 @@ export default function SuggestionSections({
     .filter((c) => c.label.toLowerCase().includes(term))
     .slice(0, SECTION_CAP);
 
-  // 2. Paths — distinct directory fragments containing the term.
-  const { data: pathResults } = useQuery<string[], Error>(
-    ['suggest', 'paths', debouncedText],
-    () => invoke('load-path-suggestions', [debouncedText]) as Promise<string[]>,
-    { enabled: debouncedText.length > 0, refetchOnWindowFocus: false }
-  );
-
-  const distinctDirs: string[] = [];
-  if (pathResults) {
-    const seen = new Set<string>();
-    for (const full of pathResults) {
-      const segments = full.split(/[/\\]/);
-      for (const seg of segments) {
-        if (!seg) continue;
-        if (!seg.toLowerCase().includes(term)) continue;
-        if (seen.has(seg)) continue;
-        seen.add(seg);
-        distinctDirs.push(seg);
-        if (distinctDirs.length >= SECTION_CAP) break;
-      }
-      if (distinctDirs.length >= SECTION_CAP) break;
-    }
-  }
-
   // Row keys for highlight matching + navigation. These also prefix the rows
   // below so the rendered DOM order matches the reported item order exactly.
   const CAT_KEY = (label: string) => `cat:${label}`;
   const PATH_ADD_KEY = 'path:add';
-  const DIR_KEY = (dir: string) => `path:${dir}`;
   const DESC_ADD_KEY = 'desc:add';
   const HASH_ADD_KEY = 'hash:add';
 
@@ -120,10 +108,6 @@ export default function SuggestionSections({
       key: PATH_ADD_KEY,
       predicate: { type: 'path', value: text, exclude: false } as Predicate,
     },
-    ...distinctDirs.map((dir) => ({
-      key: DIR_KEY(dir),
-      predicate: { type: 'path', value: dir, exclude: false } as Predicate,
-    })),
     {
       key: DESC_ADD_KEY,
       predicate: { type: 'description', value: text, exclude: false } as Predicate,
@@ -185,18 +169,6 @@ export default function SuggestionSections({
             path contains &quot;{text}&quot;
           </span>
         </div>
-        {distinctDirs.map((dir) => (
-          <div
-            key={dir}
-            className={rowClass(DIR_KEY(dir))}
-            title={dir}
-            onMouseEnter={() => onHighlightKey?.(DIR_KEY(dir))}
-            onClick={() => onAdd({ type: 'path', value: dir, exclude: false })}
-          >
-            <span className="suggestion-prefix">path:</span>
-            <span className="suggestion-value">{dir}</span>
-          </div>
-        ))}
       </div>
 
       <div className="suggestion-section">

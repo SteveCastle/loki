@@ -69,7 +69,11 @@ services:
       dockerfile: media-server/Dockerfile
     container_name: lowkey-media-server
     ports:
-      - "${LOWKEY_PORT:-18090}:8090"
+      # Host port (set LOWKEY_PORT in your shell/.env) → container port. The
+      # server inside the container listens on its default 10111; to change
+      # the *container* port instead, add LOWKEY_PORT under `environment:`
+      # and update the right-hand side here to match.
+      - "${LOWKEY_PORT:-18090}:10111"
     volumes:
       - lowkey-data:/data
       # Mount local media directories on top of the S3 root if you like:

@@ -61,7 +61,7 @@ func statusFor(m Model) ModelStatus {
 	if _, err := os.Stat(dir); err != nil {
 		return StatusMissing
 	}
-	for _, f := range m.Files {
+	for _, f := range m.EffectiveFiles() {
 		if _, err := os.Stat(filepath.Join(dir, f.RelPath)); err != nil {
 			return StatusMissing
 		}

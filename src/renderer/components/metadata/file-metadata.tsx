@@ -8,6 +8,7 @@ import Tags from './tags';
 import PathTree from './path-tree';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import { Description } from './description';
+import Embeddings from './embeddings';
 import PathActions from './path-actions';
 import { useContext } from 'react';
 import { GlobalStateContext } from '../../state';
@@ -64,18 +65,6 @@ export default function FileMetadata({ item }: { item: any }) {
         <h2>Path</h2>
         {item?.path && <PathActions path={item.path} />}
         {item?.path && <PathTree path={item?.path} />}
-      </div>
-      <div
-        className="section action"
-        onClick={() => {
-          libraryService.send({
-            type: 'SET_QUERY',
-            data: { text: `hash:${data.hash}` },
-          });
-        }}
-      >
-        <h2>Hash</h2>
-        {item?.path && data.hash}
       </div>
       <div className="section">
         <h2>Tags</h2>
@@ -160,6 +149,21 @@ export default function FileMetadata({ item }: { item: any }) {
           </div>
         </div>
       )}
+
+      {item?.path && <Embeddings path={item.path} key={item.path} />}
+
+      <div
+        className="section action"
+        onClick={() => {
+          libraryService.send({
+            type: 'SET_QUERY',
+            data: { text: `hash:${data.hash}` },
+          });
+        }}
+      >
+        <h2>Hash</h2>
+        {item?.path && data.hash}
+      </div>
     </div>
   );
 }

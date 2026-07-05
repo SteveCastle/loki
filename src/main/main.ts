@@ -107,6 +107,20 @@ ipcMain.handle('get-mac-path', () => {
   return macPath;
 });
 
+ipcMain.handle('capture-region', async (_event, [rect]) => {
+  if (!mainWindow) return null;
+  // rect is in renderer CSS pixels; capturePage expects the same space.
+  const r = {
+    x: Math.round(rect.x),
+    y: Math.round(rect.y),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  };
+  if (r.width <= 0 || r.height <= 0) return null;
+  const image = await mainWindow.webContents.capturePage(r);
+  return image.toPNG(); // Buffer; serialized to the renderer as a Uint8Array
+});
+
 // Window Controls
 ipcMain.on('shutdown', async () => {
   // Shutdown the app.
@@ -336,7 +350,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-category-tags');
   ipcMain.removeHandler('load-all-tags');
   ipcMain.removeHandler('get-tag-count');
-  ipcMain.removeHandler('load-path-suggestions');
   ipcMain.removeHandler('get-category-count');
   ipcMain.removeHandler('create-tag');
   ipcMain.removeHandler('create-category');
@@ -420,7 +433,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('load-category-tags', taxonomyModule.loadCategoryTags(db));
   ipcMain.handle('load-all-tags', taxonomyModule.loadAllTags(db));
   ipcMain.handle('get-tag-count', taxonomyModule.getTagCount(db));
-  ipcMain.handle('load-path-suggestions', taxonomyModule.loadPathSuggestions(db));
   ipcMain.handle('get-category-count', taxonomyModule.getCategoryCount(db));
   ipcMain.handle('create-tag', taxonomyModule.createTag(db));
   ipcMain.handle('create-category', taxonomyModule.createCategory(db));

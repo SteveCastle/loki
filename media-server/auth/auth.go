@@ -215,6 +215,13 @@ func (s *AuthService) DeleteUser(username string) error {
 		return errors.New("cannot delete the last user")
 	}
 
+	// Revoke the user's API keys so they can't outlive the account.
+	if _, err := s.db.Exec(
+		"DELETE FROM api_keys WHERE user_id IN (SELECT id FROM users WHERE username = ?)", username,
+	); err != nil {
+		return err
+	}
+
 	_, err := s.db.Exec("DELETE FROM users WHERE username = ?", username)
 	return err
 }

@@ -10,7 +10,7 @@ export const OptionalPanel: React.FC<Props> = ({ items }) => {
     <section className={styles.panel}>
       <header>
         <h2>Optional tools</h2>
-        <p>Install these yourself if you want the features they unlock. The server runs fine without them.</p>
+        <p>Each unlocks an import or AI feature. Install these yourself if you want them — the server runs fine without them.</p>
       </header>
       <ul className={styles.list}>
         {optional.map((i) => <OptionalRow key={i.id} item={i} />)}
@@ -29,7 +29,10 @@ const OptionalRow: React.FC<{ item: DepStatus }> = ({ item }) => {
     <li className={styles[item.state] || styles.row}>
       <div className={styles.head}>
         <span className={styles.icon} aria-hidden>{item.state === 'installed' ? 'OK' : '-'}</span>
-        <span className={styles.name}>{item.name}</span>
+        <span className={styles.name}>
+          {item.feature || item.name}
+          {item.feature && <span className={styles.version}> {item.name}</span>}
+        </span>
         {item.version && <span className={styles.version}>{item.version}</span>}
         <button type="button" className={styles.disclose} onClick={() => setOpen((o) => !o)}>
           {open ? 'Hide install commands' : 'Show install commands'}

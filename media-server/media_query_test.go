@@ -179,3 +179,104 @@ func TestBuildMediaQueryIncludeTagColumns(t *testing.T) {
 		t.Fatalf("expected drive param first: %v", params)
 	}
 }
+
+// ---- Visual predicate tests ----
+
+func TestBuildMediaQueryVisualInClause(t *testing.T) {
+	sql, params := BuildMediaQuery([]Predicate{
+		{Type: "visual", Value: "red car", Resolved: []string{"a.jpg", "b.jpg"}},
+	}, "AND")
+	n := norm(sql)
+	if !strings.Contains(n, "media.path IN (?, ?)") {
+		t.Fatalf("expected IN clause: %q", sql)
+	}
+	if len(params) != 2 || params[0] != "a.jpg" || params[1] != "b.jpg" {
+		t.Fatalf("expected params [a.jpg b.jpg], got %v", params)
+	}
+}
+
+func TestBuildMediaQueryVisualExclude(t *testing.T) {
+	sql, params := BuildMediaQuery([]Predicate{
+		{Type: "visual", Value: "red car", Resolved: []string{"a.jpg", "b.jpg"}, Exclude: true},
+	}, "AND")
+	n := norm(sql)
+	if !strings.Contains(n, "media.path NOT IN (?, ?)") {
+		t.Fatalf("expected NOT IN clause: %q", sql)
+	}
+	if len(params) != 2 || params[0] != "a.jpg" || params[1] != "b.jpg" {
+		t.Fatalf("expected params [a.jpg b.jpg], got %v", params)
+	}
+}
+
+func TestBuildMediaQueryVisualEmptyResolved(t *testing.T) {
+	// Include with empty Resolved → matches nothing (1=0).
+	sqlInc, _ := BuildMediaQuery([]Predicate{
+		{Type: "visual", Value: "red car"},
+	}, "AND")
+	if !strings.Contains(sqlInc, "1=0") {
+		t.Fatalf("empty include should produce 1=0: %q", sqlInc)
+	}
+
+	// Exclude with empty Resolved → removes nothing (1=1).
+	sqlExc, _ := BuildMediaQuery([]Predicate{
+		{Type: "visual", Value: "red car", Exclude: true},
+	}, "AND")
+	if !strings.Contains(sqlExc, "1=1") {
+		t.Fatalf("empty exclude should produce 1=1: %q", sqlExc)
+	}
+}
+
+func TestBuildMediaQueryVisualComposesWithTag(t *testing.T) {
+	// Visual + tag in AND mode: tag drives the index, visual becomes an IN conjunct.
+	predicates := []Predicate{
+		{Type: "visual", Value: "x", Resolved: []string{"a.jpg"}},
+		{Type: "tag", Value: "fav", Join: "AND"},
+	}
+	sql, params := BuildMediaQuery(predicates, "AND")
+	n := norm(sql)
+	if !strings.Contains(n, "media.path IN (?)") {
+		t.Fatalf("expected visual IN clause: %q", sql)
+	}
+	if !strings.Contains(n, "tag_label") {
+		t.Fatalf("expected tag reference: %q", sql)
+	}
+	foundA, foundFav := false, false
+	for _, p := range params {
+		if s, ok := p.(string); ok {
+			switch s {
+			case "a.jpg":
+				foundA = true
+			case "fav":
+				foundFav = true
+			}
+		}
+	}
+	if !foundA || !foundFav {
+		t.Fatalf("expected both 'a.jpg' and 'fav' in params, got %v", params)
+	}
+}
+
+func TestSortItemsByScore(t *testing.T) {
+	items := []map[string]any{
+		{"path": "a"},
+		{"path": "b"},
+		{"path": "c"},
+	}
+	scores := map[string]float32{"a": 0.1, "b": 0.9, "c": 0.5}
+	sortItemsByScore(items, scores)
+
+	wantOrder := []string{"b", "c", "a"}
+	for i, it := range items {
+		if it["path"] != wantOrder[i] {
+			t.Fatalf("position %d: got path %q, want %q", i, it["path"], wantOrder[i])
+		}
+		want32 := scores[wantOrder[i]]
+		got, ok := it["score"].(float32)
+		if !ok {
+			t.Fatalf("item %q: score not float32: %T", wantOrder[i], it["score"])
+		}
+		if got != want32 {
+			t.Fatalf("item %q: score = %v, want %v", wantOrder[i], got, want32)
+		}
+	}
+}

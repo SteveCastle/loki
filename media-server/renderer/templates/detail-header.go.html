@@ -24,7 +24,8 @@
       {{if .Arguments}}
       <span class="command-args">{{range .Arguments}}{{.}} {{end}}</span>
       {{end}} {{if .Input}}
-      <span class="command-input">{{.Input}}</span>
+      <strong>Input:</strong>
+      <span class="command-input">{{template "jobInput" (jobInputView .Input)}}</span>
       {{end}}
     </div>
     {{- if .CreatedAt.IsZero | not}}

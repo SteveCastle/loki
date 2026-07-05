@@ -40,6 +40,7 @@ import (
 	"github.com/stevecastle/shrike/storage"
 	"github.com/stevecastle/shrike/stream"
 	"github.com/stevecastle/shrike/tasks"
+	"github.com/stevecastle/shrike/transcribe"
 )
 
 // -----------------------------------------------------------------------------
@@ -293,6 +294,10 @@ func homeHandler(deps *Dependencies) http.HandlerFunc {
 			var c Command
 			if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
 				http.Error(w, "bad json", http.StatusBadRequest)
+				return
+			}
+			if len(c.Arguments) == 0 {
+				http.Error(w, "arguments required: last element is the task input", http.StatusBadRequest)
 				return
 			}
 			workflow := jobqueue.Workflow{
@@ -899,6 +904,12 @@ func swipeAPIHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// "More like this": rank by embedding similarity to an anchor item
+		// instead of the seeded shuffle. Shared across platform builds.
+		if maybeHandleSwipeSimilar(w, r, deps) {
+			return
+		}
+
 		// Parse query parameters
 		offsetStr := r.URL.Query().Get("offset")
 		limitStr := r.URL.Query().Get("limit")
@@ -1201,42 +1212,63 @@ func formatBytes(bytes int64) string {
 // -----------------------------------------------------------------------------
 
 type configTemplateData struct {
-	Config       appconfig.Config
-	ConfigPath   string
-	ActiveDBPath string
+	Config                 appconfig.Config
+	ConfigPath             string
+	ActiveDBPath           string
+	EmbeddingModels        []tasks.EmbedModel
+	TaggerModels           []tasks.TaggerModel
+	DirectMLInstalled      bool
+	TranscriptionProviders []transcribe.Provider
+	TranscriptionModels    []transcribe.ModelChoice
 }
 
 type updateConfigRequest struct {
-	DBPath                 string  `json:"dbPath"`
-	DownloadPath           string  `json:"downloadPath"`
-	OllamaBaseURL          string  `json:"ollamaBaseUrl"`
-	OllamaModel            string  `json:"ollamaModel"`
-	DescribePrompt         string  `json:"describePrompt"`
-	AutotagPrompt          string  `json:"autotagPrompt"`
-	InferenceProvider      string  `json:"inferenceProvider"`
-	RunPodEndpoint         string  `json:"runpodEndpoint"`
-	RunPodAPIKey           string  `json:"runpodApiKey"`
-	LMStudioBaseURL        string  `json:"lmstudioBaseUrl"`
-	LMStudioModel          string  `json:"lmstudioModel"`
-	LMStudioAPIKey         string  `json:"lmstudioApiKey"`
-	LlamaCppBaseURL        string  `json:"llamacppBaseUrl"`
-	LlamaCppModel          string  `json:"llamacppModel"`
-	LlamaCppAPIKey         string  `json:"llamacppApiKey"`
-	InferenceConcurrency   struct {
+	DBPath               string `json:"dbPath"`
+	Port                 int    `json:"port"`
+	DownloadPath         string `json:"downloadPath"`
+	OllamaBaseURL        string `json:"ollamaBaseUrl"`
+	OllamaModel          string `json:"ollamaModel"`
+	DescribePrompt       string `json:"describePrompt"`
+	AutotagPrompt        string `json:"autotagPrompt"`
+	InferenceProvider    string `json:"inferenceProvider"`
+	RunPodEndpoint       string `json:"runpodEndpoint"`
+	RunPodAPIKey         string `json:"runpodApiKey"`
+	LMStudioBaseURL      string `json:"lmstudioBaseUrl"`
+	LMStudioModel        string `json:"lmstudioModel"`
+	LMStudioAPIKey       string `json:"lmstudioApiKey"`
+	LlamaCppBaseURL      string `json:"llamacppBaseUrl"`
+	LlamaCppModel        string `json:"llamacppModel"`
+	LlamaCppAPIKey       string `json:"llamacppApiKey"`
+	InferenceConcurrency struct {
 		Ollama   int `json:"ollama"`
 		RunPod   int `json:"runpod"`
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
-	OnnxModelPath          string  `json:"onnxModelPath"`
-	OnnxLabelsPath         string  `json:"onnxLabelsPath"`
-	OnnxConfigPath         string  `json:"onnxConfigPath"`
-	OnnxORTSharedLibPath   string  `json:"onnxOrtSharedLibPath"`
-	OnnxGeneralThreshold   float64 `json:"onnxGeneralThreshold"`
-	OnnxCharacterThreshold float64 `json:"onnxCharacterThreshold"`
-	FasterWhisperPath      string                  `json:"fasterWhisperPath"`
-	DiscordToken           string                  `json:"discordToken"`
-	Roots                  []appconfig.StorageRoot `json:"roots"`
+	OnnxModelPath             string                  `json:"onnxModelPath"`
+	OnnxLabelsPath            string                  `json:"onnxLabelsPath"`
+	OnnxConfigPath            string                  `json:"onnxConfigPath"`
+	OnnxORTSharedLibPath      string                  `json:"onnxOrtSharedLibPath"`
+	OnnxGeneralThreshold      float64                 `json:"onnxGeneralThreshold"`
+	OnnxCharacterThreshold    float64                 `json:"onnxCharacterThreshold"`
+	EmbeddingModel            string                  `json:"embeddingModel"`
+	EmbeddingProvider         string                  `json:"embeddingProvider"`
+	EmbeddingPerformance      string                  `json:"embeddingPerformance"`
+	EmbeddingWorkers          int                     `json:"embeddingWorkers"`
+	EmbeddingThreadsPerWorker int                     `json:"embeddingThreadsPerWorker"`
+	AutotagModel              string                  `json:"autotagModel"`
+	AutotagProvider           string                  `json:"autotagProvider"`
+	AutotagPerformance        string                  `json:"autotagPerformance"`
+	AutotagWorkers            int                     `json:"autotagWorkers"`
+	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
+	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
+	TranscriptionProvider     string                  `json:"transcriptionProvider"`
+	TranscriptionModel        string                  `json:"transcriptionModel"`
+	TranscriptionLanguage     *string                 `json:"transcriptionLanguage"`
+	TranscriptionVADFilter    *bool                   `json:"transcriptionVadFilter"`
+	FasterWhisperPath         string                  `json:"fasterWhisperPath"`
+	DiscordToken              string                  `json:"discordToken"`
+	Roots                     []appconfig.StorageRoot `json:"roots"`
 }
 
 // -----------------------------------------------------------------------------
@@ -1379,9 +1411,16 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			currentConfig = cfg
 			data := configTemplateData{
-				Config:       cfg,
-				ConfigPath:   cfgPath,
-				ActiveDBPath: cfg.DBPath,
+				Config:                 cfg,
+				ConfigPath:             cfgPath,
+				ActiveDBPath:           cfg.DBPath,
+				EmbeddingModels:        tasks.EmbedModelList(),
+				TaggerModels:           tasks.TaggerModelList(),
+				DirectMLInstalled:      tasks.DirectMLRuntimeInstalled(),
+				TranscriptionProviders: transcribe.Providers(),
+			}
+			if p, err := transcribe.Active(); err == nil {
+				data.TranscriptionModels = p.Models()
 			}
 			if err := renderer.Templates().ExecuteTemplate(w, "config", data); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1400,8 +1439,14 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 
 			oldCfg := currentConfig
 			oldDBPath := currentConfig.DBPath
+			oldEmbeddingModel := currentConfig.EmbeddingModel
 			newCfg := currentConfig
 			newCfg.DBPath = req.DBPath
+			// Port: positive in-range values overwrite; 0 = field absent from a
+			// partial POST, leave the stored value alone. Takes effect on restart.
+			if req.Port > 0 && req.Port <= 65535 {
+				newCfg.Port = req.Port
+			}
 			if strings.TrimSpace(req.DownloadPath) != "" {
 				newCfg.DownloadPath = strings.TrimSpace(req.DownloadPath)
 			}
@@ -1473,6 +1518,56 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.OnnxCharacterThreshold > 0 {
 				newCfg.OnnxTagger.CharacterThreshold = req.OnnxCharacterThreshold
 			}
+			if v := strings.TrimSpace(req.EmbeddingModel); v != "" {
+				newCfg.EmbeddingModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.EmbeddingProvider)); v != "" {
+				newCfg.EmbeddingProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.EmbeddingPerformance)); v != "" {
+				newCfg.EmbeddingPerformance = v
+			}
+			if req.EmbeddingWorkers > 0 {
+				newCfg.EmbeddingWorkers = req.EmbeddingWorkers
+			}
+			if req.EmbeddingThreadsPerWorker > 0 {
+				newCfg.EmbeddingThreadsPerWorker = req.EmbeddingThreadsPerWorker
+			}
+			if v := strings.TrimSpace(req.AutotagModel); v != "" {
+				newCfg.AutotagModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.AutotagProvider)); v != "" {
+				newCfg.AutotagProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.AutotagPerformance)); v != "" {
+				newCfg.AutotagPerformance = v
+			}
+			if req.AutotagWorkers > 0 {
+				newCfg.AutotagWorkers = req.AutotagWorkers
+			}
+			if req.AutotagThreadsPerWorker > 0 {
+				newCfg.AutotagThreadsPerWorker = req.AutotagThreadsPerWorker
+			}
+			if req.OnnxFileTimeoutSeconds != 0 {
+				// non-zero so a partial POST doesn't clobber it; negative = disabled.
+				newCfg.OnnxFileTimeoutSeconds = req.OnnxFileTimeoutSeconds
+			}
+			// Transcription: provider/model use the protective non-empty
+			// pattern; language and VAD are pointers so an explicit empty
+			// language ("auto-detect") or unchecked VAD box persists, while
+			// partial POSTs that omit the fields leave them alone.
+			if v := strings.ToLower(strings.TrimSpace(req.TranscriptionProvider)); v != "" {
+				newCfg.TranscriptionProvider = v
+			}
+			if v := strings.TrimSpace(req.TranscriptionModel); v != "" {
+				newCfg.TranscriptionModel = v
+			}
+			if req.TranscriptionLanguage != nil {
+				newCfg.TranscriptionLanguage = strings.TrimSpace(*req.TranscriptionLanguage)
+			}
+			if req.TranscriptionVADFilter != nil {
+				newCfg.TranscriptionVADFilter = *req.TranscriptionVADFilter
+			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
 			}
@@ -1507,6 +1602,22 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				log.Println("Auth session cleared due to database switch")
 			}
 			currentConfig = newCfg
+
+			// If the active embedding model changed, rebuild the ANN index for
+			// the new model in the background. Vectors are model-keyed in the DB
+			// (no re-inference needed); this just reloads the stored vectors for
+			// the now-active model. Done off the request goroutine because a
+			// large library can take a while to load.
+			if newCfg.EmbeddingModel != oldEmbeddingModel {
+				go func(db *sql.DB) {
+					model, n, err := tasks.RebuildActiveIndex(db, nil)
+					if err != nil {
+						log.Printf("embedding index rebuild after model switch failed (model %s): %v", model, err)
+						return
+					}
+					log.Printf("embedding index rebuilt after model switch: %d vectors (model %s)", n, model)
+				}(deps.DB)
+			}
 
 			// Rebuild storage backends from new config
 			newReg, regErrs := storage.BuildRegistry(newCfg.Roots)
@@ -1870,11 +1981,10 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			return
 		}
 
-		// Check Authorization header first (Bearer token)
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if claims, err := deps.Auth.VerifyToken(tokenString); err == nil {
+		// Check header credentials first (Authorization Bearer JWT or lk_
+		// API key, or the X-API-Key header)
+		if tokenString := requestAuthToken(r); tokenString != "" {
+			if claims, err := verifyCredential(deps, tokenString); err == nil {
 				// Check if user setup is required (logged in as default admin)
 				if claims.Username == auth.DefaultAdminUsername {
 					setupRequired, _ := deps.Auth.IsSetupRequired()
@@ -2063,11 +2173,10 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Check Authorization header first (Bearer token)
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-			if claims, err := deps.Auth.VerifyToken(tokenString); err == nil {
+		// Check header credentials first (Authorization Bearer JWT or lk_
+		// API key, or the X-API-Key header)
+		if tokenString := requestAuthToken(r); tokenString != "" {
+			if claims, err := verifyCredential(deps, tokenString); err == nil {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]interface{}{
 					"loggedIn": true,
@@ -2201,6 +2310,14 @@ func main() {
 		Storage: storageReg,
 	}
 
+	// ––– embedding vector index (best-effort, non-fatal) –––
+	log.Printf("Building embedding search index…")
+	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
+		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
+	} else {
+		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
+	}
+
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
 		return authMiddleware(deps, next, role)
@@ -2237,9 +2354,30 @@ func main() {
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	RegisterDepsRoutes(mux)
+	RegisterVizRoutes(mux, deps)
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows", renderer.ApplyMiddlewares(workflowsListHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows/create", renderer.ApplyMiddlewares(workflowCreateHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows/{id}", renderer.ApplyMiddlewares(workflowDetailHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/workflows/{id}/run", renderer.ApplyMiddlewares(workflowRunHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
+
+	// Library stats API (stats_api.go) — powers the home page coverage cards
+	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RoleAdmin))
+
+	// Embeddings index + library data API (index_api.go / library_api.go)
+	mux.HandleFunc("/api/index/status", renderer.ApplyMiddlewares(indexStatusHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/index/models", renderer.ApplyMiddlewares(indexModelsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/index/rebuild", renderer.ApplyMiddlewares(indexRebuildHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/index/missing", renderer.ApplyMiddlewares(indexMissingHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/embeddings", renderer.ApplyMiddlewares(embeddingsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/embeddings/prune", renderer.ApplyMiddlewares(embeddingsPruneHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/transcript", renderer.ApplyMiddlewares(mediaTranscriptHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/rating", renderer.ApplyMiddlewares(mediaRatingHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/list", renderer.ApplyMiddlewares(tagsListHandler(deps), renderer.RoleAdmin))
 
 	// Auth routes
 	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps), renderer.RolePublic))
@@ -2247,6 +2385,7 @@ func main() {
 	mux.HandleFunc("/auth/logout", renderer.ApplyMiddlewares(logoutHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps), renderer.RolePublic))
+	mux.HandleFunc("/auth/keys", renderer.ApplyMiddlewares(apiKeysHandler(deps), renderer.RoleAdmin))
 
 	// File upload
 	mux.HandleFunc("/api/upload", renderer.ApplyMiddlewares(uploadHandler(deps), renderer.RoleAdmin))
@@ -2265,11 +2404,13 @@ func main() {
 	mux.HandleFunc("/api/media/preview", renderer.ApplyMiddlewares(lokiMediaPreviewHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/delete", renderer.ApplyMiddlewares(lokiMediaDeleteHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/gif-metadata", renderer.ApplyMiddlewares(lokiGifMetadataHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/similar", renderer.ApplyMiddlewares(lokiSimilarHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/search/visual", renderer.ApplyMiddlewares(lokiVisualSearchHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/search/image", renderer.ApplyMiddlewares(lokiImageSearchHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/taxonomy/paths", renderer.ApplyMiddlewares(lokiPathSuggestHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
@@ -2375,7 +2516,7 @@ func main() {
 	}()
 
 	srv = &http.Server{
-		Addr:    ":8090",
+		Addr:    appconfig.Get().ListenAddr(),
 		Handler: mux,
 	}
 
@@ -2385,7 +2526,7 @@ func main() {
 
 	// start HTTP server in background
 	go func() {
-		log.Println("HTTP server starting on http://localhost:8090")
+		log.Printf("HTTP server starting on %s", appconfig.Get().LocalBaseURL())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("lowkeymediaserver: %v", err)
 		}
@@ -2393,9 +2534,9 @@ func main() {
 
 	// Optionally open browser (only if DISPLAY is set or running under a desktop environment)
 	if os.Getenv("DISPLAY") != "" || os.Getenv("WAYLAND_DISPLAY") != "" {
-		_ = browser.OpenURL("http://localhost:8090/")
+		_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
 	} else {
-		log.Println("No display detected. Access the web UI at http://localhost:8090")
+		log.Printf("No display detected. Access the web UI at %s", appconfig.Get().LocalBaseURL())
 	}
 
 	// Wait for shutdown signal

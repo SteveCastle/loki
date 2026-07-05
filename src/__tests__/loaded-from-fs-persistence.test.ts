@@ -37,6 +37,7 @@ jest.mock('../renderer/platform', () => ({
   send: jest.fn(),
   on: jest.fn(() => () => {}),
   isElectron: true,
+  mediaServerBase: 'http://localhost:10111',
   capabilities: {
     fileSystemAccess: true,
     clipboard: true,
@@ -46,7 +47,7 @@ jest.mock('../renderer/platform', () => ({
   },
   appArgs: {
     filePath: '/test/folder',
-    // 'web' skips the post-load-db fetch to localhost:8090/config
+    // 'web' skips the post-load-db fetch to the media server's /config
     dbPath: 'web',
     appUserData: '/test/userData',
   },

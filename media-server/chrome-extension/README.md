@@ -15,7 +15,7 @@ A Chrome extension for creating Lowkey Media Server tasks directly from your bro
 ## Prerequisites
 
 - Google Chrome or Chromium-based browser (Edge, Brave, etc.)
-- Lowkey Media Server running on `http://localhost:8090`
+- Lowkey Media Server running on `http://localhost:10111`
 
 ## Installation
 
@@ -147,7 +147,7 @@ You can use any image editor or convert the project's `assets/logo.ico` file.
 
 ## Configuration
 
-The extension connects to `http://localhost:8090` by default. If you need to change this:
+The extension connects to `http://localhost:10111` by default. If you need to change this:
 
 1. Open `popup.js`
 2. Modify the `API_BASE` constant at the top of the file
@@ -159,7 +159,7 @@ The extension connects to `http://localhost:8090` by default. If you need to cha
 ### Extension shows "Disconnected"
 
 - Ensure the Lowkey Media Server is running (`lowkeymediaserver.exe`)
-- Check that port 8090 is accessible
+- Check that port 10111 is accessible
 - Try clicking the refresh button
 
 ### "Failed to create task" error

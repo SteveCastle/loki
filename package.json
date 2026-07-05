@@ -1,6 +1,6 @@
 {
   "name": "loki",
-  "version": "2.16.0",
+  "version": "2.17.0",
   "type": "commonjs",
   "productName": "Lowkey Media Viewer",
   "description": "A Media library for quick curation.",
@@ -36,6 +36,7 @@
     "test": "npm run build && jest",
     "build:web": "npm run build:renderer && node -e \"const fs=require('fs');const path=require('path');function cpR(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?cpR(sp,dp):fs.copyFileSync(sp,dp)}}cpR('release/app/dist/renderer','media-server/loki-static')\"",
     "build:server": "node scripts/build-server.js",
+    "build:cli": "node -e \"const{execSync}=require('child_process');const ext=process.platform==='win32'?'.exe':'';execSync('go build -o lokictl'+ext+' ./cmd/lokictl',{stdio:'inherit',cwd:'media-server'})\"",
     "test:server": "cd media-server && go test ./..."
   },
   "lint-staged": {

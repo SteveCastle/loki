@@ -3,7 +3,7 @@
 # =============================================================================
 # Multi-stage:
 #   1. node-builder   — webpack-builds the React SPA into media-server/loki-static
-#   2. go-builder     — builds lowkeymediaserver + the onnxtag CLI with the SPA embedded
+#   2. go-builder     — builds lowkeymediaserver + the onnxtag/embed CLIs with the SPA embedded
 #   3. ort-fetcher    — downloads the ONNX Runtime shared library
 #   4. runtime        — Debian slim with ffmpeg/exiftool/yt-dlp/gallery-dl pre-installed,
 #                       all "bundled" binaries arranged under /opt/lowkey/bin/ so
@@ -13,10 +13,10 @@
 #
 #   docker build -f media-server/Dockerfile -t lowkey-media-server .
 #
-# RUN (mapping host port 18090 → container 8090 to avoid colliding with a
-# local dev instance on 8090):
+# RUN (mapping host port 18090 → container 10111 to avoid colliding with a
+# local dev instance on 10111):
 #
-#   docker run --rm -p 18090:8090 \
+#   docker run --rm -p 18090:10111 \
 #     -v lowkey-data:/data \
 #     -v /path/to/your/media:/media \
 #     -e LOWKEY_ROOT_1=/media:Local \
@@ -70,7 +70,8 @@ COPY --from=node-builder /src/media-server/loki-static ./loki-static
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
 RUN go build -ldflags="-s -w" -o /out/lowkeymediaserver . && \
-    go build -ldflags="-s -w" -o /out/onnxtag ./cmd/onnxtag
+    go build -ldflags="-s -w" -o /out/onnxtag ./cmd/onnxtag && \
+    go build -ldflags="-s -w" -o /out/embed ./cmd/embed
 
 # -----------------------------------------------------------------------------
 # Stage 3 — fetch ONNX Runtime shared library (matches bundled-versions.json)
@@ -122,8 +123,9 @@ RUN ln -sf /usr/bin/ffmpeg     /opt/lowkey/bin/ffmpeg && \
 
 COPY --from=go-builder    /out/lowkeymediaserver /opt/lowkey/lowkeymediaserver
 COPY --from=go-builder    /out/onnxtag           /opt/lowkey/bin/onnxtag
+COPY --from=go-builder    /out/embed             /opt/lowkey/bin/embed
 COPY --from=ort-fetcher   /out/onnxruntime.so    /opt/lowkey/bin/onnxruntime.so
-RUN chmod +x /opt/lowkey/lowkeymediaserver /opt/lowkey/bin/onnxtag && \
+RUN chmod +x /opt/lowkey/lowkeymediaserver /opt/lowkey/bin/onnxtag /opt/lowkey/bin/embed && \
     chown -R lowkey:lowkey /opt/lowkey
 
 # ---- Optional tools — installed for the lowkey user via pipx ----
@@ -179,7 +181,7 @@ ENV LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434
 #   LOWKEY_DISCORD_TOKEN         — required by the Discord ingest task
 #   LOWKEY_FASTER_WHISPER_PATH   — path to faster-whisper if you want transcription
 
-EXPOSE 8090
+EXPOSE 10111
 
 VOLUME ["/data", "/media"]
 

@@ -623,6 +623,30 @@
 
 /* In-place type-ahead results. Bounded height so a long match list scrolls
    instead of overflowing the floating palette. */
+/* Inline hint shown while "search by meaning" mode is on. */
+.CommandPalette .commandPaletteMeaningHint {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(108, 92, 255, 0.4);
+  border-radius: 8px;
+  background: rgba(108, 92, 255, 0.12);
+  color: #d8d2ff;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.CommandPalette .commandPaletteMeaningHint kbd {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-family: inherit;
+}
+
+.CommandPalette .commandPaletteMeaningHint .meaning-hint-query {
+  color: #fff;
+  font-weight: 600;
+}
+
 .CommandPalette .commandPaletteSearchResults {
   margin-top: 6px;
   max-height: 40vh;

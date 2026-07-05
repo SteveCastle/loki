@@ -44,6 +44,17 @@ function clauseFor(p: Predicate, params: string[]): string {
     case 'hash':
       params.push(like);
       return p.exclude ? '(media.hash NOT LIKE ?)' : '(media.hash LIKE ?)';
+    case 'similar':
+    case 'visual':
+    case 'clip':
+      // Visual similarity requires the embedding backend, which only exists in
+      // the media-server (web mode). In Electron's local-SQLite path we cannot
+      // resolve it, so treat it as no constraint and warn. The server path
+      // (/api/media/query) handles these properly.
+      console.warn(
+        `Visual search ('${p.type}:') is only available in server/web mode; ignoring this predicate in local mode.`
+      );
+      return '(1=1)';
     default: {
       const _never: never = p.type as never;
       throw new Error(`Unknown predicate type: ${_never}`);

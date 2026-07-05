@@ -2,6 +2,7 @@ import React, { useContext, useEffect, useState } from 'react';
 import { GlobalStateContext } from '../../state';
 import './login-widget.css';
 import { useSelector } from '@xstate/react';
+import { mediaServerBase } from '../../platform';
 
 export default function LoginWidget() {
   const { libraryService } = useContext(GlobalStateContext);
@@ -22,7 +23,7 @@ export default function LoginWidget() {
 
       try {
         // Use the health endpoint to verify the token works
-        const response = await fetch('http://localhost:8090/health', {
+        const response = await fetch(`${mediaServerBase}/health`, {
           headers: {
             Authorization: `Bearer ${authToken}`,
           },
@@ -44,7 +45,7 @@ export default function LoginWidget() {
     setError(null);
 
     try {
-      const response = await fetch('http://localhost:8090/auth/login', {
+      const response = await fetch(`${mediaServerBase}/auth/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

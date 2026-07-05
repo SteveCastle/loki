@@ -8,7 +8,8 @@ export type SortByOption =
   | 'weight'
   | 'shuffle'
   | 'elo'
-  | 'stream';
+  | 'stream'
+  | 'similarity';
 
 export type FilterOption = 'all' | 'static' | 'video' | 'audio';
 

@@ -50,6 +50,8 @@ func removeFromDB(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, fmt.Sprintf("Processed %d paths", len(result.ProcessedPaths)))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Removed %d tag associations", result.TagsRemoved))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Removed %d media items from database", result.MediaItemsRemoved))
+	// Index eviction happens inside RemoveItemsFromDB via the media removal
+	// hook (registry.go init); only output-file registration is needed here.
 	for _, p := range result.ProcessedPaths {
 		q.RegisterOutputFile(j.ID, p)
 	}

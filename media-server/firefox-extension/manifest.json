@@ -9,7 +9,7 @@
       "strict_min_version": "91.0"
     }
   },
-  "permissions": ["activeTab", "storage", "http://localhost:8090/*"],
+  "permissions": ["activeTab", "storage", "http://localhost:10111/*"],
   "browser_action": {
     "default_popup": "popup.html",
     "default_icon": {

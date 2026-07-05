@@ -162,7 +162,7 @@
         <h2>Overview</h2>
         <p>
           Lowkey Media Server is a companion application for the Lowkey Media Viewer that manages long-running offline tasks.
-          Built in Go, it runs as an HTTP server on port 8090.
+          Built in Go, it runs as an HTTP server on port 10111.
         </p>
         <ul>
           <li>Job queue with persistence and real-time status updates</li>
@@ -217,7 +217,7 @@
 
         <h3 id="web-ui">Web Interface</h3>
         <p>
-          Access the web interface at <code>http://localhost:8090</code>.
+          Access the web interface at <code>http://localhost:10111</code>.
           The home page shows the job queue with all running and completed jobs.
         </p>
         <div class="placeholder-video">Web UI Demo Video</div>
@@ -251,12 +251,12 @@
         <p>Pull the image and start the server:</p>
         <div class="code-block">
           <code>docker run -d --name lowkey-media-server \</code><br>
-          <code>  -p 8090:8090 \</code><br>
+          <code>  -p 10111:10111 \</code><br>
           <code>  -v lowkey-data:/data \</code><br>
           <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
         </div>
         <p>
-          Open <code>http://localhost:8090</code> in your browser. The server is ready to use.
+          Open <code>http://localhost:10111</code> in your browser. The server is ready to use.
         </p>
 
         <h3 id="docker-local-storage">Local Storage</h3>
@@ -266,7 +266,7 @@
         </p>
         <div class="code-block">
           <code>docker run -d --name lowkey-media-server \</code><br>
-          <code>  -p 8090:8090 \</code><br>
+          <code>  -p 10111:10111 \</code><br>
           <code>  -v lowkey-data:/data \</code><br>
           <code>  -v /path/to/photos:/mnt/photos:ro \</code><br>
           <code>  -v /path/to/videos:/mnt/videos:ro \</code><br>
@@ -299,7 +299,7 @@
         <h4>S3 Only</h4>
         <div class="code-block">
           <code>docker run -d --name lowkey-media-server \</code><br>
-          <code>  -p 8090:8090 \</code><br>
+          <code>  -p 10111:10111 \</code><br>
           <code>  -v lowkey-data:/data \</code><br>
           <code>  -e 'LOWKEY_ROOTS=[{</code><br>
           <code>    "type": "s3",</code><br>
@@ -318,7 +318,7 @@
         <h4>Mixed Local + S3</h4>
         <div class="code-block">
           <code>docker run -d --name lowkey-media-server \</code><br>
-          <code>  -p 8090:8090 \</code><br>
+          <code>  -p 10111:10111 \</code><br>
           <code>  -v lowkey-data:/data \</code><br>
           <code>  -v ~/photos:/mnt/photos:ro \</code><br>
           <code>  -e 'LOWKEY_ROOTS=[</code><br>
@@ -402,7 +402,7 @@
         </p>
         <div class="code-block">
           <code>docker run -d --name lowkey-media-server \</code><br>
-          <code>  -p 8090:8090 \</code><br>
+          <code>  -p 10111:10111 \</code><br>
           <code>  -v /path/to/lowkey-data:/data \</code><br>
           <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
         </div>
@@ -428,7 +428,7 @@
           <code>password: admin</code>
         </div>
         <p>
-          Visit <code>http://localhost:8090</code>, log in with those
+          Visit <code>http://localhost:10111</code>, log in with those
           credentials, and you'll be redirected to a setup wizard at
           <code>/login?setup=true</code> that forces you to register a
           real account. The default admin is deleted as soon as your
@@ -649,7 +649,7 @@
           <li><strong>Tag & Filter</strong> - Browse by tags and filter your collection</li>
         </ul>
         <p>
-          Access the Swipe App at <code>http://[server-ip]:8090/swipe</code> on your mobile device.
+          Access the Swipe App at <code>http://[server-ip]:10111/swipe</code> on your mobile device.
         </p>
         <div class="placeholder-video">Swipe App Demo Video</div>
       </section>
@@ -659,7 +659,7 @@
         <p>
           The full Lowkey Media Viewer runs inside any browser as a web
           app, served by the media server at
-          <code>http://[server-ip]:8090/app/</code>. It is the same React
+          <code>http://[server-ip]:10111/app/</code>. It is the same React
           interface as the Electron desktop app — same layout, same
           tagging panel, same hotkeys — but routed over HTTP instead of
           Electron IPC so you can reach your library from any computer
@@ -695,7 +695,7 @@
           </li>
         </ul>
         <p>
-          Open <code>http://[server-ip]:8090/app/</code> in a browser,
+          Open <code>http://[server-ip]:10111/app/</code> in a browser,
           sign in, and use the viewer exactly like you would on the
           desktop.
         </p>

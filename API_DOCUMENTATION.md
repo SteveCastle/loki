@@ -4,9 +4,9 @@ Shrike is a job management system with web UI that handles media processing task
 
 ## Server Information
 
-- **Base URL**: `http://localhost:8090`
+- **Base URL**: `http://localhost:10111`
 - **Protocol**: HTTP
-- **Port**: 8090 (configurable in code)
+- **Port**: 10111 (default; configurable via `port` in config.json or the `LOWKEY_PORT` env var)
 
 ## Available Tasks
 
@@ -51,7 +51,7 @@ The system supports the following built-in tasks:
   ```
 - **Example**:
   ```bash
-  curl -X POST http://localhost:8090/create \
+  curl -X POST http://localhost:10111/create \
     -H "Content-Type: application/json" \
     -d '{"input": "yt-dlp --format best https://youtube.com/watch?v=example"}'
   ```
@@ -248,21 +248,21 @@ The system supports the following built-in tasks:
 
 #### Gallery-dl Download
 ```bash
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "gallery-dl --dest /downloads https://example.com/gallery"}'
 ```
 
 #### Video Download with yt-dlp
 ```bash
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "yt-dlp --format bestvideo+bestaudio --output \"/downloads/%(title)s.%(ext)s\" https://youtube.com/watch?v=VIDEO_ID"}'
 ```
 
 #### Media File Conversion
 ```bash
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "ffmpeg -i input.mp4 -c:v libx264 -crf 23 output.mp4"}'
 ```
@@ -271,7 +271,7 @@ curl -X POST http://localhost:8090/create \
 
 #### Ingest Media Files
 ```bash
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "ingest -r /path/to/media/directory"}'
 ```
@@ -279,19 +279,19 @@ curl -X POST http://localhost:8090/create \
 #### Generate Metadata
 ```bash
 # Generate all metadata types for all files
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "metadata --type description,hash,dimensions --apply all"}'
 
 # Generate only descriptions for specific files
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "metadata --type description --model llama3.2-vision\n/path/to/image1.jpg\n/path/to/video1.mp4"}'
 ```
 
 #### Move Media Files
 ```bash
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "move /new/target/directory --prefix /old/common/path\n/old/path/file1.jpg\n/old/path/file2.mp4"}'
 ```
@@ -299,12 +299,12 @@ curl -X POST http://localhost:8090/create \
 #### Database Cleanup
 ```bash
 # Remove orphaned database entries
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \  
   -d '{"input": "cleanup"}'
 
 # Remove specific files from database
-curl -X POST http://localhost:8090/create \
+curl -X POST http://localhost:10111/create \
   -H "Content-Type: application/json" \
   -d '{"input": "remove\n/path/to/file1.jpg\n/path/to/file2.mp4"}'
 ```
@@ -313,7 +313,7 @@ curl -X POST http://localhost:8090/create \
 
 ### Using SSE in JavaScript
 ```javascript
-const eventSource = new EventSource('http://localhost:8090/stream');
+const eventSource = new EventSource('http://localhost:10111/stream');
 
 // Listen for job updates
 eventSource.addEventListener('create', (event) => {
@@ -340,10 +340,10 @@ eventSource.onerror = (error) => {
 ### Using curl for SSE
 ```bash
 # Monitor all job events
-curl -N http://localhost:8090/stream
+curl -N http://localhost:10111/stream
 
 # Monitor and filter for specific events
-curl -N http://localhost:8090/stream | grep "event: stdout-"
+curl -N http://localhost:10111/stream | grep "event: stdout-"
 ```
 
 ## Error Handling

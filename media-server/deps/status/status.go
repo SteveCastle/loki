@@ -3,21 +3,27 @@
 package status
 
 import (
+	"os"
+	"strings"
+
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps/bundled"
 	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/deps/optional"
 )
 
 type Item struct {
-	ID        string `json:"id"`
-	Category  string `json:"category"`
-	Name      string `json:"name"`
-	State     string `json:"state"`
-	Version   string `json:"version,omitempty"`
-	SizeBytes int64  `json:"size_bytes,omitempty"`
-	Path      string `json:"path,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Detail    any    `json:"detail,omitempty"`
+	ID          string `json:"id"`
+	Category    string `json:"category"`
+	Name        string `json:"name"`
+	Feature     string `json:"feature,omitempty"`
+	Description string `json:"description,omitempty"`
+	State       string `json:"state"`
+	Version     string `json:"version,omitempty"`
+	SizeBytes   int64  `json:"size_bytes,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Error       string `json:"error,omitempty"`
+	Detail      any    `json:"detail,omitempty"`
 }
 
 func Snapshot() []Item {
@@ -37,6 +43,7 @@ func Snapshot() []Item {
 		}
 		out = append(out, Item{
 			ID: s.ID, Category: "optional", Name: s.Name,
+			Feature: o.Feature, Description: o.Description,
 			State: state, Version: s.Version, Path: s.Path, Detail: s.Hint,
 		})
 	}
@@ -50,19 +57,30 @@ func Snapshot() []Item {
 		if cached[m.ID] == models.StatusInstalled {
 			path = models.ModelDir(m.ID)
 		}
+		item := Item{
+			ID: m.ID, Category: m.EffectiveCategory(), Name: m.Name,
+			Feature: m.Feature, Description: m.Description,
+			State: state, SizeBytes: m.EffectiveSizeBytes(), Path: path,
+		}
 		if inst, ok := models.Tracker.Snapshot(m.ID); ok {
-			state = string(inst.State)
-			out = append(out, Item{
-				ID: m.ID, Category: "model", Name: m.Name,
-				State: state, SizeBytes: m.SizeBytes, Path: path,
-				Detail: inst, Error: inst.Error,
-			})
+			item.State = string(inst.State)
+			item.Detail = inst
+			item.Error = inst.Error
+			out = append(out, item)
 			continue
 		}
-		out = append(out, Item{
-			ID: m.ID, Category: "model", Name: m.Name,
-			State: state, SizeBytes: m.SizeBytes, Path: path,
-		})
+		// A user-configured faster-whisper binary satisfies the transcription
+		// tool without the assisted download.
+		if m.ID == "faster-whisper" && item.State == string(models.StatusMissing) {
+			if p := strings.TrimSpace(appconfig.Get().FasterWhisperPath); p != "" {
+				if _, err := os.Stat(p); err == nil {
+					item.State = string(models.StatusInstalled)
+					item.Path = p
+					item.Detail = map[string]string{"source": "configured_path"}
+				}
+			}
+		}
+		out = append(out, item)
 	}
 	return out
 }
