@@ -59,30 +59,39 @@ export function addPredicateWithMode(
   return addPredicate(q, p);
 }
 
-// Adding a SIMILARITY predicate (similar/clip) treats the filtering mode
-// specially so images can be STACKED into one latent-space query: EXCLUSIVE
-// replaces the whole query (the classic find-similar), but in AND/OR, when a
-// similarity predicate already exists, the new image is merged into it as a
-// blend node — the server combines the vectors into one — instead of
-// intersecting two independent top-N path sets (which mostly returns nothing).
-// Face predicates never merge (different embedding space).
+// Adding an EMBEDDING-SPACE predicate (similar/clip image or visual text)
+// treats the filtering mode specially so components can be STACKED into one
+// latent-space query: EXCLUSIVE replaces the whole query (the classic
+// find-similar), but in AND/OR, when an embedding predicate already exists,
+// the new image/text is merged into it as a blend node — the server combines
+// the vectors into one — instead of intersecting independent top-N path sets
+// (which mostly returns nothing). Works in every direction: image onto text,
+// text onto image, image onto image. Face predicates never merge (different
+// embedding space).
+const EMBEDDING_TYPES = ['similar', 'clip', 'visual'] as const;
+
+function isEmbeddingType(t: Predicate['type']): boolean {
+  return (EMBEDDING_TYPES as readonly string[]).includes(t);
+}
+
 export function addOrMergeSimilarityPredicate(
   q: Query,
   p: Predicate,
   mode: string
 ): Query {
-  const isSimilarity = p.type === 'similar' || p.type === 'clip';
-  if (mode === 'EXCLUSIVE' || !isSimilarity) {
+  if (mode === 'EXCLUSIVE' || !isEmbeddingType(p.type)) {
     return addPredicateWithMode(q, p, mode);
   }
   const target = q.predicates.find(
-    (x) => (x.type === 'similar' || x.type === 'clip') && !x.exclude
+    (x) => isEmbeddingType(x.type) && !x.exclude
   );
   if (!target) return addPredicate(q, p);
-  const node: BlendNode = {
-    kind: p.type === 'similar' ? 'image' : 'clip',
-    value: p.value,
-  };
+  const node: BlendNode =
+    p.type === 'visual'
+      ? // Text joins at half strength (same default as the popover's add-
+        // concept input) so it steers rather than overwhelms the base.
+        { kind: 'text', value: p.value, weight: 0.5 }
+      : { kind: p.type === 'similar' ? 'image' : 'clip', value: p.value };
   return addBlendNode(q, predicateKey(target), node);
 }
 

@@ -26,7 +26,7 @@ type Predicate struct {
 	// text form — new clients send Nodes instead.
 	Text       string   `json:"text"`
 	TextWeight *float64 `json:"textWeight"`
-	// Composite similarity (similar/clip only): extra image/clip/text nodes
+	// Composite similarity (similar/clip/visual): extra image/clip/text nodes
 	// merged with the base value into ONE query vector (embedvec.Combine).
 	Nodes    []BlendNode `json:"nodes"`
 	Resolved []string    `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery

@@ -297,3 +297,59 @@ describe('composite blend nodes', () => {
     expect(next.predicates[0].nodes).toBeUndefined();
   });
 });
+
+describe('composing from a visual (text) base', () => {
+  it('AND merges a similar image into an existing visual chip as a node', () => {
+    const start = q([{ type: 'visual', value: 'a red car', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'similar', value: 'C:/b.png', exclude: false },
+      'AND'
+    );
+    expect(next.predicates).toHaveLength(1);
+    expect(next.predicates[0].type).toBe('visual');
+    expect(next.predicates[0].nodes).toEqual([
+      { kind: 'image', value: 'C:/b.png' },
+    ]);
+  });
+
+  it('AND merges a new visual text into an existing similarity chip at half strength', () => {
+    const start = q([{ type: 'similar', value: 'C:/a.png', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'visual', value: 'at night', exclude: false },
+      'OR'
+    );
+    expect(next.predicates).toHaveLength(1);
+    expect(next.predicates[0].nodes).toEqual([
+      { kind: 'text', value: 'at night', weight: 0.5 },
+    ]);
+  });
+
+  it('EXCLUSIVE keeps a visual add as a full replace', () => {
+    const start = q([{ type: 'similar', value: 'C:/a.png', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'visual', value: 'at night', exclude: false },
+      'EXCLUSIVE'
+    );
+    expect(next.predicates).toEqual([
+      { type: 'visual', value: 'at night', exclude: false },
+    ]);
+  });
+
+  it('text stacking dedupes against an identical text node', () => {
+    const start = q([{ type: 'visual', value: 'a red car', exclude: false }]);
+    const once = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'visual', value: 'at night', exclude: false },
+      'AND'
+    );
+    const twice = addOrMergeSimilarityPredicate(
+      once,
+      { type: 'visual', value: 'at night', exclude: false },
+      'AND'
+    );
+    expect(twice.predicates[0].nodes).toHaveLength(1);
+  });
+});

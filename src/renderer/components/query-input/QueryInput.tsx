@@ -413,17 +413,17 @@ export default function QueryInput({
               isSimilar || (isFace && !isFaceClip)
                 ? p.value.split(/[/\\]/).pop() || p.value
                 : '';
-            // Image chips (similar/clip) carry a composite blend: hovering
-            // opens the node editor (stack images, add/remove text concepts,
-            // weights, negative steering).
-            const isImage = isSimilar || isClip;
+            // Embedding chips (similar/clip images and visual text) carry a
+            // composite blend: hovering opens the node editor (stack images,
+            // add/remove text concepts, weights, negative steering).
+            const isBlendable = isSimilar || isClip || isVisual;
             const canBlend =
-              isImage &&
+              isBlendable &&
               !!onAddBlendNode &&
               !!onRemoveBlendNode &&
               !!onUpdateBlendNode;
             const blendOpen = canBlend && blendKey === key;
-            const effNodes = isImage ? effectiveBlendNodes(p) : [];
+            const effNodes = isBlendable ? effectiveBlendNodes(p) : [];
             return (
               <span
                 className="query-chip-wrap"
@@ -570,18 +570,27 @@ export default function QueryInput({
                   className="query-chip-blend-pop"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {/* Base image — always weight 1, the anchor of the query. */}
+                  {/* Base component — always weight 1, the anchor of the query. */}
                   <span className="query-blend-node query-blend-node--base">
-                    <img
-                      className="query-blend-node-thumb"
-                      src={isClip ? p.value : mediaUrl(p.value)}
-                      alt=""
-                      onError={(e) => {
-                        e.currentTarget.style.display = 'none';
-                      }}
-                    />
+                    {isVisual ? (
+                      <span
+                        className="query-blend-node-thumb query-blend-node-thumb--text"
+                        aria-hidden="true"
+                      >
+                        ✨
+                      </span>
+                    ) : (
+                      <img
+                        className="query-blend-node-thumb"
+                        src={isClip ? p.value : mediaUrl(p.value)}
+                        alt=""
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    )}
                     <span className="query-blend-node-label">
-                      {isClip ? 'Screen clip' : baseName}
+                      {isVisual ? p.value : isClip ? 'Screen clip' : baseName}
                     </span>
                     <span className="query-blend-node-hint">base</span>
                   </span>

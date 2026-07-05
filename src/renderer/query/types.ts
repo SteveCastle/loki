@@ -51,9 +51,10 @@ export interface Predicate {
   // Text share of the blend, 0..1 (0 = pure image, 1 = pure text). Only
   // meaningful when `text` is set; the UI defaults new blends to 0.5.
   textWeight?: number;
-  // Composite similarity ('similar'/'clip' only): extra image/clip/text nodes
-  // merged with the base value into ONE query vector server-side. The chip
-  // popover manages these (add/remove text, stack images, negative toggles).
+  // Composite similarity ('similar'/'clip'/'visual'): extra image/clip/text
+  // nodes merged with the base value into ONE query vector server-side. The
+  // chip popover manages these (add/remove text, stack images, negative
+  // toggles) — a visual (text) chip composes exactly like an image chip.
   nodes?: BlendNode[];
 }
 

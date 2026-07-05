@@ -474,8 +474,16 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 						faceHits, err = tasks.SearchFacesByMediaPath(r.Context(), deps.DB, val, visualCandidateLimit)
 					}
 					hits = tasks.FaceHitsToMediaHits(faceHits)
-				default:
-					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
+				default: // "visual": free-text → image search, composable like similar/clip
+					if hasNodes {
+						var terms []tasks.QueryTerm
+						terms, err = compositeTerms(tasks.QueryTerm{Kind: "text", Value: val, Weight: 1}, req.Predicates[i])
+						if err == nil {
+							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+						}
+					} else {
+						hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
+					}
 				}
 				if err != nil {
 					// A clip/face value can be a multi-hundred-KB data URL — log its size, not the payload.
