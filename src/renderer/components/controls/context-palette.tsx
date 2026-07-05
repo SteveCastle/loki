@@ -7,6 +7,7 @@ import React, {
   useState,
 } from 'react';
 import { useSelector } from '@xstate/react';
+import { useQueryClient } from '@tanstack/react-query';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
 import { capabilities, mediaServerBase } from '../../platform';
@@ -471,6 +472,7 @@ function WorkflowPicker({
 
 export default function ContextPalette() {
   const { libraryService } = useContext(GlobalStateContext);
+  const queryClient = useQueryClient();
 
   const display = useSelector(
     libraryService,
@@ -768,6 +770,11 @@ export default function ContextPalette() {
         const body = await res.text();
         throw new Error(body || `HTTP ${res.status}`);
       }
+      // The rename cascades to the person's People-category tag rows on the
+      // server; refresh everything that renders those tags client-side.
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
       libraryService.send({
         type: 'ADD_TOAST',
         data: {

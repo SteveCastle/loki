@@ -116,6 +116,9 @@ export function PersonEditModal({
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
     queryClient.invalidateQueries({ queryKey: ['metadata'] });
+    // Person names double as People-category tags on media items, so any
+    // person mutation must also refresh the per-media tag lists.
+    queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
   };
 
   const call = async (path: string, init: RequestInit) => {
@@ -402,6 +405,9 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           job.state === 'completed'
         ) {
           queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+          // Clustering assigns faces to people, which writes People tags
+          // onto media — refresh the per-media tag lists too.
+          queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
         }
       } catch {
         // malformed event — ignore
@@ -439,6 +445,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
       });
       queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
     } catch (err) {
       libraryService.send({
         type: 'ADD_TOAST',
