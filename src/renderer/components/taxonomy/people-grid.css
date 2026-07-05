@@ -158,6 +158,12 @@
   background: rgba(0, 0, 0, 0.8);
 }
 
+.person-model-info {
+  margin-top: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
 .person-merge-select {
   margin-top: 6px;
   width: 100%;

@@ -93,6 +93,24 @@
   cursor: default;
 }
 
+/* People tags come from face clustering — a subtle teal tint + person glyph
+   distinguishes them from hand-applied tags. Selected/confirming states win. */
+.Tags li.person-tag {
+  background-color: #22333a;
+  box-shadow: inset 0 0 0 1px rgba(94, 234, 212, 0.25);
+}
+
+.Tags li.person-tag.selected {
+  background-color: #5b3a8c;
+  box-shadow: inset 0 0 0 1px #b794f4;
+}
+
+.Tags li .person-tag-icon {
+  margin-right: 3px;
+  font-size: 9px;
+  opacity: 0.8;
+}
+
 .Tags li span {
   margin-right: 12px;
 }

@@ -25,6 +25,25 @@ export interface Person {
   coverFaceId?: number;
   faceCount: number;
   mediaCount: number;
+  // Recognizer(s) the cluster's faces were embedded with (comma-separated;
+  // normally one) — distinguishes photo-face clusters from anime-character
+  // clusters.
+  models?: string;
+}
+
+// describeModels renders the recognizer id(s) as a human label so the admin
+// can tell a photographic face cluster from a drawn-character one.
+function describeModels(models?: string): string | null {
+  if (!models) return null;
+  const label = (id: string): string => {
+    if (id === 'anime-ccip') return 'Anime character (CCIP)';
+    if (id === 'sface') return 'Photo face (SFace)';
+    if (id.includes('anime') || id.includes('ccip')) {
+      return `Anime character (${id})`;
+    }
+    return `Photo face (${id})`;
+  };
+  return models.split(',').map(label).join(', ');
 }
 
 function authHeaders(authToken: string | null): HeadersInit {
@@ -258,6 +277,12 @@ export function PersonEditModal({
               if (e.key === 'Enter') handleSave();
             }}
           />
+          {person && describeModels(person.models) && (
+            <div className="person-model-info">
+              Embeddings: {describeModels(person.models)} ·{' '}
+              {person.faceCount} face{person.faceCount === 1 ? '' : 's'}
+            </div>
+          )}
         </div>
 
         {person && (
@@ -401,8 +426,10 @@ function PersonCard({
       onClick={() => onSelect(person)}
       title={`${displayTagLabel(person.name)} — ${person.faceCount} face${
         person.faceCount === 1 ? '' : 's'
-      } in ${person.mediaCount} item${
-        person.mediaCount === 1 ? '' : 's'
+      } in ${person.mediaCount} item${person.mediaCount === 1 ? '' : 's'}${
+        describeModels(person.models)
+          ? ` · ${describeModels(person.models)}`
+          : ''
       } · drag onto another person to merge`}
     >
       <FaceCrop faceId={person.coverFaceId} authToken={authToken} />

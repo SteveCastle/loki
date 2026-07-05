@@ -185,9 +185,13 @@ function Tags({ item, enableTagGeneration = false }: Props) {
             const liKey = `${tag.tag_label}-${tag.time_stamp || 0}-${idx}`;
             const isSelected = queryTags.includes(tag.tag_label);
             const isConfirming = confirmingKey === liKey;
+            // People tags come from face clustering, not hand tagging — mark
+            // them with a subtle person glyph + tint so they read as clusters.
+            const isPersonTag = tag.category_label === 'People';
             const className = [
               isSelected ? 'selected' : '',
               isConfirming ? 'confirming' : '',
+              isPersonTag ? 'person-tag' : '',
             ]
               .filter(Boolean)
               .join(' ');
@@ -249,7 +253,18 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                     />
                   </>
                 ) : null}
-                <span>{displayTagLabel(tag.tag_label)}</span>
+                <span>
+                  {isPersonTag && (
+                    <span
+                      className="person-tag-icon"
+                      title="Face cluster (People)"
+                      aria-hidden="true"
+                    >
+                      👤
+                    </span>
+                  )}
+                  {displayTagLabel(tag.tag_label)}
+                </span>
                 {isConfirming ? (
                   <span className="confirm-actions">
                     <button

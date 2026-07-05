@@ -26,6 +26,11 @@ type Person struct {
 	FaceCount   int    `json:"faceCount"`
 	MediaCount  int    `json:"mediaCount"`
 	CreatedAt   int64  `json:"createdAt,omitempty"`
+	// Models lists the recognizer(s) the cluster's faces were embedded with
+	// (comma-separated; normally one) — e.g. "anime-ccip" identifies a drawn-
+	// character cluster vs a photographic face cluster. Empty when the person
+	// has no faces.
+	Models string `json:"models,omitempty"`
 }
 
 // PersonClusterSuffix disambiguates a person's tag from a hand-curated tag
@@ -147,7 +152,8 @@ func GetPeople(db *sql.DB) ([]Person, error) {
 		          ORDER BY fb.det_score * fb.bbox_w * fb.bbox_h DESC, fb.id ASC LIMIT 1),
 		         0),
 		       COALESCE(p.created_at, 0),
-		       COUNT(f.id), COUNT(DISTINCT f.media_path)
+		       COUNT(f.id), COUNT(DISTINCT f.media_path),
+		       COALESCE(GROUP_CONCAT(DISTINCT f.model), '')
 		FROM person p
 		LEFT JOIN face f ON f.person_id = p.id
 		GROUP BY p.id
@@ -160,7 +166,7 @@ func GetPeople(db *sql.DB) ([]Person, error) {
 	var out []Person
 	for rows.Next() {
 		var p Person
-		if err := rows.Scan(&p.ID, &p.Name, &p.CoverFaceID, &p.CreatedAt, &p.FaceCount, &p.MediaCount); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.CoverFaceID, &p.CreatedAt, &p.FaceCount, &p.MediaCount, &p.Models); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
