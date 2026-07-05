@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/stevecastle/shrike/media"
+	"github.com/stevecastle/shrike/tasks"
 	_ "modernc.org/sqlite"
 )
 
@@ -246,6 +247,69 @@ func TestPersonCoverRegenerateEndpoint(t *testing.T) {
 	rec, _ = doJSON(t, mux, http.MethodPost, "/api/people/99999/cover", "")
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing person: %d", rec.Code)
+	}
+}
+
+func TestMediaAssignPersonEndpoint(t *testing.T) {
+	mux, deps := muxWithPeopleRoutes(t)
+	model := tasks.ActiveFaceModel().ID
+
+	// Alice exists with one face pointing at [1,0].
+	alice, _ := media.CreatePerson(deps.DB, "Alice")
+	seedIDs, _ := media.ReplaceFaces(deps.DB, "seed.jpg", model, []media.NewFace{
+		{X: 0.1, Y: 0.1, W: 0.3, H: 0.3, Score: 0.9, Vec: []float32{1, 0}},
+	}, 1)
+	_ = media.AssignFace(deps.DB, seedIDs[0], alice, "user")
+
+	// Target media (pre-scanned, so no ONNX subprocess is needed) with two
+	// faces: a LARGE dissimilar one and a small one similar to Alice. The
+	// similar one must win the assignment despite its size.
+	targetIDs, _ := media.ReplaceFaces(deps.DB, "target.jpg", model, []media.NewFace{
+		{X: 0.0, Y: 0.0, W: 0.8, H: 0.8, Score: 0.95, Vec: []float32{0, 1}},
+		{X: 0.7, Y: 0.7, W: 0.1, H: 0.1, Score: 0.85, Vec: []float32{0.98, 0.2}},
+	}, 1)
+
+	rec, out := doJSON(t, mux, http.MethodPost, "/api/media/assign-person",
+		`{"path":"target.jpg","personId":`+jsonNum(alice)+`,"setCover":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign: %d %s", rec.Code, rec.Body.String())
+	}
+	if int64(out["faceId"].(float64)) != targetIDs[1] {
+		t.Fatalf("assigned face %v, want the Alice-similar one %d", out["faceId"], targetIDs[1])
+	}
+	f, _, _ := media.GetFaceByID(deps.DB, targetIDs[1])
+	if f.PersonID != alice || f.AssignedBy != "user" {
+		t.Fatalf("face = %+v", f)
+	}
+	// Shift-drop semantics: cover replaced with this face.
+	p, _, _ := media.GetPersonByID(deps.DB, alice)
+	if p.CoverFaceID != targetIDs[1] {
+		t.Fatalf("cover = %d, want %d", p.CoverFaceID, targetIDs[1])
+	}
+	// The large face stays unassigned (it's someone else in the shot).
+	other, _, _ := media.GetFaceByID(deps.DB, targetIDs[0])
+	if other.PersonID != 0 {
+		t.Fatalf("dissimilar face was assigned too: %+v", other)
+	}
+
+	// A pre-scanned no-face item → 422.
+	if _, err := media.ReplaceFaces(deps.DB, "empty.jpg", model, nil, 1); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = doJSON(t, mux, http.MethodPost, "/api/media/assign-person",
+		`{"path":"empty.jpg","personId":`+jsonNum(alice)+`}`)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("no-face media: %d %s", rec.Code, rec.Body.String())
+	}
+	// Missing person → 404; missing fields → 400.
+	rec, _ = doJSON(t, mux, http.MethodPost, "/api/media/assign-person",
+		`{"path":"target.jpg","personId":99999}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing person: %d", rec.Code)
+	}
+	rec, _ = doJSON(t, mux, http.MethodPost, "/api/media/assign-person", `{}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing fields: %d", rec.Code)
 	}
 }
 

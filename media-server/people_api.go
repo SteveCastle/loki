@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/stevecastle/shrike/embedvec"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/renderer"
 	"github.com/stevecastle/shrike/tasks"
@@ -29,6 +30,7 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/people/{id}", renderer.ApplyMiddlewares(personDeleteHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/media", renderer.ApplyMiddlewares(personMediaHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/cover", renderer.ApplyMiddlewares(personCoverHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/assign-person", renderer.ApplyMiddlewares(mediaAssignPersonHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/assign", renderer.ApplyMiddlewares(faceAssignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/unassign", renderer.ApplyMiddlewares(faceUnassignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/all", renderer.ApplyMiddlewares(facesWipeHandler(deps), renderer.RoleAdmin))
@@ -248,6 +250,105 @@ func personCoverHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		httpError(w, "none of the person's best faces could be rendered", http.StatusUnprocessableEntity)
 	}
+}
+
+// mediaAssignPersonHandler assigns a media item's face to a person (dragging
+// a person card onto media). POST /api/media/assign-person with
+// {path, personId, setCover?}. The media is scanned on the fly when it has no
+// stored face vectors yet. When the item contains several faces, the one most
+// similar to the person's existing faces wins (people often appear alongside
+// others); for a person with no faces yet, the largest face wins. setCover
+// additionally makes that face the person's preview crop.
+func mediaAssignPersonHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Path     string `json:"path"`
+			PersonID int64  `json:"personId"`
+			SetCover bool   `json:"setCover"`
+		}
+		if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Path) == "" || req.PersonID <= 0 {
+			httpError(w, "path and personId required", http.StatusBadRequest)
+			return
+		}
+		if _, found, err := media.GetPersonByID(deps.DB, req.PersonID); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		} else if !found {
+			httpError(w, "no such person", http.StatusNotFound)
+			return
+		}
+
+		// Stored faces when scanned; scan on the fly (persist + index)
+		// otherwise — "create the vector first".
+		faces, _, err := tasks.FacesForPathOrScan(r.Context(), deps.DB, req.Path)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(faces) == 0 {
+			httpError(w, "no face detected in this media item", http.StatusUnprocessableEntity)
+			return
+		}
+
+		personFaces, err := media.PersonFacesByQuality(deps.DB, req.PersonID)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		best := pickFaceForPerson(faces, personFaces)
+
+		if err := media.AssignFace(deps.DB, best.ID, req.PersonID, "user"); err != nil {
+			httpError(w, err.Error(), userErrorStatus(err))
+			return
+		}
+		if req.SetCover {
+			if err := media.SetPersonCover(deps.DB, req.PersonID, best.ID); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		writeJSON(w, map[string]any{
+			"faceId":   best.ID,
+			"personId": req.PersonID,
+			"faces":    len(faces),
+			"setCover": req.SetCover,
+		})
+	}
+}
+
+// pickFaceForPerson chooses which of a media item's faces to assign: the one
+// most similar to the person's existing faces when the person has any
+// (comparing only same-dimension vectors, i.e. the same recognizer), else the
+// largest face in the item.
+func pickFaceForPerson(faces, personFaces []media.Face) media.Face {
+	best := faces[0]
+	if len(personFaces) > 0 {
+		var bestScore float32 = -2
+		matched := false
+		for _, f := range faces {
+			for _, pf := range personFaces {
+				if len(f.Vec) != len(pf.Vec) {
+					continue
+				}
+				if sc := embedvec.CosineSim(f.Vec, pf.Vec); sc > bestScore {
+					bestScore, best, matched = sc, f, true
+				}
+			}
+		}
+		if matched {
+			return best
+		}
+	}
+	for _, f := range faces[1:] {
+		if f.W*f.H > best.W*best.H {
+			best = f
+		}
+	}
+	return best
 }
 
 func faceAssignHandler(deps *Dependencies) http.HandlerFunc {

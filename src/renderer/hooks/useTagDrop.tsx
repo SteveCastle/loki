@@ -1,6 +1,6 @@
 import { useContext, useRef, useState } from 'react';
 import { GlobalStateContext, Item } from '../state';
-import { invoke } from '../platform';
+import { invoke, mediaServerBase } from '../platform';
 import filter from '../filter';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
@@ -42,18 +42,20 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
 
   type DroppedTag = { label: string; category: string };
   type DroppedMedia = { path: string; timeStamp?: number };
+  // A person card dragged from the taxonomy People grid.
+  type DroppedPerson = { id: number; name: string };
   const isDroppedTag = (v: unknown): v is DroppedTag =>
     typeof v === 'object' && v != null && 'label' in v && 'category' in v;
   const isDroppedMedia = (v: unknown): v is DroppedMedia =>
     typeof v === 'object' && v != null && 'path' in v;
 
   const [collectedProps, drop] = useDrop<
-    DroppedTag | DroppedMedia,
+    DroppedTag | DroppedMedia | DroppedPerson,
     unknown,
     DropProps
   >(
     () => ({
-      accept: ['TAG', 'MEDIA'],
+      accept: ['TAG', 'MEDIA', 'PERSON'],
       collect: (monitor) => ({
         isOver: monitor.isOver({ shallow: true }),
         isSelf: (() => {
@@ -135,6 +137,76 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
               },
             });
           });
+        }
+
+        // A person card dropped on media: assign this item's face to that
+        // person (the server scans the item on the fly if it has no face
+        // vectors yet). Shift at drop time additionally makes the face the
+        // person's preview crop — analogous to the tag-preview behavior.
+        async function assignPersonToMedia(person: DroppedPerson) {
+          const setCover = !!(window as any).__shiftHeld;
+          const headers: HeadersInit = { 'Content-Type': 'application/json' };
+          if (ctx.authToken) {
+            headers['Authorization'] = `Bearer ${ctx.authToken}`;
+          }
+          const res = await fetch(`${mediaServerBase}/api/media/assign-person`, {
+            method: 'POST',
+            headers,
+            credentials: 'include',
+            body: JSON.stringify({
+              path: item.path,
+              personId: person.id,
+              setCover,
+            }),
+          });
+          if (!res.ok) {
+            let msg = `HTTP ${res.status}`;
+            try {
+              const body = await res.json();
+              if (body?.error) msg = body.error;
+            } catch {
+              /* keep status message */
+            }
+            throw new Error(msg);
+          }
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: {
+              type: 'success',
+              title: setCover
+                ? `Assigned to ${person.name} + preview updated`
+                : `Assigned to ${person.name}`,
+              message: item.path.split(/[/\\]/).pop() || item.path,
+            },
+          });
+          queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+          queryClient.invalidateQueries({ queryKey: ['metadata'] });
+          queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+        }
+        if (monitor.getItemType() === 'PERSON' && item.path) {
+          const person = droppedItem as DroppedPerson;
+          // Scanning on the fly (video frame + ONNX) can take a few seconds —
+          // acknowledge the drop immediately so it doesn't feel dead.
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: {
+              type: 'info',
+              title: `Matching face for ${person.name}…`,
+              durationMs: 2500,
+            },
+          });
+          assignPersonToMedia(person).catch((err) => {
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: {
+                type: 'error',
+                title: `Could not assign ${person.name}`,
+                message:
+                  err instanceof Error ? err.message : 'Assignment failed — try again.',
+              },
+            });
+          });
+          return;
         }
 
         async function updateAssignmentWeight(media: DroppedMedia) {
