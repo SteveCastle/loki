@@ -8,6 +8,7 @@
 import { useContext, useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
+import { useDrag, useDrop } from 'react-dnd';
 import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { GlobalStateContext } from '../../state';
@@ -270,6 +271,89 @@ export function PersonEditModal({
   );
 }
 
+// One person card: click filters, ✎ edits, and drag-onto-another merges.
+// Drag/drop goes through react-dnd (type 'PERSON') — the app runs react-dnd's
+// HTML5 backend globally (tag reorder, file drops), whose window-level capture
+// handlers break raw HTML5 draggable elements.
+function PersonCard({
+  person,
+  isDisabled,
+  active,
+  authToken,
+  onSelect,
+  onEdit,
+  onMerge,
+}: {
+  person: Person;
+  isDisabled: boolean;
+  active: boolean;
+  authToken: string | null;
+  onSelect: (p: Person) => void;
+  onEdit: (p: Person) => void;
+  onMerge: (from: Person, into: Person) => void;
+}) {
+  const [{ isDragging }, drag] = useDrag(
+    () => ({
+      type: 'PERSON',
+      item: person,
+      canDrag: !isDisabled,
+      collect: (monitor) => ({ isDragging: monitor.isDragging() }),
+    }),
+    [person, isDisabled]
+  );
+  const [{ isOver, canDrop }, drop] = useDrop<
+    Person,
+    unknown,
+    { isOver: boolean; canDrop: boolean }
+  >(
+    () => ({
+      accept: 'PERSON',
+      canDrop: (item) => item.id !== person.id,
+      drop: (item) => onMerge(item, person),
+      collect: (monitor) => ({
+        isOver: monitor.isOver(),
+        canDrop: monitor.canDrop(),
+      }),
+    }),
+    [person, onMerge]
+  );
+
+  return (
+    <div
+      ref={(node) => drag(drop(node))}
+      className={`person-card${active ? ' active' : ''}${
+        isDisabled ? ' disabled' : ''
+      }${isDragging ? ' dragging' : ''}${
+        isOver && canDrop ? ' drop-target' : ''
+      }`}
+      onClick={() => onSelect(person)}
+      title={`${person.name} — ${person.faceCount} face${
+        person.faceCount === 1 ? '' : 's'
+      } in ${person.mediaCount} item${
+        person.mediaCount === 1 ? '' : 's'
+      } · drag onto another person to merge`}
+    >
+      <FaceCrop faceId={person.coverFaceId} authToken={authToken} />
+      <div className="person-card-info">
+        <span className="person-card-name">{person.name}</span>
+        <span className="person-card-count">{person.mediaCount}</span>
+      </div>
+      <button
+        type="button"
+        className="person-card-edit"
+        onClick={(e) => {
+          e.stopPropagation();
+          onEdit(person);
+        }}
+        title="Rename, merge, or delete"
+        aria-label={`Edit ${person.name}`}
+      >
+        ✎
+      </button>
+    </div>
+  );
+}
+
 export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (s) => s.context.authToken);
@@ -287,9 +371,6 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   );
   const [editing, setEditing] = useState<Person | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  // Drag-to-merge: the person being dragged and the card currently under it.
-  const [dragId, setDragId] = useState<number | null>(null);
-  const [dropTargetId, setDropTargetId] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
   // Under the 'taxonomy' key prefix so existing broad invalidations (tag
@@ -299,6 +380,39 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     () => fetchPeople(authToken),
     { enabled: !!initSessionId, staleTime: 60_000 }
   );
+
+  // Live refresh: while the People panel is mounted, watch the job stream and
+  // refetch when a face job finishes — otherwise "Group new faces" (or a scan
+  // started elsewhere) completes silently and the grid looks stale until the
+  // next manual reload.
+  useEffect(() => {
+    let es: EventSource | null = null;
+    try {
+      es = new EventSource(`${mediaServerBase}/stream`);
+    } catch {
+      return undefined; // no live refresh; manual reload still works
+    }
+    const onEvent = (event: Event) => {
+      try {
+        const parsed = JSON.parse((event as MessageEvent).data);
+        const job = parsed?.job;
+        if (!job) return;
+        if (
+          (job.command === 'faces' || job.command === 'faces-cluster') &&
+          job.state === 'completed'
+        ) {
+          queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+        }
+      } catch {
+        // malformed event — ignore
+      }
+    };
+    es.addEventListener('update', onEvent);
+    es.addEventListener('delete', onEvent);
+    return () => {
+      es?.close();
+    };
+  }, [queryClient]);
 
   // Merge `from` into `into` (drag a card onto another card). Every face and
   // taxonomy row of the dragged person moves to the target; the dragged
@@ -425,78 +539,19 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   const unknown = list.filter((p) => p.name.startsWith('Unknown #'));
 
   const renderCard = (person: Person) => (
-    <div
+    <PersonCard
       key={person.id}
-      className={`person-card${
-        selectedTags.includes(person.name) ? ' active' : ''
-      }${isDisabled ? ' disabled' : ''}${
-        dragId === person.id ? ' dragging' : ''
-      }${
-        dropTargetId === person.id && dragId !== null && dragId !== person.id
-          ? ' drop-target'
-          : ''
-      }`}
-      onClick={() => handleSelect(person)}
-      title={
-        dragId !== null && dragId !== person.id
-          ? `Drop to merge into ${person.name}`
-          : `${person.name} — ${person.faceCount} face${
-              person.faceCount === 1 ? '' : 's'
-            } in ${person.mediaCount} item${
-              person.mediaCount === 1 ? '' : 's'
-            } · drag onto another person to merge`
-      }
-      draggable={!isDisabled}
-      onDragStart={(e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('application/x-loki-person', String(person.id));
-        setDragId(person.id);
+      person={person}
+      isDisabled={isDisabled}
+      active={selectedTags.includes(person.name)}
+      authToken={authToken}
+      onSelect={handleSelect}
+      onEdit={(p) => {
+        setEditing(p);
+        setEditOpen(true);
       }}
-      onDragEnd={() => {
-        setDragId(null);
-        setDropTargetId(null);
-      }}
-      onDragOver={(e) => {
-        if (dragId === null || dragId === person.id) return;
-        e.preventDefault(); // required to allow the drop
-        e.dataTransfer.dropEffect = 'move';
-        setDropTargetId(person.id);
-      }}
-      onDragLeave={() => {
-        setDropTargetId((cur) => (cur === person.id ? null : cur));
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        const fromId = Number(
-          e.dataTransfer.getData('application/x-loki-person')
-        );
-        setDragId(null);
-        setDropTargetId(null);
-        const from = list.find((p) => p.id === fromId);
-        if (from && fromId !== person.id) {
-          handleMergeDrop(from, person);
-        }
-      }}
-    >
-      <FaceCrop faceId={person.coverFaceId} authToken={authToken} />
-      <div className="person-card-info">
-        <span className="person-card-name">{person.name}</span>
-        <span className="person-card-count">{person.mediaCount}</span>
-      </div>
-      <button
-        type="button"
-        className="person-card-edit"
-        onClick={(e) => {
-          e.stopPropagation();
-          setEditing(person);
-          setEditOpen(true);
-        }}
-        title="Rename, merge, or delete"
-        aria-label={`Edit ${person.name}`}
-      >
-        ✎
-      </button>
-    </div>
+      onMerge={handleMergeDrop}
+    />
   );
 
   return (
