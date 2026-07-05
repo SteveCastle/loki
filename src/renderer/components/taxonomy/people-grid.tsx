@@ -182,6 +182,25 @@ export function PersonEditModal({
     }
   };
 
+  const handleRegenerateCover = async () => {
+    if (!person) return;
+    try {
+      await call(`/api/people/${person.id}/cover`, { method: 'POST' });
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: 'Preview regenerated',
+          message: `Picked a new face for “${person.name}”`,
+        },
+      });
+      refresh();
+      handleClose();
+    } catch (err) {
+      toastError('Failed to regenerate preview', err);
+    }
+  };
+
   const mergeTargets = person
     ? people.filter((p) => p.id !== person.id)
     : [];
@@ -246,6 +265,16 @@ export function PersonEditModal({
                   </button>
                 </div>
               )}
+              <div className="action-row">
+                <div className="action-row-text">
+                  <div className="action-row-title">Regenerate preview</div>
+                  <div className="action-row-description">
+                    Picks the clearest face in this group that actually
+                    renders and uses it as the card image
+                  </div>
+                </div>
+                <button onClick={handleRegenerateCover}>Regenerate</button>
+              </div>
               <div className="action-row">
                 <div className="action-row-text">
                   <div className="action-row-title">Delete person</div>

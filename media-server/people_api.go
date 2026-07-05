@@ -28,6 +28,7 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/people/{id}/merge", renderer.ApplyMiddlewares(personMergeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}", renderer.ApplyMiddlewares(personDeleteHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/media", renderer.ApplyMiddlewares(personMediaHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/people/{id}/cover", renderer.ApplyMiddlewares(personCoverHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/assign", renderer.ApplyMiddlewares(faceAssignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/unassign", renderer.ApplyMiddlewares(faceUnassignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/all", renderer.ApplyMiddlewares(facesWipeHandler(deps), renderer.RoleAdmin))
@@ -192,6 +193,60 @@ func personMediaHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, items)
+	}
+}
+
+// personCoverHandler regenerates a person's cover crop: it walks the person's
+// faces best-first (detection confidence × bbox area) and picks the first one
+// whose source actually renders — decoding images directly and re-extracting
+// the scan's midpoint frame for videos — so a person with usable faces always
+// ends up with a visible preview. POST /api/people/{id}/cover.
+func personCoverHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		id, ok := pathID(r)
+		if !ok {
+			httpError(w, "invalid person id", http.StatusBadRequest)
+			return
+		}
+		if _, found, err := media.GetPersonByID(deps.DB, id); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		} else if !found {
+			httpError(w, "no such person", http.StatusNotFound)
+			return
+		}
+		faces, err := media.PersonFacesByQuality(deps.DB, id)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(faces) == 0 {
+			httpError(w, "person has no faces to pick a cover from", http.StatusUnprocessableEntity)
+			return
+		}
+		// Try a bounded number of candidates — decoding (and possibly frame
+		// extraction) per face is not free, and if the ten best faces all fail
+		// the rest almost certainly will too.
+		const maxCandidates = 10
+		for i, f := range faces {
+			if i >= maxCandidates {
+				break
+			}
+			if _, err := decodeFaceSource(r.Context(), deps.DB, f.MediaPath); err != nil {
+				continue
+			}
+			if err := media.SetPersonCover(deps.DB, id, f.ID); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]any{"personId": id, "coverFaceId": f.ID})
+			return
+		}
+		httpError(w, "none of the person's best faces could be rendered", http.StatusUnprocessableEntity)
 	}
 }
 

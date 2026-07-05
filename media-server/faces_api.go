@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"image"
@@ -232,7 +233,7 @@ func faceCropHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		img, err := decodeFaceSource(deps.DB, f.MediaPath)
+		img, err := decodeFaceSource(r.Context(), deps.DB, f.MediaPath)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusNotFound)
 			return
@@ -248,12 +249,23 @@ func faceCropHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // decodeFaceSource decodes the media item the face belongs to. Images decode
-// directly; for videos (or anything the image decoders reject) it falls back
-// to the stored 600px thumbnail, whose aspect ratio matches the original so
-// the relative bbox still applies.
-func decodeFaceSource(db *sql.DB, mediaPath string) (image.Image, error) {
+// directly. Videos re-extract the SAME deterministic midpoint frame the scan
+// analyzed (via ffmpeg), so the stored relative bbox lines up exactly. Only
+// when frame extraction fails does it fall back to the stored 600px thumbnail
+// — same aspect ratio, but potentially a different frame, so it's a
+// last-resort approximation rather than the primary path.
+func decodeFaceSource(ctx context.Context, db *sql.DB, mediaPath string) (image.Image, error) {
 	if img, err := decodeImageFile(mediaPath); err == nil {
 		return img, nil
+	}
+	if framePath, tempFrame, err := tasks.ExtractFrameForMedia(ctx, mediaPath); err == nil {
+		img, derr := decodeImageFile(framePath)
+		if tempFrame != "" {
+			_ = os.Remove(tempFrame)
+		}
+		if derr == nil {
+			return img, nil
+		}
 	}
 	var thumb sql.NullString
 	if err := db.QueryRow(`SELECT thumbnail_path_600 FROM media WHERE path = ?`, mediaPath).Scan(&thumb); err != nil || !thumb.Valid || thumb.String == "" {

@@ -51,6 +51,15 @@ func runWithTimeout[T any](ctx context.Context, d time.Duration, fn func() (T, e
 	}
 }
 
+// ExtractFrameForMedia returns a decodable image path for any media item: the
+// path itself for images, or a freshly-extracted temp frame for videos —
+// the SAME deterministic midpoint frame the scan tasks analyze, so relative
+// face bboxes recorded at scan time line up with it. tempFrame (when non-"")
+// is the caller's to delete. Exported for the face-crop endpoint.
+func ExtractFrameForMedia(ctx context.Context, mediaPath string) (imagePath, tempFrame string, err error) {
+	return extractFrameForFile(ctx, mediaPath, 30*time.Second)
+}
+
 // extractFrameForFile returns the path to feed the model plus a temp-frame path
 // to delete afterward (empty for non-video). Video frame extraction is bounded
 // by a per-file timeout so a corrupt video can't hang the worker indefinitely.

@@ -2,8 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -186,6 +190,62 @@ func TestPersonMediaEndpoint(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing person media: %d", rec.Code)
+	}
+}
+
+func TestPersonCoverRegenerateEndpoint(t *testing.T) {
+	mux, deps := muxWithPeopleRoutes(t)
+	pid, _ := media.CreatePerson(deps.DB, "Alice")
+
+	// One face on an undecodable path (simulates the broken-preview state)
+	// and one on a real image file — regenerate must pick the real one even
+	// though the broken face scores higher on quality.
+	imgPath := filepath.Join(t.TempDir(), "cover.png")
+	img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	fh, err := os.Create(imgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(fh, img); err != nil {
+		t.Fatal(err)
+	}
+	fh.Close()
+
+	brokenIDs, _ := media.ReplaceFaces(deps.DB, `C:\gone\missing.jpg`, "m1", []media.NewFace{
+		{X: 0.1, Y: 0.1, W: 0.9, H: 0.9, Score: 0.99, Vec: []float32{1}},
+	}, 1)
+	goodIDs, _ := media.ReplaceFaces(deps.DB, imgPath, "m1", []media.NewFace{
+		{X: 0.2, Y: 0.2, W: 0.4, H: 0.4, Score: 0.9, Vec: []float32{1}},
+	}, 1)
+	_ = media.AssignFace(deps.DB, brokenIDs[0], pid, "user")
+	_ = media.AssignFace(deps.DB, goodIDs[0], pid, "user")
+	// Force the stored cover onto the broken face.
+	if err := media.SetPersonCover(deps.DB, pid, brokenIDs[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, out := doJSON(t, mux, http.MethodPost, "/api/people/"+jsonNum(pid)+"/cover", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("regenerate: %d %s", rec.Code, rec.Body.String())
+	}
+	if int64(out["coverFaceId"].(float64)) != goodIDs[0] {
+		t.Fatalf("cover = %v, want renderable face %d", out["coverFaceId"], goodIDs[0])
+	}
+	p, _, _ := media.GetPersonByID(deps.DB, pid)
+	if p.CoverFaceID != goodIDs[0] {
+		t.Fatalf("stored cover = %d, want %d", p.CoverFaceID, goodIDs[0])
+	}
+
+	// A person with no faces → 422.
+	emptyID, _ := media.CreatePerson(deps.DB, "Empty")
+	rec, _ = doJSON(t, mux, http.MethodPost, "/api/people/"+jsonNum(emptyID)+"/cover", "")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("empty person: %d", rec.Code)
+	}
+	// Unknown person → 404.
+	rec, _ = doJSON(t, mux, http.MethodPost, "/api/people/99999/cover", "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing person: %d", rec.Code)
 	}
 }
 

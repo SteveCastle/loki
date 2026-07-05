@@ -190,6 +190,41 @@ func GetPersonByName(db *sql.DB, name string) (Person, bool, error) {
 	return p, true, nil
 }
 
+// PersonFacesByQuality returns a person's faces best-first: detection
+// confidence weighted by bbox area, so the clearest close-up faces come
+// first. Used to pick cover crops.
+func PersonFacesByQuality(db *sql.DB, personID int64) ([]Face, error) {
+	rows, err := db.Query(
+		`SELECT id, media_path, model, frame_ts, bbox_x, bbox_y, bbox_w, bbox_h,
+		        det_score, vector, COALESCE(person_id, 0), COALESCE(assigned_by, ''), COALESCE(created_at, 0)
+		 FROM face WHERE person_id = ?
+		 ORDER BY det_score * bbox_w * bbox_h DESC, id ASC`,
+		personID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFaceRows(rows)
+}
+
+// SetPersonCover stores an explicit cover face for a person. The face must
+// belong to the person.
+func SetPersonCover(db *sql.DB, personID, faceID int64) error {
+	res, err := db.Exec(
+		`UPDATE person SET cover_face_id = ?
+		 WHERE id = ? AND EXISTS (SELECT 1 FROM face WHERE id = ? AND person_id = ?)`,
+		faceID, personID, faceID, personID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("face %d does not belong to person %d", faceID, personID)
+	}
+	return nil
+}
+
 // PersonMediaPaths returns the distinct media paths a person's faces appear
 // in, best detection first.
 func PersonMediaPaths(db *sql.DB, id int64) ([]string, error) {

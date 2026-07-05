@@ -374,6 +374,40 @@ func TestGetPeopleCoverSelfHeals(t *testing.T) {
 	}
 }
 
+func TestPersonFacesByQualityAndSetCover(t *testing.T) {
+	db := newPeopleDB(t)
+	pid, _ := CreatePerson(db, "Alice")
+	ids, _ := ReplaceFaces(db, "a.jpg", "m1", []NewFace{
+		{X: 0.1, Y: 0.1, W: 0.05, H: 0.05, Score: 0.99, Vec: []float32{1}}, // tiny, high conf
+		{X: 0.2, Y: 0.2, W: 0.5, H: 0.5, Score: 0.80, Vec: []float32{1}},   // big, decent conf
+	}, 1)
+	for _, id := range ids {
+		_ = AssignFace(db, id, pid, "user")
+	}
+
+	faces, err := PersonFacesByQuality(db, pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Quality = det_score × area: 0.80×0.25 ≫ 0.99×0.0025.
+	if len(faces) != 2 || faces[0].ID != ids[1] {
+		t.Fatalf("quality order wrong: %+v", faces)
+	}
+
+	if err := SetPersonCover(db, pid, ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	p, _, _ := GetPersonByID(db, pid)
+	if p.CoverFaceID != ids[0] {
+		t.Fatalf("cover = %d, want %d", p.CoverFaceID, ids[0])
+	}
+	// A face belonging to someone else (or nobody) is rejected.
+	otherIDs, _ := ReplaceFaces(db, "b.jpg", "m1", []NewFace{{Score: 0.9, Vec: []float32{1}}}, 1)
+	if err := SetPersonCover(db, pid, otherIDs[0]); err == nil {
+		t.Fatal("cover set to a face outside the person")
+	}
+}
+
 func TestDeleteAllFaceData(t *testing.T) {
 	db := newPeopleDB(t)
 	pid, _ := CreatePerson(db, "Alice")
