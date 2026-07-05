@@ -827,6 +827,37 @@
     </div>
 
     <script>
+      // Point the download button at the media-server binary for the
+      // visitor's OS. The server ships from the same GitHub release as the
+      // viewer; asset names come from the Release workflow's Go build jobs.
+      (function () {
+        const el = document.getElementById('serverDownloadButton');
+        const RELEASE_BASE =
+          'https://github.com/SteveCastle/loki/releases/download/v2.17.0/';
+        const RELEASES_PAGE =
+          'https://github.com/SteveCastle/loki/releases/latest';
+        const platform = window.navigator.platform || '';
+        const ua = window.navigator.userAgent || '';
+
+        let href = RELEASES_PAGE;
+        let label = 'Download | Free';
+
+        if (/Win/i.test(platform) || /Windows/i.test(ua)) {
+          href = RELEASE_BASE + 'media-server-windows-amd64.exe';
+          label = 'Download | Free for Windows';
+        } else if (/Mac/i.test(platform) || /Mac OS/i.test(ua)) {
+          // Default to Apple Silicon; Intel Macs can grab darwin-amd64 from the releases page.
+          href = RELEASE_BASE + 'media-server-darwin-arm64';
+          label = 'Download | Free for Mac';
+        } else if (/Linux/i.test(platform) || /Linux/i.test(ua)) {
+          href = RELEASE_BASE + 'media-server-linux-amd64';
+          label = 'Download | Free for Linux';
+        }
+
+        el.setAttribute('href', href);
+        el.innerHTML = label;
+      })();
+
       // Smooth scroll for TOC links
       document.querySelectorAll('.toc a').forEach(link => {
         link.addEventListener('click', (e) => {
