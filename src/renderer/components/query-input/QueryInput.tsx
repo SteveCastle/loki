@@ -4,6 +4,7 @@ import { useMeaningMode } from '../../hooks/useMeaningMode';
 import { mediaUrl } from '../../platform';
 import type { Query, Predicate } from '../../query/types';
 import { predicateKey } from '../../query/types';
+import { displayTagLabel } from '../../tag-display';
 import type { FilterModeOption } from '../../../settings';
 import clear from '../../../../assets/cancel.svg';
 import union from '../../../../assets/union.svg';
@@ -530,7 +531,7 @@ export default function QueryInput({
                   ) : (
                     <>
                       {TYPE_GLYPH[p.type]}
-                      {p.value}
+                      {p.type === 'tag' ? displayTagLabel(p.value) : p.value}
                     </>
                   )}
                   {hasBlend && (

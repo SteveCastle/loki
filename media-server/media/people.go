@@ -28,24 +28,31 @@ type Person struct {
 	CreatedAt   int64  `json:"createdAt,omitempty"`
 }
 
-// personNameConflict returns an error when name is already used by a tag in a
-// category other than People (tag labels are globally unique — a person may
-// not silently steal a tag from another category).
-func personNameConflict(q interface {
+// PersonClusterSuffix disambiguates a person's tag from a hand-curated tag
+// with the same name. Tag labels are globally unique, and a curated tag (say,
+// the iconic shots of someone) can deliberately coexist with a face cluster
+// covering everything they appear in — so instead of rejecting the name, the
+// person is stored as "<name>_cluster". UIs strip the suffix for display.
+const PersonClusterSuffix = "_cluster"
+
+// resolvePersonName maps a requested person name to its stored form:
+// unchanged when the name is free (or already a People tag), suffixed with
+// PersonClusterSuffix when a tag in another category owns the plain name.
+func resolvePersonName(q interface {
 	QueryRow(string, ...any) *sql.Row
-}, name string) error {
+}, name string) (string, error) {
 	var cat sql.NullString
 	err := q.QueryRow(`SELECT category_label FROM tag WHERE label = ?`, name).Scan(&cat)
 	if err == sql.ErrNoRows {
-		return nil
+		return name, nil
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	if cat.Valid && cat.String != "" && cat.String != PeopleCategory {
-		return fmt.Errorf("name %q is already a tag in category %q", name, cat.String)
+		return name + PersonClusterSuffix, nil
 	}
-	return nil
+	return name, nil
 }
 
 // ensurePersonTag creates the People category and the person's tag row inside
@@ -71,7 +78,8 @@ func CreatePerson(db *sql.DB, name string) (int64, error) {
 	if name == "" {
 		return 0, fmt.Errorf("person name required")
 	}
-	if err := personNameConflict(db, name); err != nil {
+	name, err := resolvePersonName(db, name)
+	if err != nil {
 		return 0, err
 	}
 	if _, exists, err := GetPersonByName(db, name); err != nil {
@@ -175,6 +183,16 @@ func GetPersonByID(db *sql.DB, id int64) (Person, bool, error) {
 	return p, true, nil
 }
 
+// GetPersonByDisplayName resolves a person from a user-visible name: exact
+// match first, then the "_cluster"-suffixed form a curated-tag collision
+// would have produced.
+func GetPersonByDisplayName(db *sql.DB, name string) (Person, bool, error) {
+	if p, ok, err := GetPersonByName(db, name); err != nil || ok {
+		return p, ok, err
+	}
+	return GetPersonByName(db, name+PersonClusterSuffix)
+}
+
 // GetPersonByName returns one person row by exact name.
 func GetPersonByName(db *sql.DB, name string) (Person, bool, error) {
 	var p Person
@@ -272,7 +290,9 @@ func retagPerson(tx *sql.Tx, oldName, newName string) error {
 	return nil
 }
 
-// RenamePerson renames a person and cascades to their taxonomy rows.
+// RenamePerson renames a person and cascades to their taxonomy rows. When
+// the requested name is owned by a tag in another category, the stored name
+// gets the "_cluster" suffix (see PersonClusterSuffix).
 func RenamePerson(db *sql.DB, id int64, newName string) error {
 	newName = strings.TrimSpace(newName)
 	if newName == "" {
@@ -285,11 +305,12 @@ func RenamePerson(db *sql.DB, id int64, newName string) error {
 	if !ok {
 		return fmt.Errorf("no person with id %d", id)
 	}
+	newName, err = resolvePersonName(db, newName)
+	if err != nil {
+		return err
+	}
 	if p.Name == newName {
 		return nil
-	}
-	if err := personNameConflict(db, newName); err != nil {
-		return err
 	}
 	if other, exists, err := GetPersonByName(db, newName); err != nil {
 		return err

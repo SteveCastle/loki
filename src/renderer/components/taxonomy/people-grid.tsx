@@ -13,6 +13,7 @@ import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { GlobalStateContext } from '../../state';
 import { mediaServerBase } from '../../platform';
+import { displayTagLabel } from '../../tag-display';
 import './new-modal.css';
 import './people-grid.css';
 
@@ -103,7 +104,9 @@ export function PersonEditModal({
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (s) => s.context.authToken);
   const queryClient = useQueryClient();
-  const [name, setName] = useState(person?.name ?? '');
+  // Edit the DISPLAY name; the server re-applies the _cluster suffix if the
+  // plain name is owned by a curated tag.
+  const [name, setName] = useState(person ? displayTagLabel(person.name) : '');
   const [mergeInto, setMergeInto] = useState<number>(0);
   const ref = useRef(null);
   useOnClickOutside(ref, handleClose);
@@ -144,7 +147,7 @@ export function PersonEditModal({
           method: 'POST',
           body: JSON.stringify({ name: trimmed }),
         });
-      } else if (trimmed !== person.name) {
+      } else if (trimmed !== displayTagLabel(person.name)) {
         await call(`/api/people/${person.id}/rename`, {
           method: 'POST',
           body: JSON.stringify({ name: trimmed }),
@@ -193,7 +196,7 @@ export function PersonEditModal({
         data: {
           type: 'success',
           title: 'Group purged',
-          message: `“${person.name}” and its ${person.faceCount} face${
+          message: `“${displayTagLabel(person.name)}” and its ${person.faceCount} face${
             person.faceCount === 1 ? '' : 's'
           } were deleted`,
         },
@@ -214,7 +217,7 @@ export function PersonEditModal({
         data: {
           type: 'success',
           title: 'Preview regenerated',
-          message: `Picked a new face for “${person.name}”`,
+          message: `Picked a new face for “${displayTagLabel(person.name)}”`,
         },
       });
       refresh();
@@ -267,7 +270,7 @@ export function PersonEditModal({
                   <div className="action-row-text">
                     <div className="action-row-title">Merge into</div>
                     <div className="action-row-description">
-                      Move every face and tag of “{person.name}” onto another
+                      Move every face and tag of “{displayTagLabel(person.name)}” onto another
                       person, then remove this one
                     </div>
                     <select
@@ -278,7 +281,7 @@ export function PersonEditModal({
                       <option value={0}>Choose a person…</option>
                       {mergeTargets.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name} ({p.faceCount})
+                          {displayTagLabel(p.name)} ({p.faceCount})
                         </option>
                       ))}
                     </select>
@@ -396,7 +399,7 @@ function PersonCard({
         isOver && canDrop ? ' drop-target' : ''
       }`}
       onClick={() => onSelect(person)}
-      title={`${person.name} — ${person.faceCount} face${
+      title={`${displayTagLabel(person.name)} — ${person.faceCount} face${
         person.faceCount === 1 ? '' : 's'
       } in ${person.mediaCount} item${
         person.mediaCount === 1 ? '' : 's'
@@ -404,7 +407,7 @@ function PersonCard({
     >
       <FaceCrop faceId={person.coverFaceId} authToken={authToken} />
       <div className="person-card-info">
-        <span className="person-card-name">{person.name}</span>
+        <span className="person-card-name">{displayTagLabel(person.name)}</span>
         <span className="person-card-count">{person.mediaCount}</span>
       </div>
       <button
@@ -415,7 +418,7 @@ function PersonCard({
           onEdit(person);
         }}
         title="Rename, merge, or delete"
-        aria-label={`Edit ${person.name}`}
+        aria-label={`Edit ${displayTagLabel(person.name)}`}
       >
         ✎
       </button>
@@ -506,7 +509,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
         data: {
           type: 'success',
           title: 'People merged',
-          message: `“${from.name}” merged into “${into.name}”`,
+          message: `“${displayTagLabel(from.name)}” merged into “${displayTagLabel(into.name)}”`,
         },
       });
       queryClient.invalidateQueries({ queryKey: ['taxonomy'] });

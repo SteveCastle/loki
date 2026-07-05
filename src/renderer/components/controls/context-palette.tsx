@@ -11,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
 import { capabilities, mediaServerBase } from '../../platform';
+import { displayTagLabel } from '../../tag-display';
 import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import filter from '../../filter';
@@ -741,7 +742,7 @@ export default function ContextPalette() {
         const match = people.find((p) => p.name === (target as { tag: string }).tag);
         if (match) {
           setPersonTarget(match);
-          setPersonRename(match.name);
+          setPersonRename(displayTagLabel(match.name));
         }
       } catch {
         // server unavailable — no person section
@@ -751,7 +752,11 @@ export default function ContextPalette() {
   }, [display, target, authToken]);
 
   const handleRenamePerson = async () => {
-    if (!personTarget || !personRename.trim() || personRename === personTarget.name) {
+    if (
+      !personTarget ||
+      !personRename.trim() ||
+      personRename === displayTagLabel(personTarget.name)
+    ) {
       return;
     }
     try {
@@ -780,7 +785,7 @@ export default function ContextPalette() {
         data: {
           type: 'success',
           title: 'Person renamed',
-          message: `${personTarget.name} → ${personRename.trim()}`,
+          message: `${displayTagLabel(personTarget.name)} → ${personRename.trim()}`,
         },
       });
       libraryService.send('HIDE_CONTEXT_PALETTE');

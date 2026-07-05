@@ -76,12 +76,30 @@ func TestCreatePersonAndTag(t *testing.T) {
 	if _, err := CreatePerson(db, "Alice"); err == nil {
 		t.Fatal("duplicate person allowed")
 	}
-	// Name colliding with a foreign-category tag rejected.
+	// A name owned by a curated tag in another category is stored with the
+	// _cluster suffix instead of erroring — the curated tag and the face
+	// cluster deliberately coexist.
 	if _, err := db.Exec(`INSERT INTO tag (label, category_label) VALUES ('blonde', 'Appearance')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreatePerson(db, "blonde"); err == nil {
-		t.Fatal("person stole a foreign tag")
+	pid, err := CreatePerson(db, "blonde")
+	if err != nil {
+		t.Fatalf("collision create: %v", err)
+	}
+	p, _, _ := GetPersonByID(db, pid)
+	if p.Name != "blonde"+PersonClusterSuffix {
+		t.Fatalf("stored name = %q, want suffixed", p.Name)
+	}
+	if cat, ok := tagCategory(t, db, "blonde"+PersonClusterSuffix); !ok || cat != PeopleCategory {
+		t.Fatalf("suffixed tag = (%q, %v)", cat, ok)
+	}
+	// The curated tag is untouched.
+	if cat, _ := tagCategory(t, db, "blonde"); cat != "Appearance" {
+		t.Fatalf("curated tag harmed: %q", cat)
+	}
+	// Display-name lookup finds the suffixed person.
+	if got, ok, _ := GetPersonByDisplayName(db, "blonde"); !ok || got.ID != pid {
+		t.Fatalf("display lookup = (%+v, %v)", got, ok)
 	}
 }
 
@@ -212,12 +230,24 @@ func TestRenamePersonCascades(t *testing.T) {
 	if err := RenamePerson(db, pid, "Bob"); err == nil {
 		t.Fatal("rename onto existing person allowed")
 	}
-	// Renaming to a foreign-category tag name → error.
+	// Renaming to a curated tag's name stores the suffixed form and
+	// cascades the bridge rows to it.
 	if _, err := db.Exec(`INSERT INTO tag (label, category_label) VALUES ('redhead', 'Appearance')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenamePerson(db, pid, "redhead"); err == nil {
-		t.Fatal("rename stole a foreign tag")
+	if err := RenamePerson(db, pid, "redhead"); err != nil {
+		t.Fatalf("collision rename: %v", err)
+	}
+	p, _, _ = GetPersonByID(db, pid)
+	if p.Name != "redhead"+PersonClusterSuffix {
+		t.Fatalf("stored name = %q, want suffixed", p.Name)
+	}
+	rows = bridgeRows(t, db)
+	if rows["a.jpg|redhead"+PersonClusterSuffix] != 1 {
+		t.Fatalf("bridge rows after collision rename = %v", rows)
+	}
+	if cat, _ := tagCategory(t, db, "redhead"); cat != "Appearance" {
+		t.Fatalf("curated tag harmed: %q", cat)
 	}
 }
 

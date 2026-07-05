@@ -3,6 +3,7 @@ import { useSelector } from '@xstate/react';
 import { invoke } from '../../platform';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
+import { displayTagLabel, isAiTagCategory } from '../../tag-display';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import './tags.css';
 import TimestampTooltip from './timestamp-tooltip';
@@ -161,7 +162,13 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   if (isLoading || !data) return <div ref={containerRef} className={`Tags`} />;
   if (error) return <div ref={containerRef} className={`Tags`}><p>{error.message}</p></div>;
   const visibleTags = (data.tags || []).filter((tag) => {
-    if (!enableTagGeneration && hideSuggestedTags && tag.category_label === 'Suggested') {
+    // "Hide suggested tags" hides all AI-generated tags: the auto-tagger's
+    // Suggested bucket and the face-clustering People tags alike.
+    if (
+      !enableTagGeneration &&
+      hideSuggestedTags &&
+      isAiTagCategory(tag.category_label)
+    ) {
       return false;
     }
     return true;
@@ -238,7 +245,7 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                     />
                   </>
                 ) : null}
-                <span>{tag.tag_label}</span>
+                <span>{displayTagLabel(tag.tag_label)}</span>
                 {isConfirming ? (
                   <span className="confirm-actions">
                     <button

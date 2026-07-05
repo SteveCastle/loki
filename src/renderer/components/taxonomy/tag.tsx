@@ -13,6 +13,7 @@ import { useSelector } from '@xstate/react';
 import TagCount from './tag-count';
 import { invoke, mediaUrl, fetchTagPreview } from '../../platform';
 import { isClickWithinThreshold, Point } from './click-vs-drag';
+import { displayTagLabel } from '../../tag-display';
 
 type Concept = {
   label: string;
@@ -193,7 +194,7 @@ export default function Tag({
           />
         )
       ) : null}
-      <div className="label">{tag.label}</div>
+      <div className="label">{displayTagLabel(tag.label)}</div>
       {active && <img className="check" src={checkCircle} />}
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}

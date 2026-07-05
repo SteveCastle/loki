@@ -9,6 +9,7 @@ import ConfirmDeleteTag from './confirm-delete-tag';
 import TagCount from './tag-count';
 import { invoke } from '../../platform';
 import { isClickWithinThreshold, Point } from './click-vs-drag';
+import { displayTagLabel } from '../../tag-display';
 
 type Concept = {
   label: string;
@@ -144,8 +145,8 @@ function TagListRow({
         }
       }}
     >
-      <div className="label" title={tag.label}>
-        {tag.label}
+      <div className="label" title={displayTagLabel(tag.label)}>
+        {displayTagLabel(tag.label)}
       </div>
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}

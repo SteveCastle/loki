@@ -391,8 +391,9 @@ func faceAssignHandler(deps *Dependencies) http.HandlerFunc {
 				httpError(w, "personId or name required", http.StatusBadRequest)
 				return
 			}
-			// Assign by name: reuse the person when it exists, create otherwise.
-			if p, found, err := media.GetPersonByName(deps.DB, name); err != nil {
+			// Assign by name: reuse the person when it exists (including the
+			// _cluster-suffixed form), create otherwise.
+			if p, found, err := media.GetPersonByDisplayName(deps.DB, name); err != nil {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
 			} else if found {
