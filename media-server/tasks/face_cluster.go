@@ -198,11 +198,18 @@ func clusterFaces(db *sql.DB, model FaceModel, threshold float32, minCluster int
 	return stats, nil
 }
 
-// resetAutoAssignments clears every auto assignment for model (user labels
-// stay put) and dissolves auto-created "Unknown #N" people left with no
-// faces. Returns how many faces were unassigned.
+// resetAutoAssignments clears the auto assignments of ANONYMOUS clusters for
+// model and dissolves the emptied "Unknown #N" people. Anything the user has
+// endorsed stays put: user-assigned faces (ground truth) and ALL faces of
+// named people — renaming or merging a cluster is an endorsement of its
+// contents, so a reset must not scatter it. Orphaned assignments (person row
+// gone) are cleared too. Returns how many faces were unassigned.
 func resetAutoAssignments(db *sql.DB, model string) (int, error) {
-	rows, err := db.Query(`SELECT id FROM face WHERE model = ? AND assigned_by = 'auto'`, model)
+	rows, err := db.Query(`
+		SELECT f.id FROM face f
+		LEFT JOIN person p ON p.id = f.person_id
+		WHERE f.model = ? AND f.assigned_by = 'auto'
+		  AND (p.id IS NULL OR p.name LIKE 'Unknown #%')`, model)
 	if err != nil {
 		return 0, err
 	}
@@ -273,7 +280,10 @@ func jobHasFlag(j *jobqueue.Job, flag string) bool {
 //	--model=<id>       cluster a specific recognizer's faces (default: active)
 //	--threshold=<0..1> override the model's match threshold
 //	--min-cluster=<n>  minimum faces for a new anonymous person (default 3)
-//	--reset            clear auto assignments (never user ones) first
+//	--reset            rebuild the anonymous "Unknown #N" clusters first.
+//	                   User-assigned faces and everything inside NAMED people
+//	                   are never touched — naming/merging a cluster endorses
+//	                   its contents.
 func facesClusterTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	model := ActiveFaceModel()
 	if id, ok := embedModelOverrideFromJob(j); ok {
@@ -304,7 +314,7 @@ func facesClusterTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error 
 			q.ErrorJob(j.ID)
 			return err
 		}
-		q.PushJobStdout(j.ID, fmt.Sprintf("Reset %d auto assignment(s); user labels kept", n))
+		q.PushJobStdout(j.ID, fmt.Sprintf("Reset %d auto assignment(s) in unnamed clusters; named people and user labels kept", n))
 	}
 
 	stats, err := clusterFaces(q.Db, model, threshold, minCluster)

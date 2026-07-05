@@ -82,15 +82,19 @@ func TestClusterFacesJoinsSeedsAndMintsUnknowns(t *testing.T) {
 	}
 }
 
-func TestResetAutoAssignmentsKeepsUserLabels(t *testing.T) {
+func TestResetAutoAssignmentsKeepsUserLabelsAndNamedPeople(t *testing.T) {
 	db := newFaceIndexDB(t)
 	resetFaceIndex(t)
 
 	alice, _ := media.CreatePerson(db, "Alice")
 	unknown, _ := media.CreatePerson(db, "Unknown #1")
 	userIDs := seedFaces(t, db, "u.jpg", "m1", []float32{1, 0})
+	// An auto face inside a NAMED person (e.g. an Unknown cluster the user
+	// renamed/merged into Alice) — naming endorses the contents.
+	namedAutoIDs := seedFaces(t, db, "n.jpg", "m1", []float32{1, 0.1})
 	autoIDs := seedFaces(t, db, "a.jpg", "m1", []float32{0, 1})
 	_ = media.AssignFace(db, userIDs[0], alice, "user")
+	_ = media.AssignFace(db, namedAutoIDs[0], alice, "auto")
 	_ = media.AssignFace(db, autoIDs[0], unknown, "auto")
 
 	n, err := resetAutoAssignments(db, "m1")
@@ -98,15 +102,20 @@ func TestResetAutoAssignmentsKeepsUserLabels(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Fatalf("reset %d, want 1", n)
+		t.Fatalf("reset %d, want 1 (only the Unknown cluster's face)", n)
 	}
 	fUser, _, _ := media.GetFaceByID(db, userIDs[0])
 	if fUser.PersonID != alice || fUser.AssignedBy != "user" {
 		t.Fatalf("user label harmed: %+v", fUser)
 	}
+	// The auto face inside the NAMED person survives a reset.
+	fNamedAuto, _, _ := media.GetFaceByID(db, namedAutoIDs[0])
+	if fNamedAuto.PersonID != alice || fNamedAuto.AssignedBy != "auto" {
+		t.Fatalf("named person's auto face scattered: %+v", fNamedAuto)
+	}
 	fAuto, _, _ := media.GetFaceByID(db, autoIDs[0])
 	if fAuto.PersonID != 0 {
-		t.Fatalf("auto assignment survived: %+v", fAuto)
+		t.Fatalf("unnamed cluster's auto assignment survived: %+v", fAuto)
 	}
 	// Emptied anonymous person dissolved; Alice kept.
 	if _, ok, _ := media.GetPersonByID(db, unknown); ok {

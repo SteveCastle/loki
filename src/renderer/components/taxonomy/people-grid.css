@@ -14,6 +14,12 @@
 .people-grid-toolbar {
   display: flex;
   justify-content: flex-end;
+  gap: 6px;
+}
+
+.people-cluster-btn.danger {
+  border-color: rgb(211, 3, 72);
+  color: rgb(255, 120, 160);
 }
 
 .people-cluster-btn {

@@ -352,7 +352,16 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     });
   };
 
-  const handleCluster = async () => {
+  // Two-click confirm for the destructive rebuild (unnamed clusters are
+  // dissolved and regrouped). Resets after a few seconds if not confirmed.
+  const [rebuildArmed, setRebuildArmed] = useState(false);
+  useEffect(() => {
+    if (!rebuildArmed) return undefined;
+    const t = window.setTimeout(() => setRebuildArmed(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [rebuildArmed]);
+
+  const runClusterJob = async (input: string, title: string, message: string) => {
     try {
       const res = await fetch(`${mediaServerBase}/create`, {
         method: 'POST',
@@ -361,16 +370,12 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           ...authHeaders(authToken),
         },
         credentials: 'include',
-        body: JSON.stringify({ input: 'faces-cluster' }),
+        body: JSON.stringify({ input }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       libraryService.send({
         type: 'ADD_TOAST',
-        data: {
-          type: 'info',
-          title: 'Clustering faces',
-          message: 'Grouping scanned faces into people…',
-        },
+        data: { type: 'info', title, message },
       });
     } catch (err) {
       libraryService.send({
@@ -382,6 +387,29 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
         },
       });
     }
+  };
+
+  // Additive: assigns only currently-unassigned faces; never moves anything.
+  const handleCluster = () =>
+    runClusterJob(
+      'faces-cluster',
+      'Clustering faces',
+      'Grouping new faces into people…'
+    );
+
+  // Rebuild: dissolves the anonymous "Unknown #N" clusters and regroups them
+  // from scratch. Named people and user-assigned faces are never touched.
+  const handleRebuild = () => {
+    if (!rebuildArmed) {
+      setRebuildArmed(true);
+      return;
+    }
+    setRebuildArmed(false);
+    runClusterJob(
+      'faces-cluster --reset',
+      'Rebuilding unnamed groups',
+      'Regrouping anonymous clusters (named people are kept)…'
+    );
   };
 
   if (error) {
@@ -478,9 +506,17 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           type="button"
           className="people-cluster-btn"
           onClick={handleCluster}
-          title="Group scanned faces into people (never overwrites your manual labels)"
+          title="Assign unassigned faces to people. Additive — never moves existing assignments."
         >
           Group new faces
+        </button>
+        <button
+          type="button"
+          className={`people-cluster-btn${rebuildArmed ? ' danger' : ''}`}
+          onClick={handleRebuild}
+          title="Dissolve the Unknown clusters and regroup them from scratch. Named people and manually assigned faces are never touched."
+        >
+          {rebuildArmed ? 'Click again to confirm' : 'Rebuild unnamed groups'}
         </button>
       </div>
       {list.length === 0 && (
