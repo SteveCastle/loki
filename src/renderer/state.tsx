@@ -10,7 +10,7 @@ import {
   clampVolume,
 } from 'settings';
 import {
-  invoke, send, on, store, appArgs, capabilities, isElectron,
+  invoke, send, on, store, appArgs, capabilities, isElectron, mediaServerBase,
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
 import type { Query, Predicate } from './query/types';
@@ -170,7 +170,9 @@ type LibraryState = {
 };
 
 const queryHasVisual = (predicates: Predicate[] = []): boolean =>
-  predicates.some((p) => p.type === 'similar' || p.type === 'visual');
+  predicates.some(
+    (p) => p.type === 'similar' || p.type === 'visual' || p.type === 'clip'
+  );
 
 const applySimilaritySort = assign<LibraryState, AnyEventObject>({
   settings: (context) => {
@@ -802,7 +804,11 @@ const queryMutationOn = {
           event.data.predicate,
           context.settings.filteringMode
         );
-        return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+        // The new result set starts at the top. A mounted list view resets
+        // itself on the libraryLoadId change, but when the query changes while
+        // the list is unmounted (e.g. similar-search from the detail screen)
+        // the persisted position would be restored stale on the next mount.
+        return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
       }),
     ],
   },
@@ -818,7 +824,7 @@ const queryMutationOn = {
       target: 'runningQuery',
       actions: assign<LibraryState, AnyEventObject>((context, event) => {
         const q = removePredicate(context.query, event.data.key);
-        return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+        return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
       }),
     },
   ],
@@ -826,14 +832,14 @@ const queryMutationOn = {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
       const q = toggleExclude(context.query, event.data.key);
-      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
   },
   SET_PREDICATE_JOIN: {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
       const q = setPredicateJoin(context.query, event.data.key, event.data.join);
-      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
   },
   SET_QUERY: [
@@ -849,7 +855,7 @@ const queryMutationOn = {
         capturePreviousIfEmpty,
         assign<LibraryState, AnyEventObject>((_context, event) => {
           const q = { predicates: parseQuery(event.data.text) };
-          return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+          return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
         }),
       ],
     },
@@ -1443,7 +1449,7 @@ export const libraryMachine = createMachine(
                     if (context.authToken) {
                       headers['Authorization'] = `Bearer ${context.authToken}`;
                     }
-                    fetch('http://localhost:8090/config', {
+                    fetch(`${mediaServerBase}/config`, {
                       method: 'POST',
                       headers,
                       body: JSON.stringify({ dbPath: context.dbPath }),
@@ -2136,17 +2142,6 @@ export const libraryMachine = createMachine(
                   },
                 }),
               },
-              REGION_SEARCH_RESULTS: {
-                actions: [
-                  capturePrevious,
-                  assign<LibraryState, AnyEventObject>({
-                    library: (_context, event) => event.data.items as Item[],
-                    cursor: 0,
-                    libraryLoadId: () => uniqueId(),
-                    settings: (context) => ({ ...context.settings, sortBy: 'similarity' }),
-                  }),
-                ],
-              },
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
@@ -2551,17 +2546,6 @@ export const libraryMachine = createMachine(
                     };
                   },
                 }),
-              },
-              REGION_SEARCH_RESULTS: {
-                actions: [
-                  capturePrevious,
-                  assign<LibraryState, AnyEventObject>({
-                    library: (_context, event) => event.data.items as Item[],
-                    cursor: 0,
-                    libraryLoadId: () => uniqueId(),
-                    settings: (context) => ({ ...context.settings, sortBy: 'similarity' }),
-                  }),
-                ],
               },
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({

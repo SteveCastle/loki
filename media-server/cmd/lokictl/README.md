@@ -27,7 +27,10 @@ cd media-server && go build -o lokictl.exe ./cmd/lokictl
 ## Connection & auth
 
 Server URL and token resolve as: flag (`--server`, `--token`) > env
-(`LOKICTL_SERVER`, `LOKICTL_TOKEN`) > config file > `http://localhost:8090`.
+(`LOKICTL_SERVER`, `LOKICTL_TOKEN`) > config file > auto-detected default.
+The default is `http://localhost:<port>` where the port comes from the
+`LOWKEY_PORT` env var, then the local media-server's own `config.json`
+(`port` field), then `10111` ("L0K1" — the server's default port).
 
 ```sh
 lokictl health                            # no auth needed

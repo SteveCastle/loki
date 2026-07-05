@@ -60,6 +60,15 @@ export default function RegionSelect() {
   );
 
   const onMouseMove = useCallback((e: React.MouseEvent) => {
+    // Self-heal: the keyup/blur listeners can miss the Alt release (e.g. the
+    // OS or menu bar swallows it), which would leave this full-screen overlay
+    // wedged over the UI. The mouse event carries the live modifier state, so
+    // any movement without Alt actually held dismisses the overlay.
+    if (!e.altKey && !startRef.current) {
+      setAltHeld(false);
+      setBox(null);
+      return;
+    }
     if (!startRef.current) return;
     setBox(rectFromDrag(startRef.current, { x: e.clientX, y: e.clientY }));
   }, []);

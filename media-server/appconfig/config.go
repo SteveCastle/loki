@@ -39,10 +39,13 @@ const DefaultEmbeddingModel = "siglip2-base-patch16-224"
 
 // DefaultTranscriptionProvider / DefaultTranscriptionModel are used when the
 // transcription section is empty. The provider id must match a registration
-// in the transcribe package; the model id is provider-specific.
+// in the transcribe package. An empty model means "use the provider's
+// default", which is platform-aware (e.g. large-v3-turbo where the XXL
+// build is available, large-v2 on macOS) — so appconfig stays a leaf
+// package and the transcribe provider owns the choice.
 const (
 	DefaultTranscriptionProvider = "whisper-cli"
-	DefaultTranscriptionModel    = "large-v2"
+	DefaultTranscriptionModel    = ""
 )
 
 // DefaultAutotagModel is the auto-tagging model used when none is configured.
@@ -50,9 +53,18 @@ const (
 // (not imported from tasks) to keep appconfig a leaf package.
 const DefaultAutotagModel = "wd-eva02-large-tagger-v3"
 
+// DefaultPort is the HTTP listen port used when none is configured.
+// 10111 is "L0K1" in leet: L→1, O→0, K→11 (11th letter), I→1.
+const DefaultPort = 10111
+
 // Config holds application configuration including database path, LLM prompts, and AI model paths.
 type Config struct {
 	DBPath string `json:"dbPath"`
+
+	// HTTP listen port. Changing it requires a server restart. Overridable
+	// via the LOWKEY_PORT env var (Docker-friendly); 0/invalid falls back to
+	// DefaultPort at load time.
+	Port int `json:"port"`
 
 	// Download path for media files
 	DownloadPath string `json:"downloadPath"`
@@ -220,6 +232,7 @@ func DefaultConfigDir() string {
 func defaultConfig() Config {
 	return Config{
 		DBPath:                 DefaultDBPath(),
+		Port:                   DefaultPort,
 		DownloadPath:           defaultDownloadPath(),
 		InferenceProvider:      "ollama",
 		EmbeddingModel:         DefaultEmbeddingModel,
@@ -271,6 +284,17 @@ func Get() Config {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
 	return cfg
+}
+
+// ListenAddr returns the bind address (":<port>") for the HTTP server.
+func (c Config) ListenAddr() string {
+	return fmt.Sprintf(":%d", c.Port)
+}
+
+// LocalBaseURL returns the loopback base URL ("http://localhost:<port>")
+// used for log messages and opening the web UI in a browser.
+func (c Config) LocalBaseURL() string {
+	return fmt.Sprintf("http://localhost:%d", c.Port)
 }
 
 // Set replaces the in-memory config.
@@ -403,6 +427,11 @@ func Load() (Config, string, error) {
 
 	if c.DBPath == "" {
 		c.DBPath = def.DBPath
+		needsSave = true
+	}
+	if c.Port <= 0 || c.Port > 65535 {
+		// 0 = configs predating the field; out-of-range = hand-edited junk.
+		c.Port = def.Port
 		needsSave = true
 	}
 	if c.DownloadPath == "" {
@@ -564,6 +593,13 @@ func DefaultRoot(roots []StorageRoot) *StorageRoot {
 func applyEnvOverrides(c *Config) {
 	if v := os.Getenv("LOWKEY_DB_PATH"); v != "" {
 		c.DBPath = v
+	}
+	if v := os.Getenv("LOWKEY_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+			c.Port = n
+		} else {
+			log.Printf("Warning: LOWKEY_PORT=%q is not a valid port (1-65535); ignored", v)
+		}
 	}
 	if v := os.Getenv("LOWKEY_DOWNLOAD_PATH"); v != "" {
 		c.DownloadPath = v

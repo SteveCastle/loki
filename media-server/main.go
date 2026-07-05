@@ -912,6 +912,12 @@ func swipeAPIHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// "More like this": rank by embedding similarity to an anchor item
+		// instead of the seeded shuffle. Shared across platform builds.
+		if maybeHandleSwipeSimilar(w, r, deps) {
+			return
+		}
+
 		// Parse query parameters
 		offsetStr := r.URL.Query().Get("offset")
 		limitStr := r.URL.Query().Get("limit")
@@ -1350,6 +1356,7 @@ type configTemplateData struct {
 
 type updateConfigRequest struct {
 	DBPath               string `json:"dbPath"`
+	Port                 int    `json:"port"`
 	DownloadPath         string `json:"downloadPath"`
 	OllamaBaseURL        string `json:"ollamaBaseUrl"`
 	OllamaModel          string `json:"ollamaModel"`
@@ -1460,6 +1467,11 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			oldEmbeddingModel := currentConfig.EmbeddingModel
 			newCfg := currentConfig
 			newCfg.DBPath = req.DBPath
+			// Port: positive in-range values overwrite; 0 = field absent from a
+			// partial POST, leave the stored value alone. Takes effect on restart.
+			if req.Port > 0 && req.Port <= 65535 {
+				newCfg.Port = req.Port
+			}
 			if strings.TrimSpace(req.DownloadPath) != "" {
 				newCfg.DownloadPath = strings.TrimSpace(req.DownloadPath)
 			}
@@ -2434,7 +2446,6 @@ func main() {
 	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/taxonomy/paths", renderer.ApplyMiddlewares(lokiPathSuggestHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RoleAdmin))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
@@ -2540,12 +2551,13 @@ func main() {
 	}()
 
 	srv = &http.Server{
-		Addr:    ":8090",
+		Addr:    appconfig.Get().ListenAddr(),
 		Handler: mux,
 	}
 
 	// start HTTP server in background
 	go func() {
+		log.Printf("HTTP server starting on %s", appconfig.Get().LocalBaseURL())
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("lowkeymediaserver: %v", err)
 		}
@@ -2569,13 +2581,13 @@ func onReady() {
 	quitItem := systray.AddMenuItem("Quit", "Shut down Lowkey Media Server")
 
 	// open UI once at startup
-	_ = browser.OpenURL("http://localhost:8090/")
+	_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
 
 	// event loop
 	for {
 		select {
 		case <-openItem.ClickedCh:
-			_ = browser.OpenURL("http://localhost:8090/")
+			_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
 		case <-quitItem.ClickedCh:
 			systray.Quit()
 			return

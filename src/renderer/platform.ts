@@ -5,6 +5,15 @@ export const isElectron =
   typeof window !== 'undefined' &&
   typeof (window as any).electron !== 'undefined';
 
+// Base URL of the local Lowkey Media Server (job queue, deps, AI tasks).
+// In web mode the SPA is served by that same server, so relative URLs work
+// and this is ''. In Electron the preload discovers the configured port
+// (LOWKEY_PORT env > the server's config.json > default 10111 "L0K1") and
+// exposes the base; fall back to the default if the preload predates it.
+export const mediaServerBase: string = isElectron
+  ? (window as any).electron?.mediaServerBase || 'http://localhost:10111'
+  : '';
+
 export const capabilities = {
   fileSystemAccess: true,
   clipboard: isElectron,
@@ -188,15 +197,10 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'GET',
       argsToBody: () => null,
     },
-    'load-path-suggestions': {
-      url: '/api/taxonomy/paths',
-      method: 'GET',
-      argsToBody: (args) => ({ term: args[0] }),
-    },
     'get-category-count': {
       url: '/api/taxonomy/category-count',
       method: 'GET',
-      argsToBody: (args) => ({ category: args[0] }),
+      argsToBody: (args) => ({ category: args[0], cap: args[1] }),
     },
     'create-tag': {
       url: '/api/tags',
@@ -458,7 +462,9 @@ if (isElectron) {
     // non-empty value is resolved via the embedding backend, so only route
     // (and require auth) when there's actually a visual query to run.
     const hasVisual = predicates.some(
-      (p) => (p.type === 'similar' || p.type === 'visual') && p.value !== ''
+      (p) =>
+        (p.type === 'similar' || p.type === 'visual' || p.type === 'clip') &&
+        p.value !== ''
     );
     if (!hasVisual) {
       // Normal queries stay on the fast local SQLite path.
@@ -472,7 +478,7 @@ if (isElectron) {
         'Visual search requires logging in to the local media server.'
       );
     }
-    const res = await fetch('http://localhost:8090/api/media/query', {
+    const res = await fetch(`${mediaServerBase}/api/media/query`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

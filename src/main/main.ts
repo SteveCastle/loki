@@ -350,7 +350,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-category-tags');
   ipcMain.removeHandler('load-all-tags');
   ipcMain.removeHandler('get-tag-count');
-  ipcMain.removeHandler('load-path-suggestions');
   ipcMain.removeHandler('get-category-count');
   ipcMain.removeHandler('create-tag');
   ipcMain.removeHandler('create-category');
@@ -434,7 +433,6 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('load-category-tags', taxonomyModule.loadCategoryTags(db));
   ipcMain.handle('load-all-tags', taxonomyModule.loadAllTags(db));
   ipcMain.handle('get-tag-count', taxonomyModule.getTagCount(db));
-  ipcMain.handle('load-path-suggestions', taxonomyModule.loadPathSuggestions(db));
   ipcMain.handle('get-category-count', taxonomyModule.getCategoryCount(db));
   ipcMain.handle('create-tag', taxonomyModule.createTag(db));
   ipcMain.handle('create-category', taxonomyModule.createCategory(db));

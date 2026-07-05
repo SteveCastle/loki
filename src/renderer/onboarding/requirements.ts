@@ -1,12 +1,12 @@
 // Maps job-creation surfaces (task chips, per-file generate buttons) to the
 // dependency each one needs, so the UI can offer a one-click download at the
 // point of use instead of letting the job fail later in its log.
-import { isElectron } from '../platform';
+import { mediaServerBase } from '../platform';
 
 // The deps API lives on the media server. In web mode the SPA is served by
 // that same server, so relative URLs work; in Electron the SPA must reach the
 // local server directly (same base the job endpoints already use).
-export const depsApiBase = isElectron ? 'http://localhost:8090' : '';
+export const depsApiBase = mediaServerBase;
 
 export interface TaskRequirement {
   /** id in /api/deps/status */

@@ -1394,6 +1394,17 @@
 
       <div class="swipe-actions" id="swipeActions" style="display: none">
         <button class="action-btn" id="likeBtn" title="Like">♥</button>
+        <button class="action-btn" id="similarBtn" title="More like this">
+          ≈
+        </button>
+        <button
+          class="action-btn"
+          id="randomBtn"
+          title="Back to shuffle"
+          style="display: none"
+        >
+          ⚄
+        </button>
         <button class="action-btn" id="openBtn" title="Open in browser">
           ↗
         </button>
@@ -1528,6 +1539,14 @@
       // This Set is used for UI state only
       let likedItems = new Set();
 
+      // "More like this" mode: when active, items are ranked by embedding
+      // similarity to an anchor item (nearest first) instead of the seeded
+      // shuffle. The random-mode stack is stashed so toggling back restores
+      // the user's place in the shuffle.
+      let similarMode = false;
+      let similarAnchor = null;
+      let randomStash = null;
+
       // Request cancellation
       let fetchController = null;
 
@@ -1556,6 +1575,8 @@
       const tagList = document.getElementById('tagList');
       const selectedTagsContainer = document.getElementById('selectedTags');
       const likeBtn = document.getElementById('likeBtn');
+      const similarBtn = document.getElementById('similarBtn');
+      const randomBtn = document.getElementById('randomBtn');
       const openBtn = document.getElementById('openBtn');
       const fitBtn = document.getElementById('fitBtn');
       const installPrompt = document.getElementById('installPrompt');
@@ -1886,18 +1907,34 @@
         fetchController = controller;
 
         try {
-          const params = new URLSearchParams({
-            offset: items.length,
-            limit: limit,
-            seed: sessionSeed,
-          });
-          if (searchQuery) {
-            params.set('q', searchQuery);
+          let params;
+          if (similarMode) {
+            // The anchor item occupies index 0 client-side but is excluded
+            // from the server's ranked list, so the server offset is one
+            // behind the client stack length.
+            params = new URLSearchParams({
+              mode: 'similar',
+              anchor: similarAnchor,
+              offset: Math.max(0, items.length - 1),
+              limit: limit,
+            });
+          } else {
+            params = new URLSearchParams({
+              offset: items.length,
+              limit: limit,
+              seed: sessionSeed,
+            });
+            if (searchQuery) {
+              params.set('q', searchQuery);
+            }
           }
 
           const response = await fetch(`/swipe/api?${params}`, {
             signal: controller.signal,
           });
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
           const data = await response.json();
 
           items = items.concat(data.items || []);
@@ -2253,6 +2290,117 @@
             el.classList.remove('cover');
           }
         });
+      }
+
+      // --- "More like this" (similarity ranking) mode ---
+      // The ≈ button anchors the feed on the current image. While in similar
+      // mode it stays available as a "hop": pressing it again re-anchors on
+      // whatever image is on screen, so you can walk the embedding space
+      // image-to-image. A separate shuffle button (visible only in similar
+      // mode) returns to the stashed random feed.
+      function updateSimilarButton() {
+        similarBtn.classList.toggle('active', similarMode);
+        similarBtn.title = similarMode
+          ? 'Search from this image'
+          : 'More like this';
+        randomBtn.style.display = similarMode ? 'flex' : 'none';
+      }
+
+      function abortPendingLoads() {
+        if (fetchController) {
+          fetchController.abort();
+          fetchController = null;
+        }
+        isLoading = false;
+        isPreloading = false;
+      }
+
+      // Re-anchor the similarity feed on anchorItem and load its neighbours.
+      // Shared by entering similar mode and hopping to a new anchor; the
+      // caller decides what happens to randomStash.
+      async function anchorSimilarTo(anchorItem, toastMsg) {
+        // Abort in-flight fetches so a late response for the previous mode
+        // or anchor can't append items into the new stack.
+        abortPendingLoads();
+
+        similarMode = true;
+        similarAnchor = anchorItem.path;
+        items = [anchorItem];
+        currentIndex = 0;
+        hasMore = true;
+        updateSimilarButton();
+        renderItems();
+        updateProgress();
+
+        await loadMore(30);
+        // Bail if the user exited similar mode or hopped again mid-fetch.
+        if (!similarMode || similarAnchor !== anchorItem.path) return;
+
+        if (items.length <= 1) {
+          // No neighbours — likely no embedding for this item (or the
+          // embedding index is empty). Fall back to the shuffle.
+          showTagToast('No similar items found');
+          exitSimilarMode();
+          return;
+        }
+        // Re-render so the preloaded next-card previews appear behind the
+        // anchor, which was rendered alone before the fetch completed.
+        renderItems();
+        if (toastMsg) showTagToast(toastMsg);
+      }
+
+      function enterSimilarMode() {
+        if (items.length === 0 || currentIndex >= items.length) return;
+        const anchorItem = items[currentIndex];
+        // Stash the shuffle so "back to shuffle" restores this exact spot,
+        // no matter how many hops happen in between.
+        randomStash = { items, currentIndex, hasMore };
+        anchorSimilarTo(anchorItem, 'Showing more like this');
+      }
+
+      function hopSimilar() {
+        if (items.length === 0 || currentIndex >= items.length) return;
+        const anchorItem = items[currentIndex];
+        if (anchorItem.path === similarAnchor) {
+          showTagToast('Already searching from this image');
+          return;
+        }
+        // randomStash is left untouched: hops chain, but "back to shuffle"
+        // still returns to the pre-similar-mode position.
+        anchorSimilarTo(anchorItem, 'Hopped — similar to this image');
+      }
+
+      function exitSimilarMode() {
+        abortPendingLoads();
+        similarMode = false;
+        similarAnchor = null;
+        updateSimilarButton();
+
+        if (randomStash) {
+          items = randomStash.items;
+          currentIndex = Math.min(randomStash.currentIndex, items.length - 1);
+          hasMore = randomStash.hasMore;
+          randomStash = null;
+          renderItems();
+          updateProgress();
+          updateLikeButton();
+        } else {
+          // No stash to restore (defensive) — start a fresh shuffle.
+          items = [];
+          currentIndex = 0;
+          hasMore = true;
+          loadInitial();
+        }
+      }
+
+      // ≈ button: enter similar mode, or re-anchor on the current image when
+      // already in it.
+      function onSimilarButton() {
+        if (similarMode) {
+          hopSimilar();
+        } else {
+          enterSimilarMode();
+        }
       }
 
       // Open current item in browser
@@ -2853,6 +3001,13 @@
           case 'f':
             toggleFitMode();
             break;
+          case 's':
+            // Enter similar mode, or hop the anchor to the current image.
+            onSimilarButton();
+            break;
+          case 'Escape':
+            if (similarMode) exitSimilarMode();
+            break;
           case 't':
             // Open tag menu with 't' key
             openTagMenu();
@@ -3299,6 +3454,15 @@
         saveSelectedTags();
         updateFilterButtonIndicator();
         if (newQuery !== searchQuery) {
+          // A new filter invalidates similar mode and its stashed shuffle —
+          // both belong to the previous query.
+          if (similarMode || randomStash) {
+            similarMode = false;
+            similarAnchor = null;
+            randomStash = null;
+            updateSimilarButton();
+          }
+
           // Abort any pending requests
           if (fetchController) {
             fetchController.abort();
@@ -3333,6 +3497,8 @@
 
       // Action buttons
       likeBtn.addEventListener('click', toggleLike);
+      similarBtn.addEventListener('click', onSimilarButton);
+      randomBtn.addEventListener('click', exitSimilarMode);
       openBtn.addEventListener('click', openInBrowser);
       fitBtn.addEventListener('click', toggleFitMode);
 

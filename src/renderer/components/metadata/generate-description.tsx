@@ -11,6 +11,7 @@ import {
 } from './customPromptStore';
 import { SparkleIcon, TuneIcon } from './section-action-icons';
 import { useDepRequirement } from '../../onboarding/useDepRequirement';
+import { mediaServerBase } from '../../platform';
 
 type Props = {
   path: string;
@@ -68,7 +69,7 @@ export default function GenerateDescription({
           headers['Authorization'] = `Bearer ${authToken}`;
         }
 
-        const response = await fetch('http://localhost:8090/health', {
+        const response = await fetch(`${mediaServerBase}/health`, {
           method: 'GET',
           headers,
           signal: controller.signal,
@@ -97,7 +98,7 @@ export default function GenerateDescription({
           headers['Authorization'] = `Bearer ${authToken}`;
         }
         const response = await fetch(
-          'http://localhost:8090/api/prompts/describe',
+          `${mediaServerBase}/api/prompts/describe`,
           { headers }
         );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -140,7 +141,7 @@ export default function GenerateDescription({
         setLastCustomPrompt(trimmed);
       }
 
-      const response = await fetch('http://localhost:8090/create', {
+      const response = await fetch(`${mediaServerBase}/create`, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
@@ -204,8 +205,8 @@ export default function GenerateDescription({
               need to install and run the Lowkey Media Server job service.
             </p>
             <p>
-              Start the service at <code>localhost:8090</code> to enable this
-              feature.
+              Start the service at <code>{mediaServerBase || 'this server'}</code>{' '}
+              to enable this feature.
             </p>
           </div>
         </div>

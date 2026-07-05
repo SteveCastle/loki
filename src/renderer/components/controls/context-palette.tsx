@@ -9,7 +9,7 @@ import React, {
 import { useSelector } from '@xstate/react';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
-import { capabilities } from '../../platform';
+import { capabilities, mediaServerBase } from '../../platform';
 import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import filter from '../../filter';
@@ -183,7 +183,7 @@ function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
       try {
         const headers: HeadersInit = {};
         if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-        const res = await fetch('http://localhost:8090/jobs/list', {
+        const res = await fetch(`${mediaServerBase}/jobs/list`, {
           method: 'GET',
           headers,
           signal: AbortSignal.timeout(3000),
@@ -201,7 +201,7 @@ function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
     };
     fetchJobs();
 
-    const es = new EventSource('http://localhost:8090/stream');
+    const es = new EventSource(`${mediaServerBase}/stream`);
 
     const handleEvent = (event: Event) => {
       try {
@@ -253,7 +253,7 @@ function useSavedWorkflows(
         const headers: HeadersInit = {
           Authorization: `Bearer ${authToken}`,
         };
-        const res = await fetch('http://localhost:8090/workflows', {
+        const res = await fetch(`${mediaServerBase}/workflows`, {
           method: 'GET',
           headers,
           signal: AbortSignal.timeout(3000),
@@ -552,7 +552,7 @@ export default function ContextPalette() {
       try {
         const headers: HeadersInit = {};
         if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-        const res = await fetch('http://localhost:8090/health', {
+        const res = await fetch(`${mediaServerBase}/health`, {
           method: 'GET',
           headers,
           signal: AbortSignal.timeout(3000),
@@ -729,7 +729,7 @@ export default function ContextPalette() {
     try {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-      const res = await fetch('http://localhost:8090/create', {
+      const res = await fetch(`${mediaServerBase}/create`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ input }),
@@ -757,7 +757,7 @@ export default function ContextPalette() {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
       const res = await fetch(
-        `http://localhost:8090/workflows/${workflow.id}/run`,
+        `${mediaServerBase}/workflows/${workflow.id}/run`,
         {
           method: 'POST',
           headers,
@@ -833,7 +833,7 @@ export default function ContextPalette() {
 
       {serverAvailable === false && (
         <div className="context-palette-unavailable">
-          Job service unavailable at localhost:8090
+          Job service unavailable at {mediaServerBase || 'this server'}
         </div>
       )}
 
@@ -937,7 +937,7 @@ export default function ContextPalette() {
                       if (authToken)
                         headers['Authorization'] = `Bearer ${authToken}`;
                       await fetch(
-                        `http://localhost:8090/job/${job.id}/cancel`,
+                        `${mediaServerBase}/job/${job.id}/cancel`,
                         { method: 'POST', headers }
                       );
                     } catch {

@@ -13,17 +13,27 @@ test('single include predicate is unparenthesized', () => {
 
 test('exclude predicate becomes NOT and is left-assoc joined', () => {
   const preds = [p('tag', 'cat'), p('description', 'blurry', { exclude: true, join: 'AND' })];
-  expect(buildLegacyQuery(preds, 'AND')).toBe('(tag:"cat" AND NOT description:"blurry")');
+  expect(buildLegacyQuery(preds, 'AND')).toBe('(tag:"cat" AND NOT description:"*blurry*")');
 });
 
 test('per-predicate OR join overrides the default mode', () => {
   const preds = [p('tag', 'a'), p('path', 'photos', { join: 'OR' })];
-  expect(buildLegacyQuery(preds, 'AND')).toBe('(tag:"a" OR path:"photos")');
+  expect(buildLegacyQuery(preds, 'AND')).toBe('(tag:"a" OR path:"*photos*")');
 });
 
 test('left-associative composition is parenthesized for 3+ predicates', () => {
   const preds = [p('tag', 'a'), p('tag', 'b', { join: 'OR' }), p('path', 'c', { join: 'AND' })];
-  expect(buildLegacyQuery(preds, 'AND')).toBe('((tag:"a" OR tag:"b") AND path:"c")');
+  expect(buildLegacyQuery(preds, 'AND')).toBe('((tag:"a" OR tag:"b") AND path:"*c*")');
+});
+
+test('substring predicates (path/description/hash) are wrapped in wildcards', () => {
+  // The unified query treats these as contains searches; the server lexer only
+  // emits LIKE when the value has a wildcard, so a bare value = exact match.
+  expect(buildLegacyQuery([p('path', 'vacation')], 'AND')).toBe('path:"*vacation*"');
+  expect(buildLegacyQuery([p('description', 'sunset')], 'AND')).toBe('description:"*sunset*"');
+  expect(buildLegacyQuery([p('hash', 'abc123')], 'AND')).toBe('hash:"*abc123*"');
+  // Exact-match types stay bare.
+  expect(buildLegacyQuery([p('category', 'People')], 'AND')).toBe('category:"People"');
 });
 
 test('visual/similar and empty-value predicates are dropped', () => {

@@ -3,6 +3,7 @@ import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { useDepRequirement } from '../../onboarding/useDepRequirement';
 import { fmtSize } from '../../onboarding/requirements';
+import { mediaServerBase } from '../../platform';
 import './generate-tags.css';
 import { SparkleIcon } from './section-action-icons';
 
@@ -29,7 +30,7 @@ export default function GenerateTags({ path }: Props) {
           headers['Authorization'] = `Bearer ${authToken}`;
         }
 
-        const response = await fetch('http://localhost:8090/health', {
+        const response = await fetch(`${mediaServerBase}/health`, {
           method: 'GET',
           headers,
           signal: AbortSignal.timeout(3000), // 3 second timeout
@@ -53,7 +54,7 @@ export default function GenerateTags({ path }: Props) {
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 
-      const response = await fetch('http://localhost:8090/create', {
+      const response = await fetch(`${mediaServerBase}/create`, {
         method: 'POST',
         headers,
         body: JSON.stringify({

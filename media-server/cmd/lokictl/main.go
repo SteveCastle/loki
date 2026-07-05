@@ -5,12 +5,18 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/stevecastle/shrike/appconfig"
+	"github.com/stevecastle/shrike/platform"
 )
 
 // App carries everything a command needs: the HTTP client and the output
@@ -43,7 +49,31 @@ func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-const defaultServer = "http://localhost:8090"
+// defaultServer is the fallback base URL when neither the --server flag,
+// LOKICTL_SERVER, nor the CLI config file specify one. The port is discovered
+// from the local media-server's own configuration so the CLI keeps working
+// after the server port is changed: LOWKEY_PORT env > the server's
+// config.json "port" > the compiled-in default (10111, "L0K1").
+func defaultServer() string {
+	return fmt.Sprintf("http://localhost:%d", localServerPort())
+}
+
+func localServerPort() int {
+	if v := os.Getenv("LOWKEY_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+			return n
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(platform.GetDataDir(), "config.json")); err == nil {
+		var c struct {
+			Port int `json:"port"`
+		}
+		if json.Unmarshal(b, &c) == nil && c.Port > 0 && c.Port <= 65535 {
+			return c.Port
+		}
+	}
+	return appconfig.DefaultPort
+}
 
 func run(argv []string, stdout, stderr io.Writer) int {
 	var (
@@ -127,7 +157,7 @@ func run(argv []string, stdout, stderr io.Writer) int {
 	}
 
 	fileCfg := loadCLIConfig()
-	server := resolve(serverFlag, "LOKICTL_SERVER", fileCfg.Server, defaultServer)
+	server := resolve(serverFlag, "LOKICTL_SERVER", fileCfg.Server, defaultServer())
 	token := resolve(tokenFlag, "LOKICTL_TOKEN", fileCfg.Token, "")
 
 	app := &App{
@@ -175,7 +205,8 @@ func printHelp(w io.Writer) {
 Usage: lokictl [global flags] <command> [args]
 
 Global flags (before the command):
-  --server URL    server base URL (env LOKICTL_SERVER, config file; default `+defaultServer+`)
+  --server URL    server base URL (env LOKICTL_SERVER, config file; default `+defaultServer()+`,
+                  port auto-detected from the local server config / LOWKEY_PORT)
   --token TOKEN   bearer token (env LOKICTL_TOKEN, config file; set by "lokictl login")
   -o json|table   output format (default json)
   --timeout DUR   HTTP timeout (default 30s; streaming commands ignore it)

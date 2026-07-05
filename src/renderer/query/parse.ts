@@ -75,6 +75,9 @@ const TYPE_PREFIX: Record<PredicateType, string> = {
   hash: 'hash:',
   similar: 'similar:',
   visual: 'visual:',
+  // Not parseable from typed text (the value is a PNG data URL); serialization
+  // only — the query persists as JSON, never through parseQuery.
+  clip: 'clip:',
 };
 
 export function serializePredicate(p: Predicate): string {

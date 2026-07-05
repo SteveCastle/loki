@@ -2,7 +2,7 @@ import React, { useContext, useEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
-import { send } from '../../platform';
+import { send, mediaServerBase } from '../../platform';
 import './toast-system.css';
 
 type JobState = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'error';
@@ -177,7 +177,7 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear }) => {
   const filePath = extractFilePath(job.input);
 
   const handleOpenJobDetail = () => {
-    send('open-external', [`http://localhost:8090/job/${job.id}`]);
+    send('open-external', [`${mediaServerBase}/job/${job.id}`]);
   };
 
   return (
@@ -338,7 +338,7 @@ export function ToastSystem() {
           headers['Authorization'] = `Bearer ${authToken}`;
         }
 
-        const response = await fetch('http://localhost:8090/health', {
+        const response = await fetch(`${mediaServerBase}/health`, {
           method: 'GET',
           headers,
           signal: controller.signal,
@@ -393,7 +393,7 @@ export function ToastSystem() {
       return; // Don't attempt SSE connection if server is not available
     }
 
-    const eventSource = new EventSource('http://localhost:8090/stream');
+    const eventSource = new EventSource(`${mediaServerBase}/stream`);
     eventSourceRef.current = eventSource;
 
     type JobEventPayload = { job: JobRunnerJob };
@@ -594,8 +594,8 @@ export function ToastSystem() {
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       const url =
         job.state === 'pending' || job.state === 'in_progress'
-          ? `http://localhost:8090/job/${job.id}/cancel`
-          : `http://localhost:8090/job/${job.id}/remove`;
+          ? `${mediaServerBase}/job/${job.id}/cancel`
+          : `${mediaServerBase}/job/${job.id}/remove`;
 
       const headers: HeadersInit = {};
       if (authToken) {

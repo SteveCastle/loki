@@ -13,10 +13,10 @@
 #
 #   docker build -f media-server/Dockerfile -t lowkey-media-server .
 #
-# RUN (mapping host port 18090 → container 8090 to avoid colliding with a
-# local dev instance on 8090):
+# RUN (mapping host port 18090 → container 10111 to avoid colliding with a
+# local dev instance on 10111):
 #
-#   docker run --rm -p 18090:8090 \
+#   docker run --rm -p 18090:10111 \
 #     -v lowkey-data:/data \
 #     -v /path/to/your/media:/media \
 #     -e LOWKEY_ROOT_1=/media:Local \
@@ -181,7 +181,7 @@ ENV LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434
 #   LOWKEY_DISCORD_TOKEN         — required by the Discord ingest task
 #   LOWKEY_FASTER_WHISPER_PATH   — path to faster-whisper if you want transcription
 
-EXPOSE 8090
+EXPOSE 10111
 
 VOLUME ["/data", "/media"]
 

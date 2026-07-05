@@ -2,7 +2,9 @@ package main
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -310,6 +312,20 @@ func lokiVisualSearchHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+// decodeImageDataURL decodes a base64 image payload, with or without a
+// `data:<mime>;base64,` prefix — the renderer's clip predicates carry a PNG
+// data URL so the same value can double as the chip thumbnail.
+func decodeImageDataURL(s string) ([]byte, error) {
+	if strings.HasPrefix(s, "data:") {
+		i := strings.Index(s, ",")
+		if i < 0 {
+			return nil, errors.New("malformed data URL")
+		}
+		s = s[i+1:]
+	}
+	return base64.StdEncoding.DecodeString(s)
+}
+
 // sortItemsByScore orders items (each a map with "path") by descending score
 // from scoreByPath, attaching item["score"]. Stable for equal scores.
 func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
@@ -343,24 +359,36 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// Resolve visual predicates (similar/visual) into path sets before
+		// Resolve visual predicates (similar/visual/clip) into path sets before
 		// BuildMediaQuery, which is pure and cannot call the model.
 		scoreByPath := map[string]float32{}
 		hasVisual := false
 		for i := range req.Predicates {
 			pt := req.Predicates[i].Type
 			val := req.Predicates[i].Value
-			if (pt == "similar" || pt == "visual") && val != "" {
+			if (pt == "similar" || pt == "visual" || pt == "clip") && val != "" {
 				hasVisual = true
 				var hits []tasks.SimilarHit
 				var err error
-				if pt == "similar" {
+				switch pt {
+				case "similar":
 					hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
-				} else {
+				case "clip":
+					// A captured screen region: the value is a PNG data URL.
+					var image []byte
+					if image, err = decodeImageDataURL(val); err == nil {
+						hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+					}
+				default:
 					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
 				}
 				if err != nil {
-					log.Printf("query: %s predicate %q failed (model=%q): %v", pt, val, tasks.ActiveEmbedModel().ID, err)
+					// A clip value is a multi-hundred-KB data URL — log its size, not the payload.
+					logVal := val
+					if pt == "clip" {
+						logVal = fmt.Sprintf("<clip %d bytes>", len(val))
+					}
+					log.Printf("query: %s predicate %q failed (model=%q): %v", pt, logVal, tasks.ActiveEmbedModel().ID, err)
 					httpError(w, err.Error(), http.StatusInternalServerError)
 					return
 				}
@@ -1197,32 +1225,21 @@ func lokiTagCountHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
-func lokiPathSuggestHandler(deps *Dependencies) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		term := "%" + r.URL.Query().Get("term") + "%"
-		rows, err := deps.DB.Query(`SELECT DISTINCT path FROM media WHERE path LIKE ? LIMIT 50`, term)
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer rows.Close()
-		paths := []string{}
-		for rows.Next() {
-			var p string
-			if err := rows.Scan(&p); err != nil {
-				continue
-			}
-			paths = append(paths, p)
-		}
-		writeJSON(w, paths)
-	}
-}
-
 func lokiCategoryCountHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		category := r.URL.Query().Get("category")
 		var count int
-		deps.DB.QueryRow(`SELECT COUNT(DISTINCT media_path) FROM media_tag_by_category WHERE category_label = ?`, category).Scan(&count)
+		// Optional cap: COUNT(DISTINCT media_path) walks a table row per index
+		// entry, which takes 20+ seconds on the huge autotag "Suggested"
+		// category. The SPA's suggestion badge passes a cap so the count stops
+		// early; callers that need the exact count (lokictl) omit it.
+		if cap, err := strconv.Atoi(r.URL.Query().Get("cap")); err == nil && cap > 0 {
+			deps.DB.QueryRow(`SELECT COUNT(*) FROM (
+				SELECT DISTINCT media_path FROM media_tag_by_category
+				WHERE category_label = ? LIMIT ?)`, category, cap).Scan(&count)
+		} else {
+			deps.DB.QueryRow(`SELECT COUNT(DISTINCT media_path) FROM media_tag_by_category WHERE category_label = ?`, category).Scan(&count)
+		}
 		writeJSON(w, count)
 	}
 }

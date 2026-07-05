@@ -479,6 +479,7 @@ func TestApplyEnvOverrides(t *testing.T) {
 	// Set env vars
 	envs := map[string]string{
 		"LOWKEY_DB_PATH":                        "/env/db.sqlite",
+		"LOWKEY_PORT":                           "9999",
 		"LOWKEY_DOWNLOAD_PATH":                  "/env/downloads",
 		"LOWKEY_OLLAMA_BASE_URL":                "http://env-ollama:11434",
 		"LOWKEY_OLLAMA_MODEL":                   "env-model",
@@ -507,6 +508,9 @@ func TestApplyEnvOverrides(t *testing.T) {
 
 	if c.DBPath != "/env/db.sqlite" {
 		t.Errorf("DBPath = %q; want %q", c.DBPath, "/env/db.sqlite")
+	}
+	if c.Port != 9999 {
+		t.Errorf("Port = %d; want 9999", c.Port)
 	}
 	if c.DownloadPath != "/env/downloads" {
 		t.Errorf("DownloadPath = %q; want %q", c.DownloadPath, "/env/downloads")
@@ -564,6 +568,33 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if c.FasterWhisperPath != "/env/whisper" {
 		t.Errorf("FasterWhisperPath = %q; want %q", c.FasterWhisperPath, "/env/whisper")
+	}
+}
+
+// TestApplyEnvOverridesInvalidPort verifies a malformed LOWKEY_PORT is ignored.
+func TestApplyEnvOverridesInvalidPort(t *testing.T) {
+	for _, bad := range []string{"loki", "0", "-1", "70000"} {
+		c := defaultConfig()
+		t.Setenv("LOWKEY_PORT", bad)
+		applyEnvOverrides(&c)
+		if c.Port != DefaultPort {
+			t.Errorf("LOWKEY_PORT=%q: Port = %d; want default %d", bad, c.Port, DefaultPort)
+		}
+	}
+}
+
+// TestDefaultPort verifies the default config carries the leet port and the
+// derived address helpers agree with it.
+func TestDefaultPort(t *testing.T) {
+	c := defaultConfig()
+	if c.Port != 10111 {
+		t.Errorf("Port = %d; want 10111", c.Port)
+	}
+	if got := c.ListenAddr(); got != ":10111" {
+		t.Errorf("ListenAddr() = %q; want %q", got, ":10111")
+	}
+	if got := c.LocalBaseURL(); got != "http://localhost:10111" {
+		t.Errorf("LocalBaseURL() = %q; want %q", got, "http://localhost:10111")
 	}
 }
 

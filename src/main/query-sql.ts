@@ -46,6 +46,7 @@ function clauseFor(p: Predicate, params: string[]): string {
       return p.exclude ? '(media.hash NOT LIKE ?)' : '(media.hash LIKE ?)';
     case 'similar':
     case 'visual':
+    case 'clip':
       // Visual similarity requires the embedding backend, which only exists in
       // the media-server (web mode). In Electron's local-SQLite path we cannot
       // resolve it, so treat it as no constraint and warn. The server path

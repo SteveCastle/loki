@@ -82,12 +82,12 @@ Open **http://localhost:18090** (set `LOWKEY_PORT` to change the host port), log
 ```bash
 docker build -f media-server/Dockerfile -t lowkey-media-server .
 docker run -d --name lowkey-media-server \
-  -p 8090:8090 \
+  -p 10111:10111 \
   -v lowkey-data:/data \
   lowkey-media-server
 ```
 
-Then open **http://localhost:8090**. The manual container has no storage roots until you configure some (next section); the compose stack comes with MinIO preconfigured.
+Then open **http://localhost:10111**. The manual container has no storage roots until you configure some (next section); the compose stack comes with MinIO preconfigured.
 
 ### 2. Mount your media
 
@@ -95,7 +95,7 @@ Bind-mount local directories so the server can browse and process your files:
 
 ```bash
 docker run -d --name lowkey-media-server \
-  -p 8090:8090 \
+  -p 10111:10111 \
   -v lowkey-data:/data \
   -v /path/to/photos:/mnt/photos:ro \
   -v /path/to/videos:/mnt/videos:ro \
@@ -127,7 +127,7 @@ All configuration can be set via environment variables — no config file needed
 
 ```bash
 docker run -d --name lowkey-media-server \
-  -p 8090:8090 \
+  -p 10111:10111 \
   -v lowkey-data:/data \
   -v ~/photos:/mnt/photos:ro \
   -v ~/videos:/mnt/videos:ro \
@@ -140,7 +140,7 @@ docker run -d --name lowkey-media-server \
 
 ```bash
 docker run -d --name lowkey-media-server \
-  -p 8090:8090 \
+  -p 10111:10111 \
   -v lowkey-data:/data \
   -e 'LOWKEY_ROOTS=[
     {"type":"local","path":"/mnt/photos","label":"Photos"},
@@ -217,11 +217,11 @@ Prebuilt binaries for Windows (x64), macOS (arm64 + amd64), and Linux (amd64) ar
 
    <img width="408" height="247" alt="Screenshot 2025-09-20 080659" src="https://github.com/user-attachments/assets/4b8a0141-08d4-4fb9-9c42-78db5dbd25ad" />
 
-2. **Open <http://localhost:8090>.** Log in as `admin` / `admin`. You'll be redirected to a setup wizard — pick a real username and password. The default admin is deleted automatically once a real user exists.
+2. **Open <http://localhost:10111>.** Log in as `admin` / `admin`. You'll be redirected to a setup wizard — pick a real username and password. The default admin is deleted automatically once a real user exists.
 
 3. **Open the Config tab** to verify the Lowkey Database path and configure model paths for ONNX tagging, Ollama, or Faster Whisper.
 
-4. **Walk the welcome wizard** at <http://localhost:8090/> on first run. It shows what's bundled, gives install instructions for optional tools (`yt-dlp`, `gallery-dl`, `ollama`), and lets you pick which AI models to download. You can skip it and revisit any time.
+4. **Walk the welcome wizard** at <http://localhost:10111/> on first run. It shows what's bundled, gives install instructions for optional tools (`yt-dlp`, `gallery-dl`, `ollama`), and lets you pick which AI models to download. You can skip it and revisit any time.
 
    - [Download model files for the ONNX tagger](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3/tree/main)
    - [Install Ollama for LLM-based descriptions and tagging](https://ollama.com/)
@@ -352,7 +352,7 @@ GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w" -o media-server-linux-amd64 
 ./media-server        # or .\media-server.exe on Windows
 ```
 
-The server listens on `http://localhost:8090`. On Windows and macOS a system tray icon appears.
+The server listens on `http://localhost:10111`. On Windows and macOS a system tray icon appears.
 
 ### Development Mode
 
@@ -479,7 +479,7 @@ Most settings can also be set via environment variables (see the Docker section 
   },
 
   "transcriptionProvider": "whisper-cli",
-  "transcriptionModel": "large-v2",
+  "transcriptionModel": "large-v3-turbo",
   "transcriptionLanguage": "en",
   "transcriptionVadFilter": true,
   "fasterWhisperPath": "C:\\optional\\override\\faster-whisper-xxl.exe",
@@ -513,7 +513,7 @@ Once the server is running, the Lowkey Media Viewer detects it automatically and
 
 ### Web Interface
 
-Access the web UI at: <http://localhost:8090>
+Access the web UI at: <http://localhost:10111>
 
 - **Home / Tasks** — quick task creation
 - **Jobs** — view, cancel, copy, and remove jobs; real-time updates via SSE
@@ -528,7 +528,7 @@ Access the web UI at: <http://localhost:8090>
 
 Right-click the tray icon (Windows/macOS) for:
 
-- **Open Web UI** — opens <http://localhost:8090> in your default browser
+- **Open Web UI** — opens <http://localhost:10111> in your default browser
 - **Quit** — shutdown the server
 
 Linux builds run headless.
@@ -601,9 +601,9 @@ sqlite3 /path/to/media.db "DELETE FROM users;"
 
 Restart the server. The default `admin` / `admin` will be re-created and you'll be sent through the setup wizard again.
 
-### Port 8090 already in use
+### Port 10111 already in use
 
-Bind address is currently hardcoded to `:8090` in the entry-point files. To run on a different port, edit `main.go` / `main_darwin.go` / `main_linux.go` and rebuild.
+The listen port (default `10111` — "L0K1") is configurable: set `"port"` in `config.json`, change it on the Config page (Server port, takes effect on restart), or set the `LOWKEY_PORT` env var (highest priority; handy for Docker). `lokictl` and the desktop app auto-detect the configured port from the same config file.
 
 ### Database connection errors
 

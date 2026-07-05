@@ -5,11 +5,11 @@ import "strings"
 
 // Predicate mirrors src/renderer/query/types.ts Predicate.
 type Predicate struct {
-	Type     string   `json:"type"` // tag|category|path|description|hash|similar|visual
+	Type     string   `json:"type"` // tag|category|path|description|hash|similar|visual|clip
 	Value    string   `json:"value"`
 	Exclude  bool     `json:"exclude"`
 	Join     string   `json:"join"`              // "AND" | "OR" | "" (empty falls back to mode)
-	Resolved []string `json:"-"` // visual predicates (similar/visual): paths resolved by the handler before BuildMediaQuery
+	Resolved []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
 }
 
 // Columns returned for the library list. media.description is intentionally
@@ -61,7 +61,7 @@ func clauseFor(p Predicate, params *[]any) string {
 			return "(media.hash NOT LIKE ?)"
 		}
 		return "(media.hash LIKE ?)"
-	case "similar", "visual":
+	case "similar", "visual", "clip":
 		// Resolved is the path set produced by the handler (similarity search).
 		// Empty set: an include matches nothing; an exclude removes nothing.
 		if len(p.Resolved) == 0 {

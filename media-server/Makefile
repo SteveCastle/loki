@@ -1,7 +1,7 @@
 IMAGE_NAME  ?= lowkey-media-server
 IMAGE_TAG   ?= latest
 CONTAINER   ?= lowkey-media-server
-PORT        ?= 8090
+PORT        ?= 10111
 DATA_VOLUME ?= lowkey-data
 
 .PHONY: docker-build docker-run docker-stop docker-logs docker-clean docker-rebuild \
@@ -19,7 +19,7 @@ docker-rebuild:
 docker-run:
 	docker run -d \
 		--name $(CONTAINER) \
-		-p $(PORT):8090 \
+		-p $(PORT):10111 \
 		-v $(DATA_VOLUME):/data \
 		$(IMAGE_NAME):$(IMAGE_TAG)
 
@@ -27,7 +27,7 @@ docker-run:
 docker-run-it:
 	docker run --rm -it \
 		--name $(CONTAINER) \
-		-p $(PORT):8090 \
+		-p $(PORT):10111 \
 		-v $(DATA_VOLUME):/data \
 		$(IMAGE_NAME):$(IMAGE_TAG)
 

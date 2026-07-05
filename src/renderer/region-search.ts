@@ -22,8 +22,20 @@ export function rectFromDrag(
   };
 }
 
-// Capture the region, POST it to the server's image-search endpoint, and
-// dispatch the results into the machine. Throws on failure (caller toasts).
+function pngToDataUrl(png: Uint8Array): string {
+  let binary = '';
+  const CHUNK = 0x8000; // avoid call-stack limits on large captures
+  for (let i = 0; i < png.length; i += CHUNK) {
+    binary += String.fromCharCode(...png.subarray(i, i + CHUNK));
+  }
+  return `data:image/png;base64,${btoa(binary)}`;
+}
+
+// Capture the region and commit it as a `clip` predicate on the unified query.
+// The query pipeline resolves it via the embedding backend exactly like a
+// `similar:` predicate, so the search shows up as a chip (with the clip as its
+// thumbnail), composes with other predicates, and is removable/restorable like
+// any other filter. Throws on failure (caller toasts).
 export async function runRegionSearch(
   rect: Rect,
   authToken: string | null,
@@ -39,17 +51,10 @@ export async function runRegionSearch(
   if (!png || png.length === 0) {
     throw new Error('Capture failed.');
   }
-  const res = await fetch('http://localhost:8090/api/media/search/image', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'image/png',
-      Authorization: `Bearer ${authToken}`,
+  dispatch({
+    type: 'ADD_PREDICATE',
+    data: {
+      predicate: { type: 'clip', value: pngToDataUrl(png), exclude: false },
     },
-    body: png,
   });
-  if (!res.ok) {
-    throw new Error(`Region search failed (HTTP ${res.status}). Is the media server running?`);
-  }
-  const items = await res.json();
-  dispatch({ type: 'REGION_SEARCH_RESULTS', data: { items: items || [] } });
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -18,27 +19,59 @@ import (
 
 func init() { Register(&whisperCLI{}) }
 
-// whisperCLI runs the Purfview Faster-Whisper standalone binary. The binary
-// downloads its speech model on first use into its own _models directory.
+// whisperCLI runs the Purfview Faster-Whisper standalone binary — the
+// Faster-Whisper-XXL bundle on Windows/Linux (CPU + CUDA, supports the fast
+// large-v3-turbo model), the legacy CPU-only build on macOS where no XXL
+// release exists. The binary downloads its speech model on first use into
+// its own _models directory.
 type whisperCLI struct{}
 
 func (w *whisperCLI) ID() string          { return "whisper-cli" }
 func (w *whisperCLI) DisplayName() string { return "Faster-Whisper (local)" }
 
-func (w *whisperCLI) DefaultModel() string { return "large-v2" }
+// xxlPlatform reports whether this OS runs the XXL bundle. The macOS legacy
+// build predates the turbo model, so model choices differ per platform.
+func xxlPlatform() bool { return runtime.GOOS == "windows" || runtime.GOOS == "linux" }
+
+func (w *whisperCLI) DefaultModel() string {
+	if xxlPlatform() {
+		// Turbo trims the decoder from 32 layers to 4: near large-v2
+		// quality at a fraction of the (per-token) decode cost, which is
+		// where transcription spends its time.
+		return "large-v3-turbo"
+	}
+	return "large-v2"
+}
 
 func (w *whisperCLI) Models() []ModelChoice {
 	// faster-whisper itself warns that large-v3 can produce worse results
 	// than large-v2 on general content (more hallucinations, some accents
-	// regressed) — hence v2 as the recommended default.
-	return []ModelChoice{
-		{ID: "large-v2", DisplayName: "Large v2 — best quality, recommended (~3 GB download)"},
+	// regressed) — hence v2, not v3, as the quality pick.
+	common := []ModelChoice{
 		{ID: "large-v3", DisplayName: "Large v3 (~3 GB; can hallucinate more than v2)"},
 		{ID: "medium", DisplayName: "Medium (~1.5 GB)"},
 		{ID: "small", DisplayName: "Small (~460 MB)"},
 		{ID: "base", DisplayName: "Base (~140 MB)"},
 		{ID: "tiny", DisplayName: "Tiny — fastest, lowest quality (~75 MB)"},
 	}
+	if xxlPlatform() {
+		return append([]ModelChoice{
+			{ID: "large-v3-turbo", DisplayName: "Large v3 Turbo — near-large quality, many times faster, recommended (~1.6 GB download)"},
+			{ID: "large-v2", DisplayName: "Large v2 — best quality, slow (~3 GB download)"},
+		}, common...)
+	}
+	return append([]ModelChoice{
+		{ID: "large-v2", DisplayName: "Large v2 — best quality, recommended (~3 GB download)"},
+	}, common...)
+}
+
+// depBinaryRelPath is where the assisted download places the executable,
+// relative to the faster-whisper model dir.
+func depBinaryRelPath() string {
+	if xxlPlatform() {
+		return filepath.Join("xxl", "faster-whisper-xxl"+platform.BinaryExtension())
+	}
+	return "whisper-faster" + platform.BinaryExtension()
 }
 
 // binaryPath resolves the executable: explicit config path wins, then the
@@ -47,18 +80,20 @@ func (w *whisperCLI) binaryPath() string {
 	if p := strings.TrimSpace(appconfig.Get().FasterWhisperPath); p != "" {
 		return p
 	}
-	if p, err := deps.ModelPath("faster-whisper", "whisper-faster"+platform.BinaryExtension()); err == nil {
+	if p, err := deps.ModelPath("faster-whisper", depBinaryRelPath()); err == nil {
 		return p
 	}
-	if p, err := exec.LookPath("whisper-faster"); err == nil {
-		return p
+	for _, name := range []string{"faster-whisper-xxl", "whisper-faster"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
 	}
 	return ""
 }
 
 func (w *whisperCLI) Available() error {
 	if w.binaryPath() == "" {
-		return fmt.Errorf("faster-whisper not found: download it from the Dependencies page (Transcription), set fasterWhisperPath in settings, or put whisper-faster on PATH")
+		return fmt.Errorf("faster-whisper not found: download it from the Dependencies page (Transcription), set fasterWhisperPath in settings, or put faster-whisper-xxl / whisper-faster on PATH")
 	}
 	return nil
 }

@@ -169,7 +169,7 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
       const predicates: Array<{ type: string }> =
         state.context.query?.predicates ?? [];
       return predicates.some(
-        (p) => p.type === 'similar' || p.type === 'visual'
+        (p) => p.type === 'similar' || p.type === 'visual' || p.type === 'clip'
       );
     });
 

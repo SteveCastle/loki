@@ -93,23 +93,30 @@ const getTagCount =
     return results.count;
   };
 
-const loadPathSuggestions =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: [string]) => {
-    const term = `%${args[0] || ''}%`;
-    const rows = await db.all(
-      `SELECT DISTINCT path FROM media WHERE path LIKE $1 LIMIT 50`,
-      [term]
-    );
-    return rows.map((r: any) => r.path);
-  };
-
+// Distinct-media count for one category, stopped at an optional cap. The cap
+// matters: COUNT(DISTINCT media_path) walks a table row per index entry, and
+// the huge autotag "Suggested" category took 20+ seconds — which serializes
+// every other query on the shared connection and froze the type-ahead UI.
+// With the LIMIT subquery the count stops as soon as the cap is reached.
 const getCategoryCount =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: [string]) => {
+  (db: Database) => async (_: IpcMainInvokeEvent, args: [string, number?]) => {
     const category = args[0];
-    const result = await db.get(
-      `SELECT COUNT(DISTINCT media_path) AS count FROM media_tag_by_category WHERE category_label = $1`,
-      [category]
-    );
+    const cap = args[1];
+    const result =
+      cap && cap > 0
+        ? await db.get(
+            `SELECT COUNT(*) AS count FROM (
+               SELECT DISTINCT media_path FROM media_tag_by_category
+               WHERE category_label = $1 LIMIT $2
+             )`,
+            [category, cap],
+            'getCategoryCount.capped'
+          )
+        : await db.get(
+            `SELECT COUNT(DISTINCT media_path) AS count FROM media_tag_by_category WHERE category_label = $1`,
+            [category],
+            'getCategoryCount'
+          );
     return result?.count ?? 0;
   };
 
@@ -752,7 +759,6 @@ export {
   loadCategoryTags,
   loadAllTags,
   getTagCount,
-  loadPathSuggestions,
   getCategoryCount,
   createTag,
   createAssignment,

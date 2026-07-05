@@ -13,8 +13,8 @@ export function quoteValue(value: string): string {
 // Map a unified predicate type to its legacy task-query prefix. The task query
 // path (autotag/embed/metadata via getMediaPathsByQueryFast) uses the legacy
 // lexer, which understands tag/category/path/description/hash, AND/OR/NOT and
-// parentheses. visual/similar predicates have no legacy/SQL representation (they
-// need the embedding backend), so they are omitted from task queries.
+// parentheses. visual/similar/clip predicates have no legacy/SQL representation
+// (they need the embedding backend), so they are omitted from task queries.
 export const LEGACY_PREFIX: Partial<Record<Predicate['type'], string>> = {
   tag: 'tag:',
   category: 'category:',
@@ -23,10 +23,21 @@ export const LEGACY_PREFIX: Partial<Record<Predicate['type'], string>> = {
   hash: 'hash:',
 };
 
+// Predicate types whose unified-query semantics are a substring match (the
+// client filters with LIKE '%value%' — see query/types.ts). The server's task
+// lexer only produces a LIKE when the value contains a wildcard, so these must
+// be serialized as '*value*'; a bare value would be an exact `=` match.
+const SUBSTRING_TYPES = new Set<Predicate['type']>([
+  'path',
+  'description',
+  'hash',
+]);
+
 function legacyClause(p: Predicate): string | null {
   const prefix = LEGACY_PREFIX[p.type];
   if (!prefix || !p.value) return null;
-  const clause = `${prefix}${quoteValue(p.value)}`;
+  const value = SUBSTRING_TYPES.has(p.type) ? `*${p.value}*` : p.value;
+  const clause = `${prefix}${quoteValue(value)}`;
   return p.exclude ? `NOT ${clause}` : clause;
 }
 

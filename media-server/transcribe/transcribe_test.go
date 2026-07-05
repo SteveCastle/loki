@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"runtime"
 	"slices"
 	"testing"
 
@@ -19,8 +20,14 @@ func TestWhisperCLIRegistered(t *testing.T) {
 	if !ok {
 		t.Fatal("whisper-cli not registered")
 	}
-	if p.DefaultModel() != "large-v2" {
-		t.Errorf("DefaultModel = %q; want large-v2", p.DefaultModel())
+	// The XXL bundle (Windows/Linux) supports the much faster turbo model;
+	// the macOS legacy build predates it.
+	wantDefault := "large-v2"
+	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
+		wantDefault = "large-v3-turbo"
+	}
+	if p.DefaultModel() != wantDefault {
+		t.Errorf("DefaultModel = %q; want %q", p.DefaultModel(), wantDefault)
 	}
 	if len(p.Models()) == 0 {
 		t.Error("Models() empty — the config UI dropdown would be blank")
@@ -28,6 +35,12 @@ func TestWhisperCLIRegistered(t *testing.T) {
 	if p.Models()[0].ID != p.DefaultModel() {
 		t.Errorf("first model choice %q should be the default %q", p.Models()[0].ID, p.DefaultModel())
 	}
+	for _, m := range p.Models() {
+		if m.ID == "large-v2" {
+			return
+		}
+	}
+	t.Error("large-v2 missing from Models() — existing configs pointing at it would have no dropdown entry")
 }
 
 func TestProvidersDefaultFirst(t *testing.T) {
@@ -90,9 +103,9 @@ func TestWhisperBuildArgs(t *testing.T) {
 		t.Errorf("args = %v\nwant  %v", args, want)
 	}
 
-	// No VAD, auto-detect language, default model.
+	// No VAD, auto-detect language, default model (platform-aware).
 	args = w.buildArgs(Request{MediaPath: "b.mkv"})
-	want = []string{"--beep_off", "--output_format=vtt", "--output_dir=source", "--model", "large-v2", "b.mkv"}
+	want = []string{"--beep_off", "--output_format=vtt", "--output_dir=source", "--model", w.DefaultModel(), "b.mkv"}
 	if !slices.Equal(args, want) {
 		t.Errorf("args = %v\nwant  %v", args, want)
 	}

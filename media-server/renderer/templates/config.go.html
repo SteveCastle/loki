@@ -813,6 +813,28 @@
                     >
                   </div>
                 </div>
+                <div class="field">
+                  <label class="label">Server port</label>
+                  <input
+                    id="server-port"
+                    class="input"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    value="{{.Config.Port}}"
+                  />
+                  <div
+                    class="hint"
+                    style="
+                      font-size: 0.8em;
+                      color: var(--text-muted);
+                      margin-top: 5px;
+                    "
+                  >
+                    HTTP listen port (default 10111). Takes effect after a
+                    server restart. The LOWKEY_PORT env var overrides this.
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1427,9 +1449,10 @@
                       value="{{.Config.FasterWhisperPath}}"
                     />
                     <small class="hint">
-                      Bring your own build (e.g. Faster-Whisper-XXL with CUDA)
-                      by setting <code>fasterWhisperPath</code> in config.json;
-                      otherwise the binary from the Dependencies tab is used.
+                      Bring your own Faster-Whisper build by setting
+                      <code>fasterWhisperPath</code> in config.json; otherwise
+                      the Faster-Whisper-XXL bundle from the Dependencies tab
+                      is used.
                     </small>
                   </div>
                 </details>
@@ -1987,6 +2010,8 @@
         }
         const payload = {
           dbPath,
+          port:
+            parseInt(document.getElementById('server-port').value, 10) || 0,
           discordToken: document.getElementById('discord-token').value.trim(),
           ollamaBaseUrl: document
             .getElementById('ollama-base-url')

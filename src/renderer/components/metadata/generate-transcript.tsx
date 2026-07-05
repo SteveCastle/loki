@@ -3,6 +3,7 @@ import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { useDepRequirement } from '../../onboarding/useDepRequirement';
 import { fmtSize } from '../../onboarding/requirements';
+import { mediaServerBase } from '../../platform';
 import './generate-transcript.css';
 
 type Props = {
@@ -38,7 +39,7 @@ export default function GenerateTranscript({
           headers['Authorization'] = `Bearer ${authToken}`;
         }
 
-        const response = await fetch('http://localhost:8090/health', {
+        const response = await fetch(`${mediaServerBase}/health`, {
           method: 'GET',
           headers,
           signal: controller.signal,
@@ -68,7 +69,7 @@ export default function GenerateTranscript({
         headers['Authorization'] = `Bearer ${authToken}`;
       }
 
-      const response = await fetch('http://localhost:8090/create', {
+      const response = await fetch(`${mediaServerBase}/create`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -118,8 +119,8 @@ export default function GenerateTranscript({
               to install and run the Lowkey Media Server job service.
             </p>
             <p>
-              Start the service at <code>localhost:8090</code> to enable this
-              feature.
+              Start the service at <code>{mediaServerBase || 'this server'}</code>{' '}
+              to enable this feature.
             </p>
           </div>
         </div>

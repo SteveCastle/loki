@@ -27,14 +27,16 @@ type Model struct {
 // File is one downloadable file within a model. When OS is set the file only
 // applies to that GOOS. When Archive is set the download is an archive whose
 // ArchiveMember gets extracted to RelPath (and the archive is discarded);
-// SHA256 covers the archive as downloaded.
+// SHA256 covers the archive as downloaded. An ArchiveMember ending in "/"
+// extracts that whole subtree into RelPath as a directory (7z only); Exec
+// then marks the extracted root-level binaries executable.
 type File struct {
 	URL           string `json:"url"`
 	RelPath       string `json:"rel_path"`
 	SHA256        string `json:"sha256"`
 	OS            string `json:"os,omitempty"`
 	SizeBytes     int64  `json:"size_bytes,omitempty"`
-	Archive       string `json:"archive,omitempty"` // only "zip" supported
+	Archive       string `json:"archive,omitempty"` // "zip" (single member) or "7z" (directory member)
 	ArchiveMember string `json:"archive_member,omitempty"`
 	Exec          bool   `json:"exec,omitempty"` // chmod +x after install
 }

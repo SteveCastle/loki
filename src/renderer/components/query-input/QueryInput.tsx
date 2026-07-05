@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
+import { useMeaningMode } from '../../hooks/useMeaningMode';
 import { mediaUrl } from '../../platform';
 import type { Query, Predicate } from '../../query/types';
 import { predicateKey } from '../../query/types';
@@ -42,9 +43,9 @@ interface QueryInputProps {
   // Semantic ("search by meaning") support. When onSubmitVisual is provided a
   // ✨ toggle is shown; with it ON, submitting commits the typed text as a
   // `visual:` (text→image embedding) predicate instead of the normal parse.
-  // onMeaningModeChange lets the parent react (e.g. hide tag suggestions).
+  // The toggle state itself is shared via useMeaningMode — parents that need
+  // to react (e.g. hide tag suggestions) read the same hook.
   onSubmitVisual?: (text: string) => void;
-  onMeaningModeChange?: (on: boolean) => void;
 }
 
 // Glyph prefix shown on a chip for each predicate type.
@@ -56,6 +57,7 @@ const TYPE_GLYPH: Record<Predicate['type'], string> = {
   hash: 'hash:',
   similar: 'similar:',
   visual: 'visual:',
+  clip: 'clip:', // never shown — clip chips render a thumbnail instead
 };
 
 // Icons + labels for the three tag-filtering behaviours, mirroring the toggle
@@ -95,19 +97,15 @@ export default function QueryInput({
   filteringMode,
   onCycleFilterMode,
   onSubmitVisual,
-  onMeaningModeChange,
 }: QueryInputProps) {
   const { history, addSearch, removeSearch, clearAll } = useSearchHistory();
   // "Search by meaning" mode: typed text commits as a visual: predicate.
-  const [meaningMode, setMeaningMode] = useState(false);
+  // Shared + sticky: stays on across palette open/close until toggled off.
+  const { meaningMode, setMeaningMode } = useMeaningMode();
   const toggleMeaningMode = useCallback(() => {
-    setMeaningMode((prev) => {
-      const next = !prev;
-      onMeaningModeChange?.(next);
-      return next;
-    });
+    setMeaningMode(!meaningMode);
     inputRef.current?.focus();
-  }, [onMeaningModeChange]);
+  }, [meaningMode, setMeaningMode]);
   // The parent owns a navigable results list (command palette). While it has
   // items, arrow/enter drive that list instead of the history dropdown.
   const resultNavActive = resultNavCount > 0;
@@ -332,9 +330,12 @@ export default function QueryInput({
             const join = p.join ?? 'AND';
             const isVisual = p.type === 'visual';
             const isSimilar = p.type === 'similar';
+            // A captured screen region (PNG data URL) — renders like a similar:
+            // chip but with the clip itself as the thumbnail.
+            const isClip = p.type === 'clip';
             const chipClass = `query-chip${p.exclude ? ' exclude' : ''}${
               p.type === 'category' ? ' category' : ''
-            }${isVisual ? ' visual' : ''}${isSimilar ? ' similar' : ''}`;
+            }${isVisual ? ' visual' : ''}${isSimilar || isClip ? ' similar' : ''}`;
             const baseName = isSimilar
               ? p.value.split(/[/\\]/).pop() || p.value
               : '';
@@ -362,7 +363,10 @@ export default function QueryInput({
                     {join}
                   </button>
                 )}
-                <span className="query-chip-label" title={p.value}>
+                <span
+                  className="query-chip-label"
+                  title={isClip ? 'Screen clip' : p.value}
+                >
                   {p.exclude ? '−' : ''}
                   {isVisual ? (
                     <>
@@ -370,6 +374,15 @@ export default function QueryInput({
                         ✨
                       </span>
                       {p.value}
+                    </>
+                  ) : isClip ? (
+                    <>
+                      <img
+                        className="query-chip-thumb"
+                        src={p.value}
+                        alt=""
+                      />
+                      Screen clip
                     </>
                   ) : isSimilar ? (
                     <>

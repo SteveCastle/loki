@@ -14,6 +14,7 @@ import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import type { TagConcept } from '../../hooks/useTagSearch';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
+import { useMeaningMode } from '../../hooks/useMeaningMode';
 import QueryInput from '../query-input/QueryInput';
 import SuggestionSections from '../taxonomy/suggestion-sections';
 import type { SuggestionItem } from '../taxonomy/suggestion-sections';
@@ -104,7 +105,8 @@ export default function CommandPaletteSearch({
   const [text, setText] = useState('');
   // "Search by meaning" mode: typed text commits as a visual: predicate and the
   // tag-suggestion surface is suppressed (it's irrelevant to semantic search).
-  const [meaningMode, setMeaningMode] = useState(false);
+  // Shared + sticky (useMeaningMode) — survives the palette closing/reopening.
+  const { meaningMode } = useMeaningMode();
   // Index into `navItems` of the currently highlighted result. Enter commits
   // it; arrow keys move it; the top result is highlighted by default.
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -234,7 +236,6 @@ export default function CommandPaletteSearch({
           libraryService.send({ type: 'CLEAR_QUERY' });
           clearText();
         }}
-        onMeaningModeChange={setMeaningMode}
         onSubmitVisual={(t) => {
           libraryService.send({
             type: 'ADD_PREDICATE',
