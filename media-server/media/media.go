@@ -1174,7 +1174,10 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 
 		// Remove face rows + scan markers (face-identity sidecar tables). The
 		// registered removal hook evicts them from the in-memory face index.
+		// Person covers pointing at the doomed faces are cleared first so they
+		// don't dangle (GetPeople falls back to the person's best face).
 		for _, stmt := range []string{
+			`UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (SELECT id FROM face WHERE media_path IN (%s))`,
 			`DELETE FROM face WHERE media_path IN (%s)`,
 			`DELETE FROM face_scan WHERE media_path IN (%s)`,
 		} {

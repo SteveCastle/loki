@@ -45,6 +45,17 @@ func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int
 	}
 	defer tx.Rollback()
 
+	// The old rows are about to disappear — clear any person cover that points
+	// at them, or the cover would dangle at a deleted face id (blank card in
+	// the People UI). GetPeople falls back to the person's best face, so the
+	// cover self-heals on the next listing.
+	if _, err := tx.Exec(
+		`UPDATE person SET cover_face_id = NULL
+		 WHERE cover_face_id IN (SELECT id FROM face WHERE media_path=? AND model=?)`,
+		path, model,
+	); err != nil {
+		return nil, fmt.Errorf("clear stale covers: %w", err)
+	}
 	if _, err := tx.Exec(`DELETE FROM face WHERE media_path=? AND model=?`, path, model); err != nil {
 		return nil, fmt.Errorf("clear stale faces: %w", err)
 	}
@@ -149,6 +160,12 @@ func GetFaceByID(db *sql.DB, id int64) (Face, bool, error) {
 // DeleteFacesForMedia removes all face rows and scan markers for a media path
 // (all models). Called when media is deleted from the library.
 func DeleteFacesForMedia(db *sql.DB, path string) error {
+	if _, err := db.Exec(
+		`UPDATE person SET cover_face_id = NULL
+		 WHERE cover_face_id IN (SELECT id FROM face WHERE media_path=?)`, path,
+	); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`DELETE FROM face WHERE media_path=?`, path); err != nil {
 		return err
 	}

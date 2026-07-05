@@ -123,9 +123,22 @@ func NextUnknownName(db *sql.DB) (string, error) {
 
 // GetPeople lists all persons with their face and distinct-media counts,
 // ordered by face count descending (biggest clusters first).
+//
+// CoverFaceID is the EFFECTIVE cover: the stored cover when it still points
+// at one of the person's faces, otherwise the person's best face — highest
+// detection confidence weighted by bbox area, so covers favour clear,
+// close-up faces over tiny background ones. The fallback matters because
+// rescanning a media item replaces its face rows under new ids, silently
+// orphaning any stored cover that pointed there.
 func GetPeople(db *sql.DB) ([]Person, error) {
 	rows, err := db.Query(`
-		SELECT p.id, COALESCE(p.name, ''), COALESCE(p.cover_face_id, 0), COALESCE(p.created_at, 0),
+		SELECT p.id, COALESCE(p.name, ''),
+		       COALESCE(
+		         (SELECT fc.id FROM face fc WHERE fc.id = p.cover_face_id AND fc.person_id = p.id),
+		         (SELECT fb.id FROM face fb WHERE fb.person_id = p.id
+		          ORDER BY fb.det_score * fb.bbox_w * fb.bbox_h DESC, fb.id ASC LIMIT 1),
+		         0),
+		       COALESCE(p.created_at, 0),
 		       COUNT(f.id), COUNT(DISTINCT f.media_path)
 		FROM person p
 		LEFT JOIN face f ON f.person_id = p.id

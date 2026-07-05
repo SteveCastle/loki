@@ -336,6 +336,16 @@ func setupTestDB(t *testing.T) *sql.DB {
 	`); err != nil {
 		t.Fatalf("Failed to create face_scan table: %v", err)
 	}
+	if _, err := db.Exec(`
+		CREATE TABLE person (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			name          TEXT UNIQUE,
+			cover_face_id INTEGER,
+			created_at    INTEGER
+		)
+	`); err != nil {
+		t.Fatalf("Failed to create person table: %v", err)
+	}
 
 	return db
 }

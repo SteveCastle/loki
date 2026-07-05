@@ -322,6 +322,58 @@ func TestAssignFaceSkipsBridgeForNonLibraryMedia(t *testing.T) {
 	}
 }
 
+func TestGetPeopleCoverSelfHeals(t *testing.T) {
+	db := newPeopleDB(t)
+	pid, _ := CreatePerson(db, "Alice")
+	// Two faces: a tiny low-confidence one and a big clear one. Assign the
+	// tiny one FIRST so it becomes the stored cover.
+	ids, _ := ReplaceFaces(db, "a.jpg", "m1", []NewFace{
+		{X: 0.8, Y: 0.8, W: 0.05, H: 0.05, Score: 0.71, Vec: []float32{1}},
+		{X: 0.2, Y: 0.2, W: 0.5, H: 0.5, Score: 0.98, Vec: []float32{1}},
+	}, 1)
+	_ = AssignFace(db, ids[0], pid, "user")
+	_ = AssignFace(db, ids[1], pid, "user")
+
+	people, err := GetPeople(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stored cover (the tiny face) is still valid → honoured.
+	if people[0].CoverFaceID != ids[0] {
+		t.Fatalf("cover = %d, want stored %d", people[0].CoverFaceID, ids[0])
+	}
+
+	// Rescan the media: old rows (including the cover) are replaced. The
+	// stored cover must be cleared, and GetPeople must fall back to the
+	// person's best remaining face.
+	otherIDs, _ := ReplaceFaces(db, "b.jpg", "m1", []NewFace{
+		{X: 0.1, Y: 0.1, W: 0.3, H: 0.3, Score: 0.9, Vec: []float32{1}},
+		{X: 0.5, Y: 0.5, W: 0.6, H: 0.6, Score: 0.95, Vec: []float32{1}},
+	}, 2)
+	_ = AssignFace(db, otherIDs[0], pid, "user")
+	_ = AssignFace(db, otherIDs[1], pid, "user")
+	if _, err := ReplaceFaces(db, "a.jpg", "m1", nil, 3); err != nil {
+		t.Fatal(err)
+	}
+
+	var stored any
+	if err := db.QueryRow(`SELECT cover_face_id FROM person WHERE id=?`, pid).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != nil {
+		t.Fatalf("stale cover not cleared by rescan: %v", stored)
+	}
+	people, err = GetPeople(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fallback = best remaining face by det_score × bbox area: otherIDs[1]
+	// (0.95 × 0.36) beats otherIDs[0] (0.9 × 0.09).
+	if people[0].CoverFaceID != otherIDs[1] {
+		t.Fatalf("effective cover = %d, want best face %d", people[0].CoverFaceID, otherIDs[1])
+	}
+}
+
 func TestDeleteAllFaceData(t *testing.T) {
 	db := newPeopleDB(t)
 	pid, _ := CreatePerson(db, "Alice")
