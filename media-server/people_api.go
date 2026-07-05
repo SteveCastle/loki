@@ -142,6 +142,10 @@ func personMergeHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+// personDeleteHandler removes a person. By default their faces are kept
+// (unassigned, free to re-cluster); with ?deleteFaces=true the face rows are
+// deleted too — the purge for a hopelessly mixed cluster. Deleted faces stay
+// gone until their media is explicitly rescanned.
 func personDeleteHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -151,6 +155,16 @@ func personDeleteHandler(deps *Dependencies) http.HandlerFunc {
 		id, ok := pathID(r)
 		if !ok {
 			httpError(w, "invalid person id", http.StatusBadRequest)
+			return
+		}
+		if r.URL.Query().Get("deleteFaces") == "true" {
+			faceIDs, err := media.DeletePersonAndFaces(deps.DB, id)
+			if err != nil {
+				httpError(w, err.Error(), userErrorStatus(err))
+				return
+			}
+			tasks.FaceIndexDeleteFaceIDs(faceIDs)
+			writeJSON(w, map[string]any{"deleted": id, "facesDeleted": len(faceIDs)})
 			return
 		}
 		if err := media.DeletePerson(deps.DB, id); err != nil {

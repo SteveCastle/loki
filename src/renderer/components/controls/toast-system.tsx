@@ -66,6 +66,12 @@ const getJobTitle = (job: JobRunnerJob): string => {
       return 'Visual Embedding';
     case 'autotag':
       return 'Auto-Tagging';
+    case 'faces':
+      return 'Scanning Faces';
+    case 'faces-cluster':
+      return job.input.includes('--reset')
+        ? 'Rebuilding Face Groups'
+        : 'Grouping Faces into People';
     case 'metadata':
       switch (parseFlag(job.input, 'type')) {
         case 'description':
@@ -92,6 +98,12 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return 'Indexing images so you can search by visual similarity.';
     case 'autotag':
       return 'Detecting tags from each image’s content.';
+    case 'faces':
+      return 'Finding faces and characters so they can be grouped into people.';
+    case 'faces-cluster':
+      return job.input.includes('--reset')
+        ? 'Regrouping the unnamed clusters from scratch — named people are kept.'
+        : 'Matching new faces to your people; nothing already grouped is moved.';
     case 'metadata':
       switch (parseFlag(job.input, 'type')) {
         case 'description':

@@ -182,6 +182,29 @@ export function PersonEditModal({
     }
   };
 
+  const handleDeleteWithFaces = async () => {
+    if (!person) return;
+    try {
+      await call(`/api/people/${person.id}?deleteFaces=true`, {
+        method: 'DELETE',
+      });
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: 'Group purged',
+          message: `“${person.name}” and its ${person.faceCount} face${
+            person.faceCount === 1 ? '' : 's'
+          } were deleted`,
+        },
+      });
+      refresh();
+      handleClose();
+    } catch (err) {
+      toastError('Failed to purge group', err);
+    }
+  };
+
   const handleRegenerateCover = async () => {
     if (!person) return;
     try {
@@ -284,6 +307,20 @@ export function PersonEditModal({
                   </div>
                 </div>
                 <button onClick={handleDelete}>Delete</button>
+              </div>
+              <div className="action-row">
+                <div className="action-row-text">
+                  <div className="action-row-title">
+                    Delete person and faces
+                  </div>
+                  <div className="action-row-description">
+                    Also deletes every face embedding in this group, so a
+                    messy cluster won&apos;t re-form on the next grouping.
+                    The media itself is untouched; faces only come back if
+                    you rescan it.
+                  </div>
+                </div>
+                <button onClick={handleDeleteWithFaces}>Purge</button>
               </div>
             </div>
           </>
@@ -511,7 +548,9 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     return () => window.clearTimeout(t);
   }, [rebuildArmed]);
 
-  const runClusterJob = async (input: string, title: string, message: string) => {
+  // The job's own toast (ToastSystem, via the SSE stream) announces the run
+  // with a formatted title/subtitle — no manual toast here or it doubles up.
+  const runClusterJob = async (input: string) => {
     try {
       const res = await fetch(`${mediaServerBase}/create`, {
         method: 'POST',
@@ -523,10 +562,6 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
         body: JSON.stringify({ input }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: { type: 'info', title, message },
-      });
     } catch (err) {
       libraryService.send({
         type: 'ADD_TOAST',
@@ -540,12 +575,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   };
 
   // Additive: assigns only currently-unassigned faces; never moves anything.
-  const handleCluster = () =>
-    runClusterJob(
-      'faces-cluster',
-      'Clustering faces',
-      'Grouping new faces into people…'
-    );
+  const handleCluster = () => runClusterJob('faces-cluster');
 
   // Rebuild: dissolves the anonymous "Unknown #N" clusters and regroups them
   // from scratch. Named people and user-assigned faces are never touched.
@@ -555,11 +585,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
       return;
     }
     setRebuildArmed(false);
-    runClusterJob(
-      'faces-cluster --reset',
-      'Rebuilding unnamed groups',
-      'Regrouping anonymous clusters (named people are kept)…'
-    );
+    runClusterJob('faces-cluster --reset');
   };
 
   if (error) {

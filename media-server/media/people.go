@@ -389,6 +389,63 @@ func DeletePerson(db *sql.DB, id int64) error {
 	return tx.Commit()
 }
 
+// DeletePersonAndFaces deletes a person AND every face row assigned to them —
+// the cleanup for a hopelessly messy cluster. The deleted embeddings won't
+// re-cluster (their media stays marked scanned, so they only come back on an
+// explicit rescan). Returns the deleted face IDs so callers can evict them
+// from the live index.
+func DeletePersonAndFaces(db *sql.DB, id int64) ([]int64, error) {
+	p, ok, err := GetPersonByID(db, id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("no person with id %d", id)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT id FROM face WHERE person_id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	var faceIDs []int64
+	for rows.Next() {
+		var fid int64
+		if err := rows.Scan(&fid); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		faceIDs = append(faceIDs, fid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if _, err := tx.Exec(`DELETE FROM face WHERE person_id = ?`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM media_tag_by_category WHERE tag_label = ? AND category_label = ?`, p.Name, PeopleCategory,
+	); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM tag WHERE label = ? AND category_label = ?`, p.Name, PeopleCategory); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM person WHERE id = ?`, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return faceIDs, nil
+}
+
 // AssignFace assigns a face to a person (assignedBy = "user" or "auto") and
 // maintains the taxonomy bridge row for the face's media item. Reassigning a
 // face moves it (removing the old person's bridge row when this was their

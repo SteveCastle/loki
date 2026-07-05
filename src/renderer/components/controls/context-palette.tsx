@@ -796,33 +796,6 @@ export default function ContextPalette() {
     }
   };
 
-  // Regroup faces into people (server-wide job; incremental over existing
-  // assignments, never overwrites manual labels).
-  const handleClusterFaces = async () => {
-    try {
-      const headers: HeadersInit = { 'Content-Type': 'application/json' };
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-      const res = await fetch(`${mediaServerBase}/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ input: 'faces-cluster' }),
-        signal: AbortSignal.timeout(10000),
-        redirect: 'error',
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      libraryService.send('HIDE_CONTEXT_PALETTE');
-    } catch {
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: {
-          type: 'error',
-          title: 'Failed to Create Job',
-          message: 'Could not communicate with job service',
-        },
-      });
-      libraryService.send('HIDE_CONTEXT_PALETTE');
-    }
-  };
 
   // Action handler — runs a metadata generation job for one type in the current
   // mode. `missing` fills gaps; `all` replaces (adds `--overwrite`).
@@ -1096,16 +1069,6 @@ export default function ContextPalette() {
             })}
           </div>
           <DepRequirementRows deps={deps} onChange={refreshDeps} />
-          <div className="cluster-row">
-            <button
-              type="button"
-              className="type-chip"
-              onClick={handleClusterFaces}
-              title="Group scanned faces into people (never overwrites your manual labels)"
-            >
-              Cluster Faces → People
-            </button>
-          </div>
         </div>
       )}
 

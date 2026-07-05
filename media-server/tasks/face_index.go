@@ -99,6 +99,37 @@ func faceIndexReplacePath(model, path string, ids []int64, faces []media.NewFace
 	}
 }
 
+// FaceIndexDeleteFaceIDs evicts specific faces from the live index (no-op
+// when none installed) — used when a person is deleted together with their
+// face rows.
+func FaceIndexDeleteFaceIDs(ids []int64) {
+	faceIndexMu.Lock()
+	defer faceIndexMu.Unlock()
+	if faceIndex == nil || len(ids) == 0 {
+		return
+	}
+	gone := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		key := faceKey(id)
+		gone[key] = true
+		faceIndex.Delete(key)
+	}
+	// Prune the path→keys map so later path-level evictions stay accurate.
+	for path, keys := range facePathKeys {
+		kept := keys[:0]
+		for _, k := range keys {
+			if !gone[k] {
+				kept = append(kept, k)
+			}
+		}
+		if len(kept) == 0 {
+			delete(facePathKeys, path)
+		} else {
+			facePathKeys[path] = kept
+		}
+	}
+}
+
 // FaceIndexDeletePath evicts all of path's faces from the live index (no-op
 // when none). Exported for the media-removal hook.
 func FaceIndexDeletePath(path string) {

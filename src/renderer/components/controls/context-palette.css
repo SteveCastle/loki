@@ -1,5 +1,5 @@
-.ContextPalette {
-  /* Local accent tokens — consolidates the previously-scattered green literals
+﻿.ContextPalette {
+  /* Local accent tokens â€” consolidates the previously-scattered green literals
      and adds a caution accent used when the Generate mode is "All" (replace). */
   --ctx-accent: #00c896;
   --ctx-accent-soft: rgba(0, 200, 150, 0.15);
@@ -26,7 +26,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-/* ── Header ── */
+/* â”€â”€ Header â”€â”€ */
 
 .context-palette-header {
   display: flex;
@@ -87,7 +87,7 @@
   transform: translateY(0.5px);
 }
 
-/* ── States ── */
+/* â”€â”€ States â”€â”€ */
 
 .context-palette-login {
   padding: 4px 0;
@@ -101,7 +101,7 @@
   font-size: 12px;
 }
 
-/* ── Generate block (mode toggle + type chips) ── */
+/* â”€â”€ Generate block (mode toggle + type chips) â”€â”€ */
 
 .generate-block {
   display: flex;
@@ -206,7 +206,7 @@
   background: var(--ctx-caution-strong);
 }
 
-/* ── Dependency requirements under the Generate chips ── */
+/* â”€â”€ Dependency requirements under the Generate chips â”€â”€ */
 
 .type-chip.needs-dep {
   color: rgba(255, 255, 255, 0.45);
@@ -283,7 +283,7 @@
   transition: width 0.3s;
 }
 
-/* ── Workflow picker ── */
+/* â”€â”€ Workflow picker â”€â”€ */
 
 .context-palette-workflows {
   border-top: 1px solid var(--ctx-hairline);
@@ -378,7 +378,7 @@
   text-align: center;
 }
 
-/* ── Jobs footer ── */
+/* â”€â”€ Jobs footer â”€â”€ */
 
 .context-palette-footer {
   border-top: 1px solid var(--ctx-hairline);
@@ -465,7 +465,7 @@
   color: rgb(211, 3, 72);
 }
 
-/* ── Person actions (People-category tag targets) ── */
+/* â”€â”€ Person actions (People-category tag targets) â”€â”€ */
 
 .context-palette-person {
   display: flex;
@@ -515,9 +515,4 @@
 .person-rename-btn:disabled {
   opacity: 0.4;
   cursor: default;
-}
-
-.cluster-row {
-  display: flex;
-  margin-top: 6px;
 }

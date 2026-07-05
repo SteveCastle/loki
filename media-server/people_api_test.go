@@ -313,6 +313,41 @@ func TestMediaAssignPersonEndpoint(t *testing.T) {
 	}
 }
 
+func TestPersonDeleteWithFaces(t *testing.T) {
+	mux, deps := muxWithPeopleRoutes(t)
+	pid, _ := media.CreatePerson(deps.DB, "Messy Cluster")
+	ids, _ := media.ReplaceFaces(deps.DB, "a.jpg", "m1", []media.NewFace{
+		{Score: 0.9, Vec: []float32{1, 0}},
+		{Score: 0.8, Vec: []float32{0, 1}},
+	}, 1)
+	otherIDs, _ := media.ReplaceFaces(deps.DB, "b.jpg", "m1", []media.NewFace{{Score: 0.9, Vec: []float32{1, 1}}}, 1)
+	_ = media.AssignFace(deps.DB, ids[0], pid, "auto")
+	_ = media.AssignFace(deps.DB, ids[1], pid, "user")
+
+	rec, out := doJSON(t, mux, http.MethodDelete, "/api/people/"+jsonNum(pid)+"?deleteFaces=true", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("purge: %d %s", rec.Code, rec.Body.String())
+	}
+	if int(out["facesDeleted"].(float64)) != 2 {
+		t.Fatalf("facesDeleted = %v, want 2", out["facesDeleted"])
+	}
+	// Person + its faces gone; unrelated faces and the scan marker survive.
+	if _, ok, _ := media.GetPersonByID(deps.DB, pid); ok {
+		t.Fatal("person survived purge")
+	}
+	for _, id := range ids {
+		if _, ok, _ := media.GetFaceByID(deps.DB, id); ok {
+			t.Fatalf("face %d survived purge", id)
+		}
+	}
+	if _, ok, _ := media.GetFaceByID(deps.DB, otherIDs[0]); !ok {
+		t.Fatal("unrelated face was deleted")
+	}
+	if scanned, _ := media.HasFaceScan(deps.DB, "a.jpg", "m1"); !scanned {
+		t.Fatal("scan marker deleted — media would rescan and the junk would return")
+	}
+}
+
 func TestFacesWipeEndpoint(t *testing.T) {
 	mux, deps := muxWithPeopleRoutes(t)
 	pid, _ := media.CreatePerson(deps.DB, "Alice")
