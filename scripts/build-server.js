@@ -49,7 +49,19 @@ run(`go build${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
 
 console.log(`\n✓ Server built: media-server/media-server${ext}`);
 
-// 4. Build the lokictl CLI (ships next to the server binary).
+// 4. Build the bundled worker binaries (media-server/bin/). The server spawns
+// these as subprocesses and evolves their CLI flags in lockstep with its own
+// task code — an out-of-date embed.exe fails every embed/faces job with
+// "flag provided but not defined". They ship next to the server, so rebuild
+// them whenever the server is rebuilt. Skip with SKIP_BUNDLED=1.
+if (process.env.SKIP_BUNDLED !== '1') {
+  console.log('\n--- Building bundled worker binaries (bin/) ---');
+  run(`go build -o bin${path.sep}embed${ext} ./cmd/embed`, { cwd: SERVER_DIR });
+  run(`go build -o bin${path.sep}onnxtag${ext} ./cmd/onnxtag`, { cwd: SERVER_DIR });
+  console.log(`\n✓ Bundled binaries built: media-server/bin/{embed,onnxtag}${ext}`);
+}
+
+// 5. Build the lokictl CLI (ships next to the server binary).
 // Skip with SKIP_CLI=1 for a server-only rebuild.
 if (process.env.SKIP_CLI !== '1') {
   console.log('\n--- Building lokictl CLI ---');
