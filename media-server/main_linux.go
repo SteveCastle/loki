@@ -1217,6 +1217,7 @@ type configTemplateData struct {
 	ActiveDBPath           string
 	EmbeddingModels        []tasks.EmbedModel
 	TaggerModels           []tasks.TaggerModel
+	FaceModels             []tasks.FaceModel
 	DirectMLInstalled      bool
 	TranscriptionProviders []transcribe.Provider
 	TranscriptionModels    []transcribe.ModelChoice
@@ -1262,7 +1263,15 @@ type updateConfigRequest struct {
 	AutotagWorkers            int                     `json:"autotagWorkers"`
 	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
 	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
-	TranscriptionProvider     string                  `json:"transcriptionProvider"`
+	FaceModel                 string                  `json:"faceModel"`
+	FaceProvider              string                  `json:"faceProvider"`
+	FacePerformance           string                  `json:"facePerformance"`
+	FaceWorkers               int                     `json:"faceWorkers"`
+	FaceThreadsPerWorker      int                     `json:"faceThreadsPerWorker"`
+	// nil = field absent from the POST (leave stored entries alone);
+	// an explicit empty array clears the list.
+	ByoFaceModels         []appconfig.ByoFaceModel `json:"byoFaceModels"`
+	TranscriptionProvider string                   `json:"transcriptionProvider"`
 	TranscriptionModel        string                  `json:"transcriptionModel"`
 	TranscriptionLanguage     *string                 `json:"transcriptionLanguage"`
 	TranscriptionVADFilter    *bool                   `json:"transcriptionVadFilter"`
@@ -1416,6 +1425,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				ActiveDBPath:           cfg.DBPath,
 				EmbeddingModels:        tasks.EmbedModelList(),
 				TaggerModels:           tasks.TaggerModelList(),
+				FaceModels:             tasks.FaceModelList(),
 				DirectMLInstalled:      tasks.DirectMLRuntimeInstalled(),
 				TranscriptionProviders: transcribe.Providers(),
 			}
@@ -1440,6 +1450,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			oldCfg := currentConfig
 			oldDBPath := currentConfig.DBPath
 			oldEmbeddingModel := currentConfig.EmbeddingModel
+			oldFaceModel := currentConfig.FaceModel
 			newCfg := currentConfig
 			newCfg.DBPath = req.DBPath
 			// Port: positive in-range values overwrite; 0 = field absent from a
@@ -1552,6 +1563,26 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				// non-zero so a partial POST doesn't clobber it; negative = disabled.
 				newCfg.OnnxFileTimeoutSeconds = req.OnnxFileTimeoutSeconds
 			}
+			if v := strings.TrimSpace(req.FaceModel); v != "" {
+				newCfg.FaceModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.FaceProvider)); v != "" {
+				newCfg.FaceProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.FacePerformance)); v != "" {
+				newCfg.FacePerformance = v
+			}
+			if req.FaceWorkers > 0 {
+				newCfg.FaceWorkers = req.FaceWorkers
+			}
+			if req.FaceThreadsPerWorker > 0 {
+				newCfg.FaceThreadsPerWorker = req.FaceThreadsPerWorker
+			}
+			// nil = field omitted (partial POST) → keep; an explicit empty
+			// array is a deliberate "remove all BYO entries".
+			if req.ByoFaceModels != nil {
+				newCfg.ByoFaceModels = req.ByoFaceModels
+			}
 			// Transcription: provider/model use the protective non-empty
 			// pattern; language and VAD are pointers so an explicit empty
 			// language ("auto-detect") or unchecked VAD box persists, while
@@ -1616,6 +1647,19 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 						return
 					}
 					log.Printf("embedding index rebuilt after model switch: %d vectors (model %s)", n, model)
+				}(deps.DB)
+			}
+
+			// Same for the face index when the active recognizer changed. Face
+			// vectors are model-keyed too, so this just reloads stored vectors.
+			if newCfg.FaceModel != oldFaceModel {
+				go func(db *sql.DB) {
+					model, n, err := tasks.RebuildActiveFaceIndex(db, nil)
+					if err != nil {
+						log.Printf("face index rebuild after model switch failed (model %s): %v", model, err)
+						return
+					}
+					log.Printf("face index rebuilt after model switch: %d faces (model %s)", n, model)
 				}(deps.DB)
 			}
 

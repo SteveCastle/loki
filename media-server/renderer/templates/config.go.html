@@ -782,15 +782,27 @@
         </a>
 
         <div class="tabs">
-          <button class="tab-button active" data-tab="configuration">
-            Configuration
+          <button class="tab-button active" data-tab="general">
+            General
+          </button>
+          <button class="tab-button" data-tab="ai">
+            AI &amp; Inference
+          </button>
+          <button class="tab-button" data-tab="search">
+            Search &amp; Faces
+          </button>
+          <button class="tab-button" data-tab="transcription">
+            Transcription
+          </button>
+          <button class="tab-button" data-tab="access">
+            Access
           </button>
           <button class="tab-button" data-tab="dependencies">
             Dependencies
           </button>
         </div>
 
-        <div id="tab-configuration" class="tab-content active">
+        <div id="tab-general" class="tab-content active">
           <div class="config-sections">
             <div class="config-card config-card--blue">
               <div class="section-title">⚙️ General</div>
@@ -871,7 +883,11 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
 
+        <div id="tab-ai" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--purple">
               <div class="section-title">🧠 Inference</div>
               <div class="section-subtitle">
@@ -1289,7 +1305,11 @@
                 </details>
               </div>
             </div>
+          </div>
+        </div>
 
+        <div id="tab-search" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--cyan">
               <div class="section-title">🖼️ Visual Embedding</div>
               <div class="fields">
@@ -1368,14 +1388,109 @@
                   <label class="label">Per-file timeout (seconds)</label>
                   <input id="onnx-file-timeout" class="input" type="number" min="1" step="1" value="{{.Config.OnnxFileTimeoutSeconds}}" />
                   <small class="hint">
-                    Applies to all ONNX tasks (embedding &amp; tagging). A single
-                    file that exceeds this — e.g. a corrupt image or video — is
-                    skipped and processing continues (the stuck worker is restarted).
+                    Applies to all ONNX tasks (embedding, tagging &amp; faces). A
+                    single file that exceeds this — e.g. a corrupt image or video
+                    — is skipped and processing continues (the stuck worker is
+                    restarted).
                   </small>
                 </div>
               </div>
             </div>
 
+            <div class="config-card config-card--cyan">
+              <div class="section-title">🙂 Faces</div>
+              <div class="section-subtitle">
+                Face detection, person search, and clustering. Detection always
+                uses YuNet; the recognizer below produces the identity vectors.
+                Install both from the Dependencies tab.
+              </div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Recognizer (identity model)</label>
+                  <select id="face-model" class="input">
+                    {{range .FaceModels}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.FaceModel}}selected{{end}}
+                    >{{.DisplayName}}{{if .BYO}} — bring-your-own{{end}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    Face vectors are stored per recognizer, so switching never
+                    deletes anything — but faces must be rescanned under a model
+                    before it can search or cluster them. Changing this rebuilds
+                    the face index in the background. Match thresholds are
+                    per-model (SFace 0.363 default; set
+                    <code>matchThreshold</code> on bring-your-own entries).
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Execution provider</label>
+                  <select id="face-provider" class="input">
+                    <option value="cpu" {{if eq .Config.FaceProvider "cpu"}}selected{{end}}>CPU</option>
+                    <option value="directml" {{if eq .Config.FaceProvider "directml"}}selected{{end}}>GPU (DirectML)</option>
+                  </select>
+                  <small class="hint">
+                    Shares the GPU runtime with Visual Embedding — install it
+                    there if you haven't.
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Performance</label>
+                  <select id="face-performance" class="input">
+                    <option value="low" {{if eq .Config.FacePerformance "low"}}selected{{end}}>Low — reserve CPU, stay responsive (~25% of cores)</option>
+                    <option value="balanced" {{if eq .Config.FacePerformance "balanced"}}selected{{end}}>Balanced (~50% of cores)</option>
+                    <option value="max" {{if eq .Config.FacePerformance "max"}}selected{{end}}>Max — all but one core</option>
+                    <option value="custom" {{if eq .Config.FacePerformance "custom"}}selected{{end}}>Custom (advanced)</option>
+                  </select>
+                  <small class="hint">
+                    Parallel workers + threads for the face-scanning task.
+                  </small>
+                </div>
+
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Advanced (Custom workers/threads)</summary>
+                  <div class="field-row" style="margin-top:6px">
+                    <div class="field">
+                      <label class="label">Workers</label>
+                      <input id="face-workers" class="input" type="number" min="0" step="1" value="{{.Config.FaceWorkers}}" />
+                    </div>
+                    <div class="field">
+                      <label class="label">Threads per worker</label>
+                      <input id="face-threads" class="input" type="number" min="0" step="1" value="{{.Config.FaceThreadsPerWorker}}" />
+                    </div>
+                  </div>
+                  <small class="hint">Used only when Performance = Custom (0 = derive from a preset).</small>
+                </details>
+
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Bring-your-own recognizers (advanced)</summary>
+                  <div class="field" style="margin-top:6px">
+                    <label class="label">byoFaceModels (JSON array)</label>
+                    <textarea id="byo-face-models" class="input" rows="8" spellcheck="false">{{.Config.ByoFaceModels | json}}</textarea>
+                    <small class="hint">
+                      Research-licensed recognizers (ArcFace / AdaFace exports)
+                      that can't ship with the app. Each entry:
+                      <code>{"id", "name", "modelPath", "dim", "inputName",
+                      "outputName", "mean", "std", "colorOrder",
+                      "matchThreshold"}</code>. mean/std are RGB on the 0–255
+                      scale (ArcFace-family: 127.5/127.5, colorOrder "RGB").
+                      matchThreshold is the same-person cosine cutoff used by
+                      clustering. Leave as-is to keep the current entries;
+                      invalid JSON blocks saving.
+                    </small>
+                    <div id="byo-face-models-status" class="hint"></div>
+                  </div>
+                </details>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-transcription" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--pink">
               <div class="section-title">🎙️ Transcription</div>
               <div class="fields">
@@ -1458,7 +1573,11 @@
                 </details>
               </div>
             </div>
+          </div>
+        </div>
 
+        <div id="tab-access" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--pink">
               <div class="section-title">👥 User Management</div>
               <div class="fields">
@@ -2008,6 +2127,27 @@
           setStatus('dbPath cannot be empty', 'error');
           return;
         }
+        // Bring-your-own face recognizers: an empty/"null" textarea means
+        // "leave the stored entries alone" (omit the field); anything else
+        // must parse to a JSON array or the save is blocked so a typo can't
+        // wipe the list.
+        let byoFaceModels;
+        {
+          const byoStatusEl = document.getElementById('byo-face-models-status');
+          const raw = document.getElementById('byo-face-models').value.trim();
+          byoStatusEl.textContent = '';
+          if (raw !== '' && raw !== 'null') {
+            try {
+              const parsed = JSON.parse(raw);
+              if (!Array.isArray(parsed)) throw new Error('must be a JSON array');
+              byoFaceModels = parsed;
+            } catch (e) {
+              byoStatusEl.textContent = 'Invalid JSON: ' + e.message;
+              setStatus('byoFaceModels is not valid JSON — fix it or clear the box', 'error');
+              return;
+            }
+          }
+        }
         const payload = {
           dbPath,
           port:
@@ -2124,6 +2264,20 @@
             document.getElementById('onnx-file-timeout').value || '0',
             10
           ),
+          faceModel: document.getElementById('face-model').value.trim(),
+          faceProvider: document.getElementById('face-provider').value.trim(),
+          facePerformance: document
+            .getElementById('face-performance')
+            .value.trim(),
+          faceWorkers: parseInt(
+            document.getElementById('face-workers').value || '0',
+            10
+          ),
+          faceThreadsPerWorker: parseInt(
+            document.getElementById('face-threads').value || '0',
+            10
+          ),
+          ...(byoFaceModels !== undefined ? { byoFaceModels } : {}),
           transcriptionProvider: document
             .getElementById('transcription-provider')
             .value.trim(),
