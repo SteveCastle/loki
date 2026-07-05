@@ -122,16 +122,35 @@ export default function HotKeyController() {
 
   const item = filteredLibrary[cursor];
 
+  // Surface tagging failures (e.g. the shared DB briefly locked by the Go
+  // media-server) — a swallowed rejection makes the hotkey look dead.
+  const toastTagError = (tag: string, err: unknown) => {
+    libraryService.send({
+      type: 'ADD_TOAST',
+      data: {
+        type: 'error',
+        title: `Could not apply "${tag}"`,
+        message:
+          err instanceof Error ? err.message : 'Tagging failed — try again.',
+      },
+    });
+  };
+
   // Helper function to create assignments
   const createAssignments = async (tags: string[], itemPath: string) => {
     for (const tag of tags) {
-      await invoke('create-assignment', [
-        [itemPath],
-        tag,
-        mostRecentCategory,
-        null,
-        false,
-      ]);
+      try {
+        await invoke('create-assignment', [
+          [itemPath],
+          tag,
+          mostRecentCategory,
+          null,
+          false,
+        ]);
+      } catch (err) {
+        toastTagError(tag, err);
+        continue;
+      }
       queryClient.invalidateQueries({
         queryKey: ['taxonomy', 'tag', tag],
       });
@@ -209,7 +228,7 @@ export default function HotKeyController() {
             queryKey: ['tags-by-path', item.path],
           });
         }
-        createAssignment();
+        createAssignment().catch((err) => toastTagError(mostRecentTag, err));
       },
       up: () => {},
     },

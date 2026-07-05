@@ -123,6 +123,32 @@
         "extract": [{"from": "onnxtag", "to": "onnxtag"}]
       }
     },
+    "embed": {
+      "windows-amd64": {
+        "version": "local",
+        "source": "./cmd/embed",
+        "archive": "build",
+        "extract": [{"from": "embed.exe", "to": "embed.exe"}]
+      },
+      "linux-amd64": {
+        "version": "local",
+        "source": "./cmd/embed",
+        "archive": "build",
+        "extract": [{"from": "embed", "to": "embed"}]
+      },
+      "darwin-arm64": {
+        "version": "local",
+        "source": "./cmd/embed",
+        "archive": "build",
+        "extract": [{"from": "embed", "to": "embed"}]
+      },
+      "darwin-amd64": {
+        "version": "local",
+        "source": "./cmd/embed",
+        "archive": "build",
+        "extract": [{"from": "embed", "to": "embed"}]
+      }
+    },
     "onnxruntime": {
       "windows-amd64": {
         "version": "1.22.0",

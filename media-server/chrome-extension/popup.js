@@ -1,5 +1,5 @@
 // Lowkey Media Server Chrome Extension
-const API_BASE = 'http://localhost:8090';
+const API_BASE = 'http://localhost:10111';
 
 // State
 let eventSource = null;

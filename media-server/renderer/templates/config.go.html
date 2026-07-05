@@ -813,6 +813,28 @@
                     >
                   </div>
                 </div>
+                <div class="field">
+                  <label class="label">Server port</label>
+                  <input
+                    id="server-port"
+                    class="input"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    value="{{.Config.Port}}"
+                  />
+                  <div
+                    class="hint"
+                    style="
+                      font-size: 0.8em;
+                      color: var(--text-muted);
+                      margin-top: 5px;
+                    "
+                  >
+                    HTTP listen port (default 10111). Takes effect after a
+                    server restart. The LOWKEY_PORT env var overrides this.
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1139,44 +1161,22 @@
             </div>
 
             <div class="config-card config-card--cyan">
-              <div class="section-title">🧩 ONNX Tagger</div>
+              <div class="section-title">🏷️ Auto-Tagging</div>
               <div class="fields">
                 <div class="field">
-                  <label class="label">Model path</label>
-                  <input
-                    disabled
-                    id="onnx-model-path"
-                    class="input"
-                    type="text"
-                    value="{{.Config.OnnxTagger.ModelPath}}"
-                  />
-                </div>
-                <div class="field">
-                  <label class="label">Labels path</label>
-                  <input
-                    id="onnx-labels-path"
-                    class="input"
-                    type="text"
-                    value="{{.Config.OnnxTagger.LabelsPath}}"
-                  />
-                </div>
-                <div class="field">
-                  <label class="label">Config path</label>
-                  <input
-                    id="onnx-config-path"
-                    class="input"
-                    type="text"
-                    value="{{.Config.OnnxTagger.ConfigPath}}"
-                  />
-                </div>
-                <div class="field">
-                  <label class="label">ORT shared library path</label>
-                  <input
-                    id="onnx-ort-path"
-                    class="input"
-                    type="text"
-                    value="{{.Config.OnnxTagger.ORTSharedLibraryPath}}"
-                  />
+                  <label class="label">Model</label>
+                  <select id="autotag-model" class="input">
+                    {{range .TaggerModels}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.AutotagModel}}selected{{end}}
+                    >{{.DisplayName}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    Model used to generate tags from images. Install its files
+                    from the Dependencies tab.
+                  </small>
                 </div>
                 <div class="field-row">
                   <div class="field">
@@ -1200,22 +1200,262 @@
                     />
                   </div>
                 </div>
+                <div class="field">
+                  <label class="label">Execution provider</label>
+                  <select id="autotag-provider" class="input">
+                    <option value="cpu" {{if eq .Config.AutotagProvider "cpu"}}selected{{end}}>CPU</option>
+                    <option value="directml" {{if eq .Config.AutotagProvider "directml"}}selected{{end}}>GPU (DirectML)</option>
+                  </select>
+                  <small class="hint">
+                    {{if .DirectMLInstalled}}
+                    GPU runtime installed (shared with embedding).
+                    {{else}}
+                    GPU (DirectML) needs the runtime — install it from the Visual
+                    Embedding section.
+                    {{end}}
+                  </small>
+                </div>
+                <div class="field">
+                  <label class="label">Performance</label>
+                  <select id="autotag-performance" class="input">
+                    <option value="low" {{if eq .Config.AutotagPerformance "low"}}selected{{end}}>Low — reserve CPU, stay responsive (~25% of cores)</option>
+                    <option value="balanced" {{if eq .Config.AutotagPerformance "balanced"}}selected{{end}}>Balanced (~50% of cores)</option>
+                    <option value="max" {{if eq .Config.AutotagPerformance "max"}}selected{{end}}>Max — all but one core</option>
+                    <option value="custom" {{if eq .Config.AutotagPerformance "custom"}}selected{{end}}>Custom (advanced)</option>
+                  </select>
+                  <small class="hint">
+                    Parallel workers + threads for auto-tagging. The tagging
+                    model loads once per worker, so larger libraries tag far faster.
+                  </small>
+                </div>
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Advanced (Custom workers/threads)</summary>
+                  <div class="field-row" style="margin-top:6px">
+                    <div class="field">
+                      <label class="label">Workers</label>
+                      <input id="autotag-workers" class="input" type="number" min="0" step="1" value="{{.Config.AutotagWorkers}}" />
+                    </div>
+                    <div class="field">
+                      <label class="label">Threads per worker</label>
+                      <input id="autotag-threads" class="input" type="number" min="0" step="1" value="{{.Config.AutotagThreadsPerWorker}}" />
+                    </div>
+                  </div>
+                  <small class="hint">Used only when Performance = Custom (0 = derive from a preset).</small>
+                </details>
+
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Advanced (manual model paths)</summary>
+                  <div class="field" style="margin-top:6px">
+                    <label class="label">Model path (override)</label>
+                    <input
+                      disabled
+                      id="onnx-model-path"
+                      class="input"
+                      type="text"
+                      value="{{.Config.OnnxTagger.ModelPath}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">Labels path (override)</label>
+                    <input
+                      id="onnx-labels-path"
+                      class="input"
+                      type="text"
+                      value="{{.Config.OnnxTagger.LabelsPath}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">Config path (override)</label>
+                    <input
+                      id="onnx-config-path"
+                      class="input"
+                      type="text"
+                      value="{{.Config.OnnxTagger.ConfigPath}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">ORT shared library path (override)</label>
+                    <input
+                      id="onnx-ort-path"
+                      class="input"
+                      type="text"
+                      value="{{.Config.OnnxTagger.ORTSharedLibraryPath}}"
+                    />
+                  </div>
+                  <small class="hint">
+                    Optional fallbacks used only when the selected model's files
+                    aren't installed via Dependencies.
+                  </small>
+                </details>
+              </div>
+            </div>
+
+            <div class="config-card config-card--cyan">
+              <div class="section-title">🖼️ Visual Embedding</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Model (indexing + similarity search)</label>
+                  <select id="embedding-model" class="input">
+                    {{range .EmbeddingModels}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.EmbeddingModel}}selected{{end}}
+                    >{{.DisplayName}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    Governs both new indexing (the <code>embed</code> task) and
+                    image→image similarity search. Text→image search always uses
+                    SigLIP&nbsp;2. Embeddings are stored per model, so switching
+                    never deletes existing vectors — switching back is instant.
+                    Changing this rebuilds the search index in the background;
+                    media must be embedded under a model before that model can
+                    search it.
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Execution provider</label>
+                  <select id="embedding-provider" class="input">
+                    <option value="cpu" {{if eq .Config.EmbeddingProvider "cpu"}}selected{{end}}>CPU</option>
+                    <option value="directml" {{if eq .Config.EmbeddingProvider "directml"}}selected{{end}}>GPU (DirectML)</option>
+                  </select>
+                  <small class="hint">
+                    {{if .DirectMLInstalled}}
+                    GPU runtime installed. DirectML works on any DirectX&nbsp;12 GPU.
+                    {{else}}
+                    GPU (DirectML) needs a one-time runtime download.
+                    <button type="button" id="install-directml" class="btn-secondary" style="margin-left:6px">Download GPU runtime</button>
+                    <span id="directml-status"></span>
+                    {{end}}
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Performance</label>
+                  <select id="embedding-performance" class="input">
+                    <option value="low" {{if eq .Config.EmbeddingPerformance "low"}}selected{{end}}>Low — reserve CPU, stay responsive (~25% of cores)</option>
+                    <option value="balanced" {{if eq .Config.EmbeddingPerformance "balanced"}}selected{{end}}>Balanced (~50% of cores)</option>
+                    <option value="max" {{if eq .Config.EmbeddingPerformance "max"}}selected{{end}}>Max — all but one core</option>
+                    <option value="custom" {{if eq .Config.EmbeddingPerformance "custom"}}selected{{end}}>Custom (advanced)</option>
+                  </select>
+                  <small class="hint">
+                    Controls how many parallel workers and threads embedding uses.
+                    Lower settings keep the system responsive while indexing.
+                  </small>
+                </div>
+
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Advanced (Custom)</summary>
+                  <div class="field-row" style="margin-top:6px">
+                    <div class="field">
+                      <label class="label">Workers</label>
+                      <input id="embedding-workers" class="input" type="number" min="0" step="1" value="{{.Config.EmbeddingWorkers}}" />
+                    </div>
+                    <div class="field">
+                      <label class="label">Threads per worker</label>
+                      <input id="embedding-threads" class="input" type="number" min="0" step="1" value="{{.Config.EmbeddingThreadsPerWorker}}" />
+                    </div>
+                  </div>
+                  <small class="hint">
+                    Used only when Performance = Custom (0 = derive from a preset).
+                    Total CPU load ≈ workers × threads. On GPU, workers are capped
+                    low since the GPU does the compute.
+                  </small>
+                </details>
+
+                <div class="field">
+                  <label class="label">Per-file timeout (seconds)</label>
+                  <input id="onnx-file-timeout" class="input" type="number" min="1" step="1" value="{{.Config.OnnxFileTimeoutSeconds}}" />
+                  <small class="hint">
+                    Applies to all ONNX tasks (embedding &amp; tagging). A single
+                    file that exceeds this — e.g. a corrupt image or video — is
+                    skipped and processing continues (the stuck worker is restarted).
+                  </small>
+                </div>
               </div>
             </div>
 
             <div class="config-card config-card--pink">
-              <div class="section-title">🎙️ Whisper</div>
+              <div class="section-title">🎙️ Transcription</div>
               <div class="fields">
                 <div class="field">
-                  <label class="label">Faster-Whisper executable</label>
-                  <input
-                    disabled
-                    id="faster-whisper-path"
-                    class="input"
-                    type="text"
-                    value="{{.Config.FasterWhisperPath}}"
-                  />
+                  <label class="label">Provider</label>
+                  <select id="transcription-provider" class="input">
+                    {{range .TranscriptionProviders}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.TranscriptionProvider}}selected{{end}}
+                    >{{.DisplayName}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    How speech-to-text runs. Additional providers (HTTP
+                    services, other engines) can plug in here later.
+                  </small>
                 </div>
+                <div class="field">
+                  <label class="label">Model</label>
+                  <select id="transcription-model" class="input">
+                    {{range .TranscriptionModels}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.TranscriptionModel}}selected{{end}}
+                    >{{.DisplayName}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    The speech model is downloaded automatically on first use.
+                    Install the transcription engine itself from the
+                    Dependencies tab.
+                  </small>
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label class="label">Language</label>
+                    <input
+                      id="transcription-language"
+                      class="input"
+                      type="text"
+                      value="{{.Config.TranscriptionLanguage}}"
+                      placeholder="auto-detect"
+                    />
+                    <small class="hint">
+                      ISO code like <code>en</code>, <code>ja</code>,
+                      <code>de</code>. Leave empty to auto-detect per file.
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">Voice activity detection</label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer">
+                      <input
+                        id="transcription-vad"
+                        type="checkbox"
+                        {{if .Config.TranscriptionVADFilter}}checked{{end}}
+                      />
+                      <small class="hint">Skip non-speech (reduces hallucinations)</small>
+                    </label>
+                  </div>
+                </div>
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Advanced (custom binary)</summary>
+                  <div class="field" style="margin-top:6px">
+                    <label class="label">Faster-Whisper executable (override)</label>
+                    <input
+                      disabled
+                      id="faster-whisper-path"
+                      class="input"
+                      type="text"
+                      value="{{.Config.FasterWhisperPath}}"
+                    />
+                    <small class="hint">
+                      Bring your own Faster-Whisper build by setting
+                      <code>fasterWhisperPath</code> in config.json; otherwise
+                      the Faster-Whisper-XXL bundle from the Dependencies tab
+                      is used.
+                    </small>
+                  </div>
+                </details>
               </div>
             </div>
 
@@ -1260,6 +1500,77 @@
                       "
                     >
                       <!-- Users populated via JS -->
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="config-card config-card--pink">
+              <div class="section-title">🔑 API Keys</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Create API Key</label>
+                  <div class="field-row">
+                    <input
+                      id="new-key-name"
+                      class="input"
+                      type="text"
+                      placeholder="Key name (e.g. lokictl)"
+                    />
+                    <select id="new-key-user" class="input"></select>
+                    <button class="btn btn-secondary" id="create-key-btn">
+                      Create
+                    </button>
+                  </div>
+                </div>
+                <div class="field" id="new-key-result" style="display: none">
+                  <label class="label"
+                    >New key — copy it now, it won't be shown again</label
+                  >
+                  <div class="field-row">
+                    <input
+                      id="new-key-value"
+                      class="input"
+                      type="text"
+                      readonly
+                      style="font-family: monospace"
+                    />
+                    <button class="btn btn-secondary" id="copy-key-btn">
+                      Copy
+                    </button>
+                  </div>
+                  <div
+                    style="
+                      color: var(--text-muted);
+                      font-size: 12px;
+                      margin-top: var(--space-2);
+                    "
+                  >
+                    Use it as <code>lokictl --token &lt;key&gt;</code> (or the
+                    <code>LOKICTL_TOKEN</code> env var), an
+                    <code>Authorization: Bearer</code> header, or an
+                    <code>X-API-Key</code> header.
+                  </div>
+                </div>
+                <div class="field">
+                  <label class="label">Existing Keys</label>
+                  <div
+                    class="value"
+                    style="background: transparent; border: none; padding: 0"
+                  >
+                    <ul
+                      id="key-list"
+                      style="
+                        list-style: none;
+                        padding: 0;
+                        margin: 0;
+                        display: flex;
+                        flex-direction: column;
+                        gap: var(--space-2);
+                      "
+                    >
+                      <!-- Keys populated via JS -->
                     </ul>
                   </div>
                 </div>
@@ -1406,6 +1717,32 @@
         statusEl.className = 'status ' + kind;
       }
 
+      // DirectML GPU runtime one-time install.
+      const installDmlBtn = document.getElementById('install-directml');
+      if (installDmlBtn) {
+        installDmlBtn.addEventListener('click', () => {
+          const statusSpan = document.getElementById('directml-status');
+          installDmlBtn.disabled = true;
+          if (statusSpan) statusSpan.textContent = ' Downloading…';
+          fetch('/api/embedding/directml/install', { method: 'POST' })
+            .then((r) => r.json())
+            .then((d) => {
+              if (d.installed) {
+                if (statusSpan) statusSpan.textContent = ' Installed ✓ (reload to refresh)';
+              } else {
+                installDmlBtn.disabled = false;
+                if (statusSpan)
+                  statusSpan.textContent =
+                    ' Failed: ' + (d.error || 'unknown error');
+              }
+            })
+            .catch((e) => {
+              installDmlBtn.disabled = false;
+              if (statusSpan) statusSpan.textContent = ' Failed: ' + e;
+            });
+        });
+      }
+
       // Tab switching
       document.querySelectorAll('.tab-button').forEach((button) => {
         button.addEventListener('click', () => {
@@ -1525,8 +1862,12 @@
 
       function renderDependencies(items) {
         const root = document.getElementById('dependencies-content');
-        const groups = { bundled: [], optional: [], model: [] };
+        const groups = { bundled: [], optional: [], model: [], tool: [] };
         items.forEach((it) => { if (groups[it.category]) groups[it.category].push(it); });
+
+        // Tools (e.g. Faster-Whisper) download through the same machinery as
+        // models, so they share the AI-features section and card renderer.
+        const downloadable = groups.model.concat(groups.tool);
 
         root.innerHTML = `
           <div class="dep-section">
@@ -1540,9 +1881,9 @@
             <div class="dep-cards">${groups.optional.map(optionalCard).join('')}</div>
           </div>
           <div class="dep-section">
-            <h3>AI models</h3>
-            <p class="dep-section-desc">Downloaded on demand. Checksummed and resumable.</p>
-            <div class="dep-cards">${groups.model.map(modelCard).join('')}</div>
+            <h3>AI features</h3>
+            <p class="dep-section-desc">Models and tools downloaded on demand. Checksummed and resumable. Each unlocks a feature.</p>
+            <div class="dep-cards">${downloadable.map(modelCard).join('')}</div>
           </div>
         `;
         wireDepActions();
@@ -1599,9 +1940,12 @@
         const path = it.path
           ? `<div class="dep-path" title="${escDep(it.path)}"><code>${escDep(it.path)}</code></div>`
           : '';
+        const title = it.feature
+          ? `${escDep(it.feature)} <span class="dep-version">${escDep(it.name)}</span>`
+          : escDep(it.name);
         return `<div class="dep-card" data-cat="model" data-id="${escDep(it.id)}">
           <div class="dep-row">
-            <strong>${escDep(it.name)}</strong>
+            <strong>${title}</strong>
             ${stateBadge(it.state)}
             ${it.size_bytes ? `<span class="dep-version">${escDep(fmtBytes(it.size_bytes))}</span>` : ''}
             <div class="dep-actions">${actions}</div>
@@ -1666,6 +2010,8 @@
         }
         const payload = {
           dbPath,
+          port:
+            parseInt(document.getElementById('server-port').value, 10) || 0,
           discordToken: document.getElementById('discord-token').value.trim(),
           ollamaBaseUrl: document
             .getElementById('ollama-base-url')
@@ -1740,6 +2086,55 @@
           onnxCharacterThreshold: parseFloat(
             document.getElementById('onnx-char-thresh').value
           ),
+          embeddingModel: document
+            .getElementById('embedding-model')
+            .value.trim(),
+          embeddingProvider: document
+            .getElementById('embedding-provider')
+            .value.trim(),
+          embeddingPerformance: document
+            .getElementById('embedding-performance')
+            .value.trim(),
+          embeddingWorkers: parseInt(
+            document.getElementById('embedding-workers').value || '0',
+            10
+          ),
+          embeddingThreadsPerWorker: parseInt(
+            document.getElementById('embedding-threads').value || '0',
+            10
+          ),
+          autotagModel: document
+            .getElementById('autotag-model')
+            .value.trim(),
+          autotagProvider: document
+            .getElementById('autotag-provider')
+            .value.trim(),
+          autotagPerformance: document
+            .getElementById('autotag-performance')
+            .value.trim(),
+          autotagWorkers: parseInt(
+            document.getElementById('autotag-workers').value || '0',
+            10
+          ),
+          autotagThreadsPerWorker: parseInt(
+            document.getElementById('autotag-threads').value || '0',
+            10
+          ),
+          onnxFileTimeoutSeconds: parseInt(
+            document.getElementById('onnx-file-timeout').value || '0',
+            10
+          ),
+          transcriptionProvider: document
+            .getElementById('transcription-provider')
+            .value.trim(),
+          transcriptionModel: document
+            .getElementById('transcription-model')
+            .value.trim(),
+          transcriptionLanguage: document
+            .getElementById('transcription-language')
+            .value.trim(),
+          transcriptionVadFilter: document.getElementById('transcription-vad')
+            .checked,
           fasterWhisperPath: document
             .getElementById('faster-whisper-path')
             .value.trim(),
@@ -1876,6 +2271,14 @@
               `;
               userListEl.appendChild(li);
             });
+            // Also populate the API-key owner dropdown
+            keyUserSelect.innerHTML = '';
+            data.users.forEach((user) => {
+              const opt = document.createElement('option');
+              opt.value = user.username;
+              opt.textContent = user.username;
+              keyUserSelect.appendChild(opt);
+            });
           })
           .catch((err) => console.error('Failed to load users', err));
       }
@@ -1928,8 +2331,107 @@
           .catch((err) => setStatus('Error creating user: ' + err, 'error'));
       });
 
+      // API Keys
+      const keyListEl = document.getElementById('key-list');
+      const keyUserSelect = document.getElementById('new-key-user');
+      const createKeyBtn = document.getElementById('create-key-btn');
+
+      function fmtEpoch(secs) {
+        return secs ? new Date(secs * 1000).toLocaleString() : 'never';
+      }
+
+      function loadKeys() {
+        fetch('/auth/keys')
+          .then((r) => r.json())
+          .then((data) => {
+            keyListEl.innerHTML = '';
+            (data.keys || []).forEach((key) => {
+              const li = document.createElement('li');
+              li.style.cssText =
+                'display: flex; justify-content: space-between; align-items: center; padding: var(--space-2); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md);';
+              li.innerHTML = `
+                <span>
+                  <strong>${esc(key.name)}</strong> — ${esc(key.username)} · <code>${esc(key.prefix)}…</code><br/>
+                  <span style="color: var(--text-muted); font-size: 12px">created ${fmtEpoch(key.created_at)} · last used ${fmtEpoch(key.last_used_at)}</span>
+                </span>
+                <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px; color: var(--status-error); border-color: var(--status-error);" onclick="deleteKey(${key.id}, '${esc(key.name)}')">Revoke</button>
+              `;
+              keyListEl.appendChild(li);
+            });
+          })
+          .catch((err) => console.error('Failed to load API keys', err));
+      }
+
+      function deleteKey(id, name) {
+        if (
+          !confirm(
+            'Revoke API key "' +
+              name +
+              '"? Clients using it will stop working.'
+          )
+        )
+          return;
+        fetch('/auth/keys?id=' + id, { method: 'DELETE' })
+          .then((r) => r.json())
+          .then((res) => {
+            if (res.status === 'deleted') {
+              setStatus('API key revoked', 'success');
+              loadKeys();
+            } else {
+              setStatus(
+                'Failed to revoke key: ' + (res.error || 'Unknown error'),
+                'error'
+              );
+            }
+          })
+          .catch((err) => setStatus('Error revoking key: ' + err, 'error'));
+      }
+
+      createKeyBtn.addEventListener('click', () => {
+        const name = document.getElementById('new-key-name').value.trim();
+        const username = keyUserSelect.value;
+        if (!name) {
+          setStatus('Key name required', 'error');
+          return;
+        }
+        fetch('/auth/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, username }),
+        })
+          .then(async (r) => {
+            if (r.ok) return r.json();
+            const text = await r.text();
+            throw new Error(text || r.statusText);
+          })
+          .then((res) => {
+            document.getElementById('new-key-name').value = '';
+            document.getElementById('new-key-value').value = res.key;
+            document.getElementById('new-key-result').style.display = '';
+            setStatus('API key created — copy it now', 'success');
+            loadKeys();
+          })
+          .catch((err) => setStatus('Error creating key: ' + err, 'error'));
+      });
+
+      document.getElementById('copy-key-btn').addEventListener('click', () => {
+        const input = document.getElementById('new-key-value');
+        input.select();
+        const done = () => setStatus('Key copied to clipboard', 'success');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(input.value).then(done, () => {
+            document.execCommand('copy');
+            done();
+          });
+        } else {
+          document.execCommand('copy');
+          done();
+        }
+      });
+
       // Initial load
       loadUsers();
+      loadKeys();
     </script>
   </body>
 </html>

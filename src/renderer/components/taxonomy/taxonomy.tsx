@@ -22,6 +22,7 @@ import SuggestionSections from './suggestion-sections';
 import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
 import { useTagSearch } from '../../hooks/useTagSearch';
+import { useMeaningMode } from '../../hooks/useMeaningMode';
 
 const VIRTUALIZE_THRESHOLD = 300;
 
@@ -95,6 +96,10 @@ export default function Taxonomy() {
   // rather than guard the main thread — hence a short 150ms window.
   const [tagFilterInput, setTagFilterInput] = useState<string>('');
   const [tagFilter, setTagFilter] = useState<string>('');
+  // "Search by meaning" mode: typed text commits as a visual: (text→image)
+  // predicate instead of filtering the tag tree. Shared + sticky with the
+  // command palette (useMeaningMode) — stays on until the user toggles it off.
+  const { meaningMode } = useMeaningMode();
   // Set once the search input has been focused. Used to warm the full-tag
   // fetch (and worker index) before the first keystroke so the initial search
   // isn't stalled waiting on the network. Stays true for the session — with
@@ -106,8 +111,16 @@ export default function Taxonomy() {
     }, 150)
   );
   useEffect(() => {
+    // In meaning mode the text drives a semantic query, not tag-tree filtering
+    // — drop any pending/active filter. (The toggle may flip from either this
+    // sidebar or the command palette; both arrive here via useMeaningMode.)
+    if (meaningMode) {
+      setTagFilter('');
+      debouncedSetTagFilter.current.cancel();
+      return;
+    }
     debouncedSetTagFilter.current(tagFilterInput);
-  }, [tagFilterInput]);
+  }, [tagFilterInput, meaningMode]);
   useEffect(() => {
     const debounced = debouncedSetTagFilter.current;
     return () => {
@@ -322,6 +335,22 @@ export default function Taxonomy() {
                 data: { key, join },
               })
             }
+            onSubmitVisual={(t) => {
+              libraryService.send({
+                type: 'ADD_PREDICATE',
+                data: {
+                  predicate: {
+                    type: 'visual',
+                    value: t,
+                    exclude: false,
+                    join: filteringMode === 'OR' ? 'OR' : 'AND',
+                  },
+                },
+              });
+              setTagFilterInput('');
+              setTagFilter('');
+              debouncedSetTagFilter.current.cancel();
+            }}
             onClearText={() => {
               setTagFilterInput('');
               setTagFilter('');

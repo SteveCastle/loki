@@ -121,7 +121,20 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
           });
         }
         if (isDroppedTag(droppedItem) && item.path) {
-          createAssignment(droppedItem);
+          // Surface failures — a rejected create-assignment (e.g. the shared
+          // DB briefly locked by the Go media-server) used to vanish as an
+          // unhandled rejection, making the drop look like it did nothing.
+          createAssignment(droppedItem).catch((err) => {
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: {
+                type: 'error',
+                title: `Could not apply "${droppedItem.label}"`,
+                message:
+                  err instanceof Error ? err.message : 'Tagging failed — try again.',
+              },
+            });
+          });
         }
 
         async function updateAssignmentWeight(media: DroppedMedia) {

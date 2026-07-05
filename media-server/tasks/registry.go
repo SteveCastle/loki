@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/storage"
 )
 
@@ -33,11 +34,22 @@ func SetStorageRegistry(r *storage.Registry) {
 }
 
 func init() {
+	// Whenever media rows are deleted (cleanup task, remove task, or any other
+	// RemoveItemsFromDB caller), evict the paths from the live vector index so
+	// similarity search stops returning deleted items immediately instead of
+	// after the next index rebuild.
+	media.SetMediaRemovalHook(func(paths []string) {
+		for _, p := range paths {
+			IndexDelete(p)
+		}
+	})
+
 	// Register built-in tasks
 	RegisterTask("wait", "Wait", nil, waitFn)
 	RegisterTask("remove", "Remove Media", nil, removeFromDB)
 	RegisterTask("cleanup", "CleanUp", nil, cleanUpFn)
 	RegisterTask("autotag", "Auto Tag (ONNX)", nil, autotagTask)
+	RegisterTask("embed", "Visual Embedding (ONNX)", nil, embedTask)
 
 	RegisterTask("metadata", "Generate Metadata", metadataOptions, metadataTask)
 	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
@@ -50,8 +62,13 @@ func init() {
 	// an entry fall through to ResolveHost's "localhost" default. Adding a
 	// new vision-using task is one line: route it through InferenceHost.
 	visionHost := func(string) string { return InferenceHost() }
-	RegisterHostResolver("autotag", visionHost)
+	// Auto-tagging is a local ONNX task with its own concurrency bucket — like
+	// embed, it parallelizes internally and must not share the LLM cap.
+	RegisterHostResolver("autotag", func(string) string { return HostBucketAutotag })
 	RegisterHostResolver("metadata", visionHost)
+	// Embedding is a local ONNX task with its own concurrency bucket — it must
+	// not share the LLM inference cap (it parallelizes internally instead).
+	RegisterHostResolver("embed", func(string) string { return HostBucketEmbed })
 	RegisterHostResolver("ingest", urlHostResolver)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)

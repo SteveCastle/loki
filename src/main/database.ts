@@ -134,17 +134,53 @@ export class Database {
       });
     });
   }
-  prepare(query: string): Promise<sqlite3.Statement> {
+  prepare(query: string): Promise<PreparedStatement> {
     return new Promise((resolve, reject) => {
       const statement = this.db.prepare(query, (err: Error | null) => {
         if (err) {
           console.error('Error preparing query:', err);
           reject(err);
         } else {
-          resolve(statement);
+          resolve(new PreparedStatement(statement));
         }
       });
     });
+  }
+
+  // Run `fn` inside a transaction that can never leak. The raw
+  // BEGIN...COMMIT pattern this replaces had a failure mode that wedged the
+  // whole connection: any error between BEGIN and COMMIT (e.g. SQLITE_BUSY
+  // from the Go media-server writing to the shared dream.sqlite) left the
+  // transaction open, and every later write failed with "cannot start a
+  // transaction within a transaction" until the app was restarted.
+  async withTransaction<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      await this.run('BEGIN TRANSACTION');
+    } catch (err) {
+      // Self-heal a connection a previous leak left mid-transaction. Match on
+      // the message, not `instanceof Error` — sqlite3's native errors can come
+      // from a different JS realm where instanceof fails.
+      const msg = String((err as { message?: string })?.message ?? err);
+      if (msg.includes('within a transaction')) {
+        await this.run('ROLLBACK');
+        await this.run('BEGIN TRANSACTION');
+      } else {
+        throw err;
+      }
+    }
+    try {
+      const result = await fn();
+      await this.run('COMMIT');
+      return result;
+    } catch (err) {
+      try {
+        await this.run('ROLLBACK');
+      } catch {
+        // Rollback can itself fail (e.g. the connection dropped); surface the
+        // original error rather than masking it.
+      }
+      throw err;
+    }
   }
 
   close(): Promise<void> {
@@ -158,6 +194,32 @@ export class Database {
           resolve();
         }
       });
+    });
+  }
+}
+
+// Promise wrapper around sqlite3.Statement. The raw statement's run() is
+// callback-based and returns the statement itself, so `await stmt.run(...)`
+// silently didn't wait — COMMIT could race in-flight inserts ("cannot commit
+// transaction - SQL statements in progress") and insert errors surfaced as
+// uncaught exceptions instead of rejecting the caller.
+export class PreparedStatement {
+  constructor(private stmt: sqlite3.Statement) {}
+
+  run(...params: any[]): Promise<{ changes: number }> {
+    return new Promise((resolve, reject) => {
+      this.stmt.run(...params, function (this: any, err: Error | null) {
+        if (err) reject(err);
+        else resolve({ changes: this.changes });
+      });
+    });
+  }
+
+  finalize(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.stmt.finalize((err: Error | null) =>
+        err ? reject(err) : resolve()
+      );
     });
   }
 }

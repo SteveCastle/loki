@@ -10,10 +10,10 @@ import {
   clampVolume,
 } from 'settings';
 import {
-  invoke, send, on, store, appArgs, capabilities, isElectron,
+  invoke, send, on, store, appArgs, capabilities, isElectron, mediaServerBase,
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
-import type { Query } from './query/types';
+import type { Query, Predicate } from './query/types';
 import { predicateKey } from './query/types';
 import {
   addPredicateWithMode,
@@ -48,6 +48,7 @@ export type Item = {
   description?: string;
   height?: number | null;
   width?: number | null;
+  score?: number;
 };
 
 type Props = {
@@ -167,6 +168,42 @@ type LibraryState = {
   // Cache for masonry layout dimensions to maintain stable layout across view switches
   masonryDimensionsCache: Record<string, { width: number; height: number }>;
 };
+
+const queryHasVisual = (predicates: Predicate[] = []): boolean =>
+  predicates.some(
+    (p) => p.type === 'similar' || p.type === 'visual' || p.type === 'clip'
+  );
+
+const applySimilaritySort = assign<LibraryState, AnyEventObject>({
+  settings: (context) => {
+    const hasVisual = queryHasVisual(context.query?.predicates);
+    if (hasVisual) {
+      return { ...context.settings, sortBy: 'similarity' };
+    }
+    // Leaving a visual query: if we were on 'similarity', fall back to 'name'.
+    if (context.settings.sortBy === 'similarity') {
+      return { ...context.settings, sortBy: 'name' };
+    }
+    return context.settings;
+  },
+});
+
+const addQueryErrorToast = assign<LibraryState, AnyEventObject>({
+  toasts: (context, event) => {
+    const err = event.data;
+    const message =
+      'Query failed: ' +
+      (err?.message ?? (typeof err === 'string' ? err : 'unknown error'));
+    const newToast = {
+      id: uniqueId(),
+      type: 'error' as const,
+      title: 'Query Error',
+      message,
+      timestamp: Date.now(),
+    };
+    return [...context.toasts, newToast];
+  },
+});
 
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
@@ -767,7 +804,11 @@ const queryMutationOn = {
           event.data.predicate,
           context.settings.filteringMode
         );
-        return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+        // The new result set starts at the top. A mounted list view resets
+        // itself on the libraryLoadId change, but when the query changes while
+        // the list is unmounted (e.g. similar-search from the detail screen)
+        // the persisted position would be restored stale on the next mount.
+        return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
       }),
     ],
   },
@@ -783,7 +824,7 @@ const queryMutationOn = {
       target: 'runningQuery',
       actions: assign<LibraryState, AnyEventObject>((context, event) => {
         const q = removePredicate(context.query, event.data.key);
-        return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+        return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
       }),
     },
   ],
@@ -791,14 +832,14 @@ const queryMutationOn = {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
       const q = toggleExclude(context.query, event.data.key);
-      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
   },
   SET_PREDICATE_JOIN: {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
       const q = setPredicateJoin(context.query, event.data.key, event.data.join);
-      return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
   },
   SET_QUERY: [
@@ -814,7 +855,7 @@ const queryMutationOn = {
         capturePreviousIfEmpty,
         assign<LibraryState, AnyEventObject>((_context, event) => {
           const q = { predicates: parseQuery(event.data.text) };
-          return { query: q, dbQuery: { tags: tagsFromQuery(q) } };
+          return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
         }),
       ],
     },
@@ -1408,7 +1449,7 @@ export const libraryMachine = createMachine(
                     if (context.authToken) {
                       headers['Authorization'] = `Bearer ${context.authToken}`;
                     }
-                    fetch('http://localhost:8090/config', {
+                    fetch(`${mediaServerBase}/config`, {
                       method: 'POST',
                       headers,
                       body: JSON.stringify({ dbPath: context.dbPath }),
@@ -1730,14 +1771,18 @@ export const libraryMachine = createMachine(
               src: (context) =>
                 platformLoadMediaByQuery(
                   context.query.predicates,
-                  context.settings.filteringMode
+                  context.settings.filteringMode,
+                  context.authToken
                 ),
               onDone: {
                 target: 'loadedFromDB',
-                actions: ['setLibraryWithPrevious'],
+                // applySimilaritySort here too (not just on runningQuery) so a
+                // loaded/restored visual query also auto-sorts by similarity.
+                actions: ['setLibraryWithPrevious', 'applySimilaritySort'],
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: ['addQueryErrorToast'],
               },
             },
             on: { ...queryMutationOn },
@@ -1750,14 +1795,16 @@ export const libraryMachine = createMachine(
               src: (context) =>
                 platformLoadMediaByQuery(
                   context.query.predicates,
-                  context.settings.filteringMode
+                  context.settings.filteringMode,
+                  context.authToken
                 ),
               onDone: {
                 target: 'loadedFromDB',
-                actions: ['setLibrary'],
+                actions: ['setLibrary', 'applySimilaritySort'],
               },
               onError: {
                 target: 'loadedFromFS',
+                actions: ['addQueryErrorToast'],
               },
             },
             on: { ...queryMutationOn },
@@ -2093,6 +2140,16 @@ export const libraryMachine = createMachine(
                       sortBy: 'shuffle',
                     };
                   },
+                }),
+              },
+              SORTED_SCORE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'similarity',
+                  }),
                 }),
               },
             },
@@ -2490,6 +2547,16 @@ export const libraryMachine = createMachine(
                   },
                 }),
               },
+              SORTED_SCORE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'similarity',
+                  }),
+                }),
+              },
               UPDATE_MEDIA_ELO: {
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
@@ -2779,6 +2846,8 @@ export const libraryMachine = createMachine(
   {
     actions: {
       setLibrary,
+      applySimilaritySort,
+      addQueryErrorToast,
       setLibraryWithPrevious,
       setPath,
       setDB,

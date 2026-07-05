@@ -7,7 +7,7 @@
     <a href="/job/{{.ID}}">{{ .Command }}</a>
   </div>
   <div class="jobs-cell arguments" data-label="Arguments">{{ .Arguments }}</div>
-  <div class="jobs-cell input" data-label="Input">{{ .Input }}</div>
+  <div class="jobs-cell input" data-label="Input">{{ template "jobInput" (jobInputView .Input) }}</div>
   <div class="jobs-cell created" data-label="Created">
     {{ formatTime .CreatedAt }}
   </div>

@@ -1559,6 +1559,7 @@
               <option value="move">Move Files</option>
               <option value="metadata">Generate Metadata</option>
               <option value="autotag">Auto Tag (ONNX)</option>
+              <option value="embed">Generate Embeddings (Visual Search)</option>
               <option value="lora-dataset">Create LoRA Dataset</option>
               <option value="hls">Pre-generate HLS Streams</option>
             </select>
@@ -2307,6 +2308,7 @@
           const applyAllowedTasks = [
             'metadata',
             'autotag',
+            'embed',
             'move',
             'remove',
             'lora-dataset',
@@ -2468,6 +2470,25 @@
               input = '';
             } else {
               // Pass comma-separated list to support multi-file in one task
+              input = Array.from(selectedItems).join(',');
+            }
+          } else if (selectedTask === 'embed') {
+            // Always incremental: the embed task skips media already embedded
+            // for the active model, so there is no overwrite variant.
+            command = 'embed';
+            args = [];
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push('--query64=' + encQuery);
+              } catch (e) {
+                args.push('--query', currentSearchQuery);
+              }
+              input = '';
+            } else {
+              // Comma-separated list to support multi-file in one task
               input = Array.from(selectedItems).join(',');
             }
           } else if (selectedTask === 'lora-dataset') {

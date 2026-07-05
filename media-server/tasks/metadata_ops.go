@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -30,6 +29,7 @@ import (
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/platform"
+	"github.com/stevecastle/shrike/transcribe"
 )
 
 // generateDescriptions generates descriptions for media files using Ollama
@@ -296,11 +296,11 @@ func updateMediaMetadata(db *sql.DB, path, metadataType, value string) error {
 	return err
 }
 
-// extractVideoFrame extracts a single frame from a video file using ffmpeg.
-// It intelligently seeks to a representative frame (avoiding black intros) and handles edge cases:
-// - Short videos: seeks proportionally (10% duration, minimum 0.1s)
-// - Single-frame GIFs: extracts the only frame
-// - Very short videos: extracts first available frame
+// extractVideoFrame extracts a single representative frame from a video file.
+// It seeks to the midpoint of the video (title cards, black intros, and fade-ins
+// cluster at the start, so the middle is far more representative than frame 0),
+// falling back to the first frame when the duration is unknown or the mid-seek
+// yields nothing (e.g. single-frame GIFs).
 //
 // Parameters:
 //   - ctx: context for cancellation
@@ -311,53 +311,35 @@ func updateMediaMetadata(db *sql.DB, path, metadataType, value string) error {
 //   - string: path to the extracted frame (caller is responsible for cleanup)
 //   - error: if extraction fails
 func extractVideoFrame(ctx context.Context, videoPath string, outputPath string) (string, error) {
-	// Get video duration and frame count using ffprobe
-	duration, frameCount, err := getVideoMetadata(ctx, videoPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to probe video metadata: %w", err)
-	}
-
-	// Generate output path if not provided
 	if outputPath == "" {
 		outputPath = filepath.Join(os.TempDir(), fmt.Sprintf("video_frame_%s_%d.jpg",
 			strings.TrimSuffix(filepath.Base(videoPath), filepath.Ext(videoPath)),
 			time.Now().UnixNano()))
 	}
 
-	// Determine optimal seek time based on video characteristics
-	var seekTime float64
-	if frameCount <= 1 {
-		// Single-frame video or GIF - extract the only frame
+	// Midpoint seek. Duration comes from a header-only probe; 0 means unknown.
+	// Sub-second clips just take the first frame.
+	seekTime := probeVideoDuration(ctx, videoPath) / 2
+	if seekTime < 0.5 {
 		seekTime = 0
-	} else if duration < 1.0 {
-		// Very short video (< 1 second) - seek to 10% or 0.1s, whichever is smaller
-		seekTime = duration * 0.1
-		if seekTime < 0.1 {
-			seekTime = 0
-		}
-	} else if duration < 5.0 {
-		// Short video (1-5 seconds) - seek to 1 second or 20% duration
-		seekTime = 1.0
-		if duration*0.2 > 1.0 {
-			seekTime = duration * 0.2
-		}
-	} else {
-		// Normal video - seek to 3 seconds or 10% duration, whichever is larger (avoiding intros)
-		seekTime = 3.0
-		if duration*0.1 > seekTime {
-			seekTime = duration * 0.1
-		}
-		// Cap at 30 seconds to avoid seeking too far in very long videos
-		if seekTime > 30.0 {
-			seekTime = 30.0
-		}
 	}
 
-	// Build ffmpeg command with optimized parameters
-	// -ss before -i for fast seeking
-	// -frames:v 1 to extract exactly one frame
-	// -q:v 2 for high quality JPEG (scale 2-31, lower is better)
-	// -y to overwrite without asking
+	err := runFFmpegSingleFrame(ctx, videoPath, outputPath, seekTime)
+	if err != nil && seekTime > 0 && ctx.Err() == nil {
+		// Mid-seek produced no frame (stream shorter than the container claims,
+		// single-frame animations, etc.) — retry from the start.
+		err = runFFmpegSingleFrame(ctx, videoPath, outputPath, 0)
+	}
+	if err != nil {
+		return "", err
+	}
+	return outputPath, nil
+}
+
+// runFFmpegSingleFrame extracts one frame at seekTime seconds into outputPath.
+// -ss before -i is a fast keyframe-level seek (no decoding up to that point),
+// so cost is roughly constant regardless of where in the video we seek.
+func runFFmpegSingleFrame(ctx context.Context, videoPath, outputPath string, seekTime float64) error {
 	args := []string{
 		"-ss", fmt.Sprintf("%.3f", seekTime),
 		"-i", videoPath,
@@ -366,76 +348,43 @@ func extractVideoFrame(ctx context.Context, videoPath string, outputPath string)
 		"-y",
 		outputPath,
 	}
-
 	cmd := exec.CommandContext(ctx, deps.MustBundled("ffmpeg"), args...)
 	platform.HideSubprocessWindow(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("ffmpeg frame extraction failed (seek=%.2fs, duration=%.2fs, frames=%d): %w\nOutput: %s",
-			seekTime, duration, frameCount, err, string(output))
+		return fmt.Errorf("ffmpeg frame extraction failed (seek=%.2fs): %w\nOutput: %s",
+			seekTime, err, string(output))
 	}
-
-	// Verify output file was created
+	// ffmpeg exits 0 even when the seek lands past the last frame and nothing is
+	// written, so verify the output exists.
 	if _, statErr := os.Stat(outputPath); statErr != nil {
-		return "", fmt.Errorf("ffmpeg completed but output file not found: %w", statErr)
+		return fmt.Errorf("ffmpeg completed but output file not found (seek=%.2fs): %w", seekTime, statErr)
 	}
-
-	return outputPath, nil
+	return nil
 }
 
-// getVideoMetadata retrieves duration and frame count from a video file using ffprobe
-func getVideoMetadata(ctx context.Context, videoPath string) (duration float64, frameCount int, err error) {
-	// Query duration
-	durationCmd := exec.CommandContext(ctx, deps.MustBundled("ffprobe"),
+// probeVideoDuration returns the container duration in seconds from a
+// header-only ffprobe (no frame decoding), or 0 when it can't be determined.
+func probeVideoDuration(ctx context.Context, videoPath string) float64 {
+	cmd := exec.CommandContext(ctx, deps.MustBundled("ffprobe"),
 		"-v", "error",
 		"-show_entries", "format=duration",
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		videoPath)
-	platform.HideSubprocessWindow(durationCmd)
-
-	durationOut, err := durationCmd.Output()
+	platform.HideSubprocessWindow(cmd)
+	out, err := cmd.Output()
 	if err != nil {
-		return 0, 0, fmt.Errorf("ffprobe duration query failed: %w", err)
+		return 0
 	}
-
-	durationStr := strings.TrimSpace(string(durationOut))
-	if durationStr != "" && durationStr != "N/A" {
-		duration, err = strconv.ParseFloat(durationStr, 64)
-		if err != nil {
-			// If parsing fails, try to extract from format
-			duration = 1.0 // Default fallback
-		}
-	} else {
-		duration = 1.0 // Default for files without duration metadata
+	s := strings.TrimSpace(string(out))
+	if s == "" || s == "N/A" {
+		return 0
 	}
-
-	// Get frame count
-	frameCmd := exec.CommandContext(ctx, deps.MustBundled("ffprobe"),
-		"-v", "error",
-		"-select_streams", "v:0",
-		"-count_frames",
-		"-show_entries", "stream=nb_read_frames",
-		"-of", "default=noprint_wrappers=1:nokey=1",
-		videoPath)
-	platform.HideSubprocessWindow(frameCmd)
-
-	frameOut, err := frameCmd.Output()
-	if err == nil {
-		frameStr := strings.TrimSpace(string(frameOut))
-		if frameStr != "" && frameStr != "N/A" {
-			frameCount, _ = strconv.Atoi(frameStr)
-		}
+	d, err := strconv.ParseFloat(s, 64)
+	if err != nil || d < 0 {
+		return 0
 	}
-
-	// If frame count is unavailable, estimate from duration and assume 24fps minimum
-	if frameCount == 0 && duration > 0 {
-		frameCount = int(duration * 24) // Conservative estimate
-		if frameCount == 0 {
-			frameCount = 1 // At least one frame
-		}
-	}
-
-	return duration, frameCount, nil
+	return d
 }
 
 func describeFileWithOllama(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath, model, customPrompt string) (string, error) {
@@ -611,131 +560,27 @@ func callOllamaVision(ctx context.Context, imagePath, _ string, customPrompt str
 	return callVisionLLM(timeoutCtx, imagePath, resolveDescribePrompt(customPrompt))
 }
 
+// generateTranscriptWithFasterWhisper transcribes one file through the
+// transcribe facade — the provider (local Faster-Whisper CLI today, possibly
+// an HTTP service later) and its model/language/VAD settings come from config.
 func generateTranscriptWithFasterWhisper(ctx context.Context, q *jobqueue.Queue, jobID string, filePath string) (string, error) {
-	// Faster-Whisper is not bundled in this build. Caller falls back to user-configured path.
-	exePath := deps.BundledOrEmpty("faster-whisper")
-	var err error
-	if exePath == "" {
-		err = fmt.Errorf("faster-whisper not bundled; configure FasterWhisperPath in settings to enable transcription")
-	}
-	if err != nil {
-		// Fall back to config if dependency system doesn't have it
+	logFn := func(line string) {
 		if q != nil && jobID != "" {
-			q.PushJobStdout(jobID, fmt.Sprintf("[whisper] dependency lookup failed: %v; falling back to config FasterWhisperPath", err))
-		}
-		exePath = appconfig.Get().FasterWhisperPath
-		if strings.TrimSpace(exePath) == "" {
-			return "", fmt.Errorf("faster-whisper not found: dependency not installed and FasterWhisperPath not configured. Please install faster-whisper from the Dependencies page")
+			q.PushJobStdout(jobID, "[transcribe] "+line)
 		}
 	}
-
-	// --vad_filter trims non-speech, which dramatically reduces hallucinations
-	// during silent stretches in long clips. --language=en skips the
-	// (often-wrong on silent openings) auto-detect — change if non-English
-	// content needs supporting.
-	args := []string{
-		"--beep_off",
-		"--output_format=vtt",
-		"--output_dir=source",
-		// faster-whisper itself warns that large-v3 can produce worse
-		// results than large-v2 on general content (more hallucinations,
-		// some accents regressed). Stick with v2.
-		"--model", "large-v2",
-		"--vad_filter", "true",
-		"--language", "en",
-		filePath,
-	}
-	cmd := exec.CommandContext(ctx, exePath, args...)
-	platform.HideSubprocessWindow(cmd)
-
-	// Pipe both stdout and stderr line-by-line into the job stream so failures
-	// surface in the job's output (rather than disappearing into a dropped
-	// process buffer). faster-whisper-xxl writes progress and errors to
-	// stderr — without this we'd lose the actual reason for a failed run.
-	pushLine := func(line string) {
-		if q != nil && jobID != "" {
-			q.PushJobStdout(jobID, "[whisper] "+line)
-		}
-	}
-	pushLine(fmt.Sprintf("running: %s %s", exePath, strings.Join(args, " ")))
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", fmt.Errorf("faster-whisper-xxl: stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return "", fmt.Errorf("faster-whisper-xxl: stderr pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("faster-whisper-xxl: start: %w", err)
-	}
-
-	scanReader := func(r io.Reader) {
-		scanner := bufio.NewScanner(r)
-		// Whisper progress lines can be long; bump the buffer so we don't drop them.
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-		for scanner.Scan() {
-			pushLine(scanner.Text())
-		}
-	}
-	go scanReader(stdout)
-	go scanReader(stderr)
-
-	waitErr := cmd.Wait()
-
-	vttPath := filePath[:len(filePath)-len(filepath.Ext(filePath))] + ".vtt"
-
-	// Trust the artifact, not the exit code. faster-whisper-xxl is a
-	// PyInstaller-bundled binary that on Windows sometimes returns
-	// 0xc0000409 (STATUS_STACK_BUFFER_OVERRUN) AFTER all transcription
-	// work is complete and the .vtt is written — a known teardown crash
-	// in the bundled CRT/CUDA runtime, not a transcription failure. If
-	// the expected output is on disk, treat the run as success regardless
-	// of the exit code.
-	if stat, statErr := os.Stat(vttPath); statErr == nil && stat.Size() > 0 {
-		if waitErr != nil {
-			var exitErr *exec.ExitError
-			if errors.As(waitErr, &exitErr) {
-				pushLine(fmt.Sprintf("exited with code %d but VTT is present (%d bytes); treating as success", exitErr.ExitCode(), stat.Size()))
-			} else {
-				pushLine(fmt.Sprintf("wait error %v but VTT is present (%d bytes); treating as success", waitErr, stat.Size()))
-			}
-		} else {
-			pushLine("transcription complete; reading " + vttPath)
-		}
-		return readFileAll(vttPath)
-	}
-
-	// No VTT produced — this is a real failure.
-	if waitErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) {
-			pushLine(fmt.Sprintf("exited with code %d, no VTT produced", exitErr.ExitCode()))
-			return "", fmt.Errorf("faster-whisper-xxl exited with code %d (no VTT produced): %w", exitErr.ExitCode(), waitErr)
-		}
-		return "", fmt.Errorf("faster-whisper-xxl failed (no VTT produced): %w", waitErr)
-	}
-	return "", fmt.Errorf("faster-whisper-xxl exited cleanly but no VTT was produced at %s", vttPath)
-}
-
-func readFileAll(path string) (string, error) {
-	f, err := os.Open(path)
+	provider, req, err := transcribe.FromConfig(filePath, logFn)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	var sb strings.Builder
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		sb.WriteString(s.Text())
-		sb.WriteByte('\n')
+	if err := provider.Available(); err != nil {
+		return "", err
 	}
-	if scanErr := s.Err(); scanErr != nil {
-		return "", scanErr
+	res, err := provider.Transcribe(ctx, req)
+	if err != nil {
+		return "", err
 	}
-	return sb.String(), nil
+	return res.Text, nil
 }
 
 func getImageDimensions(path string) (int, int, error) {
@@ -825,6 +670,7 @@ func processDescriptionForFile(ctx context.Context, q *jobqueue.Queue, jobID str
 	if err := updateMediaMetadata(q.Db, filePath, "description", description); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	notifyProgress(ProgressDescription, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  description: generated"))
 	return nil
 }
@@ -867,6 +713,7 @@ func processTranscriptForFile(ctx context.Context, q *jobqueue.Queue, jobID stri
 	if err := updateMediaMetadata(q.Db, filePath, "transcript", transcript); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	notifyProgress(ProgressTranscript, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  transcript: generated"))
 	return nil
 }
@@ -914,6 +761,9 @@ func processHashForFile(ctx context.Context, q *jobqueue.Queue, jobID string, fi
 	if err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	// One UPDATE sets both columns, so both coverage counters advance.
+	notifyProgress(ProgressHash, 1)
+	notifyProgress(ProgressSize, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  hash: generated"))
 	return nil
 }
@@ -966,6 +816,7 @@ func processDimensionsForFile(ctx context.Context, q *jobqueue.Queue, jobID stri
 	if err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
+	notifyProgress(ProgressDimensions, 1)
 	q.PushJobStdout(jobID, fmt.Sprintf("  dimensions: %dx%d", width, height))
 	return nil
 }

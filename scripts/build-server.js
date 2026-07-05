@@ -48,3 +48,11 @@ const ldflags = process.platform === 'win32' ? '' : '';
 run(`go build${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
 
 console.log(`\n✓ Server built: media-server/media-server${ext}`);
+
+// 4. Build the lokictl CLI (ships next to the server binary).
+// Skip with SKIP_CLI=1 for a server-only rebuild.
+if (process.env.SKIP_CLI !== '1') {
+  console.log('\n--- Building lokictl CLI ---');
+  run(`go build -o lokictl${ext} ./cmd/lokictl`, { cwd: SERVER_DIR });
+  console.log(`\n✓ CLI built: media-server/lokictl${ext}`);
+}

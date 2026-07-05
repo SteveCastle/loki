@@ -20,6 +20,7 @@ type Optional struct {
 	Name        string
 	Binary      string
 	VersionArgs []string
+	Feature     string // user-facing capability this unlocks
 	Description string
 	DocsURL     string
 }

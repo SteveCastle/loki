@@ -478,13 +478,14 @@ func TestApplyEnvOverrides(t *testing.T) {
 
 	// Set env vars
 	envs := map[string]string{
-		"LOWKEY_DB_PATH":             "/env/db.sqlite",
-		"LOWKEY_DOWNLOAD_PATH":       "/env/downloads",
-		"LOWKEY_OLLAMA_BASE_URL":     "http://env-ollama:11434",
-		"LOWKEY_OLLAMA_MODEL":        "env-model",
-		"LOWKEY_INFERENCE_PROVIDER":           "runpod",
-		"LOWKEY_RUNPOD_ENDPOINT":              "https://api.runpod.ai/v2/abc123/run",
-		"LOWKEY_RUNPOD_API_KEY":               "env-runpod-key",
+		"LOWKEY_DB_PATH":                        "/env/db.sqlite",
+		"LOWKEY_PORT":                           "9999",
+		"LOWKEY_DOWNLOAD_PATH":                  "/env/downloads",
+		"LOWKEY_OLLAMA_BASE_URL":                "http://env-ollama:11434",
+		"LOWKEY_OLLAMA_MODEL":                   "env-model",
+		"LOWKEY_INFERENCE_PROVIDER":             "runpod",
+		"LOWKEY_RUNPOD_ENDPOINT":                "https://api.runpod.ai/v2/abc123/run",
+		"LOWKEY_RUNPOD_API_KEY":                 "env-runpod-key",
 		"LOWKEY_INFERENCE_OLLAMA_CONCURRENCY":   "2",
 		"LOWKEY_INFERENCE_RUNPOD_CONCURRENCY":   "8",
 		"LOWKEY_LMSTUDIO_BASE_URL":              "http://env-lmstudio:1234",
@@ -495,9 +496,9 @@ func TestApplyEnvOverrides(t *testing.T) {
 		"LOWKEY_LLAMACPP_API_KEY":               "env-llamacpp-key",
 		"LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY": "3",
 		"LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY": "5",
-		"LOWKEY_JWT_SECRET":          "env-secret",
-		"LOWKEY_DISCORD_TOKEN":       "env-discord",
-		"LOWKEY_FASTER_WHISPER_PATH": "/env/whisper",
+		"LOWKEY_JWT_SECRET":                     "env-secret",
+		"LOWKEY_DISCORD_TOKEN":                  "env-discord",
+		"LOWKEY_FASTER_WHISPER_PATH":            "/env/whisper",
 	}
 	for k, v := range envs {
 		t.Setenv(k, v)
@@ -507,6 +508,9 @@ func TestApplyEnvOverrides(t *testing.T) {
 
 	if c.DBPath != "/env/db.sqlite" {
 		t.Errorf("DBPath = %q; want %q", c.DBPath, "/env/db.sqlite")
+	}
+	if c.Port != 9999 {
+		t.Errorf("Port = %d; want 9999", c.Port)
 	}
 	if c.DownloadPath != "/env/downloads" {
 		t.Errorf("DownloadPath = %q; want %q", c.DownloadPath, "/env/downloads")
@@ -564,6 +568,33 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if c.FasterWhisperPath != "/env/whisper" {
 		t.Errorf("FasterWhisperPath = %q; want %q", c.FasterWhisperPath, "/env/whisper")
+	}
+}
+
+// TestApplyEnvOverridesInvalidPort verifies a malformed LOWKEY_PORT is ignored.
+func TestApplyEnvOverridesInvalidPort(t *testing.T) {
+	for _, bad := range []string{"loki", "0", "-1", "70000"} {
+		c := defaultConfig()
+		t.Setenv("LOWKEY_PORT", bad)
+		applyEnvOverrides(&c)
+		if c.Port != DefaultPort {
+			t.Errorf("LOWKEY_PORT=%q: Port = %d; want default %d", bad, c.Port, DefaultPort)
+		}
+	}
+}
+
+// TestDefaultPort verifies the default config carries the leet port and the
+// derived address helpers agree with it.
+func TestDefaultPort(t *testing.T) {
+	c := defaultConfig()
+	if c.Port != 10111 {
+		t.Errorf("Port = %d; want 10111", c.Port)
+	}
+	if got := c.ListenAddr(); got != ":10111" {
+		t.Errorf("ListenAddr() = %q; want %q", got, ":10111")
+	}
+	if got := c.LocalBaseURL(); got != "http://localhost:10111" {
+		t.Errorf("LocalBaseURL() = %q; want %q", got, "http://localhost:10111")
 	}
 }
 
@@ -711,6 +742,111 @@ func TestLoadNewConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(cfgFile); err != nil {
 		t.Errorf("config file not created: %v", err)
+	}
+}
+
+// TestLoadNewConfigAppliesEnvOverrides verifies env vars are honored on the
+// very first Load (no config file yet) — a fresh Docker container must come
+// up with LOWKEY_DB_PATH / LOWKEY_ROOTS applied, not pure defaults.
+func TestLoadNewConfigAppliesEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	envDB := filepath.Join(dir, "db", "media.db")
+	t.Setenv("LOWKEY_DB_PATH", envDB)
+	t.Setenv("LOWKEY_ROOTS", `[{"type":"local","path":"/mnt/photos","label":"Photos","default":true}]`)
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.DBPath != envDB {
+		t.Errorf("DBPath = %q; want env override %q", c.DBPath, envDB)
+	}
+	if len(c.Roots) != 1 || c.Roots[0].Label != "Photos" {
+		t.Errorf("Roots = %+v; want the single LOWKEY_ROOTS entry", c.Roots)
+	}
+	if _, err := os.Stat(filepath.Dir(envDB)); err != nil {
+		t.Errorf("db directory for env override not created: %v", err)
+	}
+
+	// The file on disk should hold defaults, not env values — env stays env.
+	data, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatalf("read config file: %v", err)
+	}
+	var onDisk Config
+	if err := json.Unmarshal(data, &onDisk); err != nil {
+		t.Fatalf("parse config file: %v", err)
+	}
+	if onDisk.DBPath == envDB {
+		t.Errorf("env override leaked into persisted config: %q", onDisk.DBPath)
+	}
+}
+
+// TestTranscriptionDefaultsMigration verifies configs predating the
+// transcription section get the full default block, while an explicitly
+// saved VADFilter=false (with provider present) is preserved.
+func TestTranscriptionDefaultsMigration(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	// Pre-existing config with no transcription section.
+	if err := os.WriteFile(cfgFile, []byte(`{"dbPath":"`+filepath.ToSlash(filepath.Join(dir, "m.db"))+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.TranscriptionProvider != DefaultTranscriptionProvider ||
+		c.TranscriptionModel != DefaultTranscriptionModel ||
+		c.TranscriptionLanguage != "en" || !c.TranscriptionVADFilter {
+		t.Errorf("migration defaults wrong: %+v", c)
+	}
+
+	// Explicit VADFilter=false with provider set must survive a reload.
+	c.TranscriptionVADFilter = false
+	if _, err := Save(c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	c2, _, err := Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if c2.TranscriptionVADFilter {
+		t.Error("explicit VADFilter=false was clobbered by defaults on reload")
+	}
+}
+
+func TestTranscriptionEnvOverrides(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	t.Setenv("LOWKEY_TRANSCRIPTION_PROVIDER", "custom")
+	t.Setenv("LOWKEY_TRANSCRIPTION_MODEL", "tiny")
+	t.Setenv("LOWKEY_TRANSCRIPTION_LANGUAGE", "de")
+	t.Setenv("LOWKEY_TRANSCRIPTION_VAD", "false")
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.TranscriptionProvider != "custom" || c.TranscriptionModel != "tiny" ||
+		c.TranscriptionLanguage != "de" || c.TranscriptionVADFilter {
+		t.Errorf("env overrides not applied: %+v", c)
 	}
 }
 

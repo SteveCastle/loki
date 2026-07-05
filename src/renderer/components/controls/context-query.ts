@@ -2,6 +2,70 @@
 // (no XState / platform imports) so they can be unit-tested directly without
 // dragging in the renderer's state/platform module graph.
 
+import type { Predicate } from '../../query/types';
+
+// Wrap a value in double quotes so multi-word values (e.g. "Exchange Student")
+// survive the server lexer's whitespace splitting. Embedded quotes are escaped.
+export function quoteValue(value: string): string {
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+// Map a unified predicate type to its legacy task-query prefix. The task query
+// path (autotag/embed/metadata via getMediaPathsByQueryFast) uses the legacy
+// lexer, which understands tag/category/path/description/hash, AND/OR/NOT and
+// parentheses. visual/similar/clip predicates have no legacy/SQL representation
+// (they need the embedding backend), so they are omitted from task queries.
+export const LEGACY_PREFIX: Partial<Record<Predicate['type'], string>> = {
+  tag: 'tag:',
+  category: 'category:',
+  path: 'path:',
+  description: 'description:',
+  hash: 'hash:',
+};
+
+// Predicate types whose unified-query semantics are a substring match (the
+// client filters with LIKE '%value%' — see query/types.ts). The server's task
+// lexer only produces a LIKE when the value contains a wildcard, so these must
+// be serialized as '*value*'; a bare value would be an exact `=` match.
+const SUBSTRING_TYPES = new Set<Predicate['type']>([
+  'path',
+  'description',
+  'hash',
+]);
+
+function legacyClause(p: Predicate): string | null {
+  const prefix = LEGACY_PREFIX[p.type];
+  if (!prefix || !p.value) return null;
+  const value = SUBSTRING_TYPES.has(p.type) ? `*${p.value}*` : p.value;
+  const clause = `${prefix}${quoteValue(value)}`;
+  return p.exclude ? `NOT ${clause}` : clause;
+}
+
+// Serialize the unified query predicates into the legacy task-query string,
+// mirroring BuildMediaQuery's LEFT-ASSOCIATIVE per-predicate join composition
+// (parenthesized so the legacy parser's precedence matches the unified query).
+// This is what makes context-menu task actions operate on EXACTLY the media the
+// search input shows — not just the include-tags. Returns "" when no predicate
+// is representable (e.g. filesystem browsing, or a visual-only query).
+export function buildLegacyQuery(
+  predicates: Predicate[],
+  filteringMode: string
+): string {
+  const defaultJoin = filteringMode === 'OR' ? 'OR' : 'AND'; // EXCLUSIVE -> AND
+  let expr = '';
+  for (const p of predicates) {
+    const clause = legacyClause(p);
+    if (!clause) continue;
+    if (!expr) {
+      expr = clause;
+      continue;
+    }
+    const join = p.join === 'AND' || p.join === 'OR' ? p.join : defaultJoin;
+    expr = `(${expr} ${join} ${clause})`;
+  }
+  return expr;
+}
+
 /** If initialFile is a media file path, return its parent directory; otherwise return as-is. */
 export function getDirFromInitialFile(initialFile: string): string {
   const lastSegment = initialFile.split(/[/\\]/).pop() || '';

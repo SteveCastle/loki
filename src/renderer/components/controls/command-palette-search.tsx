@@ -14,6 +14,7 @@ import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import type { TagConcept } from '../../hooks/useTagSearch';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
+import { useMeaningMode } from '../../hooks/useMeaningMode';
 import QueryInput from '../query-input/QueryInput';
 import SuggestionSections from '../taxonomy/suggestion-sections';
 import type { SuggestionItem } from '../taxonomy/suggestion-sections';
@@ -102,6 +103,10 @@ export default function CommandPaletteSearch({
   const { addSearch } = useSearchHistory();
 
   const [text, setText] = useState('');
+  // "Search by meaning" mode: typed text commits as a visual: predicate and the
+  // tag-suggestion surface is suppressed (it's irrelevant to semantic search).
+  // Shared + sticky (useMeaningMode) — survives the palette closing/reopening.
+  const { meaningMode } = useMeaningMode();
   // Index into `navItems` of the currently highlighted result. Enter commits
   // it; arrow keys move it; the top result is highlighted by default.
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -145,13 +150,13 @@ export default function CommandPaletteSearch({
   // The full, ordered set the keyboard moves through: tags first (in render
   // order), then the suggestion rows. Empty unless the user is searching.
   const navItems: SuggestionItem[] = useMemo(() => {
-    if (!hasText) return [];
+    if (!hasText || meaningMode) return [];
     const tagItems: SuggestionItem[] = cappedTags.map((t) => ({
       key: `tag:${t.label}`,
       predicate: { type: 'tag', value: t.label, exclude: false },
     }));
     return [...tagItems, ...suggestionItems];
-  }, [hasText, cappedTags, suggestionItems]);
+  }, [hasText, cappedTags, suggestionItems, meaningMode]);
 
   // Clamp the stored index to the live list — the result count changes as the
   // user types and as async suggestions arrive.
@@ -231,6 +236,16 @@ export default function CommandPaletteSearch({
           libraryService.send({ type: 'CLEAR_QUERY' });
           clearText();
         }}
+        onSubmitVisual={(t) => {
+          libraryService.send({
+            type: 'ADD_PREDICATE',
+            data: {
+              predicate: { type: 'visual', value: t, exclude: false, join },
+            },
+          });
+          clearText();
+          setHighlightIndex(0);
+        }}
         resultNavCount={navItems.length}
         onResultNavMove={moveHighlight}
         onResultNavSubmit={() => {
@@ -238,7 +253,20 @@ export default function CommandPaletteSearch({
         }}
       />
 
-      {hasText && (
+      {meaningMode && (
+        <div className="commandPaletteMeaningHint">
+          {hasText ? (
+            <>
+              Press <kbd>↵</kbd> to search images by meaning:{' '}
+              <span className="meaning-hint-query">“{text.trim()}”</span>
+            </>
+          ) : (
+            <>✨ Search by meaning — describe what an image looks like, then press <kbd>↵</kbd></>
+          )}
+        </div>
+      )}
+
+      {hasText && !meaningMode && (
         <div className="commandPaletteSearchResults">
           {cappedTags.length > 0 && (
             <div className="suggestion-section">

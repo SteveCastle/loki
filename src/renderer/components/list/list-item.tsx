@@ -213,7 +213,13 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
       if (e.shiftKey) {
         libraryService.send('SHOW_CONTEXT_PALETTE', {
           position: { x: e.clientX, y: e.clientY },
-          target: { type: 'library' },
+          // Shift-clicking the item under the cursor (the library selection)
+          // targets that file specifically — same as the detail view — while
+          // any other item targets the whole library selection.
+          target:
+            cursor === idx
+              ? { type: 'file', path: item.path }
+              : { type: 'library' },
         });
       } else {
         libraryService.send('SHOW_COMMAND_PALETTE', {
@@ -221,7 +227,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
         });
       }
     },
-    [libraryService]
+    [libraryService, cursor, idx, item.path]
   );
 
   const handleFilePathClick = useCallback(() => {
@@ -288,6 +294,9 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
           </span>
         </div>
       ) : null}
+      {sortBy === 'similarity' && Number.isFinite(item.score) ? (
+        <div className="score-badge">{Math.round((item.score as number) * 100)}%</div>
+      ) : null}
     </div>
   );
 }
@@ -301,7 +310,8 @@ export const ListItem = React.memo(
       prevProps.height === nextProps.height &&
       prevProps.item.timeStamp === nextProps.item.timeStamp &&
       prevProps.item.elo === nextProps.item.elo &&
-      prevProps.item.weight === nextProps.item.weight
+      prevProps.item.weight === nextProps.item.weight &&
+      prevProps.item.score === nextProps.item.score
     );
   }
 );

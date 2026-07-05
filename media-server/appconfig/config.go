@@ -18,10 +18,10 @@ import (
 
 // StorageRoot represents a single storage root, either a local filesystem path or an S3-compatible bucket.
 type StorageRoot struct {
-	Type            string `json:"type"`                      // "local" or "s3"
-	Path            string `json:"path,omitempty"`            // local filesystem path
-	Label           string `json:"label"`                     // display name in UI
-	Default         bool   `json:"default,omitempty"`         // true = destination for uploads/downloads
+	Type            string `json:"type"`              // "local" or "s3"
+	Path            string `json:"path,omitempty"`    // local filesystem path
+	Label           string `json:"label"`             // display name in UI
+	Default         bool   `json:"default,omitempty"` // true = destination for uploads/downloads
 	Endpoint        string `json:"endpoint,omitempty"`
 	Region          string `json:"region,omitempty"`
 	Bucket          string `json:"bucket,omitempty"`
@@ -31,9 +31,40 @@ type StorageRoot struct {
 	ThumbnailPrefix string `json:"thumbnailPrefix,omitempty"`
 }
 
+// DefaultEmbeddingModel is the visual-embedding model used when none is
+// configured. Must match an ID in the tasks package's embed-model registry.
+// Kept as a literal here (not imported from tasks) so appconfig stays a leaf
+// package with no dependency cycle.
+const DefaultEmbeddingModel = "siglip2-base-patch16-224"
+
+// DefaultTranscriptionProvider / DefaultTranscriptionModel are used when the
+// transcription section is empty. The provider id must match a registration
+// in the transcribe package. An empty model means "use the provider's
+// default", which is platform-aware (e.g. large-v3-turbo where the XXL
+// build is available, large-v2 on macOS) — so appconfig stays a leaf
+// package and the transcribe provider owns the choice.
+const (
+	DefaultTranscriptionProvider = "whisper-cli"
+	DefaultTranscriptionModel    = ""
+)
+
+// DefaultAutotagModel is the auto-tagging model used when none is configured.
+// Must match an ID in the tasks package's tagger-model registry. Literal here
+// (not imported from tasks) to keep appconfig a leaf package.
+const DefaultAutotagModel = "wd-eva02-large-tagger-v3"
+
+// DefaultPort is the HTTP listen port used when none is configured.
+// 10111 is "L0K1" in leet: L→1, O→0, K→11 (11th letter), I→1.
+const DefaultPort = 10111
+
 // Config holds application configuration including database path, LLM prompts, and AI model paths.
 type Config struct {
 	DBPath string `json:"dbPath"`
+
+	// HTTP listen port. Changing it requires a server restart. Overridable
+	// via the LOWKEY_PORT env var (Docker-friendly); 0/invalid falls back to
+	// DefaultPort at load time.
+	Port int `json:"port"`
 
 	// Download path for media files
 	DownloadPath string `json:"downloadPath"`
@@ -98,7 +129,64 @@ type Config struct {
 		CharacterThreshold   float64 `json:"characterThreshold"`
 	} `json:"onnxTagger"`
 
-	// Optional path to faster-whisper executable
+	// Active visual-embedding model ID. Governs both indexing (the `embed`
+	// task) and image->image similarity search. Vectors are stored keyed by
+	// model, so switching is non-destructive — previously-embedded vectors are
+	// retained and become searchable again on switch-back (only the in-memory
+	// ANN index rebuilds). Must be a known ID from tasks' embed-model registry
+	// (e.g. "siglip2-base-patch16-224", "dinov2-base"); empty falls back to the
+	// default. Text->image search always uses a multimodal model (SigLIP 2)
+	// regardless of this setting.
+	EmbeddingModel string `json:"embeddingModel"`
+
+	// Embedding execution provider: "cpu" or "directml" (GPU, Windows DX12).
+	// "directml" requires the optional GPU runtime to be installed; absent it,
+	// the embed task falls back to CPU.
+	EmbeddingProvider string `json:"embeddingProvider"`
+
+	// Embedding performance preset governing parallelism: "low" (~25% of cores,
+	// keeps the system responsive), "balanced" (~50%), "max" (all but one core),
+	// or "custom" (use EmbeddingWorkers / EmbeddingThreadsPerWorker).
+	EmbeddingPerformance string `json:"embeddingPerformance"`
+
+	// Advanced overrides used when EmbeddingPerformance == "custom" (0 = derive
+	// from the preset). Workers is the number of parallel embed worker processes;
+	// ThreadsPerWorker is the ONNX Runtime intra-op thread count per worker.
+	EmbeddingWorkers          int `json:"embeddingWorkers"`
+	EmbeddingThreadsPerWorker int `json:"embeddingThreadsPerWorker"`
+
+	// Active auto-tagging model ID. Must be a known ID from the tasks package's
+	// tagger-model registry (e.g. "wd-eva02-large-tagger-v3"); empty falls back
+	// to the default. Switchable like EmbeddingModel.
+	AutotagModel string `json:"autotagModel"`
+
+	// Auto-tagging (ONNX) execution provider + performance, mirroring the
+	// embedding settings so tagging can be tuned independently. Provider is
+	// "cpu" or "directml" (shares the same GPU runtime as embedding).
+	AutotagProvider         string `json:"autotagProvider"`
+	AutotagPerformance      string `json:"autotagPerformance"`
+	AutotagWorkers          int    `json:"autotagWorkers"`
+	AutotagThreadsPerWorker int    `json:"autotagThreadsPerWorker"`
+
+	// Per-file processing timeout (seconds) for the local ONNX tasks (embed,
+	// autotag). A single file that exceeds this — e.g. a corrupt image stuck in
+	// decode or a bad video stuck in frame extraction — is skipped and the job
+	// continues (the stuck worker is killed and replaced). <= 0 disables the
+	// timeout.
+	OnnxFileTimeoutSeconds int `json:"onnxFileTimeoutSeconds"`
+
+	// Transcription settings. Provider names an implementation in the
+	// transcribe package's registry ("whisper-cli" today; HTTP or other
+	// engines can register later). Model is provider-specific ("" = provider
+	// default), Language is an ISO hint ("" = auto-detect), VADFilter trims
+	// non-speech before transcribing.
+	TranscriptionProvider  string `json:"transcriptionProvider"`
+	TranscriptionModel     string `json:"transcriptionModel"`
+	TranscriptionLanguage  string `json:"transcriptionLanguage"`
+	TranscriptionVADFilter bool   `json:"transcriptionVadFilter"`
+
+	// Optional path to a user-supplied faster-whisper executable. Overrides
+	// the binary installed via the Dependencies downloader.
 	FasterWhisperPath string `json:"fasterWhisperPath"`
 
 	// Discord authentication token for media export
@@ -143,15 +231,27 @@ func DefaultConfigDir() string {
 // defaultConfig returns a Config populated with sensible defaults.
 func defaultConfig() Config {
 	return Config{
-		DBPath:            DefaultDBPath(),
-		DownloadPath:      defaultDownloadPath(),
-		InferenceProvider: "ollama",
-		OllamaBaseURL:     "http://localhost:11434",
-		OllamaModel:       "llama3.2-vision",
-		DescribePrompt: "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
-		AutotagPrompt:  "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
-		LMStudioBaseURL: "http://localhost:1234",
-		LlamaCppBaseURL: "http://localhost:8080",
+		DBPath:                 DefaultDBPath(),
+		Port:                   DefaultPort,
+		DownloadPath:           defaultDownloadPath(),
+		InferenceProvider:      "ollama",
+		EmbeddingModel:         DefaultEmbeddingModel,
+		EmbeddingProvider:      "cpu",
+		EmbeddingPerformance:   "balanced",
+		AutotagModel:           DefaultAutotagModel,
+		AutotagProvider:        "cpu",
+		AutotagPerformance:     "balanced",
+		OnnxFileTimeoutSeconds: 120,
+		TranscriptionProvider:  DefaultTranscriptionProvider,
+		TranscriptionModel:     DefaultTranscriptionModel,
+		TranscriptionLanguage:  "en",
+		TranscriptionVADFilter: true,
+		OllamaBaseURL:          "http://localhost:11434",
+		OllamaModel:            "llama3.2-vision",
+		DescribePrompt:         "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
+		AutotagPrompt:          "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
+		LMStudioBaseURL:        "http://localhost:1234",
+		LlamaCppBaseURL:        "http://localhost:8080",
 		InferenceConcurrency: struct {
 			Ollama   int `json:"ollama"`
 			RunPod   int `json:"runpod"`
@@ -184,6 +284,17 @@ func Get() Config {
 	cfgMu.RLock()
 	defer cfgMu.RUnlock()
 	return cfg
+}
+
+// ListenAddr returns the bind address (":<port>") for the HTTP server.
+func (c Config) ListenAddr() string {
+	return fmt.Sprintf(":%d", c.Port)
+}
+
+// LocalBaseURL returns the loopback base URL ("http://localhost:<port>")
+// used for log messages and opening the web UI in a browser.
+func (c Config) LocalBaseURL() string {
+	return fmt.Sprintf("http://localhost:%d", c.Port)
 }
 
 // Set replaces the in-memory config.
@@ -253,17 +364,35 @@ func Load() (Config, string, error) {
 			// Config file doesn't exist - create it with defaults
 			def := defaultConfig()
 
-			// Ensure the database directory exists
+			// Save the default config (without env overrides — env vars stay
+			// in the environment; the file only records persistent choices)
+			savedPath, saveErr := Save(def)
+			if saveErr != nil {
+				return Config{}, path, fmt.Errorf("failed to create default config file: %v", saveErr)
+			}
+
+			// Apply env overrides on first run too, or a fresh container
+			// would boot once on pure defaults (wrong DB path, no storage
+			// roots) and then silently switch on the next restart.
+			applyEnvOverrides(&def)
+
+			// Ensure the database directory exists (after overrides so an
+			// env-provided LOWKEY_DB_PATH gets its directory created)
 			dbDir := filepath.Dir(def.DBPath)
 			if err := os.MkdirAll(dbDir, 0755); err != nil {
 				return Config{}, "", fmt.Errorf("failed to create database directory %s: %v", dbDir, err)
 			}
 
-			// Save the default config
-			savedPath, saveErr := Save(def)
-			if saveErr != nil {
-				return Config{}, path, fmt.Errorf("failed to create default config file: %v", saveErr)
+			// Same DownloadPath → default-root migration as the existing-file path
+			if len(def.Roots) == 0 && def.DownloadPath != "" {
+				def.Roots = []StorageRoot{{
+					Type:    "local",
+					Path:    def.DownloadPath,
+					Label:   "Downloads",
+					Default: true,
+				}}
 			}
+
 			Set(def)
 			return def, savedPath, nil
 		}
@@ -300,6 +429,11 @@ func Load() (Config, string, error) {
 		c.DBPath = def.DBPath
 		needsSave = true
 	}
+	if c.Port <= 0 || c.Port > 65535 {
+		// 0 = configs predating the field; out-of-range = hand-edited junk.
+		c.Port = def.Port
+		needsSave = true
+	}
 	if c.DownloadPath == "" {
 		c.DownloadPath = def.DownloadPath
 	}
@@ -326,6 +460,47 @@ func Load() (Config, string, error) {
 	}
 	if c.AutotagPrompt == "" {
 		c.AutotagPrompt = def.AutotagPrompt
+	}
+	if c.EmbeddingModel == "" {
+		c.EmbeddingModel = def.EmbeddingModel
+		needsSave = true
+	}
+	if c.EmbeddingProvider == "" {
+		c.EmbeddingProvider = def.EmbeddingProvider
+		needsSave = true
+	}
+	if c.EmbeddingPerformance == "" {
+		c.EmbeddingPerformance = def.EmbeddingPerformance
+		needsSave = true
+	}
+	if c.AutotagModel == "" {
+		c.AutotagModel = def.AutotagModel
+		needsSave = true
+	}
+	if c.AutotagProvider == "" {
+		c.AutotagProvider = def.AutotagProvider
+		needsSave = true
+	}
+	if c.AutotagPerformance == "" {
+		c.AutotagPerformance = def.AutotagPerformance
+		needsSave = true
+	}
+	if c.OnnxFileTimeoutSeconds == 0 {
+		// 0 = unset (pre-existing config). Fill the default so the timeout is on.
+		// A negative value is preserved and means "disabled" at use time.
+		c.OnnxFileTimeoutSeconds = def.OnnxFileTimeoutSeconds
+		needsSave = true
+	}
+	// Transcription migration: configs predating the section get the full
+	// default block (including VADFilter=true). An empty provider is the
+	// "section unset" signal, so an explicitly saved VADFilter=false with a
+	// provider present is preserved.
+	if c.TranscriptionProvider == "" {
+		c.TranscriptionProvider = def.TranscriptionProvider
+		c.TranscriptionModel = def.TranscriptionModel
+		c.TranscriptionLanguage = def.TranscriptionLanguage
+		c.TranscriptionVADFilter = def.TranscriptionVADFilter
+		needsSave = true
 	}
 	if c.OnnxTagger.GeneralThreshold == 0 {
 		c.OnnxTagger.GeneralThreshold = def.OnnxTagger.GeneralThreshold
@@ -419,6 +594,13 @@ func applyEnvOverrides(c *Config) {
 	if v := os.Getenv("LOWKEY_DB_PATH"); v != "" {
 		c.DBPath = v
 	}
+	if v := os.Getenv("LOWKEY_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 65535 {
+			c.Port = n
+		} else {
+			log.Printf("Warning: LOWKEY_PORT=%q is not a valid port (1-65535); ignored", v)
+		}
+	}
 	if v := os.Getenv("LOWKEY_DOWNLOAD_PATH"); v != "" {
 		c.DownloadPath = v
 	}
@@ -485,6 +667,25 @@ func applyEnvOverrides(c *Config) {
 			log.Printf("Warning: LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY=%q is not a positive integer; ignored", v)
 		}
 	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_PROVIDER"); v != "" {
+		c.TranscriptionProvider = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_MODEL"); v != "" {
+		c.TranscriptionModel = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_LANGUAGE"); v != "" {
+		c.TranscriptionLanguage = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_VAD"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1", "yes", "on":
+			c.TranscriptionVADFilter = true
+		case "false", "0", "no", "off":
+			c.TranscriptionVADFilter = false
+		default:
+			log.Printf("Warning: LOWKEY_TRANSCRIPTION_VAD=%q is not a boolean; ignored", v)
+		}
+	}
 	if v := os.Getenv("LOWKEY_JWT_SECRET"); v != "" {
 		c.JWTSecret = v
 	}
@@ -493,6 +694,49 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_FASTER_WHISPER_PATH"); v != "" {
 		c.FasterWhisperPath = v
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_MODEL"); v != "" {
+		c.EmbeddingModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_PROVIDER"); v != "" {
+		c.EmbeddingProvider = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_PERFORMANCE"); v != "" {
+		c.EmbeddingPerformance = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.EmbeddingWorkers = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_EMBEDDING_THREADS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.EmbeddingThreadsPerWorker = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_MODEL"); v != "" {
+		c.AutotagModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_PROVIDER"); v != "" {
+		c.AutotagProvider = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_PERFORMANCE"); v != "" {
+		c.AutotagPerformance = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.AutotagWorkers = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_AUTOTAG_THREADS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.AutotagThreadsPerWorker = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_ONNX_FILE_TIMEOUT"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			c.OnnxFileTimeoutSeconds = n
+		}
 	}
 
 	// Storage roots from environment variables.

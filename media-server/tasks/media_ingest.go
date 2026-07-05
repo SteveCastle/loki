@@ -173,7 +173,12 @@ func ingestTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		return ingestGalleryTaskWithOptions(j, q, mu, opts)
 	default:
-		// Treat as local path
+		// Storage-backend paths (s3://... or relative keys like "uploads/"
+		// when the default root is S3) scan through the backend; everything
+		// else is treated as a local filesystem path.
+		if backend := backendForIngest(input); backend != nil {
+			return ingestBackendTaskWithOptions(j, q, mu, opts, backend)
+		}
 		return ingestLocalTaskWithOptions(j, q, mu, opts)
 	}
 }

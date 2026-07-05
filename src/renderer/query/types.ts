@@ -8,11 +8,18 @@ export type PredicateType =
   | 'category'
   | 'path'
   | 'description'
-  | 'hash';
+  | 'hash'
+  | 'similar'
+  | 'visual'
+  | 'clip';
 
 export interface Predicate {
   type: PredicateType;
   // Exact value for 'tag'/'category'; substring for 'path'/'description'/'hash'.
+  // 'similar' = a media path (find visually similar media via embedding backend).
+  // 'visual' = free text query (text→image search via embedding backend).
+  // 'clip' = a captured screen region as a PNG data URL (image→image search
+  //   via embedding backend); the data URL doubles as the chip thumbnail.
   value: string;
   // Per-predicate include (false) / exclude (true).
   exclude: boolean;
