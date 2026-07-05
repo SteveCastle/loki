@@ -1,6 +1,7 @@
 import path from 'path';
 import * as fs from 'fs';
 import { Database } from './database';
+import { retryAsync, isDatabaseLockedError } from './db-retry';
 import type Store from 'electron-store';
 import { IpcMainInvokeEvent, dialog } from 'electron';
 
@@ -155,47 +156,62 @@ const createAssignment =
       return;
     }
 
-    const results = await db.get(
-      `SELECT COUNT(*) AS count FROM media_tag_by_category WHERE tag_label = $2`,
-      [tagLabel]
-    );
-    let newWeight = results.count;
-
     if (mediaPaths.length > 1 || !timeStamp) {
       timeStamp = 0;
     }
 
-    // withTransaction rolls back and rethrows on any failure (e.g. a
-    // SQLITE_BUSY lock held by the Go media-server on the shared DB), so the
-    // invoke rejects and the renderer can toast — instead of leaving the
-    // connection wedged inside an open transaction (every later write then
-    // failed with "cannot start a transaction within a transaction").
-    await db.withTransaction(async () => {
-      const insertStatement = await db.prepare(
-        `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
-      );
-      try {
-        for (const mediaPath of mediaPaths) {
-          newWeight = newWeight + 1;
-          if (getFileType(mediaPath) === 'image' || !timeStamp) {
-            timeStamp = 0;
-          }
-          const createdAt = Date.now();
-          await insertStatement.run(
-            mediaPath,
-            tagLabel,
-            categoryLabel,
-            newWeight,
-            timeStamp,
-            createdAt
+    // withTransaction rolls back and rethrows on any failure, so the
+    // connection can never be left wedged inside an open transaction (every
+    // later write then failed with "cannot start a transaction within a
+    // transaction"). On top of that, the whole write is retried through
+    // transient SQLITE_BUSY locks — the Go media-server writes to the same
+    // dream.sqlite, and tagging must survive its lock windows rather than
+    // asking the user to try again. Safe to retry: the inserts are
+    // ON CONFLICT DO NOTHING, so a replay is idempotent.
+    await retryAsync(
+      async () => {
+        const results = await db.get(
+          `SELECT COUNT(*) AS count FROM media_tag_by_category WHERE tag_label = $2`,
+          [tagLabel]
+        );
+        let newWeight = results.count;
+        await db.withTransaction(async () => {
+          const insertStatement = await db.prepare(
+            `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
           );
-        }
-      } finally {
-        // Finalize before COMMIT/ROLLBACK — an open statement makes both
-        // fail with "SQL statements in progress".
-        await insertStatement.finalize().catch(() => {});
+          try {
+            for (const mediaPath of mediaPaths) {
+              newWeight = newWeight + 1;
+              if (getFileType(mediaPath) === 'image' || !timeStamp) {
+                timeStamp = 0;
+              }
+              const createdAt = Date.now();
+              await insertStatement.run(
+                mediaPath,
+                tagLabel,
+                categoryLabel,
+                newWeight,
+                timeStamp,
+                createdAt
+              );
+            }
+          } finally {
+            // Finalize before COMMIT/ROLLBACK — an open statement makes both
+            // fail with "SQL statements in progress".
+            await insertStatement.finalize().catch(() => {});
+          }
+        });
+      },
+      {
+        retries: 5,
+        isRetryable: isDatabaseLockedError,
+        onRetry: (err, attempt, delayMs) =>
+          console.warn(
+            `create-assignment: retrying after lock (attempt ${attempt}, waiting ${delayMs}ms):`,
+            err instanceof Error ? err.message : err
+          ),
       }
-    });
+    );
 
     // Save the preview in the database, use the tags table.
     const userHomeDirectory = require('os').homedir();

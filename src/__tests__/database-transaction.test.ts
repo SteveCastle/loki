@@ -6,6 +6,7 @@
 // silently dead. withTransaction must roll back, rethrow, and leave the
 // connection usable; it must also self-heal an already-wedged connection.
 import { Database } from '../main/database';
+import { retryAsync, isDatabaseLockedError } from '../main/db-retry';
 
 // Each test gets a fresh in-memory DB with one table.
 async function makeDb(): Promise<Database> {
@@ -46,6 +47,35 @@ describe('Database.withTransaction', () => {
     });
     const after = await db.get('SELECT COUNT(*) AS n FROM t');
     expect(after.n).toBe(1);
+    await db.close();
+  });
+
+  it('recovers through a transient lock when composed with retryAsync', async () => {
+    // The create-assignment write path: a SQLITE_BUSY inside the transaction
+    // (Go media-server holding the shared DB) must roll back cleanly and
+    // succeed on the retry — tagging has to work without user intervention.
+    const db = await makeDb();
+    let attempts = 0;
+    await retryAsync(
+      () =>
+        db.withTransaction(async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            throw Object.assign(new Error('SQLITE_BUSY: database is locked'), {
+              code: 'SQLITE_BUSY',
+            });
+          }
+          await db.run('INSERT INTO t (val) VALUES (?)', ['retried']);
+        }),
+      {
+        retries: 3,
+        isRetryable: isDatabaseLockedError,
+        sleep: async () => {},
+      }
+    );
+    expect(attempts).toBe(2);
+    const row = await db.get('SELECT COUNT(*) AS n FROM t');
+    expect(row.n).toBe(1);
     await db.close();
   });
 
