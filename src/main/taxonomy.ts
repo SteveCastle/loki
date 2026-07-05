@@ -155,11 +155,6 @@ const createAssignment =
       return;
     }
 
-    // Open mediaPaths and create thumbnail as a blog to store in the database.
-    await db.run('BEGIN TRANSACTION');
-    const insertStatement = await db.prepare(
-      `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
-    );
     const results = await db.get(
       `SELECT COUNT(*) AS count FROM media_tag_by_category WHERE tag_label = $2`,
       [tagLabel]
@@ -170,26 +165,37 @@ const createAssignment =
       timeStamp = 0;
     }
 
-    for (const mediaPath of mediaPaths) {
+    // withTransaction rolls back and rethrows on any failure (e.g. a
+    // SQLITE_BUSY lock held by the Go media-server on the shared DB), so the
+    // invoke rejects and the renderer can toast — instead of leaving the
+    // connection wedged inside an open transaction (every later write then
+    // failed with "cannot start a transaction within a transaction").
+    await db.withTransaction(async () => {
+      const insertStatement = await db.prepare(
+        `INSERT INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT(media_path, tag_label, category_label, time_stamp) DO NOTHING`
+      );
       try {
-        newWeight = newWeight + 1;
-        if (getFileType(mediaPath) === 'image' || !timeStamp) {
-          timeStamp = 0;
+        for (const mediaPath of mediaPaths) {
+          newWeight = newWeight + 1;
+          if (getFileType(mediaPath) === 'image' || !timeStamp) {
+            timeStamp = 0;
+          }
+          const createdAt = Date.now();
+          await insertStatement.run(
+            mediaPath,
+            tagLabel,
+            categoryLabel,
+            newWeight,
+            timeStamp,
+            createdAt
+          );
         }
-        const createdAt = Date.now();
-        await insertStatement.run(
-          mediaPath,
-          tagLabel,
-          categoryLabel,
-          newWeight,
-          timeStamp,
-          createdAt
-        );
-      } catch (e) {
-        console.log(e);
+      } finally {
+        // Finalize before COMMIT/ROLLBACK — an open statement makes both
+        // fail with "SQL statements in progress".
+        await insertStatement.finalize().catch(() => {});
       }
-    }
-    await db.run('COMMIT');
+    });
 
     // Save the preview in the database, use the tags table.
     const userHomeDirectory = require('os').homedir();
