@@ -287,6 +287,10 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   );
   const [editing, setEditing] = useState<Person | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  // Drag-to-merge: the person being dragged and the card currently under it.
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<number | null>(null);
+  const queryClient = useQueryClient();
 
   // Under the 'taxonomy' key prefix so existing broad invalidations (tag
   // mutations, DB swaps) refresh the people list too.
@@ -295,6 +299,43 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     () => fetchPeople(authToken),
     { enabled: !!initSessionId, staleTime: 60_000 }
   );
+
+  // Merge `from` into `into` (drag a card onto another card). Every face and
+  // taxonomy row of the dragged person moves to the target; the dragged
+  // person is removed. Mirrors the edit-modal Merge action.
+  const handleMergeDrop = async (from: Person, into: Person) => {
+    try {
+      const res = await fetch(`${mediaServerBase}/api/people/${from.id}/merge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders(authToken),
+        },
+        credentials: 'include',
+        body: JSON.stringify({ intoId: into.id }),
+      });
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: 'People merged',
+          message: `“${from.name}” merged into “${into.name}”`,
+        },
+      });
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+    } catch (err) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to merge people',
+          message: String(err),
+        },
+      });
+    }
+  };
 
   const handleSelect = (person: Person) => {
     if (isDisabled) return;
@@ -360,11 +401,54 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
       key={person.id}
       className={`person-card${
         selectedTags.includes(person.name) ? ' active' : ''
-      }${isDisabled ? ' disabled' : ''}`}
+      }${isDisabled ? ' disabled' : ''}${
+        dragId === person.id ? ' dragging' : ''
+      }${
+        dropTargetId === person.id && dragId !== null && dragId !== person.id
+          ? ' drop-target'
+          : ''
+      }`}
       onClick={() => handleSelect(person)}
-      title={`${person.name} — ${person.faceCount} face${
-        person.faceCount === 1 ? '' : 's'
-      } in ${person.mediaCount} item${person.mediaCount === 1 ? '' : 's'}`}
+      title={
+        dragId !== null && dragId !== person.id
+          ? `Drop to merge into ${person.name}`
+          : `${person.name} — ${person.faceCount} face${
+              person.faceCount === 1 ? '' : 's'
+            } in ${person.mediaCount} item${
+              person.mediaCount === 1 ? '' : 's'
+            } · drag onto another person to merge`
+      }
+      draggable={!isDisabled}
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('application/x-loki-person', String(person.id));
+        setDragId(person.id);
+      }}
+      onDragEnd={() => {
+        setDragId(null);
+        setDropTargetId(null);
+      }}
+      onDragOver={(e) => {
+        if (dragId === null || dragId === person.id) return;
+        e.preventDefault(); // required to allow the drop
+        e.dataTransfer.dropEffect = 'move';
+        setDropTargetId(person.id);
+      }}
+      onDragLeave={() => {
+        setDropTargetId((cur) => (cur === person.id ? null : cur));
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        const fromId = Number(
+          e.dataTransfer.getData('application/x-loki-person')
+        );
+        setDragId(null);
+        setDropTargetId(null);
+        const from = list.find((p) => p.id === fromId);
+        if (from && fromId !== person.id) {
+          handleMergeDrop(from, person);
+        }
+      }}
     >
       <FaceCrop faceId={person.coverFaceId} authToken={authToken} />
       <div className="person-card-info">

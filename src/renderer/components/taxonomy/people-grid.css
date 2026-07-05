@@ -74,6 +74,18 @@
   pointer-events: none;
 }
 
+/* Drag-to-merge: the dragged card dims; the card under the cursor lights up
+   as the merge target. */
+.person-card.dragging {
+  opacity: 0.4;
+}
+
+.person-card.drop-target {
+  border-color: rgb(211, 3, 72);
+  background: rgba(211, 3, 72, 0.15);
+  box-shadow: 0 0 0 1px rgb(211, 3, 72);
+}
+
 .person-card-face {
   width: 100%;
   aspect-ratio: 1;
