@@ -90,6 +90,64 @@ func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int
 	return ids, nil
 }
 
+// FaceScansForPaths reports which of the given paths already have a scan
+// marker under ANY of the given models — the batch form of HasFaceScan, used
+// by the routing scan to skip already-processed media without paying the
+// per-item classification cost. Batched IN queries stay under SQLite's
+// bind-variable cap.
+func FaceScansForPaths(db *sql.DB, models []string, paths []string) (map[string]bool, error) {
+	out := make(map[string]bool)
+	if len(models) == 0 || len(paths) == 0 {
+		return out, nil
+	}
+	const batch = 500
+	for lo := 0; lo < len(paths); lo += batch {
+		hi := lo + batch
+		if hi > len(paths) {
+			hi = len(paths)
+		}
+		chunk := paths[lo:hi]
+		args := make([]any, 0, len(models)+len(chunk))
+		mph := make([]byte, 0, len(models)*2)
+		for i, m := range models {
+			if i > 0 {
+				mph = append(mph, ',')
+			}
+			mph = append(mph, '?')
+			args = append(args, m)
+		}
+		pph := make([]byte, 0, len(chunk)*2)
+		for i, p := range chunk {
+			if i > 0 {
+				pph = append(pph, ',')
+			}
+			pph = append(pph, '?')
+			args = append(args, p)
+		}
+		rows, err := db.Query(
+			`SELECT DISTINCT media_path FROM face_scan WHERE model IN (`+string(mph)+`) AND media_path IN (`+string(pph)+`)`,
+			args...,
+		)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var p string
+			if err := rows.Scan(&p); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[p] = true
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
 // HasFaceScan reports whether path was already scanned under model.
 func HasFaceScan(db *sql.DB, path, model string) (bool, error) {
 	var one int

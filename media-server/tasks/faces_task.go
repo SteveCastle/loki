@@ -199,80 +199,31 @@ func facesTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	// Resolve which recognizer(s) scan which paths. An explicit `--model=<id>`
 	// pins everything to that model (background migration, same contract as
-	// the embed task). Otherwise, with routing on, each item is classified
-	// photo vs anime and grouped under the matching recognizer, so one job
-	// covers mixed libraries.
-	groups := map[string][]string{}
-	models := map[string]FaceModel{}
+	// the embed task). Otherwise routing runs in STREAMING mode: paths are
+	// classified in chunks and fed to per-model pools as they're routed, so
+	// scanning starts within the first chunk instead of after a full-library
+	// routing pass (which on 100k items would sit silent for a long time).
+	var scanned, facesFound, autoAssigned, skipped int
+	var scanErr error
 	if id, ok := embedModelOverrideFromJob(j); ok {
 		m, known := FaceModelByID(id)
 		if !known {
 			m = ActiveFaceModel()
 			q.PushJobStdout(j.ID, fmt.Sprintf("Unknown --model %q; using active model %q", id, m.ID))
 		}
-		groups[m.ID] = paths
-		models[m.ID] = m
+		scanned, facesFound, autoAssigned, skipped, scanErr = scanPathsWithModel(ctx, j, q, paths, fromQuery, m, embedBin)
 	} else {
-		var embeddedOnTheFly int
-		var routeErr error
-		groups, models, embeddedOnTheFly, routeErr = partitionPathsByModel(ctx, q.Db, paths)
-		if routeErr != nil {
-			if ctx.Err() != nil {
-				q.PushJobStdout(j.ID, "Task canceled")
-				_ = q.CancelJob(j.ID)
-				return routeErr
-			}
-			q.PushJobStdout(j.ID, "Domain routing unavailable ("+routeErr.Error()+"); scanning everything with the active model")
-		}
-		if FaceRoutingEnabled() && routeErr == nil {
-			for id, group := range groups {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Routed %d item(s) → %s", len(group), id))
-			}
-			if embeddedOnTheFly > 0 {
-				q.PushJobStdout(j.ID, fmt.Sprintf("(%d item(s) had no stored embedding and were embedded for routing — run the Embeddings task first to make this instant)", embeddedOnTheFly))
-			}
-		}
+		scanned, facesFound, autoAssigned, skipped, scanErr = runRoutedFacesScan(ctx, j, q, paths, fromQuery, embedBin)
 	}
-
-	var scanned, facesFound, autoAssigned, skipped int
-	for id, group := range groups {
-		model := models[id]
-		q.PushJobStdout(j.ID, fmt.Sprintf("Face model: %s (dim %d, detector %s)", model.ID, model.Dim, model.DetectorKindOrDefault()))
-
-		detectorPath, err := FaceDetectorPathFor(model)
-		if err != nil {
-			q.PushJobStdout(j.ID, err.Error())
-			q.ErrorJob(j.ID)
-			return err
+	if scanErr != nil {
+		if ctx.Err() != nil {
+			q.PushJobStdout(j.ID, "Task canceled")
+			_ = q.CancelJob(j.ID)
+			return scanErr
 		}
-		recognizerPath, err := FaceRecognizerPath(model)
-		if err != nil {
-			q.PushJobStdout(j.ID, err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
-		secondaryPath, err := FaceSecondaryPath(model)
-		if err != nil {
-			q.PushJobStdout(j.ID, err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
-
-		s, f, a, sk, err := runFacesPool(ctx, j, q, group, fromQuery, model, detectorPath, recognizerPath, secondaryPath, embedBin)
-		scanned += s
-		facesFound += f
-		autoAssigned += a
-		skipped += sk
-		if err != nil {
-			if ctx.Err() != nil {
-				q.PushJobStdout(j.ID, "Task canceled")
-				_ = q.CancelJob(j.ID)
-				return err
-			}
-			q.PushJobStdout(j.ID, "Face scan failed: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
+		q.PushJobStdout(j.ID, "Face scan failed: "+scanErr.Error())
+		q.ErrorJob(j.ID)
+		return scanErr
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d scanned (%d faces found, %d auto-assigned to people), %d skipped", scanned, facesFound, autoAssigned, skipped))
@@ -280,22 +231,211 @@ func facesTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	return nil
 }
 
-// runFacesPool scans all paths using a pool of persistent worker processes,
-// storing faces under model.ID. Returns (scanned, facesFound, autoAssigned,
-// skipped).
-func runFacesPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths []string, fromQuery bool, model FaceModel, detectorPath, recognizerPath, secondaryPath, embedBin string) (int, int, int, int, error) {
+// scanPathsWithModel resolves one recognizer's on-disk pieces and scans the
+// whole path list with it.
+func scanPathsWithModel(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths []string, fromQuery bool, model FaceModel, embedBin string) (int, int, int, int, error) {
+	q.PushJobStdout(j.ID, fmt.Sprintf("Face model: %s (dim %d, detector %s)", model.ID, model.Dim, model.DetectorKindOrDefault()))
+	detectorPath, err := FaceDetectorPathFor(model)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	recognizerPath, err := FaceRecognizerPath(model)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	secondaryPath, err := FaceSecondaryPath(model)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	return runFacesPool(ctx, j, q, paths, fromQuery, model, detectorPath, recognizerPath, secondaryPath, embedBin)
+}
+
+// startPoolForModel resolves a recognizer's on-disk pieces and starts its
+// live pool.
+func startPoolForModel(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, fromQuery bool, model FaceModel, embedBin string) (*facesPoolRun, error) {
+	detectorPath, err := FaceDetectorPathFor(model)
+	if err != nil {
+		return nil, err
+	}
+	recognizerPath, err := FaceRecognizerPath(model)
+	if err != nil {
+		return nil, err
+	}
+	secondaryPath, err := FaceSecondaryPath(model)
+	if err != nil {
+		return nil, err
+	}
+	return startFacesPool(ctx, j, q, fromQuery, model, detectorPath, recognizerPath, secondaryPath, embedBin)
+}
+
+// runRoutedFacesScan classifies paths photo-vs-anime in chunks and streams
+// them into lazily-started per-model pools, so scanning overlaps routing:
+//
+//   - already-scanned items (under either candidate model) are skipped up
+//     front from a batched face_scan lookup — no classification cost at all;
+//   - items with a stored SigLIP embedding are classified with one cosine;
+//   - items with no embedding are embedded on the fly (persisting the vector)
+//     BETWEEN chunk feeds, so the pools keep scanning while stragglers embed.
+//
+// Progress is logged per chunk so a big library never looks stuck.
+func runRoutedFacesScan(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths []string, fromQuery bool, embedBin string) (int, int, int, int, error) {
+	var anchors *anchorCache
+	var anchErr error
+	if FaceRoutingEnabled() {
+		anchors, anchErr = domainAnchors(ctx)
+		if anchErr != nil {
+			q.PushJobStdout(j.ID, "Domain routing unavailable ("+anchErr.Error()+"); scanning everything with the active model")
+		}
+	}
+	if anchors == nil {
+		return scanPathsWithModel(ctx, j, q, paths, fromQuery, ActiveFaceModel(), embedBin)
+	}
+
+	photoModel := faceModelForDomain("photo")
+	animeModel := faceModelForDomain("anime")
+	candidateIDs := []string{photoModel.ID}
+	if animeModel.ID != photoModel.ID {
+		candidateIDs = append(candidateIDs, animeModel.ID)
+	}
+	embedModel := TextSearchModel()
+
+	pools := map[string]*facesPoolRun{}
+	// finishAll drains every started pool exactly once and sums their counts.
+	finishAll := func() (int, int, int, int) {
+		var s, f, a, sk int
+		for _, p := range pools {
+			ps, pf, pa, psk := p.finish()
+			s += ps
+			f += pf
+			a += pa
+			sk += psk
+		}
+		return s, f, a, sk
+	}
+	poolFor := func(m FaceModel) (*facesPoolRun, error) {
+		if p, ok := pools[m.ID]; ok {
+			return p, nil
+		}
+		p, err := startPoolForModel(ctx, j, q, fromQuery, m, embedBin)
+		if err != nil {
+			return nil, err
+		}
+		pools[m.ID] = p
+		return p, nil
+	}
+
+	const chunkSize = 512
+	routed, alreadyScanned, embeddedOnTheFly := 0, 0, 0
+	for lo := 0; lo < len(paths) && ctx.Err() == nil; lo += chunkSize {
+		hi := lo + chunkSize
+		if hi > len(paths) {
+			hi = len(paths)
+		}
+		chunk := paths[lo:hi]
+
+		scannedSet, err := media.FaceScansForPaths(q.Db, candidateIDs, chunk)
+		if err != nil {
+			s, f, a, sk := finishAll()
+			return s, f, a, sk, err
+		}
+		stored, err := media.GetEmbeddingsForPaths(q.Db, embedModel.ID, chunk)
+		if err != nil {
+			s, f, a, sk := finishAll()
+			return s, f, a, sk, err
+		}
+
+		for _, p := range chunk {
+			if ctx.Err() != nil {
+				break
+			}
+			if scannedSet[p] {
+				alreadyScanned++
+				continue
+			}
+			m := ActiveFaceModel() // classification-failure fallback
+			if vec, ok := stored[p]; ok {
+				m = routeVec(vec, anchors)
+			} else if fresh, err := ImageQueryVectorForPath(ctx, q.Db, embedModel, p); err == nil {
+				embeddedOnTheFly++
+				m = routeVec(fresh, anchors)
+			}
+			pool, err := poolFor(m)
+			if err != nil {
+				s, f, a, sk := finishAll()
+				return s, f, a, sk, err
+			}
+			if !pool.feed(p) {
+				break
+			}
+			routed++
+		}
+		q.PushJobStdout(j.ID, fmt.Sprintf(
+			"Routing: %d/%d processed (%d routed, %d already scanned, %d embedded on the fly)",
+			hi, len(paths), routed, alreadyScanned, embeddedOnTheFly,
+		))
+	}
+	if embeddedOnTheFly > 0 {
+		q.PushJobStdout(j.ID, fmt.Sprintf("(%d item(s) had no stored embedding — run the Embeddings task first to make routing instant)", embeddedOnTheFly))
+	}
+
+	s, f, a, sk := finishAll()
+	sk += alreadyScanned
+	if ctx.Err() != nil {
+		return s, f, a, sk, ctx.Err()
+	}
+	return s, f, a, sk, nil
+}
+
+// facesPoolRun is a live, channel-fed scanning pool for one recognizer. The
+// caller feeds paths as it discovers them (e.g. while routing classifies the
+// library in chunks) and calls finish() to drain and collect the counts —
+// scanning overlaps with whatever produces the paths instead of waiting for
+// the full list.
+type facesPoolRun struct {
+	model FaceModel
+	jobs  chan string
+
+	// Owned by the collector goroutine; read only after finish().
+	scanned, facesFound, skipped, autoAssigned int
+
+	workerWG    sync.WaitGroup
+	collectorWG sync.WaitGroup
+	results     chan facesResult
+	ctx         context.Context
+}
+
+// feed hands one path to the pool. Returns false when the job was canceled.
+func (p *facesPoolRun) feed(path string) bool {
+	select {
+	case p.jobs <- path:
+		return true
+	case <-p.ctx.Done():
+		return false
+	}
+}
+
+// finish stops accepting paths, drains the workers, and returns the counts
+// (scanned, facesFound, autoAssigned, skipped).
+func (p *facesPoolRun) finish() (int, int, int, int) {
+	close(p.jobs)
+	p.workerWG.Wait()
+	close(p.results)
+	p.collectorWG.Wait()
+	return p.scanned, p.facesFound, p.autoAssigned, p.skipped
+}
+
+// startFacesPool launches the persistent worker subprocesses and the DB
+// collector for one recognizer and returns the live pool.
+func startFacesPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, fromQuery bool, model FaceModel, detectorPath, recognizerPath, secondaryPath, embedBin string) (*facesPoolRun, error) {
 	workers, threads := ResolveFaceResources()
 	ortLib, provider := resolveONNXRuntime(FaceProviderFromConfig())
 	if FaceProviderFromConfig() == "directml" && provider != "directml" {
 		q.PushJobStdout(j.ID, "DirectML runtime not installed; falling back to CPU. Install it from Dependencies.")
 	}
-	if workers > len(paths) {
-		workers = len(paths)
-	}
 	if workers < 1 {
 		workers = 1
 	}
-	q.PushJobStdout(j.ID, fmt.Sprintf("Scanning faces with %d worker(s), %d thread(s) each, provider=%s", workers, threads, provider))
+	q.PushJobStdout(j.ID, fmt.Sprintf("[%s] scanning with %d worker(s), %d thread(s) each, provider=%s", model.ID, workers, threads, provider))
 
 	baseArgs := buildFacesServeArgs(detectorPath, recognizerPath, secondaryPath, ortLib, model, provider, threads)
 
@@ -306,81 +446,82 @@ func runFacesPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths
 			for _, p := range pool {
 				p.close()
 			}
-			return 0, 0, 0, 0, fmt.Errorf("start faces worker: %w", err)
+			return nil, fmt.Errorf("start faces worker: %w", err)
 		}
 		pool = append(pool, wkr)
 	}
 
-	jobs := make(chan string)
-	results := make(chan facesResult, workers*2)
+	run := &facesPoolRun{
+		model:   model,
+		jobs:    make(chan string),
+		results: make(chan facesResult, workers*2),
+		ctx:     ctx,
+	}
 
 	// Collector: single goroutine owns all DB writes.
-	var scanned, facesFound, skipped, autoAssigned int
-	var collectorWG sync.WaitGroup
-	collectorWG.Add(1)
+	run.collectorWG.Add(1)
 	go func() {
-		defer collectorWG.Done()
-		for r := range results {
+		defer run.collectorWG.Done()
+		for r := range run.results {
 			if !r.ok {
-				skipped++
+				run.skipped++
 				continue
 			}
 			ids, err := media.ReplaceFaces(q.Db, r.mediaPath, model.ID, r.faces, time.Now().Unix())
 			if err != nil {
 				q.PushJobStdout(j.ID, "  Failed to store faces: "+err.Error())
-				skipped++
+				run.skipped++
 				continue
 			}
 			faceIndexReplacePath(model.ID, r.mediaPath, ids, r.faces) // index normalizes internally
 			// Incremental clustering: fresh faces join existing people when a
 			// confident match exists (full grouping is the faces-cluster task).
-			autoAssigned += autoAssignNewFaces(q.Db, model, ids, r.faces)
+			run.autoAssigned += autoAssignNewFaces(q.Db, model, ids, r.faces)
 			q.RegisterOutputFile(j.ID, r.mediaPath)
-			scanned++
-			facesFound += len(r.faces)
-			if (scanned+skipped)%50 == 0 {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Progress: %d scanned (%d faces), %d skipped (of %d)", scanned, facesFound, skipped, len(paths)))
+			run.scanned++
+			run.facesFound += len(r.faces)
+			if (run.scanned+run.skipped)%50 == 0 {
+				q.PushJobStdout(j.ID, fmt.Sprintf("[%s] progress: %d scanned (%d faces), %d skipped", model.ID, run.scanned, run.facesFound, run.skipped))
 			}
 		}
 	}()
 
 	// Workers: each owns one subprocess and pulls paths off the channel.
 	timeout := OnnxFileTimeout()
-	var workerWG sync.WaitGroup
 	for _, wkr := range pool {
-		workerWG.Add(1)
+		run.workerWG.Add(1)
 		go func(w *serveWorker) {
-			defer workerWG.Done()
+			defer run.workerWG.Done()
 			defer func() {
 				if w != nil {
 					w.close()
 				}
 			}()
-			for mediaPath := range jobs {
+			for mediaPath := range run.jobs {
 				if ctx.Err() != nil {
 					return
 				}
 				if shouldSkipFaceScan(q.Db, mediaPath, model.ID) {
-					results <- facesResult{ok: false}
+					run.results <- facesResult{ok: false}
 					continue
 				}
 				if !fromQuery {
 					if _, err := os.Stat(mediaPath); os.IsNotExist(err) {
-						results <- facesResult{ok: false}
+						run.results <- facesResult{ok: false}
 						continue
 					}
 				}
 				imagePath, tempFrame, ferr := extractFrameForFile(ctx, mediaPath, timeout)
 				if ferr != nil {
 					q.PushJobStdout(j.ID, fmt.Sprintf("  frame extract failed/timed out (%s): %v", filepath.Base(mediaPath), ferr))
-					results <- facesResult{ok: false}
+					run.results <- facesResult{ok: false}
 					continue
 				}
 				if w == nil { // a previous restart failed; drain as skips
 					if tempFrame != "" {
 						_ = os.Remove(tempFrame)
 					}
-					results <- facesResult{ok: false}
+					run.results <- facesResult{ok: false}
 					continue
 				}
 				faces, err, timedOut := runWithTimeout(ctx, timeout, func() ([]media.NewFace, error) {
@@ -408,7 +549,7 @@ func runFacesPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths
 						q.PushJobStdout(j.ID, "  worker restart failed; its remaining files will be skipped: "+rerr.Error())
 						w = nil
 					}
-					results <- facesResult{ok: false}
+					run.results <- facesResult{ok: false}
 					continue
 				}
 				if err != nil {
@@ -416,32 +557,29 @@ func runFacesPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths
 						return
 					}
 					q.PushJobStdout(j.ID, fmt.Sprintf("  face scan failed (%s): %v", filepath.Base(mediaPath), err))
-					results <- facesResult{ok: false}
+					run.results <- facesResult{ok: false}
 					continue
 				}
-				results <- facesResult{mediaPath: mediaPath, faces: faces, ok: true}
+				run.results <- facesResult{mediaPath: mediaPath, faces: faces, ok: true}
 			}
 		}(wkr)
 	}
+	return run, nil
+}
 
-	// Feed paths (stops early on cancel).
-	feedDone := make(chan struct{})
-	go func() {
-		defer close(feedDone)
-		defer close(jobs)
-		for _, p := range paths {
-			if ctx.Err() != nil {
-				return
-			}
-			jobs <- p
+// runFacesPool scans a fixed path list with one recognizer (the pinned
+// --model flow). Returns (scanned, facesFound, autoAssigned, skipped).
+func runFacesPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths []string, fromQuery bool, model FaceModel, detectorPath, recognizerPath, secondaryPath, embedBin string) (int, int, int, int, error) {
+	run, err := startFacesPool(ctx, j, q, fromQuery, model, detectorPath, recognizerPath, secondaryPath, embedBin)
+	if err != nil {
+		return 0, 0, 0, 0, err
+	}
+	for _, p := range paths {
+		if !run.feed(p) {
+			break
 		}
-	}()
-
-	<-feedDone
-	workerWG.Wait()
-	close(results)
-	collectorWG.Wait()
-
+	}
+	scanned, facesFound, autoAssigned, skipped := run.finish()
 	if ctx.Err() != nil {
 		return scanned, facesFound, autoAssigned, skipped, ctx.Err()
 	}

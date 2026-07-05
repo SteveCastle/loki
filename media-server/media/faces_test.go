@@ -90,6 +90,30 @@ func TestHasFaceScanIsModelKeyed(t *testing.T) {
 	}
 }
 
+func TestFaceScansForPaths(t *testing.T) {
+	db := newFaceDB(t)
+	defer db.Close()
+	_, _ = ReplaceFaces(db, "a.jpg", "photo-model", nil, 1)
+	_, _ = ReplaceFaces(db, "b.jpg", "anime-model", nil, 1)
+	_, _ = ReplaceFaces(db, "c.jpg", "other-model", nil, 1)
+
+	got, err := FaceScansForPaths(db, []string{"photo-model", "anime-model"}, []string{"a.jpg", "b.jpg", "c.jpg", "d.jpg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["a.jpg"] || !got["b.jpg"] {
+		t.Fatalf("candidate-model scans missed: %v", got)
+	}
+	// c.jpg was scanned only under a NON-candidate model — must not skip.
+	if got["c.jpg"] || got["d.jpg"] {
+		t.Fatalf("false positives: %v", got)
+	}
+	// Empty inputs are harmless.
+	if empty, err := FaceScansForPaths(db, nil, []string{"a.jpg"}); err != nil || len(empty) != 0 {
+		t.Fatalf("empty models: %v %v", empty, err)
+	}
+}
+
 func TestLoadAllFacesAndGetByID(t *testing.T) {
 	db := newFaceDB(t)
 	defer db.Close()
