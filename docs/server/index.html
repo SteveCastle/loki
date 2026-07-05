@@ -141,6 +141,8 @@
               <li><a href="#autotag">Auto-Tagging (ONNX)</a></li>
               <li><a href="#llm-vision">LLM Vision Descriptions</a></li>
               <li><a href="#transcription">Transcription</a></li>
+              <li><a href="#visual-similarity">Visual Similarity Search</a></li>
+              <li><a href="#embeddings-viz">3D Embedding Visualization</a></li>
             </ul>
           </li>
           <li><a href="#media-browser">Media Browser</a>
@@ -614,9 +616,35 @@
         <h3 id="transcription">Transcription</h3>
         <p>
           Generate transcripts for videos using Faster Whisper. Transcripts are saved as VTT files
-          and can be viewed in the Media Viewer.
+          and can be viewed in the Media Viewer. Transcription providers and the default model are
+          configurable from the Config page, and the Whisper build installs on demand from the
+          Dependencies page.
         </p>
         <div class="placeholder-video">Transcription Demo Video</div>
+
+        <h3 id="visual-similarity">Visual Similarity Search</h3>
+        <p>
+          Search the library by what media <em>looks like</em>, powered by SigLIP 2 image
+          embeddings computed entirely on your machine. Generate embeddings with the
+          <code>embed</code> task, then search three ways:
+        </p>
+        <ul>
+          <li><strong>Image → image</strong> - Find media similar to any item in the library</li>
+          <li><strong>Text → image</strong> - Describe what you want in plain words</li>
+          <li><strong>Clip → image</strong> - Search with any uploaded or captured image crop</li>
+        </ul>
+        <p>
+          Similarity predicates compose with tags, paths, and other filters in one query, and
+          results are ranked by match score. The SigLIP 2 model (~1.5 GB) installs from the
+          Dependencies page.
+        </p>
+
+        <h3 id="embeddings-viz">3D Embedding Visualization</h3>
+        <p>
+          Explore your whole library as a 3D point cloud of its embedding space at
+          <code>/viz/embeddings</code>. Hover any point to preview the image or play the video —
+          visually similar media clusters together.
+        </p>
       </section>
 
       <section id="media-browser">
@@ -647,6 +675,7 @@
           <li><strong>Swipe Navigation</strong> - Swipe up/down to browse through media</li>
           <li><strong>Mobile Optimized</strong> - Designed for touch and vertical video viewing</li>
           <li><strong>Tag & Filter</strong> - Browse by tags and filter your collection</li>
+          <li><strong>More Like This</strong> - Switch to similarity mode to see media that looks like the current item, and re-anchor as you go</li>
         </ul>
         <p>
           Access the Swipe App at <code>http://[server-ip]:10111/swipe</code> on your mobile device.
@@ -729,6 +758,7 @@
         <h4>Configuration Options</h4>
         <ul>
           <li><strong>dbPath</strong> - Path to the SQLite database</li>
+          <li><strong>port</strong> - HTTP listen port (default 10111; the <code>LOWKEY_PORT</code> env var overrides it)</li>
           <li><strong>ollamaBaseUrl</strong> - Ollama server URL (default: http://localhost:11434)</li>
           <li><strong>ollamaModel</strong> - Vision model for descriptions</li>
           <li><strong>fasterWhisperPath</strong> - Path to Faster Whisper executable</li>
@@ -755,6 +785,14 @@
           <tr><td>GET</td><td><code>/media/api</code></td><td>Media JSON API with search</td></tr>
           <tr><td>GET</td><td><code>/media/file</code></td><td>Serve media files</td></tr>
         </table>
+        <h4>Visual Search</h4>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/media/query</code></td><td>Composable query (tags, text, similar/visual/clip predicates)</td></tr>
+          <tr><td>GET</td><td><code>/api/media/similar</code></td><td>Find media similar to a library item</td></tr>
+          <tr><td>GET</td><td><code>/api/media/search/visual</code></td><td>Text-to-image semantic search</td></tr>
+          <tr><td>POST</td><td><code>/api/media/search/image</code></td><td>Search by an uploaded image</td></tr>
+        </table>
         <h4>System</h4>
         <table class="api-table">
           <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
@@ -762,7 +800,15 @@
           <tr><td>GET</td><td><code>/stream</code></td><td>SSE stream for real-time updates</td></tr>
           <tr><td>GET</td><td><code>/config</code></td><td>Configuration page</td></tr>
           <tr><td>POST</td><td><code>/config</code></td><td>Update configuration</td></tr>
+          <tr><td>GET</td><td><code>/api/config</code></td><td>Active configuration (JSON, secrets redacted)</td></tr>
+          <tr><td>POST</td><td><code>/api/db/query</code></td><td>Read-only SQL over the library database</td></tr>
         </table>
+        <p>
+          Prefer a terminal? The <code>lokictl</code> CLI (in
+          <code>media-server/cmd/lokictl</code>) wraps the whole API: query and search media,
+          run jobs and workflows, manage tags, deps, and config — designed for scripting and
+          AI-agent use.
+        </p>
       </section>
 
       <section>
