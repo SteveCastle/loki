@@ -40,19 +40,10 @@ type FaceHit struct {
 
 // buildFacesOneShotArgs assembles `embed --faces --image=...` arguments for a
 // single query image (the one-shot sibling of buildFacesServeArgs).
-func buildFacesOneShotArgs(detectorPath, recognizerPath, ortLib, imagePath string, m FaceModel) []string {
-	args := []string{
-		"--faces",
-		"--image=" + imagePath,
-		"--detect-model=" + detectorPath,
-		"--model=" + recognizerPath,
-		fmt.Sprintf("--dim=%d", m.Dim),
-		"--face-input=" + m.InputName,
-		"--face-output=" + m.OutputName,
-		fmt.Sprintf("--face-mean=%g,%g,%g", m.Mean[0], m.Mean[1], m.Mean[2]),
-		fmt.Sprintf("--face-std=%g,%g,%g", m.Std[0], m.Std[1], m.Std[2]),
-		"--face-color=" + m.ColorOrder,
-	}
+func buildFacesOneShotArgs(detectorPath, recognizerPath, secondaryPath, ortLib, imagePath string, m FaceModel) []string {
+	args := append(faceModelArgs(m, detectorPath, recognizerPath, secondaryPath),
+		"--image="+imagePath,
+	)
 	if ortLib != "" {
 		args = append(args, "--ort="+ortLib)
 	}
@@ -62,11 +53,15 @@ func buildFacesOneShotArgs(detectorPath, recognizerPath, ortLib, imagePath strin
 // FacesInImageFile runs the face pipeline on one image file and returns the
 // detected faces with their normalized embeddings, under the given recognizer.
 func FacesInImageFile(ctx context.Context, m FaceModel, imagePath string) ([]media.NewFace, error) {
-	detectorPath, err := FaceDetectorPath()
+	detectorPath, err := FaceDetectorPathFor(m)
 	if err != nil {
 		return nil, err
 	}
 	recognizerPath, err := FaceRecognizerPath(m)
+	if err != nil {
+		return nil, err
+	}
+	secondaryPath, err := FaceSecondaryPath(m)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +71,7 @@ func FacesInImageFile(ctx context.Context, m FaceModel, imagePath string) ([]med
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 
-	cmd := exec.CommandContext(ctx, embedBin, buildFacesOneShotArgs(detectorPath, recognizerPath, ortLib, imagePath, m)...)
+	cmd := exec.CommandContext(ctx, embedBin, buildFacesOneShotArgs(detectorPath, recognizerPath, secondaryPath, ortLib, imagePath, m)...)
 	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil {

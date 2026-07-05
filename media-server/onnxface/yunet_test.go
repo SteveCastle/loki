@@ -119,3 +119,31 @@ func TestIoU(t *testing.T) {
 func close32(a, b float32) bool {
 	return math.Abs(float64(a-b)) < 1e-4
 }
+
+func TestDecodeYOLO(t *testing.T) {
+	// [1,5,N] planar layout: all cx, all cy, all w, all h, all scores.
+	// Three anchors: one confident head, one below threshold, one confident.
+	n := 3
+	out := make([]float32, 5*n)
+	// anchor 0: center (100,80), 40×60, score 0.9
+	out[0*n+0], out[1*n+0], out[2*n+0], out[3*n+0], out[4*n+0] = 100, 80, 40, 60, 0.9
+	// anchor 1: below threshold
+	out[0*n+1], out[1*n+1], out[2*n+1], out[3*n+1], out[4*n+1] = 300, 300, 50, 50, 0.2
+	// anchor 2: center (400,200), 80×80, score 0.75
+	out[0*n+2], out[1*n+2], out[2*n+2], out[3*n+2], out[4*n+2] = 400, 200, 80, 80, 0.75
+
+	dets := decodeYOLO(out, 0.5)
+	if len(dets) != 2 {
+		t.Fatalf("got %d detections, want 2", len(dets))
+	}
+	d := dets[0]
+	if !close32(d.X, 80) || !close32(d.Y, 50) || !close32(d.W, 40) || !close32(d.H, 60) || !close32(d.Score, 0.9) {
+		t.Fatalf("det 0 = %+v", d)
+	}
+	if d.Landmarks != ([5][2]float32{}) {
+		t.Fatalf("yolo detections must carry no landmarks: %+v", d.Landmarks)
+	}
+	if got := decodeYOLO(nil, 0.5); got != nil {
+		t.Fatalf("nil output decoded to %v", got)
+	}
+}

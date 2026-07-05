@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"math"
 	"os"
 	"strings"
 
@@ -14,9 +15,16 @@ import (
 	ort "github.com/yalue/onnxruntime_go"
 )
 
-// DetectorConfig configures the YuNet detection session.
+// DetectorConfig configures a detection session.
 type DetectorConfig struct {
 	ModelPath string
+	// Kind selects the model family: "yunet" (photo faces, 5 landmarks,
+	// fixed 640×640) or "yolo" (anime heads, no landmarks, dynamic input
+	// letterboxed to InputSize). Default "yunet".
+	Kind string
+	// InputSize is the square letterbox size for "yolo" detectors (default
+	// 640). YuNet's export is hard-fixed at 640 regardless.
+	InputSize int
 	// ScoreThreshold drops detections below this confidence (default 0.7).
 	ScoreThreshold float32
 	// NMSThreshold is the IoU above which overlapping boxes are suppressed
@@ -91,10 +99,19 @@ func sessionOptions(provider string, threads, device int) (*ort.SessionOptions, 
 	return so, nil
 }
 
-// NewDetector loads the YuNet model into a reusable session.
+// NewDetector loads a detection model into a reusable session.
 func NewDetector(cfg DetectorConfig) (*Detector, error) {
 	if cfg.ModelPath == "" {
 		return nil, errors.New("onnxface: detector ModelPath is required")
+	}
+	if cfg.Kind == "" {
+		cfg.Kind = "yunet"
+	}
+	if cfg.Kind != "yunet" && cfg.Kind != "yolo" {
+		return nil, fmt.Errorf("onnxface: unknown detector kind %q", cfg.Kind)
+	}
+	if cfg.InputSize <= 0 || cfg.Kind == "yunet" {
+		cfg.InputSize = yunetInputSize // 640 for both by default; forced for YuNet
 	}
 	if cfg.ScoreThreshold <= 0 {
 		cfg.ScoreThreshold = defaultScoreThreshold
@@ -114,48 +131,89 @@ func NewDetector(cfg DetectorConfig) (*Detector, error) {
 	}
 	defer so.Destroy()
 
-	session, err := ort.NewDynamicAdvancedSession(
-		cfg.ModelPath,
-		[]string{yunetInputName},
-		yunetOutputNames(),
-		so,
-	)
+	inputs := []string{yunetInputName}
+	outputs := yunetOutputNames()
+	if cfg.Kind == "yolo" {
+		inputs = []string{yoloInputName}
+		outputs = []string{yoloOutputName}
+	}
+	session, err := ort.NewDynamicAdvancedSession(cfg.ModelPath, inputs, outputs, so)
 	if err != nil {
 		return nil, fmt.Errorf("onnxface: load detector: %w", err)
 	}
 	return &Detector{session: session, cfg: cfg}, nil
 }
 
-// Detect runs YuNet on img and returns detections in original-image pixel
-// coordinates, score-descending, with bboxes clamped to the image and faces
-// smaller than MinSize dropped.
+// letterbox scales img down to fit size×size (never up), places it top-left
+// on a black canvas, and returns the canvas plus the applied scale.
+func letterbox(img image.Image, size int) (*image.RGBA, float64) {
+	b := img.Bounds()
+	scale := fitWithin(b.Dx(), b.Dy(), size)
+	scaledW := int(float64(b.Dx())*scale + 0.5)
+	scaledH := int(float64(b.Dy())*scale + 0.5)
+	canvas := image.NewRGBA(image.Rect(0, 0, size, size))
+	if scale == 1 {
+		draw.Draw(canvas, image.Rect(0, 0, b.Dx(), b.Dy()), img, b.Min, draw.Src)
+	} else {
+		draw.CatmullRom.Scale(canvas, image.Rect(0, 0, scaledW, scaledH), img, b, draw.Src, nil)
+	}
+	return canvas, scale
+}
+
+// Detect runs the detector on img and returns detections in original-image
+// pixel coordinates, score-descending, with bboxes clamped to the image and
+// faces smaller than MinSize dropped.
 func (d *Detector) Detect(img image.Image) ([]Detection, error) {
 	b := img.Bounds()
 	origW, origH := b.Dx(), b.Dy()
 	if origW == 0 || origH == 0 {
 		return nil, errors.New("onnxface: empty image")
 	}
+	canvas, scale := letterbox(img, d.cfg.InputSize)
 
-	// Letterbox into the model's fixed 640×640 input: scale down to fit
-	// (never up), place top-left, pad the rest with black.
-	scale := fitWithin(origW, origH, yunetInputSize)
-	scaledW := int(float64(origW)*scale + 0.5)
-	scaledH := int(float64(origH)*scale + 0.5)
-	padW, padH := yunetInputSize, yunetInputSize
-
-	canvas := image.NewRGBA(image.Rect(0, 0, padW, padH))
-	if scale == 1 {
-		draw.Draw(canvas, image.Rect(0, 0, origW, origH), img, b.Min, draw.Src)
+	var dets []Detection
+	var err error
+	if d.cfg.Kind == "yolo" {
+		dets, err = d.detectYOLO(canvas)
 	} else {
-		draw.CatmullRom.Scale(canvas, image.Rect(0, 0, scaledW, scaledH), img, b, draw.Src, nil)
+		dets, err = d.detectYuNet(canvas)
 	}
+	if err != nil {
+		return nil, err
+	}
+	dets = nms(dets, d.cfg.NMSThreshold)
 
-	// YuNet input: raw BGR 0..255, NCHW float32 (OpenCV blobFromImage defaults).
-	data := make([]float32, 3*padW*padH)
-	n := padW * padH
+	// Map back to original coordinates, clamp, and apply the min-size gate.
+	inv := float32(1 / scale)
+	minSize := float32(d.cfg.MinSize)
+	kept := dets[:0]
+	for _, det := range dets {
+		det.X *= inv
+		det.Y *= inv
+		det.W *= inv
+		det.H *= inv
+		for k := range det.Landmarks {
+			det.Landmarks[k][0] *= inv
+			det.Landmarks[k][1] *= inv
+		}
+		det = clampToImage(det, float32(origW), float32(origH))
+		if det.W < minSize || det.H < minSize {
+			continue
+		}
+		kept = append(kept, det)
+	}
+	return kept, nil
+}
+
+// detectYuNet feeds the letterboxed canvas as raw BGR 0..255 NCHW (OpenCV
+// blobFromImage defaults) and decodes the 12 per-stride output maps.
+func (d *Detector) detectYuNet(canvas *image.RGBA) ([]Detection, error) {
+	size := d.cfg.InputSize
+	data := make([]float32, 3*size*size)
+	n := size * size
 	i := 0
-	for y := 0; y < padH; y++ {
-		for x := 0; x < padW; x++ {
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
 			c := canvas.RGBAAt(x, y)
 			data[0*n+i] = float32(c.B)
 			data[1*n+i] = float32(c.G)
@@ -163,7 +221,7 @@ func (d *Detector) Detect(img image.Image) ([]Detection, error) {
 			i++
 		}
 	}
-	tensor, err := ort.NewTensor(ort.NewShape(1, 3, int64(padH), int64(padW)), data)
+	tensor, err := ort.NewTensor(ort.NewShape(1, 3, int64(size), int64(size)), data)
 	if err != nil {
 		return nil, err
 	}
@@ -194,29 +252,45 @@ func (d *Detector) Detect(img image.Image) ([]Detection, error) {
 		}
 		raws = append(raws, yunetRaw{stride: stride, cls: maps[0], obj: maps[1], bbox: maps[2], kps: maps[3]})
 	}
+	return decodeYuNet(size, size, raws, d.cfg.ScoreThreshold), nil
+}
 
-	dets := nms(decodeYuNet(padW, padH, raws, d.cfg.ScoreThreshold), d.cfg.NMSThreshold)
-
-	// Map back to original coordinates, clamp, and apply the min-size gate.
-	inv := float32(1 / scale)
-	minSize := float32(d.cfg.MinSize)
-	kept := dets[:0]
-	for _, det := range dets {
-		det.X *= inv
-		det.Y *= inv
-		det.W *= inv
-		det.H *= inv
-		for k := range det.Landmarks {
-			det.Landmarks[k][0] *= inv
-			det.Landmarks[k][1] *= inv
+// detectYOLO feeds the letterboxed canvas as RGB 0..1 NCHW (ultralytics
+// convention) and decodes the [1,5,N] raw head.
+func (d *Detector) detectYOLO(canvas *image.RGBA) ([]Detection, error) {
+	size := d.cfg.InputSize
+	data := make([]float32, 3*size*size)
+	n := size * size
+	i := 0
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			c := canvas.RGBAAt(x, y)
+			data[0*n+i] = float32(c.R) / 255
+			data[1*n+i] = float32(c.G) / 255
+			data[2*n+i] = float32(c.B) / 255
+			i++
 		}
-		det = clampToImage(det, float32(origW), float32(origH))
-		if det.W < minSize || det.H < minSize {
-			continue
-		}
-		kept = append(kept, det)
 	}
-	return kept, nil
+	tensor, err := ort.NewTensor(ort.NewShape(1, 3, int64(size), int64(size)), data)
+	if err != nil {
+		return nil, err
+	}
+	defer tensor.Destroy()
+
+	outputs := []ort.Value{nil}
+	if err := d.session.Run([]ort.Value{tensor}, outputs); err != nil {
+		return nil, err
+	}
+	out := outputs[0]
+	if out == nil {
+		return nil, errors.New("onnxface: detector produced no output")
+	}
+	defer out.Destroy()
+	t, ok := out.(*ort.Tensor[float32])
+	if !ok {
+		return nil, fmt.Errorf("onnxface: unexpected detector output type %T", out)
+	}
+	return decodeYOLO(t.GetData(), d.cfg.ScoreThreshold), nil
 }
 
 // clampToImage clips a detection's bbox to [0,w]×[0,h] (landmarks may sit
@@ -249,6 +323,9 @@ type RecognizerConfig struct {
 	Dim        int    // embedding dimension (SFace 128, ArcFace/AdaFace 512)
 	InputName  string // default "data"
 	OutputName string // default "fc1"
+	// InputSize is the square crop edge the model expects (default 112 —
+	// the landmark-aligned template; generic encoders on head crops use 224).
+	InputSize int
 	// Mean/Std are applied per channel on the 0..255 pixel scale:
 	// v = (pixel - Mean) / Std. SFace wants raw pixels (Mean 0, Std 1);
 	// ArcFace-family models want Mean 127.5, Std 127.5.
@@ -284,6 +361,9 @@ func NewRecognizer(cfg RecognizerConfig) (*Recognizer, error) {
 	if cfg.OutputName == "" {
 		cfg.OutputName = "fc1"
 	}
+	if cfg.InputSize <= 0 {
+		cfg.InputSize = AlignSize
+	}
 	if cfg.Std == ([3]float32{}) {
 		cfg.Std = [3]float32{1, 1, 1}
 	}
@@ -311,14 +391,15 @@ func NewRecognizer(cfg RecognizerConfig) (*Recognizer, error) {
 	return &Recognizer{session: session, cfg: cfg}, nil
 }
 
-// Embed computes the identity embedding of an aligned 112×112 crop. The
+// Embed computes the identity embedding of an aligned InputSize² crop. The
 // returned vector is raw — callers L2-normalize before storing/comparing.
 func (r *Recognizer) Embed(aligned *image.NRGBA) ([]float32, error) {
+	size := r.cfg.InputSize
 	bb := aligned.Bounds()
-	if bb.Dx() != AlignSize || bb.Dy() != AlignSize {
-		return nil, fmt.Errorf("onnxface: aligned crop is %dx%d, want %dx%d", bb.Dx(), bb.Dy(), AlignSize, AlignSize)
+	if bb.Dx() != size || bb.Dy() != size {
+		return nil, fmt.Errorf("onnxface: aligned crop is %dx%d, want %dx%d", bb.Dx(), bb.Dy(), size, size)
 	}
-	n := AlignSize * AlignSize
+	n := size * size
 	data := make([]float32, 3*n)
 	bgr := strings.EqualFold(r.cfg.ColorOrder, "BGR")
 	std := r.cfg.Std
@@ -328,8 +409,8 @@ func (r *Recognizer) Embed(aligned *image.NRGBA) ([]float32, error) {
 		}
 	}
 	i := 0
-	for y := 0; y < AlignSize; y++ {
-		for x := 0; x < AlignSize; x++ {
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
 			px := aligned.NRGBAAt(x, y)
 			// Mean/Std are declared in RGB order regardless of tensor layout.
 			rv := (float32(px.R) - r.cfg.Mean[0]) / std[0]
@@ -347,7 +428,7 @@ func (r *Recognizer) Embed(aligned *image.NRGBA) ([]float32, error) {
 			i++
 		}
 	}
-	tensor, err := ort.NewTensor(ort.NewShape(1, 3, AlignSize, AlignSize), data)
+	tensor, err := ort.NewTensor(ort.NewShape(1, 3, int64(size), int64(size)), data)
 	if err != nil {
 		return nil, err
 	}
@@ -386,31 +467,117 @@ func (r *Recognizer) Close() error {
 	return nil
 }
 
-// Pipeline combines a Detector and a Recognizer: decode → detect → align →
-// embed. Not safe for concurrent use — one Pipeline per worker.
-type Pipeline struct {
-	Det *Detector
-	Rec *Recognizer
+// PipelineSpec assembles a full detect→align→embed pipeline.
+type PipelineSpec struct {
+	Detector   DetectorConfig
+	Recognizer RecognizerConfig
+	// Secondary enables embedding fusion: both recognizers embed the same
+	// crop and the L2-normalized vectors are concatenated with per-model
+	// weights (the cosine of the concat equals the weighted average of the
+	// per-model cosines). Used for the anime pipeline (DINOv2 + SigLIP).
+	Secondary *RecognizerConfig
+	// Weight/SecondaryWeight are the effective cosine-fusion weights
+	// (default 1 / 0). Internally the parts are scaled by sqrt(weight) so
+	// the dot product weights them linearly.
+	Weight          float32
+	SecondaryWeight float32
+	// Align selects the crop strategy: "landmarks" (default — the 112×112
+	// five-point warp; requires a landmark detector) or "bbox-expand" (an
+	// expanded square head crop; the only option for landmark-less
+	// detectors like the anime one).
+	Align string
+	// CropExpand is the bbox expansion factor for "bbox-expand" (default 1.5).
+	CropExpand float32
 }
 
-// NewPipeline builds both sessions; on error neither is leaked.
-func NewPipeline(dc DetectorConfig, rc RecognizerConfig) (*Pipeline, error) {
-	det, err := NewDetector(dc)
+// Pipeline combines a Detector and one or two Recognizers: decode → detect →
+// align → embed(→fuse). Not safe for concurrent use — one Pipeline per worker.
+type Pipeline struct {
+	Det  *Detector
+	Rec  *Recognizer
+	Rec2 *Recognizer
+	spec PipelineSpec
+}
+
+// NewPipeline builds all sessions; on error none are leaked.
+func NewPipeline(spec PipelineSpec) (*Pipeline, error) {
+	if spec.Align == "" {
+		spec.Align = "landmarks"
+	}
+	if spec.Align != "landmarks" && spec.Align != "bbox-expand" {
+		return nil, fmt.Errorf("onnxface: unknown align mode %q", spec.Align)
+	}
+	if spec.Align == "landmarks" && spec.Detector.Kind == "yolo" {
+		return nil, errors.New("onnxface: yolo detectors emit no landmarks; use bbox-expand alignment")
+	}
+	if spec.CropExpand <= 0 {
+		spec.CropExpand = 1.5
+	}
+	if spec.Weight <= 0 {
+		spec.Weight = 1
+	}
+	det, err := NewDetector(spec.Detector)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := NewRecognizer(rc)
+	rec, err := NewRecognizer(spec.Recognizer)
 	if err != nil {
 		det.Close()
 		return nil, err
 	}
-	return &Pipeline{Det: det, Rec: rec}, nil
+	p := &Pipeline{Det: det, Rec: rec, spec: spec}
+	if spec.Secondary != nil {
+		rec2, err := NewRecognizer(*spec.Secondary)
+		if err != nil {
+			det.Close()
+			rec.Close()
+			return nil, err
+		}
+		p.Rec2 = rec2
+		if spec.SecondaryWeight <= 0 {
+			p.spec.SecondaryWeight = 1
+		}
+	}
+	return p, nil
+}
+
+// l2norm normalizes v in place (no-op on the zero vector) and returns it.
+func l2norm(v []float32) []float32 {
+	var sum float64
+	for _, x := range v {
+		sum += float64(x) * float64(x)
+	}
+	if sum == 0 {
+		return v
+	}
+	inv := float32(1 / math.Sqrt(sum))
+	for i := range v {
+		v[i] *= inv
+	}
+	return v
+}
+
+// embedCrop runs one recognizer on the detection using the pipeline's crop
+// strategy, sized for that recognizer.
+func (p *Pipeline) embedCrop(rec *Recognizer, img image.Image, det Detection) ([]float32, error) {
+	var crop *image.NRGBA
+	if p.spec.Align == "landmarks" {
+		aligned, err := alignFace(img, det.Landmarks)
+		if err != nil {
+			return nil, err
+		}
+		crop = aligned
+	} else {
+		crop = cropExpanded(img, det, p.spec.CropExpand, rec.cfg.InputSize)
+	}
+	return rec.Embed(crop)
 }
 
 // Process runs the full pipeline on one image file. It returns the faces
-// (embedding vectors raw/un-normalized) plus the image dimensions so callers
-// can store relative bbox coordinates. A face that fails to align/embed is
-// skipped rather than failing the whole image.
+// (embedding vectors raw for single-recognizer pipelines, or the weighted
+// normalized concat for fused ones — callers L2-normalize either way) plus
+// the image dimensions so callers can store relative bbox coordinates. A face
+// that fails to align/embed is skipped rather than failing the whole image.
 func (p *Pipeline) Process(imagePath string) (faces []Face, imgW, imgH int, err error) {
 	img, err := decodeImageFile(imagePath)
 	if err != nil {
@@ -424,20 +591,36 @@ func (p *Pipeline) Process(imagePath string) (faces []Face, imgW, imgH int, err 
 		return nil, imgW, imgH, err
 	}
 	for _, det := range dets {
-		aligned, aerr := alignFace(img, det.Landmarks)
-		if aerr != nil {
-			continue
-		}
-		vec, eerr := p.Rec.Embed(aligned)
+		vec, eerr := p.embedCrop(p.Rec, img, det)
 		if eerr != nil {
 			continue
+		}
+		if p.Rec2 != nil {
+			vec2, e2 := p.embedCrop(p.Rec2, img, det)
+			if e2 != nil {
+				continue
+			}
+			// Weighted concat of unit vectors: scale each part by
+			// sqrt(weight) so cos(concat) = Σ wᵢ·cosᵢ / Σ wᵢ.
+			l2norm(vec)
+			l2norm(vec2)
+			w1 := float32(math.Sqrt(float64(p.spec.Weight)))
+			w2 := float32(math.Sqrt(float64(p.spec.SecondaryWeight)))
+			fused := make([]float32, 0, len(vec)+len(vec2))
+			for _, x := range vec {
+				fused = append(fused, x*w1)
+			}
+			for _, x := range vec2 {
+				fused = append(fused, x*w2)
+			}
+			vec = fused
 		}
 		faces = append(faces, Face{Detection: det, Vec: vec})
 	}
 	return faces, imgW, imgH, nil
 }
 
-// Close releases both sessions.
+// Close releases all sessions.
 func (p *Pipeline) Close() error {
 	var err error
 	if p.Det != nil {
@@ -445,6 +628,11 @@ func (p *Pipeline) Close() error {
 	}
 	if p.Rec != nil {
 		if e := p.Rec.Close(); err == nil {
+			err = e
+		}
+	}
+	if p.Rec2 != nil {
+		if e := p.Rec2.Close(); err == nil {
 			err = e
 		}
 	}

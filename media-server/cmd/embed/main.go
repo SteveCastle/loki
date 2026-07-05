@@ -30,12 +30,22 @@ func main() {
 		textInput, textOutput             string
 		seqLen                            int
 		// faces mode flags
-		facesMode                          bool
-		detectModel                        string
-		faceInput, faceOutput              string
-		faceMean, faceStd, faceColor       string
-		faceMinScore                       float64
-		faceMinSize                        int
+		facesMode                    bool
+		detectModel, detectKind      string
+		alignMode                    string
+		cropExpand                   float64
+		faceInput, faceOutput        string
+		faceSize                     int
+		faceMean, faceStd, faceColor string
+		faceWeight                   float64
+		face2Model, face2Input       string
+		face2Output                  string
+		face2Size, face2Dim          int
+		face2Mean, face2Std          string
+		face2Color                   string
+		face2Weight                  float64
+		faceMinScore                 float64
+		faceMinSize                  int
 	)
 	flag.StringVar(&modelPath, "model", "", "Path to ONNX embedding model")
 	flag.StringVar(&imagePath, "image", "", "Path to input image")
@@ -69,13 +79,29 @@ func main() {
 	// template, and embed each with a face-identity model (SFace by default;
 	// BYO ArcFace-family models via the --face-* preprocessing flags). Output
 	// is one JSON line per image; --model is the RECOGNIZER model path here.
-	flag.BoolVar(&facesMode, "faces", false, "Face mode: detect+align+embed faces; --model is the recognizer, --detect-model the YuNet detector")
-	flag.StringVar(&detectModel, "detect-model", "", "Path to the YuNet face-detection ONNX model (faces mode)")
+	flag.BoolVar(&facesMode, "faces", false, "Face mode: detect+align+embed faces; --model is the recognizer, --detect-model the detector")
+	flag.StringVar(&detectModel, "detect-model", "", "Path to the face/head detection ONNX model (faces mode)")
+	flag.StringVar(&detectKind, "detect-kind", "yunet", "Detector family: yunet (photo faces, landmarks) or yolo (anime heads)")
+	flag.StringVar(&alignMode, "align", "landmarks", "Crop strategy: landmarks (112 template warp) or bbox-expand (expanded head crop)")
+	flag.Float64Var(&cropExpand, "crop-expand", 1.5, "Bbox expansion factor for --align=bbox-expand")
 	flag.StringVar(&faceInput, "face-input", "data", "Recognizer input tensor name (faces mode)")
 	flag.StringVar(&faceOutput, "face-output", "fc1", "Recognizer output tensor name (faces mode)")
+	flag.IntVar(&faceSize, "face-size", 112, "Recognizer input crop size (112 landmark models, 224 generic encoders)")
 	flag.StringVar(&faceMean, "face-mean", "0,0,0", "Recognizer per-channel RGB mean on the 0..255 scale (127.5 for ArcFace-family)")
 	flag.StringVar(&faceStd, "face-std", "1,1,1", "Recognizer per-channel RGB stddev on the 0..255 scale (127.5 for ArcFace-family)")
 	flag.StringVar(&faceColor, "face-color", "BGR", "Recognizer channel order: BGR (SFace) or RGB (ArcFace-family)")
+	flag.Float64Var(&faceWeight, "face-weight", 1, "Primary recognizer's cosine-fusion weight")
+	// Secondary recognizer: embedding fusion (e.g. DINOv2 + SigLIP on anime
+	// head crops). Vectors are L2-normalized and weight-concatenated.
+	flag.StringVar(&face2Model, "face2-model", "", "Optional secondary recognizer ONNX model (embedding fusion)")
+	flag.StringVar(&face2Input, "face2-input", "data", "Secondary recognizer input tensor name")
+	flag.StringVar(&face2Output, "face2-output", "fc1", "Secondary recognizer output tensor name")
+	flag.IntVar(&face2Size, "face2-size", 112, "Secondary recognizer input crop size")
+	flag.IntVar(&face2Dim, "face2-dim", 0, "Secondary recognizer embedding dimension (required with --face2-model)")
+	flag.StringVar(&face2Mean, "face2-mean", "0,0,0", "Secondary recognizer RGB mean (0..255 scale)")
+	flag.StringVar(&face2Std, "face2-std", "1,1,1", "Secondary recognizer RGB stddev (0..255 scale)")
+	flag.StringVar(&face2Color, "face2-color", "RGB", "Secondary recognizer channel order")
+	flag.Float64Var(&face2Weight, "face2-weight", 1, "Secondary recognizer's cosine-fusion weight")
 	flag.Float64Var(&faceMinScore, "min-score", 0.7, "Minimum detection confidence (faces mode)")
 	flag.IntVar(&faceMinSize, "min-size", 40, "Minimum face bbox edge in original-image pixels (faces mode)")
 	flag.Parse()
@@ -95,13 +121,27 @@ func main() {
 	if facesMode {
 		err := runFaces(facesFlags{
 			detectModel: detectModel,
+			detectKind:  detectKind,
+			align:       alignMode,
+			cropExpand:  cropExpand,
 			recModel:    modelPath,
 			dim:         dim,
 			faceInput:   faceInput,
 			faceOutput:  faceOutput,
+			faceSize:    faceSize,
 			faceMean:    faceMean,
 			faceStd:     faceStd,
 			faceColor:   faceColor,
+			faceWeight:  faceWeight,
+			rec2Model:   face2Model,
+			face2Input:  face2Input,
+			face2Out:    face2Output,
+			face2Size:   face2Size,
+			face2Mean:   face2Mean,
+			face2Std:    face2Std,
+			face2Color:  face2Color,
+			face2Dim:    face2Dim,
+			face2Wt:     face2Weight,
 			minScore:    faceMinScore,
 			minSize:     faceMinSize,
 			ortLib:      ortLibPath,

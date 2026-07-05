@@ -122,6 +122,50 @@ func alignFace(src image.Image, landmarks [5][2]float32) (*image.NRGBA, error) {
 	return dst, nil
 }
 
+// cropExpanded cuts an expanded square region around a detection's bbox and
+// scales it to size×size — the "alignment" for detectors without landmarks
+// (anime heads): expand ~1.5× turns a head box into a head+hair/bust crop,
+// which carries the identity signal for drawn characters. Out-of-image area
+// is black, mirroring warpAffine's border behavior.
+func cropExpanded(src image.Image, d Detection, expand float32, size int) *image.NRGBA {
+	if expand <= 0 {
+		expand = 1
+	}
+	b := src.Bounds()
+	cx := float64(d.X) + float64(d.W)/2
+	cy := float64(d.Y) + float64(d.H)/2
+	side := float64(d.W)
+	if float64(d.H) > side {
+		side = float64(d.H)
+	}
+	side *= float64(expand)
+	if side < 1 {
+		side = 1
+	}
+	x0 := cx - side/2
+	y0 := cy - side/2
+	scale := float64(size) / side
+
+	// Flatten once for O(1) sampling (same as alignFace).
+	flat, ok := src.(*image.NRGBA)
+	if !ok || b.Min != (image.Point{}) {
+		flat = image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+		draw.Draw(flat, flat.Bounds(), src, b.Min, draw.Src)
+	}
+	w := flat.Rect.Dx()
+	h := flat.Rect.Dy()
+
+	dst := image.NewNRGBA(image.Rect(0, 0, size, size))
+	for dy := 0; dy < size; dy++ {
+		for dx := 0; dx < size; dx++ {
+			sx := x0 + (float64(dx)+0.5)/scale
+			sy := y0 + (float64(dy)+0.5)/scale
+			dst.SetNRGBA(dx, dy, sampleBilinear(flat, w, h, sx, sy))
+		}
+	}
+	return dst
+}
+
 // sampleBilinear reads the source at fractional coordinates with bilinear
 // interpolation; samples fully outside the image return black.
 func sampleBilinear(img *image.NRGBA, w, h int, x, y float64) color.NRGBA {

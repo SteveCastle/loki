@@ -35,21 +35,36 @@ type facesResultJSON struct {
 // facesFlags carries the faces-mode CLI configuration from main.
 type facesFlags struct {
 	detectModel string
+	detectKind  string // "yunet" | "yolo"
+	align       string // "landmarks" | "bbox-expand"
+	cropExpand  float64
 	recModel    string // recognizer model path (--model)
 	dim         int
 	faceInput   string
 	faceOutput  string
+	faceSize    int    // recognizer input size (112 landmarks, 224 crops)
 	faceMean    string // RGB, 0..255 scale
 	faceStd     string // RGB, 0..255 scale
 	faceColor   string // "BGR" (SFace) or "RGB" (ArcFace-family)
-	minScore    float64
-	minSize     int
-	ortLib      string
-	provider    string
-	device      int
-	threads     int
-	serve       bool
-	imagePath   string
+	faceWeight  float64
+	// optional secondary recognizer (embedding fusion, e.g. DINOv2+SigLIP)
+	rec2Model  string
+	face2Input string
+	face2Out   string
+	face2Size  int
+	face2Mean  string
+	face2Std   string
+	face2Color string
+	face2Dim   int
+	face2Wt    float64
+	minScore   float64
+	minSize    int
+	ortLib     string
+	provider   string
+	device     int
+	threads    int
+	serve      bool
+	imagePath  string
 }
 
 // runFaces executes faces mode: one-shot (--image) or --serve (one image path
@@ -70,9 +85,10 @@ func runFaces(f facesFlags) error {
 		return fmt.Errorf("invalid --face-std: %w", err)
 	}
 
-	pipe, err := onnxface.NewPipeline(
-		onnxface.DetectorConfig{
+	spec := onnxface.PipelineSpec{
+		Detector: onnxface.DetectorConfig{
 			ModelPath:      f.detectModel,
+			Kind:           f.detectKind,
 			ScoreThreshold: float32(f.minScore),
 			MinSize:        f.minSize,
 			ORTLib:         f.ortLib,
@@ -80,11 +96,12 @@ func runFaces(f facesFlags) error {
 			Device:         f.device,
 			Threads:        f.threads,
 		},
-		onnxface.RecognizerConfig{
+		Recognizer: onnxface.RecognizerConfig{
 			ModelPath:  f.recModel,
 			Dim:        f.dim,
 			InputName:  f.faceInput,
 			OutputName: f.faceOutput,
+			InputSize:  f.faceSize,
 			Mean:       mean,
 			Std:        std,
 			ColorOrder: f.faceColor,
@@ -93,7 +110,39 @@ func runFaces(f facesFlags) error {
 			Device:     f.device,
 			Threads:    f.threads,
 		},
-	)
+		Align:      f.align,
+		CropExpand: float32(f.cropExpand),
+		Weight:     float32(f.faceWeight),
+	}
+	if f.rec2Model != "" {
+		mean2, err := parseRGB(f.face2Mean)
+		if err != nil {
+			return fmt.Errorf("invalid --face2-mean: %w", err)
+		}
+		std2, err := parseRGB(f.face2Std)
+		if err != nil {
+			return fmt.Errorf("invalid --face2-std: %w", err)
+		}
+		if f.face2Dim <= 0 {
+			return fmt.Errorf("--face2-dim is required with --face2-model")
+		}
+		spec.Secondary = &onnxface.RecognizerConfig{
+			ModelPath:  f.rec2Model,
+			Dim:        f.face2Dim,
+			InputName:  f.face2Input,
+			OutputName: f.face2Out,
+			InputSize:  f.face2Size,
+			Mean:       mean2,
+			Std:        std2,
+			ColorOrder: f.face2Color,
+			ORTLib:     f.ortLib,
+			Provider:   f.provider,
+			Device:     f.device,
+			Threads:    f.threads,
+		}
+		spec.SecondaryWeight = float32(f.face2Wt)
+	}
+	pipe, err := onnxface.NewPipeline(spec)
 	if err != nil {
 		return err
 	}

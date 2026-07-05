@@ -86,6 +86,38 @@
       ]
     },
     {
+      "id": "anime-head",
+      "name": "Anime head detector",
+      "feature": "Anime character detection",
+      "description": "Detect anime/illustrated character heads so drawn characters can be grouped into people. YOLO-family detector from the deepghs project (MIT). Photo-trained face detectors miss drawn faces; this pairs with the anime character recognizer built from the installed DINOv2 + SigLIP models.",
+      "version": "v2.0_s",
+      "consumers": ["faces"],
+      "size_bytes": 44585386,
+      "files": [
+        {
+          "url": "https://huggingface.co/deepghs/anime_head_detection/resolve/main/head_detect_v2.0_s/model.onnx",
+          "rel_path": "model.onnx",
+          "sha256": "6679f9b71192298bbf174d82e9e5581c3237b0c3dc67deace7cdbf686b070a00"
+        }
+      ]
+    },
+    {
+      "id": "ccip",
+      "name": "CCIP anime character recognizer",
+      "feature": "Anime character identity",
+      "description": "Group anime/illustrated characters into people. Contrastive character-identity embeddings (deepghs CCIP, caformer-24; OpenRAIL license — downloaded directly from Hugging Face under its terms, never bundled). Pairs with the Anime head detector.",
+      "version": "caformer-24-randaug-pruned",
+      "consumers": ["faces"],
+      "size_bytes": 150248245,
+      "files": [
+        {
+          "url": "https://huggingface.co/deepghs/ccip_onnx/resolve/main/ccip-caformer-24-randaug-pruned/model_feat.onnx",
+          "rel_path": "model.onnx",
+          "sha256": "4ea118d16496274f4f6e08d3afc768cc592389e8f7f32f8732ce2215c228ac5f"
+        }
+      ]
+    },
+    {
       "id": "sface",
       "name": "SFace face recognizer",
       "feature": "Face identity",

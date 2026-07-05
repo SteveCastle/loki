@@ -35,9 +35,12 @@ type FaceModel struct {
 	Path string
 	BYO  bool
 
-	// Recognizer I/O + preprocessing of the aligned 112×112 crop.
+	// Recognizer I/O + preprocessing of the aligned crop.
 	InputName  string
 	OutputName string
+	// InputSize is the recognizer's square crop edge (default 112 for the
+	// landmark-aligned template; 224 for generic encoders on head crops).
+	InputSize  int
 	Mean, Std  [3]float32 // per-channel RGB on the 0..255 pixel scale
 	ColorOrder string     // "BGR" (SFace) or "RGB" (ArcFace-family)
 
@@ -45,6 +48,41 @@ type FaceModel struct {
 	// as the same person (clustering / search grouping). Recognizers have
 	// different score distributions, so this is per-model.
 	MatchThreshold float32
+
+	// ---- Pipeline profile (face domains) ----
+	// Domain is informational: "photo" (default) or "anime".
+	Domain string
+	// Detector coordinates in the deps manifest. Empty = YuNet.
+	DetectorDepID string
+	DetectorFile  string
+	// DetectorKind: "yunet" (landmarks) or "yolo" (anime heads, bbox only).
+	DetectorKind string
+	// Align: "landmarks" (112 five-point warp) or "bbox-expand" (expanded
+	// square head crop — required for landmark-less detectors).
+	Align string
+	// CropExpand is the bbox expansion factor for bbox-expand alignment.
+	CropExpand float32
+
+	// Secondary recognizer for embedding fusion (e.g. DINOv2 + SigLIP on
+	// anime head crops): both embed the same crop; vectors are L2-normalized
+	// and weight-concatenated, so the stored vector's cosine equals the
+	// weighted average of the per-model cosines. Dim must be the SUM of both
+	// dims when Secondary is set.
+	Secondary       *FaceModelPart
+	Weight          float32 // primary fusion weight (default 1)
+	SecondaryWeight float32
+}
+
+// FaceModelPart is one recognizer of a fused face model.
+type FaceModelPart struct {
+	DepID      string // deps manifest id
+	File       string // rel path under the model dir
+	InputName  string
+	OutputName string
+	Dim        int
+	InputSize  int
+	Mean, Std  [3]float32
+	ColorOrder string
 }
 
 // DefaultFaceModelID is the recognizer used when the config is empty or names
@@ -67,17 +105,53 @@ const defaultByoMatchThreshold = 0.40
 var builtinFaceModels = map[string]FaceModel{
 	"sface": {
 		ID:          "sface",
-		DisplayName: "SFace (OpenCV Zoo — shipped default)",
+		DisplayName: "SFace (photos — OpenCV Zoo, shipped default)",
 		Dim:         128,
 		DepID:       "sface",
 		File:        "model.onnx",
 		InputName:   "data",
 		OutputName:  "fc1",
+		InputSize:   112,
 		Mean:        [3]float32{0, 0, 0},
 		Std:         [3]float32{1, 1, 1},
 		ColorOrder:  "BGR",
 		// OpenCV's tuned same-identity cosine threshold for SFace.
 		MatchThreshold: 0.363,
+		Domain:         "photo",
+		DetectorKind:   "yunet",
+		Align:          "landmarks",
+	},
+	// Anime characters: drawn faces defeat photo-trained recognizers, so this
+	// pipeline detects HEADS (deepghs YOLO detector, MIT), crops an expanded
+	// head/bust region (hair + costume carry the identity signal for drawn
+	// characters), and embeds it with CCIP — a model trained specifically for
+	// anime character identity (deepghs, OpenRAIL; downloaded on demand from
+	// the Dependencies tab, never redistributed). Vectors live in the same
+	// face table under this ID, so characters become ordinary persons/People
+	// tags. Calibration on library art (same character across styles vs
+	// different characters): same 0.63–0.78, different ≤ 0.33 — a DINOv2 +
+	// SigLIP fusion measured an OVERLAPPING 0.52–0.78 vs 0.42–0.66 and was
+	// rejected; the fusion plumbing remains for future recognizers.
+	"anime-ccip": {
+		ID:          "anime-ccip",
+		DisplayName: "Anime characters (CCIP)",
+		Dim:         768,
+		DepID:       "ccip",
+		File:        "model.onnx",
+		InputName:   "input",
+		OutputName:  "output",
+		InputSize:   384,
+		Mean:        [3]float32{123.675, 116.28, 103.53}, // ImageNet, 0..255 scale
+		Std:         [3]float32{58.395, 57.12, 57.375},
+		ColorOrder:  "RGB",
+		// Midpoint of the measured same/different gap, rounded conservative.
+		MatchThreshold: 0.50,
+		Domain:         "anime",
+		DetectorDepID:  "anime-head",
+		DetectorFile:   "model.onnx",
+		DetectorKind:   "yolo",
+		Align:          "bbox-expand",
+		CropExpand:     2.5,
 	},
 }
 
@@ -112,6 +186,11 @@ func byoToFaceModel(b appconfig.ByoFaceModel) FaceModel {
 	if m.MatchThreshold <= 0 {
 		m.MatchThreshold = defaultByoMatchThreshold
 	}
+	// BYO entries are photo recognizers on the standard aligned crop.
+	m.InputSize = 112
+	m.Domain = "photo"
+	m.DetectorKind = "yunet"
+	m.Align = "landmarks"
 	return m
 }
 
@@ -149,10 +228,23 @@ func ActiveFaceModel() FaceModel {
 	return builtinFaceModels[DefaultFaceModelID]
 }
 
-// FaceModelList returns all selectable recognizers (built-ins first, then
-// valid BYO entries) for the config UI.
+// FaceModelList returns all selectable recognizers (built-ins in a stable
+// order, then valid BYO entries) for the config UI.
 func FaceModelList() []FaceModel {
-	out := []FaceModel{builtinFaceModels[DefaultFaceModelID]}
+	order := []string{DefaultFaceModelID, "anime-ccip"}
+	out := make([]FaceModel, 0, len(builtinFaceModels))
+	seen := map[string]bool{}
+	for _, id := range order {
+		if m, ok := builtinFaceModels[id]; ok {
+			out = append(out, m)
+			seen[id] = true
+		}
+	}
+	for id, m := range builtinFaceModels {
+		if !seen[id] {
+			out = append(out, m)
+		}
+	}
 	for _, b := range appconfig.Get().ByoFaceModels {
 		if strings.TrimSpace(b.ID) == "" || b.ModelPath == "" || b.Dim <= 0 {
 			continue
@@ -182,11 +274,34 @@ func FaceRecognizerPath(m FaceModel) (string, error) {
 	return p, nil
 }
 
-// FaceDetectorPath resolves the YuNet detector ONNX path via the deps flow.
-func FaceDetectorPath() (string, error) {
-	p, err := deps.ModelPath(FaceDetectorDepID, FaceDetectorFile)
+// FaceDetectorPathFor resolves the detector ONNX path for a face model via
+// the deps flow (YuNet unless the model declares its own detector).
+func FaceDetectorPathFor(m FaceModel) (string, error) {
+	depID, file := m.DetectorDepID, m.DetectorFile
+	if depID == "" {
+		depID, file = FaceDetectorDepID, FaceDetectorFile
+	}
+	p, err := deps.ModelPath(depID, file)
 	if err != nil || p == "" {
-		return "", fmt.Errorf("YuNet face detector not installed; install it from Dependencies")
+		return "", fmt.Errorf("face detector %q not installed; install it from Dependencies", depID)
+	}
+	return p, nil
+}
+
+// FaceDetectorPath resolves the detector for the ACTIVE face model.
+func FaceDetectorPath() (string, error) {
+	return FaceDetectorPathFor(ActiveFaceModel())
+}
+
+// FaceSecondaryPath resolves the on-disk path of a fused model's secondary
+// recognizer ("" when the model isn't fused).
+func FaceSecondaryPath(m FaceModel) (string, error) {
+	if m.Secondary == nil {
+		return "", nil
+	}
+	p, err := deps.ModelPath(m.Secondary.DepID, m.Secondary.File)
+	if err != nil || p == "" {
+		return "", fmt.Errorf("%s (fusion component) not installed; install it from Dependencies", m.Secondary.DepID)
 	}
 	return p, nil
 }

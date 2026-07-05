@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -104,16 +105,21 @@ func TestByoFaceModelInvalidEntriesSkipped(t *testing.T) {
 	if m, ok := FaceModelByID("sface"); !ok || m.BYO || m.Dim != 128 {
 		t.Fatalf("built-in sface shadowed: %+v", m)
 	}
-	// FaceModelList: only the built-in survives (all BYO entries invalid/shadowed).
+	// FaceModelList: only built-ins survive (all BYO entries invalid/shadowed).
 	list := FaceModelList()
-	if len(list) != 1 || list[0].ID != "sface" {
-		t.Fatalf("list = %+v, want [sface]", list)
+	for _, m := range list {
+		if m.BYO {
+			t.Fatalf("invalid BYO entry surfaced in list: %+v", m)
+		}
+	}
+	if len(list) != len(builtinFaceModels) {
+		t.Fatalf("list has %d entries, want the %d built-ins", len(list), len(builtinFaceModels))
 	}
 }
 
 func TestFacesServeArgs(t *testing.T) {
 	m, _ := FaceModelByID("sface")
-	args := buildFacesServeArgs(`C:\d\yunet.onnx`, `C:\d\sface.onnx`, `C:\ort.dll`, m, "cpu", 2)
+	args := buildFacesServeArgs(`C:\d\yunet.onnx`, `C:\d\sface.onnx`, "", `C:\ort.dll`, m, "cpu", 2)
 	want := map[string]bool{
 		"--faces": true, "--serve": true,
 		`--detect-model=C:\d\yunet.onnx`: true,
@@ -121,9 +127,12 @@ func TestFacesServeArgs(t *testing.T) {
 		"--dim=128":                      true,
 		"--face-input=data":              true,
 		"--face-output=fc1":              true,
+		"--face-size=112":                true,
 		"--face-mean=0,0,0":              true,
 		"--face-std=1,1,1":               true,
 		"--face-color=BGR":               true,
+		"--detect-kind=yunet":            true,
+		"--align=landmarks":              true,
 		"--provider=cpu":                 true,
 		"--threads=2":                    true,
 		`--ort=C:\ort.dll`:               true,
@@ -134,6 +143,74 @@ func TestFacesServeArgs(t *testing.T) {
 	for _, a := range args {
 		if !want[a] {
 			t.Fatalf("unexpected arg %q in %v", a, args)
+		}
+	}
+}
+
+func TestAnimeCcipModelAndArgs(t *testing.T) {
+	m, ok := FaceModelByID("anime-ccip")
+	if !ok {
+		t.Fatal("anime-ccip not registered")
+	}
+	if m.Dim != 768 || m.InputSize != 384 || m.Secondary != nil {
+		t.Fatalf("anime-ccip recognizer profile wrong: %+v", m)
+	}
+	if m.DetectorKind != "yolo" || m.Align != "bbox-expand" || m.Domain != "anime" || m.DetectorDepID != "anime-head" {
+		t.Fatalf("anime pipeline profile wrong: %+v", m)
+	}
+
+	args := buildFacesServeArgs(`C:\d\head.onnx`, `C:\d\ccip.onnx`, "", "", m, "cpu", 0)
+	joined := " " + strings.Join(args, " ") + " "
+	for _, wantArg := range []string{
+		"--detect-kind=yolo",
+		"--align=bbox-expand",
+		"--crop-expand=2.5",
+		"--dim=768",
+		"--face-size=384",
+		"--face-input=input",
+		"--face-output=output",
+		"--face-color=RGB",
+	} {
+		if !strings.Contains(joined, " "+wantArg+" ") {
+			t.Fatalf("missing %q in %v", wantArg, args)
+		}
+	}
+
+	// The anime model appears in the config-UI list after the default.
+	list := FaceModelList()
+	if len(list) < 2 || list[0].ID != "sface" || list[1].ID != "anime-ccip" {
+		t.Fatalf("model list order: %v", list)
+	}
+}
+
+func TestFusedModelArgs(t *testing.T) {
+	// No built-in ships fusion today (the DINOv2+SigLIP candidate measured
+	// overlapping same/different similarity and was rejected), but the
+	// plumbing stays for future recognizers — keep it covered.
+	m := FaceModel{
+		ID: "fused-test", Dim: 1536,
+		InputName: "pixel_values", OutputName: "last_hidden_state",
+		InputSize: 224, ColorOrder: "RGB", Weight: 0.6,
+		Secondary: &FaceModelPart{
+			DepID: "x", File: "y.onnx", InputName: "pixel_values",
+			OutputName: "pooler_output", Dim: 768, InputSize: 224, ColorOrder: "RGB",
+		},
+		SecondaryWeight: 0.4,
+		DetectorKind:    "yolo", Align: "bbox-expand", CropExpand: 1.5,
+	}
+	args := buildFacesServeArgs(`C:\d\head.onnx`, `C:\d\a.onnx`, `C:\d\b.onnx`, "", m, "cpu", 0)
+	joined := " " + strings.Join(args, " ") + " "
+	for _, wantArg := range []string{
+		"--dim=768", // primary dim = total − secondary
+		"--face-weight=0.6",
+		`--face2-model=C:\d\b.onnx`,
+		"--face2-dim=768",
+		"--face2-size=224",
+		"--face2-weight=0.4",
+		"--face2-color=RGB",
+	} {
+		if !strings.Contains(joined, " "+wantArg+" ") {
+			t.Fatalf("missing %q in %v", wantArg, args)
 		}
 	}
 }

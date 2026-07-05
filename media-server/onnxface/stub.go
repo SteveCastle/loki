@@ -14,6 +14,8 @@ var ErrCGORequired = errors.New("onnxface: built without cgo; ONNX inference una
 // DetectorConfig mirrors the cgo type (pipeline.go).
 type DetectorConfig struct {
 	ModelPath      string
+	Kind           string
+	InputSize      int
 	ScoreThreshold float32
 	NMSThreshold   float32
 	MinSize        int
@@ -29,12 +31,24 @@ type RecognizerConfig struct {
 	Dim        int
 	InputName  string
 	OutputName string
+	InputSize  int
 	Mean, Std  [3]float32
 	ColorOrder string
 	ORTLib     string
 	Provider   string
 	Device     int
 	Threads    int
+}
+
+// PipelineSpec mirrors the cgo type (pipeline.go).
+type PipelineSpec struct {
+	Detector        DetectorConfig
+	Recognizer      RecognizerConfig
+	Secondary       *RecognizerConfig
+	Weight          float32
+	SecondaryWeight float32
+	Align           string
+	CropExpand      float32
 }
 
 // Detector is unavailable without cgo.
@@ -53,11 +67,12 @@ func (r *Recognizer) Close() error                                     { return 
 
 // Pipeline is unavailable without cgo.
 type Pipeline struct {
-	Det *Detector
-	Rec *Recognizer
+	Det  *Detector
+	Rec  *Recognizer
+	Rec2 *Recognizer
 }
 
-func NewPipeline(dc DetectorConfig, rc RecognizerConfig) (*Pipeline, error) {
+func NewPipeline(spec PipelineSpec) (*Pipeline, error) {
 	return nil, ErrCGORequired
 }
 func (p *Pipeline) Process(imagePath string) ([]Face, int, int, error) {
