@@ -554,6 +554,7 @@ const getInitialContext = (): LibraryState => {
     ['followTranscript', true],
     ['showTags', 'all'],
     ['hideSuggestedTags', false],
+    ['hidePeopleTags', false],
     ['showFileInfo', 'none'],
     ['showControls', false],
     ['gridSize', [4, 4]],
@@ -684,6 +685,7 @@ const getInitialContext = (): LibraryState => {
       followTranscript: batched['followTranscript'] as boolean,
       showTags: batched['showTags'] as 'all' | 'list' | 'detail' | 'none',
       hideSuggestedTags: batched['hideSuggestedTags'] as boolean,
+      hidePeopleTags: batched['hidePeopleTags'] as boolean,
       showFileInfo: batched['showFileInfo'] as
         | 'all'
         | 'list'

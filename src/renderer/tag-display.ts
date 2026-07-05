@@ -13,11 +13,3 @@ export function displayTagLabel(label: string): string {
     : label;
 }
 
-// Categories whose tags are AI-generated rather than hand-curated. The
-// "hide suggested tags" setting hides all of them: Suggested comes from the
-// auto-tagger, People from face clustering.
-export const AI_TAG_CATEGORIES = ['Suggested', 'People'];
-
-export function isAiTagCategory(category: string | null | undefined): boolean {
-  return !!category && AI_TAG_CATEGORIES.includes(category);
-}

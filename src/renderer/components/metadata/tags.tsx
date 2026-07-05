@@ -3,7 +3,7 @@ import { useSelector } from '@xstate/react';
 import { invoke } from '../../platform';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
-import { displayTagLabel, isAiTagCategory } from '../../tag-display';
+import { displayTagLabel } from '../../tag-display';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import './tags.css';
 import TimestampTooltip from './timestamp-tooltip';
@@ -74,6 +74,10 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(enableTagGeneration); // Always visible for metadata panel
   const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
+  const hidePeopleTags = useSelector(
+    libraryService,
+    (state) => state.context.settings.hidePeopleTags
+  );
   const hideSuggestedTags = useSelector(
     libraryService,
     (state) => state.context.settings.hideSuggestedTags
@@ -162,13 +166,13 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   if (isLoading || !data) return <div ref={containerRef} className={`Tags`} />;
   if (error) return <div ref={containerRef} className={`Tags`}><p>{error.message}</p></div>;
   const visibleTags = (data.tags || []).filter((tag) => {
-    // "Hide suggested tags" hides all AI-generated tags: the auto-tagger's
-    // Suggested bucket and the face-clustering People tags alike.
-    if (
-      !enableTagGeneration &&
-      hideSuggestedTags &&
-      isAiTagCategory(tag.category_label)
-    ) {
+    if (enableTagGeneration) return true;
+    // Both buckets are AI-generated, but each has its own toggle: Suggested
+    // comes from the auto-tagger, People from face clustering.
+    if (hideSuggestedTags && tag.category_label === 'Suggested') {
+      return false;
+    }
+    if (hidePeopleTags && tag.category_label === 'People') {
       return false;
     }
     return true;

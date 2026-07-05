@@ -45,6 +45,7 @@ export type SettingKey =
   | 'followTranscript'
   | 'showTags'
   | 'hideSuggestedTags'
+  | 'hidePeopleTags'
   | 'showFileInfo'
   | 'showControls'
   | 'recursive'
@@ -73,6 +74,7 @@ export type Settings = {
   battleMode: boolean;
   showTags: ShowTagOptions;
   hideSuggestedTags: boolean;
+  hidePeopleTags: boolean;
   showFileInfo: ShowFileInfoOptions;
   showControls: boolean;
   recursive: boolean;
@@ -295,6 +297,25 @@ export const SHOW_TAGS = {
 
 export const HIDE_SUGGESTED_TAGS = {
   title: 'Hide Suggested Tags',
+  reload: false,
+  display: 'general',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
+// Face clustering writes People tags automatically, so they're AI-suggested
+// like the autotagger's Suggested bucket — but they get their own toggle so
+// hiding one kind doesn't force hiding the other.
+export const HIDE_PEOPLE_TAGS = {
+  title: 'Hide People (Face) Tags',
   reload: false,
   display: 'general',
   options: {
@@ -574,6 +595,7 @@ export const SETTINGS: SettingsObject = {
   followTranscript: FOLLOW_TRANSCRIPT,
   showTags: SHOW_TAGS,
   hideSuggestedTags: HIDE_SUGGESTED_TAGS,
+  hidePeopleTags: HIDE_PEOPLE_TAGS,
   showFileInfo: SHOW_FILE_INFO,
   showControls: SHOW_CONTROLS,
   recursive: RECURSIVE,
