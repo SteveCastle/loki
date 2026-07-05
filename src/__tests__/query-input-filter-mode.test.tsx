@@ -51,7 +51,9 @@ describe('QueryInput filtering-mode toggle', () => {
     expect(onCycleFilterMode).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the query-syntax help button alongside the new toggle (additive)', () => {
+  it('keeps the submit and clear buttons alongside the toggle (additive)', () => {
+    // The old query-syntax help button was removed with the cheat sheet;
+    // the toggle must coexist with the remaining input buttons.
     const utils = render(
       <QueryInput
         {...baseProps}
@@ -60,7 +62,10 @@ describe('QueryInput filtering-mode toggle', () => {
       />
     );
     expect(
-      utils.container.querySelector('.query-input-help')
+      utils.container.querySelector('.query-input-submit')
+    ).not.toBeNull();
+    expect(
+      utils.container.querySelector('.query-input-clear')
     ).not.toBeNull();
     expect(
       utils.container.querySelector('.query-input-filter-mode')

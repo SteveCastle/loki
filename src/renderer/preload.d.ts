@@ -149,6 +149,16 @@ declare global {
           endTime?: string;
           text?: string;
         }) => Promise<boolean>;
+        deleteTranscriptCue: (input: {
+          mediaPath: string;
+          cueIndex: number;
+        }) => Promise<boolean>;
+        insertTranscriptCue: (input: {
+          mediaPath: string;
+          startTime: string;
+          endTime: string;
+          text?: string;
+        }) => Promise<number>;
         checkIfWhisperIsInstalled: () => Promise<boolean>;
       };
       loadTaxonomy: () => Promise<string[]>;

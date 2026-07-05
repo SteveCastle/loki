@@ -169,7 +169,10 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
     'load-tags-by-media-path': {
       url: '/api/media/tags',
       method: 'POST',
-      argsToBody: (args) => ({ path: args[0]?.path ?? args[0] }),
+      // Callers pass either an item object ({ path }) or a bare path string.
+      argsToBody: (args) => ({
+        path: (args[0] as { path?: string })?.path ?? args[0],
+      }),
     },
     'update-description': {
       url: '/api/media/description',
