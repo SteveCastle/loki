@@ -193,6 +193,16 @@
               </ul>
             </li>
             <li>
+              <a href="#viewer-visual-search">Visual Search (AI)</a>
+              <ul>
+                <li><a href="#viewer-query-chips">Search &amp; Filter Chips</a></li>
+                <li><a href="#viewer-find-similar">Find Similar Images</a></li>
+                <li><a href="#viewer-search-meaning">Search by Meaning</a></li>
+                <li><a href="#viewer-clip-search">Screen Clip Search</a></li>
+                <li><a href="#viewer-visual-setup">Setup Requirements</a></li>
+              </ul>
+            </li>
+            <li>
               <a href="#viewer-playback">Video & Audio Playback</a>
               <ul>
                 <li><a href="#viewer-controls">Playback Controls</a></li>
@@ -864,6 +874,87 @@
               remembering — descriptions appear inline in the tagging panel
               and can be edited from the redesigned tag and category modals.
             </p>
+          </section>
+
+          <section id="viewer-visual-search">
+            <h2>Visual Search (AI)</h2>
+            <p>
+              Search your library the way you think about it: find images
+              that look like another image, describe what you want in plain
+              words, or draw a box around anything on screen and find more
+              like it. Visual search is powered by on-device AI image
+              embeddings (SigLIP 2) — nothing leaves your machine.
+            </p>
+
+            <h3 id="viewer-query-chips">Search &amp; Filter Chips</h3>
+            <p>
+              The search input builds a composable query out of chips. Mix
+              and match filters and they all apply together:
+            </p>
+            <ul>
+              <li><strong>#tag</strong> - Media with a tag</li>
+              <li><strong>in:category</strong> - Media tagged in a category</li>
+              <li><strong>path:</strong> - Filename or folder contains text</li>
+              <li><strong>description:</strong> - Description contains text</li>
+              <li><strong>hash:</strong> - File hash contains text</li>
+            </ul>
+            <p>
+              Click a chip to exclude it (NOT), and click the join between
+              chips to switch each one between AND and OR. Visual searches
+              below appear as chips too, so you can combine "looks like this"
+              with regular tag and text filters — remove the chip to get your
+              previous view back.
+            </p>
+
+            <h3 id="viewer-find-similar">Find Similar Images</h3>
+            <p>
+              Shift + right-click any image (in the detail view, or the
+              selected item in list view) to open the Context Palette, then
+              choose <strong>Find Similar</strong>. The library reorders by
+              visual similarity to that image, with a match score badge on
+              every result.
+            </p>
+
+            <h3 id="viewer-search-meaning">Search by Meaning</h3>
+            <p>
+              Toggle the ✨ button in the search input and describe what
+              you're looking for — "a red car at night", "handwritten notes",
+              "two people on a beach" — then press Enter. Text is matched
+              against the images themselves, not tags or filenames, so it
+              finds things you never got around to tagging. The toggle stays
+              on until you turn it off.
+            </p>
+
+            <h3 id="viewer-clip-search">Screen Clip Search</h3>
+            <p>
+              Hold <strong>Alt</strong> and drag a box around anything on
+              screen — part of an image, a frame of a paused video, even a
+              detail inside a larger picture — and the viewer searches your
+              library for visually similar media. The clip appears as a chip
+              in the search input with its own thumbnail, and composes with
+              your other filters like any other search.
+            </p>
+
+            <h3 id="viewer-visual-setup">Setup Requirements</h3>
+            <p>
+              Visual search uses the Lowkey Media Server's embedding backend:
+            </p>
+            <ul>
+              <li>
+                Run the Lowkey Media Server and log in from the viewer (the
+                desktop app and server share the same library database).
+              </li>
+              <li>
+                Install the SigLIP 2 model (~1.5 GB, one-time) from the
+                server's Dependencies page.
+              </li>
+              <li>
+                Generate embeddings for your library — one click from the
+                Context Palette (<strong>Generate embeddings</strong>) or a
+                batch job on the server. New media can be embedded as it's
+                ingested.
+              </li>
+            </ul>
           </section>
 
           <section id="viewer-playback">
