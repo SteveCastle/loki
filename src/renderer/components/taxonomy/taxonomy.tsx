@@ -335,6 +335,12 @@ export default function Taxonomy() {
                 data: { key, join },
               })
             }
+            onUpdatePredicateBlend={(key, patch) =>
+              libraryService.send({
+                type: 'UPDATE_PREDICATE_BLEND',
+                data: { key, patch },
+              })
+            }
             onSubmitVisual={(t) => {
               libraryService.send({
                 type: 'ADD_PREDICATE',

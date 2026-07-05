@@ -231,6 +231,12 @@ export default function CommandPaletteSearch({
             data: { key, join: j },
           })
         }
+        onUpdatePredicateBlend={(key, patch) =>
+          libraryService.send({
+            type: 'UPDATE_PREDICATE_BLEND',
+            data: { key, patch },
+          })
+        }
         onClearText={clearText}
         onClearAll={() => {
           libraryService.send({ type: 'CLEAR_QUERY' });

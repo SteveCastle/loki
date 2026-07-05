@@ -25,6 +25,13 @@ export interface Predicate {
   exclude: boolean;
   // Faceted combine bucket; undefined falls back to the global mode.
   join?: 'AND' | 'OR';
+  // Blended search ('similar'/'clip' only): free text mixed into the image
+  // query. The server combines the image and text embeddings into one query
+  // vector, so both live in the same SigLIP 2 space. Absent = pure image.
+  text?: string;
+  // Text share of the blend, 0..1 (0 = pure image, 1 = pure text). Only
+  // meaningful when `text` is set; the UI defaults new blends to 0.5.
+  textWeight?: number;
 }
 
 export interface Query {

@@ -229,15 +229,38 @@ func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string,
 	if !found {
 		m = ActiveEmbedModel()
 	}
+	fresh, err := embedAndPersist(ctx, db, m, path)
+	if err != nil {
+		return nil, err
+	}
+	return SearchByVector(db, m.ID, fresh, limit)
+}
+
+// embedAndPersist embeds path under m, then persists + indexes the vector so
+// future searches over this item are instant.
+func embedAndPersist(ctx context.Context, db *sql.DB, m EmbedModel, path string) ([]float32, error) {
 	fresh, err := embedFileWithModel(ctx, path, m)
 	if err != nil {
 		return nil, fmt.Errorf("embed query item %q: %w", path, err)
 	}
-	// Persist + index so future searches over this item are instant.
 	if uerr := media.UpsertEmbedding(db, path, m.ID, fresh, 0); uerr == nil {
 		indexAdd(m.ID, path, fresh) // index normalizes internally
 	}
-	return SearchByVector(db, m.ID, fresh, limit)
+	return fresh, nil
+}
+
+// ImageQueryVectorForPath returns path's image embedding under m: the stored
+// vector when present, otherwise embedded on the fly (and persisted). Used as
+// the image half of a blended image+text query.
+func ImageQueryVectorForPath(ctx context.Context, db *sql.DB, m EmbedModel, path string) ([]float32, error) {
+	vec, ok, err := media.GetEmbedding(db, path, m.ID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return vec, nil
+	}
+	return embedAndPersist(ctx, db, m, path)
 }
 
 // embedSubprocessError wraps a failed embed-subprocess run, surfacing the
@@ -333,37 +356,50 @@ func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer,
 	return embedvec.Decode(raw)
 }
 
-// SearchByText encodes text via the SigLIP 2 text encoder subprocess and
-// returns the top-limit most similar media by cosine similarity. Returns an
-// error (not a panic) when the model, tokenizer, or embed binary is absent.
-func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
+// TextQueryVector encodes text with the multimodal text-search model's text
+// encoder and returns the vector plus the model it belongs to (which is also
+// the image-embedding space the vector must be matched/blended against).
+// Returns an error (not a panic) when the model, tokenizer, or embed binary
+// is absent.
+func TextQueryVector(ctx context.Context, text string) ([]float32, EmbedModel, error) {
 	// Text->image search needs a text encoder; resolve the multimodal model
 	// (the active model if it's multimodal, otherwise SigLIP 2). Vectors are
 	// matched against this model's image embeddings.
 	m := TextSearchModel()
 	if !m.Multimodal || m.TextModelFile == "" {
-		return nil, fmt.Errorf("model %q does not support text search", m.ID)
+		return nil, m, fmt.Errorf("model %q does not support text search", m.ID)
 	}
 	textModel, err := deps.ModelPath(m.ID, m.TextModelFile)
 	if err != nil {
-		return nil, fmt.Errorf("text model not installed: %w", err)
+		return nil, m, fmt.Errorf("text model not installed: %w", err)
 	}
 	if textModel == "" {
-		return nil, fmt.Errorf("text model not installed")
+		return nil, m, fmt.Errorf("text model not installed")
 	}
 	tokenizer, err := deps.ModelPath(m.ID, m.TokenizerFile)
 	if err != nil {
-		return nil, fmt.Errorf("tokenizer not installed: %w", err)
+		return nil, m, fmt.Errorf("tokenizer not installed: %w", err)
 	}
 	if tokenizer == "" {
-		return nil, fmt.Errorf("tokenizer not installed")
+		return nil, m, fmt.Errorf("tokenizer not installed")
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, fmt.Errorf("embed binary not installed")
+		return nil, m, fmt.Errorf("embed binary not installed")
 	}
 	vec, err := runEmbedTextSubprocess(ctx, embedBin, textModel, tokenizer, ortLib, text, m)
+	if err != nil {
+		return nil, m, err
+	}
+	return vec, m, nil
+}
+
+// SearchByText encodes text via the SigLIP 2 text encoder subprocess and
+// returns the top-limit most similar media by cosine similarity. Returns an
+// error (not a panic) when the model, tokenizer, or embed binary is absent.
+func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
+	vec, m, err := TextQueryVector(ctx, text)
 	if err != nil {
 		return nil, err
 	}

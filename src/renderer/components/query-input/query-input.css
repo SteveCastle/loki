@@ -65,6 +65,97 @@
   border-color: #3d6378;
 }
 
+/* Anchors an image chip's blend popover; otherwise visually inert (the chip
+   keeps its own margins, and flex-wrap treats the wrapper like the chip). */
+.query-chip-wrap {
+  position: relative;
+  display: inline-flex;
+  max-width: 100%;
+}
+
+/* Inline "blended with text" suffix on an image chip. */
+.query-chip-blend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 5px;
+  padding-left: 5px;
+  border-left: 1px solid #3d6378;
+  color: #cdb8ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.query-chip-blend-pct {
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+/* Hover popover: text input + image↔text weight slider. */
+.query-chip-blend-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 250px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #26262b;
+  border: 1px solid #4a4356;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  cursor: default;
+}
+
+.query-chip-blend-input {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid #4a4356;
+  border-radius: 3px;
+  background: #2d2d31;
+  color: #fff;
+  font-size: 12px;
+}
+
+.query-chip-blend-input:focus {
+  outline: none;
+  border-color: #6c5cff;
+}
+
+.query-chip-blend-input::placeholder {
+  color: #888;
+}
+
+.query-chip-blend-slider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.query-chip-blend-slider input[type='range'] {
+  flex: 1 1 0;
+  min-width: 0;
+  accent-color: #6c5cff;
+  cursor: pointer;
+}
+
+.query-chip-blend-slider input[type='range']:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.query-chip-blend-pct-label {
+  min-width: 52px;
+  text-align: right;
+  color: #b9b2ff;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .query-chip-thumb {
   width: 18px;
   height: 18px;

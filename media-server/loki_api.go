@@ -326,6 +326,22 @@ func decodeImageDataURL(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
+// blendTextWeight resolves a blended predicate's text share: clamped to [0,1],
+// defaulting to an even 0.5 when the client sent text without a weight.
+func blendTextWeight(w *float64) float32 {
+	if w == nil {
+		return 0.5
+	}
+	v := *w
+	if v < 0 {
+		v = 0
+	}
+	if v > 1 {
+		v = 1
+	}
+	return float32(v)
+}
+
 // sortItemsByScore orders items (each a map with "path") by descending score
 // from scoreByPath, attaching item["score"]. Stable for equal scores.
 func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
@@ -370,14 +386,26 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 				hasVisual = true
 				var hits []tasks.SimilarHit
 				var err error
+				// An image predicate carrying text becomes a blended query: one
+				// combined vector ((1-w)*image + w*text) cosine-scanned once,
+				// rather than two independently-resolved path sets.
+				blendText := strings.TrimSpace(req.Predicates[i].Text)
 				switch pt {
 				case "similar":
-					hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
+					if blendText != "" {
+						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
+					} else {
+						hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
+					}
 				case "clip":
 					// A captured screen region: the value is a PNG data URL.
 					var image []byte
 					if image, err = decodeImageDataURL(val); err == nil {
-						hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+						if blendText != "" {
+							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
+						} else {
+							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+						}
 					}
 				default:
 					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)

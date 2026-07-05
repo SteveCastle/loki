@@ -59,6 +59,27 @@ export function addPredicateWithMode(
   return addPredicate(q, p);
 }
 
+// Patch a predicate's blend fields (text / textWeight) in place, keyed by
+// predicateKey (which ignores blend fields, so the chip identity is stable
+// while its blend is edited). Clearing the text drops the whole blend.
+export function updatePredicateBlend(
+  q: Query,
+  key: string,
+  patch: { text?: string; textWeight?: number }
+): Query {
+  return {
+    predicates: q.predicates.map((x) => {
+      if (predicateKey(x) !== key) return x;
+      const next = { ...x, ...patch };
+      if (!next.text || !next.text.trim()) {
+        delete next.text;
+        delete next.textWeight;
+      }
+      return next;
+    }),
+  };
+}
+
 export function setPredicateJoin(q: Query, key: string, join: 'AND' | 'OR'): Query {
   return {
     predicates: q.predicates.map((x) =>

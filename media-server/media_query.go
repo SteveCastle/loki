@@ -5,11 +5,16 @@ import "strings"
 
 // Predicate mirrors src/renderer/query/types.ts Predicate.
 type Predicate struct {
-	Type     string   `json:"type"` // tag|category|path|description|hash|similar|visual|clip
-	Value    string   `json:"value"`
-	Exclude  bool     `json:"exclude"`
-	Join     string   `json:"join"`              // "AND" | "OR" | "" (empty falls back to mode)
-	Resolved []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
+	Type    string `json:"type"` // tag|category|path|description|hash|similar|visual|clip
+	Value   string `json:"value"`
+	Exclude bool   `json:"exclude"`
+	Join    string `json:"join"` // "AND" | "OR" | "" (empty falls back to mode)
+	// Blended search (similar/clip only): free text mixed into the image query
+	// and its share of the blend, 0..1 (0 = pure image, 1 = pure text). A nil
+	// TextWeight with Text set defaults to an even 0.5 blend.
+	Text       string   `json:"text"`
+	TextWeight *float64 `json:"textWeight"`
+	Resolved   []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
 }
 
 // Columns returned for the library list. media.description is intentionally

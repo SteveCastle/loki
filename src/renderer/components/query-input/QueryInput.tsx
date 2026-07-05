@@ -19,6 +19,13 @@ interface QueryInputProps {
   onRemovePredicate: (key: string) => void;
   onToggleExclude: (key: string) => void;
   onSetPredicateJoin: (key: string, join: 'AND' | 'OR') => void;
+  // Blend an image predicate (similar/clip) with text. When supplied, hovering
+  // an image chip opens a popover with a text input and an image↔text weight
+  // slider; commits patch the predicate in place (text: '' clears the blend).
+  onUpdatePredicateBlend?: (
+    key: string,
+    patch: { text?: string; textWeight?: number }
+  ) => void;
   onClearAll: () => void; // clear chips + text (resets the library)
   onClearText: () => void; // clear only the typed text (no-op on the library)
   onFocus?: () => void;
@@ -86,6 +93,7 @@ export default function QueryInput({
   onRemovePredicate,
   onToggleExclude,
   onSetPredicateJoin,
+  onUpdatePredicateBlend,
   onClearAll,
   onClearText,
   onFocus,
@@ -114,6 +122,75 @@ export default function QueryInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Blend popover (image chips only): which chip is open, plus draft text /
+  // text-weight (%) being edited. Drafts commit on Enter, input blur, or
+  // slider release — never per keystroke/drag-tick, since a commit re-runs the
+  // query (an embed-subprocess call per run on the server).
+  const [blendKey, setBlendKey] = useState<string | null>(null);
+  const [blendText, setBlendText] = useState('');
+  const [blendPct, setBlendPct] = useState(50);
+  const blendCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Keep the popover open while its controls have focus or the pointer is
+  // over the chip/popover (the two signals cover typing and mousing apart).
+  const blendFocusRef = useRef(false);
+  const blendHoverRef = useRef(false);
+
+  const cancelBlendClose = useCallback(() => {
+    if (blendCloseTimer.current) {
+      clearTimeout(blendCloseTimer.current);
+      blendCloseTimer.current = null;
+    }
+  }, []);
+
+  // Commit a blend edit for the chip at `key`. Values are passed explicitly
+  // (not read from state) so slider-release and input-blur commits can't race
+  // a pending setState. No-ops when nothing actually changed.
+  const commitBlend = useCallback(
+    (key: string, text: string, pct: number) => {
+      if (!onUpdatePredicateBlend) return;
+      const p = query.predicates.find((x) => predicateKey(x) === key);
+      if (!p) return;
+      const trimmed = text.trim();
+      const curText = p.text ?? '';
+      const curPct = Math.round((p.textWeight ?? 0.5) * 100);
+      if (trimmed === curText && (trimmed === '' || pct === curPct)) return;
+      onUpdatePredicateBlend(
+        key,
+        trimmed
+          ? { text: trimmed, textWeight: pct / 100 }
+          : { text: '', textWeight: undefined }
+      );
+    },
+    [onUpdatePredicateBlend, query.predicates]
+  );
+
+  const openBlend = useCallback(
+    (p: Predicate) => {
+      cancelBlendClose();
+      blendHoverRef.current = true;
+      const key = predicateKey(p);
+      if (blendKey === key) return;
+      // Flush any uncommitted draft on the previously open chip.
+      if (blendKey !== null) commitBlend(blendKey, blendText, blendPct);
+      setBlendKey(key);
+      setBlendText(p.text ?? '');
+      setBlendPct(Math.round((p.textWeight ?? 0.5) * 100));
+    },
+    [cancelBlendClose, blendKey, blendText, blendPct, commitBlend]
+  );
+
+  const scheduleBlendClose = useCallback(() => {
+    blendHoverRef.current = false;
+    cancelBlendClose();
+    blendCloseTimer.current = setTimeout(() => {
+      if (blendFocusRef.current || blendHoverRef.current) return;
+      setBlendKey(null);
+    }, 250);
+  }, [cancelBlendClose]);
+
+  // Clear any pending popover-close timer on unmount.
+  useEffect(() => cancelBlendClose, [cancelBlendClose]);
 
   // Focus the text input on mount when requested (e.g. the command palette
   // opens) so the user can start typing a query immediately.
@@ -339,14 +416,26 @@ export default function QueryInput({
             const baseName = isSimilar
               ? p.value.split(/[/\\]/).pop() || p.value
               : '';
+            // Image chips (similar/clip) can blend in a text query: hovering
+            // opens a popover with a text input + image↔text weight slider.
+            const isImage = isSimilar || isClip;
+            const canBlend = isImage && !!onUpdatePredicateBlend;
+            const blendOpen = canBlend && blendKey === key;
+            const hasBlend = isImage && !!p.text;
+            const chipPct = Math.round((p.textWeight ?? 0.5) * 100);
             return (
               <span
-                className={chipClass}
+                className="query-chip-wrap"
                 key={key}
+                onMouseEnter={canBlend ? () => openBlend(p) : undefined}
+                onMouseLeave={canBlend ? scheduleBlendClose : undefined}
+              >
+              <span
+                className={chipClass}
                 onClick={() => onToggleExclude(key)}
-                title={
-                  p.exclude ? 'Click to include' : 'Click to exclude'
-                }
+                title={`${p.exclude ? 'Click to include' : 'Click to exclude'}${
+                  canBlend ? ' · hover to blend with text' : ''
+                }`}
               >
                 {index > 0 && (
                   <button
@@ -402,6 +491,16 @@ export default function QueryInput({
                       {p.value}
                     </>
                   )}
+                  {hasBlend && (
+                    <span
+                      className="query-chip-blend"
+                      title={`Blended with “${p.text}” (${chipPct}% text)`}
+                    >
+                      <span aria-hidden="true">✨</span>
+                      {p.text}
+                      <span className="query-chip-blend-pct">{chipPct}%</span>
+                    </span>
+                  )}
                 </span>
                 <button
                   className="query-chip-remove"
@@ -413,6 +512,89 @@ export default function QueryInput({
                 >
                   &times;
                 </button>
+              </span>
+              {blendOpen && (
+                <span
+                  className="query-chip-blend-pop"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    className="query-chip-blend-input"
+                    type="text"
+                    placeholder="Blend with text… (e.g. “at night”)"
+                    value={blendText}
+                    onChange={(e) => setBlendText(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      e.stopPropagation();
+                      if (e.key === 'Enter') {
+                        commitBlend(key, e.currentTarget.value, blendPct);
+                        blendFocusRef.current = false;
+                        setBlendKey(null);
+                      } else if (e.key === 'Escape') {
+                        // Revert the draft; keep whatever was last committed.
+                        setBlendText(p.text ?? '');
+                        setBlendPct(chipPct);
+                        blendFocusRef.current = false;
+                        setBlendKey(null);
+                      }
+                    }}
+                    onKeyUp={(e) => e.stopPropagation()}
+                    onFocus={() => {
+                      blendFocusRef.current = true;
+                    }}
+                    onBlur={(e) => {
+                      blendFocusRef.current = false;
+                      commitBlend(key, e.currentTarget.value, blendPct);
+                      scheduleBlendClose();
+                    }}
+                  />
+                  <span className="query-chip-blend-slider">
+                    <span title="All image" aria-hidden="true">
+                      🖼
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={blendPct}
+                      disabled={!blendText.trim()}
+                      aria-label="Image vs. text weight"
+                      onChange={(e) =>
+                        setBlendPct(Number(e.currentTarget.value))
+                      }
+                      onPointerUp={(e) =>
+                        commitBlend(
+                          key,
+                          blendText,
+                          Number((e.target as HTMLInputElement).value)
+                        )
+                      }
+                      onKeyUp={(e) => {
+                        e.stopPropagation();
+                        commitBlend(
+                          key,
+                          blendText,
+                          Number(e.currentTarget.value)
+                        );
+                      }}
+                      onFocus={() => {
+                        blendFocusRef.current = true;
+                      }}
+                      onBlur={() => {
+                        blendFocusRef.current = false;
+                        scheduleBlendClose();
+                      }}
+                    />
+                    <span title="All text" aria-hidden="true">
+                      ✨
+                    </span>
+                    <span className="query-chip-blend-pct-label">
+                      {blendPct}% text
+                    </span>
+                  </span>
+                </span>
+              )}
               </span>
             );
           })}

@@ -21,6 +21,7 @@ import {
   toggleExclude,
   applyTagClick,
   setPredicateJoin,
+  updatePredicateBlend,
   tagsFromQuery,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
@@ -839,6 +840,20 @@ const queryMutationOn = {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
       const q = setPredicateJoin(context.query, event.data.key, event.data.join);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  // Blend a similar/clip (image) predicate with text: patch text/textWeight on
+  // the chip and re-run. The chip UI commits only real changes, so every event
+  // here means the blend actually moved.
+  UPDATE_PREDICATE_BLEND: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = updatePredicateBlend(
+        context.query,
+        event.data.key,
+        event.data.patch
+      );
       return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
   },
