@@ -1,5 +1,5 @@
 // src/__tests__/query-reducer.test.ts
-import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, updatePredicateBlend, tagsFromQuery, addPredicateWithMode } from '../renderer/query/reducer';
+import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, updatePredicateBlend, tagsFromQuery, addPredicateWithMode, addOrMergeSimilarityPredicate, addBlendNode, removeBlendNode, updateBlendNode, effectiveBlendNodes } from '../renderer/query/reducer';
 import type { Query } from '../renderer/query/types';
 
 const q = (preds: Query['predicates']): Query => ({ predicates: preds });
@@ -163,5 +163,137 @@ describe('query reducer', () => {
       { type: 'tag', value: 'c', exclude: false },
     ]);
     expect(tagsFromQuery(q2)).toEqual(['a', 'c']);
+  });
+});
+
+describe('composite blend nodes', () => {
+  it('EXCLUSIVE still replaces the whole query with the new similarity predicate', () => {
+    const start = q([{ type: 'similar', value: 'C:/a.png', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'similar', value: 'C:/b.png', exclude: false },
+      'EXCLUSIVE'
+    );
+    expect(next.predicates).toEqual([
+      { type: 'similar', value: 'C:/b.png', exclude: false },
+    ]);
+  });
+
+  it('AND merges a new similar image into the existing similarity chip as a node', () => {
+    const start = q([{ type: 'similar', value: 'C:/a.png', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'similar', value: 'C:/b.png', exclude: false },
+      'AND'
+    );
+    expect(next.predicates).toHaveLength(1);
+    expect(next.predicates[0].nodes).toEqual([
+      { kind: 'image', value: 'C:/b.png' },
+    ]);
+  });
+
+  it('AND merges a clip capture into an existing similar chip', () => {
+    const start = q([{ type: 'similar', value: 'C:/a.png', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'clip', value: 'data:image/png;base64,xyz', exclude: false },
+      'OR'
+    );
+    expect(next.predicates).toHaveLength(1);
+    expect(next.predicates[0].nodes).toEqual([
+      { kind: 'clip', value: 'data:image/png;base64,xyz' },
+    ]);
+  });
+
+  it('AND with no existing similarity chip appends a normal predicate', () => {
+    const start = q([{ type: 'tag', value: 'a', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'similar', value: 'C:/b.png', exclude: false },
+      'AND'
+    );
+    expect(next.predicates).toHaveLength(2);
+  });
+
+  it('non-similarity predicates keep plain addPredicateWithMode behavior', () => {
+    const start = q([{ type: 'similar', value: 'C:/a.png', exclude: false }]);
+    const next = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'tag', value: 't', exclude: false },
+      'AND'
+    );
+    expect(next.predicates).toHaveLength(2);
+  });
+
+  it('merge dedupes against the base value and existing nodes', () => {
+    const start = q([{ type: 'similar', value: 'C:/a.png', exclude: false }]);
+    const same = addOrMergeSimilarityPredicate(
+      start,
+      { type: 'similar', value: 'C:/a.png', exclude: false },
+      'AND'
+    );
+    expect(same.predicates[0].nodes).toBeUndefined();
+    const once = addBlendNode(start, 'similar:C:/a.png', {
+      kind: 'image',
+      value: 'C:/b.png',
+    });
+    const twice = addBlendNode(once, 'similar:C:/a.png', {
+      kind: 'image',
+      value: 'C:/b.png',
+    });
+    expect(twice.predicates[0].nodes).toHaveLength(1);
+  });
+
+  it('addBlendNode migrates the legacy text blend into nodes[0]', () => {
+    const start = q([
+      { type: 'similar', value: 'C:/a.png', exclude: false, text: 'night', textWeight: 0.7 },
+    ]);
+    const next = addBlendNode(start, 'similar:C:/a.png', {
+      kind: 'text',
+      value: 'rain',
+      weight: 0.5,
+    });
+    const p = next.predicates[0];
+    expect(p.text).toBeUndefined();
+    expect(p.textWeight).toBeUndefined();
+    expect(p.nodes).toEqual([
+      { kind: 'text', value: 'night', weight: 0.7 },
+      { kind: 'text', value: 'rain', weight: 0.5 },
+    ]);
+  });
+
+  it('effectiveBlendNodes shows the legacy text without mutating the predicate', () => {
+    const p = { type: 'similar' as const, value: 'C:/a.png', exclude: false, text: 'night' };
+    expect(effectiveBlendNodes(p)).toEqual([
+      { kind: 'text', value: 'night', weight: 0.5 },
+    ]);
+    expect(p.text).toBe('night');
+  });
+
+  it('updateBlendNode toggles negative and adjusts weight', () => {
+    const start = addBlendNode(
+      q([{ type: 'similar', value: 'C:/a.png', exclude: false }]),
+      'similar:C:/a.png',
+      { kind: 'text', value: 'blurry', weight: 0.5 }
+    );
+    const neg = updateBlendNode(start, 'similar:C:/a.png', 0, { negative: true });
+    expect(neg.predicates[0].nodes![0].negative).toBe(true);
+    const rew = updateBlendNode(neg, 'similar:C:/a.png', 0, { weight: 0.2 });
+    expect(rew.predicates[0].nodes![0]).toEqual({
+      kind: 'text',
+      value: 'blurry',
+      weight: 0.2,
+      negative: true,
+    });
+  });
+
+  it('removeBlendNode drops the node and clears nodes when empty', () => {
+    const start = addBlendNode(
+      q([{ type: 'similar', value: 'C:/a.png', exclude: false }]),
+      'similar:C:/a.png',
+      { kind: 'text', value: 'x' }
+    );
+    const next = removeBlendNode(start, 'similar:C:/a.png', 0);
+    expect(next.predicates[0].nodes).toBeUndefined();
   });
 });

@@ -342,6 +342,46 @@ func blendTextWeight(w *float64) float32 {
 	return float32(v)
 }
 
+// compositeTerms builds the term list for a multi-node similarity predicate:
+// the base term (the predicate's own value, weight 1) plus every blend node,
+// each with its signed weight (0..1 magnitude, negated by Negative). The
+// legacy Text field folds in as one more text term for mixed old/new clients.
+func compositeTerms(base tasks.QueryTerm, p Predicate) ([]tasks.QueryTerm, error) {
+	terms := []tasks.QueryTerm{base}
+	if t := strings.TrimSpace(p.Text); t != "" {
+		terms = append(terms, tasks.QueryTerm{Kind: "text", Value: t, Weight: blendTextWeight(p.TextWeight)})
+	}
+	for _, n := range p.Nodes {
+		w := float32(1)
+		if n.Weight != nil {
+			w = blendTextWeight(n.Weight) // same 0..1 clamp
+		}
+		if w == 0 {
+			continue // zero-weight nodes contribute nothing
+		}
+		if n.Negative {
+			w = -w
+		}
+		switch n.Kind {
+		case "image":
+			terms = append(terms, tasks.QueryTerm{Kind: "path", Value: n.Value, Weight: w})
+		case "clip":
+			img, err := decodeImageDataURL(n.Value)
+			if err != nil {
+				return nil, fmt.Errorf("blend node clip: %w", err)
+			}
+			terms = append(terms, tasks.QueryTerm{Kind: "image", Image: img, Weight: w})
+		case "text":
+			if v := strings.TrimSpace(n.Value); v != "" {
+				terms = append(terms, tasks.QueryTerm{Kind: "text", Value: v, Weight: w})
+			}
+		default:
+			return nil, fmt.Errorf("unknown blend node kind %q", n.Kind)
+		}
+	}
+	return terms, nil
+}
+
 // sortItemsByScore orders items (each a map with "path") by descending score
 // from scoreByPath, attaching item["score"]. Stable for equal scores.
 func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
@@ -390,9 +430,16 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 				// combined vector ((1-w)*image + w*text) cosine-scanned once,
 				// rather than two independently-resolved path sets.
 				blendText := strings.TrimSpace(req.Predicates[i].Text)
+				hasNodes := len(req.Predicates[i].Nodes) > 0
 				switch pt {
 				case "similar":
-					if blendText != "" {
+					if hasNodes {
+						var terms []tasks.QueryTerm
+						terms, err = compositeTerms(tasks.QueryTerm{Kind: "path", Value: val, Weight: 1}, req.Predicates[i])
+						if err == nil {
+							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+						}
+					} else if blendText != "" {
 						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
 					} else {
 						hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
@@ -401,7 +448,13 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 					// A captured screen region: the value is a PNG data URL.
 					var image []byte
 					if image, err = decodeImageDataURL(val); err == nil {
-						if blendText != "" {
+						if hasNodes {
+							var terms []tasks.QueryTerm
+							terms, err = compositeTerms(tasks.QueryTerm{Kind: "image", Image: image, Weight: 1}, req.Predicates[i])
+							if err == nil {
+								hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+							}
+						} else if blendText != "" {
 							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
 						} else {
 							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)

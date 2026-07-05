@@ -2,8 +2,9 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import { mediaUrl } from '../../platform';
-import type { Query, Predicate } from '../../query/types';
+import type { Query, Predicate, BlendNode } from '../../query/types';
 import { predicateKey } from '../../query/types';
+import { effectiveBlendNodes } from '../../query/reducer';
 import { displayTagLabel } from '../../tag-display';
 import type { FilterModeOption } from '../../../settings';
 import clear from '../../../../assets/cancel.svg';
@@ -26,6 +27,16 @@ interface QueryInputProps {
   onUpdatePredicateBlend?: (
     key: string,
     patch: { text?: string; textWeight?: number }
+  ) => void;
+  // Composite blend nodes (similar/clip): manage the multi-node latent-space
+  // query on a chip — add/remove text and image nodes, adjust weights, flip a
+  // node negative. When supplied, the hover popover becomes a node editor.
+  onAddBlendNode?: (key: string, node: BlendNode) => void;
+  onRemoveBlendNode?: (key: string, index: number) => void;
+  onUpdateBlendNode?: (
+    key: string,
+    index: number,
+    patch: Partial<Pick<BlendNode, 'weight' | 'negative'>>
   ) => void;
   onClearAll: () => void; // clear chips + text (resets the library)
   onClearText: () => void; // clear only the typed text (no-op on the library)
@@ -96,6 +107,9 @@ export default function QueryInput({
   onToggleExclude,
   onSetPredicateJoin,
   onUpdatePredicateBlend,
+  onAddBlendNode,
+  onRemoveBlendNode,
+  onUpdateBlendNode,
   onClearAll,
   onClearText,
   onFocus,
@@ -125,13 +139,12 @@ export default function QueryInput({
   const containerRef = useRef<HTMLDivElement>(null);
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Blend popover (image chips only): which chip is open, plus draft text /
-  // text-weight (%) being edited. Drafts commit on Enter, input blur, or
-  // slider release — never per keystroke/drag-tick, since a commit re-runs the
-  // query (an embed-subprocess call per run on the server).
+  // Blend popover (image chips only): which chip's node editor is open, plus
+  // the draft text for the "add concept" input. Node weights commit on slider
+  // release (never per drag-tick — every commit re-runs the query, an
+  // embed-subprocess call per run on the server); toggles commit instantly.
   const [blendKey, setBlendKey] = useState<string | null>(null);
-  const [blendText, setBlendText] = useState('');
-  const [blendPct, setBlendPct] = useState(50);
+  const [addText, setAddText] = useState('');
   const blendCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Keep the popover open while its controls have focus or the pointer is
   // over the chip/popover (the two signals cover typing and mousing apart).
@@ -145,41 +158,16 @@ export default function QueryInput({
     }
   }, []);
 
-  // Commit a blend edit for the chip at `key`. Values are passed explicitly
-  // (not read from state) so slider-release and input-blur commits can't race
-  // a pending setState. No-ops when nothing actually changed.
-  const commitBlend = useCallback(
-    (key: string, text: string, pct: number) => {
-      if (!onUpdatePredicateBlend) return;
-      const p = query.predicates.find((x) => predicateKey(x) === key);
-      if (!p) return;
-      const trimmed = text.trim();
-      const curText = p.text ?? '';
-      const curPct = Math.round((p.textWeight ?? 0.5) * 100);
-      if (trimmed === curText && (trimmed === '' || pct === curPct)) return;
-      onUpdatePredicateBlend(
-        key,
-        trimmed
-          ? { text: trimmed, textWeight: pct / 100 }
-          : { text: '', textWeight: undefined }
-      );
-    },
-    [onUpdatePredicateBlend, query.predicates]
-  );
-
   const openBlend = useCallback(
     (p: Predicate) => {
       cancelBlendClose();
       blendHoverRef.current = true;
       const key = predicateKey(p);
       if (blendKey === key) return;
-      // Flush any uncommitted draft on the previously open chip.
-      if (blendKey !== null) commitBlend(blendKey, blendText, blendPct);
       setBlendKey(key);
-      setBlendText(p.text ?? '');
-      setBlendPct(Math.round((p.textWeight ?? 0.5) * 100));
+      setAddText('');
     },
-    [cancelBlendClose, blendKey, blendText, blendPct, commitBlend]
+    [cancelBlendClose, blendKey]
   );
 
   const scheduleBlendClose = useCallback(() => {
@@ -425,13 +413,17 @@ export default function QueryInput({
               isSimilar || (isFace && !isFaceClip)
                 ? p.value.split(/[/\\]/).pop() || p.value
                 : '';
-            // Image chips (similar/clip) can blend in a text query: hovering
-            // opens a popover with a text input + image↔text weight slider.
+            // Image chips (similar/clip) carry a composite blend: hovering
+            // opens the node editor (stack images, add/remove text concepts,
+            // weights, negative steering).
             const isImage = isSimilar || isClip;
-            const canBlend = isImage && !!onUpdatePredicateBlend;
+            const canBlend =
+              isImage &&
+              !!onAddBlendNode &&
+              !!onRemoveBlendNode &&
+              !!onUpdateBlendNode;
             const blendOpen = canBlend && blendKey === key;
-            const hasBlend = isImage && !!p.text;
-            const chipPct = Math.round((p.textWeight ?? 0.5) * 100);
+            const effNodes = isImage ? effectiveBlendNodes(p) : [];
             return (
               <span
                 className="query-chip-wrap"
@@ -534,14 +526,31 @@ export default function QueryInput({
                       {p.type === 'tag' ? displayTagLabel(p.value) : p.value}
                     </>
                   )}
-                  {hasBlend && (
+                  {effNodes.length > 0 && (
                     <span
                       className="query-chip-blend"
-                      title={`Blended with “${p.text}” (${chipPct}% text)`}
+                      title={effNodes
+                        .map(
+                          (n) =>
+                            `${n.negative ? '−' : '+'} ${
+                              n.kind === 'text' ? `“${n.value}”` : n.kind
+                            } (${Math.round((n.weight ?? 1) * 100)}%)`
+                        )
+                        .join('\n')}
                     >
-                      <span aria-hidden="true">✨</span>
-                      {p.text}
-                      <span className="query-chip-blend-pct">{chipPct}%</span>
+                      {effNodes.length === 1 && effNodes[0].kind === 'text' ? (
+                        <>
+                          <span aria-hidden="true">
+                            {effNodes[0].negative ? '−✨' : '✨'}
+                          </span>
+                          {effNodes[0].value}
+                        </>
+                      ) : (
+                        <>
+                          <span aria-hidden="true">⊕</span>
+                          {effNodes.length}
+                        </>
+                      )}
                     </span>
                   )}
                 </span>
@@ -561,22 +570,135 @@ export default function QueryInput({
                   className="query-chip-blend-pop"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  {/* Base image — always weight 1, the anchor of the query. */}
+                  <span className="query-blend-node query-blend-node--base">
+                    <img
+                      className="query-blend-node-thumb"
+                      src={isClip ? p.value : mediaUrl(p.value)}
+                      alt=""
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none';
+                      }}
+                    />
+                    <span className="query-blend-node-label">
+                      {isClip ? 'Screen clip' : baseName}
+                    </span>
+                    <span className="query-blend-node-hint">base</span>
+                  </span>
+                  {effNodes.map((n, ni) => {
+                    const pct = Math.round((n.weight ?? 1) * 100);
+                    return (
+                      <span
+                        className={`query-blend-node${
+                          n.negative ? ' negative' : ''
+                        }`}
+                        key={`${n.kind}:${n.value}:${ni}`}
+                      >
+                        {n.kind === 'text' ? (
+                          <span
+                            className="query-blend-node-thumb query-blend-node-thumb--text"
+                            aria-hidden="true"
+                          >
+                            ✨
+                          </span>
+                        ) : (
+                          <img
+                            className="query-blend-node-thumb"
+                            src={n.kind === 'clip' ? n.value : mediaUrl(n.value)}
+                            alt=""
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                            }}
+                          />
+                        )}
+                        <span
+                          className="query-blend-node-label"
+                          title={n.value}
+                        >
+                          {n.kind === 'text'
+                            ? n.value
+                            : n.kind === 'clip'
+                            ? 'Screen clip'
+                            : n.value.split(/[/\\]/).pop() || n.value}
+                        </span>
+                        <input
+                          type="range"
+                          min={5}
+                          max={100}
+                          step={5}
+                          // Uncontrolled + remount on committed weight: drag is
+                          // local, commit happens on release only.
+                          key={`w${pct}`}
+                          defaultValue={pct}
+                          aria-label="Node weight"
+                          onPointerUp={(e) =>
+                            onUpdateBlendNode?.(key, ni, {
+                              weight:
+                                Number((e.target as HTMLInputElement).value) /
+                                100,
+                            })
+                          }
+                          onKeyUp={(e) => {
+                            e.stopPropagation();
+                            onUpdateBlendNode?.(key, ni, {
+                              weight: Number(e.currentTarget.value) / 100,
+                            });
+                          }}
+                          onFocus={() => {
+                            blendFocusRef.current = true;
+                          }}
+                          onBlur={() => {
+                            blendFocusRef.current = false;
+                            scheduleBlendClose();
+                          }}
+                        />
+                        <span className="query-blend-node-pct">{pct}%</span>
+                        <button
+                          type="button"
+                          className={`query-blend-node-neg${
+                            n.negative ? ' active' : ''
+                          }`}
+                          title={
+                            n.negative
+                              ? 'Steering AWAY from this — click to attract'
+                              : 'Click to steer away from this (negative vector)'
+                          }
+                          onClick={() =>
+                            onUpdateBlendNode?.(key, ni, {
+                              negative: !n.negative,
+                            })
+                          }
+                        >
+                          −
+                        </button>
+                        <button
+                          type="button"
+                          className="query-blend-node-remove"
+                          title="Remove from blend"
+                          onClick={() => onRemoveBlendNode?.(key, ni)}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
                   <input
                     className="query-chip-blend-input"
                     type="text"
-                    placeholder="Blend with text… (e.g. “at night”)"
-                    value={blendText}
-                    onChange={(e) => setBlendText(e.currentTarget.value)}
+                    placeholder="Add concept… (e.g. “at night”), Enter to add"
+                    value={addText}
+                    onChange={(e) => setAddText(e.currentTarget.value)}
                     onKeyDown={(e) => {
                       e.stopPropagation();
-                      if (e.key === 'Enter') {
-                        commitBlend(key, e.currentTarget.value, blendPct);
-                        blendFocusRef.current = false;
-                        setBlendKey(null);
+                      if (e.key === 'Enter' && addText.trim()) {
+                        onAddBlendNode?.(key, {
+                          kind: 'text',
+                          value: addText.trim(),
+                          weight: 0.5,
+                        });
+                        setAddText('');
                       } else if (e.key === 'Escape') {
-                        // Revert the draft; keep whatever was last committed.
-                        setBlendText(p.text ?? '');
-                        setBlendPct(chipPct);
+                        setAddText('');
                         blendFocusRef.current = false;
                         setBlendKey(null);
                       }
@@ -585,56 +707,13 @@ export default function QueryInput({
                     onFocus={() => {
                       blendFocusRef.current = true;
                     }}
-                    onBlur={(e) => {
+                    onBlur={() => {
                       blendFocusRef.current = false;
-                      commitBlend(key, e.currentTarget.value, blendPct);
                       scheduleBlendClose();
                     }}
                   />
-                  <span className="query-chip-blend-slider">
-                    <span title="All image" aria-hidden="true">
-                      🖼
-                    </span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      step={5}
-                      value={blendPct}
-                      disabled={!blendText.trim()}
-                      aria-label="Image vs. text weight"
-                      onChange={(e) =>
-                        setBlendPct(Number(e.currentTarget.value))
-                      }
-                      onPointerUp={(e) =>
-                        commitBlend(
-                          key,
-                          blendText,
-                          Number((e.target as HTMLInputElement).value)
-                        )
-                      }
-                      onKeyUp={(e) => {
-                        e.stopPropagation();
-                        commitBlend(
-                          key,
-                          blendText,
-                          Number(e.currentTarget.value)
-                        );
-                      }}
-                      onFocus={() => {
-                        blendFocusRef.current = true;
-                      }}
-                      onBlur={() => {
-                        blendFocusRef.current = false;
-                        scheduleBlendClose();
-                      }}
-                    />
-                    <span title="All text" aria-hidden="true">
-                      ✨
-                    </span>
-                    <span className="query-chip-blend-pct-label">
-                      {blendPct}% text
-                    </span>
+                  <span className="query-blend-pop-hint">
+                    Similar images added in ∩/∪ mode stack here as nodes.
                   </span>
                 </span>
               )}

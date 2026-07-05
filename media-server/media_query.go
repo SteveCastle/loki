@@ -3,6 +3,17 @@ package main
 
 import "strings"
 
+// BlendNode is one extra component of a composite similarity predicate: an
+// additional library image ("image" = media path), captured region ("clip" =
+// PNG data URL), or free text ("text") merged into the query vector alongside
+// the predicate's own value. Negative nodes steer the query away.
+type BlendNode struct {
+	Kind     string   `json:"kind"` // "image" | "clip" | "text"
+	Value    string   `json:"value"`
+	Weight   *float64 `json:"weight"` // 0..1 magnitude; nil = 1
+	Negative bool     `json:"negative"`
+}
+
 // Predicate mirrors src/renderer/query/types.ts Predicate.
 type Predicate struct {
 	Type    string `json:"type"` // tag|category|path|description|hash|similar|visual|clip
@@ -11,10 +22,14 @@ type Predicate struct {
 	Join    string `json:"join"` // "AND" | "OR" | "" (empty falls back to mode)
 	// Blended search (similar/clip only): free text mixed into the image query
 	// and its share of the blend, 0..1 (0 = pure image, 1 = pure text). A nil
-	// TextWeight with Text set defaults to an even 0.5 blend.
+	// TextWeight with Text set defaults to an even 0.5 blend. Legacy single-
+	// text form — new clients send Nodes instead.
 	Text       string   `json:"text"`
 	TextWeight *float64 `json:"textWeight"`
-	Resolved   []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
+	// Composite similarity (similar/clip only): extra image/clip/text nodes
+	// merged with the base value into ONE query vector (embedvec.Combine).
+	Nodes    []BlendNode `json:"nodes"`
+	Resolved []string    `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
 }
 
 // Columns returned for the library list. media.description is intentionally

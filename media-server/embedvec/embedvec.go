@@ -73,6 +73,41 @@ func Blend(a, b []float32, w float32) ([]float32, error) {
 	return Normalize(out), nil
 }
 
+// Combine returns the L2-normalized signed weighted sum Σ wᵢ·vᵢ of same-space
+// embeddings — the N-way generalization of Blend for composite latent-space
+// queries ("this image + that image + 'at night' − 'blurry'"). Each vector is
+// normalized first so a weight is a true share regardless of input scale;
+// NEGATIVE weights steer the query away from that concept. Errors on empty
+// input, length mismatch, or when the weights cancel to a (near-)zero vector.
+func Combine(vecs [][]float32, weights []float32) ([]float32, error) {
+	if len(vecs) == 0 {
+		return nil, fmt.Errorf("embedvec: combine: no vectors")
+	}
+	if len(weights) != len(vecs) {
+		return nil, fmt.Errorf("embedvec: combine: %d vectors but %d weights", len(vecs), len(weights))
+	}
+	dim := len(vecs[0])
+	out := make([]float32, dim)
+	for i, v := range vecs {
+		if len(v) != dim {
+			return nil, fmt.Errorf("embedvec: combine length mismatch: %d vs %d", len(v), dim)
+		}
+		n := Normalize(v)
+		w := weights[i]
+		for k := range n {
+			out[k] += w * n[k]
+		}
+	}
+	var sum float64
+	for _, x := range out {
+		sum += float64(x) * float64(x)
+	}
+	if sum < 1e-12 {
+		return nil, fmt.Errorf("embedvec: combine: weights cancel to a zero vector")
+	}
+	return Normalize(out), nil
+}
+
 // Cosine returns the dot product of a and b. When both are unit vectors this
 // equals cosine similarity. Returns 0 if the lengths differ.
 func Cosine(a, b []float32) float32 {

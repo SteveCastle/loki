@@ -16,12 +16,15 @@ import {
 import type { Query, Predicate } from './query/types';
 import { predicateKey } from './query/types';
 import {
-  addPredicateWithMode,
+  addOrMergeSimilarityPredicate,
   removePredicate,
   toggleExclude,
   applyTagClick,
   setPredicateJoin,
   updatePredicateBlend,
+  addBlendNode,
+  removeBlendNode,
+  updateBlendNode,
   tagsFromQuery,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
@@ -802,7 +805,9 @@ const queryMutationOn = {
       assign<LibraryState, AnyEventObject>((context, event) => {
         // EXCLUSIVE mode replaces the entire query with the selected filter,
         // regardless of predicate type (tag/path/category/description/hash).
-        const q = addPredicateWithMode(
+        // In AND/OR, a new similar/clip image merges into an existing
+        // similarity chip as a blend node (vectors combine server-side).
+        const q = addOrMergeSimilarityPredicate(
           context.query,
           event.data.predicate,
           context.settings.filteringMode
@@ -854,6 +859,34 @@ const queryMutationOn = {
       const q = updatePredicateBlend(
         context.query,
         event.data.key,
+        event.data.patch
+      );
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  // Composite similarity nodes: add/remove/patch one component of a
+  // multi-node blend on a similar/clip chip (see query/reducer.ts).
+  ADD_BLEND_NODE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = addBlendNode(context.query, event.data.key, event.data.node);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  REMOVE_BLEND_NODE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = removeBlendNode(context.query, event.data.key, event.data.index);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  UPDATE_BLEND_NODE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = updateBlendNode(
+        context.query,
+        event.data.key,
+        event.data.index,
         event.data.patch
       );
       return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };

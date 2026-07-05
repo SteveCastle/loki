@@ -14,6 +14,20 @@ export type PredicateType =
   | 'clip'
   | 'face';
 
+// One extra component of a composite similarity query, merged with the
+// predicate's base value into a single query vector server-side:
+//   'image' = another library item (media path)
+//   'clip'  = another captured region (PNG data URL)
+//   'text'  = a free-text concept
+// Negative nodes steer the query AWAY from the concept ("… − 'blurry'").
+export interface BlendNode {
+  kind: 'image' | 'clip' | 'text';
+  value: string;
+  // 0..1 magnitude; undefined = 1 (full strength).
+  weight?: number;
+  negative?: boolean;
+}
+
 export interface Predicate {
   type: PredicateType;
   // Exact value for 'tag'/'category'; substring for 'path'/'description'/'hash'.
@@ -32,10 +46,15 @@ export interface Predicate {
   // Blended search ('similar'/'clip' only): free text mixed into the image
   // query. The server combines the image and text embeddings into one query
   // vector, so both live in the same SigLIP 2 space. Absent = pure image.
+  // LEGACY single-text form — node mutations migrate it into `nodes`.
   text?: string;
   // Text share of the blend, 0..1 (0 = pure image, 1 = pure text). Only
   // meaningful when `text` is set; the UI defaults new blends to 0.5.
   textWeight?: number;
+  // Composite similarity ('similar'/'clip' only): extra image/clip/text nodes
+  // merged with the base value into ONE query vector server-side. The chip
+  // popover manages these (add/remove text, stack images, negative toggles).
+  nodes?: BlendNode[];
 }
 
 export interface Query {

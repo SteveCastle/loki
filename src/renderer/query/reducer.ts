@@ -1,5 +1,5 @@
 // src/renderer/query/reducer.ts
-import type { Predicate, Query } from './types';
+import type { BlendNode, Predicate, Query } from './types';
 import { predicateKey } from './types';
 
 export function addPredicate(q: Query, p: Predicate): Query {
@@ -57,6 +57,111 @@ export function addPredicateWithMode(
 ): Query {
   if (mode === 'EXCLUSIVE') return { predicates: [p] };
   return addPredicate(q, p);
+}
+
+// Adding a SIMILARITY predicate (similar/clip) treats the filtering mode
+// specially so images can be STACKED into one latent-space query: EXCLUSIVE
+// replaces the whole query (the classic find-similar), but in AND/OR, when a
+// similarity predicate already exists, the new image is merged into it as a
+// blend node — the server combines the vectors into one — instead of
+// intersecting two independent top-N path sets (which mostly returns nothing).
+// Face predicates never merge (different embedding space).
+export function addOrMergeSimilarityPredicate(
+  q: Query,
+  p: Predicate,
+  mode: string
+): Query {
+  const isSimilarity = p.type === 'similar' || p.type === 'clip';
+  if (mode === 'EXCLUSIVE' || !isSimilarity) {
+    return addPredicateWithMode(q, p, mode);
+  }
+  const target = q.predicates.find(
+    (x) => (x.type === 'similar' || x.type === 'clip') && !x.exclude
+  );
+  if (!target) return addPredicate(q, p);
+  const node: BlendNode = {
+    kind: p.type === 'similar' ? 'image' : 'clip',
+    value: p.value,
+  };
+  return addBlendNode(q, predicateKey(target), node);
+}
+
+// migrateLegacyBlend folds the old single-text blend fields into `nodes` so
+// every node mutation works on one uniform list. Index 0 is always the legacy
+// text when it existed, matching what the popover renders.
+function migrateLegacyBlend(p: Predicate): Predicate {
+  if (!p.text || !p.text.trim()) return p;
+  const next: Predicate = {
+    ...p,
+    nodes: [
+      { kind: 'text', value: p.text.trim(), weight: p.textWeight ?? 0.5 },
+      ...(p.nodes ?? []),
+    ],
+  };
+  delete next.text;
+  delete next.textWeight;
+  return next;
+}
+
+// effectiveBlendNodes is the uniform node view of a predicate for rendering:
+// the migrated legacy text (if any) followed by the explicit nodes.
+export function effectiveBlendNodes(p: Predicate): BlendNode[] {
+  return migrateLegacyBlend(p).nodes ?? [];
+}
+
+// Append a blend node to the similarity predicate at `key` (deduped against
+// the base value and existing nodes).
+export function addBlendNode(q: Query, key: string, node: BlendNode): Query {
+  return {
+    predicates: q.predicates.map((x) => {
+      if (predicateKey(x) !== key) return x;
+      const p = migrateLegacyBlend(x);
+      if (p.value === node.value) return p; // already the base image
+      const nodes = p.nodes ?? [];
+      if (nodes.some((n) => n.kind === node.kind && n.value === node.value)) {
+        return p;
+      }
+      return { ...p, nodes: [...nodes, node] };
+    }),
+  };
+}
+
+// Remove the blend node at `index` (indices match effectiveBlendNodes).
+export function removeBlendNode(q: Query, key: string, index: number): Query {
+  return {
+    predicates: q.predicates.map((x) => {
+      if (predicateKey(x) !== key) return x;
+      const p = migrateLegacyBlend(x);
+      const nodes = (p.nodes ?? []).filter((_, i) => i !== index);
+      if (nodes.length === 0) {
+        const rest: Predicate = { ...p };
+        delete rest.nodes;
+        return rest;
+      }
+      return { ...p, nodes };
+    }),
+  };
+}
+
+// Patch the blend node at `index` (weight / negative toggle).
+export function updateBlendNode(
+  q: Query,
+  key: string,
+  index: number,
+  patch: Partial<Pick<BlendNode, 'weight' | 'negative' | 'value'>>
+): Query {
+  return {
+    predicates: q.predicates.map((x) => {
+      if (predicateKey(x) !== key) return x;
+      const p = migrateLegacyBlend(x);
+      return {
+        ...p,
+        nodes: (p.nodes ?? []).map((n, i) =>
+          i === index ? { ...n, ...patch } : n
+        ),
+      };
+    }),
+  };
 }
 
 // Patch a predicate's blend fields (text / textWeight) in place, keyed by

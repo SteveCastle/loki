@@ -116,6 +116,54 @@ func TestBlendLengthMismatch(t *testing.T) {
 	}
 }
 
+func TestCombinePositiveAndNegative(t *testing.T) {
+	// x + y − y should collapse to pure x (after normalization).
+	got, err := Combine(
+		[][]float32{{1, 0}, {0, 1}, {0, 2}}, // inputs normalized internally
+		[]float32{1, 1, -1},
+	)
+	if err != nil {
+		t.Fatalf("combine: %v", err)
+	}
+	if math.Abs(float64(got[0])-1) > 1e-6 || math.Abs(float64(got[1])) > 1e-6 {
+		t.Fatalf("x+y−y = %v, want [1 0]", got)
+	}
+	// Unit length.
+	var n float64
+	for _, x := range got {
+		n += float64(x) * float64(x)
+	}
+	if math.Abs(n-1) > 1e-6 {
+		t.Fatalf("not unit length: %v", n)
+	}
+}
+
+func TestCombineWeightsShiftTheResult(t *testing.T) {
+	got, err := Combine([][]float32{{1, 0}, {0, 1}}, []float32{1, 0.5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !(got[0] > got[1]) || got[1] <= 0 {
+		t.Fatalf("weighted combine = %v, want x-dominant with positive y", got)
+	}
+}
+
+func TestCombineErrors(t *testing.T) {
+	if _, err := Combine(nil, nil); err == nil {
+		t.Fatal("empty input allowed")
+	}
+	if _, err := Combine([][]float32{{1, 0}}, []float32{1, 2}); err == nil {
+		t.Fatal("weight-count mismatch allowed")
+	}
+	if _, err := Combine([][]float32{{1, 0}, {1, 0, 0}}, []float32{1, 1}); err == nil {
+		t.Fatal("length mismatch allowed")
+	}
+	// Perfect cancellation → zero vector → error, not NaN.
+	if _, err := Combine([][]float32{{1, 0}, {1, 0}}, []float32{1, -1}); err == nil {
+		t.Fatal("cancelled combine allowed")
+	}
+}
+
 func TestNormalizeZeroVector(t *testing.T) {
 	z := Normalize([]float32{0, 0, 0})
 	for _, x := range z {

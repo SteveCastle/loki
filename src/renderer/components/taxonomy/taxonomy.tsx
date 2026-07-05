@@ -346,6 +346,24 @@ export default function Taxonomy() {
                 data: { key, patch },
               })
             }
+            onAddBlendNode={(key, node) =>
+              libraryService.send({
+                type: 'ADD_BLEND_NODE',
+                data: { key, node },
+              })
+            }
+            onRemoveBlendNode={(key, index) =>
+              libraryService.send({
+                type: 'REMOVE_BLEND_NODE',
+                data: { key, index },
+              })
+            }
+            onUpdateBlendNode={(key, index, patch) =>
+              libraryService.send({
+                type: 'UPDATE_BLEND_NODE',
+                data: { key, index, patch },
+              })
+            }
             onSubmitVisual={(t) => {
               libraryService.send({
                 type: 'ADD_PREDICATE',
