@@ -1264,6 +1264,7 @@ type updateConfigRequest struct {
 	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
 	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
 	FaceModel                 string                  `json:"faceModel"`
+	FaceRouting               string                  `json:"faceRouting"`
 	FaceProvider              string                  `json:"faceProvider"`
 	FacePerformance           string                  `json:"facePerformance"`
 	FaceWorkers               int                     `json:"faceWorkers"`
@@ -1565,6 +1566,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if v := strings.TrimSpace(req.FaceModel); v != "" {
 				newCfg.FaceModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.FaceRouting)); v == "auto" || v == "single" {
+				newCfg.FaceRouting = v
 			}
 			if v := strings.ToLower(strings.TrimSpace(req.FaceProvider)); v != "" {
 				newCfg.FaceProvider = v

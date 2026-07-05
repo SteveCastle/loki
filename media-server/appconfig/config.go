@@ -212,6 +212,12 @@ type Config struct {
 	FaceWorkers          int    `json:"faceWorkers"`
 	FaceThreadsPerWorker int    `json:"faceThreadsPerWorker"`
 
+	// FaceRouting: "auto" (default) classifies each media item as photo vs
+	// anime via a SigLIP text probe and scans/searches it under the matching
+	// recognizer, so one faces job handles both domains; "single" pins
+	// everything to FaceModel (pre-routing behavior).
+	FaceRouting string `json:"faceRouting"`
+
 	// Bring-your-own face recognizers (research-licensed models like ArcFace
 	// or AdaFace exports that can't be shipped). The user supplies the ONNX
 	// file; entries here make it selectable as FaceModel.
@@ -293,6 +299,7 @@ func defaultConfig() Config {
 		FaceModel:              DefaultFaceModel,
 		FaceProvider:           "cpu",
 		FacePerformance:        "balanced",
+		FaceRouting:            "auto",
 		OnnxFileTimeoutSeconds: 120,
 		TranscriptionProvider:  DefaultTranscriptionProvider,
 		TranscriptionModel:     DefaultTranscriptionModel,
@@ -547,6 +554,10 @@ func Load() (Config, string, error) {
 	}
 	if c.FacePerformance == "" {
 		c.FacePerformance = def.FacePerformance
+		needsSave = true
+	}
+	if c.FaceRouting == "" {
+		c.FaceRouting = def.FaceRouting
 		needsSave = true
 	}
 	if c.OnnxFileTimeoutSeconds == 0 {
@@ -805,6 +816,9 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_FACE_PERFORMANCE"); v != "" {
 		c.FacePerformance = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_FACE_ROUTING"); v != "" {
+		c.FaceRouting = strings.ToLower(strings.TrimSpace(v))
 	}
 	if v := os.Getenv("LOWKEY_FACE_WORKERS"); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {

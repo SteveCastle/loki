@@ -190,37 +190,6 @@ func facesTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return nil
 	}
 
-	// Resolve the recognizer. An explicit `--model=<id>` in the job overrides
-	// the configured active model (background migration to a new recognizer,
-	// same contract as the embed task).
-	model := ActiveFaceModel()
-	if id, ok := embedModelOverrideFromJob(j); ok {
-		if m, known := FaceModelByID(id); known {
-			model = m
-		} else {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Unknown --model %q; using active model %q", id, model.ID))
-		}
-	}
-	q.PushJobStdout(j.ID, fmt.Sprintf("Face model: %s (dim %d), detector: YuNet", model.ID, model.Dim))
-
-	detectorPath, err := FaceDetectorPathFor(model)
-	if err != nil {
-		q.PushJobStdout(j.ID, err.Error())
-		q.ErrorJob(j.ID)
-		return err
-	}
-	recognizerPath, err := FaceRecognizerPath(model)
-	if err != nil {
-		q.PushJobStdout(j.ID, err.Error())
-		q.ErrorJob(j.ID)
-		return err
-	}
-	secondaryPath, err := FaceSecondaryPath(model)
-	if err != nil {
-		q.PushJobStdout(j.ID, err.Error())
-		q.ErrorJob(j.ID)
-		return err
-	}
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
 		q.PushJobStdout(j.ID, "embed binary not installed; install it from Dependencies")
@@ -228,16 +197,82 @@ func facesTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fmt.Errorf("embed binary not installed")
 	}
 
-	scanned, facesFound, autoAssigned, skipped, err := runFacesPool(ctx, j, q, paths, fromQuery, model, detectorPath, recognizerPath, secondaryPath, embedBin)
-	if err != nil {
-		if ctx.Err() != nil {
-			q.PushJobStdout(j.ID, "Task canceled")
-			_ = q.CancelJob(j.ID)
+	// Resolve which recognizer(s) scan which paths. An explicit `--model=<id>`
+	// pins everything to that model (background migration, same contract as
+	// the embed task). Otherwise, with routing on, each item is classified
+	// photo vs anime and grouped under the matching recognizer, so one job
+	// covers mixed libraries.
+	groups := map[string][]string{}
+	models := map[string]FaceModel{}
+	if id, ok := embedModelOverrideFromJob(j); ok {
+		m, known := FaceModelByID(id)
+		if !known {
+			m = ActiveFaceModel()
+			q.PushJobStdout(j.ID, fmt.Sprintf("Unknown --model %q; using active model %q", id, m.ID))
+		}
+		groups[m.ID] = paths
+		models[m.ID] = m
+	} else {
+		var embeddedOnTheFly int
+		var routeErr error
+		groups, models, embeddedOnTheFly, routeErr = partitionPathsByModel(ctx, q.Db, paths)
+		if routeErr != nil {
+			if ctx.Err() != nil {
+				q.PushJobStdout(j.ID, "Task canceled")
+				_ = q.CancelJob(j.ID)
+				return routeErr
+			}
+			q.PushJobStdout(j.ID, "Domain routing unavailable ("+routeErr.Error()+"); scanning everything with the active model")
+		}
+		if FaceRoutingEnabled() && routeErr == nil {
+			for id, group := range groups {
+				q.PushJobStdout(j.ID, fmt.Sprintf("Routed %d item(s) → %s", len(group), id))
+			}
+			if embeddedOnTheFly > 0 {
+				q.PushJobStdout(j.ID, fmt.Sprintf("(%d item(s) had no stored embedding and were embedded for routing — run the Embeddings task first to make this instant)", embeddedOnTheFly))
+			}
+		}
+	}
+
+	var scanned, facesFound, autoAssigned, skipped int
+	for id, group := range groups {
+		model := models[id]
+		q.PushJobStdout(j.ID, fmt.Sprintf("Face model: %s (dim %d, detector %s)", model.ID, model.Dim, model.DetectorKindOrDefault()))
+
+		detectorPath, err := FaceDetectorPathFor(model)
+		if err != nil {
+			q.PushJobStdout(j.ID, err.Error())
+			q.ErrorJob(j.ID)
 			return err
 		}
-		q.PushJobStdout(j.ID, "Face scan failed: "+err.Error())
-		q.ErrorJob(j.ID)
-		return err
+		recognizerPath, err := FaceRecognizerPath(model)
+		if err != nil {
+			q.PushJobStdout(j.ID, err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+		secondaryPath, err := FaceSecondaryPath(model)
+		if err != nil {
+			q.PushJobStdout(j.ID, err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+
+		s, f, a, sk, err := runFacesPool(ctx, j, q, group, fromQuery, model, detectorPath, recognizerPath, secondaryPath, embedBin)
+		scanned += s
+		facesFound += f
+		autoAssigned += a
+		skipped += sk
+		if err != nil {
+			if ctx.Err() != nil {
+				q.PushJobStdout(j.ID, "Task canceled")
+				_ = q.CancelJob(j.ID)
+				return err
+			}
+			q.PushJobStdout(j.ID, "Face scan failed: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d scanned (%d faces found, %d auto-assigned to people), %d skipped", scanned, facesFound, autoAssigned, skipped))

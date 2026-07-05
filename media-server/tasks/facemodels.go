@@ -73,6 +73,14 @@ type FaceModel struct {
 	SecondaryWeight float32
 }
 
+// DetectorKindOrDefault returns the detector family, defaulting to YuNet.
+func (m FaceModel) DetectorKindOrDefault() string {
+	if m.DetectorKind == "" {
+		return "yunet"
+	}
+	return m.DetectorKind
+}
+
 // FaceModelPart is one recognizer of a fused face model.
 type FaceModelPart struct {
 	DepID      string // deps manifest id

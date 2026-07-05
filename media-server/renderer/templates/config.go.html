@@ -1426,6 +1426,21 @@
                 </div>
 
                 <div class="field">
+                  <label class="label">Domain routing</label>
+                  <select id="face-routing" class="input">
+                    <option value="auto" {{if ne .Config.FaceRouting "single"}}selected{{end}}>Auto — classify each item (photo vs anime) and use the matching recognizer</option>
+                    <option value="single" {{if eq .Config.FaceRouting "single"}}selected{{end}}>Single — always use the recognizer above</option>
+                  </select>
+                  <small class="hint">
+                    Auto lets one Faces scan handle mixed libraries: items are
+                    classified via their SigLIP embedding (instant when already
+                    embedded) — photos use the recognizer above, drawn/anime
+                    content uses the anime recognizer. Clustering then groups
+                    each domain with its own threshold.
+                  </small>
+                </div>
+
+                <div class="field">
                   <label class="label">Execution provider</label>
                   <select id="face-provider" class="input">
                     <option value="cpu" {{if eq .Config.FaceProvider "cpu"}}selected{{end}}>CPU</option>
@@ -2265,6 +2280,7 @@
             10
           ),
           faceModel: document.getElementById('face-model').value.trim(),
+          faceRouting: document.getElementById('face-routing').value.trim(),
           faceProvider: document.getElementById('face-provider').value.trim(),
           facePerformance: document
             .getElementById('face-performance')

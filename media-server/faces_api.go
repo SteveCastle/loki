@@ -142,7 +142,8 @@ func facesForPathHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "path query parameter required", http.StatusBadRequest)
 			return
 		}
-		model := tasks.ActiveFaceModel()
+		// Show the faces of the model this item routes to (photo vs anime).
+		model := tasks.RoutedFaceModelForPath(r.Context(), deps.DB, path)
 		faces, err := media.GetFaces(deps.DB, path, model.ID)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)

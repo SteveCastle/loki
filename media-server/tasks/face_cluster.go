@@ -444,14 +444,70 @@ func jobHasFlag(j *jobqueue.Job, flag string) bool {
 //	                       people are never touched — naming/merging a cluster
 //	                       endorses its contents.
 func facesClusterTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
-	model := ActiveFaceModel()
+	// Which recognizers to cluster: an explicit --model pins one; otherwise,
+	// with routing on, every known model that has stored faces gets its own
+	// pass (per-model thresholds), so one job clusters photos AND anime.
+	var clusterModels []FaceModel
 	if id, ok := embedModelOverrideFromJob(j); ok {
 		if m, known := FaceModelByID(id); known {
-			model = m
+			clusterModels = []FaceModel{m}
 		} else {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Unknown --model %q; using active model %q", id, model.ID))
+			m := ActiveFaceModel()
+			q.PushJobStdout(j.ID, fmt.Sprintf("Unknown --model %q; using active model %q", id, m.ID))
+			clusterModels = []FaceModel{m}
+		}
+	} else if FaceRoutingEnabled() {
+		ids, err := faceModelsWithFaces(q.Db)
+		if err != nil {
+			q.PushJobStdout(j.ID, "Failed to list face models: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+		for _, id := range ids {
+			if m, known := FaceModelByID(id); known {
+				clusterModels = append(clusterModels, m)
+			} else {
+				q.PushJobStdout(j.ID, fmt.Sprintf("Skipping faces stored under unknown model %q", id))
+			}
+		}
+		if len(clusterModels) == 0 {
+			clusterModels = []FaceModel{ActiveFaceModel()}
+		}
+	} else {
+		clusterModels = []FaceModel{ActiveFaceModel()}
+	}
+
+	for _, model := range clusterModels {
+		if err := clusterOneModel(j, q, model); err != nil {
+			return err
 		}
 	}
+	q.CompleteJob(j.ID)
+	return nil
+}
+
+// faceModelsWithFaces lists the distinct recognizer IDs present in the face
+// table.
+func faceModelsWithFaces(db *sql.DB) ([]string, error) {
+	rows, err := db.Query(`SELECT DISTINCT model FROM face`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// clusterOneModel runs one full clustering pass (flags + reset + stats
+// logging) for a single recognizer. Errors the job on failure.
+func clusterOneModel(j *jobqueue.Job, q *jobqueue.Queue, model FaceModel) error {
 	p := defaultClusterParams(model)
 	if v, ok := jobArgValue(j, "--threshold"); ok {
 		if t, err := strconv.ParseFloat(v, 32); err == nil && t > 0 && t < 1 {
@@ -501,9 +557,8 @@ func facesClusterTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error 
 		return err
 	}
 	q.PushJobStdout(j.ID, fmt.Sprintf(
-		"Completed: %d joined existing people, %d new people (%d faces), %d left unassigned (%d below quality floor, %d in discarded incoherent clusters)",
-		stats.JoinedExisting, stats.NewPeople, stats.NewlyClustered, stats.Unassigned, stats.QualitySkipped, stats.Discarded,
+		"%s: %d joined existing people, %d new people (%d faces), %d left unassigned (%d below quality floor, %d in discarded incoherent clusters)",
+		model.ID, stats.JoinedExisting, stats.NewPeople, stats.NewlyClustered, stats.Unassigned, stats.QualitySkipped, stats.Discarded,
 	))
-	q.CompleteJob(j.ID)
 	return nil
 }
