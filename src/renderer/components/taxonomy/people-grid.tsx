@@ -13,6 +13,7 @@ import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { GlobalStateContext } from '../../state';
 import { mediaServerBase } from '../../platform';
+import { subscribeStream } from '../../stream-bus';
 import { displayTagLabel } from '../../tag-display';
 import './new-modal.css';
 import './people-grid.css';
@@ -485,15 +486,12 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   // started elsewhere) completes silently and the grid looks stale until the
   // next manual reload.
   useEffect(() => {
-    let es: EventSource | null = null;
-    try {
-      es = new EventSource(`${mediaServerBase}/stream`);
-    } catch {
-      return undefined; // no live refresh; manual reload still works
-    }
-    const onEvent = (event: Event) => {
+    // Shared /stream bus — never opens a second EventSource (Chromium caps
+    // connections per origin at 6; see stream-bus.ts).
+    return subscribeStream((type, event) => {
+      if (type !== 'update' && type !== 'delete') return;
       try {
-        const parsed = JSON.parse((event as MessageEvent).data);
+        const parsed = JSON.parse(event.data);
         const job = parsed?.job;
         if (!job) return;
         if (
@@ -508,12 +506,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
       } catch {
         // malformed event — ignore
       }
-    };
-    es.addEventListener('update', onEvent);
-    es.addEventListener('delete', onEvent);
-    return () => {
-      es?.close();
-    };
+    });
   }, [queryClient]);
 
   // Merge `from` into `into` (drag a card onto another card). Every face and

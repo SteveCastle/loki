@@ -11,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
 import { capabilities, mediaServerBase } from '../../platform';
+import { subscribeStream, streamConnected } from '../../stream-bus';
 import { displayTagLabel } from '../../tag-display';
 import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
@@ -212,11 +213,12 @@ function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
     };
     fetchJobs();
 
-    const es = new EventSource(`${mediaServerBase}/stream`);
-
-    const handleEvent = (event: Event) => {
+    // Shared /stream bus — the palette must never cost an extra socket
+    // (Chromium caps connections per origin at 6; see stream-bus.ts).
+    return subscribeStream((type, event) => {
+      if (type !== 'create' && type !== 'update' && type !== 'delete') return;
       try {
-        const parsed = JSON.parse((event as MessageEvent).data);
+        const parsed = JSON.parse(event.data);
         const job = parsed?.job as JobInfo | undefined;
         if (!job) return;
         setJobs((prev) => {
@@ -229,15 +231,7 @@ function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
       } catch {
         // Ignore malformed events
       }
-    };
-
-    es.addEventListener('create', handleEvent);
-    es.addEventListener('update', handleEvent);
-    es.addEventListener('delete', handleEvent);
-
-    return () => {
-      es.close();
-    };
+    });
   }, [isOpen, authToken]);
 
   return jobs;
@@ -553,28 +547,47 @@ export default function ContextPalette() {
     if (display) setGenMode('missing');
   }, [display]);
 
-  // Server health
+  // Server health. A live SSE connection on the shared stream bus is proof
+  // the server is reachable without spending a socket; the /health probe is
+  // the fallback when the bus isn't connected. Never latch: while the palette
+  // is open and the server looks down, keep re-probing so a recovered server
+  // (or a freed-up socket pool) is noticed without closing the palette.
   const [serverAvailable, setServerAvailable] = useState<boolean | null>(null);
   useEffect(() => {
     if (!display) {
       setServerAvailable(null);
       return;
     }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const check = async () => {
+      if (cancelled) return;
+      if (streamConnected()) {
+        setServerAvailable(true);
+        return;
+      }
+      let ok = false;
       try {
         const headers: HeadersInit = {};
         if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
         const res = await fetch(`${mediaServerBase}/health`, {
           method: 'GET',
           headers,
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(5000),
         });
-        setServerAvailable(res.ok);
+        ok = res.ok;
       } catch {
-        setServerAvailable(false);
+        ok = false;
       }
+      if (cancelled) return;
+      setServerAvailable(ok);
+      if (!ok) timer = setTimeout(check, 4000); // retry while open
     };
     check();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [display, authToken]);
 
   // Positioning (same pattern as CommandPalette)

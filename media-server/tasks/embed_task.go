@@ -306,6 +306,11 @@ func runEmbedSubprocess(ctx context.Context, embedBin, imageModelPath, ortLib, i
 	if ortLib != "" {
 		args = append(args, "--ort="+ortLib)
 	}
+	// Independent deadline: query-time embeds run on a REQUEST context, and a
+	// client that never disconnects must not be able to wedge this handler
+	// (and its socket) forever behind a hung ONNX call.
+	ctx, cancel := context.WithTimeout(ctx, OnnxFileTimeout())
+	defer cancel()
 	cmd := exec.CommandContext(ctx, embedBin, args...)
 	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
@@ -342,6 +347,10 @@ func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer,
 	if ortLib != "" {
 		args = append(args, "--ort="+ortLib)
 	}
+	// Same independent deadline as runEmbedSubprocess: a hung text encode must
+	// not pin a request handler forever.
+	ctx, cancel := context.WithTimeout(ctx, OnnxFileTimeout())
+	defer cancel()
 	cmd := exec.CommandContext(ctx, embedBin, args...)
 	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()

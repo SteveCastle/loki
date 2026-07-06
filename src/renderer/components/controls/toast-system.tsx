@@ -3,6 +3,7 @@ import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { send, mediaServerBase } from '../../platform';
+import { subscribeStream } from '../../stream-bus';
 import './toast-system.css';
 
 type JobState = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'error';
@@ -299,9 +300,6 @@ export function ToastSystem() {
     (state) => state.context.authToken
   );
   const [jobs, setJobs] = useState<Map<string, JobRunnerJob>>(new Map());
-  const [jobServerAvailable, setJobServerAvailable] = useState<boolean>(false);
-  const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
-  const [sseGeneration, setSseGeneration] = useState<number>(0);
 
   // When a media-created event fires, we store the target path and the
   // current libraryLoadId. Once libraryLoadId changes (the refresh completed),
@@ -311,9 +309,6 @@ export function ToastSystem() {
     sinceLoadId: string;
   } | null>(null);
 
-  // Track last activity time to aid in debugging/health visibility
-  const lastActivityAtRef = useRef<number>(Date.now());
-  const eventSourceRef = useRef<EventSource | null>(null);
 
   const libraryLoadId = useSelector(
     libraryService,
@@ -338,76 +333,11 @@ export function ToastSystem() {
     (state) => state.context.toasts || []
   );
 
-  // Check if job server is available before attempting SSE connection
+  // All /stream consumption goes through the shared bus (one EventSource for
+  // the whole renderer — see stream-bus.ts for why): reconnects, zombie
+  // detection, and availability all live there, so this component just
+  // subscribes to events.
   useEffect(() => {
-    const checkJobServer = async () => {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-        const headers: HeadersInit = {};
-        if (authToken) {
-          headers['Authorization'] = `Bearer ${authToken}`;
-        }
-
-        const response = await fetch(`${mediaServerBase}/health`, {
-          method: 'GET',
-          headers,
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        setJobServerAvailable(response.ok);
-      } catch (error) {
-        setJobServerAvailable(false);
-      }
-    };
-
-    if (isOnline) {
-      checkJobServer();
-    } else {
-      setJobServerAvailable(false);
-    }
-
-    // Recheck every 30 seconds if server is not available
-    const interval = setInterval(() => {
-      if (!jobServerAvailable && isOnline) {
-        checkJobServer();
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [jobServerAvailable, isOnline, authToken]);
-
-  // Track online/offline to prevent futile reconnect loops when offline
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => {
-      setIsOnline(false);
-      setJobServerAvailable(false);
-      // Close any existing SSE connection if we go offline
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-    };
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!jobServerAvailable || !isOnline) {
-      return; // Don't attempt SSE connection if server is not available
-    }
-
-    const eventSource = new EventSource(`${mediaServerBase}/stream`);
-    eventSourceRef.current = eventSource;
-
     type JobEventPayload = { job: JobRunnerJob };
     const parseJobEvent = (data: string): JobEventPayload | null => {
       try {
@@ -426,25 +356,17 @@ export function ToastSystem() {
       }
     };
 
-    eventSource.onopen = () => {
-      // Connection established or re-established
-      setJobServerAvailable(true);
-      lastActivityAtRef.current = Date.now();
-    };
-
-    eventSource.addEventListener('create', (event) => {
-      lastActivityAtRef.current = Date.now();
-      const data = parseJobEvent((event as MessageEvent).data);
+    const onCreate = (event: MessageEvent) => {
+      const data = parseJobEvent(event.data);
       if (!data || !data.job) return;
       const job = data.job as JobRunnerJob;
       console.log('Job created:', job);
       setJobs((prev) => new Map(prev).set(job.id, job));
       // No toast for job creation - the job toast itself shows the status
-    });
+    };
 
-    eventSource.addEventListener('update', (event) => {
-      lastActivityAtRef.current = Date.now();
-      const data = parseJobEvent((event as MessageEvent).data);
+    const onUpdate = (event: MessageEvent) => {
+      const data = parseJobEvent(event.data);
       if (!data || !data.job) return;
       const job = data.job as JobRunnerJob;
       console.log('Job updated:', job);
@@ -485,11 +407,10 @@ export function ToastSystem() {
           });
         }, 5000);
       }
-    });
+    };
 
-    eventSource.addEventListener('delete', (event) => {
-      lastActivityAtRef.current = Date.now();
-      const data = parseJobEvent((event as MessageEvent).data);
+    const onDelete = (event: MessageEvent) => {
+      const data = parseJobEvent(event.data);
       if (!data || !data.job) return;
       const jobId = data.job.id;
       setJobs((prev) => {
@@ -497,14 +418,13 @@ export function ToastSystem() {
         newJobs.delete(jobId);
         return newJobs;
       });
-    });
+    };
 
     // When media files are overwritten (e.g. save task in "replace" mode),
     // invalidate cached previews so the UI shows the updated file.
-    eventSource.addEventListener('media-updated', (event) => {
-      lastActivityAtRef.current = Date.now();
+    const onMediaUpdated = (event: MessageEvent) => {
       try {
-        const payload = JSON.parse((event as MessageEvent).data);
+        const payload = JSON.parse(event.data);
         const inner = typeof payload.msg === 'string' ? JSON.parse(payload.msg) : payload;
         const paths: string[] = inner.paths || [];
         for (const p of paths) {
@@ -524,14 +444,13 @@ export function ToastSystem() {
       } catch {
         // Best-effort parse; ignore malformed events
       }
-    });
+    };
 
     // When new files are created (e.g. save task in "alongside" or "folder" mode),
     // refresh the library so they appear immediately and navigate to the first new file.
-    eventSource.addEventListener('media-created', (event) => {
-      lastActivityAtRef.current = Date.now();
+    const onMediaCreated = (event: MessageEvent) => {
       try {
-        const payload = JSON.parse((event as MessageEvent).data);
+        const payload = JSON.parse(event.data);
         const inner = typeof payload.msg === 'string' ? JSON.parse(payload.msg) : payload;
         const paths: string[] = inner.paths || [];
         if (paths.length > 0) {
@@ -553,52 +472,32 @@ export function ToastSystem() {
       } catch {
         // Best-effort parse; ignore malformed events
       }
+    };
+
+    // One bus subscription covers all event types; reconnects and zombie
+    // detection live in the bus itself.
+    return subscribeStream((type, event) => {
+      switch (type) {
+        case 'create':
+          onCreate(event);
+          break;
+        case 'update':
+          onUpdate(event);
+          break;
+        case 'delete':
+          onDelete(event);
+          break;
+        case 'media-updated':
+          onMediaUpdated(event);
+          break;
+        case 'media-created':
+          onMediaCreated(event);
+          break;
+        default:
+          break;
+      }
     });
-
-    // Some servers emit default 'message' events (e.g., ping). Track activity.
-    eventSource.onmessage = () => {
-      lastActivityAtRef.current = Date.now();
-    };
-
-    eventSource.onerror = (error) => {
-      console.error('SSE connection error:', error);
-      // Do not immediately mark unavailable; EventSource will auto-reconnect.
-      // If we are offline, ensure we reflect unavailable state.
-      if (!navigator.onLine) {
-        setJobServerAvailable(false);
-      }
-    };
-
-    return () => {
-      eventSource.close();
-      if (eventSourceRef.current === eventSource) {
-        eventSourceRef.current = null;
-      }
-    };
-  }, [jobServerAvailable, isOnline, sseGeneration, queryClient]);
-
-  // Watchdog: if connection is stale or closed and no activity for a while, force a fresh subscribe
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const secondsSinceActivity = (now - lastActivityAtRef.current) / 1000;
-      const current = eventSourceRef.current;
-      if (!isOnline) return;
-
-      // If we have an EventSource but it's closed or has been idle too long, force regeneration
-      if (current && (current.readyState === 2 || secondsSinceActivity > 90)) {
-        try {
-          current.close();
-        } catch (err) {
-          // noop; closing a dead EventSource can throw in some environments
-        }
-        eventSourceRef.current = null;
-        // Trigger effect to recreate the EventSource immediately
-        setSseGeneration((g) => g + 1);
-      }
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [isOnline]);
+  }, [queryClient]);
 
   const handleClearJob = async (job: JobRunnerJob) => {
     try {
