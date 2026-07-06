@@ -87,6 +87,15 @@ func InferenceHost() string {
 // hard failure.
 var ErrInferenceDisabled = errors.New("inference disabled: set an InferenceProvider in config")
 
+// visionMaxOutputTokens caps generation length for every vision backend.
+// Descriptions and tag lists are at most a few paragraphs; without a cap, a
+// local model that misses its stop token (observed with LM Studio) generates
+// until the task's 10-minute deadline, wedging the provider's
+// one-at-a-time concurrency bucket the whole time. ~1024 tokens is roughly
+// 700 words — comfortably above any sane description, small enough that a
+// runaway generation ends in seconds instead of minutes.
+const visionMaxOutputTokens = 1024
+
 // callVisionLLM is the single entry point for image-conditioned LLM calls
 // (description, autotag). It dispatches based on the configured inference
 // provider. The caller supplies a deadline via ctx.
@@ -137,8 +146,9 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 	img.logRequest("openai-compatible", model, endpoint, prompt)
 
 	payload := map[string]any{
-		"model":  model,
-		"stream": false,
+		"model":      model,
+		"stream":     false,
+		"max_tokens": visionMaxOutputTokens,
 		"messages": []map[string]any{
 			{
 				"role": "user",
@@ -214,8 +224,8 @@ func callOllamaVisionRaw(ctx context.Context, imagePath, prompt, baseURL, model 
 	}
 	base := strings.TrimRight(baseURL, "/")
 	img.logRequest("ollama", model, base+"/api/generate", prompt)
-	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"prompt":%s,"images":["%s"]}`,
-		model, strconv.Quote(prompt), img.base64())
+	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"options":{"num_predict":%d},"prompt":%s,"images":["%s"]}`,
+		model, visionMaxOutputTokens, strconv.Quote(prompt), img.base64())
 	req, err := http.NewRequestWithContext(ctx, "POST", base+"/api/generate", strings.NewReader(reqJSON))
 	if err != nil {
 		return "", fmt.Errorf("failed to build request: %w", err)
@@ -262,6 +272,9 @@ func callRunPodVision(ctx context.Context, imagePath, prompt, endpoint, apiKey s
 
 	payload := map[string]any{
 		"input": map[string]any{
+			// Passed through to the worker's OpenAI-style handler; ignored
+			// by workers that don't support it.
+			"max_tokens": visionMaxOutputTokens,
 			"messages": []map[string]any{
 				{
 					"role": "user",

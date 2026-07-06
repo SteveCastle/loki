@@ -1,9 +1,10 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { useDepRequirement } from '../../onboarding/useDepRequirement';
 import { fmtSize } from '../../onboarding/requirements';
 import { mediaServerBase } from '../../platform';
+import useJobServerAvailable from '../../hooks/useJobServerAvailable';
 import './generate-transcript.css';
 
 type Props = {
@@ -22,37 +23,9 @@ export default function GenerateTranscript({
     libraryService,
     (state) => state.context.authToken
   );
-  const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
-    null
-  );
+  const jobServerAvailable = useJobServerAvailable(authToken);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const whisper = useDepRequirement('faster-whisper');
-
-  useEffect(() => {
-    const checkJobServer = async () => {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-        const headers: HeadersInit = {};
-        if (authToken) {
-          headers['Authorization'] = `Bearer ${authToken}`;
-        }
-
-        const response = await fetch(`${mediaServerBase}/health`, {
-          method: 'GET',
-          headers,
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        setJobServerAvailable(response.ok);
-      } catch (error) {
-        setJobServerAvailable(false);
-      }
-    };
-
-    checkJobServer();
-  }, [authToken]);
 
   // No SSE subscription here; ToastSystem handles job progress globally
 

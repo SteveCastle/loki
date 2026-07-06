@@ -35,8 +35,10 @@ func Snapshot() []Item {
 			State: b.State, Version: b.Version, Path: b.Path, Error: b.Error,
 		})
 	}
+	// CachedDetect, not Detect: live detection spawns version subprocesses
+	// (seconds each) and this endpoint is polled from many UI surfaces.
 	for _, o := range optional.Manifest {
-		s, _ := optional.Detect(o.ID)
+		s, _ := optional.CachedDetect(o.ID)
 		state := "not_installed"
 		if s.Installed {
 			state = "installed"

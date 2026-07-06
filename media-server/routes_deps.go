@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/stevecastle/shrike/deps/optional"
 	"github.com/stevecastle/shrike/handlers"
 	"github.com/stevecastle/shrike/renderer"
 )
@@ -13,6 +14,11 @@ import (
 // renderer (different origin) can drive point-of-use model downloads.
 func RegisterDepsRoutes(mux *http.ServeMux) {
 	h := func(fn http.HandlerFunc) http.HandlerFunc { return renderer.CORS(fn) }
+
+	// Populate the optional-tool detection cache before the first status
+	// request; detection spawns version subprocesses and must never run in
+	// the request path.
+	optional.Warm()
 
 	mux.HandleFunc("GET /api/deps/status", h(handlers.HandleDepsStatus))
 	mux.HandleFunc("GET /api/deps/models/progress", h(handlers.HandleModelProgressSSE))

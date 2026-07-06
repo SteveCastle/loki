@@ -571,6 +571,9 @@ const getInitialContext = (): LibraryState => {
     ['alwaysOnTop', false],
     ['useHLS', false],
     ['subtitlesEnabled', false],
+    ['showDescriptionOverlay', false],
+    ['descriptionOverlaySize', 18],
+    ['descriptionOverlayPadding', 4],
     ['incrementCursor', 'arrowright'],
     ['decrementCursor', 'arrowleft'],
     ['toggleTagPreview', 'shift'],
@@ -621,6 +624,7 @@ const getInitialContext = (): LibraryState => {
     ['applyTag9', '9'],
     ['togglePlayPause', ' '],
     ['refreshLibrary', 'r'],
+    ['generateDescription', 'g'],
     ['layoutMode', 'grid'],
     ['authToken', null],
   ] as [string, any][]);
@@ -710,6 +714,9 @@ const getInitialContext = (): LibraryState => {
       layoutMode: batched['layoutMode'] as 'grid' | 'masonry',
       useHLS: batched['useHLS'] as boolean,
       subtitlesEnabled: batched['subtitlesEnabled'] as boolean,
+      showDescriptionOverlay: batched['showDescriptionOverlay'] as boolean,
+      descriptionOverlaySize: batched['descriptionOverlaySize'] as number,
+      descriptionOverlayPadding: batched['descriptionOverlayPadding'] as number,
     },
     hotKeys: {
       incrementCursor: batched['incrementCursor'] as string,
@@ -762,6 +769,7 @@ const getInitialContext = (): LibraryState => {
       applyTag9: batched['applyTag9'] as string,
       togglePlayPause: batched['togglePlayPause'] as string,
       refreshLibrary: batched['refreshLibrary'] as string,
+      generateDescription: batched['generateDescription'] as string,
     },
     dbQuery: {
       tags: [],

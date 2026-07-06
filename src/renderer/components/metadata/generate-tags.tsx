@@ -1,9 +1,10 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { useDepRequirement } from '../../onboarding/useDepRequirement';
 import { fmtSize } from '../../onboarding/requirements';
 import { mediaServerBase } from '../../platform';
+import useJobServerAvailable from '../../hooks/useJobServerAvailable';
 import './generate-tags.css';
 import { SparkleIcon } from './section-action-icons';
 
@@ -17,32 +18,8 @@ export default function GenerateTags({ path }: Props) {
     libraryService,
     (state) => state.context.authToken
   );
-  const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
-    null
-  );
+  const jobServerAvailable = useJobServerAvailable(authToken);
   const tagger = useDepRequirement('wd-eva02-large-tagger-v3');
-
-  useEffect(() => {
-    const checkJobServer = async () => {
-      try {
-        const headers: HeadersInit = {};
-        if (authToken) {
-          headers['Authorization'] = `Bearer ${authToken}`;
-        }
-
-        const response = await fetch(`${mediaServerBase}/health`, {
-          method: 'GET',
-          headers,
-          signal: AbortSignal.timeout(3000), // 3 second timeout
-        });
-        setJobServerAvailable(response.ok);
-      } catch (error) {
-        setJobServerAvailable(false);
-      }
-    };
-
-    checkJobServer();
-  }, [authToken]);
 
   const handleGenerateTags = async () => {
     try {
@@ -60,6 +37,7 @@ export default function GenerateTags({ path }: Props) {
         body: JSON.stringify({
           input: `autotag "${path}"`,
         }),
+        signal: AbortSignal.timeout(10000),
       });
 
       if (!response.ok) {

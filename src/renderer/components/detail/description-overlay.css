@@ -1,0 +1,29 @@
+.DescriptionOverlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* Side padding is set inline from the descriptionOverlayPadding setting
+     (percent of panel width per side). */
+  padding: 8px 16px 12px;
+  text-align: center;
+  color: #fff;
+  /* font-size is set inline from the descriptionOverlaySize setting. */
+  line-height: 1.35;
+  font-weight: 600;
+  /* Closed-caption outline: stroke painted behind the fill gives a clean
+     black edge on any background; the shadow softens it at small sizes.
+     em units keep the outline proportional at any configured font size. */
+  paint-order: stroke fill;
+  -webkit-text-stroke: 0.2em rgba(0, 0, 0, 0.9);
+  text-shadow: 0 0 0.2em rgba(0, 0, 0, 0.8);
+  /* Never intercept drag-to-pan or click navigation on the media below. */
+  pointer-events: none;
+  /* Under .controls (998) so tag pills stay clickable above it. */
+  z-index: 900;
+}
+
+/* When the file-info bar is shown it owns the bottom 20px — sit above it. */
+.DetailContainer:has(.item-info) .DescriptionOverlay {
+  bottom: 20px;
+}
