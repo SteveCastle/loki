@@ -221,11 +221,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # server_cgo: the server binary itself is pure Go everywhere except
+          # macOS, where the menu-bar tray needs Cocoa (tray_darwin.go).
           - os: windows-latest
             target: windows-amd64
             goos: windows
             goarch: amd64
             ext: .exe
+            server_cgo: '0'
             # -H=windowsgui: tray-only app, no console window
             ldflags: '-s -w -H=windowsgui'
             fetch_cmd: 'powershell -File media-server/scripts/fetch-bundled-deps.ps1 -Target windows-amd64 -Mode verify'
@@ -234,6 +237,7 @@ jobs:
             goos: linux
             goarch: amd64
             ext: ''
+            server_cgo: '0'
             ldflags: '-s -w'
             fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh linux-amd64 verify'
           - os: macos-14 # Apple Silicon
@@ -241,6 +245,7 @@ jobs:
             goos: darwin
             goarch: arm64
             ext: ''
+            server_cgo: '1'
             ldflags: '-s -w'
             fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh darwin-arm64 verify'
           - os: macos-13 # Intel
@@ -248,6 +253,7 @@ jobs:
             goos: darwin
             goarch: amd64
             ext: ''
+            server_cgo: '1'
             ldflags: '-s -w'
             fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh darwin-amd64 verify'
     runs-on: ${{ matrix.os }}
@@ -301,7 +307,7 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
+          CGO_ENABLED: ${{ matrix.server_cgo }}
         run: go build -ldflags="${{ matrix.ldflags }}" -o lowkeymediaserver${{ matrix.ext }} .
 
       - name: Build lokictl
@@ -373,7 +379,42 @@ jobs:
         shell: bash
         run: media-server/scripts/smoke-bundled.sh release/${{ matrix.target }}
 
-      - name: Notarize macOS payload
+      # The Mac-native artifact: a menu-bar agent .app inside a DMG. The
+      # bundle reuses the already-signed payload binaries (deps live under
+      # Contents/MacOS/bin, which the server's executable-relative resolver
+      # handles unchanged). Runs even without signing secrets — the DMG is
+      # just unsigned then.
+      - name: Package macOS app + DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          media-server/scripts/make-macos-app.sh \
+            "release/${{ matrix.target }}" dist-app "${{ needs.version-and-tag.outputs.version }}"
+          IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+            | grep "Developer ID Application" | head -1 | awk '{print $2}' || true)
+          if [ -n "$IDENTITY" ]; then
+            # Nested Mach-Os were signed in the payload; sign the bundle
+            # itself (seals resources + re-signs the main executable).
+            codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+              "dist-app/Lowkey Media Server.app"
+            codesign --verify --strict --deep "dist-app/Lowkey Media Server.app"
+          else
+            echo "no Developer ID identity in keychain — app left unsigned"
+          fi
+          ln -s /Applications dist-app/Applications
+          hdiutil create -volname "Lowkey Media Server" -srcfolder dist-app \
+            -ov -format UDZO "release/lowkey-media-server-${{ matrix.target }}.dmg"
+          if [ -n "$IDENTITY" ]; then
+            codesign --force --timestamp --sign "$IDENTITY" \
+              "release/lowkey-media-server-${{ matrix.target }}.dmg"
+          fi
+
+      # One notarization covers everything: tickets are recorded per code
+      # signature, so the identical signed binaries inside the tar.gz pass
+      # Gatekeeper's online check too. The DMG gets its ticket stapled for
+      # fully-offline verification.
+      - name: Notarize and staple DMG
         if: ${{ runner.os == 'macOS' && secrets.CSC_LINK != '' && secrets.APPLE_ID != '' }}
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -382,17 +423,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # notarytool takes a zip; the ticket is recorded server-side per
-          # code signature, so the tar.gz we actually distribute (same
-          # signed files) passes Gatekeeper's online check. Bare CLI
-          # binaries can't be stapled — first run needs network, which a
-          # media server has by definition.
-          ditto -c -k --keepParent release/${{ matrix.target }} "$RUNNER_TEMP/notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+          xcrun notarytool submit "release/lowkey-media-server-${{ matrix.target }}.dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
+          xcrun stapler staple "release/lowkey-media-server-${{ matrix.target }}.dmg"
 
       - name: Smoke test (windows)
         if: runner.os == 'Windows'

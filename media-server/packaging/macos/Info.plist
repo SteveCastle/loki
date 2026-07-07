@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist template for the Lowkey Media Server .app bundle.
+  APP_VERSION is substituted by scripts/make-macos-app.sh.
+  LSUIElement: menu-bar agent app — no Dock icon, no app switcher entry.
+-->
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Lowkey Media Server</string>
+  <key>CFBundleDisplayName</key>
+  <string>Lowkey Media Server</string>
+  <key>CFBundleIdentifier</key>
+  <string>com.stevecastle.lowkeymediaserver</string>
+  <key>CFBundleExecutable</key>
+  <string>lowkeymediaserver</string>
+  <key>CFBundleIconFile</key>
+  <string>icon</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>APP_VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>APP_VERSION</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>

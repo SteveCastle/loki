@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pkg/browser"
 	_ "modernc.org/sqlite"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -2345,7 +2344,8 @@ func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// main – start server with signal handling (no systray on macOS headless mode)
+// main – start server, then hand control to the menu-bar UI (cgo builds)
+// or a headless signal wait (see tray_darwin.go / tray_darwin_nocgo.go).
 // -----------------------------------------------------------------------------
 
 func main() {
@@ -2624,13 +2624,9 @@ func main() {
 		}
 	}()
 
-	// Try to open browser on macOS
-	_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
-
-	// Wait for shutdown signal
-	sig := <-sigChan
-	log.Printf("Received signal %v, shutting down...", sig)
-	onExit()
+	// Menu-bar UI when built with cgo (the released .app); headless
+	// signal-wait otherwise. Opens the browser and blocks until shutdown.
+	runDarwinUI(sigChan)
 }
 
 // onExit is called when the application is shutting down.

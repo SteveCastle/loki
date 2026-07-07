@@ -134,22 +134,34 @@ entitlement because they dlopen the ONNX runtime), smoke test the signed
 binaries, then `notarytool submit --wait`. If the secrets are ever absent
 the steps skip and the release ships unsigned rather than failing.
 
-What to verify / know:
+**The Mac-native artifact is now a DMG**: each darwin job assembles
+`Lowkey Media Server.app` (menu-bar agent app — `LSUIElement`, no Dock
+icon, tray with Open Web UI/Quit from `tray_darwin.go`; bundled deps live
+under `Contents/MacOS/bin` so the executable-relative resolver works
+unchanged), signs the bundle, wraps it in a drag-to-Applications DMG,
+notarizes the DMG and staples the ticket. The tar.gz still ships for CLI
+users — its binaries carry the same signatures, and notarization tickets
+are per-signature, so they pass Gatekeeper's online check without a second
+submission. The macOS *server* binary now builds with `CGO_ENABLED=1`
+(Cocoa for the tray); cross-compiled/dev builds without cgo fall back to
+headless mode automatically (`tray_darwin_nocgo.go`).
 
-- [ ] **First-run check**: the assumption baked in is that `CSC_LINK` is a
-      base64-encoded `.p12` containing a **Developer ID Application** cert
-      (electron-builder's convention). If your cert is "Apple Development"
-      or "3rd Party Mac Developer" only, notarization will reject it — the
-      signing step logs the identity it found.
+What to verify / know on the first release:
+
+- [ ] **`CSC_LINK` must be a base64 `.p12` with a "Developer ID
+      Application" cert** (electron-builder's convention). Wrong cert type
+      → notarization rejects; the signing step logs the identity it found.
+- [ ] **`tray_darwin.go` has never been compiled** (needs a Mac) — it
+      mirrors the Windows tray code, but watch the darwin build step.
+- [ ] **Menu-bar icon rendering**: the tray reuses
+      `media-server/assets/logo.png` as a *template* icon (monochrome from
+      alpha). If it renders as a blob or wrong size on a real Mac, that's a
+      5-minute icon swap in `tray_darwin.go`.
+- [ ] Install → launch flow to sanity-check on a real Mac: open DMG → drag
+      to Applications → launch → menu-bar icon appears → browser opens to
+      the setup wizard → Quit from the menu shuts the server down cleanly.
 - [ ] **Notarization adds ~1–5 min** per darwin job (`--wait`). If Apple's
       service hiccups the job fails — rerun the workflow.
-- [ ] Bare CLI binaries can't be stapled, so Gatekeeper does an online
-      ticket check on first run — fine for a network server.
-- [ ] **Remaining UX gap (code work, not paperwork)**: it's still a CLI
-      binary — double-clicking opens a Terminal window and there's no
-      menu-bar icon (`main_darwin.go` runs headless). The "nice Mac app"
-      version is a `.app` bundle + menu-bar tray; signing was the hard
-      prerequisite and it's now done.
 
 ## 6. Loose ends worth knowing about
 
