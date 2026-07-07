@@ -326,10 +326,73 @@ jobs:
             cp media-server/packaging/linux/lowkeymediaserver.service release/${{ matrix.target }}/
           fi
 
+      # macOS: sign everything with the same Developer ID cert the Electron
+      # build uses, then notarize. Both steps skip cleanly when the signing
+      # secrets are absent (the release still ships, just unsigned). Without
+      # this, Gatekeeper hard-blocks the downloaded binaries.
+      - name: Sign macOS binaries
+        if: ${{ runner.os == 'macOS' && secrets.CSC_LINK != '' }}
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/server-sign.keychain-db"
+          KC_PASS="$(openssl rand -hex 16)"
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN"
+          # CSC_LINK is the base64-encoded .p12 (same convention as electron-builder)
+          echo "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CSC_KEY_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PASS" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep "Developer ID Application" | head -1 | awk '{print $2}')
+          echo "signing with identity $IDENTITY"
+
+          T=release/${{ matrix.target }}
+          # Plain Mach-O executables + the ONNX runtime dylib. exiftool and
+          # its lib/ are Perl scripts — not signable, not checked by
+          # notarization.
+          for f in "$T/lowkeymediaserver" "$T/lokictl" "$T/bin/ffmpeg" "$T/bin/ffprobe" "$T/bin/onnxruntime.dylib"; do
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp "$f"
+          done
+          # The workers dlopen the ONNX runtime — sign with the
+          # library-validation entitlement.
+          for f in "$T/bin/embed" "$T/bin/onnxtag"; do
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp \
+              --entitlements media-server/packaging/macos/entitlements.plist "$f"
+          done
+          codesign --verify --strict "$T/lowkeymediaserver"
+
       - name: Smoke test (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: media-server/scripts/smoke-bundled.sh release/${{ matrix.target }}
+
+      - name: Notarize macOS payload
+        if: ${{ runner.os == 'macOS' && secrets.CSC_LINK != '' && secrets.APPLE_ID != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # notarytool takes a zip; the ticket is recorded server-side per
+          # code signature, so the tar.gz we actually distribute (same
+          # signed files) passes Gatekeeper's online check. Bare CLI
+          # binaries can't be stapled — first run needs network, which a
+          # media server has by definition.
+          ditto -c -k --keepParent release/${{ matrix.target }} "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
 
       - name: Smoke test (windows)
         if: runner.os == 'Windows'

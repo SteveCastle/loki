@@ -123,22 +123,33 @@ What only you can decide/do:
       recheck each license first. SigLIP2/DINOv2/WD-tagger/YuNet/SFace are
       permissive (Apache/MIT).
 
-## 5. macOS (deferred, honestly)
+## 5. macOS
 
-The tar.gz works for technical users only: bare CLI binary, no menu-bar
-app, and Gatekeeper blocks unsigned+unnotarized downloads hard (Sequoia
-removed the right-click bypass). Getting to "normal user" quality requires:
+**Signing + notarization are wired into `release.yml`** using the same
+secrets the Electron build already notarizes with (`CSC_LINK`,
+`CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
+`APPLE_TEAM_ID`). The darwin jobs sign every Mach-O in the payload with
+Developer ID + hardened runtime (workers get a library-validation
+entitlement because they dlopen the ONNX runtime), smoke test the signed
+binaries, then `notarytool submit --wait`. If the secrets are ever absent
+the steps skip and the release ships unsigned rather than failing.
 
-- [ ] Apple Developer Program ($99/yr).
-- [ ] Developer ID signing + notarization in CI (the Electron job already
-      has the secrets plumbing — `APPLE_ID`, `CSC_LINK` etc. — the server
-      job could reuse it).
-- [ ] Packaging as a `.app` bundle with a menu-bar tray (code change:
-      `main_darwin.go` currently runs headless).
+What to verify / know:
 
-Until then the README should say macOS is for technical users, with:
-`xattr -dr com.apple.quarantine ./lowkey-media-server-darwin-arm64` after
-extraction.
+- [ ] **First-run check**: the assumption baked in is that `CSC_LINK` is a
+      base64-encoded `.p12` containing a **Developer ID Application** cert
+      (electron-builder's convention). If your cert is "Apple Development"
+      or "3rd Party Mac Developer" only, notarization will reject it — the
+      signing step logs the identity it found.
+- [ ] **Notarization adds ~1–5 min** per darwin job (`--wait`). If Apple's
+      service hiccups the job fails — rerun the workflow.
+- [ ] Bare CLI binaries can't be stapled, so Gatekeeper does an online
+      ticket check on first run — fine for a network server.
+- [ ] **Remaining UX gap (code work, not paperwork)**: it's still a CLI
+      binary — double-clicking opens a Terminal window and there's no
+      menu-bar icon (`main_darwin.go` runs headless). The "nice Mac app"
+      version is a `.app` bundle + menu-bar tray; signing was the hard
+      prerequisite and it's now done.
 
 ## 6. Loose ends worth knowing about
 
