@@ -90,6 +90,26 @@ func defaultClusterParams(model FaceModel) clusterParams {
 	}
 }
 
+// incrementalClusterParams are the knobs for the frequent IN-SCAN passes.
+// They are deliberately stricter than the defaults: a pass that runs every
+// ~100 faces retests borderline candidates dozens of times per scan (each
+// retest is another chance for a false join), sees only small batches (easy
+// for a few borderline faces to look coherent), and every join it makes
+// becomes a full-strength seed for all later passes — so early mistakes
+// snowball. Mid-scan grouping therefore takes only clearly-confident
+// evidence; the FINAL pass at scan end runs the normal defaults once, which
+// is where borderline cases are settled (same end quality as the old
+// scan-then-cluster pipeline).
+func incrementalClusterParams(model FaceModel) clusterParams {
+	p := defaultClusterParams(model)
+	p.joinThreshold += 0.03
+	p.formThreshold += 0.03
+	p.minCluster += 2  // small batches need more corroborating members
+	p.minQuality = 0.8 // only confident detections may found people mid-scan
+	p.passes = 1       // no intra-pass transitivity between full passes
+	return p
+}
+
 // autoAssignNewFaces incrementally assigns freshly-scanned faces to existing
 // people using the same corroborated-join rule as the full clustering pass.
 // Called by the faces collector after storing a batch, so growing a library

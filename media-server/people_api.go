@@ -34,6 +34,67 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/faces/{id}/assign", renderer.ApplyMiddlewares(faceAssignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/unassign", renderer.ApplyMiddlewares(faceUnassignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/all", renderer.ApplyMiddlewares(facesWipeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/faces/stats", renderer.ApplyMiddlewares(facesStatsHandler(deps), renderer.RoleAdmin))
+}
+
+// facesStatsHandler reports how much face data is stored — per-model face
+// vectors (count + blob bytes), scan markers, people counts, and the live
+// in-memory search index — for the Config page's storage panel.
+func facesStatsHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httpError(w, "use GET", http.StatusMethodNotAllowed)
+			return
+		}
+
+		type modelStats struct {
+			Model string `json:"model"`
+			Count int    `json:"count"`
+			Bytes int64  `json:"bytes"`
+		}
+		faces := []modelStats{}
+		var totalFaces int
+		var totalBytes int64
+		rows, err := deps.DB.Query(
+			`SELECT model, COUNT(*), COALESCE(SUM(LENGTH(vector)), 0)
+			 FROM face GROUP BY model ORDER BY model`)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for rows.Next() {
+			var s modelStats
+			if err := rows.Scan(&s.Model, &s.Count, &s.Bytes); err == nil {
+				faces = append(faces, s)
+				totalFaces += s.Count
+				totalBytes += s.Bytes
+			}
+		}
+		rows.Close()
+
+		var scans int
+		_ = deps.DB.QueryRow(`SELECT COUNT(*) FROM face_scan`).Scan(&scans)
+		var people, named int
+		_ = deps.DB.QueryRow(`SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN name IS NOT NULL AND TRIM(name) <> '' THEN 1 ELSE 0 END), 0)
+			FROM person`).Scan(&people, &named)
+
+		writeJSON(w, map[string]any{
+			"faces":       faces,
+			"total_faces": totalFaces,
+			"total_bytes": totalBytes,
+			"scans":       scans,
+			"people": map[string]any{
+				"total":   people,
+				"named":   named,
+				"unnamed": people - named,
+			},
+			"index": map[string]any{
+				"model":   tasks.FaceIndexedModel(),
+				"vectors": tasks.FaceIndexSize(),
+			},
+		})
+	}
 }
 
 // pathID parses the {id} path value.

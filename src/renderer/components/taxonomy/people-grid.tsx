@@ -619,10 +619,31 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     runClusterJob('faces-cluster --reset');
   };
 
+  // Empty-state CTA: kick off a whole-library face scan right here. People
+  // then appear in this grid live (the scan clusters incrementally and
+  // broadcasts people-updated), so the empty state resolves itself.
+  const [scanStarted, setScanStarted] = useState(false);
+  const handleScanLibrary = async () => {
+    const query64 = btoa(unescape(encodeURIComponent('path:*')));
+    setScanStarted(true);
+    await runClusterJob(`faces --query64=${query64}`);
+  };
+
   if (error) {
     return (
-      <div className="people-grid-empty">
-        People need the media server ({error.message}).
+      <div className="people-empty">
+        <div className="people-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
+          </svg>
+        </div>
+        <div className="people-empty-title">Can’t reach the media server</div>
+        <p className="people-empty-body">
+          People are detected and grouped by the media server. Start it (or
+          check the connection) and this panel will fill in.
+        </p>
+        <p className="people-empty-hint">{error.message}</p>
       </div>
     );
   }
@@ -649,28 +670,68 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
 
   return (
     <div className="people-grid-wrap">
-      <div className="people-grid-toolbar">
-        <button
-          type="button"
-          className="people-cluster-btn"
-          onClick={handleCluster}
-          title="Assign unassigned faces to people. Additive — never moves existing assignments."
-        >
-          Group new faces
-        </button>
-        <button
-          type="button"
-          className={`people-cluster-btn${rebuildArmed ? ' danger' : ''}`}
-          onClick={handleRebuild}
-          title="Dissolve the Unknown clusters and regroup them from scratch. Named people and manually assigned faces are never touched."
-        >
-          {rebuildArmed ? 'Click again to confirm' : 'Rebuild unnamed groups'}
-        </button>
-      </div>
+      {list.length > 0 && (
+        <div className="people-grid-toolbar">
+          <button
+            type="button"
+            className="people-cluster-btn"
+            onClick={handleCluster}
+            title="Group new faces: assign unassigned faces to people. Additive — never moves existing assignments."
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <circle cx="9" cy="8" r="3.2" />
+              <path d="M3 19c0-3 2.7-4.8 6-4.8s6 1.8 6 4.8" />
+              <path d="M18 6v6M15 9h6" />
+            </svg>
+            <span className="people-btn-label">Group new faces</span>
+          </button>
+          <button
+            type="button"
+            className={`people-cluster-btn${rebuildArmed ? ' danger' : ''}`}
+            onClick={handleRebuild}
+            title={
+              rebuildArmed
+                ? 'Click again to confirm the rebuild.'
+                : 'Rebuild: dissolve the Unknown clusters and regroup them from scratch. Named people and manually assigned faces are never touched.'
+            }
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+              <path d="M20 12a8 8 0 1 1-2.34-5.66" />
+              <path d="M20 3v4h-4" />
+            </svg>
+            <span className="people-btn-label">
+              {rebuildArmed ? 'Confirm rebuild' : 'Rebuild groups'}
+            </span>
+          </button>
+        </div>
+      )}
       {list.length === 0 && (
-        <div className="people-grid-empty">
-          No people yet. Scan faces from the context palette (Generate →
-          Faces), then group them here.
+        <div className="people-empty">
+          <div className="people-empty-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="8" r="4" />
+              <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
+            </svg>
+          </div>
+          <div className="people-empty-title">No people yet</div>
+          <p className="people-empty-body">
+            Scan your library to find faces. People appear here on their own
+            while the scan runs — name them, merge duplicates, and filter your
+            library by who’s in the picture.
+          </p>
+          <button
+            type="button"
+            className="people-empty-cta"
+            onClick={handleScanLibrary}
+            disabled={scanStarted}
+          >
+            {scanStarted ? 'Scanning — people will appear here' : 'Scan library for faces'}
+          </button>
+          <p className="people-empty-hint">
+            Photos and drawn characters are each matched with the right
+            recognizer automatically. You can also start a scan anytime from
+            the context palette (Generate → Faces).
+          </p>
         </div>
       )}
       {named.length > 0 && (

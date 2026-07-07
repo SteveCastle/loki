@@ -77,9 +77,10 @@ type facesOpState struct {
 	// Incremental clustering bookkeeping. Touched ONLY from the runner's
 	// single committer goroutine (inside Commit closures) and from Finalize
 	// (which runs after the committer drains), so no locking is needed.
-	clusterEvery int            // faces per in-scan pass; 0 = end-of-scan job only
-	sinceCluster int            // faces stored since the last in-scan pass
-	dirtyModels  map[string]int // model ID -> faces stored since its last pass
+	clusterEvery  int                 // faces per in-scan pass; 0 = end-of-scan job only
+	sinceCluster  int                 // faces stored since the last in-scan pass
+	dirtyModels   map[string]int      // model ID -> faces stored since its last pass
+	touchedModels map[string]struct{} // every model that stored faces this run
 }
 
 // noteFacesScanned records n freshly stored faces for a model and reports
@@ -92,7 +93,11 @@ func (st *facesOpState) noteFacesScanned(modelID string, n int) (due bool, model
 	if st.dirtyModels == nil {
 		st.dirtyModels = map[string]int{}
 	}
+	if st.touchedModels == nil {
+		st.touchedModels = map[string]struct{}{}
+	}
 	st.dirtyModels[modelID] += n
+	st.touchedModels[modelID] = struct{}{}
 	st.sinceCluster += n
 	if st.clusterEvery <= 0 || st.sinceCluster < st.clusterEvery {
 		return false, nil
@@ -112,24 +117,34 @@ func (st *facesOpState) takeDirtyModels() []string {
 	return models
 }
 
-// runClusterPass runs one incremental clustering pass for the given models,
-// inline in the scan job (a separate faces-cluster job could not run anyway:
-// it shares the faces + local-compute buckets with the scan). It logs the
-// outcome and broadcasts "people-updated" so open People views refresh live.
-func (st *facesOpState) runClusterPass(modelIDs []string) {
+// runClusterPass runs one clustering pass for the given models, inline in
+// the scan job (a separate faces-cluster job could not run anyway: it shares
+// the faces + local-compute buckets with the scan). Mid-scan passes use the
+// strict incremental params (high-precision preview); the final pass at scan
+// end uses the normal defaults, settling borderline cases exactly once. Logs
+// the outcome and broadcasts "people-updated" so open People views refresh.
+func (st *facesOpState) runClusterPass(modelIDs []string, final bool) {
 	db := st.q.run.Queue.Db
+	label := "incremental (strict)"
+	if final {
+		label = "final (full)"
+	}
 	for _, id := range modelIDs {
 		m, known := FaceModelByID(id)
 		if !known {
 			continue
 		}
-		stats, err := clusterFaces(db, m, defaultClusterParams(m))
+		params := incrementalClusterParams(m)
+		if final {
+			params = defaultClusterParams(m)
+		}
+		stats, err := clusterFaces(db, m, params)
 		if err != nil {
-			st.q.log(fmt.Sprintf("  clustering pass (%s) failed: %v", id, err))
+			st.q.log(fmt.Sprintf("  clustering %s (%s) failed: %v", label, id, err))
 			continue
 		}
-		st.q.log(fmt.Sprintf("  clustering pass (%s): +%d people, %d faces joined existing, %d newly grouped",
-			id, stats.NewPeople, stats.JoinedExisting, stats.NewlyClustered))
+		st.q.log(fmt.Sprintf("  clustering %s (%s): +%d people, %d faces joined existing, %d newly grouped",
+			label, id, stats.NewPeople, stats.JoinedExisting, stats.NewlyClustered))
 	}
 	broadcastPeopleUpdated(modelIDs)
 }
@@ -225,12 +240,19 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 		},
 		Finalize: func() error {
 			if st.clusterEvery > 0 {
-				// Incremental mode: cluster the tail (faces stored since the
-				// last in-scan pass) inline, then the library is fully caught
-				// up — no follow-up job needed.
-				if residue := st.takeDirtyModels(); len(residue) > 0 {
-					q.PushJobStdout(j.ID, "Final clustering pass for remaining new faces")
-					st.runClusterPass(residue)
+				// Incremental mode: the in-scan passes were deliberately
+				// strict, so finish with ONE full-strength pass over every
+				// model that stored faces this run — borderline cases are
+				// settled here, with complete data, exactly like the old
+				// scan-then-cluster pipeline. No follow-up job needed.
+				st.takeDirtyModels() // counters are superseded by the full pass
+				if len(st.touchedModels) > 0 {
+					models := make([]string, 0, len(st.touchedModels))
+					for id := range st.touchedModels {
+						models = append(models, id)
+					}
+					q.PushJobStdout(j.ID, "Final full clustering pass")
+					st.runClusterPass(models, true)
 				}
 				return nil
 			}
@@ -393,7 +415,7 @@ func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path strin
 			// committer goroutine — commits stall for its duration, which is
 			// the intended throttle (clustering shares the machine anyway).
 			if due, models := st.noteFacesScanned(model.ID, len(ids)); due {
-				st.runClusterPass(models)
+				st.runClusterPass(models, false)
 			}
 			return nil
 		},

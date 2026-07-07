@@ -179,6 +179,29 @@
         box-shadow: var(--shadow-glow);
       }
 
+      .btn-danger-outline {
+        background: transparent;
+        border: 1px solid var(--status-error);
+        color: var(--status-error);
+        border-radius: var(--radius-md);
+        padding: var(--space-1) var(--space-3);
+        font-size: var(--text-xs);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }
+
+      .btn-danger-outline:hover {
+        background: var(--status-error);
+        color: #fff;
+      }
+
+      .storage-info {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        line-height: 1.6;
+      }
+
       .btn-secondary {
         background: var(--bg-hover);
         color: var(--text-primary);
@@ -1413,6 +1436,23 @@
                     restarted).
                   </small>
                 </div>
+
+                <div class="field">
+                  <label class="label">Stored embeddings</label>
+                  <div id="embed-storage-info" class="storage-info">Loading…</div>
+                  <div style="margin-top: 8px">
+                    <button type="button" id="reset-embeddings-btn" class="btn-danger-outline">
+                      Delete ALL embeddings…
+                    </button>
+                    <span id="embed-storage-status" class="hint" style="margin-left: 8px"></span>
+                  </div>
+                  <small class="hint">
+                    Permanently removes every stored vector for every model and
+                    clears the live search index. Visual similarity and
+                    text→image search stop working until the Embeddings task is
+                    re-run. Not undoable.
+                  </small>
+                </div>
               </div>
             </div>
 
@@ -1518,6 +1558,23 @@
                     <div id="byo-face-models-status" class="hint"></div>
                   </div>
                 </details>
+
+                <div class="field">
+                  <label class="label">Stored face data</label>
+                  <div id="faces-storage-info" class="storage-info">Loading…</div>
+                  <div style="margin-top: 8px">
+                    <button type="button" id="reset-faces-btn" class="btn-danger-outline">
+                      Delete ALL face data…
+                    </button>
+                    <span id="faces-storage-status" class="hint" style="margin-left: 8px"></span>
+                  </div>
+                  <small class="hint">
+                    Permanently removes every face vector, scan marker, person
+                    (named ones included), and People tag, and clears the live
+                    face index. Rescanning rebuilds everything except the names
+                    and manual assignments you gave people. Not undoable.
+                  </small>
+                </div>
               </div>
             </div>
           </div>
@@ -1998,6 +2055,136 @@
         if (mb < 1024) return mb.toFixed(0) + ' MB';
         return (mb / 1024).toFixed(2) + ' GB';
       }
+
+      // ------------------------------------------------------------------
+      // Vector storage panels: how big the embedding + face indexes are,
+      // and the confirmed full-reset actions.
+      // ------------------------------------------------------------------
+      let embedStorageTotals = { count: 0 };
+      let facesStorageTotals = { faces: 0, people: 0, named: 0 };
+
+      function loadVectorStorageStats() {
+        const embedEl = document.getElementById('embed-storage-info');
+        if (embedEl) {
+          fetch('/api/index/status')
+            .then((r) => r.json())
+            .then((d) => {
+              embedStorageTotals.count = d.total_count || 0;
+              const lines = (d.embeddings || []).map(
+                (s) =>
+                  `${s.model}: ${Number(s.count).toLocaleString()} vectors, ` +
+                  `${fmtBytes(s.bytes) || '0 KB'} (dim ${s.dim})`
+              );
+              if (lines.length === 0) lines.push('no embeddings stored');
+              lines.push(
+                `total on disk: ${fmtBytes(d.total_bytes) || '0 KB'} · ` +
+                  `in-memory index: ${Number(d.index?.vectors || 0).toLocaleString()} vectors` +
+                  (d.index?.model ? ` (${d.index.model})` : '')
+              );
+              if (d.orphaned > 0) {
+                lines.push(`orphaned rows (media deleted): ${Number(d.orphaned).toLocaleString()}`);
+              }
+              embedEl.innerHTML = lines.map(escDep).join('<br>');
+            })
+            .catch(() => { embedEl.textContent = 'Could not load embedding stats.'; });
+        }
+
+        const facesEl = document.getElementById('faces-storage-info');
+        if (facesEl) {
+          fetch('/api/faces/stats')
+            .then((r) => r.json())
+            .then((d) => {
+              facesStorageTotals = {
+                faces: d.total_faces || 0,
+                people: d.people?.total || 0,
+                named: d.people?.named || 0,
+              };
+              const lines = (d.faces || []).map(
+                (s) =>
+                  `${s.model}: ${Number(s.count).toLocaleString()} face vectors, ` +
+                  `${fmtBytes(s.bytes) || '0 KB'}`
+              );
+              if (lines.length === 0) lines.push('no face data stored');
+              lines.push(
+                `total on disk: ${fmtBytes(d.total_bytes) || '0 KB'} · ` +
+                  `scanned items: ${Number(d.scans || 0).toLocaleString()}`
+              );
+              lines.push(
+                `people: ${Number(d.people?.total || 0).toLocaleString()} ` +
+                  `(${Number(d.people?.named || 0).toLocaleString()} named) · ` +
+                  `in-memory index: ${Number(d.index?.vectors || 0).toLocaleString()} vectors` +
+                  (d.index?.model ? ` (${d.index.model})` : '')
+              );
+              facesEl.innerHTML = lines.map(escDep).join('<br>');
+            })
+            .catch(() => { facesEl.textContent = 'Could not load face stats.'; });
+        }
+      }
+
+      function wireVectorStorageResets() {
+        const embedBtn = document.getElementById('reset-embeddings-btn');
+        if (embedBtn) {
+          embedBtn.addEventListener('click', () => {
+            const n = Number(embedStorageTotals.count).toLocaleString();
+            if (
+              !confirm(
+                `Delete ALL ${n} stored embedding vectors (every model)?\n\n` +
+                  'Visual similarity and text search stop working until the ' +
+                  'Embeddings task is re-run over the library. This cannot be undone.'
+              )
+            )
+              return;
+            const status = document.getElementById('embed-storage-status');
+            embedBtn.disabled = true;
+            if (status) status.textContent = 'Deleting…';
+            fetch('/api/embeddings/all?confirm=true', { method: 'DELETE' })
+              .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+              .then((res) => {
+                if (status) status.textContent = `Deleted ${Number(res.deleted).toLocaleString()} vectors.`;
+                loadVectorStorageStats();
+              })
+              .catch((err) => { if (status) status.textContent = 'Failed: ' + err.message; })
+              .finally(() => { embedBtn.disabled = false; });
+          });
+        }
+
+        const facesBtn = document.getElementById('reset-faces-btn');
+        if (facesBtn) {
+          facesBtn.addEventListener('click', () => {
+            const t = facesStorageTotals;
+            const namedWarning =
+              t.named > 0
+                ? `\n\nWARNING: this includes ${Number(t.named).toLocaleString()} NAMED ` +
+                  'people — their names and manual assignments are lost forever.'
+                : '';
+            if (
+              !confirm(
+                `Delete ALL face data? (${Number(t.faces).toLocaleString()} face vectors, ` +
+                  `${Number(t.people).toLocaleString()} people, all scan markers and People tags)` +
+                  namedWarning +
+                  '\n\nRescanning rebuilds detection and grouping, but not names. This cannot be undone.'
+              )
+            )
+              return;
+            // Named people are irreplaceable — require a second, explicit yes.
+            if (t.named > 0 && !confirm('Really delete the named people too? Last chance.')) return;
+            const status = document.getElementById('faces-storage-status');
+            facesBtn.disabled = true;
+            if (status) status.textContent = 'Deleting…';
+            fetch('/api/faces/all?confirm=true', { method: 'DELETE' })
+              .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+              .then(() => {
+                if (status) status.textContent = 'All face data deleted.';
+                loadVectorStorageStats();
+              })
+              .catch((err) => { if (status) status.textContent = 'Failed: ' + err.message; })
+              .finally(() => { facesBtn.disabled = false; });
+          });
+        }
+      }
+
+      wireVectorStorageResets();
+      loadVectorStorageStats();
 
       function stateBadge(state) {
         const map = {
