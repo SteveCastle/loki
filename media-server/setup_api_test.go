@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bytes"
@@ -23,6 +23,9 @@ import (
 func newSetupTestDeps(t *testing.T) *Dependencies {
 	t.Helper()
 	t.Setenv("LOWKEY_CONFIG_PATH", filepath.Join(t.TempDir(), "config.json"))
+	// Neutralize any ambient provisioning env so tests control it explicitly.
+	t.Setenv("LOWKEY_ADMIN_USER", "")
+	t.Setenv("LOWKEY_ADMIN_PASSWORD", "")
 	appconfig.Set(appconfig.Config{JWTSecret: "test-secret"})
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -93,6 +96,42 @@ func TestInferSetupComplete(t *testing.T) {
 	inferSetupComplete(d)
 	if !appconfig.Get().SetupComplete {
 		t.Fatal("install with a real account must be inferred complete")
+	}
+}
+
+func TestProvisionAdminFromEnv(t *testing.T) {
+	d := newSetupTestDeps(t)
+	t.Setenv("LOWKEY_ADMIN_USER", "nasadmin")
+	t.Setenv("LOWKEY_ADMIN_PASSWORD", "hunter22")
+
+	newSetupTestMux(t, d) // registerSetupRoutes runs provisioning + inference
+
+	if setupRequired, _ := d.Auth.IsSetupRequired(); setupRequired {
+		t.Fatal("env-provisioned account not created")
+	}
+	if !appconfig.Get().SetupComplete {
+		t.Fatal("setup not inferred complete after env provisioning")
+	}
+	if _, err := d.Auth.Login("nasadmin", "hunter22"); err != nil {
+		t.Fatalf("provisioned account login failed: %v", err)
+	}
+}
+
+func TestProvisionAdminFromEnvNeverOverwrites(t *testing.T) {
+	d := newSetupTestDeps(t)
+	if err := d.Auth.Register("steve", "original-pass"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOWKEY_ADMIN_USER", "steve")
+	t.Setenv("LOWKEY_ADMIN_PASSWORD", "attacker-pass")
+
+	provisionAdminFromEnv(d)
+
+	if _, err := d.Auth.Login("steve", "original-pass"); err != nil {
+		t.Fatalf("existing account password was disturbed: %v", err)
+	}
+	if _, err := d.Auth.Login("steve", "attacker-pass"); err == nil {
+		t.Fatal("env provisioning overwrote an existing account's password")
 	}
 }
 
@@ -400,4 +439,3 @@ func TestUserCreateLockdown(t *testing.T) {
 		t.Fatalf("authenticated second account = %d: %s", w.Code, w.Body.String())
 	}
 }
-

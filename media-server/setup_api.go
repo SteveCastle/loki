@@ -57,6 +57,28 @@ func inferSetupComplete(d *Dependencies) {
 	}
 }
 
+// provisionAdminFromEnv creates the initial account from LOWKEY_ADMIN_USER /
+// LOWKEY_ADMIN_PASSWORD when the install is still on the default admin, so
+// headless deployments (Docker, NAS) can provision without clicking through
+// the wizard. inferSetupComplete then marks setup complete. No-op once a
+// real account exists — it never overwrites an existing user's password.
+func provisionAdminFromEnv(d *Dependencies) {
+	user := strings.TrimSpace(os.Getenv("LOWKEY_ADMIN_USER"))
+	pass := os.Getenv("LOWKEY_ADMIN_PASSWORD")
+	if user == "" || pass == "" {
+		return
+	}
+	setupRequired, err := d.Auth.IsSetupRequired()
+	if err != nil || !setupRequired {
+		return
+	}
+	if err := d.Auth.Register(user, pass); err != nil {
+		log.Printf("setup: LOWKEY_ADMIN_USER provisioning failed: %v", err)
+		return
+	}
+	log.Printf("setup: account %q provisioned from LOWKEY_ADMIN_USER", user)
+}
+
 // setupAuthed reports whether the request carries a valid credential
 // (Bearer JWT, lk_ API key, or the auth_token cookie).
 func setupAuthed(d *Dependencies, r *http.Request) bool {
@@ -111,6 +133,7 @@ func loginRedirectTarget(fallback string) string {
 // platform main after the auth service exists; also runs the one-time
 // upgrade inference so pre-wizard installs never see the wizard.
 func registerSetupRoutes(mux *http.ServeMux, d *Dependencies) {
+	provisionAdminFromEnv(d)
 	inferSetupComplete(d)
 
 	page := func(fn http.HandlerFunc) http.HandlerFunc {
@@ -157,16 +180,16 @@ type setupModelGroup struct {
 func setupModelGroups() []setupModelGroup {
 	groups := []setupModelGroup{
 		{ID: "visual-search", Title: "Visual & text search",
-			Desc: "Find media by describing it, or by visual similarity to another image.",
+			Desc:        "Find media by describing it, or by visual similarity to another image.",
 			Recommended: true, Models: []string{"siglip2-base-patch16-224"}},
 		{ID: "autotag", Title: "Auto-tagging",
-			Desc: "Automatically suggest tags for images so your library organizes itself.",
+			Desc:        "Automatically suggest tags for images so your library organizes itself.",
 			Recommended: true, Models: []string{"wd-eva02-large-tagger-v3"}},
 		{ID: "faces", Title: "Face & character recognition",
-			Desc: "Group photos and artwork by the people and characters in them.",
+			Desc:   "Group photos and artwork by the people and characters in them.",
 			Models: []string{"yunet", "sface", "anime-head", "ccip"}},
 		{ID: "transcription", Title: "Audio transcription",
-			Desc: "Generate searchable transcripts for videos and audio files.",
+			Desc:   "Generate searchable transcripts for videos and audio files.",
 			Models: []string{"faster-whisper"}},
 	}
 	sizes := map[string]int64{}

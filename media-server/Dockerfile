@@ -56,7 +56,7 @@ RUN npm run build:web
 # -----------------------------------------------------------------------------
 # Stage 2 — compile the Go server (with SPA embedded) and the onnxtag CLI
 # -----------------------------------------------------------------------------
-FROM golang:1.24-bookworm AS go-builder
+FROM golang:1.25-bookworm AS go-builder
 
 WORKDIR /src/media-server
 COPY media-server/go.mod media-server/go.sum ./
@@ -68,10 +68,17 @@ COPY media-server/ ./
 # Overwrite the (gitignored) loki-static with the freshly built SPA from stage 1
 COPY --from=node-builder /src/media-server/loki-static ./loki-static
 
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
-RUN go build -ldflags="-s -w" -o /out/lowkeymediaserver . && \
-    go build -ldflags="-s -w" -o /out/onnxtag ./cmd/onnxtag && \
-    go build -ldflags="-s -w" -o /out/embed ./cmd/embed
+ENV GOOS=linux GOARCH=amd64
+# The server itself is pure Go (modernc sqlite) — keep it cgo-free for a
+# fully static binary. The embed/onnxtag WORKERS require cgo (ONNX runtime
+# C API): with CGO_ENABLED=0 they build silently as runtime stubs and jobs
+# fail with "built without cgo". golang:bookworm ships gcc, so build them
+# with cgo and reject any binary that compiled in the stub.
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/lowkeymediaserver . && \
+    CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/onnxtag ./cmd/onnxtag && \
+    CGO_ENABLED=1 go build -ldflags="-s -w" -o /out/embed ./cmd/embed && \
+    ! grep -q "built without cgo" /out/onnxtag && \
+    ! grep -q "built without cgo" /out/embed
 
 # -----------------------------------------------------------------------------
 # Stage 3 — fetch ONNX Runtime shared library (matches bundled-versions.json)
@@ -125,6 +132,8 @@ COPY --from=go-builder    /out/lowkeymediaserver /opt/lowkey/lowkeymediaserver
 COPY --from=go-builder    /out/onnxtag           /opt/lowkey/bin/onnxtag
 COPY --from=go-builder    /out/embed             /opt/lowkey/bin/embed
 COPY --from=ort-fetcher   /out/onnxruntime.so    /opt/lowkey/bin/onnxruntime.so
+# Third-party license notices (apt packages carry theirs in /usr/share/doc)
+COPY media-server/licenses /opt/lowkey/licenses
 RUN chmod +x /opt/lowkey/lowkeymediaserver /opt/lowkey/bin/onnxtag /opt/lowkey/bin/embed && \
     chown -R lowkey:lowkey /opt/lowkey
 
@@ -176,6 +185,11 @@ ENV LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434
 # -----------------------------------------------------------------------------
 
 # Other recognized env vars (no default — set at run time if you want them):
+#   LOWKEY_ADMIN_USER            — headless provisioning: create this account
+#   LOWKEY_ADMIN_PASSWORD        —   at first boot and skip the setup wizard's
+#                                    account step entirely. Never overwrites an
+#                                    existing account. Without these, the first
+#                                    visit to the web UI runs the setup wizard.
 #   LOWKEY_JWT_SECRET            — auth signing secret (generate a strong one)
 #   LOWKEY_OLLAMA_MODEL          — default vision model, e.g. llama3.2-vision
 #   LOWKEY_DISCORD_TOKEN         — required by the Discord ingest task

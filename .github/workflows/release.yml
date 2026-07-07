@@ -57,7 +57,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache-dependency-path: media-server/go.sum
 
       - name: Run Go tests
@@ -270,7 +270,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache-dependency-path: media-server/go.sum
 
       - name: Install jq (unix)
@@ -319,6 +319,12 @@ jobs:
           cp media-server/lowkeymediaserver${{ matrix.ext }} release/${{ matrix.target }}/
           cp media-server/lokictl${{ matrix.ext }} release/${{ matrix.target }}/
           cp -R media-server/bin/* release/${{ matrix.target }}/bin/
+          # License notices (GPL ffmpeg builds require them in the distribution)
+          cp -R media-server/licenses release/${{ matrix.target }}/licenses
+          # Example systemd unit for Linux users
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            cp media-server/packaging/linux/lowkeymediaserver.service release/${{ matrix.target }}/
+          fi
 
       - name: Smoke test (unix)
         if: runner.os != 'Windows'
@@ -339,11 +345,61 @@ jobs:
             tar -czf lowkey-media-server-${{ matrix.target }}.tar.gz ${{ matrix.target }}
           fi
 
+      # Friendly install path for Windows: per-user installer (no UAC), Start
+      # Menu entry, optional start-with-Windows, launches into the setup
+      # wizard at finish. Inno Setup 6 is preinstalled on windows runners.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DAppVersion=${{ needs.version-and-tag.outputs.version }} `
+            /DStageDir="$PWD\release\windows-amd64" `
+            /O"release" `
+            media-server\packaging\windows\setup.iss
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: server-${{ matrix.target }}
-          path: release/lowkey-media-server-${{ matrix.target }}.*
+          path: |
+            release/lowkey-media-server-${{ matrix.target }}.*
+            release/lowkey-media-server-setup-windows-amd64.exe
+
+  # Container image — the easiest install path for Linux/NAS users. Publishes
+  # to GHCR with both a version tag and :latest.
+  publish-docker:
+    name: Publish Docker Image
+    needs: version-and-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: media-server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/stevecastle/lowkey-media-server:latest
+            ghcr.io/stevecastle/lowkey-media-server:${{ needs.version-and-tag.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   generate-changelog:
     name: Generate AI Changelog
