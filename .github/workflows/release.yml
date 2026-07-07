@@ -336,14 +336,23 @@ jobs:
       # build uses, then notarize. Both steps skip cleanly when the signing
       # secrets are absent (the release still ships, just unsigned). Without
       # this, Gatekeeper hard-blocks the downloaded binaries.
+      # Credentials arrive exactly as they do for the Electron client build:
+      # the same secrets mapped into the same env var names on the step. The
+      # scripts skip gracefully when they're absent, so a fork or a
+      # credential rotation never breaks the release — it just ships
+      # unsigned.
       - name: Sign macOS binaries
-        if: ${{ runner.os == 'macOS' && secrets.CSC_LINK != '' }}
+        if: runner.os == 'macOS'
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
+          if [ -z "${CSC_LINK:-}" ]; then
+            echo "CSC_LINK not provided — skipping code signing (unsigned build)"
+            exit 0
+          fi
           KEYCHAIN="$RUNNER_TEMP/server-sign.keychain-db"
           KC_PASS="$(openssl rand -hex 16)"
           security create-keychain -p "$KC_PASS" "$KEYCHAIN"
@@ -415,17 +424,26 @@ jobs:
       # Gatekeeper's online check too. The DMG gets its ticket stapled for
       # fully-offline verification.
       - name: Notarize and staple DMG
-        if: ${{ runner.os == 'macOS' && secrets.CSC_LINK != '' && secrets.APPLE_ID != '' }}
+        if: runner.os == 'macOS'
         env:
+          # Same secret set the Electron client build receives, same names.
           APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
         shell: bash
         run: |
           set -euo pipefail
+          # electron-builder accepts either password var; do the same.
+          PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APPLE_ID_PASS:-}}"
+          if [ -z "${CSC_LINK:-}" ] || [ -z "${APPLE_ID:-}" ] || [ -z "$PASSWORD" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "Apple credentials not provided — skipping notarization"
+            exit 0
+          fi
           xcrun notarytool submit "release/lowkey-media-server-${{ matrix.target }}.dmg" \
             --apple-id "$APPLE_ID" \
-            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --password "$PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
           xcrun stapler staple "release/lowkey-media-server-${{ matrix.target }}.dmg"
