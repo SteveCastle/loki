@@ -280,6 +280,18 @@ jobs:
             sudo apt-get update && sudo apt-get install -y jq || brew install jq
           fi
 
+      # The embed/onnxtag workers require cgo (ONNX runtime C API); the fetch
+      # script builds them with CGO_ENABLED=1 and fails loudly without a C
+      # compiler. Linux/macOS runners ship one; Windows needs mingw-w64.
+      - name: Ensure C toolchain for cgo (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v gcc >/dev/null; then
+            choco install mingw -y --no-progress
+          fi
+          gcc --version | head -1
+
       - name: Fetch bundled binaries
         shell: bash
         run: ${{ matrix.fetch_cmd }}

@@ -765,8 +765,37 @@
       }
 
       // ---- Step 1: system check ----
+      // Bundled-dep verification runs in a background goroutine at server
+      // boot and the status cache is EMPTY until it finishes — and the tray
+      // opens the browser immediately. An empty list here means "still
+      // checking", not "nothing to check": show a spinner row and poll.
+      let bundledPolls = 0;
+      function pollBundled() {
+        if (bundledPolls++ > 30) {
+          $('bundled-table').innerHTML =
+            '<div class="dep-row"><span class="status-dot status-dot--warning"></span>' +
+            '<span class="name">System check is taking longer than expected</span>' +
+            '<span class="ver"><a href="javascript:void(0)" onclick="bundledPolls=0;pollBundled()">retry</a></span></div>';
+          return;
+        }
+        api('/setup/api/state').then((s) => {
+          state.deps = s.deps;
+          const bundled = (s.deps || []).filter((d) => d.category === 'bundled');
+          if (bundled.length === 0) { setTimeout(pollBundled, 1000); return; }
+          renderBundled();
+          renderGroups();
+        }).catch(() => setTimeout(pollBundled, 1500));
+      }
+
       function renderBundled() {
         const bundled = (state.deps || []).filter((d) => d.category === 'bundled');
+        if (bundled.length === 0) {
+          $('bundled-table').innerHTML =
+            '<div class="dep-row"><span class="status-dot status-dot--running"></span>' +
+            '<span class="name text-secondary">Checking components…</span></div>';
+          setTimeout(pollBundled, 1000);
+          return;
+        }
         let missing = 0;
         $('bundled-table').innerHTML = bundled.map((d) => {
           const ok = d.state === 'ready';

@@ -33,15 +33,24 @@ for bin in $bins; do
   mkdir -p "$extract_dir"
 
   if [ "$archive" = "build" ]; then
-    # Compile the named Go package, no download.
+    # Compile the named Go package, no download. The workers REQUIRE cgo
+    # (ONNX runtime C API): with CGO_ENABLED=0 the build silently succeeds
+    # with runtime stubs and every embed/autotag/faces job fails with
+    # "built without cgo". Force cgo so a missing C compiler is a loud
+    # build failure instead of a broken release.
     source=$(jq -r --arg t "$TARGET" --arg b "$bin" '.binaries[$b][$t].source' "$CONF")
     out_name=$(jq -r --arg t "$TARGET" --arg b "$bin" '.binaries[$b][$t].extract[0].to' "$CONF")
-    echo "building $bin from $source ($target_goos/$target_goarch) ..."
+    echo "building $bin from $source ($target_goos/$target_goarch, cgo) ..."
     (
       cd "$ROOT/media-server"
-      GOOS="$target_goos" GOARCH="$target_goarch" CGO_ENABLED=0 \
+      GOOS="$target_goos" GOARCH="$target_goarch" CGO_ENABLED=1 \
         go build -ldflags="-s -w" -o "$extract_dir/$out_name" "$source"
     )
+    # Belt-and-braces: reject a binary that compiled in the no-cgo stub.
+    if grep -q "built without cgo" "$extract_dir/$out_name"; then
+      echo "$bin was built WITHOUT cgo (ONNX disabled at runtime). Ensure a C compiler is on PATH." >&2
+      exit 1
+    fi
     if [ "$MODE" = "update" ]; then
       got_sum=$(shasum -a 256 "$extract_dir/$out_name" | awk '{print $1}')
       echo "SHA256 $bin $TARGET $got_sum (built)"
