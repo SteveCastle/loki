@@ -1,11 +1,12 @@
 {
   "schema_version": 1,
+  "_comment": "URLs must be immutable (dated release tags, versioned files) so the sha256 pins stay valid. Never point at 'latest' rolling URLs — the hash breaks on the next upstream push. exiftool is pinned via SourceForge because exiftool.org deletes old versions. To bump a dependency: update url+version, run fetch-bundled-deps with -Mode update to print the new hashes, paste them in, re-run with verify.",
   "binaries": {
     "ffmpeg": {
       "windows-amd64": {
-        "version": "n7.1",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
-        "sha256": "TO_FILL",
+        "version": "n7.1.5",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-06-14-19/ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip",
+        "sha256": "2a97a15e8428267eb823e8554bfe19a7d63e1b342991ceaf33984097d2b41aec",
         "archive": "zip",
         "extract": [
           {"from": "*/bin/ffmpeg.exe",  "to": "ffmpeg.exe"},
@@ -14,9 +15,9 @@
         ]
       },
       "linux-amd64": {
-        "version": "n7.1",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
-        "sha256": "TO_FILL",
+        "version": "n7.1.5",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-06-14-19/ffmpeg-n7.1.5-1-g7d0e842004-linux64-gpl-7.1.tar.xz",
+        "sha256": "fb22900f3b8d475ddd65d688b86771370b37d998e3d9e854c5e42c459ba5b986",
         "archive": "tar.xz",
         "extract": [
           {"from": "*/bin/ffmpeg",  "to": "ffmpeg"},
@@ -25,75 +26,75 @@
         ]
       },
       "darwin-arm64": {
-        "version": "evermeet-latest",
+        "version": "7.1",
         "url": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
-        "sha256": "TO_FILL",
+        "sha256": "5a1303c7babaffff3c32c141ff49c7f44bd3b3b3e7dcea992fd7d04b6558ef43",
         "archive": "zip",
         "extract": [{"from": "ffmpeg", "to": "ffmpeg"}]
       },
       "darwin-amd64": {
-        "version": "evermeet-latest",
+        "version": "7.1",
         "url": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
-        "sha256": "TO_FILL",
+        "sha256": "5a1303c7babaffff3c32c141ff49c7f44bd3b3b3e7dcea992fd7d04b6558ef43",
         "archive": "zip",
         "extract": [{"from": "ffmpeg", "to": "ffmpeg"}]
       }
     },
     "ffprobe-macos": {
       "darwin-arm64": {
-        "version": "evermeet-latest",
+        "version": "7.1",
         "url": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
-        "sha256": "TO_FILL",
+        "sha256": "fc289c963346d7dc0891cbaed02ba270e8abec54df9259e22d59559018b25709",
         "archive": "zip",
         "extract": [{"from": "ffprobe", "to": "ffprobe"}]
       },
       "darwin-amd64": {
-        "version": "evermeet-latest",
+        "version": "7.1",
         "url": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
-        "sha256": "TO_FILL",
+        "sha256": "fc289c963346d7dc0891cbaed02ba270e8abec54df9259e22d59559018b25709",
         "archive": "zip",
         "extract": [{"from": "ffprobe", "to": "ffprobe"}]
       }
     },
     "exiftool": {
       "windows-amd64": {
-        "version": "13.58",
-        "url": "https://exiftool.org/exiftool-13.58_64.zip",
-        "sha256": "TO_FILL",
+        "version": "13.59",
+        "url": "https://downloads.sourceforge.net/project/exiftool/exiftool-13.59_64.zip",
+        "sha256": "44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec",
         "archive": "zip",
         "extract": [
-          {"from": "exiftool-13.58_64/exiftool(-k).exe", "to": "exiftool.exe"},
-          {"from": "exiftool-13.58_64/exiftool_files",   "to": "exiftool_files", "type": "dir"}
+          {"from": "exiftool-13.59_64/exiftool(-k).exe", "to": "exiftool.exe"},
+          {"from": "exiftool-13.59_64/exiftool_files",   "to": "exiftool_files", "type": "dir"}
         ]
       },
       "linux-amd64": {
-        "version": "13.58",
-        "url": "https://exiftool.org/Image-ExifTool-13.58.tar.gz",
-        "sha256": "TO_FILL",
+        "version": "13.59",
+        "url": "https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-13.59.tar.gz",
+        "sha256": "668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a",
         "archive": "tar.gz",
         "extract": [
-          {"from": "Image-ExifTool-13.58/exiftool",   "to": "exiftool"},
-          {"from": "Image-ExifTool-13.58/lib",        "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.59/exiftool",   "to": "exiftool"},
+          {"from": "Image-ExifTool-13.59/lib",        "to": "exiftool_files", "type": "dir"}
         ]
       },
       "darwin-arm64": {
-        "version": "13.58",
-        "url": "https://exiftool.org/Image-ExifTool-13.58.tar.gz",
-        "sha256": "TO_FILL",
+        "version": "13.59",
+        "url": "https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-13.59.tar.gz",
+        "sha256": "668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a",
         "archive": "tar.gz",
         "extract": [
-          {"from": "Image-ExifTool-13.58/exiftool", "to": "exiftool"},
-          {"from": "Image-ExifTool-13.58/lib",      "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.59/exiftool", "to": "exiftool"},
+          {"from": "Image-ExifTool-13.59/lib",      "to": "exiftool_files", "type": "dir"}
         ]
       },
       "darwin-amd64": {
-        "version": "13.58",
-        "url": "https://exiftool.org/Image-ExifTool-13.58.tar.gz",
-        "sha256": "TO_FILL",
+        "version": "13.59",
+        "url": "https://downloads.sourceforge.net/project/exiftool/Image-ExifTool-13.59.tar.gz",
+        "sha256": "668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a",
         "archive": "tar.gz",
         "extract": [
-          {"from": "Image-ExifTool-13.58/exiftool", "to": "exiftool"},
-          {"from": "Image-ExifTool-13.58/lib",      "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.59/exiftool", "to": "exiftool"},
+          {"from": "Image-ExifTool-13.59/lib",      "to": "exiftool_files", "type": "dir"}
         ]
       }
     },
@@ -153,28 +154,28 @@
       "windows-amd64": {
         "version": "1.22.0",
         "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip",
-        "sha256": "TO_FILL",
+        "sha256": "174c616efc0271194488642a72f1a514e01487da4dfe84c49296d66e40ebe0da",
         "archive": "zip",
         "extract": [{"from": "onnxruntime-win-x64-1.22.0/lib/onnxruntime.dll", "to": "onnxruntime.dll"}]
       },
       "linux-amd64": {
         "version": "1.22.0",
         "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz",
-        "sha256": "TO_FILL",
+        "sha256": "8344d55f93d5bc5021ce342db50f62079daf39aaafb5d311a451846228be49b3",
         "archive": "tar.gz",
         "extract": [{"from": "onnxruntime-linux-x64-1.22.0/lib/libonnxruntime.so*", "to": "onnxruntime.so", "match": "newest"}]
       },
       "darwin-arm64": {
         "version": "1.22.0",
         "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-arm64-1.22.0.tgz",
-        "sha256": "TO_FILL",
+        "sha256": "cab6dcbd77e7ec775390e7b73a8939d45fec3379b017c7cb74f5b204c1a1cc07",
         "archive": "tar.gz",
         "extract": [{"from": "onnxruntime-osx-arm64-1.22.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
       },
       "darwin-amd64": {
         "version": "1.22.0",
         "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-osx-x86_64-1.22.0.tgz",
-        "sha256": "TO_FILL",
+        "sha256": "e4ec94a7696de74fb1b12846569aa94e499958af6ffa186022cfde16c9d617f0",
         "archive": "tar.gz",
         "extract": [{"from": "onnxruntime-osx-x86_64-1.22.0/lib/libonnxruntime.*.dylib", "to": "onnxruntime.dylib", "match": "newest"}]
       }

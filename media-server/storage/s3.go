@@ -76,6 +76,18 @@ func NewS3Backend(ctx context.Context, cfg S3Config) (*S3Backend, error) {
 	}, nil
 }
 
+// Ping verifies the bucket is reachable with the configured credentials by
+// listing at most one key under the prefix. Used by the setup wizard's
+// "Test connection" button.
+func (b *S3Backend) Ping(ctx context.Context) error {
+	_, err := b.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket:  aws.String(b.bucket),
+		Prefix:  aws.String(b.prefix),
+		MaxKeys: aws.Int32(1),
+	})
+	return err
+}
+
 // pathToKey strips the s3://{bucket}/ prefix from a path to produce an S3 object key.
 func (b *S3Backend) pathToKey(p string) string {
 	prefix := "s3://" + b.bucket + "/"

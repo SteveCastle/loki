@@ -273,6 +273,12 @@ type Config struct {
 	// JWT Secret for authentication
 	JWTSecret string `json:"jwtSecret"`
 
+	// SetupComplete is true once the first-run setup wizard has finished (or
+	// been inferred complete for installs that predate the wizard). While
+	// false, unauthenticated page requests are funneled to /setup and the
+	// setup APIs are open; once true, the wizard locks behind admin auth.
+	SetupComplete bool `json:"setupComplete"`
+
 	// Storage roots for web filesystem browsing
 	Roots []StorageRoot `json:"roots"`
 

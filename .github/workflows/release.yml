@@ -209,10 +209,48 @@ jobs:
             release/build/*.zip
           if-no-files-found: warn
 
-  build-go-server:
-    name: Build Go Media Server (Windows)
+  # Bundled media-server archives: server binary + bin/ (ffmpeg, ffprobe,
+  # ffplay, exiftool, onnxruntime, embed, onnxtag) + lokictl, per target.
+  # The server resolves bundled deps relative to its executable, so the
+  # bin/ folder MUST ship inside the archive — a bare binary boots with
+  # every media-processing feature broken.
+  build-media-server:
+    name: Build Media Server (${{ matrix.target }})
     needs: version-and-tag
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            # -H=windowsgui: tray-only app, no console window
+            ldflags: '-s -w -H=windowsgui'
+            fetch_cmd: 'powershell -File media-server/scripts/fetch-bundled-deps.ps1 -Target windows-amd64 -Mode verify'
+          - os: ubuntu-latest
+            target: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ''
+            ldflags: '-s -w'
+            fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh linux-amd64 verify'
+          - os: macos-14 # Apple Silicon
+            target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ''
+            ldflags: '-s -w'
+            fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh darwin-arm64 verify'
+          - os: macos-13 # Intel
+            target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            ext: ''
+            ldflags: '-s -w'
+            fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh darwin-amd64 verify'
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -235,115 +273,65 @@ jobs:
           go-version: '1.24'
           cache-dependency-path: media-server/go.sum
 
-      - name: Build Go binary for Windows
+      - name: Install jq (unix)
+        if: runner.os != 'Windows'
+        run: |
+          if ! command -v jq >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq || brew install jq
+          fi
+
+      - name: Fetch bundled binaries
+        shell: bash
+        run: ${{ matrix.fetch_cmd }}
+
+      - name: Build server
         working-directory: ./media-server
         env:
-          GOOS: windows
-          GOARCH: amd64
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-windows-amd64.exe"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
+        run: go build -ldflags="${{ matrix.ldflags }}" -o lowkeymediaserver${{ matrix.ext }} .
 
-      - name: Upload Go binary
+      - name: Build lokictl
+        working-directory: ./media-server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o lokictl${{ matrix.ext }} ./cmd/lokictl
+
+      - name: Stage release dir
+        shell: bash
+        run: |
+          mkdir -p release/${{ matrix.target }}/bin
+          cp media-server/lowkeymediaserver${{ matrix.ext }} release/${{ matrix.target }}/
+          cp media-server/lokictl${{ matrix.ext }} release/${{ matrix.target }}/
+          cp -R media-server/bin/* release/${{ matrix.target }}/bin/
+
+      - name: Smoke test (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: media-server/scripts/smoke-bundled.sh release/${{ matrix.target }}
+
+      - name: Smoke test (windows)
+        if: runner.os == 'Windows'
+        run: powershell -File media-server/scripts/smoke-bundled.ps1 release/windows-amd64
+
+      - name: Archive
+        shell: bash
+        run: |
+          cd release
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            7z a lowkey-media-server-${{ matrix.target }}.zip ${{ matrix.target }}/*
+          else
+            tar -czf lowkey-media-server-${{ matrix.target }}.tar.gz ${{ matrix.target }}
+          fi
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: media-server-windows-amd64
-          path: build/media-server-*
-
-  build-go-server-macos:
-    name: Build Go Media Server (macOS)
-    needs: version-and-tag
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install --frozen-lockfile
-
-      - name: Build web bundle
-        run: npm run build:web
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache-dependency-path: media-server/go.sum
-
-      - name: Build Go binary for macOS (arm64)
-        working-directory: ./media-server
-        env:
-          GOOS: darwin
-          GOARCH: arm64
-          CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-darwin-arm64"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
-
-      - name: Build Go binary for macOS (amd64)
-        working-directory: ./media-server
-        env:
-          GOOS: darwin
-          GOARCH: amd64
-          CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-darwin-amd64"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
-
-      - name: Upload Go binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: media-server-darwin
-          path: build/media-server-*
-
-  build-go-server-linux:
-    name: Build Go Media Server (Linux)
-    needs: version-and-tag
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install --frozen-lockfile
-
-      - name: Build web bundle
-        run: npm run build:web
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache-dependency-path: media-server/go.sum
-
-      - name: Build Go binary for Linux (amd64)
-        working-directory: ./media-server
-        env:
-          GOOS: linux
-          GOARCH: amd64
-          CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-linux-amd64"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
-
-      - name: Upload Go binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: media-server-linux
-          path: build/media-server-*
+          name: server-${{ matrix.target }}
+          path: release/lowkey-media-server-${{ matrix.target }}.*
 
   generate-changelog:
     name: Generate AI Changelog
@@ -413,9 +401,7 @@ jobs:
         build-electron,
         build-electron-macos,
         build-electron-linux,
-        build-go-server,
-        build-go-server-macos,
-        build-go-server-linux,
+        build-media-server,
         generate-changelog,
       ]
     runs-on: ubuntu-latest
@@ -435,7 +421,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "media-server-*" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       - name: Create Release

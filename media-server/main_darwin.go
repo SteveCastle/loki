@@ -2055,7 +2055,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 							w.WriteHeader(http.StatusForbidden)
 							w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
 						} else {
-							http.Redirect(w, r, "/login?setup=true", http.StatusFound)
+							http.Redirect(w, r, loginRedirectTarget("/login?setup=true"), http.StatusFound)
 						}
 						return
 					}
@@ -2071,7 +2071,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			if r.Header.Get("Accept") == "application/json" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
-				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
 			}
 			return
 		}
@@ -2082,7 +2082,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			if r.Header.Get("Accept") == "application/json" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
-				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
 			}
 			return
 		}
@@ -2096,7 +2096,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 					w.WriteHeader(http.StatusForbidden)
 					w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
 				} else {
-					http.Redirect(w, r, "/login?setup=true", http.StatusFound)
+					http.Redirect(w, r, loginRedirectTarget("/login?setup=true"), http.StatusFound)
 				}
 				return
 			}
@@ -2112,6 +2112,12 @@ func loginPageHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		// Until first-run setup finishes there is no account to log into —
+		// the wizard owns account creation.
+		if !appconfig.Get().SetupComplete {
+			http.Redirect(w, r, "/setup", http.StatusFound)
 			return
 		}
 		if err := renderer.Templates().ExecuteTemplate(w, "login", nil); err != nil {
@@ -2292,6 +2298,15 @@ func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]interface{}{"users": users})
 
 		case http.MethodPost:
+			// First-account creation is open (the setup wizard and Electron
+			// onboarding run before any credential exists); once a real user
+			// exists, only an authenticated caller may create more.
+			if setupRequired, _ := deps.Auth.IsSetupRequired(); !setupRequired {
+				if !setupAuthed(deps, r) {
+					http.Error(w, `{"error":"unauthorized"}`, http.StatusForbidden)
+					return
+				}
+			}
 			var req struct {
 				Username string `json:"username"`
 				Password string `json:"password"`
@@ -2426,6 +2441,7 @@ func main() {
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	RegisterDepsRoutes(mux)
+	registerSetupRoutes(mux, deps)
 	RegisterVizRoutes(mux, deps)
 	RegisterFacesRoutes(mux, deps)
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
@@ -2448,6 +2464,7 @@ func main() {
 	mux.HandleFunc("/api/index/missing", renderer.ApplyMiddlewares(indexMissingHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/embeddings", renderer.ApplyMiddlewares(embeddingsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/embeddings/prune", renderer.ApplyMiddlewares(embeddingsPruneHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/embeddings/all", renderer.ApplyMiddlewares(embeddingsWipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/transcript", renderer.ApplyMiddlewares(mediaTranscriptHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/rating", renderer.ApplyMiddlewares(mediaRatingHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/list", renderer.ApplyMiddlewares(tagsListHandler(deps), renderer.RoleAdmin))

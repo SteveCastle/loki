@@ -67,7 +67,10 @@ try {
       }
       $archivePath = Join-Path $tmp ("$bin$archiveExt")
       Write-Host "fetching $bin ($($entry.url)) ..."
-      Invoke-WebRequest -Uri $entry.url -OutFile $archivePath -UseBasicParsing
+      # A wget-style User-Agent makes SourceForge (exiftool's host) serve the
+      # file directly; with a browser-ish UA it serves an HTML mirror page
+      # that then fails checksum verification.
+      Invoke-WebRequest -Uri $entry.url -OutFile $archivePath -UseBasicParsing -UserAgent 'Wget/1.21.4'
       $gotSum = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLower()
 
       if ($Mode -eq "update") {

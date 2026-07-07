@@ -1,0 +1,746 @@
+{{ define "setup" }}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lowkey Media Server – Setup</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <style>
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #0f1016 0%, #18162e 100%);
+        margin: 0;
+        font-family: var(--font-sans, system-ui, sans-serif);
+        position: relative;
+        overflow-x: hidden;
+        color: #fff;
+      }
+      body::before {
+        content: '';
+        position: fixed;
+        width: 700px;
+        height: 700px;
+        background: radial-gradient(circle, rgba(120, 110, 255, 0.15) 0%, rgba(0, 0, 0, 0) 70%);
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: -1;
+        pointer-events: none;
+      }
+      .setup-card {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-top: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 24px;
+        padding: 40px 48px;
+        width: 100%;
+        max-width: 640px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        margin: 32px 16px;
+      }
+      h1 { margin: 0 0 4px; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+      h2 { margin: 0 0 8px; font-size: 19px; font-weight: 650; }
+      p.sub { color: rgba(255,255,255,0.6); margin: 0 0 24px; font-size: 14px; line-height: 1.5; }
+      .steps {
+        display: flex; gap: 6px; margin: 20px 0 28px;
+      }
+      .steps span {
+        flex: 1; height: 4px; border-radius: 2px;
+        background: rgba(255,255,255,0.12); transition: background 0.3s;
+      }
+      .steps span.done { background: linear-gradient(90deg, #8b5cf6, #3b82f6); }
+      .panel { display: none; }
+      .panel.active { display: block; animation: fadein 0.25s ease; }
+      @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+      .form-group { margin-bottom: 16px; }
+      .form-group label { display: block; margin-bottom: 7px; color: rgba(255,255,255,0.8); font-weight: 500; font-size: 13px; }
+      .input {
+        width: 100%; padding: 12px 14px; border-radius: 12px;
+        border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.2);
+        color: #fff; box-sizing: border-box; font-family: inherit; font-size: 14px;
+        transition: all 0.2s ease;
+      }
+      .input:focus {
+        outline: none; border-color: rgba(139,92,246,0.5); background: rgba(0,0,0,0.3);
+        box-shadow: 0 0 0 4px rgba(139,92,246,0.15);
+      }
+      .row { display: flex; gap: 8px; }
+      .row .input { flex: 1; }
+      .btn {
+        padding: 12px 18px; border-radius: 12px; border: none;
+        background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+        color: #fff; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 14px;
+        transition: all 0.2s ease; box-shadow: 0 4px 12px rgba(139,92,246,0.25);
+      }
+      .btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
+      .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+      .btn.ghost {
+        background: rgba(255,255,255,0.06); box-shadow: none;
+        border: 1px solid rgba(255,255,255,0.12); font-weight: 500;
+      }
+      .btn.small { padding: 8px 12px; font-size: 13px; border-radius: 10px; }
+      .actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 24px; }
+      .actions .spacer { flex: 1; }
+      .error-message {
+        background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35);
+        color: #fca5a5; border-radius: 10px; padding: 10px 12px; font-size: 13px;
+        margin: 12px 0 0; display: none; white-space: pre-wrap;
+      }
+      .notice {
+        background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3);
+        color: #93c5fd; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin: 12px 0 0;
+      }
+      .warn {
+        background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.35);
+        color: #fcd34d; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin: 0 0 16px;
+      }
+      table.deps { width: 100%; border-collapse: collapse; font-size: 13px; margin: 4px 0 8px; }
+      table.deps td { padding: 7px 6px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+      .ok-dot, .bad-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+      .ok-dot { background: #34d399; }
+      .bad-dot { background: #f87171; }
+      .muted { color: rgba(255,255,255,0.45); }
+      .card-list { display: flex; flex-direction: column; gap: 10px; }
+      .feature {
+        display: flex; gap: 12px; align-items: flex-start;
+        border: 1px solid rgba(255,255,255,0.1); border-radius: 14px; padding: 14px;
+        background: rgba(0,0,0,0.15); cursor: pointer; transition: border-color 0.15s;
+      }
+      .feature.checked { border-color: rgba(139,92,246,0.55); background: rgba(139,92,246,0.08); }
+      .feature input { margin-top: 3px; accent-color: #8b5cf6; }
+      .feature .t { font-weight: 600; font-size: 14px; }
+      .feature .d { color: rgba(255,255,255,0.55); font-size: 12.5px; margin-top: 3px; line-height: 1.45; }
+      .feature .size { margin-left: auto; font-size: 12px; color: rgba(255,255,255,0.5); white-space: nowrap; }
+      .badge {
+        font-size: 10.5px; padding: 2px 7px; border-radius: 20px; margin-left: 8px;
+        background: rgba(139,92,246,0.25); color: #c4b5fd; vertical-align: 1px;
+      }
+      .badge.installed { background: rgba(52,211,153,0.18); color: #6ee7b7; }
+      .progress-row { margin-top: 8px; }
+      .progress-row .lbl { display: flex; justify-content: space-between; font-size: 12px; color: rgba(255,255,255,0.6); margin-bottom: 4px; }
+      .bar { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.08); overflow: hidden; }
+      .bar > div { height: 100%; width: 0%; background: linear-gradient(90deg, #8b5cf6, #3b82f6); transition: width 0.3s; }
+      .root-item {
+        border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 10px 12px;
+        display: flex; align-items: center; gap: 10px; font-size: 13px; background: rgba(0,0,0,0.15);
+      }
+      .root-item .path { color: rgba(255,255,255,0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+      .root-item .rm { cursor: pointer; color: rgba(255,255,255,0.4); background: none; border: none; font-size: 15px; }
+      .root-item .rm:hover { color: #f87171; }
+      .tabbar { display: flex; gap: 6px; margin-bottom: 14px; }
+      .tabbar button {
+        flex: 1; padding: 9px; border-radius: 10px; font-size: 13px; cursor: pointer;
+        border: 1px solid rgba(255,255,255,0.1); background: transparent; color: rgba(255,255,255,0.6);
+      }
+      .tabbar button.active { background: rgba(139,92,246,0.18); color: #fff; border-color: rgba(139,92,246,0.5); }
+      /* Directory picker modal */
+      .modal-backdrop {
+        display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+        align-items: center; justify-content: center; z-index: 50;
+      }
+      .modal-backdrop.open { display: flex; }
+      .modal {
+        background: #17182a; border: 1px solid rgba(255,255,255,0.12); border-radius: 18px;
+        width: 480px; max-width: 92vw; max-height: 80vh; display: flex; flex-direction: column;
+        padding: 18px; box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+      }
+      .modal .pathbar { font-size: 12px; color: rgba(255,255,255,0.55); word-break: break-all; margin: 8px 0; min-height: 16px; }
+      .dirlist { overflow-y: auto; flex: 1; min-height: 200px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; }
+      .dirlist button {
+        display: block; width: 100%; text-align: left; padding: 9px 12px; font-size: 13px;
+        background: none; border: none; color: #fff; cursor: pointer;
+        border-bottom: 1px solid rgba(255,255,255,0.05);
+      }
+      .dirlist button:hover { background: rgba(139,92,246,0.12); }
+      .modal .actions { margin-top: 14px; }
+      .done-icon { font-size: 44px; text-align: center; margin: 8px 0 12px; }
+      a.plain { color: #a5b4fc; }
+    </style>
+  </head>
+  <body>
+    <div class="setup-card">
+      <h1>Lowkey Media Server</h1>
+      <p class="sub" id="subtitle">Let’s get your media library set up. This takes about two minutes.</p>
+      <div class="steps" id="stepbar"></div>
+
+      <!-- Step 1: welcome + system check -->
+      <div class="panel" id="panel-welcome">
+        <h2>Welcome</h2>
+        <p class="sub">First, a quick health check of the tools that shipped with the server.</p>
+        <div id="bundled-warning" class="warn" style="display:none">
+          Some bundled components are missing. The server will run, but media
+          processing features won’t work until you reinstall from the full
+          release package (the download includes a <code>bin</code> folder that
+          must sit next to the app).
+        </div>
+        <table class="deps" id="bundled-table"></table>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="btn" onclick="goto('db')">Get started →</button>
+        </div>
+      </div>
+
+      <!-- Step 2: database location -->
+      <div class="panel" id="panel-db">
+        <h2>Where should your library live?</h2>
+        <p class="sub">
+          The library database stores your tags, descriptions, and search index —
+          not your media files themselves. The default location works for most people.
+        </p>
+        <div class="form-group">
+          <label for="db-path">Database file</label>
+          <div class="row">
+            <input class="input" id="db-path" spellcheck="false" />
+            <button class="btn ghost small" onclick="openPicker('db')">Browse…</button>
+          </div>
+        </div>
+        <div class="error-message" id="db-error"></div>
+        <div class="actions">
+          <button class="btn ghost" onclick="goto('welcome')">← Back</button>
+          <span class="spacer"></span>
+          <button class="btn" id="db-continue" onclick="submitDatabase()">Continue →</button>
+        </div>
+      </div>
+
+      <!-- Step 3: account -->
+      <div class="panel" id="panel-account">
+        <h2 id="account-title">Create your account</h2>
+        <p class="sub" id="account-sub">This account protects your library. You’ll use it to sign in from any device on your network.</p>
+        <div class="notice" id="account-existing" style="display:none">
+          This library already has an account — sign in to continue.
+        </div>
+        <div class="form-group">
+          <label for="acct-user">Username</label>
+          <input class="input" id="acct-user" autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="acct-pass">Password</label>
+          <input class="input" id="acct-pass" type="password" autocomplete="new-password" />
+        </div>
+        <div class="form-group" id="acct-confirm-group">
+          <label for="acct-confirm">Confirm password</label>
+          <input class="input" id="acct-confirm" type="password" autocomplete="new-password" />
+        </div>
+        <div class="error-message" id="account-error"></div>
+        <div class="actions">
+          <button class="btn ghost" onclick="goto('db')">← Back</button>
+          <span class="spacer"></span>
+          <button class="btn" id="account-continue" onclick="submitAccount()">Continue →</button>
+        </div>
+      </div>
+
+      <!-- Step 4: storage -->
+      <div class="panel" id="panel-storage">
+        <h2>Where are your media files?</h2>
+        <p class="sub">
+          Add the folders (or S3-compatible buckets) that hold your photos and
+          videos. You can add more later in Settings.
+        </p>
+        <div class="card-list" id="root-list"></div>
+        <div class="tabbar" style="margin-top:14px">
+          <button id="tab-local" class="active" onclick="storageTab('local')">Local folder</button>
+          <button id="tab-s3" onclick="storageTab('s3')">S3-compatible bucket</button>
+        </div>
+        <div id="storage-local">
+          <div class="form-group">
+            <label for="root-path">Folder</label>
+            <div class="row">
+              <input class="input" id="root-path" spellcheck="false" placeholder="e.g. a Pictures or Media folder" />
+              <button class="btn ghost small" onclick="openPicker('root')">Browse…</button>
+            </div>
+          </div>
+          <button class="btn ghost small" onclick="addLocalRoot()">+ Add folder</button>
+        </div>
+        <div id="storage-s3" style="display:none">
+          <div class="row" style="margin-bottom:8px">
+            <input class="input" id="s3-endpoint" placeholder="Endpoint (e.g. https://s3.us-west-2.amazonaws.com or MinIO URL)" spellcheck="false" />
+          </div>
+          <div class="row" style="margin-bottom:8px">
+            <input class="input" id="s3-region" placeholder="Region (e.g. us-west-2)" spellcheck="false" />
+            <input class="input" id="s3-bucket" placeholder="Bucket" spellcheck="false" />
+            <input class="input" id="s3-prefix" placeholder="Prefix (optional)" spellcheck="false" />
+          </div>
+          <div class="row" style="margin-bottom:10px">
+            <input class="input" id="s3-access" placeholder="Access key" spellcheck="false" autocomplete="off" />
+            <input class="input" id="s3-secret" placeholder="Secret key" type="password" autocomplete="off" />
+          </div>
+          <div class="row">
+            <button class="btn ghost small" onclick="testS3()" id="s3-test-btn">Test connection</button>
+            <button class="btn ghost small" onclick="addS3Root()">+ Add bucket</button>
+            <span id="s3-test-result" style="font-size:13px; align-self:center"></span>
+          </div>
+        </div>
+        <div class="error-message" id="storage-error"></div>
+        <div class="actions">
+          <button class="btn ghost" onclick="goto('account')">← Back</button>
+          <span class="spacer"></span>
+          <button class="btn" id="storage-continue" onclick="submitStorage()">Continue →</button>
+        </div>
+      </div>
+
+      <!-- Step 5: models -->
+      <div class="panel" id="panel-models">
+        <h2>Add AI superpowers</h2>
+        <p class="sub">
+          These features run entirely on this machine — nothing leaves your
+          library. Each needs a one-time model download. You can finish setup
+          while they download, or install them later from Settings → Dependencies.
+        </p>
+        <div class="card-list" id="model-groups"></div>
+        <div class="error-message" id="models-error"></div>
+        <div class="actions">
+          <button class="btn ghost" onclick="goto('storage')">← Back</button>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="models-skip" onclick="finishSetup(true)">Skip for now</button>
+          <button class="btn" id="models-install" onclick="installSelected()">Install selected</button>
+          <button class="btn" id="models-finish" onclick="finishSetup(false)" style="display:none">Finish →</button>
+        </div>
+      </div>
+
+      <!-- Step 6: done -->
+      <div class="panel" id="panel-done">
+        <div class="done-icon">🎉</div>
+        <h2 style="text-align:center">You’re all set</h2>
+        <p class="sub" style="text-align:center" id="done-sub">
+          Your library is ready. Any model downloads still running will finish
+          in the background — check Settings → Dependencies for progress.
+        </p>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button class="btn" onclick="window.location.href='/'">Open your library →</button>
+          <span class="spacer"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Directory picker -->
+    <div class="modal-backdrop" id="picker-backdrop">
+      <div class="modal">
+        <h2 style="font-size:16px; margin:0">Choose a folder</h2>
+        <div class="pathbar" id="picker-path"></div>
+        <div class="dirlist" id="picker-list"></div>
+        <div class="error-message" id="picker-error"></div>
+        <div class="actions">
+          <button class="btn ghost small" onclick="pickerUp()" id="picker-up">↑ Up</button>
+          <button class="btn ghost small" onclick="pickerNewFolder()">New folder</button>
+          <span class="spacer"></span>
+          <button class="btn ghost small" onclick="closePicker()">Cancel</button>
+          <button class="btn small" onclick="pickerSelect()" id="picker-select">Use this folder</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      'use strict';
+      const STEPS = ['welcome', 'db', 'account', 'storage', 'models', 'done'];
+      let state = null;          // /setup/api/state payload
+      let current = 'welcome';
+      let roots = [];            // storage roots being assembled
+      let hasRealUsers = false;
+      let selectedGroups = new Set();
+      let installTargets = new Set(); // model ids being installed
+      let sse = null;
+
+      const $ = (id) => document.getElementById(id);
+      const sep = () => (state && state.os === 'windows') ? '\\' : '/';
+
+      function fmtBytes(n) {
+        if (!n) return '';
+        if (n >= 1e9) return (n / 1e9).toFixed(1) + ' GB';
+        if (n >= 1e6) return Math.round(n / 1e6) + ' MB';
+        return Math.round(n / 1e3) + ' KB';
+      }
+
+      async function api(path, body, method) {
+        const opts = { method: method || (body !== undefined ? 'POST' : 'GET'), headers: {} };
+        if (body !== undefined) {
+          opts.headers['Content-Type'] = 'application/json';
+          opts.body = JSON.stringify(body);
+        }
+        const res = await fetch(path, opts);
+        let data = null;
+        try { data = await res.json(); } catch (e) { /* non-JSON */ }
+        if (!res.ok) {
+          const msg = (data && data.error) ? data.error : ('Request failed (' + res.status + ')');
+          throw new Error(msg);
+        }
+        return data;
+      }
+
+      function showError(id, err) {
+        const el = $(id);
+        el.textContent = err && err.message ? err.message : String(err);
+        el.style.display = 'block';
+      }
+      function clearError(id) { $(id).style.display = 'none'; }
+
+      function goto(step) {
+        current = step;
+        STEPS.forEach((s) => $('panel-' + s).classList.toggle('active', s === step));
+        const idx = STEPS.indexOf(step);
+        $('stepbar').innerHTML = STEPS.map((s, i) =>
+          '<span class="' + (i <= idx ? 'done' : '') + '"></span>').join('');
+        if (step === 'account') renderAccountStep();
+      }
+
+      // ---- Step 1: system check ----
+      function renderBundled() {
+        const bundled = (state.deps || []).filter((d) => d.category === 'bundled');
+        let missing = 0;
+        $('bundled-table').innerHTML = bundled.map((d) => {
+          const ok = d.state === 'ready';
+          if (!ok) missing++;
+          return '<tr><td><span class="' + (ok ? 'ok-dot' : 'bad-dot') + '"></span>' + d.name +
+            '</td><td class="muted">' + (ok ? (d.version || 'ready') : d.state) + '</td></tr>';
+        }).join('');
+        $('bundled-warning').style.display = missing ? 'block' : 'none';
+      }
+
+      // ---- Step 2: database ----
+      async function submitDatabase() {
+        clearError('db-error');
+        const btn = $('db-continue');
+        btn.disabled = true;
+        try {
+          const resp = await api('/setup/api/database', { path: $('db-path').value.trim() });
+          hasRealUsers = resp.hasRealUsers;
+          if (resp.existed) {
+            $('subtitle').textContent = 'Found an existing library at ' + resp.path + ' — picking up where it left off.';
+          }
+          goto('account');
+        } catch (e) {
+          showError('db-error', e);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ---- Step 3: account ----
+      function renderAccountStep() {
+        $('account-existing').style.display = hasRealUsers ? 'block' : 'none';
+        $('acct-confirm-group').style.display = hasRealUsers ? 'none' : 'block';
+        $('account-title').textContent = hasRealUsers ? 'Sign in' : 'Create your account';
+        $('account-sub').style.display = hasRealUsers ? 'none' : 'block';
+      }
+
+      async function submitAccount() {
+        clearError('account-error');
+        const user = $('acct-user').value.trim();
+        const pass = $('acct-pass').value;
+        if (!user || !pass) { showError('account-error', new Error('Username and password are required.')); return; }
+        if (!hasRealUsers && pass !== $('acct-confirm').value) {
+          showError('account-error', new Error('Passwords don’t match.')); return;
+        }
+        const btn = $('account-continue');
+        btn.disabled = true;
+        try {
+          if (!hasRealUsers) {
+            const res = await fetch('/auth/users', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ username: user, password: pass }),
+            });
+            if (!res.ok) throw new Error((await res.text()) || 'Could not create the account.');
+          }
+          const login = await fetch('/auth/login', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: user, password: pass }),
+          });
+          if (!login.ok) throw new Error('Sign-in failed — check the username and password.');
+          goto('storage');
+        } catch (e) {
+          showError('account-error', e);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ---- Step 4: storage ----
+      function storageTab(which) {
+        $('tab-local').classList.toggle('active', which === 'local');
+        $('tab-s3').classList.toggle('active', which === 's3');
+        $('storage-local').style.display = which === 'local' ? 'block' : 'none';
+        $('storage-s3').style.display = which === 's3' ? 'block' : 'none';
+      }
+
+      function renderRoots() {
+        $('root-list').innerHTML = roots.map((r, i) => {
+          const label = r.type === 's3' ? ('s3://' + r.bucket + (r.prefix ? '/' + r.prefix : '')) : r.path;
+          return '<div class="root-item">' +
+            '<input type="radio" name="default-root" title="Default location for new files"' +
+            (r.default ? ' checked' : '') + ' onchange="setDefaultRoot(' + i + ')">' +
+            '<strong>' + (r.label || (r.type === 's3' ? r.bucket : 'Folder')) + '</strong>' +
+            '<span class="path">' + label + '</span>' +
+            '<button class="rm" title="Remove" onclick="removeRoot(' + i + ')">✕</button></div>';
+        }).join('') || '<div class="muted" style="font-size:13px">No locations added yet.</div>';
+      }
+      function setDefaultRoot(i) { roots.forEach((r, j) => r.default = i === j); renderRoots(); }
+      function removeRoot(i) {
+        const wasDefault = roots[i].default;
+        roots.splice(i, 1);
+        if (wasDefault && roots.length) roots[0].default = true;
+        renderRoots();
+      }
+      function addLocalRoot() {
+        clearError('storage-error');
+        const p = $('root-path').value.trim();
+        if (!p) { showError('storage-error', new Error('Pick or type a folder first.')); return; }
+        roots.push({ type: 'local', path: p, label: p.split(/[\\/]/).filter(Boolean).pop() || 'Folder', default: roots.length === 0 });
+        $('root-path').value = '';
+        renderRoots();
+      }
+      function s3FromForm() {
+        return {
+          type: 's3',
+          endpoint: $('s3-endpoint').value.trim(),
+          region: $('s3-region').value.trim(),
+          bucket: $('s3-bucket').value.trim(),
+          prefix: $('s3-prefix').value.trim(),
+          accessKey: $('s3-access').value.trim(),
+          secretKey: $('s3-secret').value,
+        };
+      }
+      async function testS3() {
+        const el = $('s3-test-result');
+        el.textContent = 'Testing…'; el.style.color = 'rgba(255,255,255,0.6)';
+        $('s3-test-btn').disabled = true;
+        try {
+          await api('/setup/api/storage/test-s3', s3FromForm());
+          el.textContent = '✓ Connected'; el.style.color = '#34d399';
+        } catch (e) {
+          el.textContent = '✕ ' + e.message; el.style.color = '#f87171';
+        } finally {
+          $('s3-test-btn').disabled = false;
+        }
+      }
+      function addS3Root() {
+        clearError('storage-error');
+        const r = s3FromForm();
+        if (!r.bucket) { showError('storage-error', new Error('Bucket name is required.')); return; }
+        r.label = r.bucket;
+        r.default = roots.length === 0;
+        roots.push(r);
+        ['s3-endpoint','s3-region','s3-bucket','s3-prefix','s3-access','s3-secret'].forEach((id) => $(id).value = '');
+        $('s3-test-result').textContent = '';
+        renderRoots();
+      }
+      async function submitStorage() {
+        clearError('storage-error');
+        // Convenience: an un-added path in the local input counts.
+        if (roots.length === 0 && $('root-path').value.trim()) addLocalRoot();
+        if (roots.length === 0) {
+          showError('storage-error', new Error('Add at least one folder or bucket so the server knows where your media lives.'));
+          return;
+        }
+        const btn = $('storage-continue');
+        btn.disabled = true;
+        try {
+          await api('/setup/api/storage', { roots: roots });
+          goto('models');
+        } catch (e) {
+          showError('storage-error', e);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+
+      // ---- Step 5: models ----
+      function modelState(id) {
+        const item = (state.deps || []).find((d) => d.id === id);
+        return item ? item.state : 'missing';
+      }
+      function groupInstalled(g) { return g.models.every((id) => modelState(id) === 'installed'); }
+
+      function renderGroups() {
+        $('model-groups').innerHTML = state.modelGroups.map((g) => {
+          const installed = groupInstalled(g);
+          const checked = selectedGroups.has(g.id);
+          return '<label class="feature' + (checked ? ' checked' : '') + '" id="feat-' + g.id + '">' +
+            '<input type="checkbox"' + (checked ? ' checked' : '') + (installed ? ' disabled' : '') +
+            ' onchange="toggleGroup(\'' + g.id + '\', this.checked)">' +
+            '<div style="flex:1"><span class="t">' + g.title + '</span>' +
+            (installed ? '<span class="badge installed">Installed</span>' :
+              (g.recommended ? '<span class="badge">Recommended</span>' : '')) +
+            '<div class="d">' + g.desc + '</div>' +
+            '<div id="prog-' + g.id + '"></div></div>' +
+            '<span class="size">' + (installed ? '' : fmtBytes(g.sizeBytes)) + '</span></label>';
+        }).join('');
+      }
+      function toggleGroup(id, on) {
+        if (on) selectedGroups.add(id); else selectedGroups.delete(id);
+        $('feat-' + id).classList.toggle('checked', on);
+      }
+
+      function ensureSSE() {
+        if (sse) return;
+        sse = new EventSource('/api/deps/models/progress');
+        sse.onmessage = (ev) => {
+          let inst;
+          try { inst = JSON.parse(ev.data); } catch (e) { return; }
+          if (!installTargets.has(inst.id)) return;
+          const group = state.modelGroups.find((g) => g.models.includes(inst.id));
+          if (!group) return;
+          renderProgress(group, inst);
+          if (inst.state === 'installed') {
+            const item = (state.deps || []).find((d) => d.id === inst.id);
+            if (item) item.state = 'installed';
+            installTargets.delete(inst.id);
+            if (installTargets.size === 0) {
+              $('models-finish').style.display = 'inline-block';
+              $('models-install').style.display = 'none';
+            }
+          }
+        };
+      }
+
+      function renderProgress(group, inst) {
+        const host = $('prog-' + group.id);
+        let row = document.getElementById('prow-' + inst.id);
+        if (!row) {
+          row = document.createElement('div');
+          row.id = 'prow-' + inst.id;
+          row.className = 'progress-row';
+          row.innerHTML = '<div class="lbl"><span></span><span></span></div><div class="bar"><div></div></div>';
+          host.appendChild(row);
+        }
+        const [name, pct] = row.querySelectorAll('.lbl span');
+        const bar = row.querySelector('.bar > div');
+        const stateText = { queued: 'Queued', downloading: 'Downloading', extracting: 'Unpacking', verifying: 'Verifying', installed: 'Installed ✓', failed: 'Failed', cancelled: 'Cancelled' }[inst.state] || inst.state;
+        name.textContent = inst.id + ' — ' + stateText + (inst.error ? ': ' + inst.error : '');
+        if (inst.bytes_total > 0) {
+          const p = Math.min(100, Math.round(inst.bytes_done * 100 / inst.bytes_total));
+          pct.textContent = fmtBytes(inst.bytes_done) + ' / ' + fmtBytes(inst.bytes_total);
+          bar.style.width = p + '%';
+        } else if (inst.state === 'installed') {
+          bar.style.width = '100%';
+        }
+      }
+
+      async function installSelected() {
+        clearError('models-error');
+        const ids = [];
+        state.modelGroups.forEach((g) => {
+          if (selectedGroups.has(g.id) && !groupInstalled(g)) {
+            g.models.forEach((id) => { if (modelState(id) !== 'installed') ids.push(id); });
+          }
+        });
+        if (ids.length === 0) { finishSetup(false); return; }
+        ensureSSE();
+        try {
+          for (const id of ids) {
+            installTargets.add(id);
+            await api('/api/deps/models/' + encodeURIComponent(id) + '/download', {});
+          }
+          $('models-install').disabled = true;
+          $('models-install').textContent = 'Installing…';
+          $('models-skip').textContent = 'Finish (keep downloading)';
+        } catch (e) {
+          showError('models-error', e);
+        }
+      }
+
+      async function finishSetup(skipped) {
+        try {
+          await api('/setup/api/complete', {});
+          if (skipped && installTargets.size > 0) {
+            $('done-sub').textContent = 'Model downloads continue in the background — see Settings → Dependencies for progress.';
+          }
+          goto('done');
+        } catch (e) {
+          showError('models-error', e);
+        }
+      }
+
+      // ---- Directory picker ----
+      let pickerTarget = null; // 'db' | 'root'
+      let pickerCurrent = '';
+      let pickerParent = null;
+
+      function openPicker(target) {
+        pickerTarget = target;
+        $('picker-backdrop').classList.add('open');
+        clearError('picker-error');
+        let start = '';
+        if (target === 'db') {
+          const v = $('db-path').value.trim();
+          start = v ? v.replace(/[\\/][^\\/]*$/, '') : (state ? state.dataDir : '');
+        }
+        browse(start);
+      }
+      function closePicker() { $('picker-backdrop').classList.remove('open'); }
+
+      async function browse(path) {
+        clearError('picker-error');
+        try {
+          const resp = await api('/setup/api/browse', { path: path });
+          pickerCurrent = resp.path;
+          pickerParent = resp.parent;
+          $('picker-path').textContent = resp.path || 'Choose a starting point';
+          $('picker-select').disabled = !resp.path || !resp.exists;
+          $('picker-up').disabled = resp.parent === null && resp.path !== '';
+          $('picker-list').innerHTML = resp.entries.map((e) =>
+            '<button onclick="browse(' + JSON.stringify(e.path).replace(/"/g, '&quot;') + ')">📁 ' + e.name + '</button>'
+          ).join('') || '<button disabled class="muted">No subfolders</button>';
+          if (resp.path && !resp.exists) {
+            showError('picker-error', new Error('This folder doesn’t exist yet — use “New folder” to create it.'));
+          } else if (resp.path && !resp.writable) {
+            showError('picker-error', new Error('This folder isn’t writable by the server.'));
+          }
+        } catch (e) {
+          showError('picker-error', e);
+        }
+      }
+      function pickerUp() { browse(pickerParent === null ? '' : pickerParent); }
+      async function pickerNewFolder() {
+        const name = prompt('New folder name:');
+        if (!name) return;
+        try {
+          const target = pickerCurrent ? pickerCurrent + sep() + name : name;
+          await api('/setup/api/mkdir', { path: target });
+          browse(target);
+        } catch (e) {
+          showError('picker-error', e);
+        }
+      }
+      function pickerSelect() {
+        if (!pickerCurrent) return;
+        if (pickerTarget === 'db') {
+          $('db-path').value = pickerCurrent + sep() + 'media.db';
+        } else {
+          $('root-path').value = pickerCurrent;
+        }
+        closePicker();
+      }
+
+      // ---- boot ----
+      (async function init() {
+        goto('welcome');
+        try {
+          state = await api('/setup/api/state');
+        } catch (e) {
+          $('subtitle').textContent = 'Could not load setup state: ' + e.message;
+          return;
+        }
+        hasRealUsers = state.hasRealUsers;
+        $('db-path').value = state.activeDBPath || state.defaultDBPath;
+        // Redacted S3 secrets round-trip as-is; the server restores them.
+        roots = (state.roots || []).map((r) => ({ ...r }));
+        renderBundled();
+        renderRoots();
+        state.modelGroups.forEach((g) => {
+          if (g.recommended && !groupInstalled(g)) selectedGroups.add(g.id);
+        });
+        renderGroups();
+        if (state.setupComplete) {
+          $('subtitle').textContent = 'Setup is already complete — this page is available for reconfiguration.';
+        }
+      })();
+    </script>
+  </body>
+</html>
+{{ end }}
