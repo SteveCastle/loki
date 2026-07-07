@@ -24,8 +24,10 @@ const EVENT_TYPES = [
   'create',
   'update',
   'delete',
+  'progress',
   'media-updated',
   'media-created',
+  'people-updated',
   'stats',
 ];
 

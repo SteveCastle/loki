@@ -16,7 +16,9 @@ export async function createDescriptionJob(
   }
 
   const body: { input: string; fields?: { prompt: string } } = {
-    input: `metadata --type description --apply all --overwrite "${path}"`,
+    // The split-out describe task; --overwrite because this is an explicit
+    // per-file request (regenerate even if a description exists).
+    input: `describe --overwrite "${path}"`,
   };
   const trimmed = prompt?.trim();
   if (trimmed) {

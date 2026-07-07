@@ -4,7 +4,22 @@
     <span class="job-status {{.State}}"></span>
   </div>
   <div class="jobs-cell command" data-label="Command">
-    <a href="/job/{{.ID}}">{{ .Command }}</a>
+    <div class="command-stack">
+      <a href="/job/{{.ID}}">{{ .Command }}</a>
+      {{ if gt .ProgressTotal 0 }}
+      <div class="job-progress" data-progress-for="{{ .ID }}">
+        <div class="job-progress-track">
+          <div
+            class="job-progress-fill"
+            style="width: {{ progressPct .ProgressDone .ProgressTotal }}%"
+          ></div>
+        </div>
+        <span class="job-progress-label"
+          >{{ .ProgressDone }}/{{ .ProgressTotal }}</span
+        >
+      </div>
+      {{ end }}
+    </div>
   </div>
   <div class="jobs-cell arguments" data-label="Arguments">{{ .Arguments }}</div>
   <div class="jobs-cell input" data-label="Input">{{ template "jobInput" (jobInputView .Input) }}</div>
@@ -13,6 +28,12 @@
   </div>
   <div class="jobs-cell actions" data-label="Actions">
     {{ if or (eq .State 0) (eq .State 1) }}
+    <button data-id="{{ .ID }}" onclick="pauseJob(event)">Pause</button>
+    <button data-id="{{ .ID }}" class="btn--danger" onclick="cancelJob(event)">
+      Cancel
+    </button>
+    {{ else if eq .State 5 }}
+    <button data-id="{{ .ID }}" onclick="resumeJob(event)">Resume</button>
     <button data-id="{{ .ID }}" class="btn--danger" onclick="cancelJob(event)">
       Cancel
     </button>

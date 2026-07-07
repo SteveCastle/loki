@@ -46,7 +46,9 @@ export default function GenerateTranscript({
         method: 'POST',
         headers,
         body: JSON.stringify({
-          input: `metadata --type transcript --apply all "${path}"`,
+          // The split-out transcribe task; --overwrite because this is an
+          // explicit per-file request (regenerate even if one exists).
+          input: `transcribe --overwrite "${path}"`,
         }),
         signal: controller.signal,
       });

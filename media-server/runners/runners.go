@@ -2,6 +2,7 @@ package runners
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
@@ -80,6 +81,12 @@ func (r *Runners) runJob(j *jobqueue.Job) {
 		if task, exists := tasksMap[j.Command]; exists {
 			// Ensure job state is finalized even if task forgets
 			if err := task.Fn(j, r.queue, &r.mu); err != nil {
+				// A graceful pause is not a failure: park the job so it can
+				// be resumed with its progress intact.
+				if errors.Is(err, jobqueue.ErrPaused) {
+					_ = r.queue.PauseJob(j.ID)
+					return
+				}
 				// If context is canceled, prefer Cancelled state
 				select {
 				case <-j.Ctx.Done():

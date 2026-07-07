@@ -3,6 +3,7 @@ package appconfig
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -149,6 +150,28 @@ type Config struct {
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
+
+	// AutoProcessOps is the comma-separated per-item op list the scheduled
+	// combined job runs. Empty = every op (hash, dimensions, describe,
+	// transcribe, llm-autotag, embed, faces).
+	//
+	// NOTE: the scheduler's on/off mode is deliberately NOT config — it is
+	// runtime-only state that resets to "stopped" on every server start, so
+	// background compute is always an affirmative per-session choice. (A
+	// legacy "autoProcessMode" key may linger in old config files; it is
+	// ignored.)
+	AutoProcessOps string `json:"autoProcessOps"`
+
+	// LocalComputeConcurrency caps how many resource-intensive LOCAL jobs
+	// (ONNX embed/autotag/faces, transcription, and local-LLM inference) may
+	// run at the same time, machine-wide, regardless of which per-task bucket
+	// each one lives in. Every such job holds a shared "local-compute" slot in
+	// addition to its own bucket. 1 (the default) serializes all heavy local
+	// work — each job still parallelizes internally via its worker pool, which
+	// is sized to own the machine. Raise it only if the hardware has headroom
+	// for genuinely concurrent model workloads. Remote inference (RunPod) does
+	// not consume a slot. Values <= 0 fall back to the default.
+	LocalComputeConcurrency int `json:"localComputeConcurrency"`
 
 	// ONNX tagger settings
 	OnnxTagger struct {
@@ -322,6 +345,7 @@ func defaultConfig() Config {
 			LMStudio: 1, // local single-GPU LM Studio: one at a time
 			LlamaCpp: 1, // local single-GPU llama.cpp: one at a time
 		},
+		LocalComputeConcurrency: 1, // one heavy local model workload at a time
 		OnnxTagger: struct {
 			ModelPath            string  `json:"modelPath"`
 			LabelsPath           string  `json:"labelsPath"`
@@ -397,8 +421,28 @@ func deepMergeJSON(dst, src map[string]json.RawMessage) {
 // getConfigPath returns the full path to the config.json file.
 // It is a variable so tests can override it to use temp directories.
 var getConfigPath = func() (string, error) {
+	// Explicit override first — deployments (Docker, tests, side-by-side
+	// instances) can pin the config file location.
+	if v := strings.TrimSpace(os.Getenv("LOWKEY_CONFIG_PATH")); v != "" {
+		return v, nil
+	}
+	// Safety net: under `go test`, NEVER touch the real config file. A unit
+	// test that reaches Save() through production code (as the scheduler's
+	// SetMode once did) must not overwrite the developer's live
+	// %APPDATA% config — that incident reset a real dbPath and jwtSecret.
+	// Tests that care about the path set LOWKEY_CONFIG_PATH explicitly (or
+	// override this var from inside the package).
+	if underGoTest() {
+		return filepath.Join(os.TempDir(), fmt.Sprintf("lowkey-test-config-%d.json", os.Getpid())), nil
+	}
 	configDir := DefaultConfigDir()
 	return filepath.Join(configDir, "config.json"), nil
+}
+
+// underGoTest reports whether we're running inside a `go test` binary (the
+// testing framework registers the test.v flag at init).
+func underGoTest() bool {
+	return flag.Lookup("test.v") != nil
 }
 
 // Load reads the config from disk and updates the in-memory config. It returns the config and path.
@@ -598,6 +642,9 @@ func Load() (Config, string, error) {
 	}
 	if c.InferenceConcurrency.LlamaCpp <= 0 {
 		c.InferenceConcurrency.LlamaCpp = def.InferenceConcurrency.LlamaCpp
+	}
+	if c.LocalComputeConcurrency <= 0 {
+		c.LocalComputeConcurrency = def.LocalComputeConcurrency
 	}
 	if c.LMStudioBaseURL == "" {
 		c.LMStudioBaseURL = def.LMStudioBaseURL

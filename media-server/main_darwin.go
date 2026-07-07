@@ -200,6 +200,15 @@ func initDB() (*sql.DB, error) {
 	dbPath := cfg.DBPath
 	log.Printf("Using database path from config: %s", dbPath)
 
+	// A missing file means we are about to create a brand-new EMPTY library -
+	// legitimate on first run, but catastrophic-looking when dbPath silently
+	// changed (the Electron viewer shares config.json and writes the same
+	// "dbPath" key). Shout about it so a wrong path is obvious in the log
+	// instead of surfacing as "my library is empty and my login is gone".
+	if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+		log.Printf("WARNING: no database exists at %s - creating a NEW EMPTY library (fresh users/auth included). If you expected an existing library, stop the server and fix dbPath in config.json.", dbPath)
+	}
+
 	// Ensure the directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %v", err)
@@ -1246,6 +1255,7 @@ type updateConfigRequest struct {
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
+	LocalComputeConcurrency int `json:"localComputeConcurrency"`
 	OnnxModelPath             string                  `json:"onnxModelPath"`
 	OnnxLabelsPath            string                  `json:"onnxLabelsPath"`
 	OnnxConfigPath            string                  `json:"onnxConfigPath"`
@@ -1519,6 +1529,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if req.InferenceConcurrency.LlamaCpp > 0 {
 				newCfg.InferenceConcurrency.LlamaCpp = req.InferenceConcurrency.LlamaCpp
+			}
+			if req.LocalComputeConcurrency > 0 {
+				newCfg.LocalComputeConcurrency = req.LocalComputeConcurrency
 			}
 			newCfg.OnnxTagger.ModelPath = strings.TrimSpace(req.OnnxModelPath)
 			newCfg.OnnxTagger.LabelsPath = strings.TrimSpace(req.OnnxLabelsPath)
@@ -2334,6 +2347,7 @@ func main() {
 	// uses the full task-aware policy when assigning buckets to persisted
 	// jobs.
 	jobqueue.SetHostResolver(tasks.ResolveHost)
+	jobqueue.SetResourceResolver(tasks.ResolveResources)
 	queue := jobqueue.NewQueueWithDB(db)
 	log.Printf("Job queue initialized. Current jobs: %d", len(queue.GetJobs()))
 	tasks.ApplyHostLimits(queue, currentConfig)
@@ -2358,6 +2372,10 @@ func main() {
 		Storage: storageReg,
 	}
 
+	// Background idle scheduler (mode/config-gated; dormant when off). Reads
+	// deps.Queue on every tick, so it follows database switches transparently.
+	startAutoScheduler(deps)
+
 	// ––– embedding vector index (best-effort, non-fatal) –––
 	log.Printf("Building embedding search index…")
 	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
@@ -2379,6 +2397,11 @@ func main() {
 	mux.HandleFunc("/jobs/list", renderer.ApplyMiddlewares(jobsListHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}", renderer.ApplyMiddlewares(detailHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/cancel", renderer.ApplyMiddlewares(cancelHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}/pause", renderer.ApplyMiddlewares(pauseJobHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}/resume", renderer.ApplyMiddlewares(resumeJobHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scheduler", renderer.ApplyMiddlewares(schedulerStatusHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scheduler/mode", renderer.ApplyMiddlewares(schedulerModeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scheduler/run", renderer.ApplyMiddlewares(schedulerRunHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/copy", renderer.ApplyMiddlewares(copyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps), renderer.RoleAdmin))
@@ -2566,8 +2589,10 @@ func main() {
 	}()
 
 	srv = &http.Server{
-		Addr:    appconfig.Get().ListenAddr(),
-		Handler: mux,
+		Addr: appconfig.Get().ListenAddr(),
+		// Activity tracking wraps everything: user-intent requests feed the
+		// auto-scheduler's "app is in use" signal.
+		Handler: withActivityTracking(mux),
 	}
 
 	// Set up signal handling for graceful shutdown

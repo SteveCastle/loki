@@ -7,7 +7,7 @@ export interface DepStatus {
   /** User-facing capability this dependency unlocks (e.g. "Auto-tagging"). */
   feature?: string;
   description?: string;
-  state: 'ready' | 'missing' | 'broken' | 'installed' | 'not_installed' | 'queued' | 'downloading' | 'verifying' | 'failed' | 'cancelled';
+  state: 'ready' | 'missing' | 'broken' | 'installed' | 'not_installed' | 'queued' | 'downloading' | 'extracting' | 'verifying' | 'failed' | 'cancelled';
   version?: string;
   size_bytes?: number;
   path?: string;
@@ -22,7 +22,12 @@ export function isDownloadableState(s: DepStatus['state']): boolean {
 
 /** True while an install is in flight. */
 export function isDownloadingState(s: DepStatus['state']): boolean {
-  return s === 'downloading' || s === 'queued' || s === 'verifying';
+  return (
+    s === 'downloading' ||
+    s === 'extracting' ||
+    s === 'queued' ||
+    s === 'verifying'
+  );
 }
 
 // `base` lets Electron (different origin from the media server) reach the

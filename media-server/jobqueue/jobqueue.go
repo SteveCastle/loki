@@ -34,7 +34,15 @@ const (
 	StateCompleted
 	StateCancelled
 	StateError
+	StatePaused
 )
+
+// ErrPaused is returned by task functions that stopped at a pause point in
+// response to RequestPause. The runner translates it into PauseJob rather
+// than treating it as a failure. All per-item work completed before the pause
+// point has already been committed, so a paused job can be resumed (or
+// cancelled) without losing progress.
+var ErrPaused = errors.New("job paused")
 
 func (s JobState) String() string {
 	switch s {
@@ -48,6 +56,8 @@ func (s JobState) String() string {
 		return "Cancelled"
 	case StateError:
 		return "Error"
+	case StatePaused:
+		return "Paused"
 	default:
 		return "Unknown"
 	}
@@ -67,6 +77,8 @@ func (s JobState) MarshalJSON() ([]byte, error) {
 		str = "cancelled"
 	case StateError:
 		str = "error"
+	case StatePaused:
+		str = "paused"
 	default:
 		str = "unknown"
 	}
@@ -91,6 +103,8 @@ func (s *JobState) UnmarshalJSON(data []byte) error {
 		*s = StateCancelled
 	case "error":
 		*s = StateError
+	case "paused":
+		*s = StatePaused
 	default:
 		*s = StatePending
 	}
@@ -99,19 +113,25 @@ func (s *JobState) UnmarshalJSON(data []byte) error {
 
 // Job represents an individual task in the queue.
 type Job struct {
-	ID            string             `json:"id"` // Unique identifier for the job
-	Command       string             `json:"command"`
-	Arguments     []string           `json:"arguments"`
-	Input         string             `json:"input"`
-	OriginalInput string             `json:"original_input"`
-	Host          string             `json:"host"`
-	Stdout        []string           `json:"-"`
-	StdoutRaw     io.Reader          `json:"-"` // Raw stdout stream
-	StdIn         io.Reader          `json:"-"`
-	Dependencies  []string           `json:"dependencies"` // IDs of jobs that must complete before this one
-	State         JobState           `json:"state"`
-	Ctx           context.Context    `json:"-"`
-	Cancel        context.CancelFunc `json:"-"`
+	ID            string   `json:"id"` // Unique identifier for the job
+	Command       string   `json:"command"`
+	Arguments     []string `json:"arguments"`
+	Input         string   `json:"input"`
+	OriginalInput string   `json:"original_input"`
+	Host          string   `json:"host"`
+	// Resources are ADDITIONAL concurrency buckets this job occupies besides
+	// Host — one per machine resource its work actually consumes (e.g. a
+	// combined job running embed+faces ops holds those buckets too, plus the
+	// shared local-compute slot). A job is only claimed when EVERY bucket has
+	// capacity, and it counts against all of them while running.
+	Resources    []string           `json:"resources"`
+	Stdout       []string           `json:"-"`
+	StdoutRaw    io.Reader          `json:"-"` // Raw stdout stream
+	StdIn        io.Reader          `json:"-"`
+	Dependencies []string           `json:"dependencies"` // IDs of jobs that must complete before this one
+	State        JobState           `json:"state"`
+	Ctx          context.Context    `json:"-"`
+	Cancel       context.CancelFunc `json:"-"`
 
 	// Timestamps for various states
 	CreatedAt   time.Time `json:"created_at"`
@@ -123,6 +143,16 @@ type Job struct {
 	OutputFiles []string `json:"output_files"` // File paths registered for downstream consumption
 	SourceFiles []string `json:"source_files"` // Parallel to OutputFiles: the original source for each output
 	WorkflowID  string   `json:"workflow_id"`  // Non-empty when job is part of a workflow
+
+	// Item-level progress. Total is set once the job's input/query resolves to
+	// a concrete item list; Done advances as items finish (including skips).
+	// Both survive restarts so a resumed job renders where it left off.
+	ProgressDone  int `json:"progress_done"`
+	ProgressTotal int `json:"progress_total"`
+
+	// Throttling bookkeeping for progress broadcasts/persists (not serialized).
+	lastProgressBroadcast time.Time
+	lastProgressPersist   time.Time
 }
 
 type WorkflowTask struct {
@@ -149,6 +179,10 @@ type Queue struct {
 	Db            *sql.DB // Database connection for persistence
 	HostLimits    map[string]int
 	RunningCounts map[string]int
+	// pauseRequests holds job IDs asked to pause. Task item loops poll
+	// PauseRequested between items and stop gracefully (returning ErrPaused)
+	// so the current item's writes always land before the job parks.
+	pauseRequests map[string]struct{}
 }
 
 // NewQueue initializes and returns a new Queue.
@@ -158,6 +192,7 @@ func NewQueue() *Queue {
 		Signal:        make(chan string, 100),
 		HostLimits:    make(map[string]int),
 		RunningCounts: make(map[string]int),
+		pauseRequests: make(map[string]struct{}),
 	}
 }
 
@@ -169,6 +204,7 @@ func NewQueueWithDB(db *sql.DB) *Queue {
 		Db:            db,
 		HostLimits:    make(map[string]int),
 		RunningCounts: make(map[string]int),
+		pauseRequests: make(map[string]struct{}),
 	}
 
 	// Create the jobs table if it doesn't exist
@@ -219,6 +255,9 @@ func (q *Queue) createJobsTable() error {
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN output_files TEXT")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN source_files TEXT")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN workflow_id TEXT")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN progress_done INTEGER")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN progress_total INTEGER")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN resources TEXT")
 
 	return nil
 }
@@ -235,6 +274,7 @@ func (q *Queue) saveJobToDB(job *Job) error {
 	dependenciesJSON, _ := json.Marshal(job.Dependencies)
 	outputFilesJSON, _ := json.Marshal(job.OutputFiles)
 	sourceFilesJSON, _ := json.Marshal(job.SourceFiles)
+	resourcesJSON, _ := json.Marshal(job.Resources)
 
 	// Find position in job order
 	position := -1
@@ -249,8 +289,8 @@ func (q *Queue) saveJobToDB(job *Job) error {
 	INSERT OR REPLACE INTO jobs (
 		id, command, arguments, input, original_input, host, stdout, dependencies, state,
 		created_at, claimed_at, completed_at, errored_at, job_order_position,
-		output_files, source_files, workflow_id
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		output_files, source_files, workflow_id, progress_done, progress_total, resources
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := q.Db.Exec(query,
 		job.ID,
@@ -270,6 +310,9 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		string(outputFilesJSON),
 		string(sourceFilesJSON),
 		job.WorkflowID,
+		job.ProgressDone,
+		job.ProgressTotal,
+		string(resourcesJSON),
 	)
 
 	return err
@@ -284,7 +327,8 @@ func (q *Queue) loadJobsFromDB() error {
 	query := `
 	SELECT id, command, arguments, input, COALESCE(original_input, ''), COALESCE(host, ''), stdout, dependencies, state,
 		   created_at, claimed_at, completed_at, errored_at, job_order_position,
-		   COALESCE(output_files, '[]'), COALESCE(source_files, '[]'), COALESCE(workflow_id, '')
+		   COALESCE(output_files, '[]'), COALESCE(source_files, '[]'), COALESCE(workflow_id, ''),
+		   COALESCE(progress_done, 0), COALESCE(progress_total, 0), COALESCE(resources, '')
 	FROM jobs
 	ORDER BY job_order_position`
 
@@ -298,7 +342,7 @@ func (q *Queue) loadJobsFromDB() error {
 
 	for rows.Next() {
 		var job Job
-		var argumentsJSON, stdoutJSON, dependenciesJSON, outputFilesJSON, sourceFilesJSON string
+		var argumentsJSON, stdoutJSON, dependenciesJSON, outputFilesJSON, sourceFilesJSON, resourcesJSON string
 		var state int
 		var position int
 
@@ -320,6 +364,9 @@ func (q *Queue) loadJobsFromDB() error {
 			&outputFilesJSON,
 			&sourceFilesJSON,
 			&job.WorkflowID,
+			&job.ProgressDone,
+			&job.ProgressTotal,
+			&resourcesJSON,
 		)
 		if err != nil {
 			log.Printf("Error scanning job row: %v", err)
@@ -342,11 +389,20 @@ func (q *Queue) loadJobsFromDB() error {
 		if err := json.Unmarshal([]byte(sourceFilesJSON), &job.SourceFiles); err != nil {
 			job.SourceFiles = []string{}
 		}
+		if err := json.Unmarshal([]byte(resourcesJSON), &job.Resources); err != nil {
+			job.Resources = nil
+		}
 
 		job.State = JobState(state)
 
 		if job.Host == "" {
 			job.Host = getHost(job.Command, job.Input)
+		}
+		// Legacy rows (or rows written before a resolver was registered) have
+		// no resources; re-resolve so old queued jobs still respect the
+		// machine-wide caps after an upgrade.
+		if len(job.Resources) == 0 {
+			job.Resources = getResources(job.Command, job.Arguments, job.Input)
 		}
 
 		// If job was in progress, reset it to pending so it can be resumed
@@ -435,6 +491,7 @@ func (q *Queue) AddJob(id string, command string, arguments []string, input stri
 		Cancel:        cancel,
 		CreatedAt:     time.Now(),
 		Host:          getHost(command, input),
+		Resources:     getResources(command, arguments, input),
 	}
 	q.Jobs[id] = job
 	q.JobOrder = append(q.JobOrder, id)
@@ -513,6 +570,8 @@ func (q *Queue) CopyJob(id string) (string, error) {
 	newJob.OutputFiles = []string{}
 	newJob.SourceFiles = []string{}
 	newJob.State = StatePending
+	newJob.ProgressDone = 0
+	newJob.ProgressTotal = 0
 	newJob.CreatedAt = time.Now()
 	newJob.ClaimedAt = time.Time{}
 	newJob.CompletedAt = time.Time{}
@@ -550,15 +609,16 @@ func (q *Queue) ClaimJob() (*Job, error) {
 	for _, jobID := range q.JobOrder {
 		job := q.Jobs[jobID]
 		if job.State == StatePending && q.canClaim(job) {
-			// Check host limits
-			limit := q.getHostLimitLocked(job.Host)
-			if q.RunningCounts[job.Host] >= limit {
+			// Every bucket the job occupies (host + resources) must have a
+			// free slot — resource-heavy jobs hold all the buckets their work
+			// actually uses.
+			if !q.hasCapacityLocked(job) {
 				continue
 			}
 
 			job.State = StateInProgress
 			job.ClaimedAt = time.Now()
-			q.RunningCounts[job.Host]++
+			q.incRunningLocked(job)
 
 			// Construct effective input from OriginalInput and parent outputs
 			var inputBuilder strings.Builder
@@ -629,7 +689,8 @@ func (q *Queue) ErrorJob(id string) error {
 
 	job.State = StateError
 	job.ErroredAt = time.Now()
-	q.RunningCounts[job.Host]--
+	q.decRunningLocked(job)
+	delete(q.pauseRequests, id)
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -680,7 +741,8 @@ func (q *Queue) cancelWorkflowDependentsLocked(erroredID, workflowID string) {
 	}
 }
 
-// CancelJob sets a job's state to cancelled if it is currently pending.
+// CancelJob sets a job's state to cancelled if it is currently pending,
+// in progress, or paused.
 func (q *Queue) CancelJob(id string) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -690,16 +752,17 @@ func (q *Queue) CancelJob(id string) error {
 		return errors.New("job not found")
 	}
 
-	if job.State != StatePending && job.State != StateInProgress {
-		return errors.New("job is not pending, or in progree, cannot cancel")
+	if job.State != StatePending && job.State != StateInProgress && job.State != StatePaused {
+		return errors.New("job is not pending, in progress, or paused, cannot cancel")
 	}
 	job.Cancel()
 
 	if job.State == StateInProgress {
-		q.RunningCounts[job.Host]--
+		q.decRunningLocked(job)
 	}
 
 	job.State = StateCancelled
+	delete(q.pauseRequests, id)
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -711,6 +774,171 @@ func (q *Queue) CancelJob(id string) error {
 		return err
 	}
 
+	return nil
+}
+
+// RequestPause asks a running or pending job to pause. A pending job pauses
+// immediately (it just stops being claimable); an in-progress job keeps
+// running until its task polls PauseRequested at the next item boundary and
+// returns ErrPaused — so the current item's writes always complete first.
+func (q *Queue) RequestPause(id string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, exists := q.Jobs[id]
+	if !exists {
+		return errors.New("job not found")
+	}
+
+	switch job.State {
+	case StatePending:
+		return q.pauseJobLocked(job)
+	case StateInProgress:
+		if q.pauseRequests == nil {
+			q.pauseRequests = make(map[string]struct{})
+		}
+		q.pauseRequests[id] = struct{}{}
+		return nil
+	default:
+		return errors.New("job is not pending or in progress, cannot pause")
+	}
+}
+
+// PauseRequested reports whether a pause has been requested for the job.
+// Task item loops poll this between items.
+func (q *Queue) PauseRequested(id string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	_, ok := q.pauseRequests[id]
+	return ok
+}
+
+// PauseJob transitions an in-progress (or pending) job to Paused. Called by
+// the runner when a task returns ErrPaused. Progress and all per-item writes
+// are preserved; ResumeJob re-queues the job.
+func (q *Queue) PauseJob(id string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, exists := q.Jobs[id]
+	if !exists {
+		return errors.New("job not found")
+	}
+	if job.State != StateInProgress && job.State != StatePending {
+		return errors.New("job is not in progress or pending, cannot pause")
+	}
+	return q.pauseJobLocked(job)
+}
+
+// pauseJobLocked performs the Paused transition. Must be called with mu held.
+func (q *Queue) pauseJobLocked(job *Job) error {
+	if job.State == StateInProgress {
+		q.decRunningLocked(job)
+	}
+	job.State = StatePaused
+	delete(q.pauseRequests, job.ID)
+
+	if err := q.saveJobToDB(job); err != nil {
+		log.Printf("Failed to save job pause to database: %v", err)
+	}
+	return serializeListUpdate("update", job)
+}
+
+// ResumeJob re-queues a paused job. The task re-resolves its input when
+// re-claimed; already-processed items are skipped via each task's
+// skip-existing checks (and best-effort progress offsets for overwrite runs).
+func (q *Queue) ResumeJob(id string) error {
+	q.mu.Lock()
+
+	job, exists := q.Jobs[id]
+	if !exists {
+		q.mu.Unlock()
+		return errors.New("job not found")
+	}
+	if job.State != StatePaused {
+		q.mu.Unlock()
+		return errors.New("job is not paused, cannot resume")
+	}
+
+	job.State = StatePending
+	job.ClaimedAt = time.Time{}
+	delete(q.pauseRequests, id)
+
+	if err := q.saveJobToDB(job); err != nil {
+		log.Printf("Failed to save job resume to database: %v", err)
+	}
+	err := serializeListUpdate("update", job)
+	q.mu.Unlock()
+
+	// Signal outside the lock: ClaimJob (triggered by the runner) takes mu.
+	select {
+	case q.Signal <- id:
+	default:
+	}
+	return err
+}
+
+// progressBroadcastInterval throttles per-item progress SSE broadcasts and DB
+// persists — a fast op (hashing) can finish thousands of items per second and
+// must not turn each into a broadcast plus a row rewrite. First and final
+// updates always go out.
+const progressBroadcastInterval = 250 * time.Millisecond
+
+// SerializedProgress is the payload of the "progress" SSE event.
+type SerializedProgress struct {
+	UpdateType string `json:"updateType"` // always "progress"
+	ID         string `json:"id"`
+	Done       int    `json:"done"`
+	Total      int    `json:"total"`
+}
+
+// SetJobProgress records item-level progress for a job and broadcasts it as a
+// "progress" SSE event (throttled). Tasks call it once when the input/query
+// resolves (done=0, total=N) and again as each item finishes.
+func (q *Queue) SetJobProgress(id string, done, total int) error {
+	q.mu.Lock()
+
+	job, exists := q.Jobs[id]
+	if !exists {
+		q.mu.Unlock()
+		return errors.New("job not found")
+	}
+
+	job.ProgressDone = done
+	job.ProgressTotal = total
+
+	now := time.Now()
+	final := total > 0 && done >= total
+	broadcast := final || done == 0 || now.Sub(job.lastProgressBroadcast) >= progressBroadcastInterval
+	persist := final || done == 0 || now.Sub(job.lastProgressPersist) >= progressBroadcastInterval
+	if broadcast {
+		job.lastProgressBroadcast = now
+	}
+	if persist {
+		job.lastProgressPersist = now
+		// Targeted UPDATE: a full saveJobToDB rewrites the whole row (including
+		// the stdout JSON blob) which is far too heavy per item.
+		if q.Db != nil {
+			if _, err := q.Db.Exec(`UPDATE jobs SET progress_done = ?, progress_total = ? WHERE id = ?`, done, total, id); err != nil {
+				log.Printf("Failed to persist job progress: %v", err)
+			}
+		}
+	}
+	q.mu.Unlock()
+
+	if !broadcast {
+		return nil
+	}
+	payload, err := json.Marshal(SerializedProgress{
+		UpdateType: "progress",
+		ID:         id,
+		Done:       done,
+		Total:      total,
+	})
+	if err != nil {
+		return err
+	}
+	stream.Broadcast(stream.Message{Type: "progress", Msg: string(payload)})
 	return nil
 }
 
@@ -786,7 +1014,8 @@ func (q *Queue) CompleteJob(id string) error {
 
 	job.State = StateCompleted
 	job.CompletedAt = time.Now()
-	q.RunningCounts[job.Host]--
+	q.decRunningLocked(job)
+	delete(q.pauseRequests, id)
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -899,9 +1128,10 @@ func (q *Queue) RemoveJob(id string) error {
 	}
 
 	if job.State == StateInProgress {
-		q.RunningCounts[job.Host]--
+		q.decRunningLocked(job)
 	}
 
+	delete(q.pauseRequests, id)
 	delete(q.Jobs, id)
 	for i, jobId := range q.JobOrder {
 		if jobId == id {
@@ -1056,6 +1286,75 @@ func defaultHostResolver(command, input string) string {
 // don't need to change shape.
 func getHost(command, input string) string {
 	return hostResolver(command, input)
+}
+
+// ResourceResolverFunc maps a job to the ADDITIONAL concurrency buckets it
+// occupies besides its Host — one per machine resource the work consumes
+// (GPU-bound model pools, the shared local-compute slot, ...). Arguments are
+// included because composite jobs (e.g. `process --ops=...`) declare their
+// workload there.
+type ResourceResolverFunc func(command string, arguments []string, input string) []string
+
+var resourceResolver ResourceResolverFunc
+
+// SetResourceResolver installs the resource resolver. Call once at startup
+// (alongside SetHostResolver, before any AddJob / loadJobsFromDB). nil
+// disables it — jobs then occupy only their Host bucket, the historical
+// behavior.
+func SetResourceResolver(fn ResourceResolverFunc) {
+	resourceResolver = fn
+}
+
+func getResources(command string, arguments []string, input string) []string {
+	if resourceResolver == nil {
+		return nil
+	}
+	return resourceResolver(command, arguments, input)
+}
+
+// jobBuckets returns the deduplicated set of concurrency buckets a job
+// occupies: its Host plus any resolved Resources.
+func jobBuckets(job *Job) []string {
+	out := make([]string, 0, 1+len(job.Resources))
+	seen := make(map[string]struct{}, 1+len(job.Resources))
+	for _, b := range append([]string{job.Host}, job.Resources...) {
+		if b == "" {
+			continue
+		}
+		if _, dup := seen[b]; dup {
+			continue
+		}
+		seen[b] = struct{}{}
+		out = append(out, b)
+	}
+	return out
+}
+
+// hasCapacityLocked reports whether EVERY bucket the job occupies has a free
+// slot. Must be called with mu held.
+func (q *Queue) hasCapacityLocked(job *Job) bool {
+	for _, b := range jobBuckets(job) {
+		if q.RunningCounts[b] >= q.getHostLimitLocked(b) {
+			return false
+		}
+	}
+	return true
+}
+
+// incRunningLocked / decRunningLocked adjust the running counts for every
+// bucket the job occupies. Must be called with mu held, exactly once per
+// InProgress transition in each direction — all state transitions go through
+// these so multi-bucket jobs can't leak capacity.
+func (q *Queue) incRunningLocked(job *Job) {
+	for _, b := range jobBuckets(job) {
+		q.RunningCounts[b]++
+	}
+}
+
+func (q *Queue) decRunningLocked(job *Job) {
+	for _, b := range jobBuckets(job) {
+		q.RunningCounts[b]--
+	}
 }
 
 func (q *Queue) getHostLimitLocked(host string) int {

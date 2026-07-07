@@ -460,33 +460,25 @@ func ffmpegThumbSheetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) er
 
 	ctx := j.Ctx
 
-	var files []string
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("thumbsheet: using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, "thumbsheet: failed to load paths from query: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
-		files = mediaPaths
-	} else {
-		raw := strings.TrimSpace(j.Input)
-		if raw == "" {
-			q.PushJobStdout(j.ID, "thumbsheet: no input paths or query provided")
-			q.CompleteJob(j.ID)
-			return nil
-		}
-		files = parseInputPaths(raw)
+	res, rerr := resolveJobItemsRaw(j, q)
+	if rerr != nil {
+		q.PushJobStdout(j.ID, "thumbsheet: failed to resolve input: "+rerr.Error())
+		q.ErrorJob(j.ID)
+		return rerr
 	}
+	if res.FromQuery {
+		q.PushJobStdout(j.ID, fmt.Sprintf("thumbsheet: query: %s", res.Query))
+	}
+	files := res.Paths
 
 	if len(files) == 0 {
 		q.PushJobStdout(j.ID, "thumbsheet: no files to process")
 		q.CompleteJob(j.ID)
 		return nil
 	}
+	_ = q.SetJobProgress(j.ID, 0, len(files))
 
-	for _, src := range files {
+	for fileIdx, src := range files {
 		select {
 		case <-ctx.Done():
 			q.PushJobStdout(j.ID, "thumbsheet: task canceled")
@@ -494,6 +486,12 @@ func ffmpegThumbSheetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) er
 			return ctx.Err()
 		default:
 		}
+		if q.PauseRequested(j.ID) {
+			q.PushJobStdout(j.ID, fmt.Sprintf("thumbsheet: paused at %d/%d - resume to continue", fileIdx, len(files)))
+			return jobqueue.ErrPaused
+		}
+		// Body uses `continue` for skips; report progress as files started.
+		_ = q.SetJobProgress(j.ID, fileIdx, len(files))
 
 		abs := src
 		if a, err := filepath.Abs(src); err == nil {
@@ -560,6 +558,7 @@ func ffmpegThumbSheetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) er
 		q.RegisterOutputFile(j.ID, output, abs)
 	}
 
+	_ = q.SetJobProgress(j.ID, len(files), len(files))
 	q.CompleteJob(j.ID)
 	return nil
 }

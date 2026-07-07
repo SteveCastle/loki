@@ -560,5 +560,8 @@ func clusterOneModel(j *jobqueue.Job, q *jobqueue.Queue, model FaceModel) error 
 		"%s: %d joined existing people, %d new people (%d faces), %d left unassigned (%d below quality floor, %d in discarded incoherent clusters)",
 		model.ID, stats.JoinedExisting, stats.NewPeople, stats.NewlyClustered, stats.Unassigned, stats.QualitySkipped, stats.Discarded,
 	))
+	// Live UIs (People grid) refetch on this instead of waiting for the
+	// whole job to complete (multi-model runs cluster one model at a time).
+	broadcastPeopleUpdated([]string{model.ID})
 	return nil
 }

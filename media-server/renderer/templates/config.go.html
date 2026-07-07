@@ -1173,6 +1173,25 @@
 {{.Config.AutotagPrompt}}</textarea
                   >
                 </div>
+                <div class="field">
+                  <label class="label">Max concurrent local compute jobs</label>
+                  <input
+                    id="local-compute-concurrency"
+                    class="input"
+                    type="number"
+                    min="1"
+                    value="{{.Config.LocalComputeConcurrency}}"
+                  />
+                  <small class="hint">
+                    Machine-wide cap across ALL resource-intensive local jobs
+                    — embedding, tagging, face scanning, transcription, and
+                    local LLM inference — regardless of their individual
+                    limits above. 1 (recommended for a single GPU) runs one
+                    heavy job at a time; each job still parallelizes
+                    internally. Remote providers like RunPod don't count
+                    against it.
+                  </small>
+                </div>
               </div>
             </div>
 
@@ -1972,7 +1991,10 @@
 
       function fmtBytes(n) {
         if (!n || n <= 0) return '';
-        const mb = n / 1024 / 1024;
+        const kb = n / 1024;
+        // Small models (face detectors are ~230 KB) must not show "0 MB".
+        if (kb < 1024) return Math.max(1, Math.round(kb)) + ' KB';
+        const mb = kb / 1024;
         if (mb < 1024) return mb.toFixed(0) + ' MB';
         return (mb / 1024).toFixed(2) + ' GB';
       }
@@ -1987,6 +2009,7 @@
           not_installed: ['neutral', 'Not installed'],
           queued: ['info', 'Queued'],
           downloading: ['info', 'Downloading'],
+          extracting: ['info', 'Unpacking'],
           verifying: ['info', 'Verifying'],
           cancelled: ['neutral', 'Cancelled'],
         };
@@ -2061,7 +2084,7 @@
         const done = Number(inst.bytes_done || 0);
         const total = Number(inst.bytes_total || it.size_bytes || 0);
         const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-        const isInFlight = ['downloading', 'queued', 'verifying'].includes(it.state);
+        const isInFlight = ['downloading', 'extracting', 'queued', 'verifying'].includes(it.state);
         let actions = '';
         if (it.state === 'installed') {
           actions = `<button type="button" class="btn btn-secondary dep-verify">Verify</button>
@@ -2088,7 +2111,9 @@
           ${isInFlight && total > 0 ? `
             <div class="dep-progress">
               <div class="dep-progress-bar"><div class="dep-progress-fill" style="width:${pct}%"></div></div>
-              <small>${escDep(fmtBytes(done))} / ${escDep(fmtBytes(total))} (${pct}%) ${inst.current_file ? '· ' + escDep(inst.current_file) : ''}</small>
+              <small>${it.state === 'extracting'
+                ? 'Unpacking (one-time): ' + escDep(fmtBytes(done)) + ' / ' + escDep(fmtBytes(total)) + ' on disk (' + pct + '%)'
+                : escDep(fmtBytes(done)) + ' / ' + escDep(fmtBytes(total)) + ' (' + pct + '%)' + (inst.current_file ? ' · ' + escDep(inst.current_file) : '')}</small>
             </div>` : ''}
           ${it.error ? `<div class="dep-error">${escDep(it.error)}</div>` : ''}
         </div>`;
@@ -2223,6 +2248,11 @@
                 10
               ) || 0,
           },
+          localComputeConcurrency:
+            parseInt(
+              document.getElementById('local-compute-concurrency').value,
+              10
+            ) || 0,
           onnxModelPath: document
             .getElementById('onnx-model-path')
             .value.trim(),

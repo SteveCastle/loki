@@ -87,6 +87,44 @@
         word-break: break-all;
       }
 
+      .command-stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        min-width: 0;
+        flex: 1;
+      }
+
+      .job-progress {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+      }
+
+      .job-progress-track {
+        flex: 1;
+        height: 5px;
+        min-width: 60px;
+        border-radius: var(--radius-full);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        overflow: hidden;
+      }
+
+      .job-progress-fill {
+        height: 100%;
+        background: var(--accent-primary);
+        border-radius: var(--radius-full);
+        transition: width 0.25s ease;
+      }
+
+      .job-progress-label {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        white-space: nowrap;
+      }
+
       .jobs-cell.command a {
         color: inherit;
         text-decoration: none;
@@ -467,6 +505,11 @@
               if (jobElement) jobElement.remove();
               maybeRestoreEmptyState();
             });
+            es.addEventListener('progress', (event) => {
+              onActivity();
+              const p = JSON.parse(event.data);
+              updateJobProgress(p.id, p.done, p.total);
+            });
           } catch (e) {
             console.error('Jobs SSE connect threw', e);
             sseState.isConnecting = false;
@@ -527,6 +570,60 @@
             console.log('Server responded:', result);
           })
           .catch((err) => console.error('Error:', err));
+      }
+
+      function pauseJob(e) {
+        e.preventDefault();
+        const id = e.target.getAttribute('data-id');
+        fetch(`/job/${id}/pause`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+          .then((response) => response.text())
+          .then((result) => {
+            console.log('Server responded:', result);
+          })
+          .catch((err) => console.error('Error:', err));
+      }
+
+      function resumeJob(e) {
+        e.preventDefault();
+        const id = e.target.getAttribute('data-id');
+        fetch(`/job/${id}/resume`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+          .then((response) => response.text())
+          .then((result) => {
+            console.log('Server responded:', result);
+          })
+          .catch((err) => console.error('Error:', err));
+      }
+
+      // Live-update (or lazily create) a row's progress bar from "progress"
+      // SSE events. Rows rendered before a job resolved its item list have no
+      // bar yet — build one on the first event.
+      function updateJobProgress(id, done, total) {
+        if (!id || !total) return;
+        const row = document.getElementById(id);
+        if (!row) return;
+        let wrap = row.querySelector(`[data-progress-for="${id}"]`);
+        if (!wrap) {
+          const stack = row.querySelector('.command-stack');
+          if (!stack) return;
+          wrap = document.createElement('div');
+          wrap.className = 'job-progress';
+          wrap.setAttribute('data-progress-for', id);
+          wrap.innerHTML =
+            '<div class="job-progress-track"><div class="job-progress-fill"></div></div>' +
+            '<span class="job-progress-label"></span>';
+          stack.appendChild(wrap);
+        }
+        const pct = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+        const fill = wrap.querySelector('.job-progress-fill');
+        const label = wrap.querySelector('.job-progress-label');
+        if (fill) fill.style.width = pct + '%';
+        if (label) label.textContent = `${done}/${total}`;
       }
 
       function restart(e) {

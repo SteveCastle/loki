@@ -86,6 +86,36 @@ func getStats(t *testing.T, deps *Dependencies) map[string]any {
 	return out
 }
 
+// TestComputeLibraryStatsEmptyLibrary is the regression for the fresh/empty
+// database boot: SUM over an empty table yields NULL, and before the
+// COALESCE fix the media scan errored ("converting NULL to int") and the
+// snapshot never installed. An empty library must produce a ready snapshot
+// of zeros.
+func TestComputeLibraryStatsEmptyLibrary(t *testing.T) {
+	deps := newStatsTestDeps(t)
+	if _, err := deps.DB.Exec(`DELETE FROM media`); err != nil {
+		t.Fatal(err)
+	}
+	resetLibStats()
+	libStats.mu.Lock()
+	libStats.computing = true
+	libStats.mu.Unlock()
+	computeLibraryStats(deps)
+
+	libStats.mu.Lock()
+	snap := libStats.snapshot
+	libStats.mu.Unlock()
+	if snap == nil {
+		t.Fatal("empty library must still install a stats snapshot (media scan errored?)")
+	}
+	if snap.TotalMedia != 0 || snap.TotalVideos != 0 || snap.WithDescription != 0 {
+		t.Fatalf("expected zeroed snapshot, got %+v", *snap)
+	}
+	if !snap.Ready {
+		t.Fatal("snapshot must be ready")
+	}
+}
+
 // Before the first snapshot exists the handler must answer ready:false rather
 // than blocking on a potentially minutes-long recount.
 func TestStatsAPI_NotReadyBeforeFirstSnapshot(t *testing.T) {

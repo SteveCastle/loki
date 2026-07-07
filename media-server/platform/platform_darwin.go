@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 )
 
 func getDataDir() string {
@@ -62,3 +63,13 @@ func ensureExecutable(path string) error {
 
 // HideSubprocessWindow is a no-op on macOS (no console window concept).
 func HideSubprocessWindow(_ *exec.Cmd) {}
+
+// SetBackgroundPriority is a pre-start no-op on this platform; priority is
+// applied after start via DeprioritizeStarted (setpriority needs a PID).
+func SetBackgroundPriority(_ *exec.Cmd) {}
+
+// DeprioritizeStarted renices an already-started child to a background
+// priority so it yields CPU to the user's foreground work. Best-effort.
+func DeprioritizeStarted(pid int) {
+	_ = syscall.Setpriority(syscall.PRIO_PROCESS, pid, 15)
+}

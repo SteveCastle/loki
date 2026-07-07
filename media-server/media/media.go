@@ -2205,6 +2205,16 @@ func InitializeSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to create person table: %w", err)
 	}
+	// Seed the People taxonomy category so the People tab is present on every
+	// DB from first boot, not only after the first person is named. Naming a
+	// person creates this row lazily (ensurePersonTag), but a DB that has never
+	// clustered faces would otherwise have no People category at all. Idempotent
+	// (INSERT OR IGNORE) — this runs on every startup and every DB swap.
+	if _, err := db.Exec(
+		`INSERT OR IGNORE INTO category (label, weight) VALUES (?, 0)`, PeopleCategory,
+	); err != nil {
+		return fmt.Errorf("failed to seed People category: %w", err)
+	}
 	// face_scan marks media already scanned under a model so no-face media
 	// isn't rescanned on every run (absence of face rows can't distinguish
 	// "no faces" from "never scanned").

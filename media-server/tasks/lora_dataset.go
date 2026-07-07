@@ -61,46 +61,23 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	q.PushJobStdout(j.ID, fmt.Sprintf("Created output directory: %s", outputDir))
 
 	// Get files to process from input or query
-	var filesToProcess []string
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Error loading media paths for query: %v", err))
-			q.ErrorJob(j.ID)
-			return err
-		}
-		filesToProcess = mediaPaths
-		q.PushJobStdout(j.ID, fmt.Sprintf("Query matched %d items", len(filesToProcess)))
-	} else if strings.TrimSpace(j.Input) != "" {
-		raw := strings.TrimSpace(j.Input)
-		inputPaths := parseInputPaths(raw)
-		q.PushJobStdout(j.ID, fmt.Sprintf("Processing %d files from input list", len(inputPaths)))
-		for _, p := range inputPaths {
-			absPath, err := filepath.Abs(p)
-			if err == nil {
-				p = filepath.FromSlash(absPath)
-			}
-			if _, err := os.Stat(p); os.IsNotExist(err) {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Warning: file does not exist: %s", p))
-				continue
-			}
-			if !isImageFile(p) {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Warning: not a supported image file: %s", p))
-				continue
-			}
-			filesToProcess = append(filesToProcess, p)
-		}
+	res, rerr := resolveJobItems(j, q)
+	if rerr != nil {
+		q.PushJobStdout(j.ID, "Failed to resolve input: "+rerr.Error())
+		q.ErrorJob(j.ID)
+		return rerr
+	}
+	if res.FromQuery {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Query: %s", res.Query))
 	}
 
 	// Filter to only image files
-	var imageFiles []string
-	for _, p := range filesToProcess {
+	var filesToProcess []string
+	for _, p := range res.Paths {
 		if isImageFile(p) {
-			imageFiles = append(imageFiles, p)
+			filesToProcess = append(filesToProcess, p)
 		}
 	}
-	filesToProcess = imageFiles
 
 	if len(filesToProcess) == 0 {
 		q.PushJobStdout(j.ID, "No valid image files found to process")
@@ -109,6 +86,7 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Processing %d image files for LoRA dataset", len(filesToProcess)))
+	_ = q.SetJobProgress(j.ID, 0, len(filesToProcess))
 
 	processedCount := 0
 	for i, srcPath := range filesToProcess {
@@ -119,6 +97,11 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			return ctx.Err()
 		default:
 		}
+		if q.PauseRequested(j.ID) {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Paused at %d/%d - resume to continue", i, len(filesToProcess)))
+			return jobqueue.ErrPaused
+		}
+		_ = q.SetJobProgress(j.ID, i, len(filesToProcess))
 
 		// Generate lowercase UUID for the filename
 		newUUID := strings.ToLower(uuid.New().String())
@@ -163,6 +146,7 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		q.RegisterOutputFile(j.ID, jpgPath)
 	}
 
+	_ = q.SetJobProgress(j.ID, len(filesToProcess), len(filesToProcess))
 	q.PushJobStdout(j.ID, fmt.Sprintf("LoRA dataset creation completed: %d files processed, saved to %s", processedCount, outputDir))
 	q.CompleteJob(j.ID)
 	return nil

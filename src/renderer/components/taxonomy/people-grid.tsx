@@ -489,6 +489,14 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     // Shared /stream bus — never opens a second EventSource (Chromium caps
     // connections per origin at 6; see stream-bus.ts).
     return subscribeStream((type, event) => {
+      // Live incremental updates: face scans run a clustering pass every N
+      // new faces and broadcast "people-updated" after each one, so People
+      // appear and grow WHILE a scan runs — not just at job completion.
+      if (type === 'people-updated') {
+        queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+        queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+        return;
+      }
       if (type !== 'update' && type !== 'delete') return;
       try {
         const parsed = JSON.parse(event.data);

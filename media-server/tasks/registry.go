@@ -45,16 +45,29 @@ func init() {
 		}
 	})
 
+	// Per-item operations: each is a standalone task AND composable with the
+	// others into a single per-file pass via the "process" task. All of them
+	// share one contract — query/path-list inputs, --overwrite semantics,
+	// done/total progress, pause/resume with per-item durability.
+	registerBuiltinItemOps()
+
 	// Register built-in tasks
 	RegisterTask("wait", "Wait", nil, waitFn)
 	RegisterTask("remove", "Remove Media", nil, removeFromDB)
 	RegisterTask("cleanup", "CleanUp", nil, cleanUpFn)
-	RegisterTask("autotag", "Auto Tag (ONNX)", nil, autotagTask)
-	RegisterTask("embed", "Visual Embedding (ONNX)", nil, embedTask)
-	RegisterTask("faces", "Detect Faces (ONNX)", nil, facesTask)
+	RegisterTask("autotag", "Auto Tag (ONNX)", itemOpTaskOptions("autotag"), makeItemOpTaskFn("autotag"))
+	RegisterTask("embed", "Visual Embedding (ONNX)", itemOpTaskOptions("embed"), makeItemOpTaskFn("embed"))
+	RegisterTask("describe", "Generate Descriptions", itemOpTaskOptions("describe"), makeItemOpTaskFn("describe"))
+	RegisterTask("transcribe", "Generate Transcripts", itemOpTaskOptions("transcribe"), makeItemOpTaskFn("transcribe"))
+	RegisterTask("hash", "Generate Hashes", itemOpTaskOptions("hash"), makeItemOpTaskFn("hash"))
+	RegisterTask("dimensions", "Generate Dimensions", itemOpTaskOptions("dimensions"), makeItemOpTaskFn("dimensions"))
+	RegisterTask("llm-autotag", "Auto Tag (LLM Vision)", itemOpTaskOptions("llm-autotag"), makeItemOpTaskFn("llm-autotag"))
+	RegisterTask("process", "Process Media (Combined Ops)", processTaskOptions(), processTask)
+	RegisterTask("faces", "Detect Faces (ONNX)", itemOpTaskOptions("faces"), makeItemOpTaskFn("faces"))
 	RegisterTask("faces-cluster", "Cluster Faces into People", nil, facesClusterTask)
 
-	RegisterTask("metadata", "Generate Metadata", metadataOptions, metadataTask)
+	// Legacy alias: maps --type onto the split-out ops above.
+	RegisterTask("metadata", "Generate Metadata (Legacy)", metadataOptions, metadataTask)
 	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
 	RegisterTask("move", "Move Media Files", moveOptions, moveTask)
 	RegisterTask("ingest", "Ingest Media Files", ingestOptions, ingestTask)
@@ -69,6 +82,15 @@ func init() {
 	// embed, it parallelizes internally and must not share the LLM cap.
 	RegisterHostResolver("autotag", func(string) string { return HostBucketAutotag })
 	RegisterHostResolver("metadata", visionHost)
+	// The split-out LLM-vision ops share the inference cap, exactly as their
+	// former metadata-task selves did. Transcription also historically ran
+	// under the metadata task's inference bucket, so it keeps that behavior.
+	RegisterHostResolver("describe", visionHost)
+	RegisterHostResolver("llm-autotag", visionHost)
+	RegisterHostResolver("transcribe", visionHost)
+	// A combined job may include LLM ops, so it conservatively takes the
+	// inference bucket (a hash-only combined run parking there is harmless).
+	RegisterHostResolver("process", visionHost)
 	// Embedding is a local ONNX task with its own concurrency bucket — it must
 	// not share the LLM inference cap (it parallelizes internally instead).
 	RegisterHostResolver("embed", func(string) string { return HostBucketEmbed })

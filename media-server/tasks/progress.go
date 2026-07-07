@@ -13,6 +13,7 @@ const (
 	ProgressDimensions  = "dimensions"
 	ProgressTags        = "tags"
 	ProgressEmbedding   = "embedding"
+	ProgressFaces       = "faces"
 )
 
 // progressNotifier holds a func(kind string, n int). atomic.Value keeps the

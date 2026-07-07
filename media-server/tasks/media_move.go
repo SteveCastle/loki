@@ -39,35 +39,16 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		return fmt.Errorf("no target directory specified")
 	}
 
-	var cleanedPaths []string
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Error loading media paths for query: %v", err))
-			q.ErrorJob(j.ID)
-			return err
-		}
-		cleanedPaths = mediaPaths
-	} else {
-		pathsStr := strings.TrimSpace(j.Input)
-		if pathsStr == "" {
-			q.PushJobStdout(j.ID, "No paths provided for moving")
-			q.CompleteJob(j.ID)
-			return nil
-		}
-		rawPaths := strings.Split(pathsStr, "\n")
-		for _, rawPath := range rawPaths {
-			cleanPath := strings.TrimSpace(rawPath)
-			if cleanPath == "" {
-				continue
-			}
-			cleanPath = strings.Trim(cleanPath, `"'`)
-			if cleanPath != "" {
-				cleanedPaths = append(cleanedPaths, cleanPath)
-			}
-		}
+	res, rerr := resolveJobItemsRaw(j, q)
+	if rerr != nil {
+		q.PushJobStdout(j.ID, "Failed to resolve input: "+rerr.Error())
+		q.ErrorJob(j.ID)
+		return rerr
 	}
+	if res.FromQuery {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Query: %s", res.Query))
+	}
+	cleanedPaths := res.Paths
 	if len(cleanedPaths) == 0 {
 		q.PushJobStdout(j.ID, "No valid paths found after parsing input")
 		q.CompleteJob(j.ID)
@@ -120,6 +101,7 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 	}
 
+	_ = q.SetJobProgress(j.ID, 0, len(validPaths))
 	moveCount := 0
 	updateCount := 0
 	for i, srcPath := range validPaths {
@@ -130,6 +112,11 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			return ctx.Err()
 		default:
 		}
+		if q.PauseRequested(j.ID) {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Paused at %d/%d - resume to continue", i, len(validPaths)))
+			return jobqueue.ErrPaused
+		}
+		_ = q.SetJobProgress(j.ID, i, len(validPaths))
 
 		var relativePath string
 		if prefixToUse != "" && strings.HasPrefix(srcPath, prefixToUse) {
@@ -170,6 +157,7 @@ func moveTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 	}
 
+	_ = q.SetJobProgress(j.ID, len(validPaths), len(validPaths))
 	q.PushJobStdout(j.ID, fmt.Sprintf("Move operation completed: %d files moved, %d database entries updated", moveCount, updateCount))
 	select {
 	case <-ctx.Done():

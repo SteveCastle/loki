@@ -19,6 +19,25 @@ func HideSubprocessWindow(cmd *exec.Cmd) {
 	cmd.SysProcAttr.HideWindow = true
 }
 
+// belowNormalPriorityClass makes the child yield CPU to normal-priority work
+// (games, the user's foreground apps) via the OS scheduler itself.
+const belowNormalPriorityClass = 0x00004000
+
+// SetBackgroundPriority marks a not-yet-started subprocess to run at
+// below-normal CPU priority. Used for scheduler-initiated background jobs so
+// their worker processes give the machine back the instant anything else
+// wants it. Call before cmd.Start().
+func SetBackgroundPriority(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.CreationFlags |= belowNormalPriorityClass
+}
+
+// DeprioritizeStarted lowers the priority of an already-running process.
+// No-op on Windows (priority is set at creation via SetBackgroundPriority).
+func DeprioritizeStarted(pid int) {}
+
 func getDataDir() string {
 	appDataDir := os.Getenv("APPDATA")
 	if appDataDir == "" {

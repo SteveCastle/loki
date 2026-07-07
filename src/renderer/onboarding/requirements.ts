@@ -36,7 +36,10 @@ export const TASK_REQUIREMENTS: Record<string, TaskRequirement> = {
 
 export function fmtSize(n?: number): string {
   if (!n) return '';
-  const mb = n / 1024 / 1024;
+  const kb = n / 1024;
+  // Small models (face detectors are ~230 KB) must not round down to "0 MB".
+  if (kb < 1024) return `${Math.max(1, Math.round(kb))} KB`;
+  const mb = kb / 1024;
   if (mb < 1024) return `${mb.toFixed(0)} MB`;
   return `${(mb / 1024).toFixed(2)} GB`;
 }

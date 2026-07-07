@@ -46,6 +46,22 @@ func jsonFunc(v interface{}) (template.JS, error) {
 	return template.JS(a), nil
 }
 
+// progressPct converts done/total into a 0-100 integer percentage for
+// rendering job progress bars.
+func progressPct(done, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	pct := done * 100 / total
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	return pct
+}
+
 // initTemplates initializes the templates. Called only once.
 func initTemplates() *template.Template {
 	tmpl, err := template.New("").
@@ -54,6 +70,7 @@ func initTemplates() *template.Template {
 			"htmlAttr":     htmlAttr,
 			"json":         jsonFunc,
 			"jobInputView": jobInputView,
+			"progressPct":  progressPct,
 		}).
 		ParseFS(templatesFS, templateGlob)
 	if err != nil {

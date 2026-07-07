@@ -35,7 +35,10 @@ export default function GenerateTags({ path }: Props) {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          input: `autotag "${path}"`,
+          // --overwrite: an explicit per-file request re-tags even if the
+          // file already carries Suggested tags (the task's default is to
+          // skip already-tagged items on bulk runs).
+          input: `autotag --overwrite "${path}"`,
         }),
         signal: AbortSignal.timeout(10000),
       });

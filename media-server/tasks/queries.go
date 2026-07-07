@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"encoding/base64"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -216,4 +217,61 @@ func getMediaPathsByQueryFast(db *sql.DB, query string) ([]string, error) {
 		return nil, err
 	}
 	return filterMediaPaths(paths), nil
+}
+
+// resolvedItems is the outcome of resolveJobItems: the concrete file list a
+// per-item task will run over, plus where it came from.
+type resolvedItems struct {
+	Paths     []string
+	FromQuery bool
+	Query     string // the decoded query when FromQuery
+}
+
+// resolveJobItems is the single input-resolution path for per-item tasks.
+// Precedence matches the historical behavior of every task: a search query
+// (--query / --query64, in arguments or input) wins; otherwise the input is
+// parsed as a newline/comma-separated path list (flag tokens dropped, paths
+// absolutized, non-media files filtered out).
+func resolveJobItems(j *jobqueue.Job, q *jobqueue.Queue) (resolvedItems, error) {
+	return resolveJobItemsFiltered(j, q, true)
+}
+
+// resolveJobItemsRaw is resolveJobItems without the non-media filter on
+// explicit path lists — for transform tasks (ffmpeg, hls) whose workflow
+// inputs legitimately include non-library files (.m3u8 playlists, temp
+// frames, subtitle files).
+func resolveJobItemsRaw(j *jobqueue.Job, q *jobqueue.Queue) (resolvedItems, error) {
+	return resolveJobItemsFiltered(j, q, false)
+}
+
+func resolveJobItemsFiltered(j *jobqueue.Job, q *jobqueue.Queue, mediaOnly bool) (resolvedItems, error) {
+	if qstr, ok := extractQueryFromJob(j); ok {
+		paths, err := getMediaPathsByQueryFast(q.Db, qstr)
+		if err != nil {
+			return resolvedItems{}, fmt.Errorf("load media paths for query: %w", err)
+		}
+		return resolvedItems{Paths: paths, FromQuery: true, Query: qstr}, nil
+	}
+
+	raw := strings.TrimSpace(j.Input)
+	if raw == "" {
+		return resolvedItems{}, nil
+	}
+	var out []string
+	for _, p := range parseInputPaths(raw) {
+		// Option flags share the input string with paths on some job shapes
+		// (e.g. "--overwrite" landing in input via workflow chaining); they
+		// are never paths.
+		if strings.HasPrefix(p, "--") {
+			continue
+		}
+		if abs, err := filepath.Abs(p); err == nil {
+			p = filepath.FromSlash(abs)
+		}
+		out = append(out, p)
+	}
+	if mediaOnly {
+		out = filterMediaPaths(out)
+	}
+	return resolvedItems{Paths: out}, nil
 }

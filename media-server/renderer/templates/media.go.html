@@ -528,6 +528,26 @@
         width: 100%;
       }
 
+      .toast-progress-bar.determinate {
+        transition: width 0.25s ease;
+      }
+
+      .toast-progress-bar.paused {
+        background: var(--status-warning);
+      }
+
+      .toast-progress-count {
+        color: var(--text-muted);
+        font-size: var(--text-xs);
+        font-variant-numeric: tabular-nums;
+        margin-top: calc(var(--space-2) * -0.5);
+        margin-bottom: var(--space-2);
+      }
+
+      .toast-status-icon.paused {
+        color: var(--status-warning);
+      }
+
       @keyframes indeterminate {
         0% {
           transform: translateX(-100%);
@@ -541,9 +561,26 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
+        gap: var(--space-2);
         padding: var(--space-3) var(--space-4);
         background: var(--bg-surface);
         border-top: 1px solid var(--border-subtle);
+      }
+
+      .toast-pause-btn {
+        background: transparent;
+        border: 1px solid var(--border-default);
+        color: var(--text-secondary);
+        border-radius: var(--radius-md);
+        font-size: var(--text-xs);
+        padding: 2px 8px;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }
+
+      .toast-pause-btn:hover {
+        border-color: var(--accent-primary);
+        color: var(--text-primary);
       }
 
       .toast-link {
@@ -1026,6 +1063,148 @@
         box-shadow: none;
       }
 
+      /* Generate panel: composable per-item operations */
+      .gen-panel {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        padding: var(--space-3) 0;
+      }
+
+      .gen-title {
+        color: var(--text-primary);
+        font-weight: 600;
+        font-size: var(--text-sm);
+      }
+
+      .gen-hint {
+        color: var(--text-muted);
+        font-weight: 400;
+        font-size: var(--text-xs);
+        margin-left: var(--space-2);
+      }
+
+      .gen-chips {
+        display: flex;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+      }
+
+      .gen-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: var(--space-1) var(--space-3);
+        border: 1px solid var(--border-default);
+        border-radius: var(--radius-full);
+        background: var(--bg-surface);
+        color: var(--text-secondary);
+        font-size: var(--text-sm);
+        cursor: pointer;
+        user-select: none;
+        transition: all var(--transition-fast);
+      }
+
+      .gen-chip:hover {
+        border-color: var(--accent-primary);
+      }
+
+      .gen-chip:has(input:checked) {
+        border-color: var(--accent-primary);
+        background: var(--accent-primary-dim);
+        color: var(--text-primary);
+      }
+
+      .gen-chip input {
+        accent-color: var(--accent-primary);
+        margin: 0;
+      }
+
+      .gen-mode {
+        display: flex;
+        gap: var(--space-4);
+        flex-wrap: wrap;
+        color: var(--text-secondary);
+        font-size: var(--text-sm);
+      }
+
+      .gen-mode label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+      }
+
+      .gen-mode input {
+        accent-color: var(--accent-primary);
+        margin: 0;
+      }
+
+      .gen-mode-hint {
+        color: var(--text-muted);
+        font-size: var(--text-xs);
+      }
+
+      .gen-model-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .gen-run-row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+      }
+
+      .gen-run-row button {
+        padding: var(--space-2) var(--space-4);
+        background: var(--accent-primary);
+        color: #000;
+        border: none;
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        font-weight: 600;
+        font-size: var(--text-sm);
+        transition: all var(--transition-fast);
+      }
+
+      .gen-run-row button:hover {
+        background: #00e6b8;
+        box-shadow: var(--shadow-glow);
+      }
+
+      .gen-run-row button:disabled {
+        background: var(--bg-active);
+        color: var(--text-muted);
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+
+      .gen-note {
+        color: var(--text-muted);
+        font-size: var(--text-xs);
+      }
+
+      .bulk-actions-subdivider {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        color: var(--text-muted);
+        font-size: var(--text-xs);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin: var(--space-2) 0;
+      }
+
+      .bulk-actions-subdivider::before,
+      .bulk-actions-subdivider::after {
+        content: '';
+        flex: 1;
+        border-top: 1px solid var(--border-subtle);
+      }
+
       .bulk-clear-btn {
         background-color: transparent !important;
         color: var(--text-secondary) !important;
@@ -1241,24 +1420,15 @@
           transform: scale(1.25);
         }
 
-        /* Metadata options responsive */
-        #metadata-options div[style*='display: flex'] {
-          flex-direction: column !important;
-          align-items: stretch !important;
+        /* Generate panel responsive */
+        .gen-model-row {
+          flex-direction: column;
+          align-items: stretch;
         }
 
-        #metadata-options div[style*='display: flex'] label {
+        .gen-model-row input[type='text'] {
+          width: 100%;
           min-width: auto !important;
-        }
-
-        #metadata-options select,
-        #metadata-options input[type='text'] {
-          width: 100% !important;
-          min-width: auto !important;
-        }
-
-        #metadata-options div[style*='gap: 15px'] {
-          gap: var(--space-3) !important;
         }
       }
 
@@ -1552,160 +1722,105 @@
         <!-- Bulk Actions Panel -->
         <div id="bulk-actions" class="bulk-actions">
           <div class="bulk-actions-divider"></div>
+          <!-- Generate: composable per-item operations. Pick any set - they
+               are applied to each file together in ONE pass (a single job with
+               live progress that can be paused/resumed; finished items are
+               always kept). -->
+          <div class="gen-panel" id="generate-panel">
+            <div class="gen-title">
+              Generate
+              <span class="gen-hint">
+                selected operations run together, once per file - pause or
+                cancel any time, finished items are kept
+              </span>
+            </div>
+            <div class="gen-chips" id="gen-chips">
+              <label class="gen-chip"
+                ><input type="checkbox" data-op="hash" checked />Hash</label
+              >
+              <label class="gen-chip"
+                ><input
+                  type="checkbox"
+                  data-op="dimensions"
+                  checked
+                />Dimensions</label
+              >
+              <label class="gen-chip"
+                ><input type="checkbox" data-op="describe" />Descriptions</label
+              >
+              <label class="gen-chip"
+                ><input type="checkbox" data-op="transcribe" />Transcripts</label
+              >
+              <label class="gen-chip"
+                ><input type="checkbox" data-op="autotag" />Tags (ONNX)</label
+              >
+              <label class="gen-chip"
+                ><input type="checkbox" data-op="llm-autotag" />Tags (LLM)</label
+              >
+              <label class="gen-chip"
+                ><input type="checkbox" data-op="embed" />Embeddings</label
+              >
+              <label class="gen-chip"
+                ><input type="checkbox" data-op="faces" />Faces</label
+              >
+            </div>
+            <div class="gen-mode" id="gen-mode">
+              <label
+                ><input type="radio" name="gen-mode" value="missing" checked />
+                Missing only
+                <span class="gen-mode-hint">skip items that already have it</span></label
+              >
+              <label
+                ><input type="radio" name="gen-mode" value="overwrite" />
+                Overwrite
+                <span class="gen-mode-hint">reprocess everything</span></label
+              >
+            </div>
+            <div
+              class="gen-model-row"
+              id="gen-model-row"
+              style="display: none"
+            >
+              <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                >AI Model:</label
+              >
+              <input
+                type="text"
+                id="ollama-model"
+                value="{{.DefaultOllamaModel}}"
+                placeholder="e.g., llama3.2-vision"
+                style="
+                  padding: 6px 10px;
+                  background-color: #1e1e1e;
+                  border: 1px solid #555;
+                  color: #d4d4d4;
+                  border-radius: 4px;
+                  font-family: monospace;
+                  flex: 1;
+                  min-width: 200px;
+                "
+              />
+            </div>
+            <div class="gen-run-row">
+              <button type="button" id="generate-button">
+                Run 2 operations
+              </button>
+              <span class="gen-note" id="gen-note"></span>
+            </div>
+          </div>
+
+          <div class="bulk-actions-subdivider">
+            <span>or run a file action</span>
+          </div>
+
           <form class="bulk-actions-form" id="bulk-actions-form">
             <select id="task-select" required>
-              <option value="">Select task...</option>
+              <option value="">Select action...</option>
               <option value="remove">Remove from Database</option>
               <option value="move">Move Files</option>
-              <option value="metadata">Generate Metadata</option>
-              <option value="autotag">Auto Tag (ONNX)</option>
-              <option value="embed">Generate Embeddings (Visual Search)</option>
               <option value="lora-dataset">Create LoRA Dataset</option>
               <option value="hls">Pre-generate HLS Streams</option>
             </select>
-            <div
-              id="metadata-options"
-              style="
-                display: none;
-                flex-direction: column;
-                gap: 10px;
-                margin-top: 10px;
-              "
-            >
-              <div style="color: #aaa; font-size: 0.9em; font-weight: bold">
-                Metadata Types:
-              </div>
-              <div
-                style="
-                  display: flex;
-                  gap: 15px;
-                  flex-wrap: wrap;
-                  margin-left: 10px;
-                "
-              >
-                <label style="color: #aaa; font-size: 0.9em">
-                  <input
-                    type="checkbox"
-                    id="metadata-description"
-                    style="margin-right: 5px"
-                    checked
-                  />
-                  Description
-                </label>
-                <label style="color: #aaa; font-size: 0.9em">
-                  <input
-                    type="checkbox"
-                    id="metadata-transcript"
-                    style="margin-right: 5px"
-                  />
-                  Transcript
-                </label>
-                <label style="color: #aaa; font-size: 0.9em">
-                  <input
-                    type="checkbox"
-                    id="metadata-hash"
-                    style="margin-right: 5px"
-                    checked
-                  />
-                  Hash
-                </label>
-                <label style="color: #aaa; font-size: 0.9em">
-                  <input
-                    type="checkbox"
-                    id="metadata-dimensions"
-                    style="margin-right: 5px"
-                    checked
-                  />
-                  Dimensions
-                </label>
-                <label style="color: #aaa; font-size: 0.9em">
-                  <input
-                    type="checkbox"
-                    id="metadata-autotag"
-                    style="margin-right: 5px"
-                  />
-                  Auto Tag
-                </label>
-              </div>
-              <div
-                style="
-                  display: flex;
-                  gap: 10px;
-                  align-items: center;
-                  flex-wrap: wrap;
-                "
-              >
-                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
-                  >Apply Scope:</label
-                >
-                <select
-                  id="apply-scope-select"
-                  style="
-                    padding: 6px 10px;
-                    background-color: #1e1e1e;
-                    border: 1px solid #555;
-                    color: #d4d4d4;
-                    border-radius: 4px;
-                    font-family: monospace;
-                    min-width: 120px;
-                  "
-                >
-                  <option value="all">All selected files</option>
-                  <option value="new">New files only</option>
-                </select>
-              </div>
-              <div
-                style="
-                  display: flex;
-                  gap: 10px;
-                  align-items: center;
-                  flex-wrap: wrap;
-                "
-              >
-                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
-                  >AI Model:</label
-                >
-                <input
-                  type="text"
-                  id="ollama-model"
-                  value="{{.DefaultOllamaModel}}"
-                  placeholder="e.g., llama3.2-vision"
-                  style="
-                    padding: 6px 10px;
-                    background-color: #1e1e1e;
-                    border: 1px solid #555;
-                    color: #d4d4d4;
-                    border-radius: 4px;
-                    font-family: monospace;
-                    flex: 1;
-                    min-width: 200px;
-                  "
-                />
-              </div>
-              <div
-                style="
-                  display: flex;
-                  gap: 10px;
-                  align-items: center;
-                  flex-wrap: wrap;
-                "
-              >
-                <label style="color: #aaa; font-size: 0.9em">
-                  <input
-                    type="checkbox"
-                    id="overwrite-checkbox"
-                    style="margin-right: 5px"
-                  />
-                  Overwrite existing metadata
-                </label>
-              </div>
-              <div style="font-size: 0.8em; color: #888; line-height: 1.3">
-                <strong>Note:</strong> Description generation requires Ollama
-                with a vision model. Transcript generation requires
-                faster-whisper-xxl for video files. Hash and dimensions work for
-                all media types.
-              </div>
-            </div>
             <div
               id="move-options"
               style="
@@ -2176,6 +2291,11 @@
         } else {
           bulkActions.classList.remove('show');
         }
+
+        // Keep the Generate panel's button/notes in sync with the target
+        if (typeof updateGeneratePanel === 'function') {
+          updateGeneratePanel();
+        }
       }
 
       function updateApplyToQueryState(allSelected) {
@@ -2258,11 +2378,10 @@
         updateSelection();
       }
 
-      // Show/hide options based on task selection
+      // Show/hide options based on file-action selection
       document
         .getElementById('task-select')
         .addEventListener('change', function () {
-          const metadataOptions = document.getElementById('metadata-options');
           const moveOptions = document.getElementById('move-options');
           const loraDatasetOptions = document.getElementById(
             'lora-dataset-options'
@@ -2270,21 +2389,156 @@
           const hlsOptions = document.getElementById('hls-options');
 
           // Hide all options first
-          metadataOptions.style.display = 'none';
           moveOptions.style.display = 'none';
           loraDatasetOptions.style.display = 'none';
           hlsOptions.style.display = 'none';
 
           // Show relevant options
-          if (this.value === 'metadata') {
-            metadataOptions.style.display = 'flex';
-          } else if (this.value === 'move') {
+          if (this.value === 'move') {
             moveOptions.style.display = 'flex';
           } else if (this.value === 'lora-dataset') {
             loraDatasetOptions.style.display = 'flex';
           } else if (this.value === 'hls') {
             hlsOptions.style.display = 'flex';
           }
+        });
+
+      // ------------------------------------------------------------------
+      // Generate panel: pick any set of per-item operations; they run as
+      // ONE combined job (a single pass per file) against the selection or
+      // the whole query.
+      // ------------------------------------------------------------------
+      const GEN_NEEDS_MODEL = ['describe', 'llm-autotag'];
+
+      function genSelectedOps() {
+        return Array.from(
+          document.querySelectorAll('#gen-chips input:checked')
+        ).map((cb) => cb.getAttribute('data-op'));
+      }
+
+      function genOverwrite() {
+        const sel = document.querySelector(
+          'input[name="gen-mode"]:checked'
+        );
+        return sel && sel.value === 'overwrite';
+      }
+
+      // buildTargetTail returns the trailing part of the /create input string
+      // for the current selection: a --query64 token (must stay LAST) or a
+      // quoted newline-joined path list.
+      function buildTargetTail() {
+        const applyToQuery = isApplyToQueryEnabled();
+        if (applyToQuery && currentSearchQuery) {
+          try {
+            const enc = btoa(unescape(encodeURIComponent(currentSearchQuery)));
+            return '--query64=' + enc;
+          } catch (e) {
+            return '--query ' + currentSearchQuery;
+          }
+        }
+        const joined = Array.from(selectedItems).join('\n');
+        return '"' + joined.replace(/"/g, '\\"') + '"';
+      }
+
+      function genHasTarget() {
+        return (
+          selectedItems.size > 0 ||
+          (isApplyToQueryEnabled() && !!currentSearchQuery)
+        );
+      }
+
+      function updateGeneratePanel() {
+        const ops = genSelectedOps();
+        const btn = document.getElementById('generate-button');
+        const note = document.getElementById('gen-note');
+        const modelRow = document.getElementById('gen-model-row');
+
+        modelRow.style.display = ops.some((op) =>
+          GEN_NEEDS_MODEL.includes(op)
+        )
+          ? 'flex'
+          : 'none';
+
+        const n = ops.length;
+        btn.disabled = n === 0 || !genHasTarget();
+        btn.textContent =
+          n === 1 ? 'Run 1 operation' : 'Run ' + n + ' operations';
+        if (n === 0) {
+          note.textContent = 'Pick at least one operation';
+        } else if (!genHasTarget()) {
+          note.textContent =
+            "Select items or enable 'Include all matching query'";
+        } else if (n > 1) {
+          note.textContent = 'Applied together, one pass per file';
+        } else {
+          note.textContent = '';
+        }
+      }
+
+      document
+        .getElementById('gen-chips')
+        .addEventListener('change', updateGeneratePanel);
+      document
+        .getElementById('gen-mode')
+        .addEventListener('change', updateGeneratePanel);
+      updateGeneratePanel();
+
+      document
+        .getElementById('generate-button')
+        .addEventListener('click', function () {
+          const ops = genSelectedOps();
+          if (ops.length === 0 || !genHasTarget()) return;
+
+          const overwrite = genOverwrite();
+          const model = document.getElementById('ollama-model').value.trim();
+          const tail = buildTargetTail();
+
+          // Every op — faces included — joins ONE job: a single pass that
+          // applies each selected operation per file.
+          let command, cmd;
+          if (ops.length === 1) {
+            command = ops[0];
+            cmd = command;
+            if (model && GEN_NEEDS_MODEL.includes(command)) {
+              cmd += ' --model ' + model;
+            }
+          } else {
+            command = 'process';
+            cmd = 'process --ops=' + ops.join(',');
+            if (model) {
+              if (ops.includes('describe')) {
+                cmd += ' --describe-model ' + model;
+              }
+              if (ops.includes('llm-autotag')) {
+                cmd += ' --llm-autotag-model ' + model;
+              }
+            }
+          }
+          if (overwrite) cmd += ' --overwrite';
+
+          const btn = this;
+          btn.disabled = true;
+          fetch('/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input: cmd + ' ' + tail }),
+          })
+            .then((r) => {
+              if (!r.ok) throw new Error('Failed to create job');
+              return r.json();
+            })
+            .then((res) => {
+              ToastManager.add(res.id, command);
+              clearSelection();
+            })
+            .catch((err) => {
+              console.error('Error creating job:', err);
+              alert('Error creating job. Please try again.');
+            })
+            .finally(() => {
+              btn.disabled = false;
+              updateGeneratePanel();
+            });
         });
 
       // Handle bulk actions form submission
@@ -2295,8 +2549,6 @@
 
           const taskSelect = document.getElementById('task-select');
           const selectedTask = taskSelect.value;
-          const overwriteCheckbox =
-            document.getElementById('overwrite-checkbox');
           const executeButton = document.getElementById('execute-button');
           const applyToQuery = isApplyToQueryEnabled();
 
@@ -2305,15 +2557,7 @@
             return;
           }
 
-          const applyAllowedTasks = [
-            'metadata',
-            'autotag',
-            'embed',
-            'move',
-            'remove',
-            'lora-dataset',
-            'hls',
-          ];
+          const applyAllowedTasks = ['move', 'remove', 'lora-dataset', 'hls'];
           if (
             selectedItems.size === 0 &&
             !(
@@ -2390,106 +2634,6 @@
             } else {
               // Create newline-separated list of files
               input = Array.from(selectedItems).join('\n');
-            }
-          } else if (selectedTask === 'metadata') {
-            command = 'metadata';
-            args = [];
-
-            // Get selected metadata types
-            const metadataTypes = [];
-            if (document.getElementById('metadata-description').checked) {
-              metadataTypes.push('description');
-            }
-            if (document.getElementById('metadata-transcript').checked) {
-              metadataTypes.push('transcript');
-            }
-            if (document.getElementById('metadata-hash').checked) {
-              metadataTypes.push('hash');
-            }
-            if (document.getElementById('metadata-dimensions').checked) {
-              metadataTypes.push('dimensions');
-            }
-            if (document.getElementById('metadata-autotag').checked) {
-              metadataTypes.push('autotag');
-            }
-
-            // Validate that at least one metadata type is selected
-            if (metadataTypes.length === 0) {
-              alert('Please select at least one metadata type to generate');
-              return;
-            }
-
-            // Add metadata types as comma-separated list
-            args.push('--type', metadataTypes.join(','));
-
-            // Add apply scope
-            const applyScope =
-              document.getElementById('apply-scope-select').value;
-            args.push('--apply', applyScope);
-
-            // Add AI model
-            const ollamaModel = document
-              .getElementById('ollama-model')
-              .value.trim();
-            if (ollamaModel) {
-              args.push('--model', ollamaModel);
-            }
-
-            // Add overwrite flag if checked
-            if (overwriteCheckbox.checked) {
-              args.push('--overwrite');
-            }
-
-            // If applying to current search, pass the query and no explicit paths
-            if (applyToQuery && currentSearchQuery) {
-              try {
-                const encQuery = btoa(
-                  unescape(encodeURIComponent(currentSearchQuery))
-                );
-                args.push('--query64=' + encQuery);
-              } catch (e) {
-                // Fallback to plain query if encoding fails
-                args.push('--query', currentSearchQuery);
-              }
-              input = '';
-            } else {
-              input = Array.from(selectedItems).join('\n');
-            }
-          } else if (selectedTask === 'autotag') {
-            command = 'autotag';
-            args = [];
-            if (applyToQuery && currentSearchQuery) {
-              try {
-                const encQuery = btoa(
-                  unescape(encodeURIComponent(currentSearchQuery))
-                );
-                args.push('--query64=' + encQuery);
-              } catch (e) {
-                args.push('--query', currentSearchQuery);
-              }
-              input = '';
-            } else {
-              // Pass comma-separated list to support multi-file in one task
-              input = Array.from(selectedItems).join(',');
-            }
-          } else if (selectedTask === 'embed') {
-            // Always incremental: the embed task skips media already embedded
-            // for the active model, so there is no overwrite variant.
-            command = 'embed';
-            args = [];
-            if (applyToQuery && currentSearchQuery) {
-              try {
-                const encQuery = btoa(
-                  unescape(encodeURIComponent(currentSearchQuery))
-                );
-                args.push('--query64=' + encQuery);
-              } catch (e) {
-                args.push('--query', currentSearchQuery);
-              }
-              input = '';
-            } else {
-              // Comma-separated list to support multi-file in one task
-              input = Array.from(selectedItems).join(',');
             }
           } else if (selectedTask === 'lora-dataset') {
             command = 'lora-dataset';
@@ -3374,6 +3518,14 @@
                 }
               }
             });
+
+            es.addEventListener('progress', (event) => {
+              onActivity();
+              const p = JSON.parse(event.data);
+              if (p && p.id) {
+                ToastManager.progress(p.id, p.done || 0, p.total || 0);
+              }
+            });
           } catch (e) {
             console.error('Media SSE connect threw', e);
             sseState.isConnecting = false;
@@ -3437,14 +3589,17 @@
             if (Array.isArray(jobs)) {
               jobs.forEach((job) => {
                 const state = job.state;
-                // 0=Pending, 1=InProgress
+                // 0=Pending, 1=InProgress, 5=Paused
                 if (
                   state === 0 ||
                   state === 1 ||
+                  state === 5 ||
                   state === 'pending' ||
                   state === 'in_progress' ||
+                  state === 'paused' ||
                   state === 'Pending' ||
-                  state === 'InProgress'
+                  state === 'InProgress' ||
+                  state === 'Paused'
                 ) {
                   // Use a small timeout to ensure ToastManager is ready if needed
                   setTimeout(() => {
@@ -3667,7 +3822,14 @@
           'cleanup',
           'move',
           'autotag',
-        ]; // include autotag
+          // Split-out per-item tasks + the combined runner
+          'describe',
+          'transcribe',
+          'hash',
+          'dimensions',
+          'llm-autotag',
+          'process',
+        ];
 
         if (!mediaAffectingCommands.includes(job.command)) {
           return; // Job doesn't affect media
@@ -3679,9 +3841,6 @@
           case 'remove':
             handleRemoveJobCompletion(job);
             break;
-          case 'metadata':
-            handleMetadataJobCompletion(job);
-            break;
           case 'ingest':
             handleIngestJobCompletion(job);
             break;
@@ -3691,8 +3850,8 @@
           case 'move':
             handleMoveJobCompletion(job);
             break;
-          case 'autotag':
-            // For autotag, refresh affected rows to show new tags
+          default:
+            // Every metadata-producing task refreshes affected rows.
             handleMetadataJobCompletion(job);
             break;
         }
@@ -3893,10 +4052,19 @@
         const JOB_NAMES = {
           remove: 'Remove from Database',
           metadata: 'Generate Metadata',
-          autotag: 'Auto-Tag Media',
+          autotag: 'Tag Media (ONNX)',
+          'llm-autotag': 'Tag Media (LLM)',
+          describe: 'Generate Descriptions',
+          transcribe: 'Generate Transcripts',
+          hash: 'Generate Hashes',
+          dimensions: 'Read Dimensions',
+          embed: 'Generate Embeddings',
+          faces: 'Scan Faces',
+          process: 'Generate (Combined)',
           move: 'Move Files',
           ingest: 'Import Media',
           cleanup: 'Clean Up Database',
+          hls: 'Pre-generate HLS',
           'lora-dataset': 'Create LoRA Dataset',
         };
 
@@ -3904,6 +4072,7 @@
         const STATUS_MESSAGES = {
           pending: 'Waiting to start...',
           running: 'Processing your request...',
+          paused: 'Paused - progress is saved.',
           success: 'Completed successfully!',
           error: 'Something went wrong.',
         };
@@ -3918,6 +4087,8 @@
               return '⏳';
             case 'in_progress':
               return '⚡';
+            case 'paused':
+              return '⏸';
             case 'success':
               return '✓';
             case 'error':
@@ -3958,6 +4129,8 @@
               return itemText
                 ? `Processing ${itemText}...`
                 : 'Working on it...';
+            case 'paused':
+              return 'Paused - finished items are saved. Resume to continue.';
             case 'success':
               return itemText
                 ? `Successfully processed ${itemText}!`
@@ -3980,6 +4153,7 @@
           const message = getMessage(job, status);
           const time = formatTime(new Date());
 
+          toast.setAttribute('data-state', status);
           toast.innerHTML = `
             <div class="toast-header">
               <div class="toast-title">
@@ -3995,9 +4169,11 @@
                   status === 'in_progress' ? 'indeterminate' : ''
                 }"></div>
               </div>
+              <div class="toast-progress-count" style="display: none"></div>
             </div>
             <div class="toast-footer">
               <a href="/job/${jobId}" class="toast-link" target="_blank">View details →</a>
+              <button type="button" class="toast-pause-btn" title="Pause after the current item - finished work is kept">⏸ Pause</button>
               <span class="toast-time">Started ${time}</span>
             </div>
           `;
@@ -4008,7 +4184,37 @@
             removeToast(jobId);
           });
 
+          // Pause/Resume toggles on the job's current state.
+          toast
+            .querySelector('.toast-pause-btn')
+            .addEventListener('click', (e) => {
+              e.stopPropagation();
+              const paused = toast.getAttribute('data-state') === 'paused';
+              fetch(`/job/${jobId}/${paused ? 'resume' : 'pause'}`, {
+                method: 'POST',
+              }).catch((err) => console.error('pause/resume failed', err));
+            });
+
           return toast;
+        }
+
+        // Live item-level progress from the "progress" SSE event.
+        function progressToast(jobId, done, total) {
+          const toastData = toasts.get(jobId);
+          if (!toastData || !total) return;
+          const { element } = toastData;
+          const bar = element.querySelector('.toast-progress-bar');
+          const count = element.querySelector('.toast-progress-count');
+          const pct = Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+          if (bar) {
+            bar.classList.remove('indeterminate');
+            bar.classList.add('determinate');
+            bar.style.width = pct + '%';
+          }
+          if (count) {
+            count.style.display = '';
+            count.textContent = `${done.toLocaleString()} / ${total.toLocaleString()} items`;
+          }
         }
 
         function addToast(jobId, command) {
@@ -4032,17 +4238,21 @@
             // We might receive updates for jobs we didn't create via this page
             // Create a toast for them anyway so user sees the status
             const state = job.state;
-            if (
+            const isActive =
               state === 0 ||
               state === 1 ||
               state === 'pending' ||
               state === 'in_progress' ||
               state === 'Pending' ||
-              state === 'InProgress'
-            ) {
+              state === 'InProgress';
+            const isPaused =
+              state === 5 || state === 'paused' || state === 'Paused';
+            if (isActive || isPaused) {
               let status = 'in_progress';
               if (state === 0 || state === 'pending' || state === 'Pending') {
                 status = 'pending';
+              } else if (isPaused) {
+                status = 'paused';
               }
 
               const toast = createToast(jobId, job.command, status);
@@ -4052,6 +4262,9 @@
                 command: job.command,
                 startTime: Date.now(),
               });
+              // Run the full update pass so the pause button, message, and
+              // any persisted progress reflect the state we just discovered.
+              updateToast(job);
             }
             return;
           }
@@ -4083,7 +4296,11 @@
             status = 'pending'; // Cancelled - treat as pending for display
           } else if (state === 4 || state === 'error' || state === 'Error') {
             status = 'error';
+          } else if (state === 5 || state === 'paused' || state === 'Paused') {
+            status = 'paused';
           }
+
+          element.setAttribute('data-state', status);
 
           // Update icon
           const iconEl = element.querySelector('.toast-status-icon');
@@ -4098,16 +4315,44 @@
             messageEl.textContent = getMessage(job, status);
           }
 
-          // Update progress bar
+          // Update progress bar. A determinate bar (progress events arrived)
+          // keeps its width; only the color/animation state changes.
           const progressBar = element.querySelector('.toast-progress-bar');
           if (progressBar) {
-            progressBar.className = 'toast-progress-bar';
-            if (status === 'in_progress') {
+            const determinate = progressBar.classList.contains('determinate');
+            progressBar.className =
+              'toast-progress-bar' + (determinate ? ' determinate' : '');
+            if (status === 'in_progress' && !determinate) {
               progressBar.classList.add('indeterminate');
             } else if (status === 'success') {
               progressBar.classList.add('complete');
+              progressBar.style.width = '100%';
             } else if (status === 'error') {
               progressBar.classList.add('error');
+            } else if (status === 'paused') {
+              progressBar.classList.add('paused');
+            }
+          }
+
+          // Seed determinate progress for jobs discovered mid-run (page load).
+          if (job.progress_total > 0) {
+            progressToast(jobId, job.progress_done || 0, job.progress_total);
+          }
+
+          // Pause ↔ Resume ↔ hidden
+          const pauseBtn = element.querySelector('.toast-pause-btn');
+          if (pauseBtn) {
+            if (status === 'pending' || status === 'in_progress') {
+              pauseBtn.style.display = '';
+              pauseBtn.textContent = '⏸ Pause';
+              pauseBtn.title =
+                'Pause after the current item - finished work is kept';
+            } else if (status === 'paused') {
+              pauseBtn.style.display = '';
+              pauseBtn.textContent = '▶ Resume';
+              pauseBtn.title = 'Continue from where it stopped';
+            } else {
+              pauseBtn.style.display = 'none';
             }
           }
 
@@ -4188,6 +4433,7 @@
         return {
           add: addToast,
           update: updateToast,
+          progress: progressToast,
           remove: removeToast,
           notify: notify,
           getJobName: getJobName,

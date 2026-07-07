@@ -57,6 +57,15 @@ const (
 	// HostBucketFaces is the local ONNX face-scanning bucket, separate for the
 	// same reasons. Each faces job parallelizes internally (see runFacesPool).
 	HostBucketFaces = "faces"
+	// HostBucketLocalCompute is the machine-wide cap on resource-intensive
+	// LOCAL work. Unlike the per-task buckets above (which exist so different
+	// kinds of work can be tuned independently), every local model workload —
+	// ONNX embed/autotag/faces, transcription, local-LLM inference — holds a
+	// local-compute slot IN ADDITION to its own bucket, so the per-task
+	// buckets can no longer stack three full-machine worker pools onto one
+	// GPU at the same time. Limit comes from config LocalComputeConcurrency
+	// (default 1). Remote inference (RunPod) does not hold a slot.
+	HostBucketLocalCompute = "local-compute"
 )
 
 // InferenceHost returns the concurrency bucket name for the currently
@@ -78,6 +87,19 @@ func InferenceHost() string {
 		return HostBucketLlamaCpp
 	default:
 		return "localhost"
+	}
+}
+
+// InferenceHostIsLocal reports whether the configured vision provider runs
+// on this machine (Ollama/LM Studio/llama.cpp) — those jobs consume the
+// shared local-compute slot. RunPod is remote and does not; "off"/unknown
+// jobs fail fast inside callVisionLLM so holding no slot is fine.
+func InferenceHostIsLocal() bool {
+	switch InferenceHost() {
+	case HostBucketOllama, HostBucketLMStudio, HostBucketLlamaCpp:
+		return true
+	default:
+		return false
 	}
 }
 

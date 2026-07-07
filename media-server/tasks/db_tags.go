@@ -67,6 +67,35 @@ func getExistingTagsForFile(db *sql.DB, filePath string) ([]TagInfo, error) {
 	return tags, nil
 }
 
+// hasSuggestedTags reports whether a file already carries any ONNX-suggested
+// tags — the skip-existing marker for the autotag op (a re-run without
+// --overwrite skips files the tagger already processed).
+func hasSuggestedTags(db *sql.DB, filePath string) (bool, error) {
+	var one int
+	err := db.QueryRow(`SELECT 1 FROM media_tag_by_category WHERE media_path = ? AND category_label = ? LIMIT 1`,
+		filePath, suggestedCategory).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// removeSuggestedTagsForFile removes only the ONNX-suggested tags for a file,
+// leaving user-applied tags in other categories intact. Used by the autotag
+// op's --overwrite path (e.g. re-tagging under a different tagger model).
+func removeSuggestedTagsForFile(db *sql.DB, filePath string) error {
+	_, err := db.Exec(`DELETE FROM media_tag_by_category WHERE media_path = ? AND category_label = ?`,
+		filePath, suggestedCategory)
+	if err != nil {
+		return err
+	}
+	media.InvalidateRandomSampleCache()
+	return nil
+}
+
 // removeExistingTagsForFile removes all existing tags for a file
 func removeExistingTagsForFile(db *sql.DB, filePath string) error {
 	_, err := db.Exec(`DELETE FROM media_tag_by_category WHERE media_path = ?`, filePath)

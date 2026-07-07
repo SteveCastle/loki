@@ -147,6 +147,29 @@
   opacity: 1;
 }
 
+.toast-pause {
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 0;
+  margin: 0 6px 0 0;
+  transition: opacity 0.2s ease;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.toast-pause:hover {
+  opacity: 1;
+}
+
 /* Job Toast Specific Styles */
 
 .loading-animation {
@@ -172,6 +195,41 @@
 
 .loading-animation.completed {
   background-color: #45c07a;
+}
+
+.loading-animation.paused {
+  background-color: #fb923c;
+}
+
+/* Job progress bar (item-level done/total from "progress" SSE events) */
+.toast-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.toast-progress-track {
+  flex: 1;
+  height: 4px;
+  min-width: 60px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.toast-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: #45c07a;
+  transition: width 0.25s ease;
+}
+
+.toast-progress-label {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 @keyframes loading {

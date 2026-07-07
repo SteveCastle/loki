@@ -45,53 +45,48 @@ type GenMode = 'missing' | 'all';
 
 type MetadataType = {
   label: string;
-  // Builds the CLI-style command for the given encoded query and mode. For most
-  // types `all` adds `--overwrite`; Embeddings ignores the mode (see below).
-  command: (query64: string, mode: GenMode) => string;
+  // The per-item operation(s) this chip contributes. Chips multi-select:
+  // every selected op joins ONE `process` job — a single pass that applies
+  // all of them to each file together, with unified overwrite (`all` mode
+  // adds `--overwrite`), live progress, and pause/resume.
+  ops: string[];
   // When true and the current context is a folder (pathdir query), the `missing`
   // mode appends `tagcount:<3` to the query before base64 encoding so already-
-  // tagged media are skipped.
+  // tagged media are skipped. Only applied when this chip runs ALONE — a
+  // combined job shares one query and must not restrict the other ops.
   skipTaggedInFolder?: boolean;
 };
 
+// (--query64 must stay the LAST token — the server treats the final token as
+// the job input.)
 const METADATA_TYPES: MetadataType[] = [
-  {
-    label: 'Tags',
-    command: (q, mode) =>
-      mode === 'all'
-        ? `autotag --overwrite --query64=${q}`
-        : `autotag --query64=${q}`,
-    skipTaggedInFolder: true,
-  },
-  {
-    label: 'Descriptions',
-    command: (q, mode) =>
-      `metadata --type description --apply all${
-        mode === 'all' ? ' --overwrite' : ''
-      } --query64=${q}`,
-  },
-  {
-    label: 'Transcripts',
-    command: (q, mode) =>
-      `metadata --type transcript --apply all${
-        mode === 'all' ? ' --overwrite' : ''
-      } --query64=${q}`,
-  },
-  {
-    // SigLIP 2 embeddings for visual similarity search. Always incremental —
-    // `embed` skips media already embedded for the active model — so there is
-    // no overwrite variant and the mode toggle is ignored for this chip.
-    label: 'Embeddings',
-    command: (q) => `embed --query64=${q}`,
-  },
-  {
-    // Face detection + identity embeddings (people search/clustering). Like
-    // Embeddings it is always incremental — `faces` skips media already
-    // scanned under the active recognizer — so the mode toggle is ignored.
-    label: 'Faces',
-    command: (q) => `faces --query64=${q}`,
-  },
+  { label: 'Tags', ops: ['autotag'], skipTaggedInFolder: true },
+  { label: 'Descriptions', ops: ['describe'] },
+  { label: 'Transcripts', ops: ['transcribe'] },
+  { label: 'File info', ops: ['hash', 'dimensions'] },
+  { label: 'Embeddings', ops: ['embed'] },
+  { label: 'Faces', ops: ['faces'] },
 ];
+
+// The chip selection persists across palette opens and app restarts.
+const SELECTED_TYPES_STORAGE_KEY = 'loki.contextPalette.selectedTypes';
+
+// loadSelectedTypes restores the persisted chip selection, dropping any label
+// that no longer exists (chips get renamed/removed across versions).
+function loadSelectedTypes(): string[] {
+  try {
+    const raw = localStorage.getItem(SELECTED_TYPES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const known = new Set(METADATA_TYPES.map((m) => m.label));
+    return parsed.filter(
+      (l): l is string => typeof l === 'string' && known.has(l)
+    );
+  } catch {
+    return [];
+  }
+}
 
 type ContextTarget =
   | { type: 'library' }
@@ -543,9 +538,26 @@ export default function ContextPalette() {
   // Generation mode for the metadata chips. Resets to the non-destructive
   // `missing` on every open so a previous `all` (replace) choice is never sticky.
   const [genMode, setGenMode] = useState<GenMode>('missing');
+  // Multi-select chip state. Persisted across opens AND app restarts —
+  // the picked set is a preference ("these are the ops I generate"), and
+  // nothing launches without an explicit Run click, so stickiness is safe
+  // (unlike the mode, which deliberately snaps back to `missing`).
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(
+    loadSelectedTypes
+  );
   useEffect(() => {
     if (display) setGenMode('missing');
   }, [display]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        SELECTED_TYPES_STORAGE_KEY,
+        JSON.stringify(selectedTypes)
+      );
+    } catch {
+      // Storage unavailable (private mode, quota) — selection just won't persist.
+    }
+  }, [selectedTypes]);
 
   // Server health. A live SSE connection on the shared stream bus is proof
   // the server is reachable without spending a socket; the /health probe is
@@ -815,45 +827,74 @@ export default function ContextPalette() {
   };
 
 
-  // Action handler — runs a metadata generation job for one type in the current
-  // mode. `missing` fills gaps; `all` replaces (adds `--overwrite`).
-  const handleAction = async (meta: MetadataType, mode: GenMode) => {
+  // Chip selection: chips toggle; the Run button launches everything the
+  // user picked as ONE combined job (plus a parallel faces job when chosen).
+  const toggleType = (meta: MetadataType) => {
     // Point-of-use gate: a job whose model/tool isn't installed would only
     // fail later inside its log where casual users never look. Downloadable
     // deps show a Download button right under the chip instead.
-    const req = TASK_REQUIREMENTS[meta.label];
-    const dep = req ? deps.get(req.depId) : undefined;
-    if (req && req.kind === 'downloadable' && dep && isDownloadableState(dep.state)) {
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: {
-          type: 'info',
-          title: `${req.feature} needs a one-time download`,
-          message: `Use the Download button under the ${meta.label} chip (${fmtSize(dep.size_bytes)}).`,
-        },
-      });
-      return;
+    const alreadySelected = selectedTypes.includes(meta.label);
+    if (!alreadySelected) {
+      const req = TASK_REQUIREMENTS[meta.label];
+      const dep = req ? deps.get(req.depId) : undefined;
+      if (req && req.kind === 'downloadable' && dep && isDownloadableState(dep.state)) {
+        libraryService.send({
+          type: 'ADD_TOAST',
+          data: {
+            type: 'info',
+            title: `${req.feature} needs a one-time download`,
+            message: `Use the Download button under the ${meta.label} chip (${fmtSize(dep.size_bytes)}).`,
+          },
+        });
+        return;
+      }
+      if (req && dep && isDownloadingState(dep.state)) {
+        libraryService.send({
+          type: 'ADD_TOAST',
+          data: {
+            type: 'info',
+            title: `${req.feature} is still downloading`,
+            message: 'Select this again once the download finishes.',
+          },
+        });
+        return;
+      }
     }
-    if (req && dep && isDownloadingState(dep.state)) {
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: {
-          type: 'info',
-          title: `${req.feature} is still downloading`,
-          message: 'Run this again once the download finishes.',
-        },
-      });
-      return;
-    }
-    // tagcount:<3 only makes sense when filling gaps over a folder, never on a
-    // full replace.
+    setSelectedTypes((prev) =>
+      alreadySelected
+        ? prev.filter((l) => l !== meta.label)
+        : [...prev, meta.label]
+    );
+  };
+
+  // Launches the selected chips in the current mode. `missing` fills gaps;
+  // `all` replaces (adds `--overwrite`). Everything becomes ONE job: a
+  // single op runs as its own task, several run as a `process` job — one
+  // pass applying each op per file.
+  const handleRunSelected = async () => {
+    const selected = METADATA_TYPES.filter((m) =>
+      selectedTypes.includes(m.label)
+    );
+    if (selected.length === 0) return;
+    const mode = genMode;
+    const overwrite = mode === 'all' ? ' --overwrite' : '';
+
+    // tagcount:<3 only makes sense when filling tag gaps over a folder, and
+    // only when Tags runs alone — a combined job's query targets every op.
+    const tagsAlone = selected.length === 1 && selected[0].skipTaggedInFolder;
     const effectiveQuery =
-      meta.skipTaggedInFolder && isFolderContext && mode === 'missing'
+      tagsAlone && isFolderContext && mode === 'missing'
         ? `${queryString} tagcount:<3`
         : queryString;
     const effectiveQuery64 =
       effectiveQuery === queryString ? query64 : encodeQuery64(effectiveQuery);
-    const input = meta.command(effectiveQuery64, mode);
+
+    const ops = selected.flatMap((m) => m.ops);
+    const input =
+      ops.length === 1
+        ? `${ops[0]}${overwrite} --query64=${effectiveQuery64}`
+        : `process --ops=${ops.join(',')}${overwrite} --query64=${effectiveQuery64}`;
+
     try {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
@@ -1064,27 +1105,60 @@ export default function ContextPalette() {
               const needsDownload =
                 !!req && req.kind === 'downloadable' && !!dep && isDownloadableState(dep.state);
               const downloading = !!req && !!dep && isDownloadingState(dep.state);
+              const isSelected = selectedTypes.includes(meta.label);
               return (
                 <button
                   key={meta.label}
-                  className={`type-chip${needsDownload ? ' needs-dep' : ''}`}
-                  onClick={() => handleAction(meta, genMode)}
+                  role="checkbox"
+                  aria-checked={isSelected}
+                  className={`type-chip${needsDownload ? ' needs-dep' : ''}${
+                    isSelected ? ' selected' : ''
+                  }`}
+                  onClick={() => toggleType(meta)}
                   title={
                     needsDownload
                       ? `${req!.feature} needs a one-time download first`
-                      : meta.label === 'Embeddings'
-                      ? 'Generate visual embeddings (always incremental)'
-                      : genMode === 'all'
-                      ? `Replace ${meta.label.toLowerCase()} for all items`
-                      : `Generate missing ${meta.label.toLowerCase()}`
+                      : isSelected
+                      ? `Remove ${meta.label.toLowerCase()} from this run`
+                      : `Add ${meta.label.toLowerCase()} to this run`
                   }
                 >
+                  {isSelected && <span className="chip-check">✓</span>}
                   {meta.label}
                   {needsDownload && <span className="dep-badge">setup</span>}
                   {downloading && <span className="dep-badge downloading">…</span>}
                 </button>
               );
             })}
+          </div>
+          <div className="generate-run-row">
+            <button
+              type="button"
+              className="generate-run-btn"
+              disabled={selectedTypes.length === 0}
+              onClick={handleRunSelected}
+              title={
+                selectedTypes.length > 1
+                  ? `Run ${selectedTypes.length} operations together — one pass per file`
+                  : undefined
+              }
+            >
+              Run
+              {selectedTypes.length > 1 && (
+                <span className="generate-run-count">
+                  {selectedTypes.length}
+                </span>
+              )}
+            </button>
+            <span className="generate-run-hint">
+              {selectedTypes.length === 0
+                ? 'Pick one or more operations'
+                : selectedTypes.length > 1
+                ? 'Together, one pass per file'
+                : genMode === 'all'
+                ? 'Replaces existing output'
+                : 'Fills what’s missing'}
+            </span>
           </div>
           <DepRequirementRows deps={deps} onChange={refreshDeps} />
         </div>
