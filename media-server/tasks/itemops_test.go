@@ -124,7 +124,7 @@ func countStored(m *sync.Map) int {
 // combine — faces included. A missing entry here means a per-item task
 // silently fell out of the unified system.
 func TestBuiltinOpsAreCombinable(t *testing.T) {
-	want := []string{"describe", "transcribe", "hash", "dimensions", "llm-autotag", "embed", "autotag", "faces"}
+	want := []string{"describe", "transcribe", "hash", "dimensions", "embed", "autotag", "faces"}
 	ids := ItemOpIDs()
 	have := make(map[string]bool, len(ids))
 	for _, id := range ids {

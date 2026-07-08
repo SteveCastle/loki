@@ -51,7 +51,7 @@ func ResolveHost(command, input string) string {
 // its work runs on local hardware.
 func opResources(op string) []string {
 	switch op {
-	case "describe", "llm-autotag":
+	case "describe":
 		r := []string{InferenceHost()}
 		if InferenceHostIsLocal() {
 			r = append(r, HostBucketLocalCompute)
@@ -78,7 +78,6 @@ var legacyTypeToOp = map[string]string{
 	"transcript":  "transcribe",
 	"hash":        "hash",
 	"dimensions":  "dimensions",
-	"autotag":     "llm-autotag",
 }
 
 // flagListValue extracts a comma-separated flag value (e.g. --ops=a,b or
@@ -114,7 +113,7 @@ func flagListValue(flag string, arguments []string, input string) []string {
 func ResolveResources(command string, arguments []string, input string) []string {
 	var ops []string
 	switch command {
-	case "describe", "llm-autotag", "transcribe", "embed", "autotag", "faces":
+	case "describe", "transcribe", "embed", "autotag", "faces":
 		ops = []string{command}
 	case "faces-cluster":
 		// Clustering shares the faces bucket (its Host) and crunches vectors

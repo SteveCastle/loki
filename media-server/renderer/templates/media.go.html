@@ -1755,9 +1755,6 @@
                 ><input type="checkbox" data-op="autotag" />Tags (ONNX)</label
               >
               <label class="gen-chip"
-                ><input type="checkbox" data-op="llm-autotag" />Tags (LLM)</label
-              >
-              <label class="gen-chip"
                 ><input type="checkbox" data-op="embed" />Embeddings</label
               >
               <label class="gen-chip"
@@ -2408,7 +2405,7 @@
       // ONE combined job (a single pass per file) against the selection or
       // the whole query.
       // ------------------------------------------------------------------
-      const GEN_NEEDS_MODEL = ['describe', 'llm-autotag'];
+      const GEN_NEEDS_MODEL = ['describe'];
 
       function genSelectedOps() {
         return Array.from(
@@ -2505,13 +2502,8 @@
           } else {
             command = 'process';
             cmd = 'process --ops=' + ops.join(',');
-            if (model) {
-              if (ops.includes('describe')) {
-                cmd += ' --describe-model ' + model;
-              }
-              if (ops.includes('llm-autotag')) {
-                cmd += ' --llm-autotag-model ' + model;
-              }
+            if (model && ops.includes('describe')) {
+              cmd += ' --describe-model ' + model;
             }
           }
           if (overwrite) cmd += ' --overwrite';
@@ -3827,7 +3819,6 @@
           'transcribe',
           'hash',
           'dimensions',
-          'llm-autotag',
           'process',
         ];
 
@@ -4053,7 +4044,6 @@
           remove: 'Remove from Database',
           metadata: 'Generate Metadata',
           autotag: 'Tag Media (ONNX)',
-          'llm-autotag': 'Tag Media (LLM)',
           describe: 'Generate Descriptions',
           transcribe: 'Generate Transcripts',
           hash: 'Generate Hashes',

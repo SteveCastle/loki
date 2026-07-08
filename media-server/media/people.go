@@ -25,7 +25,11 @@ type Person struct {
 	CoverFaceID int64  `json:"coverFaceId,omitempty"`
 	FaceCount   int    `json:"faceCount"`
 	MediaCount  int    `json:"mediaCount"`
-	CreatedAt   int64  `json:"createdAt,omitempty"`
+	// LockedCount is how many of the person's faces are user-assigned (ground
+	// truth): confirmed by hand, promoted via "lock group", or placed by the
+	// user. These survive every recluster and carry extra clustering weight.
+	LockedCount int   `json:"lockedCount"`
+	CreatedAt   int64 `json:"createdAt,omitempty"`
 	// Models lists the recognizer(s) the cluster's faces were embedded with
 	// (comma-separated; normally one) — e.g. "anime-ccip" identifies a drawn-
 	// character cluster vs a photographic face cluster. Empty when the person
@@ -153,6 +157,7 @@ func GetPeople(db *sql.DB) ([]Person, error) {
 		         0),
 		       COALESCE(p.created_at, 0),
 		       COUNT(f.id), COUNT(DISTINCT f.media_path),
+		       COALESCE(SUM(CASE WHEN f.assigned_by = 'user' THEN 1 ELSE 0 END), 0),
 		       COALESCE(GROUP_CONCAT(DISTINCT f.model), '')
 		FROM person p
 		LEFT JOIN face f ON f.person_id = p.id
@@ -166,7 +171,7 @@ func GetPeople(db *sql.DB) ([]Person, error) {
 	var out []Person
 	for rows.Next() {
 		var p Person
-		if err := rows.Scan(&p.ID, &p.Name, &p.CoverFaceID, &p.CreatedAt, &p.FaceCount, &p.MediaCount, &p.Models); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.CoverFaceID, &p.CreatedAt, &p.FaceCount, &p.MediaCount, &p.LockedCount, &p.Models); err != nil {
 			return nil, err
 		}
 		out = append(out, p)
@@ -367,6 +372,33 @@ func MergePersons(db *sql.DB, fromID, intoID int64) error {
 	if _, err := tx.Exec(`UPDATE face SET person_id = ? WHERE person_id = ?`, intoID, fromID); err != nil {
 		return fmt.Errorf("merge faces: %w", err)
 	}
+	// Vetoes against the dissolving person carry over to the merge target
+	// (rejected-from-A means rejected-from-the-merged-A+B)…
+	if _, err := tx.Exec(
+		`UPDATE OR IGNORE face_veto SET person_id = ? WHERE person_id = ?`, intoID, fromID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM face_veto WHERE person_id = ?`, fromID); err != nil {
+		return err
+	}
+	// …but the merge itself is the user asserting the two groups ARE the same
+	// person, which contradicts any assertion between their members: drop
+	// vetoes now pointing at a face's own person and cannot-links that ended up
+	// with both ends inside the merged group.
+	if _, err := tx.Exec(
+		`DELETE FROM face_veto WHERE person_id = ?
+		   AND face_id IN (SELECT id FROM face WHERE person_id = ?)`, intoID, intoID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM face_cannot_link
+		 WHERE face_a IN (SELECT id FROM face WHERE person_id = ?)
+		   AND face_b IN (SELECT id FROM face WHERE person_id = ?)`, intoID, intoID,
+	); err != nil {
+		return err
+	}
 	if err := retagPerson(tx, from.Name, into.Name); err != nil {
 		return err
 	}
@@ -400,6 +432,12 @@ func DeletePerson(db *sql.DB, id int64) error {
 	}
 	defer tx.Rollback()
 	if _, err := tx.Exec(`UPDATE face SET person_id = NULL, assigned_by = NULL WHERE person_id = ?`, id); err != nil {
+		return err
+	}
+	// The person id is gone for good (AUTOINCREMENT), so vetoes against it are
+	// dead weight. Cannot-links stay — they encode face-level truth that must
+	// outlive the group (the whole point of recording them).
+	if _, err := tx.Exec(`DELETE FROM face_veto WHERE person_id = ?`, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(
@@ -453,6 +491,12 @@ func DeletePersonAndFaces(db *sql.DB, id int64) ([]int64, error) {
 		return nil, err
 	}
 
+	if err := clearConstraintsForFacesTx(tx, `SELECT id FROM face WHERE person_id = ?`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM face_veto WHERE person_id = ?`, id); err != nil {
+		return nil, err
+	}
 	if _, err := tx.Exec(`DELETE FROM face WHERE person_id = ?`, id); err != nil {
 		return nil, err
 	}
@@ -492,6 +536,16 @@ func AssignFace(db *sql.DB, faceID, personID int64, assignedBy string) error {
 	if assignedBy == "auto" && f.AssignedBy == "user" {
 		return nil // manual labels are ground truth
 	}
+	if assignedBy == "auto" {
+		// Defense in depth behind the clustering paths' own constraint checks:
+		// a vetoed (face, person) pair is a standing user assertion that no
+		// automatic path may override.
+		if vetoed, err := FaceVetoExists(db, faceID, personID); err != nil {
+			return err
+		} else if vetoed {
+			return nil
+		}
+	}
 	p, ok, err := GetPersonByID(db, personID)
 	if err != nil {
 		return err
@@ -510,6 +564,24 @@ func AssignFace(db *sql.DB, faceID, personID int64, assignedBy string) error {
 	// their only one on this media/frame.
 	if f.PersonID != 0 && f.PersonID != personID {
 		if err := removeBridgeRowIfLastFace(tx, f, f.PersonID); err != nil {
+			return err
+		}
+		// A user moving a face OFF a person is a negative assertion about that
+		// person — record it so no recluster ever puts the face back.
+		if assignedBy == "user" {
+			if _, err := tx.Exec(
+				`INSERT OR IGNORE INTO face_veto (face_id, person_id, created_at) VALUES (?, ?, ?)`,
+				faceID, f.PersonID, time.Now().Unix(),
+			); err != nil {
+				return err
+			}
+		}
+	}
+	// A user assignment contradicts (and therefore clears) any standing veto
+	// against the target person and any cannot-links to its current members —
+	// the newest human statement wins.
+	if assignedBy == "user" {
+		if err := clearContradictedConstraintsTx(tx, faceID, personID); err != nil {
 			return err
 		}
 	}
@@ -623,6 +695,8 @@ func DeleteAllFaceData(db *sql.DB) error {
 	for _, stmt := range []string{
 		`DELETE FROM face`,
 		`DELETE FROM face_scan`,
+		`DELETE FROM face_veto`,
+		`DELETE FROM face_cannot_link`,
 		`DELETE FROM person`,
 		`DELETE FROM media_tag_by_category WHERE category_label = '` + PeopleCategory + `'`,
 		`DELETE FROM tag WHERE category_label = '` + PeopleCategory + `'`,

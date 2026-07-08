@@ -2230,10 +2230,45 @@ func InitializeSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to create face_scan table: %w", err)
 	}
+	// Human curation assertions for face clustering. Two complementary shapes,
+	// because they survive different lifecycles:
+	//   - face_veto ("this face is NEVER person P") is the direct, cheap check,
+	//     but a veto against an anonymous "Unknown #N" dies with the person row
+	//     when a reset dissolves it;
+	//   - face_cannot_link ("these two faces are NEVER the same person",
+	//     face_a < face_b normalized) is recorded against the group's exemplar
+	//     faces at rejection time, so the assertion still holds when the same
+	//     visual cluster re-forms under a fresh person id.
+	// Both are enforced by every clustering path and only ever removed by a
+	// contradicting USER action (assigning the face to that person, merging).
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_veto (
+			face_id    INTEGER NOT NULL,
+			person_id  INTEGER NOT NULL,
+			created_at INTEGER,
+			PRIMARY KEY (face_id, person_id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_veto table: %w", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_cannot_link (
+			face_a     INTEGER NOT NULL,
+			face_b     INTEGER NOT NULL,
+			created_at INTEGER,
+			PRIMARY KEY (face_a, face_b)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_cannot_link table: %w", err)
+	}
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_face_media_path ON face(media_path)`,
 		`CREATE INDEX IF NOT EXISTS idx_face_model ON face(model)`,
 		`CREATE INDEX IF NOT EXISTS idx_face_person ON face(person_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_veto_person ON face_veto(person_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_cannot_link_b ON face_cannot_link(face_b)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			log.Printf("warning: failed to create face index (will retry on next start): %v", err)

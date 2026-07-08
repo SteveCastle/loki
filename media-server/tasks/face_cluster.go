@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/embedvec"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
@@ -30,6 +31,28 @@ const (
 	corroborationBonus = float32(0.02)
 	maxCorroborators   = 3
 )
+
+// userSeedWeight is how much a USER-assigned face (hand-confirmed, "locked")
+// counts relative to an auto-assigned one in corroboration counting: a single
+// user-seed near-match carries the corroborating force of several auto
+// matches. The mean-similarity guard goes further than weighting — when a
+// person has ANY user seeds, the guard's center is computed from those alone
+// (see scoreAgainstSeeds), so no volume of auto joins can drift the identity
+// away from what the human confirmed.
+const userSeedWeight = 3
+
+// meanJoinSlack bounds how far a face's MEAN similarity to a person's faces
+// may sit below the join threshold. The best-single-match rule alone is
+// single-linkage: face A joins via member B, becomes a seed, pulls in C via
+// itself, and so on — each hop needs only one good match, so over repeated
+// passes (the incremental in-scan clustering runs every ~100 faces) a person
+// degenerates into a transitive chain whose internal similarity is near
+// random. Requiring the mean over ALL the person's faces to stay within this
+// slack of the threshold blocks chain drift (a chained blob's mean is far
+// below any plausible floor) while leaving room for genuinely multi-modal
+// people (age/lighting/pose spread) where a hard positive matches half the
+// cluster well and the other half loosely.
+const meanJoinSlack = 2 * corroborationSlack
 
 // personScore accumulates the evidence one query face has for one person.
 type personScore struct {
@@ -79,13 +102,31 @@ type clusterParams struct {
 	passes int
 }
 
+// defaultClusterParams starts from the recognizer's defaults and applies the
+// SAVED grouping tuner (People panel Tune sliders, persisted in the server
+// config) — so every clustering pass, including the plain Group new faces /
+// Rebuild buttons and the incremental in-scan passes, runs with the tuned
+// values. Explicit faces-cluster job flags override these per run (see
+// clusterOneModel).
 func defaultClusterParams(model FaceModel) clusterParams {
+	cfg := appconfig.Get()
 	t := model.MatchThreshold
+	if o := cfg.FaceClusterThresholdOffset; o >= -0.2 && o <= 0.3 {
+		t += float32(o)
+	}
+	minQuality := 0.75
+	if q := cfg.FaceClusterMinQuality; q > 0 && q < 1 {
+		minQuality = q
+	}
+	minCluster := minAutoClusterSize
+	if n := cfg.FaceClusterMinCluster; n >= 1 {
+		minCluster = n
+	}
 	return clusterParams{
 		joinThreshold: t,
 		formThreshold: t + 0.05,
-		minQuality:    0.75,
-		minCluster:    minAutoClusterSize,
+		minQuality:    minQuality,
+		minCluster:    minCluster,
 		passes:        2,
 	}
 }
@@ -104,9 +145,13 @@ func incrementalClusterParams(model FaceModel) clusterParams {
 	p := defaultClusterParams(model)
 	p.joinThreshold += 0.03
 	p.formThreshold += 0.03
-	p.minCluster += 2  // small batches need more corroborating members
-	p.minQuality = 0.8 // only confident detections may found people mid-scan
-	p.passes = 1       // no intra-pass transitivity between full passes
+	p.minCluster += 2 // small batches need more corroborating members
+	// Only confident detections may found people mid-scan; a tuned floor
+	// above 0.8 stays in force (stricter of the two).
+	if p.minQuality < 0.8 {
+		p.minQuality = 0.8
+	}
+	p.passes = 1 // no intra-pass transitivity between full passes
 	return p
 }
 
@@ -116,6 +161,9 @@ func incrementalClusterParams(model FaceModel) clusterParams {
 // keeps enriching existing people without a full recluster. Requires the live
 // face index to hold this model (otherwise it's a no-op — the faces-cluster
 // task will pick the faces up later). Returns how many faces were assigned.
+// Curation constraints need no lookup here: these are brand-new face rows, so
+// no veto or cannot-link can exist for them yet (and AssignFace re-checks
+// vetoes anyway).
 func autoAssignNewFaces(db *sql.DB, model FaceModel, ids []int64, faces []media.NewFace) int {
 	if FaceIndexedModel() != model.ID || model.MatchThreshold <= 0 {
 		return 0
@@ -152,13 +200,64 @@ func autoAssignNewFaces(db *sql.DB, model FaceModel, ids []int64, faces []media.
 				bestPerson, best = pid, ps
 			}
 		}
-		if bestPerson != 0 && acceptJoin(best, threshold) {
+		if bestPerson != 0 && acceptJoin(best, threshold) &&
+			personMeanSimAtLeast(db, model.ID, bestPerson, faces[i].Vec, threshold-meanJoinSlack) {
 			if err := media.AssignFace(db, id, bestPerson, "auto"); err == nil {
 				assigned++
 			}
 		}
 	}
 	return assigned
+}
+
+// personMeanSimAtLeast reports whether vec's mean cosine over the person's
+// stored faces clears floor — the incremental-assignment form of the
+// mean-similarity guard (see meanJoinSlack). Like scoreAgainstSeeds, the mean
+// is taken over the person's USER-assigned faces alone when any exist (the
+// confirmed center — it cannot drift as auto joins pile up mid-scan),
+// otherwise over a random sample of all its faces. The per-face rule matches
+// on the best of 12 index hits, i.e. single linkage; without this guard every
+// assignment becomes a new match target and the person grows by transitive
+// chaining for the rest of the scan. User faces sort first so they are always
+// inside the 256-row cost cap.
+func personMeanSimAtLeast(db *sql.DB, model string, personID int64, vec []float32, floor float32) bool {
+	rows, err := db.Query(
+		`SELECT vector, COALESCE(assigned_by, '') FROM face WHERE person_id=? AND model=?
+		 ORDER BY (COALESCE(assigned_by, '') = 'user') DESC, RANDOM() LIMIT 256`, personID, model)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	var total, userTotal float64
+	var n, userN int
+	for rows.Next() {
+		var blob []byte
+		var assignedBy string
+		if rows.Scan(&blob, &assignedBy) != nil {
+			return false
+		}
+		v, err := embedvec.Decode(blob)
+		if err != nil {
+			continue
+		}
+		sim := float64(embedvec.CosineSim(vec, v))
+		total += sim
+		n++
+		if assignedBy == "user" {
+			userTotal += sim
+			userN++
+		}
+	}
+	if rows.Err() != nil {
+		return false
+	}
+	if userN > 0 {
+		return float32(userTotal/float64(userN)) >= floor
+	}
+	if n == 0 {
+		return true // no faces stored → nothing to contradict the join
+	}
+	return float32(total/float64(n)) >= floor
 }
 
 // clusterStats summarises one full clustering pass.
@@ -173,9 +272,15 @@ type clusterStats struct {
 
 // seed is one already-assigned face acting as a join anchor.
 type seed struct {
+	id       int64 // face id — checked against cannot-link assertions
 	vec      []float32
 	personID int64
+	user     bool // user-assigned (ground truth) → userSeedWeight
 }
+
+// pairSet is a symmetric/keyed constraint lookup: face → forbidden ids
+// (persons for vetoes, other faces for cannot-links).
+type pairSet = map[int64]map[int64]bool
 
 // clusterFaces runs a full clustering pass for model:
 //
@@ -194,9 +299,22 @@ type seed struct {
 //
 // Existing assignments are never touched (auto assignments in anonymous
 // clusters can be reset via the task's --reset flag before calling this).
+//
+// Human curation assertions constrain every step: a face never joins a person
+// it has a veto against, never joins a person (or a forming cluster) holding a
+// face it is cannot-linked to, and user-assigned seeds carry userSeedWeight in
+// all evidence aggregation.
 func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, error) {
 	var stats clusterStats
 	all, err := media.LoadAllFaces(db, model.ID)
+	if err != nil {
+		return stats, err
+	}
+	vetoes, err := media.FaceVetoes(db, model.ID)
+	if err != nil {
+		return stats, err
+	}
+	cannot, err := media.FaceCannotLinks(db, model.ID)
 	if err != nil {
 		return stats, err
 	}
@@ -206,7 +324,7 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 		// Normalize defensively: cosine math below assumes unit vectors.
 		f.Vec = embedvec.Normalize(f.Vec)
 		if f.PersonID != 0 {
-			seeds = append(seeds, seed{vec: f.Vec, personID: f.PersonID})
+			seeds = append(seeds, seed{id: f.ID, vec: f.Vec, personID: f.PersonID, user: f.AssignedBy == "user"})
 		} else {
 			unassigned = append(unassigned, f)
 		}
@@ -214,7 +332,7 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 
 	// Phase 1: corroborated joins against assigned seeds, p.passes rounds.
 	for pass := 0; pass < p.passes && len(seeds) > 0 && len(unassigned) > 0; pass++ {
-		matches := scoreAgainstSeeds(unassigned, seeds, p.joinThreshold)
+		matches := scoreAgainstSeeds(unassigned, seeds, p.joinThreshold, vetoes, cannot)
 		var leftovers []media.Face
 		joinedThisPass := 0
 		for i, personID := range matches {
@@ -225,7 +343,7 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 			if err := media.AssignFace(db, unassigned[i].ID, personID, "auto"); err != nil {
 				return stats, err
 			}
-			seeds = append(seeds, seed{vec: unassigned[i].Vec, personID: personID})
+			seeds = append(seeds, seed{id: unassigned[i].ID, vec: unassigned[i].Vec, personID: personID})
 			stats.JoinedExisting++
 			joinedThisPass++
 		}
@@ -246,35 +364,57 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 		}
 	}
 
-	// Greedy leader clustering among the eligible leftovers, strongest
-	// detections first so cluster centroids start from the clearest faces.
+	// Greedy AVERAGE-LINKAGE clustering among the eligible leftovers, strongest
+	// detections first so clusters start from the clearest faces. A face joins
+	// the cluster with the best MEAN cosine to its members (dot with the
+	// unnormalized member sum / count — all vectors are unit). Comparing
+	// against a NORMALIZED centroid instead is a trap: in high dimensions the
+	// members' noise cancels in the mean, so cosine-to-normalized-centroid
+	// ≈ sqrt(mean pairwise similarity) — a blob whose members agree at a
+	// near-random 0.17 scores ~0.41 against its own centroid and sails past
+	// the formation gate. Mean-to-members is the honest number.
 	sort.SliceStable(eligible, func(i, j int) bool { return eligible[i].Score > eligible[j].Score })
 	type cluster struct {
-		centroid []float32
-		members  []media.Face
+		sum     []float32 // unnormalized sum of (unit) member vectors
+		members []media.Face
 	}
 	var clusters []cluster
 	for _, f := range eligible {
 		bestIdx := -1
 		var bestScore float32
+		cl := cannot[f.ID]
 		for ci := range clusters {
-			if sc := embedvec.CosineSim(f.Vec, clusters[ci].centroid); sc > bestScore {
+			// A cannot-link to ANY member forbids the cluster: this is how a
+			// rejection outlives the person it was recorded against — the same
+			// visual group re-forming from its exemplars can't reabsorb the
+			// rejected face.
+			if len(cl) > 0 {
+				blocked := false
+				for _, m := range clusters[ci].members {
+					if cl[m.ID] {
+						blocked = true
+						break
+					}
+				}
+				if blocked {
+					continue
+				}
+			}
+			sc := dot32(f.Vec, clusters[ci].sum) / float32(len(clusters[ci].members))
+			if sc > bestScore {
 				bestScore, bestIdx = sc, ci
 			}
 		}
 		if bestIdx >= 0 && bestScore >= p.formThreshold {
 			c := &clusters[bestIdx]
-			// Running-mean centroid, renormalized.
-			n := float32(len(c.members))
-			for k := range c.centroid {
-				c.centroid[k] = (c.centroid[k]*n + f.Vec[k]) / (n + 1)
+			for k := range c.sum {
+				c.sum[k] += f.Vec[k]
 			}
-			c.centroid = embedvec.Normalize(c.centroid)
 			c.members = append(c.members, f)
 		} else {
-			centroid := make([]float32, len(f.Vec))
-			copy(centroid, f.Vec)
-			clusters = append(clusters, cluster{centroid: centroid, members: []media.Face{f}})
+			sum := make([]float32, len(f.Vec))
+			copy(sum, f.Vec)
+			clusters = append(clusters, cluster{sum: sum, members: []media.Face{f}})
 		}
 	}
 
@@ -283,14 +423,11 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 			stats.Unassigned += len(c.members)
 			continue
 		}
-		// Coherence check: greedy growth lets a centroid drift; a "cluster"
-		// whose members no longer agree with where it ended up is noise.
-		var mean float32
-		for _, m := range c.members {
-			mean += embedvec.CosineSim(m.Vec, c.centroid)
-		}
-		mean /= float32(len(c.members))
-		if mean < p.formThreshold {
+		// Coherence check: the members' MEAN PAIRWISE cosine must itself clear
+		// the formation threshold. Every join already required mean-to-members
+		// ≥ formThreshold, so this holds by construction — it stays as a cheap
+		// safety net against future rule changes and float drift.
+		if meanPairwise(c.sum, len(c.members)) < p.formThreshold {
 			stats.Discarded += len(c.members)
 			stats.Unassigned += len(c.members)
 			continue
@@ -314,14 +451,80 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 	return stats, nil
 }
 
+// dot32 is the raw float32 dot product (CosineSim renormalizes, which the
+// sum-vector tricks here must avoid).
+func dot32(a, b []float32) float32 {
+	var d float64
+	for i := range a {
+		d += float64(a[i]) * float64(b[i])
+	}
+	return float32(d)
+}
+
+// meanPairwise computes the mean pairwise cosine of n unit vectors from their
+// unnormalized sum: ||Σx||² = n + Σ_{i≠j} xᵢ·xⱼ, so the pairwise mean is
+// (||Σx||² − n) / (n(n−1)). O(d) instead of O(n²d).
+func meanPairwise(sum []float32, n int) float32 {
+	if n < 2 {
+		return 1
+	}
+	s2 := dot32(sum, sum)
+	return (s2 - float32(n)) / float32(n*(n-1))
+}
+
 // scoreAgainstSeeds computes, for every unassigned face, the person it should
-// join under the corroborated-join rule (0 = no join). Scoring is parallel;
-// the caller applies the writes serially.
-func scoreAgainstSeeds(unassigned []media.Face, seeds []seed, threshold float32) []int64 {
+// join under the corroborated-join rule (0 = no join). A candidate person
+// must ALSO pass the mean-similarity guard (see meanJoinSlack): the face's
+// mean cosine over all the person's seed faces stays within meanJoinSlack of
+// the threshold, or the join is a chain hop, not a match. Scoring is
+// parallel; the caller applies the writes serially.
+//
+// Human assertions shape the outcome three ways: a vetoed person is never a
+// candidate for that face; a person holding a seed the face is cannot-linked
+// to is never a candidate; and USER seeds count userSeedWeight× as
+// corroborators AND, when a person has any, they alone define the mean
+// guard's center — the anchor a candidate is measured against never drifts,
+// no matter how many auto faces the person accumulates.
+func scoreAgainstSeeds(unassigned []media.Face, seeds []seed, threshold float32, vetoes, cannot pairSet) []int64 {
 	matches := make([]int64, len(unassigned))
 	if len(unassigned) == 0 || len(seeds) == 0 {
 		return matches
 	}
+	// Per-person mean-guard centers (seed vectors are unit). A person with
+	// user-confirmed seeds is anchored to THEIR mean only: a weighted
+	// all-seed mean can still drift once wrong auto joins outnumber the
+	// confirmed core's weight (8 confirmed × weight 3 lose to ~25 strays),
+	// and each pass's joins seed the next, so drift snowballs. The confirmed
+	// center is immutable within a run. Purely automatic clusters fall back
+	// to the plain all-seed mean.
+	type personAgg struct {
+		sum     []float32 // every seed (fallback center)
+		n       float32
+		userSum []float32 // user-assigned seeds only (the anchor; nil if none)
+		userN   float32
+	}
+	aggs := make(map[int64]*personAgg)
+	for _, s := range seeds {
+		a := aggs[s.personID]
+		if a == nil {
+			a = &personAgg{sum: make([]float32, len(s.vec))}
+			aggs[s.personID] = a
+		}
+		for k, x := range s.vec {
+			a.sum[k] += x
+		}
+		a.n++
+		if s.user {
+			if a.userSum == nil {
+				a.userSum = make([]float32, len(s.vec))
+			}
+			for k, x := range s.vec {
+				a.userSum[k] += x
+			}
+			a.userN++
+		}
+	}
+	meanFloor := threshold - meanJoinSlack
 	workers := 8
 	if len(unassigned) < workers {
 		workers = len(unassigned)
@@ -341,11 +544,29 @@ func scoreAgainstSeeds(unassigned []media.Face, seeds []seed, threshold float32)
 		go func(lo, hi int) {
 			defer wg.Done()
 			scores := map[int64]personScore{}
+			forbidden := map[int64]bool{}
 			for i := lo; i < hi; i++ {
 				for k := range scores {
 					delete(scores, k)
 				}
+				for k := range forbidden {
+					delete(forbidden, k)
+				}
+				veto := vetoes[unassigned[i].ID]
+				cl := cannot[unassigned[i].ID]
+				for pid := range veto {
+					forbidden[pid] = true
+				}
 				for _, s := range seeds {
+					if cl[s.id] {
+						// Cannot-linked to a member → the whole person is off
+						// the table, no matter how well other members match.
+						forbidden[s.personID] = true
+						continue
+					}
+					if forbidden[s.personID] {
+						continue
+					}
 					sc := embedvec.CosineSim(unassigned[i].Vec, s.vec)
 					if sc < threshold-corroborationSlack {
 						continue // can neither win nor corroborate
@@ -354,19 +575,35 @@ func scoreAgainstSeeds(unassigned []media.Face, seeds []seed, threshold float32)
 					if sc > ps.best {
 						ps.best = sc
 					}
-					ps.count++
+					if s.user {
+						ps.count += userSeedWeight
+					} else {
+						ps.count++
+					}
 					scores[s.personID] = ps
 				}
 				var bestPerson int64
 				var best personScore
 				for pid, ps := range scores {
+					if forbidden[pid] || !acceptJoin(ps, threshold) {
+						continue
+					}
+					a := aggs[pid]
+					if a == nil {
+						continue
+					}
+					mean := dot32(unassigned[i].Vec, a.sum) / a.n
+					if a.userN > 0 {
+						mean = dot32(unassigned[i].Vec, a.userSum) / a.userN
+					}
+					if mean < meanFloor {
+						continue // strong single match, but off the person's center
+					}
 					if bestPerson == 0 || effectiveScore(ps) > effectiveScore(best) {
 						bestPerson, best = pid, ps
 					}
 				}
-				if bestPerson != 0 && acceptJoin(best, threshold) {
-					matches[i] = bestPerson
-				}
+				matches[i] = bestPerson
 			}
 		}(lo, hi)
 	}
@@ -381,11 +618,30 @@ func scoreAgainstSeeds(unassigned []media.Face, seeds []seed, threshold float32)
 // contents, so a reset must not scatter it. Orphaned assignments (person row
 // gone) are cleared too. Returns how many faces were unassigned.
 func resetAutoAssignments(db *sql.DB, model string) (int, error) {
-	rows, err := db.Query(`
+	return resetAssignments(db, `
 		SELECT f.id FROM face f
 		LEFT JOIN person p ON p.id = f.person_id
 		WHERE f.model = ? AND f.assigned_by = 'auto'
 		  AND (p.id IS NULL OR p.name LIKE 'Unknown #%')`, model)
+}
+
+// resetAllAutoAssignments clears EVERY auto assignment for model — including
+// faces sitting inside named people — keeping only user-assigned faces as
+// ground truth. This is the recovery hatch for a poisoned library: once a bad
+// auto cluster has been renamed (naming normally endorses its contents), the
+// anonymous-only reset can never dislodge it, so reclustering deterministically
+// rebuilds the same groups. Named person rows survive (possibly empty) so the
+// following clustering pass can regrow them from their user-assigned seeds.
+func resetAllAutoAssignments(db *sql.DB, model string) (int, error) {
+	return resetAssignments(db, `SELECT id FROM face WHERE model = ? AND assigned_by = 'auto'`, model)
+}
+
+// resetAssignments unassigns the faces selected by query, then dissolves
+// now-empty anonymous "Unknown #N" clusters (named people are kept even when
+// empty — the user made them, the user deletes them). Returns how many faces
+// were unassigned.
+func resetAssignments(db *sql.DB, query, model string) (int, error) {
+	rows, err := db.Query(query, model)
 	if err != nil {
 		return 0, err
 	}
@@ -407,8 +663,6 @@ func resetAutoAssignments(db *sql.DB, model string) (int, error) {
 			return len(ids), err
 		}
 	}
-	// Dissolve now-empty anonymous clusters (named people are kept even when
-	// empty — the user made them, the user deletes them).
 	people, err := media.GetPeople(db)
 	if err != nil {
 		return len(ids), err
@@ -455,6 +709,9 @@ func jobHasFlag(j *jobqueue.Job, flag string) bool {
 //
 //	--model=<id>           cluster a specific recognizer's faces (default: active)
 //	--threshold=<0..1>     override the join threshold (model default)
+//	--threshold-offset=<±> shift join AND form thresholds relative to each
+//	                       model's default (the tuning-slider form: one value
+//	                       works across routed models with different scales)
 //	--form-threshold=<0..1> override the new-cluster threshold (join + 0.05)
 //	--min-quality=<0..1>   detection-confidence floor for new clusters (0.75)
 //	--min-cluster=<n>      minimum faces for a new anonymous person (default 3)
@@ -463,6 +720,15 @@ func jobHasFlag(j *jobqueue.Job, flag string) bool {
 //	                       User-assigned faces and everything inside NAMED
 //	                       people are never touched — naming/merging a cluster
 //	                       endorses its contents.
+//	--reset-all            clear EVERY auto assignment first, including inside
+//	                       named people (user labels alone survive) — the
+//	                       from-scratch re-run for parameter tuning/recovery.
+//
+// Human curation always survives and constrains every run, whatever the flags:
+// user-assigned faces stay put and seed clustering at userSeedWeight×, and
+// rejections (face_veto + face_cannot_link) permanently keep a face out of the
+// group it was removed from — even when that group is dissolved by a reset and
+// re-forms under a new id.
 func facesClusterTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	// Which recognizers to cluster: an explicit --model pins one; otherwise,
 	// with routing on, every known model that has stored faces gets its own
@@ -506,6 +772,95 @@ func facesClusterTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error 
 	return nil
 }
 
+// clusterModelIDs resolves the recognizer set a clustering pass would process:
+// every known model with stored faces when routing is enabled, otherwise the
+// active model only. Shared by the ungrouped-face count/list so the UI reports
+// exactly the workload "Group new faces" would see.
+func clusterModelIDs(db *sql.DB) ([]string, error) {
+	var models []string
+	if FaceRoutingEnabled() {
+		ids, err := faceModelsWithFaces(db)
+		if err != nil {
+			return nil, err
+		}
+		for _, id := range ids {
+			if _, known := FaceModelByID(id); known {
+				models = append(models, id)
+			}
+		}
+	}
+	if len(models) == 0 {
+		models = []string{ActiveFaceModel().ID}
+	}
+	return models, nil
+}
+
+func modelPlaceholders(models []string) (string, []any) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(models)), ",")
+	args := make([]any, len(models))
+	for i, m := range models {
+		args[i] = m
+	}
+	return placeholders, args
+}
+
+// CountUngroupedFaces reports how many stored faces the next "Group new
+// faces" pass would try to place: faces with no person assignment, counted
+// over the recognizer set the pass itself would process. Powers the count
+// shown next to the grouping button.
+func CountUngroupedFaces(db *sql.DB) (int, error) {
+	models, err := clusterModelIDs(db)
+	if err != nil {
+		return 0, err
+	}
+	placeholders, args := modelPlaceholders(models)
+	var n int
+	err = db.QueryRow(
+		`SELECT COUNT(*) FROM face
+		 WHERE COALESCE(person_id, 0) = 0 AND model IN (`+placeholders+`)`,
+		args...).Scan(&n)
+	return n, err
+}
+
+// UngroupedFace is one not-yet-assigned face, for the manual-review UI.
+type UngroupedFace struct {
+	ID        int64   `json:"id"`
+	MediaPath string  `json:"path"`
+	FrameTS   float64 `json:"frameTs"`
+	DetScore  float64 `json:"detScore"`
+	Model     string  `json:"model"`
+}
+
+// ListUngroupedFaces pages through the faces CountUngroupedFaces counts,
+// best detections first — those are the faces that plausibly SHOULD have
+// grouped, i.e. the interesting failures; the blurry tail sorts last.
+func ListUngroupedFaces(db *sql.DB, limit, offset int) ([]UngroupedFace, error) {
+	models, err := clusterModelIDs(db)
+	if err != nil {
+		return nil, err
+	}
+	placeholders, args := modelPlaceholders(models)
+	args = append(args, limit, offset)
+	rows, err := db.Query(
+		`SELECT id, media_path, COALESCE(frame_ts, 0), det_score, model FROM face
+		 WHERE COALESCE(person_id, 0) = 0 AND model IN (`+placeholders+`)
+		 ORDER BY det_score DESC, id LIMIT ? OFFSET ?`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UngroupedFace{}
+	for rows.Next() {
+		var f UngroupedFace
+		if err := rows.Scan(&f.ID, &f.MediaPath, &f.FrameTS, &f.DetScore, &f.Model); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // faceModelsWithFaces lists the distinct recognizer IDs present in the face
 // table.
 func faceModelsWithFaces(db *sql.DB) ([]string, error) {
@@ -529,6 +884,14 @@ func faceModelsWithFaces(db *sql.DB) ([]string, error) {
 // logging) for a single recognizer. Errors the job on failure.
 func clusterOneModel(j *jobqueue.Job, q *jobqueue.Queue, model FaceModel) error {
 	p := defaultClusterParams(model)
+	if v, ok := jobArgValue(j, "--threshold-offset"); ok {
+		if t, err := strconv.ParseFloat(v, 32); err == nil && t >= -0.2 && t <= 0.3 {
+			// Offset from the recognizer's OWN default — replaces the saved
+			// tuner offset already folded into p, never stacks on it.
+			p.joinThreshold = model.MatchThreshold + float32(t)
+			p.formThreshold = model.MatchThreshold + 0.05 + float32(t)
+		}
+	}
 	if v, ok := jobArgValue(j, "--threshold"); ok {
 		if t, err := strconv.ParseFloat(v, 32); err == nil && t > 0 && t < 1 {
 			p.joinThreshold = float32(t)
@@ -560,7 +923,15 @@ func clusterOneModel(j *jobqueue.Job, q *jobqueue.Queue, model FaceModel) error 
 		model.ID, p.joinThreshold, p.formThreshold, p.minQuality, p.minCluster, p.passes,
 	))
 
-	if jobHasFlag(j, "--reset") {
+	if jobHasFlag(j, "--reset-all") {
+		n, err := resetAllAutoAssignments(q.Db, model.ID)
+		if err != nil {
+			q.PushJobStdout(j.ID, "Reset failed: "+err.Error())
+			q.ErrorJob(j.ID)
+			return err
+		}
+		q.PushJobStdout(j.ID, fmt.Sprintf("Reset ALL %d auto assignment(s); only user labels kept", n))
+	} else if jobHasFlag(j, "--reset") {
 		n, err := resetAutoAssignments(q.Db, model.ID)
 		if err != nil {
 			q.PushJobStdout(j.ID, "Reset failed: "+err.Error())

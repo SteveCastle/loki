@@ -61,7 +61,6 @@ func init() {
 	RegisterTask("transcribe", "Generate Transcripts", itemOpTaskOptions("transcribe"), makeItemOpTaskFn("transcribe"))
 	RegisterTask("hash", "Generate Hashes", itemOpTaskOptions("hash"), makeItemOpTaskFn("hash"))
 	RegisterTask("dimensions", "Generate Dimensions", itemOpTaskOptions("dimensions"), makeItemOpTaskFn("dimensions"))
-	RegisterTask("llm-autotag", "Auto Tag (LLM Vision)", itemOpTaskOptions("llm-autotag"), makeItemOpTaskFn("llm-autotag"))
 	RegisterTask("process", "Process Media (Combined Ops)", processTaskOptions(), processTask)
 	RegisterTask("faces", "Detect Faces (ONNX)", itemOpTaskOptions("faces"), makeItemOpTaskFn("faces"))
 	RegisterTask("faces-cluster", "Cluster Faces into People", nil, facesClusterTask)
@@ -86,7 +85,6 @@ func init() {
 	// former metadata-task selves did. Transcription also historically ran
 	// under the metadata task's inference bucket, so it keeps that behavior.
 	RegisterHostResolver("describe", visionHost)
-	RegisterHostResolver("llm-autotag", visionHost)
 	RegisterHostResolver("transcribe", visionHost)
 	// A combined job may include LLM ops, so it conservatively takes the
 	// inference bucket (a hash-only combined run parking there is harmless).

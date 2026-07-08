@@ -40,7 +40,6 @@ func TestGetTasks(t *testing.T) {
 		{"transcribe", "Generate Transcripts"},
 		{"hash", "Generate Hashes"},
 		{"dimensions", "Generate Dimensions"},
-		{"llm-autotag", "Auto Tag (LLM Vision)"},
 		{"embed", "Visual Embedding (ONNX)"},
 		{"process", "Process Media (Combined Ops)"},
 	}

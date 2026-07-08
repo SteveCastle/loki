@@ -1,15 +1,32 @@
 package main
 
 import (
+	"encoding/json"
+	"math"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/embedvec"
 	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/renderer"
+	"github.com/stevecastle/shrike/stream"
 	"github.com/stevecastle/shrike/tasks"
 )
+
+// broadcastPeopleChanged pushes the same "people-updated" SSE event the
+// clustering job emits, so live UIs (People grid, person-filtered library
+// views — in every connected window) refetch immediately after a MANUAL
+// mutation: assign, reject, curate, merge, rename, delete, lock, cover.
+func broadcastPeopleChanged() {
+	payload, err := json.Marshal(map[string]any{"models": []string{}})
+	if err != nil {
+		return
+	}
+	stream.Broadcast(stream.Message{Type: "people-updated", Msg: string(payload)})
+}
 
 // RegisterPeopleRoutes wires the person-management API onto mux (called from
 // RegisterFacesRoutes so the three platform mains stay one-line).
@@ -20,8 +37,13 @@ import (
 //	POST   /api/people/{id}/merge    — {intoId}; moves faces + taxonomy rows
 //	DELETE /api/people/{id}          — unassigns faces, removes taxonomy rows
 //	GET    /api/people/{id}/media    — the person's media, renderer item shape
+//	GET    /api/people/{id}/faces    — the person's faces with typicality, for review
+//	POST   /api/people/{id}/lock     — promote every auto face to a user assignment
+//	POST   /api/people/{id}/curate   — {keepFaceIds}: lock the keeps, reject the rest
+//	GET    /api/faces/ungrouped      — count of faces not yet assigned to any person
 //	POST   /api/faces/{id}/assign    — {personId} or {name} (creates person)
 //	POST   /api/faces/{id}/unassign
+//	POST   /api/faces/{id}/reject    — {personId?}: veto + cannot-links + unassign
 //	DELETE /api/faces/all?confirm=true — privacy wipe of ALL face data
 func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/people", renderer.ApplyMiddlewares(peopleHandler(deps), renderer.RoleAdmin))
@@ -29,12 +51,117 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/people/{id}/merge", renderer.ApplyMiddlewares(personMergeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}", renderer.ApplyMiddlewares(personDeleteHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/media", renderer.ApplyMiddlewares(personMediaHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/people/{id}/faces", renderer.ApplyMiddlewares(personFacesHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/people/{id}/lock", renderer.ApplyMiddlewares(personLockHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/people/{id}/curate", renderer.ApplyMiddlewares(personCurateHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/cover", renderer.ApplyMiddlewares(personCoverHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/assign-person", renderer.ApplyMiddlewares(mediaAssignPersonHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/assign", renderer.ApplyMiddlewares(faceAssignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/unassign", renderer.ApplyMiddlewares(faceUnassignHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/faces/{id}/reject", renderer.ApplyMiddlewares(faceRejectHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/all", renderer.ApplyMiddlewares(facesWipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/stats", renderer.ApplyMiddlewares(facesStatsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/faces/ungrouped", renderer.ApplyMiddlewares(facesUngroupedHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/faces/tuning", renderer.ApplyMiddlewares(facesTuningHandler(deps), renderer.RoleAdmin))
+}
+
+// facesTuningHandler reads (GET) and persists (POST) the grouping tuner — the
+// People panel's Tune sliders. Values live in the server config, so they
+// apply to EVERY clustering pass on every client (buttons, tuned regroups,
+// in-scan incremental passes) until changed. GET always reports the EFFECTIVE
+// values (built-in defaults where nothing is saved).
+func facesTuningHandler(deps *Dependencies) http.HandlerFunc {
+	type tuning struct {
+		ThresholdOffset float64 `json:"thresholdOffset"`
+		MinCluster      int     `json:"minCluster"`
+		MinQuality      float64 `json:"minQuality"`
+	}
+	current := func() tuning {
+		cfg := appconfig.Get()
+		t := tuning{ThresholdOffset: cfg.FaceClusterThresholdOffset, MinCluster: cfg.FaceClusterMinCluster, MinQuality: cfg.FaceClusterMinQuality}
+		if t.ThresholdOffset < -0.2 || t.ThresholdOffset > 0.3 {
+			t.ThresholdOffset = 0
+		}
+		if t.MinCluster < 1 {
+			t.MinCluster = 3
+		}
+		if t.MinQuality <= 0 || t.MinQuality >= 1 {
+			t.MinQuality = 0.75
+		}
+		return t
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, current())
+		case http.MethodPost:
+			var req tuning
+			if err := readJSON(r, &req); err != nil {
+				httpError(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if req.ThresholdOffset < -0.2 || req.ThresholdOffset > 0.3 {
+				httpError(w, "thresholdOffset must be between -0.2 and 0.3", http.StatusBadRequest)
+				return
+			}
+			if req.MinCluster < 1 || req.MinCluster > 50 {
+				httpError(w, "minCluster must be between 1 and 50", http.StatusBadRequest)
+				return
+			}
+			if req.MinQuality <= 0 || req.MinQuality >= 1 {
+				httpError(w, "minQuality must be between 0 and 1", http.StatusBadRequest)
+				return
+			}
+			cfg := appconfig.Get()
+			cfg.FaceClusterThresholdOffset = req.ThresholdOffset
+			cfg.FaceClusterMinCluster = req.MinCluster
+			cfg.FaceClusterMinQuality = req.MinQuality
+			if _, err := appconfig.Save(cfg); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, current())
+		default:
+			httpError(w, "use GET or POST", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+// facesUngroupedHandler reports how many stored faces have no person yet —
+// the workload a "Group new faces" run would pick up. GET /api/faces/ungrouped;
+// with ?faces=1 (plus optional limit/offset, best detections first) the
+// response also carries a page of the faces themselves for the manual-review
+// pseudo-group.
+func facesUngroupedHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httpError(w, "use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		count, err := tasks.CountUngroupedFaces(deps.DB)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp := map[string]any{"count": count}
+		if r.URL.Query().Get("faces") == "1" {
+			limit := 120
+			if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v >= 1 && v <= 500 {
+				limit = v
+			}
+			offset := 0
+			if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v > 0 {
+				offset = v
+			}
+			faces, err := tasks.ListUngroupedFaces(deps.DB, limit, offset)
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			resp["faces"] = faces
+		}
+		writeJSON(w, resp)
+	}
 }
 
 // facesStatsHandler reports how much face data is stored — per-model face
@@ -144,6 +271,7 @@ func peopleHandler(deps *Dependencies) http.HandlerFunc {
 				httpError(w, err.Error(), userErrorStatus(err))
 				return
 			}
+			broadcastPeopleChanged()
 			writeJSON(w, map[string]any{"id": id, "name": strings.TrimSpace(req.Name)})
 		default:
 			httpError(w, "use GET or POST", http.StatusMethodNotAllowed)
@@ -173,6 +301,7 @@ func personRenameHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, err.Error(), userErrorStatus(err))
 			return
 		}
+		broadcastPeopleChanged()
 		writeJSON(w, map[string]any{"id": id, "name": strings.TrimSpace(req.Name)})
 	}
 }
@@ -199,6 +328,7 @@ func personMergeHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, err.Error(), userErrorStatus(err))
 			return
 		}
+		broadcastPeopleChanged()
 		writeJSON(w, map[string]any{"merged": id, "into": req.IntoID})
 	}
 }
@@ -225,6 +355,7 @@ func personDeleteHandler(deps *Dependencies) http.HandlerFunc {
 				return
 			}
 			tasks.FaceIndexDeleteFaceIDs(faceIDs)
+			broadcastPeopleChanged()
 			writeJSON(w, map[string]any{"deleted": id, "facesDeleted": len(faceIDs)})
 			return
 		}
@@ -232,6 +363,7 @@ func personDeleteHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, err.Error(), userErrorStatus(err))
 			return
 		}
+		broadcastPeopleChanged()
 		writeJSON(w, map[string]any{"deleted": id})
 	}
 }
@@ -320,6 +452,7 @@ func personCoverHandler(deps *Dependencies) http.HandlerFunc {
 				httpError(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+			broadcastPeopleChanged()
 			writeJSON(w, map[string]any{"personId": id, "coverFaceId": f.ID})
 			return
 		}
@@ -329,11 +462,19 @@ func personCoverHandler(deps *Dependencies) http.HandlerFunc {
 
 // mediaAssignPersonHandler assigns a media item's face to a person (dragging
 // a person card onto media). POST /api/media/assign-person with
-// {path, personId, setCover?}. The media is scanned on the fly when it has no
-// stored face vectors yet. When the item contains several faces, the one most
-// similar to the person's existing faces wins (people often appear alongside
-// others); for a person with no faces yet, the largest face wins. setCover
-// additionally makes that face the person's preview crop.
+// {path, personId, setCover?} — or {path, newPerson: true, name?} to MINT a
+// brand-new group from this image (dragging the "New group" chip onto media):
+// the item's face is pulled out of whatever cluster it sits in (a user move,
+// so a veto keeps it from drifting back) and becomes the founding, locked seed
+// of a new person, which immediately joins the People grid ready to collect
+// more faces by drag or clustering.
+//
+// The media is scanned on the fly when it has no stored face vectors yet.
+// When the item contains several faces, the one most similar to the person's
+// existing faces wins (people often appear alongside others); for a person
+// with no faces yet — always the case for newPerson — the largest face wins.
+// setCover additionally makes that face the person's preview crop (implied
+// for a new person).
 func mediaAssignPersonHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -341,24 +482,30 @@ func mediaAssignPersonHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			Path     string `json:"path"`
-			PersonID int64  `json:"personId"`
-			SetCover bool   `json:"setCover"`
+			Path      string `json:"path"`
+			PersonID  int64  `json:"personId"`
+			SetCover  bool   `json:"setCover"`
+			NewPerson bool   `json:"newPerson"`
+			Name      string `json:"name"`
 		}
-		if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Path) == "" || req.PersonID <= 0 {
-			httpError(w, "path and personId required", http.StatusBadRequest)
+		if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Path) == "" ||
+			(req.PersonID <= 0 && !req.NewPerson) {
+			httpError(w, "path and personId (or newPerson) required", http.StatusBadRequest)
 			return
 		}
-		if _, found, err := media.GetPersonByID(deps.DB, req.PersonID); err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		} else if !found {
-			httpError(w, "no such person", http.StatusNotFound)
-			return
+		if !req.NewPerson {
+			if _, found, err := media.GetPersonByID(deps.DB, req.PersonID); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			} else if !found {
+				httpError(w, "no such person", http.StatusNotFound)
+				return
+			}
 		}
 
 		// Stored faces when scanned; scan on the fly (persist + index)
-		// otherwise — "create the vector first".
+		// otherwise — "create the vector first". Runs BEFORE a new person is
+		// created so a face-less item never leaves an empty group behind.
 		faces, _, err := tasks.FacesForPathOrScan(r.Context(), deps.DB, req.Path)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
@@ -367,6 +514,25 @@ func mediaAssignPersonHandler(deps *Dependencies) http.HandlerFunc {
 		if len(faces) == 0 {
 			httpError(w, "no face detected in this media item", http.StatusUnprocessableEntity)
 			return
+		}
+
+		personName := ""
+		if req.NewPerson {
+			personName = strings.TrimSpace(req.Name)
+			if personName == "" {
+				personName, err = media.NextUnknownName(deps.DB)
+				if err != nil {
+					httpError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			id, err := media.CreatePerson(deps.DB, personName)
+			if err != nil {
+				httpError(w, err.Error(), userErrorStatus(err))
+				return
+			}
+			req.PersonID = id
+			req.SetCover = true // a brand-new group always needs a preview
 		}
 
 		personFaces, err := media.PersonFacesByQuality(deps.DB, req.PersonID)
@@ -386,11 +552,14 @@ func mediaAssignPersonHandler(deps *Dependencies) http.HandlerFunc {
 				return
 			}
 		}
+		broadcastPeopleChanged()
 		writeJSON(w, map[string]any{
 			"faceId":   best.ID,
 			"personId": req.PersonID,
 			"faces":    len(faces),
 			"setCover": req.SetCover,
+			"created":  req.NewPerson,
+			"name":     personName,
 		})
 	}
 }
@@ -438,19 +607,31 @@ func faceAssignHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			PersonID int64  `json:"personId"`
-			Name     string `json:"name"`
+			PersonID  int64  `json:"personId"`
+			Name      string `json:"name"`
+			NewPerson bool   `json:"newPerson"`
 		}
 		if err := readJSON(r, &req); err != nil {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
 		personID := req.PersonID
+		created := false
+		personName := ""
 		if personID == 0 {
 			name := strings.TrimSpace(req.Name)
 			if name == "" {
-				httpError(w, "personId or name required", http.StatusBadRequest)
-				return
+				// {newPerson:true} mints a fresh auto-named group seeded by
+				// this face — "make a person out of this stray".
+				if !req.NewPerson {
+					httpError(w, "personId, name, or newPerson required", http.StatusBadRequest)
+					return
+				}
+				var err error
+				if name, err = media.NextUnknownName(deps.DB); err != nil {
+					httpError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 			}
 			// Assign by name: reuse the person when it exists (including the
 			// _cluster-suffixed form), create otherwise.
@@ -466,14 +647,268 @@ func faceAssignHandler(deps *Dependencies) http.HandlerFunc {
 					return
 				}
 				personID = id
+				created = true
 			}
+			personName = name
 		}
 		if err := media.AssignFace(deps.DB, faceID, personID, "user"); err != nil {
 			httpError(w, err.Error(), userErrorStatus(err))
 			return
 		}
-		writeJSON(w, map[string]any{"faceId": faceID, "personId": personID})
+		if created {
+			// A brand-new group needs a preview; its only face is the cover.
+			if err := media.SetPersonCover(deps.DB, personID, faceID); err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		broadcastPeopleChanged()
+		writeJSON(w, map[string]any{"faceId": faceID, "personId": personID, "created": created, "name": personName})
 	}
+}
+
+// faceRejectHandler is the "this is not them" action: POST
+// /api/faces/{id}/reject with an optional {personId} (defaults to the face's
+// current person). It records a permanent negative assertion — a veto against
+// the person plus cannot-links against the group's exemplar faces — and
+// unassigns the face. No clustering pass, under any settings, will put the
+// face back in that group, even after the group is dissolved and re-forms.
+func faceRejectHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		faceID, ok := pathID(r)
+		if !ok {
+			httpError(w, "invalid face id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			PersonID int64 `json:"personId"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		personID := req.PersonID
+		if personID == 0 {
+			f, found, err := media.GetFaceByID(deps.DB, faceID)
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !found {
+				httpError(w, "no face with id "+strconv.FormatInt(faceID, 10), http.StatusNotFound)
+				return
+			}
+			if f.PersonID == 0 {
+				httpError(w, "face is unassigned; personId required", http.StatusBadRequest)
+				return
+			}
+			personID = f.PersonID
+		}
+		links, err := media.RejectFaceFromPerson(deps.DB, faceID, personID)
+		if err != nil {
+			httpError(w, err.Error(), userErrorStatus(err))
+			return
+		}
+		broadcastPeopleChanged()
+		writeJSON(w, map[string]any{
+			"faceId":      faceID,
+			"personId":    personID,
+			"cannotLinks": links,
+		})
+	}
+}
+
+// personLockHandler promotes every auto-assigned face of a person to a user
+// assignment — "this whole group is right". POST /api/people/{id}/lock.
+// Locked faces survive every regroup (including --reset-all) and seed future
+// clustering with extra weight.
+func personLockHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		id, ok := pathID(r)
+		if !ok {
+			httpError(w, "invalid person id", http.StatusBadRequest)
+			return
+		}
+		n, err := media.LockPersonFaces(deps.DB, id)
+		if err != nil {
+			httpError(w, err.Error(), userErrorStatus(err))
+			return
+		}
+		broadcastPeopleChanged()
+		writeJSON(w, map[string]any{"personId": id, "locked": n})
+	}
+}
+
+// personCurateHandler applies a whole-group review in one shot: POST
+// /api/people/{id}/curate with {keepFaceIds: [...]}. Faces in the list are
+// locked (user assignments); every other face of the person is rejected —
+// removed with a permanent guarantee it never returns to this group. The
+// one-click "keep the checked, discard the rest" cleanup for a group with
+// false positives.
+func personCurateHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		id, ok := pathID(r)
+		if !ok {
+			httpError(w, "invalid person id", http.StatusBadRequest)
+			return
+		}
+		var req struct {
+			KeepFaceIDs []int64 `json:"keepFaceIds"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		kept, rejected, err := media.CuratePersonFaces(deps.DB, id, req.KeepFaceIDs)
+		if err != nil {
+			httpError(w, err.Error(), userErrorStatus(err))
+			return
+		}
+		broadcastPeopleChanged()
+		writeJSON(w, map[string]any{"personId": id, "kept": kept, "rejected": rejected})
+	}
+}
+
+// reviewFace is one entry of the person face-review payload.
+type reviewFace struct {
+	ID         int64   `json:"id"`
+	MediaPath  string  `json:"path"`
+	FrameTS    float64 `json:"frameTs"`
+	DetScore   float64 `json:"detScore"`
+	AssignedBy string  `json:"assignedBy"`
+	// Typicality is the face's cosine against the group's center — the mean
+	// of the user-CONFIRMED faces when any exist (self excluded), else the
+	// plain group mean. Low values are the outliers a human should look at
+	// first. 0 when it can't be computed (single face or mixed-dimension
+	// group).
+	Typicality float32 `json:"typicality"`
+}
+
+// personFacesHandler returns a person's faces enriched with typicality for
+// the review UI, least typical first (the faces most worth a human look).
+// GET /api/people/{id}/faces.
+func personFacesHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httpError(w, "use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		id, ok := pathID(r)
+		if !ok {
+			httpError(w, "invalid person id", http.StatusBadRequest)
+			return
+		}
+		if _, found, err := media.GetPersonByID(deps.DB, id); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		} else if !found {
+			httpError(w, "no such person", http.StatusNotFound)
+			return
+		}
+		faces, err := media.PersonFacesByQuality(deps.DB, id)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		out := make([]reviewFace, len(faces))
+		for i, f := range faces {
+			out[i] = reviewFace{
+				ID:         f.ID,
+				MediaPath:  f.MediaPath,
+				FrameTS:    f.FrameTS,
+				DetScore:   f.Score,
+				AssignedBy: f.AssignedBy,
+				Typicality: 0,
+			}
+		}
+		// Centroid per vector dimension (a merged person can hold faces from
+		// different recognizers; only same-dimension vectors are comparable).
+		// When the person has user-confirmed faces, the center is the mean of
+		// THOSE alone — typicality then reads "similarity to the confirmed
+		// core", matching the clustering anchor, and stays honest even when a
+		// bad regroup floods the group with someone else's faces (a weighted
+		// all-face mean drifts toward the flood, sorting the strangers as
+		// typical and the confirmed faces as suspects). Groups with no
+		// confirmations use the plain all-face mean.
+		sums := map[int][]float32{}
+		userSums := map[int][]float32{}
+		userCounts := map[int]int{}
+		for i := range faces {
+			v := embedvec.Normalize(faces[i].Vec)
+			faces[i].Vec = v
+			s := sums[len(v)]
+			if s == nil {
+				s = make([]float32, len(v))
+				sums[len(v)] = s
+			}
+			for k, x := range v {
+				s[k] += x
+			}
+			if faces[i].AssignedBy == "user" {
+				us := userSums[len(v)]
+				if us == nil {
+					us = make([]float32, len(v))
+					userSums[len(v)] = us
+				}
+				for k, x := range v {
+					us[k] += x
+				}
+				userCounts[len(v)]++
+			}
+		}
+		for i, f := range faces {
+			rest := make([]float32, len(f.Vec))
+			// A user face measures against the OTHER confirmed faces (self
+			// excluded); with only itself confirmed there is no confirmed
+			// center left, so it falls back to the all-face mean like an
+			// unconfirmed group.
+			uc := userCounts[len(f.Vec)]
+			if uc > 0 && !(f.AssignedBy == "user" && uc == 1) {
+				copy(rest, userSums[len(f.Vec)])
+				if f.AssignedBy == "user" {
+					for k := range rest {
+						rest[k] -= f.Vec[k]
+					}
+				}
+			} else {
+				s := sums[len(f.Vec)]
+				for k := range rest {
+					rest[k] = s[k] - f.Vec[k] // exclude self from its own center
+				}
+			}
+			var norm float64
+			for _, x := range rest {
+				norm += float64(x) * float64(x)
+			}
+			if norm > 1e-9 {
+				out[i].Typicality = float32(float64(dotFloat32(f.Vec, rest)) / math.Sqrt(norm))
+			}
+		}
+		sort.SliceStable(out, func(a, b int) bool { return out[a].Typicality < out[b].Typicality })
+		writeJSON(w, map[string]any{"personId": id, "faces": out})
+	}
+}
+
+// dotFloat32 is a plain dot product (embedvec.CosineSim renormalizes, which
+// the exclude-self centroid math above must control itself).
+func dotFloat32(a, b []float32) float32 {
+	var d float64
+	for i := range a {
+		d += float64(a[i]) * float64(b[i])
+	}
+	return float32(d)
 }
 
 func faceUnassignHandler(deps *Dependencies) http.HandlerFunc {
@@ -491,6 +926,7 @@ func faceUnassignHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, err.Error(), userErrorStatus(err))
 			return
 		}
+		broadcastPeopleChanged()
 		writeJSON(w, map[string]any{"faceId": faceID, "unassigned": true})
 	}
 }
@@ -514,6 +950,7 @@ func facesWipeHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 		tasks.SetFaceIndexForModel(nil, "", nil)
+		broadcastPeopleChanged()
 		writeJSON(w, map[string]any{"deleted": true})
 	}
 }

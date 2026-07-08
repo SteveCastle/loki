@@ -1,15 +1,14 @@
 package tasks
 
 // ops_metadata.go — the former "metadata" task's subtasks, each broken out as
-// a standalone ItemOp: describe, transcribe, hash, dimensions, llm-autotag.
-// Each runs as its own task and can be combined with any other op into a
-// single per-file pass (see the "process" task and runItemOps).
+// a standalone ItemOp: describe, transcribe, hash, dimensions. Each runs as
+// its own task and can be combined with any other op into a single per-file
+// pass (see the "process" task and runItemOps).
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/stevecastle/shrike/appconfig"
 )
@@ -53,16 +52,6 @@ func registerBuiltinItemOps() {
 		Concurrency: func() int { return 4 },
 		Applies:     extAppliesFn(append(append([]string{}, imageExts...), ".mp4", ".mov", ".avi", ".mkv", ".webm")...),
 		Prepare:     prepareDimensionsOp,
-	})
-
-	RegisterItemOp(ItemOp{
-		ID:   "llm-autotag",
-		Name: "Auto Tag (LLM Vision)",
-		Options: []TaskOption{
-			{Name: "model", Label: "Vision Model", Type: "string", Description: "Override the configured vision model for tag selection"},
-		},
-		Applies: extAppliesFn(imageExts...),
-		Prepare: prepareLLMAutotagOp,
 	})
 
 	registerEmbedItemOp()
@@ -193,55 +182,3 @@ func prepareDimensionsOp(run *ItemRun) (*ItemProcessor, error) {
 	}, nil
 }
 
-func prepareLLMAutotagOp(run *ItemRun) (*ItemProcessor, error) {
-	q := run.Queue
-	db := q.Db
-	model, _ := run.Opts["model"].(string)
-	if model == "" {
-		model = appconfig.Get().OllamaModel
-	}
-	overwrite := run.Overwrite
-
-	availableTags, err := getAllAvailableTags(db)
-	if err != nil {
-		return nil, fmt.Errorf("fetch available tags: %w", err)
-	}
-	if len(availableTags) == 0 {
-		return nil, fmt.Errorf("no tags exist in the library to select from - create tags first")
-	}
-	q.PushJobStdout(run.Job.ID, fmt.Sprintf("llm-autotag: selecting from %d available tags", len(availableTags)))
-
-	return &ItemProcessor{
-		SkipExisting: func(path string) (bool, error) {
-			existing, err := getExistingTagsForFile(db, path)
-			if err != nil {
-				return false, err
-			}
-			return len(existing) > 0, nil
-		},
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
-			selected, err := generateAutoTagsWithVision(ctx, path, availableTags, model)
-			if err != nil {
-				return nil, fmt.Errorf("auto-tag: %w", err)
-			}
-			if len(selected) == 0 {
-				return nil, nil // model picked nothing — not an error, nothing to write
-			}
-			labels := make([]string, len(selected))
-			for i, t := range selected {
-				labels[i] = t.Label
-			}
-			return &ItemCommit{
-				Commit: func() error {
-					if overwrite {
-						if err := removeExistingTagsForFile(db, path); err != nil {
-							return fmt.Errorf("remove existing tags: %w", err)
-						}
-					}
-					return insertTagsForFile(db, path, selected)
-				},
-				Detail: "tags: " + strings.Join(labels, ", "),
-			}, nil
-		},
-	}, nil
-}

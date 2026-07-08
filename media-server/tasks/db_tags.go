@@ -21,52 +21,6 @@ func EnsureCategoryExists(db *sql.DB, label string, weight int) error {
 	return media.EnsureCategoryExists(db, label, weight)
 }
 
-// getAllAvailableTags fetches all unique tags and their categories from the database
-func getAllAvailableTags(db *sql.DB) ([]TagInfo, error) {
-	query := `
-		SELECT DISTINCT tag_label, category_label 
-		FROM media_tag_by_category 
-		ORDER BY category_label, tag_label`
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query available tags: %w", err)
-	}
-	defer rows.Close()
-	var tags []TagInfo
-	for rows.Next() {
-		var tag TagInfo
-		if err := rows.Scan(&tag.Label, &tag.Category); err != nil {
-			return nil, fmt.Errorf("failed to scan tag row: %w", err)
-		}
-		tags = append(tags, tag)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating over tag rows: %w", err)
-	}
-	return tags, nil
-}
-
-// getExistingTagsForFile checks if a file already has tags
-func getExistingTagsForFile(db *sql.DB, filePath string) ([]TagInfo, error) {
-	rows, err := db.Query(`
-		SELECT tag_label, category_label 
-		FROM media_tag_by_category 
-		WHERE media_path = ?`, filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var tags []TagInfo
-	for rows.Next() {
-		var tag TagInfo
-		if err := rows.Scan(&tag.Label, &tag.Category); err != nil {
-			return nil, err
-		}
-		tags = append(tags, tag)
-	}
-	return tags, nil
-}
-
 // hasSuggestedTags reports whether a file already carries any ONNX-suggested
 // tags — the skip-existing marker for the autotag op (a re-run without
 // --overwrite skips files the tagger already processed).
@@ -92,17 +46,6 @@ func removeSuggestedTagsForFile(db *sql.DB, filePath string) error {
 	if err != nil {
 		return err
 	}
-	media.InvalidateRandomSampleCache()
-	return nil
-}
-
-// removeExistingTagsForFile removes all existing tags for a file
-func removeExistingTagsForFile(db *sql.DB, filePath string) error {
-	_, err := db.Exec(`DELETE FROM media_tag_by_category WHERE media_path = ?`, filePath)
-	if err != nil {
-		return err
-	}
-	// Stripping a path's last tag removes it from the swipe pool.
 	media.InvalidateRandomSampleCache()
 	return nil
 }

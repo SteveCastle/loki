@@ -2,10 +2,10 @@ package tasks
 
 // media_metadata.go — the legacy "metadata" task, kept as a compatibility
 // alias. Its subtasks now live as standalone ItemOps (describe, transcribe,
-// hash, dimensions, llm-autotag); this task just maps the old --type values
-// onto those ops and runs them through the unified per-item runner, so
-// existing saved workflows, SPA payloads, and scripts keep working while
-// gaining progress reporting, pause/resume, and per-item durability.
+// hash, dimensions); this task just maps the old --type values onto those
+// ops and runs them through the unified per-item runner, so existing saved
+// workflows, SPA payloads, and scripts keep working while gaining progress
+// reporting, pause/resume, and per-item durability.
 
 import (
 	"strings"
@@ -15,7 +15,7 @@ import (
 )
 
 var metadataOptions = []TaskOption{
-	{Name: "type", Label: "Metadata Types", Type: "multi-enum", Choices: []string{"description", "transcript", "hash", "dimensions", "autotag"}, Default: "description,hash,dimensions", Description: "Comma-separated list of metadata types to generate"},
+	{Name: "type", Label: "Metadata Types", Type: "multi-enum", Choices: []string{"description", "transcript", "hash", "dimensions"}, Default: "description,hash,dimensions", Description: "Comma-separated list of metadata types to generate"},
 	{Name: "overwrite", Label: "Overwrite Existing", Type: "bool", Description: "Overwrite existing metadata values"},
 	{Name: "apply", Label: "Apply Scope", Type: "enum", Choices: []string{"new", "all"}, Default: "new", Description: "Deprecated - has no effect (kept for compatibility)"},
 	{Name: "model", Label: "Vision Model", Type: "string", Description: "Vision model to use for descriptions and tag selection"},
@@ -23,17 +23,18 @@ var metadataOptions = []TaskOption{
 }
 
 // legacyMetadataTypeToOp maps the old --type values to their ItemOp IDs.
+// The old "autotag" type (LLM tag selection) was removed with the llm-autotag
+// op — the ONNX "autotag" task is its own command, not a metadata type.
 var legacyMetadataTypeToOp = map[string]string{
 	"description": "describe",
 	"transcript":  "transcribe",
 	"hash":        "hash",
 	"dimensions":  "dimensions",
-	"autotag":     "llm-autotag",
 }
 
 // metadataTask translates the legacy --type option into an op list and
-// delegates to the unified runner. The describe/llm-autotag ops read the
-// unprefixed --model/--prompt flags directly, matching the old behavior.
+// delegates to the unified runner. The describe op reads the unprefixed
+// --model/--prompt flags directly, matching the old behavior.
 func metadataTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	opts := ParseOptions(j, metadataOptions)
 	typesStr, _ := opts["type"].(string)
@@ -47,7 +48,7 @@ func metadataTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		if opID, ok := legacyMetadataTypeToOp[t]; ok {
 			opIDs = append(opIDs, opID)
 		} else {
-			q.PushJobStdout(j.ID, "Warning: unknown metadata type '"+t+"' - valid types are: description, transcript, hash, dimensions, autotag")
+			q.PushJobStdout(j.ID, "Warning: unknown metadata type '"+t+"' - valid types are: description, transcript, hash, dimensions")
 		}
 	}
 	if len(opIDs) == 0 {

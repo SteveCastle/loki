@@ -113,7 +113,6 @@ type Config struct {
 	OllamaBaseURL  string `json:"ollamaBaseUrl"`
 	OllamaModel    string `json:"ollamaModel"`
 	DescribePrompt string `json:"describePrompt"`
-	AutotagPrompt  string `json:"autotagPrompt"`
 
 	// RunPod serverless vision settings. Active when InferenceProvider ==
 	// "runpod". The worker is expected to expose an OpenAI-compatible
@@ -153,7 +152,7 @@ type Config struct {
 
 	// AutoProcessOps is the comma-separated per-item op list the scheduled
 	// combined job runs. Empty = every op (hash, dimensions, describe,
-	// transcribe, llm-autotag, embed, faces).
+	// transcribe, autotag, embed, faces).
 	//
 	// NOTE: the scheduler's on/off mode is deliberately NOT config — it is
 	// runtime-only state that resets to "stopped" on every server start, so
@@ -240,6 +239,16 @@ type Config struct {
 	// recognizer, so one faces job handles both domains; "single" pins
 	// everything to FaceModel (pre-routing behavior).
 	FaceRouting string `json:"faceRouting"`
+
+	// Saved grouping tuner (the People panel's Tune sliders). These apply to
+	// EVERY clustering pass — the Group new faces / Rebuild buttons, tuned
+	// regroups, and the incremental in-scan passes — with explicit
+	// faces-cluster job flags overriding them per run. Zero values mean
+	// "use the built-in default" (offset 0 IS the default; 0 min-cluster /
+	// min-quality read as unset).
+	FaceClusterThresholdOffset float64 `json:"faceClusterThresholdOffset"` // added to each recognizer's default threshold (−0.2…0.3)
+	FaceClusterMinCluster      int     `json:"faceClusterMinCluster"`      // members needed to mint a new group (default 3)
+	FaceClusterMinQuality      float64 `json:"faceClusterMinQuality"`      // detection-confidence floor for founding groups (default 0.75)
 
 	// Bring-your-own face recognizers (research-licensed models like ArcFace
 	// or AdaFace exports that can't be shipped). The user supplies the ONNX
@@ -337,7 +346,6 @@ func defaultConfig() Config {
 		OllamaBaseURL:          "http://localhost:11434",
 		OllamaModel:            "llama3.2-vision",
 		DescribePrompt:         "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
-		AutotagPrompt:          "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
 		LMStudioBaseURL:        "http://localhost:1234",
 		LlamaCppBaseURL:        "http://localhost:8080",
 		InferenceConcurrency: struct {
@@ -566,9 +574,6 @@ func Load() (Config, string, error) {
 	}
 	if c.DescribePrompt == "" {
 		c.DescribePrompt = def.DescribePrompt
-	}
-	if c.AutotagPrompt == "" {
-		c.AutotagPrompt = def.AutotagPrompt
 	}
 	if c.EmbeddingModel == "" {
 		c.EmbeddingModel = def.EmbeddingModel

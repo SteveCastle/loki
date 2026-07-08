@@ -1371,7 +1371,6 @@ type updateConfigRequest struct {
 	OllamaBaseURL        string `json:"ollamaBaseUrl"`
 	OllamaModel          string `json:"ollamaModel"`
 	DescribePrompt       string `json:"describePrompt"`
-	AutotagPrompt        string `json:"autotagPrompt"`
 	InferenceProvider    string `json:"inferenceProvider"`
 	RunPodEndpoint       string `json:"runpodEndpoint"`
 	RunPodAPIKey         string `json:"runpodApiKey"`
@@ -1505,9 +1504,6 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if req.DescribePrompt != "" {
 				newCfg.DescribePrompt = req.DescribePrompt
-			}
-			if req.AutotagPrompt != "" {
-				newCfg.AutotagPrompt = req.AutotagPrompt
 			}
 			// Inference provider: assign unconditionally so changing tabs
 			// (including selecting Off) takes immediate effect. Empty string

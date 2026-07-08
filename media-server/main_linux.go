@@ -84,7 +84,7 @@ type Dependencies struct {
 }
 
 // -----------------------------------------------------------------------------
-// Utility – run from the folder that contains the executable so the templates
+// Utility â€“ run from the folder that contains the executable so the templates
 // and static files are found even when launched from elsewhere (during dev
 // this still helps, but isn't strictly required for embedded files).
 // -----------------------------------------------------------------------------
@@ -335,7 +335,7 @@ func homeHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// GET – render quick jobs launcher
+		// GET â€“ render quick jobs launcher
 		if err := renderer.Templates().ExecuteTemplate(w, "home", nil); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -877,7 +877,7 @@ func mediaHasTagHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Swipe view handlers – TikTok-like mobile experience
+// Swipe view handlers â€“ TikTok-like mobile experience
 // -----------------------------------------------------------------------------
 
 // swipeTemplateData holds data for the swipe template
@@ -1000,7 +1000,7 @@ func swipeManifestHandler() http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Tasks handler – lists all registered tasks/commands
+// Tasks handler â€“ lists all registered tasks/commands
 // -----------------------------------------------------------------------------
 
 // TaskInfo represents a task for the API response
@@ -1082,7 +1082,7 @@ func workflowHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Ollama models handler – lists available models via `ollama ls`
+// Ollama models handler â€“ lists available models via `ollama ls`
 // -----------------------------------------------------------------------------
 
 func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
@@ -1125,7 +1125,7 @@ func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
 			if strings.Contains(line, " ") {
 				line = strings.Fields(line)[0]
 			}
-			// Some outputs include tags like name:tag – keep as-is so user can choose full ref.
+			// Some outputs include tags like name:tag â€“ keep as-is so user can choose full ref.
 			models = append(models, line)
 		}
 
@@ -1239,7 +1239,6 @@ type updateConfigRequest struct {
 	OllamaBaseURL        string `json:"ollamaBaseUrl"`
 	OllamaModel          string `json:"ollamaModel"`
 	DescribePrompt       string `json:"describePrompt"`
-	AutotagPrompt        string `json:"autotagPrompt"`
 	InferenceProvider    string `json:"inferenceProvider"`
 	RunPodEndpoint       string `json:"runpodEndpoint"`
 	RunPodAPIKey         string `json:"runpodApiKey"`
@@ -1481,9 +1480,6 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.DescribePrompt != "" {
 				newCfg.DescribePrompt = req.DescribePrompt
 			}
-			if req.AutotagPrompt != "" {
-				newCfg.AutotagPrompt = req.AutotagPrompt
-			}
 			// Inference provider: assign unconditionally so changing tabs
 			// (including selecting Off) takes immediate effect.
 			if v := strings.ToLower(strings.TrimSpace(req.InferenceProvider)); v != "" {
@@ -1595,7 +1591,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.FaceThreadsPerWorker > 0 {
 				newCfg.FaceThreadsPerWorker = req.FaceThreadsPerWorker
 			}
-			// nil = field omitted (partial POST) → keep; an explicit empty
+			// nil = field omitted (partial POST) â†’ keep; an explicit empty
 			// array is a deliberate "remove all BYO entries".
 			if req.ByoFaceModels != nil {
 				newCfg.ByoFaceModels = req.ByoFaceModels
@@ -1688,7 +1684,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			deps.Storage.ReplaceWithDefault(newReg.AllBackends(), newReg.DefaultIdx())
 
 			// Re-apply per-bucket concurrency caps so UI changes take effect
-			// immediately. Cheap idempotent operation — only future ClaimJob
+			// immediately. Cheap idempotent operation â€” only future ClaimJob
 			// calls consult the new value; in-flight jobs are untouched.
 			tasks.ApplyHostLimits(deps.Queue, newCfg)
 
@@ -2114,7 +2110,7 @@ func loginPageHandler(deps *Dependencies) http.HandlerFunc {
 			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
 			return
 		}
-		// Until first-run setup finishes there is no account to log into —
+		// Until first-run setup finishes there is no account to log into â€”
 		// the wizard owns account creation.
 		if !appconfig.Get().SetupComplete {
 			http.Redirect(w, r, "/setup", http.StatusFound)
@@ -2345,18 +2341,18 @@ func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// main – start server then hand control to the system-tray UI.
+// main â€“ start server then hand control to the system-tray UI.
 // -----------------------------------------------------------------------------
 
 func main() {
-	// ––– initialize database –––
+	// â€“â€“â€“ initialize database â€“â€“â€“
 	db, err := initDB()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
 
-	// ––– job queue and runners –––
+	// â€“â€“â€“ job queue and runners â€“â€“â€“
 	log.Println("Initializing job queue with database persistence...")
 	// Wire the host resolver before NewQueueWithDB so the DB-restore path
 	// uses the full task-aware policy when assigning buckets to persisted
@@ -2368,13 +2364,13 @@ func main() {
 	tasks.ApplyHostLimits(queue, currentConfig)
 	currentRunners = runners.New(queue)
 
-	// ––– auth service –––
+	// â€“â€“â€“ auth service â€“â€“â€“
 	authService := auth.NewAuthService(db, currentConfig.JWTSecret)
 	if err := authService.CreateDefaultUser(); err != nil {
 		log.Printf("Failed to create default user: %v", err)
 	}
 
-	// ––– create dependencies struct –––
+	// â€“â€“â€“ create dependencies struct â€“â€“â€“
 	storageReg, storageErrs := storage.BuildRegistry(currentConfig.Roots)
 	for _, err := range storageErrs {
 		log.Printf("Warning: storage backend init error: %v", err)
@@ -2391,8 +2387,8 @@ func main() {
 	// deps.Queue on every tick, so it follows database switches transparently.
 	startAutoScheduler(deps)
 
-	// ––– embedding vector index (best-effort, non-fatal) –––
-	log.Printf("Building embedding search index…")
+	// â€“â€“â€“ embedding vector index (best-effort, non-fatal) â€“â€“â€“
+	log.Printf("Building embedding search indexâ€¦")
 	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
 		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
 	} else {
@@ -2405,7 +2401,7 @@ func main() {
 		return authMiddleware(deps, next, role)
 	}
 
-	// ––– routes –––
+	// â€“â€“â€“ routes â€“â€“â€“
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", renderer.ApplyMiddlewares(homeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs", renderer.ApplyMiddlewares(jobsHandler(deps), renderer.RoleAdmin))
@@ -2454,7 +2450,7 @@ func main() {
 	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
-	// Library stats API (stats_api.go) — powers the home page coverage cards
+	// Library stats API (stats_api.go) â€” powers the home page coverage cards
 	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RoleAdmin))
 
 	// Embeddings index + library data API (index_api.go / library_api.go)

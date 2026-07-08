@@ -14,6 +14,16 @@ export const mediaServerBase: string = isElectron
   ? (window as any).electron?.mediaServerBase || 'http://localhost:10111'
   : '';
 
+// Whether the local media server appears to be INSTALLED (its config.json
+// exists — the Go server writes one on first run — or LOWKEY_PORT points at
+// one explicitly). Distinguishes "not installed" from "installed but not
+// running" in server-dependent UI. Web mode is served BY the server, so it is
+// always true there; older preloads don't expose the flag, in which case we
+// default to true so the UI never claims "not installed" without evidence.
+export const mediaServerConfigured: boolean = isElectron
+  ? ((window as any).electron?.mediaServerConfigured ?? true)
+  : true;
+
 export const capabilities = {
   fileSystemAccess: true,
   clipboard: isElectron,

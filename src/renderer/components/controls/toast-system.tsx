@@ -92,8 +92,6 @@ const getJobTitle = (job: JobRunnerJob): string => {
       return 'Hashing Files';
     case 'dimensions':
       return 'Reading Dimensions';
-    case 'llm-autotag':
-      return 'Auto-Tagging (LLM)';
     case 'process':
       return 'Processing Media';
     case 'metadata':
@@ -136,8 +134,6 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return 'Computing content hashes to find duplicates.';
     case 'dimensions':
       return 'Reading the width & height of your media.';
-    case 'llm-autotag':
-      return 'Selecting tags from your taxonomy with a vision model.';
     case 'process':
       return 'Applying multiple operations to each file in one pass.';
     case 'metadata':
@@ -486,11 +482,7 @@ export function ToastSystem() {
           queryClient.invalidateQueries(['tags-by-path']);
         }
 
-        if (
-          job.command === 'autotag' ||
-          job.command === 'llm-autotag' ||
-          job.command === 'process'
-        ) {
+        if (job.command === 'autotag' || job.command === 'process') {
           queryClient.invalidateQueries(['tags-by-path']);
           queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
         }

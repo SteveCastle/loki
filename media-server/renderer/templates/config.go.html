@@ -1191,12 +1191,6 @@
                   >
                 </div>
                 <div class="field">
-                  <label class="label">Autotag prompt</label>
-                  <textarea id="autotag-prompt" class="input" rows="6">
-{{.Config.AutotagPrompt}}</textarea
-                  >
-                </div>
-                <div class="field">
                   <label class="label">Max concurrent local compute jobs</label>
                   <input
                     id="local-compute-concurrency"
@@ -2385,7 +2379,6 @@
             .value.trim(),
           ollamaModel: document.getElementById('ollama-model').value.trim(),
           describePrompt: document.getElementById('describe-prompt').value,
-          autotagPrompt: document.getElementById('autotag-prompt').value,
           inferenceProvider: document
             .getElementById('inference-provider')
             .value.trim(),

@@ -23,10 +23,6 @@ func TestDefaultConfig(t *testing.T) {
 		t.Error("Default DescribePrompt should not be empty")
 	}
 
-	if cfg.AutotagPrompt == "" {
-		t.Error("Default AutotagPrompt should not be empty")
-	}
-
 	if cfg.OnnxTagger.GeneralThreshold != 0.35 {
 		t.Errorf("Default GeneralThreshold = %f; want 0.35", cfg.OnnxTagger.GeneralThreshold)
 	}
@@ -245,7 +241,6 @@ func TestConfigStructFields(t *testing.T) {
 		OllamaBaseURL:     "http://localhost:11434",
 		OllamaModel:       "model",
 		DescribePrompt:    "describe prompt",
-		AutotagPrompt:     "autotag prompt",
 		FasterWhisperPath: "/path/to/whisper",
 		DiscordToken:      "token",
 	}
@@ -285,7 +280,7 @@ func TestConfigJSONMarshal(t *testing.T) {
 	}
 
 	// Check expected keys exist
-	expectedKeys := []string{"dbPath", "downloadPath", "ollamaBaseUrl", "ollamaModel", "describePrompt", "autotagPrompt", "onnxTagger"}
+	expectedKeys := []string{"dbPath", "downloadPath", "ollamaBaseUrl", "ollamaModel", "describePrompt", "onnxTagger"}
 	for _, key := range expectedKeys {
 		if _, ok := parsed[key]; !ok {
 			t.Errorf("Expected key %q not found in JSON output", key)
@@ -301,7 +296,6 @@ func TestConfigJSONUnmarshal(t *testing.T) {
 		"ollamaBaseUrl": "http://test:11434",
 		"ollamaModel": "test-model",
 		"describePrompt": "describe",
-		"autotagPrompt": "autotag",
 		"onnxTagger": {
 			"modelPath": "/model.onnx",
 			"labelsPath": "/labels.json",

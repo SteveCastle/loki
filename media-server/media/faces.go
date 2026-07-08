@@ -56,6 +56,14 @@ func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int
 	); err != nil {
 		return nil, fmt.Errorf("clear stale covers: %w", err)
 	}
+	// The old rows' curation assertions (vetoes, cannot-links) go with them —
+	// a rescan means the old detections (and anything asserted about them) are
+	// stale, matching how person assignments are dropped here.
+	if err := clearConstraintsForFacesTx(
+		tx, `SELECT id FROM face WHERE media_path=? AND model=?`, path, model,
+	); err != nil {
+		return nil, fmt.Errorf("clear stale face constraints: %w", err)
+	}
 	if _, err := tx.Exec(`DELETE FROM face WHERE media_path=? AND model=?`, path, model); err != nil {
 		return nil, fmt.Errorf("clear stale faces: %w", err)
 	}
@@ -221,6 +229,18 @@ func DeleteFacesForMedia(db *sql.DB, path string) error {
 	if _, err := db.Exec(
 		`UPDATE person SET cover_face_id = NULL
 		 WHERE cover_face_id IN (SELECT id FROM face WHERE media_path=?)`, path,
+	); err != nil {
+		return err
+	}
+	if _, err := db.Exec(
+		`DELETE FROM face_veto WHERE face_id IN (SELECT id FROM face WHERE media_path=?)`, path,
+	); err != nil {
+		return err
+	}
+	if _, err := db.Exec(
+		`DELETE FROM face_cannot_link
+		 WHERE face_a IN (SELECT id FROM face WHERE media_path=?)
+		    OR face_b IN (SELECT id FROM face WHERE media_path=?)`, path, path,
 	); err != nil {
 		return err
 	}

@@ -61,7 +61,7 @@ const (
 )
 
 // autoOpsDefault is every per-item op, in the order the combined job runs them.
-var autoOpsDefault = []string{"hash", "dimensions", "describe", "transcribe", "llm-autotag", "embed", "faces"}
+var autoOpsDefault = []string{"hash", "dimensions", "describe", "transcribe", "autotag", "embed", "faces"}
 
 // ---------------------------------------------------------------------------
 // App-level activity signal
@@ -325,7 +325,7 @@ func gapsRemain(stats *statsAPIResponse, ops []string) bool {
 			if stats.VideosWithTranscript < stats.TotalVideos {
 				return true
 			}
-		case "llm-autotag", "autotag":
+		case "autotag":
 			if stats.WithTags < stats.TotalMedia {
 				return true
 			}

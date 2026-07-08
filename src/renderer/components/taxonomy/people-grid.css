@@ -21,6 +21,45 @@
   flex-shrink: 0;
 }
 
+/* Drag-source chip: dashed (it's a "blank" person) and grabbable. Anchored
+   left while the action buttons keep to the right. */
+.people-new-group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  background: rgba(110, 220, 150, 0.06);
+  border: 1px dashed rgba(110, 220, 150, 0.45);
+  border-radius: 5px;
+  color: rgb(140, 230, 170);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: grab;
+  white-space: nowrap;
+  min-width: 0;
+  user-select: none;
+}
+
+.people-new-group-chip svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.people-new-group-chip:hover {
+  background: rgba(110, 220, 150, 0.14);
+}
+
+.people-new-group-chip.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.people-new-group-chip.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .people-cluster-btn {
   display: inline-flex;
   align-items: center;
@@ -46,6 +85,100 @@
 
 .people-cluster-btn:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+/* Ungrouped-face count on "Group new faces" — how much work a run would pick
+   up. Kept visible even in the icon-only compact mode. */
+.people-btn-count {
+  padding: 0 6px;
+  border-radius: 9px;
+  background: rgba(120, 160, 255, 0.18);
+  border: 1px solid rgba(120, 160, 255, 0.35);
+  color: rgb(170, 195, 255);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.people-cluster-btn.active {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+/* ── Grouping tuner (sliders + full regroup) ── */
+
+.people-tune-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.people-tune-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.people-tune-row label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.people-tune-value {
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+}
+
+.people-tune-row input[type='range'] {
+  width: 100%;
+  accent-color: rgb(120, 160, 255);
+  cursor: pointer;
+}
+
+.people-tune-hints {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.people-tune-note {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.people-tune-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.people-tune-reset {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.people-tune-reset:hover {
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .people-cluster-btn.danger {
@@ -110,6 +243,23 @@
   font-size: 14px;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.9);
+}
+
+/* Initial fetch: quieter than a real state, pulses while we find out. */
+.people-empty-loading {
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 400;
+  animation: people-loading-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes people-loading-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .people-empty-body {
@@ -244,7 +394,8 @@
   flex-shrink: 0;
 }
 
-.person-card-edit {
+.person-card-edit,
+.person-card-review {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -260,12 +411,400 @@
   transition: opacity 0.1s;
 }
 
-.person-card:hover .person-card-edit {
+.person-card-review {
+  right: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.person-card-review svg {
+  width: 13px;
+  height: 13px;
+}
+
+.person-card:hover .person-card-edit,
+.person-card:hover .person-card-review {
   opacity: 1;
 }
 
-.person-card-edit:hover {
+.person-card-edit:hover,
+.person-card-review:hover {
   background: rgba(0, 0, 0, 0.8);
+}
+
+/* Human-confirmed badge: how many of the group's faces are locked in. */
+.person-card-locked {
+  position: absolute;
+  bottom: 28px;
+  left: 4px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6);
+  color: rgb(110, 220, 150);
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* ── Ungrouped pseudo-group ── */
+
+/* Dashed like the new-group chip: it's a holding pen, not a person. */
+.people-ungrouped-card {
+  cursor: pointer;
+  border-style: dashed;
+}
+
+.people-ungrouped-card:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.ungrouped-assign-select {
+  max-width: 55%;
+  background: #2d2d31;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  padding: 4px 6px;
+  font-family: inherit;
+}
+
+.ungrouped-assign-hint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: right;
+}
+
+/* Tiles signal clickability once a target person is picked. */
+.face-review-tile.assignable {
+  cursor: copy;
+}
+
+.face-review-tile.assignable:hover {
+  border-color: rgba(110, 220, 150, 0.55);
+}
+
+.face-review-tile-actions .add {
+  background: rgba(30, 120, 65, 0.85);
+}
+
+.face-review-tile-actions .add:hover {
+  background: rgb(30, 140, 75);
+}
+
+/* "Show more" pagination row spans the whole grid. */
+.face-review-more {
+  grid-column: 1 / -1;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.face-review-more:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.face-review-more:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── Face review drawer ── */
+
+.face-review-content {
+  width: min(680px, 92vw);
+  max-height: 84vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.face-review-counts {
+  margin-left: 10px;
+  font-size: 11px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.face-review-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0 10px;
+}
+
+.face-review-sort {
+  display: inline-flex;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.face-review-sort button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.face-review-sort button.active {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.95);
+}
+
+.face-review-lock-all {
+  background: rgba(110, 220, 150, 0.12);
+  border: 1px solid rgba(110, 220, 150, 0.4);
+  border-radius: 5px;
+  color: rgb(140, 230, 170);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.face-review-lock-all:hover:not(:disabled) {
+  background: rgba(110, 220, 150, 0.22);
+}
+
+.face-review-lock-all:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.face-review-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  /* Rows must stay content-sized: without this (plus the tile min-height
+     below), the flex max-height squashes the aspect-ratio-derived image
+     heights into slivers instead of letting the grid scroll. */
+  grid-auto-rows: max-content;
+  gap: 8px;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 120px;
+  padding: 2px;
+}
+
+.face-review-status {
+  grid-column: 1 / -1;
+  padding: 28px 0;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.face-review-tile {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.35);
+  /* Hard floor so thumbnails can never be compressed unreadably small. */
+  min-height: 104px;
+}
+
+.face-review-tile {
+  cursor: pointer;
+}
+
+.face-review-tile.locked {
+  border-color: rgba(110, 220, 150, 0.55);
+}
+
+/* Checked = keeper for the bulk curate action. */
+.face-review-tile.checked {
+  border-color: rgb(110, 220, 150);
+  box-shadow: 0 0 0 1px rgb(110, 220, 150);
+}
+
+.face-review-tile:not(.checked) .person-card-face {
+  opacity: 0.75;
+}
+
+/* Check indicator: hollow circle (discoverable affordance), filled when the
+   face is checked as a keeper. */
+.face-review-check {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  background: rgba(0, 0, 0, 0.45);
+  color: #06170c;
+  font-size: 11px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.face-review-tile.checked .face-review-check {
+  border-color: rgb(110, 220, 150);
+  background: rgb(110, 220, 150);
+}
+
+.face-review-tile .person-card-face {
+  aspect-ratio: 1;
+}
+
+.face-review-lock-badge {
+  position: absolute;
+  bottom: 7px;
+  right: 4px;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(20, 60, 35, 0.85);
+  color: rgb(140, 230, 170);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+/* Relative similarity-to-group bar along the tile's bottom edge. */
+.face-review-typicality {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: linear-gradient(90deg, rgb(230, 170, 60), rgb(110, 220, 150));
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.face-review-tile-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.face-review-tile:hover .face-review-tile-actions {
+  opacity: 1;
+}
+
+.face-review-tile-actions button {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #fff;
+}
+
+.face-review-tile-actions .confirm {
+  background: rgba(30, 120, 65, 0.85);
+}
+
+.face-review-tile-actions .confirm:hover {
+  background: rgb(30, 140, 75);
+}
+
+.face-review-tile-actions .reject {
+  background: rgba(150, 25, 55, 0.85);
+}
+
+.face-review-tile-actions .reject:hover {
+  background: rgb(180, 25, 60);
+}
+
+.face-review-check-tools {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: auto;
+  margin-left: 8px;
+}
+
+.face-review-check-tools button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  padding: 4px 6px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.face-review-check-tools button:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.face-review-check-tools button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  text-decoration: none;
+}
+
+/* ── Bulk curate bar (keep checked, discard rest) ── */
+
+.face-review-curate {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+}
+
+.face-review-curate-counts {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.face-review-curate-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.face-review-curate-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.face-review-curate-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.face-review-curate-btn.danger {
+  border-color: rgb(211, 3, 72);
+  color: rgb(255, 120, 160);
+  animation: people-confirm-pulse 1.2s ease-in-out infinite;
+}
+
+.face-review-hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.45);
 }
 
 .person-model-info {
