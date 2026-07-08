@@ -18,6 +18,7 @@ import { predicateKey } from './query/types';
 import {
   addOrMergeSimilarityPredicate,
   removePredicate,
+  renameTagPredicate,
   toggleExclude,
   applyTagClick,
   setPredicateJoin,
@@ -849,6 +850,31 @@ const queryMutationOn = {
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
       const q = toggleExclude(context.query, event.data.key);
       return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  // A person/tag was renamed on the server (the rename cascades to taxonomy
+  // rows): swap the new name into any tag chip filtering on the old one and
+  // re-run IN PLACE — same set, same scroll — instead of letting the stale
+  // chip match nothing. No-op (no re-query) when nothing referenced the name.
+  RENAME_TAG_PREDICATE: {
+    target: 'runningQuery',
+    cond: (context: LibraryState, event: AnyEventObject) =>
+      renameTagPredicate(context.query, event.data.from, event.data.to) !==
+      context.query,
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = renameTagPredicate(
+        context.query,
+        event.data.from,
+        event.data.to
+      );
+      return {
+        query: q,
+        dbQuery: { tags: tagsFromQuery(q) },
+        // In-place refresh: the list recognizes the upcoming setLibrary by
+        // this loadId and preserves scroll (same contract as
+        // DELETED_ASSIGNMENT).
+        preserveScrollFromLoadId: context.libraryLoadId,
+      };
     }),
   },
   SET_PREDICATE_JOIN: {

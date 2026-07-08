@@ -33,6 +33,33 @@ describe('buildMediaQuery', () => {
     expect(norm(sql)).toContain('NOT EXISTS');
   });
 
+  it('compiles faces:ungrouped to an EXISTS over unassigned faces', () => {
+    const { sql, params } = buildMediaQuery(
+      [{ type: 'faces', value: 'ungrouped', exclude: false }],
+      'AND'
+    );
+    expect(sql).toContain(
+      'EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0)'
+    );
+    expect(params).toEqual([]);
+
+    const excluded = buildMediaQuery(
+      [
+        { type: 'tag', value: 't', exclude: false },
+        { type: 'faces', value: 'ungrouped', exclude: true },
+      ],
+      'AND'
+    );
+    expect(excluded.sql).toContain('NOT EXISTS (SELECT 1 FROM face f');
+
+    // Unknown values match nothing — never everything.
+    const bogus = buildMediaQuery(
+      [{ type: 'faces', value: 'bogus', exclude: false }],
+      'AND'
+    );
+    expect(bogus.sql).toContain('1=0');
+  });
+
   it('drives a single category from the indexed category table (DISTINCT, no media scan)', () => {
     const { sql, params } = buildMediaQuery([{ type: 'category', value: 'Studio', exclude: false }], 'AND');
     expect(sql).toContain('SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label = ?');

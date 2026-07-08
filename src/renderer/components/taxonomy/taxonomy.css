@@ -542,6 +542,11 @@
   cursor: not-allowed;
 }
 
+/* See .tag.dragging — the chip in the drag layer is the moving element. */
+.Taxonomy .tag-list-row.dragging {
+  opacity: 0.35;
+}
+
 .Taxonomy .tag-list-row .label {
   display: flex;
   justify-content: flex-start;
@@ -655,6 +660,12 @@
 .Taxonomy .tag.disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* The drag source stays in place while its chip follows the cursor (see
+   controls/drag-layer.css) — fade it so the "picked up" item reads as such. */
+.Taxonomy .tag.dragging {
+  opacity: 0.35;
 }
 
 .Taxonomy .tag.hovered img {

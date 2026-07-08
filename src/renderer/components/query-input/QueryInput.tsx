@@ -78,6 +78,7 @@ const TYPE_GLYPH: Record<Predicate['type'], string> = {
   visual: 'visual:',
   clip: 'clip:', // never shown — clip chips render a thumbnail instead
   face: 'face:', // never shown — face chips render a thumbnail instead
+  faces: 'faces:',
 };
 
 // Icons + labels for the three tag-filtering behaviours, mirroring the toggle

@@ -64,6 +64,32 @@ func TestBuildMediaQueryLikeWrapping(t *testing.T) {
 	}
 }
 
+func TestBuildMediaQueryFacesUngrouped(t *testing.T) {
+	// faces:ungrouped — EXISTS over the face table for unassigned faces.
+	sql, params := BuildMediaQuery([]Predicate{{Type: "faces", Value: "ungrouped"}}, "AND")
+	if !strings.Contains(sql, "EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0)") {
+		t.Fatalf("expected ungrouped-faces EXISTS: %q", sql)
+	}
+	if len(params) != 0 {
+		t.Fatalf("expected no params, got %v", params)
+	}
+
+	// Excluded form inverts; combined with a tag it stays a conjunct.
+	sql, _ = BuildMediaQuery([]Predicate{
+		{Type: "tag", Value: "portrait"},
+		{Type: "faces", Value: "ungrouped", Exclude: true},
+	}, "AND")
+	if !strings.Contains(sql, "NOT EXISTS (SELECT 1 FROM face f") {
+		t.Fatalf("expected NOT EXISTS for excluded faces predicate: %q", sql)
+	}
+
+	// Unknown values match nothing — never everything.
+	sql, _ = BuildMediaQuery([]Predicate{{Type: "faces", Value: "bogus"}}, "AND")
+	if !strings.Contains(sql, "1=0") {
+		t.Fatalf("unknown faces value must match nothing: %q", sql)
+	}
+}
+
 func TestBuildMediaQueryOrSetUsesInLookup(t *testing.T) {
 	// OR-set of include-tags drives from an indexed tag_label IN, not a scan.
 	sql, params := BuildMediaQuery([]Predicate{

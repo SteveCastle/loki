@@ -1,0 +1,110 @@
+/* Cursor-following chip shown while dragging a tag or person card. Replaces
+   the native HTML5 drag ghost (see useHideNativeDragPreview). The layer
+   spans the viewport but never intercepts pointer events, so drop targets
+   underneath keep receiving hover/drop as usual. */
+.drag-chip-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10000;
+}
+
+/* Repositioned every frame via an inline translate to the cursor.
+   will-change keeps the per-frame movement on the compositor. */
+.drag-chip-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+/* The chip hangs slightly below-right of the cursor (margin) so it reads as
+   "held" without covering the exact drop point, with a slight tilt like a
+   picked-up card. */
+.drag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  margin: 14px 0 0 12px;
+  padding: 4px 14px 4px 5px;
+  background: rgba(32, 29, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 26px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  transform: rotate(2.5deg);
+  transform-origin: top left;
+  animation: drag-chip-pop 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.35);
+}
+
+@keyframes drag-chip-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.7) rotate(0deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(2.5deg);
+  }
+}
+
+.drag-chip-thumb {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* Fallback glyph when the tag has no preview thumbnail (e.g. list view). */
+.drag-chip-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.drag-chip-glyph svg {
+  width: 13px;
+  height: 13px;
+}
+
+.drag-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  letter-spacing: 0.1px;
+  color: rgba(255, 255, 255, 0.95);
+  text-shadow: none;
+}
+
+/* The person chip reuses FaceCrop, whose .person-card-face is authored for a
+   full-width card — constrain it to the chip's round thumbnail instead. */
+.drag-chip-face {
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drag-chip-face .person-card-face {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+}
+
+.drag-chip-face .person-card-face--empty svg {
+  width: 60%;
+  height: 60%;
+}

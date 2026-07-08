@@ -244,6 +244,11 @@ func DeleteFacesForMedia(db *sql.DB, path string) error {
 	); err != nil {
 		return err
 	}
+	if _, err := db.Exec(
+		`DELETE FROM face_group_ban_member WHERE face_id IN (SELECT id FROM face WHERE media_path=?)`, path,
+	); err != nil {
+		return err
+	}
 	if _, err := db.Exec(`DELETE FROM face WHERE media_path=?`, path); err != nil {
 		return err
 	}

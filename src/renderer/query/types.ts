@@ -12,7 +12,8 @@ export type PredicateType =
   | 'similar'
   | 'visual'
   | 'clip'
-  | 'face';
+  | 'face'
+  | 'faces';
 
 // One extra component of a composite similarity query, merged with the
 // predicate's base value into a single query vector server-side:
@@ -38,6 +39,9 @@ export interface Predicate {
   // 'face' = person search by face identity: a media path ("find this person")
   //   or a captured region as a PNG data URL; matched against the face
   //   embedding index, not the whole-image one.
+  // 'faces' = face-presence filter; value 'ungrouped' = media holding at
+  //   least one detected face not assigned to any person yet (the People
+  //   panel's Ungrouped pool).
   value: string;
   // Per-predicate include (false) / exclude (true).
   exclude: boolean;

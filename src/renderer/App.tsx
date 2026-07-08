@@ -10,6 +10,7 @@ import { Panels } from './components/layout/panels';
 import './App.css';
 import { Loader } from './components/layout/loader';
 import HotKeyController from './components/controls/hotkey-controller';
+import DragChipLayer from './components/controls/drag-layer';
 import { ToastSystem } from './components/controls/toast-system';
 import AutoPlayController from './components/controls/autoplay-controller';
 import { PERFORMANCE_CONSTANTS } from './constants/performance';
@@ -61,6 +62,7 @@ export default function App(): JSX.Element {
         {isLoadingState && <Loader />}
         <HotKeyController />
         {autoPlay && <AutoPlayController />}
+        <DragChipLayer />
         <ToastSystem />
         <OnboardingGate />
       </DndProvider>

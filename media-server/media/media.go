@@ -2263,12 +2263,37 @@ func InitializeSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("failed to create face_cannot_link table: %w", err)
 	}
+	// Dissolved-group tombstones: when the user deletes a group (keeping its
+	// faces), the membership is snapshotted so no automatic clustering pass
+	// may reunite the majority of it — the same nonsense blob can't simply
+	// re-form. Keyed by face ids, so a ban outlives every person id.
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_group_ban (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_name TEXT,
+			created_at  INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_group_ban table: %w", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_group_ban_member (
+			ban_id  INTEGER NOT NULL,
+			face_id INTEGER NOT NULL,
+			PRIMARY KEY (ban_id, face_id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_group_ban_member table: %w", err)
+	}
 	for _, stmt := range []string{
 		`CREATE INDEX IF NOT EXISTS idx_face_media_path ON face(media_path)`,
 		`CREATE INDEX IF NOT EXISTS idx_face_model ON face(model)`,
 		`CREATE INDEX IF NOT EXISTS idx_face_person ON face(person_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_face_veto_person ON face_veto(person_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_face_cannot_link_b ON face_cannot_link(face_b)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_group_ban_member_face ON face_group_ban_member(face_id)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			log.Printf("warning: failed to create face index (will retry on next start): %v", err)

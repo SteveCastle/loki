@@ -412,6 +412,15 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 			return "m.hash IN (SELECT hash FROM media WHERE hash IS NOT NULL AND hash <> '' GROUP BY hash HAVING COUNT(*) " + op + " ?)", []interface{}{iVal}
 		}
 		return "m.hash IN (SELECT hash FROM media WHERE hash IS NOT NULL AND hash <> '' GROUP BY hash HAVING COUNT(*) " + op + " ?)", []interface{}{val}
+	case "faces":
+		// faces:ungrouped — items holding at least one detected face that
+		// isn't assigned to any person (the People panel's Ungrouped pool),
+		// so tasks can target exactly that media. Unknown values match
+		// nothing — never everything.
+		if strings.EqualFold(val, "ungrouped") {
+			return "EXISTS (SELECT 1 FROM face f WHERE f.media_path = m.path AND COALESCE(f.person_id, 0) = 0)", nil
+		}
+		return "1=0", nil
 	case "tag":
 		// EXISTS (...)
 		return fmt.Sprintf("EXISTS (SELECT 1 FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path AND mtbc.tag_label %s ?)", op), []interface{}{val}
@@ -516,6 +525,9 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 		// it), so in-memory evaluation can't check it. The SQL side already
 		// filtered; treat as satisfied rather than dropping every row on the
 		// exists-condition slow path.
+		return true
+	case "faces":
+		// Face rows live in their own table; the SQL side already filtered.
 		return true
 	case "filetype":
 		ext := strings.ToLower(filepath.Ext(item.Path))

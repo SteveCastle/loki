@@ -268,6 +268,7 @@ type clusterStats struct {
 	Unassigned     int // faces left unassigned (small/incoherent clusters)
 	QualitySkipped int // faces below the quality floor (excluded from phase 2)
 	Discarded      int // faces in clusters dropped by the coherence check
+	BanBlocked     int // faces in clusters blocked by dissolved-group bans
 }
 
 // seed is one already-assigned face acting as a join anchor.
@@ -315,6 +316,10 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 		return stats, err
 	}
 	cannot, err := media.FaceCannotLinks(db, model.ID)
+	if err != nil {
+		return stats, err
+	}
+	bans, err := media.FaceGroupBans(db, model.ID)
 	if err != nil {
 		return stats, err
 	}
@@ -432,6 +437,15 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 			stats.Unassigned += len(c.members)
 			continue
 		}
+		// Dissolved-group bans: a cluster that would reunite the majority of
+		// a group the user deleted is refused — its faces stay unassigned
+		// (visible in the Ungrouped pool for manual triage). Genuine subsets
+		// below the majority line still form freely.
+		if clusterReunitesBan(c.members, bans) {
+			stats.BanBlocked += len(c.members)
+			stats.Unassigned += len(c.members)
+			continue
+		}
 		name, err := media.NextUnknownName(db)
 		if err != nil {
 			return stats, err
@@ -449,6 +463,24 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 		stats.NewPeople++
 	}
 	return stats, nil
+}
+
+// clusterReunitesBan reports whether a candidate cluster recreates any
+// dissolved group (see media.FaceGroupBan.Reunites for the majority rule).
+func clusterReunitesBan(members []media.Face, bans []media.FaceGroupBan) bool {
+	if len(bans) == 0 {
+		return false
+	}
+	ids := make([]int64, len(members))
+	for i, m := range members {
+		ids[i] = m.ID
+	}
+	for _, b := range bans {
+		if b.Reunites(ids) {
+			return true
+		}
+	}
+	return false
 }
 
 // dot32 is the raw float32 dot product (CosineSim renormalizes, which the
@@ -948,8 +980,8 @@ func clusterOneModel(j *jobqueue.Job, q *jobqueue.Queue, model FaceModel) error 
 		return err
 	}
 	q.PushJobStdout(j.ID, fmt.Sprintf(
-		"%s: %d joined existing people, %d new people (%d faces), %d left unassigned (%d below quality floor, %d in discarded incoherent clusters)",
-		model.ID, stats.JoinedExisting, stats.NewPeople, stats.NewlyClustered, stats.Unassigned, stats.QualitySkipped, stats.Discarded,
+		"%s: %d joined existing people, %d new people (%d faces), %d left unassigned (%d below quality floor, %d in discarded incoherent clusters, %d blocked by dissolved-group bans)",
+		model.ID, stats.JoinedExisting, stats.NewPeople, stats.NewlyClustered, stats.Unassigned, stats.QualitySkipped, stats.Discarded, stats.BanBlocked,
 	))
 	// Live UIs (People grid) refetch on this instead of waiting for the
 	// whole job to complete (multi-model runs cluster one model at a time).

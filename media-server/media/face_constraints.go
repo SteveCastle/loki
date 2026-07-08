@@ -244,20 +244,152 @@ func LockPersonFaces(db *sql.DB, personID int64) (int, error) {
 	return int(n), err
 }
 
-// clearConstraintsForFacesTx drops vetoes and cannot-links whose face rows are
-// being deleted, selected by the given face-id subquery (with args). Called
-// inside the transaction that deletes the rows, BEFORE the delete.
+// clearConstraintsForFacesTx drops vetoes, cannot-links, and group-ban
+// memberships whose face rows are being deleted, selected by the given
+// face-id subquery (with args). Called inside the transaction that deletes
+// the rows, BEFORE the delete.
 func clearConstraintsForFacesTx(tx *sql.Tx, faceIDSubquery string, args ...any) error {
 	if _, err := tx.Exec(
 		`DELETE FROM face_veto WHERE face_id IN (`+faceIDSubquery+`)`, args...,
 	); err != nil {
 		return err
 	}
-	_, err := tx.Exec(
+	if _, err := tx.Exec(
 		`DELETE FROM face_cannot_link WHERE face_a IN (`+faceIDSubquery+`) OR face_b IN (`+faceIDSubquery+`)`,
 		append(append([]any{}, args...), args...)...,
+	); err != nil {
+		return err
+	}
+	_, err := tx.Exec(
+		`DELETE FROM face_group_ban_member WHERE face_id IN (`+faceIDSubquery+`)`, args...,
 	)
 	return err
+}
+
+// ── Dissolved-group tombstones ──
+//
+// Deleting a group while keeping its faces records the membership as a BAN:
+// no automatic clustering pass may mint a new group that reunites the
+// majority of a banned set, so a dissolved nonsense blob can't simply
+// re-form on the next run. The ban asserts "this exact collection was wrong
+// as ONE group" — nothing about individual pairs — so genuine subsets (the
+// real people buried inside the blob) remain free to group among themselves,
+// and manual assignments are never blocked.
+
+// banReuniteMinOverlap is the floor on how many banned members a forming
+// cluster must contain before a ban can bind — overlaps smaller than this are
+// innocent coincidence, and groups smaller than this can't re-form at all
+// (minAutoClusterSize), so smaller bans record nothing.
+const banReuniteMinOverlap = 3
+
+// BanFaceGroup snapshots personID's CURRENT members as a dissolved-group ban.
+// Call before unassigning the faces (deletion clears person_id). Returns how
+// many faces the ban covers; groups below banReuniteMinOverlap record nothing.
+func BanFaceGroup(db *sql.DB, personID int64, sourceName string) (int, error) {
+	rows, err := db.Query(`SELECT id FROM face WHERE person_id = ?`, personID)
+	if err != nil {
+		return 0, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(ids) < banReuniteMinOverlap {
+		return 0, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(
+		`INSERT INTO face_group_ban (source_name, created_at) VALUES (?, ?)`,
+		sourceName, time.Now().Unix(),
+	)
+	if err != nil {
+		return 0, err
+	}
+	banID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	for _, id := range ids {
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO face_group_ban_member (ban_id, face_id) VALUES (?, ?)`,
+			banID, id,
+		); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+// FaceGroupBan is one dissolved group's surviving membership under one model.
+type FaceGroupBan struct {
+	ID      int64
+	Members map[int64]bool
+}
+
+// Reunites reports whether a candidate auto-cluster would recreate this
+// banned group: it holds at least banReuniteMinOverlap banned members AND at
+// least half the ban's surviving membership. Anything smaller is a legitimate
+// subset regrouping (or coincidence) and stays allowed.
+func (b FaceGroupBan) Reunites(faceIDs []int64) bool {
+	overlap := 0
+	for _, id := range faceIDs {
+		if b.Members[id] {
+			overlap++
+		}
+	}
+	return overlap >= banReuniteMinOverlap && overlap*2 >= len(b.Members)
+}
+
+// FaceGroupBans loads the dissolved-group bans that can still bind under
+// model: only members whose face rows survive (and belong to model) count,
+// so rescans naturally shrink a ban, and one that drops below the overlap
+// floor is skipped entirely.
+func FaceGroupBans(db *sql.DB, model string) ([]FaceGroupBan, error) {
+	rows, err := db.Query(
+		`SELECT m.ban_id, m.face_id FROM face_group_ban_member m
+		 JOIN face f ON f.id = m.face_id WHERE f.model = ? ORDER BY m.ban_id`, model,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byBan := map[int64]map[int64]bool{}
+	for rows.Next() {
+		var banID, faceID int64
+		if err := rows.Scan(&banID, &faceID); err != nil {
+			return nil, err
+		}
+		if byBan[banID] == nil {
+			byBan[banID] = map[int64]bool{}
+		}
+		byBan[banID][faceID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var out []FaceGroupBan
+	for id, members := range byBan {
+		if len(members) >= banReuniteMinOverlap {
+			out = append(out, FaceGroupBan{ID: id, Members: members})
+		}
+	}
+	return out, nil
 }
 
 // clearContradictedConstraintsTx removes assertions a user action has just

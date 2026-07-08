@@ -665,6 +665,59 @@ func TestFacesUngroupedListAndNewGroup(t *testing.T) {
 	}
 }
 
+func TestPersonDeleteRecordsGroupBan(t *testing.T) {
+	mux, deps := muxWithPeopleRoutes(t)
+	model := tasks.ActiveFaceModel().ID
+
+	makeBlob := func(path, name string) int64 {
+		ids, err := media.ReplaceFaces(deps.DB, path, model, []media.NewFace{
+			{Score: 0.9, Vec: []float32{1, 0}},
+			{Score: 0.9, Vec: []float32{0, 1}},
+			{Score: 0.9, Vec: []float32{0.7, 0.7}},
+		}, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid, err := media.CreatePerson(deps.DB, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range ids {
+			if err := media.AssignFace(deps.DB, id, pid, "auto"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return pid
+	}
+
+	// Default delete records the dissolved membership as a ban.
+	pid := makeBlob("a.jpg", "Blob A")
+	rec, out := doJSON(t, mux, http.MethodDelete, "/api/people/"+jsonNum(pid), "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	if out["banned"].(float64) != 3 {
+		t.Fatalf("banned = %v, want 3", out["banned"])
+	}
+	bans, err := media.FaceGroupBans(deps.DB, model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bans) != 1 || len(bans[0].Members) != 3 {
+		t.Fatalf("bans = %+v", bans)
+	}
+
+	// ?ban=false dissolves without recording.
+	pid2 := makeBlob("b.jpg", "Blob B")
+	rec, out = doJSON(t, mux, http.MethodDelete, "/api/people/"+jsonNum(pid2)+"?ban=false", "")
+	if rec.Code != http.StatusOK || out["banned"].(float64) != 0 {
+		t.Fatalf("ban=false delete: %d %v", rec.Code, out)
+	}
+	if bans, _ = media.FaceGroupBans(deps.DB, model); len(bans) != 1 {
+		t.Fatalf("bans after ban=false = %+v", bans)
+	}
+}
+
 func TestFacesTuningRoundTrip(t *testing.T) {
 	prev := appconfig.Get()
 	t.Cleanup(func() { appconfig.Set(prev) })

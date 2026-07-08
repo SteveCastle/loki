@@ -301,8 +301,15 @@ func personRenameHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, err.Error(), userErrorStatus(err))
 			return
 		}
+		// Report the RESOLVED stored name (RenamePerson may suffix it, e.g.
+		// _cluster on a collision with a non-People tag) — clients use it to
+		// keep an active tag filter pointing at the renamed person.
+		name := strings.TrimSpace(req.Name)
+		if p, found, err := media.GetPersonByID(deps.DB, id); err == nil && found {
+			name = p.Name
+		}
 		broadcastPeopleChanged()
-		writeJSON(w, map[string]any{"id": id, "name": strings.TrimSpace(req.Name)})
+		writeJSON(w, map[string]any{"id": id, "name": name})
 	}
 }
 
@@ -334,9 +341,12 @@ func personMergeHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // personDeleteHandler removes a person. By default their faces are kept
-// (unassigned, free to re-cluster); with ?deleteFaces=true the face rows are
-// deleted too — the purge for a hopelessly mixed cluster. Deleted faces stay
-// gone until their media is explicitly rescanned.
+// (unassigned, free to re-cluster) and the dissolved membership is recorded
+// as a group ban — a negative attractor stopping the SAME group from simply
+// re-forming on the next clustering pass (?ban=false skips recording it).
+// With ?deleteFaces=true the face rows are deleted too — the purge for a
+// hopelessly mixed cluster; deleted faces stay gone until their media is
+// explicitly rescanned.
 func personDeleteHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -359,12 +369,28 @@ func personDeleteHandler(deps *Dependencies) http.HandlerFunc {
 			writeJSON(w, map[string]any{"deleted": id, "facesDeleted": len(faceIDs)})
 			return
 		}
+		banned := 0
+		if r.URL.Query().Get("ban") != "false" {
+			// Snapshot the membership BEFORE the delete unassigns it. The name
+			// is provenance only (helps debugging the ban table).
+			p, found, err := media.GetPersonByID(deps.DB, id)
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if found {
+				if banned, err = media.BanFaceGroup(deps.DB, id, p.Name); err != nil {
+					httpError(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
 		if err := media.DeletePerson(deps.DB, id); err != nil {
 			httpError(w, err.Error(), userErrorStatus(err))
 			return
 		}
 		broadcastPeopleChanged()
-		writeJSON(w, map[string]any{"deleted": id})
+		writeJSON(w, map[string]any{"deleted": id, "banned": banned})
 	}
 }
 

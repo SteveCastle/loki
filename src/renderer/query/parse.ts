@@ -29,6 +29,10 @@ const PREFIXES: Array<{ prefix: string; type: PredicateType }> = [
   { prefix: 'hash:', type: 'hash' },
   { prefix: 'similar:', type: 'similar' },
   { prefix: 'visual:', type: 'visual' },
+  // 'faces:' before 'face:' would be unnecessary — startsWith('face:') can't
+  // match a 'faces:…' token (the 's' precedes the colon) — but keep them
+  // adjacent so nobody reorders them apart.
+  { prefix: 'faces:', type: 'faces' },
   { prefix: 'face:', type: 'face' },
 ];
 
@@ -80,6 +84,7 @@ const TYPE_PREFIX: Record<PredicateType, string> = {
   // only — the query persists as JSON, never through parseQuery.
   clip: 'clip:',
   face: 'face:',
+  faces: 'faces:',
 };
 
 export function serializePredicate(p: Predicate): string {

@@ -177,6 +177,66 @@ func TestAutoAssignNewFacesViaIndex(t *testing.T) {
 	}
 }
 
+// Deleting a group records its membership as a dissolved-group ban — a
+// negative attractor: no automatic pass may reunite the majority of it, so
+// the same nonsense blob can't re-form. Genuine subsets (below the majority
+// line) plus fresh faces must still group freely.
+func TestDissolvedGroupDoesNotReform(t *testing.T) {
+	db := newFaceIndexDB(t)
+	resetFaceIndex(t)
+
+	x := []float32{1, 0, 0}
+	y := []float32{0, 1, 0}
+	// A nonsense blob spanning two identities: 2 faces at Y, 4 at X.
+	var members []int64
+	members = append(members, seedFaces(t, db, "y.jpg", "m1", y, y)...)
+	members = append(members, seedFaces(t, db, "x.jpg", "m1", x, x, x, x)...)
+	blob, err := media.CreatePerson(db, "Unknown #1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range members {
+		if err := media.AssignFace(db, id, blob, "auto"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The user deletes the blob (handler order: ban first, then delete).
+	if n, err := media.BanFaceGroup(db, blob, "Unknown #1"); err != nil || n != 6 {
+		t.Fatalf("ban: n=%d err=%v", n, err)
+	}
+	if err := media.DeletePerson(db, blob); err != nil {
+		t.Fatal(err)
+	}
+
+	// Four fresh faces land at Y — plenty of new evidence for a Y group.
+	newIDs := seedFaces(t, db, "new.jpg", "m1", y, y, y, y)
+
+	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
+	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 2}
+	stats, err := clusterFaces(db, model, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The X cluster would reunite 4/6 of the banned group → blocked. The Y
+	// cluster holds only 2 banned members (under the overlap floor) → minted.
+	if stats.NewPeople != 1 {
+		t.Fatalf("new people = %d, want 1 (the Y group only): %+v", stats.NewPeople, stats)
+	}
+	if stats.BanBlocked != 4 {
+		t.Fatalf("ban-blocked = %d, want 4 (the X cluster): %+v", stats.BanBlocked, stats)
+	}
+	fX, _, _ := media.GetFaceByID(db, members[2])
+	if fX.PersonID != 0 {
+		t.Fatalf("banned X face regrouped: %+v", fX)
+	}
+	fY, _, _ := media.GetFaceByID(db, members[0])
+	fNew, _, _ := media.GetFaceByID(db, newIDs[0])
+	if fNew.PersonID == 0 || fY.PersonID != fNew.PersonID {
+		t.Fatalf("Y faces should form one new group: banned=%+v fresh=%+v", fY, fNew)
+	}
+}
+
 // The saved grouping tuner (server config) must reach every clustering pass
 // via defaultClusterParams, with zero values reading as "built-in default"
 // and the incremental pass keeping the stricter of its floor and the tuned one.

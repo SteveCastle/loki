@@ -11,6 +11,7 @@ import { useSelector } from '@xstate/react';
 import { useDrag, useDrop } from 'react-dnd';
 import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import useHideNativeDragPreview from '../../hooks/useHideNativeDragPreview';
 import { GlobalStateContext } from '../../state';
 import {
   isElectron,
@@ -160,7 +161,8 @@ async function fetchUngroupedFaces(
 
 // A face crop loaded with auth (an <img src> can't carry a bearer token in
 // Electron), delivered as a blob URL. Falls back to a silhouette.
-function FaceCrop({
+// Exported for the custom drag layer's person chip (controls/drag-layer.tsx).
+export function FaceCrop({
   faceId,
   authToken,
   size = 160,
@@ -266,10 +268,21 @@ export function PersonEditModal({
           body: JSON.stringify({ name: trimmed }),
         });
       } else if (trimmed !== displayTagLabel(person.name)) {
-        await call(`/api/people/${person.id}/rename`, {
+        const res = await call(`/api/people/${person.id}/rename`, {
           method: 'POST',
           body: JSON.stringify({ name: trimmed }),
         });
+        // The person's name doubles as a library-filter tag. If the current
+        // view filters on the OLD name, swap in the resolved new one (the
+        // server may suffix it) so the view keeps showing the same set
+        // instead of going blank on a now-nonexistent tag.
+        const out = (await res.json()) as { name?: string };
+        if (out.name) {
+          libraryService.send({
+            type: 'RENAME_TAG_PREDICATE',
+            data: { from: person.name, to: out.name },
+          });
+        }
       }
       refresh();
       handleClose();
@@ -429,8 +442,9 @@ export function PersonEditModal({
                 <div className="action-row-text">
                   <div className="action-row-title">Delete person</div>
                   <div className="action-row-description">
-                    Unassigns their faces and removes the tag; scanned faces
-                    are kept and can be regrouped later
+                    Unassigns their faces and removes the tag. The faces are
+                    kept and can join other groups, but this exact group is
+                    remembered and won’t re-form on its own
                   </div>
                 </div>
                 <button onClick={handleDelete}>Delete</button>
@@ -1080,7 +1094,7 @@ function UngroupedFacesModal({
 // or clustering like any other person. Shares the 'PERSON' drag type with
 // person cards — id 0 tells the drop handler to create instead of assign.
 function NewGroupChip({ isDisabled }: { isDisabled: boolean }) {
-  const [{ isDragging }, drag] = useDrag(
+  const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: 'PERSON',
       item: { id: 0, name: 'New group' },
@@ -1089,6 +1103,7 @@ function NewGroupChip({ isDisabled }: { isDisabled: boolean }) {
     }),
     [isDisabled]
   );
+  useHideNativeDragPreview(dragPreview);
   return (
     <div
       ref={drag}
@@ -1130,7 +1145,7 @@ function PersonCard({
   onReview: (p: Person) => void;
   onMerge: (from: Person, into: Person) => void;
 }) {
-  const [{ isDragging }, drag] = useDrag(
+  const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       type: 'PERSON',
       item: person,
@@ -1139,6 +1154,7 @@ function PersonCard({
     }),
     [person, isDisabled]
   );
+  useHideNativeDragPreview(dragPreview);
   const [{ isOver, canDrop }, drop] = useDrop<
     Person,
     unknown,
@@ -1380,6 +1396,37 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
         predicate: {
           type: 'tag',
           value: person.name,
+          exclude: false,
+          join: filteringMode === 'OR' ? 'OR' : 'AND',
+        },
+      },
+    });
+  };
+
+  // The Ungrouped pseudo-card filters like a person card: clicking adds a
+  // faces:ungrouped predicate (media holding at least one face that isn't in
+  // any group). Highlighted while that predicate is in the query, mirroring
+  // person cards' active state.
+  const queryPredicates = useSelector(
+    libraryService,
+    (s) =>
+      (s.context.query?.predicates ?? []) as Array<{
+        type: string;
+        value: string;
+        exclude: boolean;
+      }>
+  );
+  const ungroupedFilterActive = queryPredicates.some(
+    (p) => p.type === 'faces' && p.value === 'ungrouped' && !p.exclude
+  );
+  const handleUngroupedFilter = () => {
+    if (isDisabled) return;
+    libraryService.send({
+      type: 'ADD_PREDICATE',
+      data: {
+        predicate: {
+          type: 'faces',
+          value: 'ungrouped',
           exclude: false,
           join: filteringMode === 'OR' ? 'OR' : 'AND',
         },
@@ -1838,11 +1885,13 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           <div className="people-grid-heading">Not grouped yet</div>
           <div className="people-grid">
             <div
-              className="person-card people-ungrouped-card"
-              onClick={() => setUngroupedOpen(true)}
+              className={`person-card people-ungrouped-card${
+                ungroupedFilterActive ? ' active' : ''
+              }${isDisabled ? ' disabled' : ''}`}
+              onClick={handleUngroupedFilter}
               title={`${ungroupedCount.toLocaleString()} face${
                 ungroupedCount === 1 ? ' isn’t' : 's aren’t'
-              } in any group — open to assign them by hand`}
+              } in any group — click to filter the library to media with ungrouped faces`}
             >
               <div
                 className="person-card-face person-card-face--empty"
@@ -1859,6 +1908,23 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
                   {ungroupedCount.toLocaleString()}
                 </span>
               </div>
+              <button
+                type="button"
+                className="person-card-review"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setUngroupedOpen(true);
+                }}
+                title="Review ungrouped faces: assign them to people by hand"
+                aria-label="Review ungrouped faces"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7" rx="1" />
+                  <rect x="14" y="3" width="7" height="7" rx="1" />
+                  <rect x="3" y="14" width="7" height="7" rx="1" />
+                  <path d="M15 17.5l2 2 4-4.5" />
+                </svg>
+              </button>
             </div>
           </div>
         </>

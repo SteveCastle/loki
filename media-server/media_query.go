@@ -81,6 +81,20 @@ func clauseFor(p Predicate, params *[]any) string {
 			return "(media.hash NOT LIKE ?)"
 		}
 		return "(media.hash LIKE ?)"
+	case "faces":
+		// faces:ungrouped — media holding at least one detected face that
+		// isn't assigned to any person yet (the People panel's Ungrouped
+		// pool). Unknown values match nothing rather than everything.
+		if strings.EqualFold(p.Value, "ungrouped") {
+			if p.Exclude {
+				return "(NOT EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0))"
+			}
+			return "(EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0))"
+		}
+		if p.Exclude {
+			return "(1=1)"
+		}
+		return "(1=0)"
 	case "similar", "visual", "clip", "face":
 		// Resolved is the path set produced by the handler (similarity search).
 		// Empty set: an include matches nothing; an exclude removes nothing.

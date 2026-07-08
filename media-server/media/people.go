@@ -697,6 +697,8 @@ func DeleteAllFaceData(db *sql.DB) error {
 		`DELETE FROM face_scan`,
 		`DELETE FROM face_veto`,
 		`DELETE FROM face_cannot_link`,
+		`DELETE FROM face_group_ban`,
+		`DELETE FROM face_group_ban_member`,
 		`DELETE FROM person`,
 		`DELETE FROM media_tag_by_category WHERE category_label = '` + PeopleCategory + `'`,
 		`DELETE FROM tag WHERE category_label = '` + PeopleCategory + `'`,

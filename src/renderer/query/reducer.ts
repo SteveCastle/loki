@@ -32,6 +32,23 @@ export function toggleExclude(q: Query, key: string): Query {
   };
 }
 
+// A tag was renamed server-side (person rename cascades to taxonomy rows):
+// any tag chip filtering on the old label must follow it, or the active view
+// silently becomes "matches nothing". Returns the SAME query object when no
+// chip referenced the old name, so callers can skip the re-query.
+export function renameTagPredicate(q: Query, from: string, to: string): Query {
+  if (!from || !to || from === to) return q;
+  let changed = false;
+  const predicates = q.predicates.map((p) => {
+    if (p.type === 'tag' && p.value === from) {
+      changed = true;
+      return { ...p, value: to };
+    }
+    return p;
+  });
+  return changed ? { predicates } : q;
+}
+
 // Legacy tag-click behavior unified into the query model.
 // AND/OR: toggle the tag in place. EXCLUSIVE: clicking replaces the entire
 // query with that single tag (or clears it if it was the only active tag).
