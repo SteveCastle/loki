@@ -74,17 +74,23 @@ func faceIndexSearch(model string, query []float32, k int) ([]embedindex.SearchH
 }
 
 // faceIndexReplacePath replaces path's indexed faces with the given id/vector
-// pairs (parallel slices), evicting whatever was indexed for it before. No-op
-// when no index is installed or it holds a different model. Mirrors the
-// ReplaceFaces DB semantics so index and table stay in step.
+// pairs (parallel slices), evicting whatever was indexed for it before.
+// Mirrors the ReplaceFaces DB semantics so index and table stay in step: a
+// scan under ANY model wipes the whole path's rows, so the path is evicted
+// even when the installed index holds a DIFFERENT recognizer — only the adds
+// are model-gated (a foreign model's vectors don't belong in this index).
 func faceIndexReplacePath(model, path string, ids []int64, faces []media.NewFace) {
 	faceIndexMu.Lock()
 	defer faceIndexMu.Unlock()
-	if faceIndex == nil || faceIndexModel != model {
+	if faceIndex == nil {
 		return
 	}
 	for _, key := range facePathKeys[path] {
 		faceIndex.Delete(key)
+	}
+	delete(facePathKeys, path)
+	if faceIndexModel != model {
+		return
 	}
 	keys := make([]string, 0, len(ids))
 	for i, id := range ids {
@@ -92,9 +98,7 @@ func faceIndexReplacePath(model, path string, ids []int64, faces []media.NewFace
 		faceIndex.Add(key, faces[i].Vec) // Add L2-normalizes internally
 		keys = append(keys, key)
 	}
-	if len(keys) == 0 {
-		delete(facePathKeys, path)
-	} else {
+	if len(keys) > 0 {
 		facePathKeys[path] = keys
 	}
 }

@@ -149,10 +149,11 @@ func TestFaceIndexReplacePathEvictsStaleFaces(t *testing.T) {
 		}
 	}
 
-	// A wrong-model replace must be a no-op.
+	// A wrong-model replace evicts the path (the scan wiped the whole item's
+	// rows in the DB) but must NOT add the foreign model's vectors.
 	faceIndexReplacePath("other-model", "a.jpg", []int64{999}, []media.NewFace{{Vec: []float32{1, 1, 1}}})
-	if got := FaceIndexSize(); got != 2 {
-		t.Fatalf("index size changed by wrong-model replace: %d", got)
+	if got := FaceIndexSize(); got != 0 {
+		t.Fatalf("index size = %d after wrong-model replace, want 0 (path evicted, nothing added)", got)
 	}
 }
 

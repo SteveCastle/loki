@@ -80,6 +80,72 @@ async function fetchPeople(authToken: string | null): Promise<Person[]> {
   return (await res.json()) as Person[];
 }
 
+// usePeople is the shared people list. Every consumer (the People grid, the
+// taxonomy search results, media tag chips) reads the SAME cache entry, keyed
+// under the 'taxonomy' prefix so existing broad invalidations (tag mutations,
+// people-updated broadcasts, DB swaps) refresh them all together. retry: 1 so
+// a dead server resolves to an error quickly instead of sitting in
+// default-backoff limbo.
+export function usePeople(enabled = true) {
+  const { libraryService } = useContext(GlobalStateContext);
+  const authToken = useSelector(libraryService, (s) => s.context.authToken);
+  const initSessionId = useSelector(
+    libraryService,
+    (s) => s.context.initSessionId
+  );
+  return useQuery<Person[], Error>(
+    ['taxonomy', 'people', initSessionId],
+    () => fetchPeople(authToken),
+    { enabled: enabled && !!initSessionId, staleTime: 60_000, retry: 1 }
+  );
+}
+
+// useMergePeople returns the drag-merge handler (drop one person card onto
+// another): every face and taxonomy row of `from` moves to `into`, and `from`
+// is removed. Shared by the People grid and the taxonomy search results.
+function useMergePeople(): (from: Person, into: Person) => Promise<void> {
+  const { libraryService } = useContext(GlobalStateContext);
+  const authToken = useSelector(libraryService, (s) => s.context.authToken);
+  const queryClient = useQueryClient();
+  return async (from: Person, into: Person) => {
+    try {
+      const res = await fetch(
+        `${mediaServerBase}/api/people/${from.id}/merge`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders(authToken),
+          },
+          credentials: 'include',
+          body: JSON.stringify({ intoId: into.id }),
+        }
+      );
+      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: 'People merged',
+          message: `“${displayTagLabel(from.name)}” merged into “${displayTagLabel(into.name)}”`,
+        },
+      });
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+    } catch (err) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to merge people',
+          message: String(err),
+        },
+      });
+    }
+  };
+}
+
 // How many detected faces have no person yet — the work "Group new faces"
 // would pick up. Shown as a badge on that button.
 async function fetchUngroupedCount(
@@ -910,6 +976,45 @@ function UngroupedFacesModal({
     loadPage(0).catch((err) => setLoadError(String(err)));
   }, []);
 
+  // Mirrors loadingMore for the stream handler below — the subscription
+  // closure mounts once and would otherwise read the first render's value.
+  const loadingMoreRef = useRef(false);
+  loadingMoreRef.current = loadingMore;
+
+  // Live refresh: background clustering (in-scan passes, queued rebuilds) and
+  // manual mutations broadcast "people-updated" while this modal is open. The
+  // People grid re-queries on it, but this list is plain local state — without
+  // this, tiles that just got grouped linger and read as a broken filter.
+  // Debounced (broadcasts come in bursts). The count always updates; the
+  // tiles are replaced only while just the first page is loaded — a user who
+  // paged deeper keeps their scroll position and staleness resolves on close/
+  // reopen (clicking a stale tile still does the right thing: it assigns).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = subscribeStream((type) => {
+      if (type !== 'people-updated') return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (busy.current.size > 0 || loadingMoreRef.current) return;
+        fetchUngroupedFaces(authToken, 0)
+          .then((data) => {
+            setCount(data.count);
+            setFaces((prev) =>
+              prev && prev.length > data.faces.length ? prev : data.faces
+            );
+          })
+          .catch(() => {
+            /* keep the current list; the next broadcast retries */
+          });
+      }, 1500);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [authToken]);
+
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
     queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
@@ -1256,21 +1361,13 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   const [ungroupedOpen, setUngroupedOpen] = useState(false);
   const queryClient = useQueryClient();
 
-  // Under the 'taxonomy' key prefix so existing broad invalidations (tag
-  // mutations, DB swaps) refresh the people list too. retry: 1 so a dead
-  // server resolves to the error view in a couple of seconds instead of
-  // sitting in default-backoff limbo looking like an empty library.
   const {
     data: people,
     error,
     isLoading,
     isFetching,
     refetch,
-  } = useQuery<Person[], Error>(
-    ['taxonomy', 'people', initSessionId],
-    () => fetchPeople(authToken),
-    { enabled: !!initSessionId, staleTime: 60_000, retry: 1 }
-  );
+  } = usePeople();
 
   // Ungrouped-face count for the "Group new faces" badge. Shares the
   // 'taxonomy' key prefix, so every invalidation that refreshes the people
@@ -1350,43 +1447,9 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     });
   }, [queryClient]);
 
-  // Merge `from` into `into` (drag a card onto another card). Every face and
-  // taxonomy row of the dragged person moves to the target; the dragged
-  // person is removed. Mirrors the edit-modal Merge action.
-  const handleMergeDrop = async (from: Person, into: Person) => {
-    try {
-      const res = await fetch(`${mediaServerBase}/api/people/${from.id}/merge`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders(authToken),
-        },
-        credentials: 'include',
-        body: JSON.stringify({ intoId: into.id }),
-      });
-      if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: {
-          type: 'success',
-          title: 'People merged',
-          message: `“${displayTagLabel(from.name)}” merged into “${displayTagLabel(into.name)}”`,
-        },
-      });
-      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
-      queryClient.invalidateQueries({ queryKey: ['metadata'] });
-      queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
-    } catch (err) {
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: {
-          type: 'error',
-          title: 'Failed to merge people',
-          message: String(err),
-        },
-      });
-    }
-  };
+  // Merge `from` into `into` (drag a card onto another card). Mirrors the
+  // edit-modal Merge action; shared with the taxonomy search results.
+  const handleMergeDrop = useMergePeople();
 
   const handleSelect = (person: Person) => {
     if (isDisabled) return;
@@ -1404,9 +1467,10 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   };
 
   // The Ungrouped pseudo-card filters like a person card: clicking adds a
-  // faces:ungrouped predicate (media holding at least one face that isn't in
-  // any group). Highlighted while that predicate is in the query, mirroring
-  // person cards' active state.
+  // faces:ungrouped predicate (media with detected faces, NONE of them in a
+  // group yet — an item whose main face is grouped already carries its person
+  // tag and would read as a broken filter here). Highlighted while that
+  // predicate is in the query, mirroring person cards' active state.
   const queryPredicates = useSelector(
     libraryService,
     (s) =>
@@ -1891,7 +1955,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
               onClick={handleUngroupedFilter}
               title={`${ungroupedCount.toLocaleString()} face${
                 ungroupedCount === 1 ? ' isn’t' : 's aren’t'
-              } in any group — click to filter the library to media with ungrouped faces`}
+              } in any group — click to filter the library to media whose faces aren’t grouped yet`}
             >
               <div
                 className="person-card-face person-card-face--empty"
@@ -1949,6 +2013,91 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
         <UngroupedFacesModal
           people={list}
           handleClose={() => setUngroupedOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// PeopleSearchResults renders the People-category matches of the taxonomy
+// type-ahead as real person cards — face-crop preview plus the full person
+// controls (click filters, ✎ renames/merges, review drawer, drag onto media
+// to assign, drag onto another card to merge) — instead of the blank generic
+// tag cards person tags used to fall into. Names that don't resolve to a
+// person (list still loading, or the server is away) render nothing here;
+// the caller keeps them out of the tag grid either way.
+export function PeopleSearchResults({
+  names,
+  isDisabled,
+}: {
+  names: string[];
+  isDisabled: boolean;
+}) {
+  const { libraryService } = useContext(GlobalStateContext);
+  const authToken = useSelector(libraryService, (s) => s.context.authToken);
+  const selectedTags = useSelector(
+    libraryService,
+    (s) => s.context.dbQuery.tags
+  );
+  const filteringMode = useSelector(
+    libraryService,
+    (s) => s.context.settings.filteringMode
+  );
+  const { data: people } = usePeople();
+  const handleMerge = useMergePeople();
+  const [editing, setEditing] = useState<Person | null>(null);
+  const [reviewing, setReviewing] = useState<Person | null>(null);
+
+  const byName = new Map((people ?? []).map((p) => [p.name, p]));
+  const matched = names
+    .map((n) => byName.get(n))
+    .filter((p): p is Person => !!p);
+  if (matched.length === 0) return null;
+
+  const handleSelect = (person: Person) => {
+    if (isDisabled) return;
+    libraryService.send({
+      type: 'ADD_PREDICATE',
+      data: {
+        predicate: {
+          type: 'tag',
+          value: person.name,
+          exclude: false,
+          join: filteringMode === 'OR' ? 'OR' : 'AND',
+        },
+      },
+    });
+  };
+
+  return (
+    <div className="search-people-results">
+      <div className="people-grid-heading">People</div>
+      <div className="people-grid">
+        {matched.map((person) => (
+          <PersonCard
+            key={person.id}
+            person={person}
+            isDisabled={isDisabled}
+            active={selectedTags.includes(person.name)}
+            authToken={authToken}
+            onSelect={handleSelect}
+            onEdit={(p) => setEditing(p)}
+            onReview={(p) => setReviewing(p)}
+            onMerge={handleMerge}
+          />
+        ))}
+      </div>
+      {editing && (
+        <PersonEditModal
+          person={editing}
+          people={people ?? []}
+          handleClose={() => setEditing(null)}
+        />
+      )}
+      {reviewing && (
+        <FaceReviewModal
+          person={reviewing}
+          handleClose={() => setReviewing(null)}
         />
       )}
     </div>

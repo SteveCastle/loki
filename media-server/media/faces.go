@@ -32,11 +32,17 @@ type NewFace struct {
 	Vec        []float32
 }
 
-// ReplaceFaces atomically replaces all stored faces for (path, model) with
-// faces and records the scan in face_scan. Replacing (not appending) makes a
-// rescan idempotent; the scan marker distinguishes "scanned, no faces" from
-// "never scanned". Person assignments on the old rows are dropped by design —
-// a rescan means the old detections are stale. Returns the inserted row IDs
+// ReplaceFaces atomically replaces all stored faces for path with faces
+// under model and records the scan in face_scan. The new scan is
+// authoritative for the WHOLE item, not just its own recognizer: rows and
+// scan markers other models left on the path are cleared too. Domain routing
+// sends an item to exactly one recognizer, so another model's rows are a
+// superseded routing decision — leaving them behind strands ghost faces that
+// no clustering pass will ever assign but that still count (and show) as
+// "ungrouped" grouping workload. Replacing (not appending) makes a rescan
+// idempotent; the scan marker distinguishes "scanned, no faces" from "never
+// scanned". Person assignments on the old rows are dropped by design — a
+// rescan means the old detections are stale. Returns the inserted row IDs
 // (parallel to faces) so callers can update the in-memory face index.
 func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int64) ([]int64, error) {
 	tx, err := db.Begin()
@@ -51,8 +57,8 @@ func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int
 	// cover self-heals on the next listing.
 	if _, err := tx.Exec(
 		`UPDATE person SET cover_face_id = NULL
-		 WHERE cover_face_id IN (SELECT id FROM face WHERE media_path=? AND model=?)`,
-		path, model,
+		 WHERE cover_face_id IN (SELECT id FROM face WHERE media_path=?)`,
+		path,
 	); err != nil {
 		return nil, fmt.Errorf("clear stale covers: %w", err)
 	}
@@ -60,12 +66,17 @@ func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int
 	// a rescan means the old detections (and anything asserted about them) are
 	// stale, matching how person assignments are dropped here.
 	if err := clearConstraintsForFacesTx(
-		tx, `SELECT id FROM face WHERE media_path=? AND model=?`, path, model,
+		tx, `SELECT id FROM face WHERE media_path=?`, path,
 	); err != nil {
 		return nil, fmt.Errorf("clear stale face constraints: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM face WHERE media_path=? AND model=?`, path, model); err != nil {
+	if _, err := tx.Exec(`DELETE FROM face WHERE media_path=?`, path); err != nil {
 		return nil, fmt.Errorf("clear stale faces: %w", err)
+	}
+	// Other models' scan markers are superseded along with their rows; ours is
+	// upserted below.
+	if _, err := tx.Exec(`DELETE FROM face_scan WHERE media_path=? AND model<>?`, path, model); err != nil {
+		return nil, fmt.Errorf("clear stale scan markers: %w", err)
 	}
 	ids := make([]int64, 0, len(faces))
 	for _, f := range faces {
@@ -96,6 +107,56 @@ func ReplaceFaces(db *sql.DB, path, model string, faces []NewFace, scannedAt int
 		return nil, err
 	}
 	return ids, nil
+}
+
+// CleanupSupersededFaces removes face rows (and their covers, curation
+// assertions, and scan markers) whose scan was superseded by a NEWER scan of
+// the same media under a different model. ReplaceFaces now enforces this
+// invariant on every scan (one item, one recognizer), but rows stored before
+// it did — e.g. an item scanned with the photo model, then re-routed to the
+// anime model — linger as permanently "ungrouped" ghosts: no clustering pass
+// touches them, yet they inflate the ungrouped count and top the manual
+// review list. Runs at schema init; returns how many face rows it removed.
+// Ties (identical scanned_at across models) are left alone — there is no
+// winner to pick.
+func CleanupSupersededFaces(db *sql.DB) (int, error) {
+	const supersededFaceIDs = `
+		SELECT f.id FROM face f
+		JOIN face_scan fs ON fs.media_path = f.media_path AND fs.model = f.model
+		WHERE COALESCE(fs.scanned_at, 0) < (
+			SELECT MAX(COALESCE(s2.scanned_at, 0))
+			FROM face_scan s2 WHERE s2.media_path = f.media_path)`
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(
+		`UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (` + supersededFaceIDs + `)`,
+	); err != nil {
+		return 0, fmt.Errorf("clear superseded covers: %w", err)
+	}
+	if err := clearConstraintsForFacesTx(tx, supersededFaceIDs); err != nil {
+		return 0, fmt.Errorf("clear superseded face constraints: %w", err)
+	}
+	res, err := tx.Exec(`DELETE FROM face WHERE id IN (` + supersededFaceIDs + `)`)
+	if err != nil {
+		return 0, fmt.Errorf("delete superseded faces: %w", err)
+	}
+	removed, _ := res.RowsAffected()
+	if _, err := tx.Exec(
+		`DELETE FROM face_scan
+		 WHERE COALESCE(scanned_at, 0) < (
+			SELECT MAX(COALESCE(s2.scanned_at, 0))
+			FROM face_scan s2 WHERE s2.media_path = face_scan.media_path)`,
+	); err != nil {
+		return 0, fmt.Errorf("delete superseded scan markers: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(removed), nil
 }
 
 // FaceScansForPaths reports which of the given paths already have a scan

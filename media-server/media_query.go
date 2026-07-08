@@ -82,14 +82,18 @@ func clauseFor(p Predicate, params *[]any) string {
 		}
 		return "(media.hash LIKE ?)"
 	case "faces":
-		// faces:ungrouped — media holding at least one detected face that
-		// isn't assigned to any person yet (the People panel's Ungrouped
-		// pool). Unknown values match nothing rather than everything.
+		// faces:ungrouped — media whose detected faces are ALL still
+		// unassigned (the People panel's Ungrouped card). One grouped face
+		// disqualifies the item — it already carries a person tag, and
+		// secondary detections used to drag such media into this view.
+		// Unknown values match nothing rather than everything.
 		if strings.EqualFold(p.Value, "ungrouped") {
+			const ungroupedOnly = "(EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0)" +
+				" AND NOT EXISTS (SELECT 1 FROM face g WHERE g.media_path = media.path AND COALESCE(g.person_id, 0) <> 0))"
 			if p.Exclude {
-				return "(NOT EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0))"
+				return "(NOT " + ungroupedOnly + ")"
 			}
-			return "(EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0))"
+			return ungroupedOnly
 		}
 		if p.Exclude {
 			return "(1=1)"

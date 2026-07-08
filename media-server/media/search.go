@@ -413,12 +413,16 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 		}
 		return "m.hash IN (SELECT hash FROM media WHERE hash IS NOT NULL AND hash <> '' GROUP BY hash HAVING COUNT(*) " + op + " ?)", []interface{}{val}
 	case "faces":
-		// faces:ungrouped — items holding at least one detected face that
-		// isn't assigned to any person (the People panel's Ungrouped pool),
-		// so tasks can target exactly that media. Unknown values match
-		// nothing — never everything.
+		// faces:ungrouped — items whose detected faces are ALL still
+		// unassigned (the People panel's Ungrouped card). One grouped face
+		// disqualifies the item: it already belongs to a person and shows
+		// that person's tag, so listing it under "ungrouped" reads as a
+		// broken filter (secondary detections — background faces, dupes —
+		// used to drag fully-tagged media into this view). Unknown values
+		// match nothing — never everything.
 		if strings.EqualFold(val, "ungrouped") {
-			return "EXISTS (SELECT 1 FROM face f WHERE f.media_path = m.path AND COALESCE(f.person_id, 0) = 0)", nil
+			return "(EXISTS (SELECT 1 FROM face f WHERE f.media_path = m.path AND COALESCE(f.person_id, 0) = 0)" +
+				" AND NOT EXISTS (SELECT 1 FROM face g WHERE g.media_path = m.path AND COALESCE(g.person_id, 0) <> 0))", nil
 		}
 		return "1=0", nil
 	case "tag":

@@ -30,18 +30,11 @@ import (
 // defaultClusterEvery is how many newly stored faces trigger an incremental
 // in-scan clustering pass, so People form and grow WHILE a scan runs and the
 // UI updates continually instead of only after a separate faces-cluster job.
-const defaultClusterEvery = 100
-
-// defaultRebuildEvery is how many newly stored faces trigger an in-scan
-// REBUILD: dissolve the anonymous groups and regroup them from scratch at
-// full strength (same as the Rebuild button). The incremental passes between
-// rebuilds are greedy and order-dependent — identities fragment across
-// several Unknowns and borderline joins accumulate as seeds; a periodic
-// rebuild re-litigates the anonymous groups against everything scanned so
-// far, so those mistakes are wiped instead of compounding across a long
-// scan. Named people, confirmed faces, rejections, and group bans all
-// survive a rebuild. 0 disables.
-const defaultRebuildEvery = 1000
+// Each pass stalls the committer for its duration (loading every assigned
+// seed and scoring the batch against them), so the cadence trades UI
+// liveness against scan throughput — 500 keeps the pass cost a small
+// fraction of the scan work.
+const defaultClusterEvery = 500
 
 func registerFacesItemOp() {
 	RegisterItemOp(ItemOp{
@@ -50,7 +43,6 @@ func registerFacesItemOp() {
 		Options: []TaskOption{
 			{Name: "model", Label: "Face Model", Type: "string", Description: "Pin scanning to one face model ID (default: automatic photo/anime routing)"},
 			{Name: "cluster-every", Label: "Cluster Every N Faces", Type: "number", Default: float64(defaultClusterEvery), Description: "Run an incremental people-clustering pass after this many newly scanned faces so People appear while the scan runs (0 = only queue one clustering job at the end)"},
-			{Name: "rebuild-every", Label: "Rebuild Groups Every N Faces", Type: "number", Default: float64(defaultRebuildEvery), Description: "Periodically dissolve the unnamed groups and regroup them from scratch during the scan, wiping incremental clustering's accumulated mistakes (0 = only the final rebuild at scan end)"},
 		},
 		Concurrency: func() int {
 			workers, _ := ResolveFaceResources()
@@ -89,90 +81,80 @@ type facesOpState struct {
 	// Incremental clustering bookkeeping. Touched ONLY from the runner's
 	// single committer goroutine (inside Commit closures) and from Finalize
 	// (which runs after the committer drains), so no locking is needed.
-	clusterEvery  int                 // faces per in-scan pass; 0 = disabled
-	rebuildEvery  int                 // faces per in-scan REBUILD (reset + full regroup); 0 = disabled
+	clusterEvery  int                 // faces per in-scan pass; 0 = end-of-scan job only
 	sinceCluster  int                 // faces stored since the last in-scan pass
-	sinceRebuild  int                 // faces stored since the last in-scan rebuild
-	dirtyModels   map[string]int      // model ID -> faces stored since its last pass
+	dirtyBatches  map[string][]int64  // model ID -> face ids stored since its last pass
 	touchedModels map[string]struct{} // every model that stored faces this run
 }
 
-// noteFacesScanned records n freshly stored faces for a model and reports
-// whether an in-scan clustering pass is due — and whether that pass should be
-// a full REBUILD (reset + full-strength regroup) rather than the strict
-// incremental preview. When due it returns the models with new faces and
-// resets the counters (the caller runs the pass). The rebuild cadence takes
-// priority: when both are due at once, one rebuild does strictly more than an
-// incremental pass would.
-func (st *facesOpState) noteFacesScanned(modelID string, n int) (due, rebuild bool, models []string) {
-	if n <= 0 {
-		return false, false, nil
+// noteFacesScanned records freshly stored face ids for a model and reports
+// whether an in-scan clustering pass is due. When due it returns each dirty
+// model's accumulated batch and resets the counters (the caller runs the
+// pass). Passing the ids — not just a count — is what lets the incremental
+// pass restrict itself to the new faces instead of re-scoring the whole
+// unassigned backlog.
+func (st *facesOpState) noteFacesScanned(modelID string, ids []int64) (due bool, batches map[string][]int64) {
+	if len(ids) == 0 {
+		return false, nil
 	}
-	if st.dirtyModels == nil {
-		st.dirtyModels = map[string]int{}
+	if st.dirtyBatches == nil {
+		st.dirtyBatches = map[string][]int64{}
 	}
 	if st.touchedModels == nil {
 		st.touchedModels = map[string]struct{}{}
 	}
-	st.dirtyModels[modelID] += n
+	st.dirtyBatches[modelID] = append(st.dirtyBatches[modelID], ids...)
 	st.touchedModels[modelID] = struct{}{}
-	st.sinceCluster += n
-	st.sinceRebuild += n
-	if st.rebuildEvery > 0 && st.sinceRebuild >= st.rebuildEvery {
-		st.sinceRebuild = 0
-		return true, true, st.takeDirtyModels()
-	}
+	st.sinceCluster += len(ids)
 	if st.clusterEvery <= 0 || st.sinceCluster < st.clusterEvery {
-		return false, false, nil
+		return false, nil
 	}
-	return true, false, st.takeDirtyModels()
+	return true, st.takeDirtyBatches()
 }
 
-// takeDirtyModels returns the models with new unclustered faces and resets
-// the counters.
-func (st *facesOpState) takeDirtyModels() []string {
-	models := make([]string, 0, len(st.dirtyModels))
-	for id := range st.dirtyModels {
-		models = append(models, id)
-	}
-	st.dirtyModels = map[string]int{}
+// takeDirtyBatches returns the per-model batches of faces stored since each
+// model's last pass and resets the counters.
+func (st *facesOpState) takeDirtyBatches() map[string][]int64 {
+	batches := st.dirtyBatches
+	st.dirtyBatches = map[string][]int64{}
 	st.sinceCluster = 0
-	return models
+	return batches
 }
 
-// runClusterPass runs one clustering pass for the given models, inline in
-// the scan job (a separate faces-cluster job could not run anyway: it shares
-// the faces + local-compute buckets with the scan). Incremental passes use
-// the strict params — a high-precision live preview. Rebuild passes (the
-// periodic cadence and the one at scan end) first dissolve the anonymous
-// groups, then regroup at the normal full-strength defaults: because every
-// rebuild starts from a clean slate, incremental mistakes (fragmented
-// identities, accumulated borderline joins) are wiped instead of compounding.
-// Named people, user-confirmed faces, rejections, and dissolved-group bans
-// all survive a rebuild. Logs the outcome and broadcasts "people-updated" so
-// open People views refresh.
-func (st *facesOpState) runClusterPass(modelIDs []string, rebuild bool) {
+// runClusterPass runs one clustering pass per batched model, inline in the
+// scan job (a separate faces-cluster job could not run anyway: it shares the
+// faces + local-compute buckets with the scan). Mid-scan passes use the
+// strict incremental params (high-precision preview) and are RESTRICTED to
+// each model's batch of newly stored faces — the pass cost tracks the batch,
+// not the library, so long scans don't slow down as the unassigned backlog
+// grows. The final pass at scan end (nil batch = unrestricted) uses the
+// normal defaults over everything, settling borderline cases exactly once.
+// Neither reprocesses already-assigned faces — in-scan rebuilds (reset +
+// full regroup) were tried and dropped: re-litigating every unnamed group on
+// a cadence stalled long scans far too much. Logs the outcome and broadcasts
+// "people-updated" so open People views refresh.
+func (st *facesOpState) runClusterPass(batches map[string][]int64, final bool) {
 	db := st.q.run.Queue.Db
 	label := "incremental (strict)"
-	if rebuild {
-		label = "rebuild (reset + full)"
+	if final {
+		label = "final (full)"
 	}
-	for _, id := range modelIDs {
+	models := make([]string, 0, len(batches))
+	for id, ids := range batches {
 		m, known := FaceModelByID(id)
 		if !known {
 			continue
 		}
+		models = append(models, id)
 		params := incrementalClusterParams(m)
-		if rebuild {
+		if final {
 			params = defaultClusterParams(m)
-			n, err := resetAutoAssignments(db, id)
-			if err != nil {
-				st.q.log(fmt.Sprintf("  clustering %s (%s) reset failed: %v", label, id, err))
-				continue
+		} else {
+			only := make(map[int64]bool, len(ids))
+			for _, fid := range ids {
+				only[fid] = true
 			}
-			if n > 0 {
-				st.q.log(fmt.Sprintf("  clustering %s (%s): dissolved %d auto assignment(s) in unnamed groups", label, id, n))
-			}
+			params.onlyFaceIDs = only
 		}
 		stats, err := clusterFaces(db, m, params)
 		if err != nil {
@@ -182,7 +164,7 @@ func (st *facesOpState) runClusterPass(modelIDs []string, rebuild bool) {
 		st.q.log(fmt.Sprintf("  clustering %s (%s): +%d people, %d faces joined existing, %d newly grouped",
 			label, id, stats.NewPeople, stats.JoinedExisting, stats.NewlyClustered))
 	}
-	broadcastPeopleUpdated(modelIDs)
+	broadcastPeopleUpdated(models)
 }
 
 // broadcastPeopleUpdated tells live UIs (People grid) that person groupings
@@ -219,19 +201,12 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 		timeout:      OnnxFileTimeout(),
 		pools:        map[string]*servePool{},
 		clusterEvery: defaultClusterEvery,
-		rebuildEvery: defaultRebuildEvery,
 	}
 	if v, ok := run.Opts["cluster-every"].(float64); ok {
 		st.clusterEvery = int(v)
 	}
-	if v, ok := run.Opts["rebuild-every"].(float64); ok {
-		st.rebuildEvery = int(v)
-	}
 	if st.clusterEvery > 0 {
 		q.PushJobStdout(j.ID, fmt.Sprintf("Incremental clustering: people update every %d new faces", st.clusterEvery))
-	}
-	if st.rebuildEvery > 0 {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Periodic rebuild: unnamed groups regrouped from scratch every %d new faces", st.rebuildEvery))
 	}
 
 	// Resolve routing vs a pinned model. An explicit model option pins
@@ -282,24 +257,26 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 			return st.processOne(ctx, run, path)
 		},
 		Finalize: func() error {
-			if st.clusterEvery > 0 || st.rebuildEvery > 0 {
-				// In-scan mode always ends with ONE full rebuild over every
-				// model that stored faces this run: the unnamed groups are
-				// dissolved and regrouped with complete data — incremental
-				// fragmentation and order-dependence don't outlive the scan.
-				st.takeDirtyModels() // counters are superseded by the rebuild
+			if st.clusterEvery > 0 {
+				// Incremental mode: the in-scan passes were deliberately
+				// strict AND batch-restricted, so finish with ONE full,
+				// unrestricted pass over every model that stored faces this
+				// run — borderline cases and batch leftovers are settled
+				// here, with complete data, exactly like the old
+				// scan-then-cluster pipeline. No follow-up job needed.
+				st.takeDirtyBatches() // counters are superseded by the full pass
 				if len(st.touchedModels) > 0 {
-					models := make([]string, 0, len(st.touchedModels))
+					full := make(map[string][]int64, len(st.touchedModels))
 					for id := range st.touchedModels {
-						models = append(models, id)
+						full[id] = nil // nil batch = unrestricted
 					}
-					q.PushJobStdout(j.ID, "Final rebuild: regrouping unnamed groups with the complete scan data")
-					st.runClusterPass(models, true)
+					q.PushJobStdout(j.ID, "Final full clustering pass")
+					st.runClusterPass(full, true)
 				}
 				return nil
 			}
 			if id, queued := maybeQueueFaceClustering(q, st.newFaces.Load()); queued {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Stored %d new face(s) — queued rebuild clustering pass (job %s)", st.newFaces.Load(), id))
+				q.PushJobStdout(j.ID, fmt.Sprintf("Stored %d new face(s) — queued clustering pass (job %s)", st.newFaces.Load(), id))
 			}
 			return nil
 		},
@@ -313,14 +290,13 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 	}, nil
 }
 
-// maybeQueueFaceClustering queues a rebuild clustering pass (--reset: unnamed
-// groups dissolved and regrouped from scratch) after a face scan that stored
-// new faces, so freshly-scanned faces form or join people without the user
-// pressing Cluster — with batch-quality groups, not incremental leftovers.
-// Gated on newFaces > 0, and deduped against an already-pending faces-cluster
-// job — that pending pass will pick up these faces when it runs, so at most
-// one is ever queued at a time. A cluster job never scans faces, so it can't
-// retrigger this. Returns the queued job ID and whether one was created.
+// maybeQueueFaceClustering queues a full clustering pass after a face scan that
+// stored new faces, so freshly-scanned faces form or join people without the
+// user pressing Cluster. Gated on newFaces > 0, and deduped against an
+// already-pending faces-cluster job — that pending pass will pick up these
+// faces when it runs, so at most one is ever queued at a time. A cluster job
+// never scans faces, so it can't retrigger this. Returns the queued job ID and
+// whether one was created.
 func maybeQueueFaceClustering(q *jobqueue.Queue, newFaces int64) (string, bool) {
 	if newFaces <= 0 {
 		return "", false
@@ -330,7 +306,7 @@ func maybeQueueFaceClustering(q *jobqueue.Queue, newFaces int64) (string, bool) 
 			return "", false
 		}
 	}
-	id, err := q.AddJob("", "faces-cluster", []string{"--reset"}, "", nil)
+	id, err := q.AddJob("", "faces-cluster", nil, "", nil)
 	if err != nil {
 		return "", false
 	}
@@ -454,13 +430,11 @@ func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path strin
 			// match exists...
 			autoAssignNewFaces(db, model, ids, faces)
 			// ...and every clusterEvery new faces a strict incremental pass
-			// runs inline so NEW people form mid-scan too, with a full
-			// rebuild every rebuildEvery faces wiping the incremental
-			// passes' accumulated mistakes. It executes on the committer
-			// goroutine — commits stall for its duration, which is the
-			// intended throttle (clustering shares the machine anyway).
-			if due, rebuild, models := st.noteFacesScanned(model.ID, len(ids)); due {
-				st.runClusterPass(models, rebuild)
+			// runs inline so NEW people form mid-scan too. It executes on the
+			// committer goroutine — commits stall for its duration, which is
+			// the intended throttle (clustering shares the machine anyway).
+			if due, batches := st.noteFacesScanned(model.ID, ids); due {
+				st.runClusterPass(batches, false)
 			}
 			return nil
 		},

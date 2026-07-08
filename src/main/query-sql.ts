@@ -44,18 +44,23 @@ function clauseFor(p: Predicate, params: string[]): string {
     case 'hash':
       params.push(like);
       return p.exclude ? '(media.hash NOT LIKE ?)' : '(media.hash LIKE ?)';
-    case 'faces':
-      // faces:ungrouped — media holding at least one detected face that isn't
-      // assigned to any person yet. The face table is created by the media
-      // server in the shared library DB; the predicate is only offered from
-      // the People panel (which requires the server), so the table existing
-      // here is a safe assumption. Unknown values match nothing.
+    case 'faces': {
+      // faces:ungrouped — media whose detected faces are ALL still unassigned
+      // (the People panel's Ungrouped card). One grouped face disqualifies
+      // the item: it already carries a person tag, and secondary detections
+      // (background faces, dupes) used to drag fully-tagged media into this
+      // view. The face table is created by the media server in the shared
+      // library DB; the predicate is only offered from the People panel
+      // (which requires the server), so the table existing here is a safe
+      // assumption. Unknown values match nothing.
       if (p.value === 'ungrouped') {
-        return p.exclude
-          ? '(NOT EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0))'
-          : '(EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0))';
+        const ungroupedOnly =
+          '(EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0)' +
+          ' AND NOT EXISTS (SELECT 1 FROM face g WHERE g.media_path = media.path AND COALESCE(g.person_id, 0) <> 0))';
+        return p.exclude ? `(NOT ${ungroupedOnly})` : ungroupedOnly;
       }
       return p.exclude ? '(1=1)' : '(1=0)';
+    }
     case 'similar':
     case 'visual':
     case 'clip':

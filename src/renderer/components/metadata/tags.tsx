@@ -8,6 +8,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import './tags.css';
 import TimestampTooltip from './timestamp-tooltip';
 import GenerateTags from './generate-tags';
+import {
+  usePeople,
+  PersonEditModal,
+  Person,
+} from '../taxonomy/people-grid';
 
 type Tag = {
   tag_label: string;
@@ -74,6 +79,12 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(enableTagGeneration); // Always visible for metadata panel
   const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
+  // Person behind an open settings modal (rename/merge/delete), reached via
+  // the 👤 icon on a People chip. The people list is the shared cache from
+  // usePeople — one fetch serves every Tags mount; when it's unavailable
+  // (no media server) the icon stays decorative.
+  const [editingPerson, setEditingPerson] = useState<Person | null>(null);
+  const { data: people } = usePeople(isVisible);
   const hidePeopleTags = useSelector(
     libraryService,
     (state) => state.context.settings.hidePeopleTags
@@ -254,15 +265,39 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                   </>
                 ) : null}
                 <span>
-                  {isPersonTag && (
-                    <span
-                      className="person-tag-icon"
-                      title="Face cluster (People)"
-                      aria-hidden="true"
-                    >
-                      👤
-                    </span>
-                  )}
+                  {isPersonTag &&
+                    (() => {
+                      const person = (people ?? []).find(
+                        (p) => p.name === tag.tag_label
+                      );
+                      // With the person resolved the glyph becomes the door to
+                      // their settings — name an "Unknown #N" right from the
+                      // chip. Without it (list loading / server away) it stays
+                      // the decorative cluster marker.
+                      return (
+                        <button
+                          type="button"
+                          className="person-tag-icon"
+                          disabled={!person}
+                          title={
+                            person
+                              ? 'Open person settings — name, merge, or delete this group'
+                              : 'Face cluster (People)'
+                          }
+                          aria-label={
+                            person
+                              ? `Edit person ${displayTagLabel(tag.tag_label)}`
+                              : undefined
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (person) setEditingPerson(person);
+                          }}
+                        >
+                          👤
+                        </button>
+                      );
+                    })()}
                   {displayTagLabel(tag.tag_label)}
                 </span>
                 {isConfirming ? (
@@ -306,6 +341,13 @@ function Tags({ item, enableTagGeneration = false }: Props) {
         {item.elo && <li>{item.elo.toFixed(0)}</li>}
       </ul>
       {enableTagGeneration && <GenerateTags path={item.path} />}
+      {editingPerson && (
+        <PersonEditModal
+          person={editingPerson}
+          people={people ?? []}
+          handleClose={() => setEditingPerson(null)}
+        />
+      )}
     </div>
   );
 }

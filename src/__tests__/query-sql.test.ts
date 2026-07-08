@@ -33,13 +33,18 @@ describe('buildMediaQuery', () => {
     expect(norm(sql)).toContain('NOT EXISTS');
   });
 
-  it('compiles faces:ungrouped to an EXISTS over unassigned faces', () => {
+  it('compiles faces:ungrouped to "has faces, none grouped"', () => {
     const { sql, params } = buildMediaQuery(
       [{ type: 'faces', value: 'ungrouped', exclude: false }],
       'AND'
     );
     expect(sql).toContain(
       'EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0)'
+    );
+    // One grouped face disqualifies the item — it already carries its person
+    // tag and must not show under "ungrouped".
+    expect(sql).toContain(
+      'NOT EXISTS (SELECT 1 FROM face g WHERE g.media_path = media.path AND COALESCE(g.person_id, 0) <> 0)'
     );
     expect(params).toEqual([]);
 
@@ -50,7 +55,7 @@ describe('buildMediaQuery', () => {
       ],
       'AND'
     );
-    expect(excluded.sql).toContain('NOT EXISTS (SELECT 1 FROM face f');
+    expect(excluded.sql).toContain('(NOT (EXISTS (SELECT 1 FROM face f');
 
     // Unknown values match nothing — never everything.
     const bogus = buildMediaQuery(

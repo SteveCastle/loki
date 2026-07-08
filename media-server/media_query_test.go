@@ -65,22 +65,29 @@ func TestBuildMediaQueryLikeWrapping(t *testing.T) {
 }
 
 func TestBuildMediaQueryFacesUngrouped(t *testing.T) {
-	// faces:ungrouped — EXISTS over the face table for unassigned faces.
+	// faces:ungrouped — media whose faces are ALL unassigned: an EXISTS for
+	// an unassigned face AND a NOT EXISTS for any assigned one (one grouped
+	// face means the item already carries its person tag and must not show
+	// under "ungrouped").
 	sql, params := BuildMediaQuery([]Predicate{{Type: "faces", Value: "ungrouped"}}, "AND")
 	if !strings.Contains(sql, "EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0)") {
 		t.Fatalf("expected ungrouped-faces EXISTS: %q", sql)
+	}
+	if !strings.Contains(sql, "NOT EXISTS (SELECT 1 FROM face g WHERE g.media_path = media.path AND COALESCE(g.person_id, 0) <> 0)") {
+		t.Fatalf("expected no-grouped-face conjunct: %q", sql)
 	}
 	if len(params) != 0 {
 		t.Fatalf("expected no params, got %v", params)
 	}
 
-	// Excluded form inverts; combined with a tag it stays a conjunct.
+	// Excluded form negates the whole clause; combined with a tag it stays a
+	// conjunct.
 	sql, _ = BuildMediaQuery([]Predicate{
 		{Type: "tag", Value: "portrait"},
 		{Type: "faces", Value: "ungrouped", Exclude: true},
 	}, "AND")
-	if !strings.Contains(sql, "NOT EXISTS (SELECT 1 FROM face f") {
-		t.Fatalf("expected NOT EXISTS for excluded faces predicate: %q", sql)
+	if !strings.Contains(sql, "(NOT (EXISTS (SELECT 1 FROM face f") {
+		t.Fatalf("expected negated ungrouped clause for excluded faces predicate: %q", sql)
 	}
 
 	// Unknown values match nothing — never everything.

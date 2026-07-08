@@ -86,6 +86,91 @@ func TestClusterFacesJoinsSeedsAndMintsUnknowns(t *testing.T) {
 	}
 }
 
+// TestClusterFacesOnlyFaceIDsRestrictsCandidates pins the incremental-pass
+// contract: with onlyFaceIDs set, faces outside the batch are not candidates
+// — the unassigned backlog is neither joined nor formed into clusters (its
+// cost is skipped entirely) — while batch faces still join people and mint
+// Unknowns, matched against ALL assigned seeds.
+func TestClusterFacesOnlyFaceIDsRestrictsCandidates(t *testing.T) {
+	db := newFaceIndexDB(t)
+	resetFaceIndex(t)
+
+	alice, err := media.CreatePerson(db, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedIDs := seedFaces(t, db, "seed.jpg", "m1", []float32{1, 0, 0})
+	if err := media.AssignFace(db, seedIDs[0], alice, "user"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Backlog (NOT in the batch): a face near Alice and a trio that would
+	// mint an Unknown in a full pass. None of them may move.
+	backlogJoin := seedFaces(t, db, "old.jpg", "m1", vecNear([]float32{1, 0, 0}, 0.05))
+	backlogTrio := [][]int64{
+		seedFaces(t, db, "ob1.jpg", "m1", vecNear([]float32{0, 1, 0}, 0.03)),
+		seedFaces(t, db, "ob2.jpg", "m1", vecNear([]float32{0, 1, 0}, -0.03)),
+		seedFaces(t, db, "ob3.jpg", "m1", []float32{0, 1, 0}),
+	}
+
+	// The batch: a face near Alice (joins) and a trio elsewhere (mints).
+	batchJoin := seedFaces(t, db, "new.jpg", "m1", vecNear([]float32{1, 0, 0}, -0.05))
+	batchTrio := [][]int64{
+		seedFaces(t, db, "nb1.jpg", "m1", vecNear([]float32{0, 0, 1}, 0.03)),
+		seedFaces(t, db, "nb2.jpg", "m1", vecNear([]float32{0, 0, 1}, -0.03)),
+		seedFaces(t, db, "nb3.jpg", "m1", []float32{0, 0, 1}),
+	}
+	only := map[int64]bool{batchJoin[0]: true}
+	for _, ids := range batchTrio {
+		only[ids[0]] = true
+	}
+
+	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
+	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 2, onlyFaceIDs: only}
+	stats, err := clusterFaces(db, model, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.JoinedExisting != 1 {
+		t.Fatalf("joined = %d, want 1 (batch face only)", stats.JoinedExisting)
+	}
+	if stats.NewPeople != 1 || stats.NewlyClustered != 3 {
+		t.Fatalf("new people = %d (%d faces), want 1 (3, the batch trio)", stats.NewPeople, stats.NewlyClustered)
+	}
+
+	f, _, _ := media.GetFaceByID(db, batchJoin[0])
+	if f.PersonID != alice {
+		t.Fatalf("batch face should have joined Alice: %+v", f)
+	}
+	f, _, _ = media.GetFaceByID(db, backlogJoin[0])
+	if f.PersonID != 0 {
+		t.Fatalf("backlog face must not be touched by a restricted pass: %+v", f)
+	}
+	for _, ids := range backlogTrio {
+		f, _, _ := media.GetFaceByID(db, ids[0])
+		if f.PersonID != 0 {
+			t.Fatalf("backlog trio face must not cluster in a restricted pass: %+v", f)
+		}
+	}
+	for _, ids := range batchTrio {
+		f, _, _ := media.GetFaceByID(db, ids[0])
+		if f.PersonID == 0 {
+			t.Fatalf("batch trio face should have minted an Unknown: %+v", f)
+		}
+	}
+
+	// A follow-up FULL pass (nil restriction) settles the backlog exactly as
+	// the end-of-scan pass does.
+	params.onlyFaceIDs = nil
+	stats, err = clusterFaces(db, model, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.JoinedExisting != 1 || stats.NewPeople != 1 {
+		t.Fatalf("full pass should settle the backlog: %+v", stats)
+	}
+}
+
 func TestResetAutoAssignmentsKeepsUserLabelsAndNamedPeople(t *testing.T) {
 	db := newFaceIndexDB(t)
 	resetFaceIndex(t)

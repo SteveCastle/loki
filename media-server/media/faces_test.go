@@ -153,7 +153,17 @@ func TestDeleteFacesForMedia(t *testing.T) {
 	if _, err := ReplaceFaces(db, "a.jpg", "sface", []NewFace{{Score: 0.9, Vec: []float32{1}}}, 1); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReplaceFaces(db, "a.jpg", "arcface", []NewFace{{Score: 0.9, Vec: []float32{1}}}, 1); err != nil {
+	// Seed a second model's row directly: ReplaceFaces would supersede the
+	// first model's data, and this test wants a genuinely multi-model path.
+	if _, err := db.Exec(
+		`INSERT INTO face (media_path, model, bbox_x, bbox_y, bbox_w, bbox_h, det_score, vector)
+		 VALUES ('a.jpg','arcface',0,0,1,1,0.9,x'0000803f')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO face_scan (media_path, model, face_count, scanned_at) VALUES ('a.jpg','arcface',1,1)`,
+	); err != nil {
 		t.Fatal(err)
 	}
 	if err := DeleteFacesForMedia(db, "a.jpg"); err != nil {
@@ -166,6 +176,99 @@ func TestDeleteFacesForMedia(t *testing.T) {
 		if ok, _ := HasFaceScan(db, "a.jpg", model); ok {
 			t.Fatalf("scan marker remains for %s", model)
 		}
+	}
+}
+
+// A scan is authoritative for the whole item: rescanning a path under a new
+// recognizer (routing re-decided its domain) must remove the old
+// recognizer's rows and scan marker, or they linger as permanently
+// "ungrouped" ghost faces in the review UI.
+func TestReplaceFacesSupersedesOtherModels(t *testing.T) {
+	db := newFaceDB(t)
+	defer db.Close()
+	if _, err := ReplaceFaces(db, "a.jpg", "photo-model", []NewFace{{Score: 0.9, Vec: []float32{1}}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	// Another path's rows must be untouched by a.jpg's rescan.
+	otherIDs, err := ReplaceFaces(db, "b.jpg", "photo-model", []NewFace{{Score: 0.8, Vec: []float32{1}}}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReplaceFaces(db, "a.jpg", "anime-model", []NewFace{{Score: 0.95, Vec: []float32{2}}}, 2); err != nil {
+		t.Fatal(err)
+	}
+
+	if faces, _ := GetFaces(db, "a.jpg", "photo-model"); len(faces) != 0 {
+		t.Fatalf("superseded photo-model rows remain: %d", len(faces))
+	}
+	if ok, _ := HasFaceScan(db, "a.jpg", "photo-model"); ok {
+		t.Fatal("superseded photo-model scan marker remains")
+	}
+	if faces, _ := GetFaces(db, "a.jpg", "anime-model"); len(faces) != 1 {
+		t.Fatalf("anime-model rows = %d, want 1", len(faces))
+	}
+	if ok, _ := HasFaceScan(db, "a.jpg", "anime-model"); !ok {
+		t.Fatal("anime-model scan marker missing")
+	}
+	if faces, _ := GetFaces(db, "b.jpg", "photo-model"); len(faces) != 1 || faces[0].ID != otherIDs[0] {
+		t.Fatalf("unrelated path's faces disturbed: %+v", faces)
+	}
+}
+
+// Pre-fix data repair: rows whose scan was superseded by a newer scan under
+// another model are swept at schema init. Ties are left alone.
+func TestCleanupSupersededFaces(t *testing.T) {
+	db := newFaceDB(t)
+	defer db.Close()
+	seed := func(path, model string, scannedAt int64) {
+		t.Helper()
+		if _, err := db.Exec(
+			// x'0000803f' = float32(1.0) little-endian — a decodable vector.
+			`INSERT INTO face (media_path, model, bbox_x, bbox_y, bbox_w, bbox_h, det_score, vector)
+			 VALUES (?,?,0,0,1,1,0.9,x'0000803f')`, path, model,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(
+			`INSERT INTO face_scan (media_path, model, face_count, scanned_at) VALUES (?,?,1,?)`,
+			path, model, scannedAt,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("stale.jpg", "photo-model", 1) // superseded by the anime scan below
+	seed("stale.jpg", "anime-model", 2)
+	seed("tie.jpg", "photo-model", 5) // identical timestamps: no winner, keep both
+	seed("tie.jpg", "anime-model", 5)
+	seed("solo.jpg", "photo-model", 1) // single model: never superseded
+
+	n, err := CleanupSupersededFaces(db)
+	if err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("removed = %d, want 1", n)
+	}
+	if faces, _ := GetFaces(db, "stale.jpg", "photo-model"); len(faces) != 0 {
+		t.Fatal("superseded rows survived cleanup")
+	}
+	if ok, _ := HasFaceScan(db, "stale.jpg", "photo-model"); ok {
+		t.Fatal("superseded scan marker survived cleanup")
+	}
+	if faces, _ := GetFaces(db, "stale.jpg", "anime-model"); len(faces) != 1 {
+		t.Fatal("winning model's rows must survive")
+	}
+	for _, model := range []string{"photo-model", "anime-model"} {
+		if faces, _ := GetFaces(db, "tie.jpg", model); len(faces) != 1 {
+			t.Fatalf("tie rows must be kept (%s)", model)
+		}
+	}
+	if faces, _ := GetFaces(db, "solo.jpg", "photo-model"); len(faces) != 1 {
+		t.Fatal("single-model rows must be kept")
+	}
+	// Idempotent: a second sweep finds nothing.
+	if n, err := CleanupSupersededFaces(db); err != nil || n != 0 {
+		t.Fatalf("second sweep: n=%d err=%v", n, err)
 	}
 }
 

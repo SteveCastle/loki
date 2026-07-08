@@ -45,7 +45,7 @@ const userSeedWeight = 3
 // may sit below the join threshold. The best-single-match rule alone is
 // single-linkage: face A joins via member B, becomes a seed, pulls in C via
 // itself, and so on — each hop needs only one good match, so over repeated
-// passes (the incremental in-scan clustering runs every ~100 faces) a person
+// passes (the incremental in-scan clustering runs every ~500 faces) a person
 // degenerates into a transitive chain whose internal similarity is near
 // random. Requiring the mean over ALL the person's faces to stay within this
 // slack of the threshold blocks chain drift (a chained blob's mean is far
@@ -100,6 +100,14 @@ type clusterParams struct {
 	// seed the next, giving bounded one-hop transitivity (a face that joins
 	// Alice can pull in its own near-duplicates) without open-ended drift.
 	passes int
+	// onlyFaceIDs, when non-nil, restricts the CANDIDATE set to these faces:
+	// only they may join people or form clusters. Assigned faces still count
+	// as seeds/match targets in full. This is what keeps the in-scan
+	// incremental pass O(batch) instead of O(library): without it every pass
+	// re-scored the entire unassigned backlog — thousands of hard/junk faces
+	// that never join anything — against every seed, so passes got slower as
+	// the library grew. nil = consider every unassigned face (full pass).
+	onlyFaceIDs map[int64]bool
 }
 
 // defaultClusterParams starts from the recognizer's defaults and applies the
@@ -133,7 +141,7 @@ func defaultClusterParams(model FaceModel) clusterParams {
 
 // incrementalClusterParams are the knobs for the frequent IN-SCAN passes.
 // They are deliberately stricter than the defaults: a pass that runs every
-// ~100 faces retests borderline candidates dozens of times per scan (each
+// ~500 faces retests borderline candidates many times per scan (each
 // retest is another chance for a false join), sees only small batches (easy
 // for a few borderline faces to look coherent), and every join it makes
 // becomes a full-strength seed for all later passes — so early mistakes
@@ -326,6 +334,12 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 	var seeds []seed
 	var unassigned []media.Face
 	for _, f := range all {
+		// Restricted (incremental) pass: unassigned faces outside the batch
+		// are not candidates — skip before the normalize so the backlog costs
+		// nothing at all.
+		if f.PersonID == 0 && p.onlyFaceIDs != nil && !p.onlyFaceIDs[f.ID] {
+			continue
+		}
 		// Normalize defensively: cosine math below assumes unit vectors.
 		f.Vec = embedvec.Normalize(f.Vec)
 		if f.PersonID != 0 {

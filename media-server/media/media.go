@@ -2300,6 +2300,17 @@ func InitializeSchema(db *sql.DB) error {
 		}
 	}
 
+	// One-time repair for DBs written before ReplaceFaces claimed the whole
+	// item per scan: drop face rows a newer scan under another model
+	// superseded. These ghosts appear as permanently "ungrouped" faces in the
+	// People review UI. Runs before the face index is built, so no live index
+	// eviction is needed. Best-effort — a failure only delays the repair.
+	if n, err := CleanupSupersededFaces(db); err != nil {
+		log.Printf("warning: superseded-face cleanup failed (will retry on next start): %v", err)
+	} else if n > 0 {
+		log.Printf("faces: removed %d stale face row(s) superseded by newer scans under another model", n)
+	}
+
 	log.Println("Database schema initialized successfully")
 	return nil
 }

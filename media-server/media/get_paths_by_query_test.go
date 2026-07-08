@@ -191,13 +191,15 @@ func TestGetPathsByQuery_TranscriptTargeting(t *testing.T) {
 }
 
 // TestGetPathsByQuery_FacesUngrouped pins the faces:ungrouped predicate the
-// People panel's Ungrouped card emits: only media holding at least one face
-// with no person assignment match, and unknown values fail closed (unknown
-// keys used to compile to 1=1 and select the whole library).
+// People panel's Ungrouped card emits: only media whose detected faces are
+// ALL unassigned match — one grouped face disqualifies the item (it already
+// carries a person tag; secondary detections used to drag fully-tagged media
+// into the Ungrouped view). Unknown values fail closed (unknown keys used to
+// compile to 1=1 and select the whole library).
 func TestGetPathsByQuery_FacesUngrouped(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
-	for _, p := range []string{"/lib/stray.jpg", "/lib/known.jpg", "/lib/empty.jpg"} {
+	for _, p := range []string{"/lib/stray.jpg", "/lib/known.jpg", "/lib/mixed.jpg", "/lib/empty.jpg"} {
 		if _, err := db.Exec("INSERT INTO media (path) VALUES (?)", p); err != nil {
 			t.Fatal(err)
 		}
@@ -227,6 +229,20 @@ func TestGetPathsByQuery_FacesUngrouped(t *testing.T) {
 	}
 	if _, err := db.Exec(
 		`UPDATE face SET person_id = 7, assigned_by = 'user' WHERE id = ?`, knownIDs[0],
+	); err != nil {
+		t.Fatal(err)
+	}
+	// Mixed: the main face is grouped, a secondary detection isn't. The item
+	// already carries its person tag, so it must NOT read as "ungrouped".
+	mixedIDs, err := ReplaceFaces(db, "/lib/mixed.jpg", "m1", []NewFace{
+		{X: 0.1, Y: 0.1, W: 0.4, H: 0.4, Score: 0.95, Vec: []float32{1, 1}},
+		{X: 0.7, Y: 0.7, W: 0.1, H: 0.1, Score: 0.4, Vec: []float32{1, 2}},
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`UPDATE face SET person_id = 7, assigned_by = 'auto' WHERE id = ?`, mixedIDs[0],
 	); err != nil {
 		t.Fatal(err)
 	}

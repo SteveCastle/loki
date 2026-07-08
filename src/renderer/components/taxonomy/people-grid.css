@@ -308,6 +308,22 @@
   gap: 8px;
 }
 
+/* People strip above the taxonomy search results (PeopleSearchResults).
+   Lives inside the flex-column .results-pane: size to content but cap the
+   height so a broad name match can't push the tag grid off-screen — beyond
+   the cap the strip scrolls internally. */
+.search-people-results {
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow-y: auto;
+  padding: 0 2px 2px;
+  margin-bottom: 6px;
+}
+
+.search-people-results .people-grid-heading {
+  margin: 0 0 6px;
+}
+
 .people-grid-heading {
   font-size: 12px;
   font-weight: 600;
@@ -521,6 +537,18 @@
   max-height: 84vh;
   display: flex;
   flex-direction: column;
+  /* One shared 0.8rem gutter (the base modal's section inset) on the sides
+     and bottom. The rows inside (toolbar, grid, curate bar, hint) carry no
+     horizontal padding of their own — without this the "Lock all" button and
+     the hint text sat flush against the modal edges. */
+  padding: 0 0.8rem 0.8rem;
+}
+
+/* The base header brings its own 0.8rem side padding; inside this drawer the
+   content box already provides the gutter, so strip the header's to keep the
+   title and ✕ aligned with the rows below instead of doubly inset. */
+.face-review-content .input-modal-header {
+  padding: 0.5rem 0;
 }
 
 .face-review-counts {
