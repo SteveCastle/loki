@@ -4,9 +4,12 @@
 #   make-macos-app.sh <payload-dir> <out-dir> <version>
 #
 # payload-dir is a staged release dir (lowkeymediaserver, lokictl, bin/,
-# licenses/). Bundled deps go under Contents/MacOS/bin because the server
-# resolves them relative to its executable — the bundle layout needs no
-# code changes. Signing/notarization happen in the workflow, after this.
+# licenses/). Bundled deps live under Contents/Resources/bin with a
+# Contents/MacOS/bin symlink: the server resolves deps relative to its
+# executable (so the symlink keeps that working unchanged), but codesign
+# treats everything under Contents/MacOS as nested code — exiftool's Perl
+# modules there make bundle signing fail with "code object is not signed
+# at all". Signing/notarization happen in the workflow, after this.
 set -euo pipefail
 
 PAYLOAD="${1:?payload dir}"
@@ -21,7 +24,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$PAYLOAD/lowkeymediaserver" "$APP/Contents/MacOS/"
 cp "$PAYLOAD/lokictl"           "$APP/Contents/MacOS/"
-cp -R "$PAYLOAD/bin"            "$APP/Contents/MacOS/bin"
+cp -R "$PAYLOAD/bin"            "$APP/Contents/Resources/bin"
+ln -s ../Resources/bin          "$APP/Contents/MacOS/bin"
 cp -R "$PAYLOAD/licenses"       "$APP/Contents/Resources/licenses"
 
 sed "s/APP_VERSION/$VERSION/g" \

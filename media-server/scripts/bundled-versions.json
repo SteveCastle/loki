@@ -74,7 +74,7 @@
         "archive": "tar.gz",
         "extract": [
           {"from": "Image-ExifTool-13.59/exiftool",   "to": "exiftool"},
-          {"from": "Image-ExifTool-13.59/lib",        "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.59/lib",        "to": "lib", "type": "dir"}
         ]
       },
       "darwin-arm64": {
@@ -84,7 +84,7 @@
         "archive": "tar.gz",
         "extract": [
           {"from": "Image-ExifTool-13.59/exiftool", "to": "exiftool"},
-          {"from": "Image-ExifTool-13.59/lib",      "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.59/lib",      "to": "lib", "type": "dir"}
         ]
       },
       "darwin-amd64": {
@@ -94,7 +94,7 @@
         "archive": "tar.gz",
         "extract": [
           {"from": "Image-ExifTool-13.59/exiftool", "to": "exiftool"},
-          {"from": "Image-ExifTool-13.59/lib",      "to": "exiftool_files", "type": "dir"}
+          {"from": "Image-ExifTool-13.59/lib",      "to": "lib", "type": "dir"}
         ]
       }
     },
