@@ -1442,6 +1442,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if p, err := transcribe.Active(); err == nil {
 				data.TranscriptionModels = p.Models()
 			}
+			// Never embed raw S3 credentials in the page; the POST handler
+			// treats the placeholder as "keep the stored value".
+			data.Config.Roots = redactRoots(cfg.Roots)
 			if err := renderer.Templates().ExecuteTemplate(w, "config", data); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
@@ -1493,7 +1496,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.TrimSpace(req.RunPodEndpoint); v != "" {
 				newCfg.RunPodEndpoint = v
 			}
-			if v := strings.TrimSpace(req.RunPodAPIKey); v != "" {
+			if v := keepStoredIfRedacted(req.RunPodAPIKey, newCfg.RunPodAPIKey); v != "" {
 				newCfg.RunPodAPIKey = v
 			}
 			if v := strings.TrimSpace(req.LMStudioBaseURL); v != "" {
@@ -1502,7 +1505,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.TrimSpace(req.LMStudioModel); v != "" {
 				newCfg.LMStudioModel = v
 			}
-			if v := strings.TrimSpace(req.LMStudioAPIKey); v != "" {
+			if v := keepStoredIfRedacted(req.LMStudioAPIKey, newCfg.LMStudioAPIKey); v != "" {
 				newCfg.LMStudioAPIKey = v
 			}
 			if v := strings.TrimSpace(req.LlamaCppBaseURL); v != "" {
@@ -1511,7 +1514,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.TrimSpace(req.LlamaCppModel); v != "" {
 				newCfg.LlamaCppModel = v
 			}
-			if v := strings.TrimSpace(req.LlamaCppAPIKey); v != "" {
+			if v := keepStoredIfRedacted(req.LlamaCppAPIKey, newCfg.LlamaCppAPIKey); v != "" {
 				newCfg.LlamaCppAPIKey = v
 			}
 			if req.InferenceConcurrency.Ollama > 0 {
@@ -1615,11 +1618,14 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
 			}
-			if strings.TrimSpace(req.DiscordToken) != "" {
-				newCfg.DiscordToken = strings.TrimSpace(req.DiscordToken)
+			if v := keepStoredIfRedacted(req.DiscordToken, newCfg.DiscordToken); v != "" {
+				newCfg.DiscordToken = v
 			}
 			if req.Roots != nil {
-				newCfg.Roots = req.Roots
+				// Recover S3 credentials for roots posted back with the
+				// "<redacted>" placeholder (both the config page and
+				// GET /api/config redact them on read).
+				newCfg.Roots = mergeIncomingRoots(req.Roots, currentConfig.Roots)
 			}
 			cfgPath, err := appconfig.Save(newCfg)
 			if err != nil {
@@ -1676,10 +1682,28 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				}(deps.DB)
 			}
 
-			// Rebuild storage backends from new config
+			// Rebuild storage backends from new config. Init failures are
+			// surfaced to the caller, not just logged — a default root that
+			// fails init silently re-routes uploads to the first backend.
 			newReg, regErrs := storage.BuildRegistry(newCfg.Roots)
+			storageWarnings := []string{}
 			for _, regErr := range regErrs {
 				log.Printf("Warning: storage backend init error: %v", regErr)
+				storageWarnings = append(storageWarnings, regErr.Error())
+			}
+			if backends := newReg.AllBackends(); newReg.DefaultIdx() == -1 && len(backends) > 0 {
+				for _, root := range newCfg.Roots {
+					if root.Default {
+						storageWarnings = append(storageWarnings, fmt.Sprintf(
+							"default storage root %q failed to initialize; uploads fall back to %q",
+							root.Label, backends[0].Root().Name))
+						break
+					}
+				}
+			}
+			if appconfig.EnvRootsActive() {
+				storageWarnings = append(storageWarnings,
+					"storage roots are overridden by environment variables (LOWKEY_ROOTS / LOWKEY_ROOT_*); saved roots take effect only after those are removed")
 			}
 			deps.Storage.ReplaceWithDefault(newReg.AllBackends(), newReg.DefaultIdx())
 
@@ -1693,12 +1717,13 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"configPath":     cfgPath,
-				"activeDBPath":   currentConfig.DBPath,
-				"changed":        changed,
-				"dbChanged":      dbChanged,
-				"logoutRequired": dbChanged,
+				"status":          "ok",
+				"configPath":      cfgPath,
+				"activeDBPath":    currentConfig.DBPath,
+				"changed":         changed,
+				"dbChanged":       dbChanged,
+				"logoutRequired":  dbChanged,
+				"storageWarnings": storageWarnings,
 			})
 		default:
 			http.Error(w, "Use GET or POST", http.StatusMethodNotAllowed)

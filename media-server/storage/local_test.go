@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -300,5 +301,44 @@ func TestLocalBackend_Root(t *testing.T) {
 	}
 	if e.Name != "MyLabel" {
 		t.Errorf("Root().Name = %q, want \"MyLabel\"", e.Name)
+	}
+}
+
+// --- Contains ---
+
+func TestLocalBackend_Contains_Boundaries(t *testing.T) {
+	root := t.TempDir()
+	b := NewLocalBackend(root, "test")
+
+	if !b.Contains(root) {
+		t.Error("Contains(root) = false, want true")
+	}
+	if !b.Contains(filepath.Join(root, "sub", "img.jpg")) {
+		t.Error("Contains(child) = false, want true")
+	}
+	// A child literally named "..foo" is inside the root even though its
+	// relative path starts with "..".
+	if !b.Contains(filepath.Join(root, "..foo", "img.jpg")) {
+		t.Error("Contains(root/..foo/img.jpg) = false, want true")
+	}
+	if b.Contains(filepath.Dir(root)) {
+		t.Error("Contains(parent of root) = true, want false")
+	}
+	// A sibling whose name shares the root's name as a prefix is outside.
+	if b.Contains(root + "2") {
+		t.Errorf("Contains(%q) = true, want false", root+"2")
+	}
+}
+
+func TestLocalBackend_Contains_CaseInsensitiveOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("case-insensitive path matching is Windows-only")
+	}
+	b := NewLocalBackend(`C:\Media Library`, "test")
+	if !b.Contains(`c:\media library\Sub\IMG.jpg`) {
+		t.Error("Contains should ignore case on Windows")
+	}
+	if b.Contains(`c:\other\img.jpg`) {
+		t.Error("Contains matched an unrelated path")
 	}
 }

@@ -1046,3 +1046,204 @@ func TestInferenceProviderMigrationNoRunPod(t *testing.T) {
 		t.Errorf("InferenceProvider = %q; want %q (default)", c.InferenceProvider, "ollama")
 	}
 }
+
+// TestDownloadPathMigrationPersisted verifies that a config predating storage
+// roots (no "roots" key) gets a Downloads root migrated from downloadPath AND
+// that the root is written to disk, so it behaves like a normal editable root.
+func TestDownloadPathMigrationPersisted(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+	legacy := map[string]interface{}{
+		"dbPath":       filepath.Join(dir, "media.db"),
+		"jwtSecret":    "test-secret",
+		"downloadPath": filepath.Join(dir, "dl"),
+	}
+	data, _ := json.Marshal(legacy)
+	if err := os.WriteFile(cfgFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Roots) != 1 || c.Roots[0].Label != "Downloads" || !c.Roots[0].Default {
+		t.Fatalf("expected migrated Downloads root, got %+v", c.Roots)
+	}
+
+	raw, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Config
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Roots) != 1 || saved.Roots[0].Label != "Downloads" {
+		t.Errorf("migrated root not persisted; file roots = %+v", saved.Roots)
+	}
+}
+
+// TestClearedRootsNotResurrected verifies that a deliberately emptied roots
+// list ("roots": []) stays empty — Load must not regenerate a Downloads root.
+func TestClearedRootsNotResurrected(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+	cleared := map[string]interface{}{
+		"dbPath":       filepath.Join(dir, "media.db"),
+		"jwtSecret":    "test-secret",
+		"downloadPath": filepath.Join(dir, "dl"),
+		"roots":        []interface{}{},
+	}
+	data, _ := json.Marshal(cleared)
+	if err := os.WriteFile(cfgFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Roots) != 0 {
+		t.Errorf("cleared roots resurrected: %+v", c.Roots)
+	}
+}
+
+// TestFirstRunSeedsDownloadsRootInFile verifies a brand-new config file
+// carries the Downloads root on disk (not just in memory).
+func TestFirstRunSeedsDownloadsRootInFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Roots) != 1 || c.Roots[0].Label != "Downloads" || !c.Roots[0].Default {
+		t.Fatalf("expected seeded Downloads root, got %+v", c.Roots)
+	}
+
+	raw, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Config
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Roots) != 1 || saved.Roots[0].Label != "Downloads" {
+		t.Errorf("seeded root not persisted; file roots = %+v", saved.Roots)
+	}
+}
+
+// TestEnvRootsNotBakedOnSave verifies that Save keeps env-injected roots out
+// of the config file: the file's own roots survive a save round-trip while
+// LOWKEY_ROOTS is active.
+func TestEnvRootsNotBakedOnSave(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+	onDisk := map[string]interface{}{
+		"dbPath":    filepath.Join(dir, "media.db"),
+		"jwtSecret": "test-secret",
+		"roots": []map[string]interface{}{
+			{"type": "local", "path": "/persistent", "label": "Persistent", "default": true},
+		},
+	}
+	data, _ := json.Marshal(onDisk)
+	if err := os.WriteFile(cfgFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+	t.Setenv("LOWKEY_ROOTS", `[{"type":"local","path":"/env-root","label":"Env"}]`)
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !EnvRootsActive() {
+		t.Fatal("EnvRootsActive() = false, want true")
+	}
+	if len(c.Roots) != 1 || c.Roots[0].Label != "Env" {
+		t.Fatalf("runtime roots should be the env set, got %+v", c.Roots)
+	}
+
+	// Simulate the config POST: save the loaded (env-overridden) config back.
+	if _, err := Save(c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, err := os.ReadFile(cfgFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Config
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Roots) != 1 || saved.Roots[0].Label != "Persistent" {
+		t.Errorf("env roots were baked into the file; file roots = %+v", saved.Roots)
+	}
+
+	// Deliberately edited roots (different from the env set) DO persist.
+	c.Roots = []StorageRoot{{Type: "local", Path: "/edited", Label: "Edited"}}
+	if _, err := Save(c); err != nil {
+		t.Fatalf("Save edited: %v", err)
+	}
+	raw, _ = os.ReadFile(cfgFile)
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Roots) != 1 || saved.Roots[0].Label != "Edited" {
+		t.Errorf("deliberate root edit not persisted; file roots = %+v", saved.Roots)
+	}
+}
+
+// TestMigratedRootFollowsEnvDownloadPath verifies the in-memory migrated root
+// tracks an env-overridden download path while the file keeps the persistent
+// (non-env) path.
+func TestMigratedRootFollowsEnvDownloadPath(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+	fileDL := filepath.Join(dir, "file-dl")
+	envDL := filepath.Join(dir, "env-dl")
+	legacy := map[string]interface{}{
+		"dbPath":       filepath.Join(dir, "media.db"),
+		"jwtSecret":    "test-secret",
+		"downloadPath": fileDL,
+	}
+	data, _ := json.Marshal(legacy)
+	if err := os.WriteFile(cfgFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+	t.Setenv("LOWKEY_DOWNLOAD_PATH", envDL)
+
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(c.Roots) != 1 || c.Roots[0].Path != envDL {
+		t.Errorf("in-memory migrated root should follow env download path %q, got %+v", envDL, c.Roots)
+	}
+
+	raw, _ := os.ReadFile(cfgFile)
+	var saved Config
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Roots) != 1 || saved.Roots[0].Path != fileDL {
+		t.Errorf("file root should keep the persistent path %q, got %+v", fileDL, saved.Roots)
+	}
+}

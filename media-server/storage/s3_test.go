@@ -152,3 +152,22 @@ func TestS3Root_NoPrefix(t *testing.T) {
 		t.Errorf("Root().Path = %q, want \"s3://my-bucket/\"", e.Path)
 	}
 }
+
+func TestS3BackendContains_PrefixIsSegmentAligned(t *testing.T) {
+	b := newTestS3Backend("my-bucket", "photos", "Test", "_thumbnails")
+
+	if !b.Contains("s3://my-bucket/photos") {
+		t.Error("Contains(prefix root without trailing slash) = false, want true")
+	}
+	if !b.Contains("s3://my-bucket/photos/img.jpg") {
+		t.Error("Contains(object under prefix) = false, want true")
+	}
+	// A sibling prefix sharing the configured prefix as a string prefix must
+	// not be claimed by this backend.
+	if b.Contains("s3://my-bucket/photos-archive/img.jpg") {
+		t.Error("Contains(sibling prefix) = true, want false")
+	}
+	if b.Contains("s3://my-bucket/photosX") {
+		t.Error("Contains(photosX) = true, want false")
+	}
+}

@@ -6,12 +6,61 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* With people present, scrolling belongs to .people-virtual-scroll (the
+     virtualizer's element) and this wrap doesn't overflow — the toolbar and
+     tune panel stay pinned above the list. The empty/error states still
+     scroll here. */
   overflow-y: auto;
-  padding: 4px 6px 40px 4px;
+  padding: 4px 6px 8px 4px;
   height: 100%;
   /* Toolbar buttons respond to the PANEL width (which the user drags), not
      the window — labels hide at narrow widths instead of wrapping. */
   container-type: inline-size;
+}
+
+/* ── Virtualized people list ──
+   Row-windowed scroller: only the visible chunk of person cards exists in
+   the DOM (thousands of clusters would otherwise each mount a drag/drop
+   target and a face-crop fetch). */
+.people-virtual-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 40px;
+}
+
+.people-virtual-body {
+  position: relative;
+  width: 100%;
+}
+
+.people-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
+
+/* Rows are fixed-height (computed from the column width); cards stretch to
+   fill exactly, with the face image flexing instead of aspect-ratio sizing —
+   this keeps the virtualizer's size estimates identical to the layout. */
+.people-virtual-row .person-card {
+  height: 100%;
+}
+
+.people-virtual-row .person-card-face {
+  aspect-ratio: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.people-virtual-heading {
+  display: flex;
+  align-items: flex-end;
+}
+
+.people-virtual-heading .people-grid-heading {
+  margin: 0;
 }
 
 .people-grid-toolbar {

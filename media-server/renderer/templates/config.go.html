@@ -141,6 +141,15 @@
 
       select.input {
         cursor: pointer;
+        /* Replace the native arrow (which hugs the right edge) with a custom
+           chevron inset by the control's own padding. */
+        appearance: none;
+        -webkit-appearance: none;
+        padding-right: calc(var(--space-3) * 2 + 12px);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5l3.5 3.5 3.5-3.5' fill='none' stroke='%23909090' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right var(--space-3) center;
+        background-size: 12px;
       }
 
       .actions {
@@ -1837,7 +1846,7 @@
               <option value="local" ${!isS3 ? 'selected' : ''}>Local</option>
               <option value="s3" ${isS3 ? 'selected' : ''}>S3</option>
             </select>
-            <input class="input root-label" data-index="${index}" type="text" placeholder="Label" value="${esc(root.label || '')}" style="flex:1"/>
+            <input class="input root-label" data-index="${index}" data-field="label" type="text" placeholder="Label" value="${esc(root.label || '')}" style="flex:1"/>
             <button type="button" class="btn btn-secondary root-default" data-index="${index}" style="padding:var(--space-2) var(--space-3);flex-shrink:0;${isDefault ? 'color:var(--accent-primary);border-color:var(--accent-primary);font-weight:600' : ''}" title="Set as default upload destination">${isDefault ? '★ Default' : '☆ Default'}</button>
             <button type="button" class="btn btn-secondary root-remove" data-index="${index}" style="padding:var(--space-2) var(--space-3);color:var(--status-error);border-color:var(--status-error);flex-shrink:0">&times;</button>
           </div>
@@ -2538,6 +2547,14 @@
                 window.location.href =
                   '/login?redirect=' + encodeURIComponent('/config');
               }, 1000);
+              return;
+            }
+            if (res.storageWarnings && res.storageWarnings.length) {
+              setStatus(
+                'Saved, with storage warnings: ' +
+                  res.storageWarnings.join(' • '),
+                'error'
+              );
               return;
             }
             setStatus(

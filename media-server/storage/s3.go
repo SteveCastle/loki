@@ -120,12 +120,15 @@ func (b *S3Backend) Root() Entry {
 }
 
 // Contains reports whether p is rooted inside this backend's bucket and prefix.
+// The prefix match is segment-aligned: a root with prefix "photos" claims
+// "photos" and "photos/...", but not a sibling like "photos-archive/...".
 func (b *S3Backend) Contains(p string) bool {
-	prefix := "s3://" + b.bucket + "/"
-	if b.prefix != "" {
-		prefix = "s3://" + b.bucket + "/" + b.prefix
+	base := "s3://" + b.bucket + "/"
+	if b.prefix == "" {
+		return strings.HasPrefix(p, base)
 	}
-	return strings.HasPrefix(p, prefix)
+	base += strings.TrimSuffix(b.prefix, "/")
+	return p == base || strings.HasPrefix(p, base+"/")
 }
 
 // List returns the immediate children (directories and media files) of dirPath.

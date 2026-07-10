@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -178,13 +179,22 @@ func (b *LocalBackend) Exists(_ context.Context, path string) (bool, error) {
 }
 
 // Contains reports whether path is located inside the backend's root directory.
+// On Windows the comparison is case-insensitive — stored media paths and
+// configured roots routinely disagree on drive-letter/segment casing.
 func (b *LocalBackend) Contains(path string) bool {
+	root := b.rootPath
 	cleaned := filepath.Clean(path)
-	rel, err := filepath.Rel(b.rootPath, cleaned)
+	if runtime.GOOS == "windows" {
+		root = strings.ToLower(root)
+		cleaned = strings.ToLower(cleaned)
+	}
+	rel, err := filepath.Rel(root, cleaned)
 	if err != nil {
 		return false
 	}
-	return !strings.HasPrefix(rel, "..")
+	// Only an actual parent traversal escapes the root; a child literally
+	// named "..foo" also starts with ".." and must not be excluded.
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Root returns the Entry representing the backend's root directory.

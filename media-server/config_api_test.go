@@ -58,3 +58,55 @@ func TestConfigGetAPIHandler_MethodGuard(t *testing.T) {
 		t.Errorf("POST status = %d, want 405", rr.Code)
 	}
 }
+
+func TestMergeIncomingRoots_RecoversRedactedCreds(t *testing.T) {
+	existing := []appconfig.StorageRoot{
+		{Type: "s3", Label: "Bucket A", Bucket: "a", Endpoint: "https://s3.example.com", AccessKey: "AK-A", SecretKey: "SK-A"},
+		{Type: "s3", Label: "Bucket B", Bucket: "b", Endpoint: "https://s3.example.com", AccessKey: "AK-B", SecretKey: "SK-B"},
+		{Type: "local", Label: "Disk", Path: "D:/media"},
+	}
+	incoming := []appconfig.StorageRoot{
+		// Same bucket, renamed label, redacted creds → recovered by S3 identity.
+		{Type: "s3", Label: "Renamed A", Bucket: "a", Endpoint: "https://s3.example.com", AccessKey: "<redacted>", SecretKey: "<redacted>"},
+		// User typed a fresh secret; access key still redacted.
+		{Type: "s3", Label: "Bucket B", Bucket: "b", Endpoint: "https://s3.example.com", AccessKey: "<redacted>", SecretKey: "NEW-SK"},
+		// Brand-new root posted with placeholders (no stored counterpart):
+		// placeholders must be dropped, never persisted literally.
+		{Type: "s3", Label: "New", Bucket: "new", AccessKey: "<redacted>", SecretKey: "<redacted>"},
+		{Type: "local", Label: "Disk", Path: "D:/media"},
+	}
+
+	got := mergeIncomingRoots(incoming, existing)
+
+	if got[0].AccessKey != "AK-A" || got[0].SecretKey != "SK-A" {
+		t.Errorf("root 0 creds = %q/%q, want recovered AK-A/SK-A", got[0].AccessKey, got[0].SecretKey)
+	}
+	if got[0].Label != "Renamed A" {
+		t.Errorf("root 0 label = %q, want the incoming rename kept", got[0].Label)
+	}
+	if got[1].AccessKey != "AK-B" || got[1].SecretKey != "NEW-SK" {
+		t.Errorf("root 1 creds = %q/%q, want AK-B/NEW-SK", got[1].AccessKey, got[1].SecretKey)
+	}
+	if got[2].AccessKey != "" || got[2].SecretKey != "" {
+		t.Errorf("root 2 creds = %q/%q, want placeholders dropped", got[2].AccessKey, got[2].SecretKey)
+	}
+	if got[3] != incoming[3] {
+		t.Errorf("local root changed: %+v", got[3])
+	}
+	// Input slices untouched.
+	if incoming[0].AccessKey != "<redacted>" || existing[0].AccessKey != "AK-A" {
+		t.Error("mergeIncomingRoots mutated its inputs")
+	}
+}
+
+func TestKeepStoredIfRedacted(t *testing.T) {
+	if got := keepStoredIfRedacted("<redacted>", "stored"); got != "stored" {
+		t.Errorf("redacted → %q, want stored", got)
+	}
+	if got := keepStoredIfRedacted("  new-value  ", "stored"); got != "new-value" {
+		t.Errorf("new value → %q, want trimmed new-value", got)
+	}
+	if got := keepStoredIfRedacted("", "stored"); got != "" {
+		t.Errorf("empty → %q, want empty (caller's non-empty guard keeps stored)", got)
+	}
+}

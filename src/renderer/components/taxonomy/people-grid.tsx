@@ -5,11 +5,20 @@
 // merges, and deletes must go through /api/people so the person table and its
 // taxonomy tag stay in sync — renaming through the normal tag editor would
 // desync them. Cards show a face crop instead of a media preview.
-import { useContext, useEffect, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
 import { useDrag, useDrop } from 'react-dnd';
+import VirtualizedPeopleGrid from './virtualized-people-grid';
 import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import useHideNativeDragPreview from '../../hooks/useHideNativeDragPreview';
@@ -109,7 +118,9 @@ function useMergePeople(): (from: Person, into: Person) => Promise<void> {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (s) => s.context.authToken);
   const queryClient = useQueryClient();
-  return async (from: Person, into: Person) => {
+  // Stable identity so the memoized PersonCard doesn't re-render (and rebuild
+  // its drag/drop registrations) every time a parent re-renders.
+  return useCallback(async (from: Person, into: Person) => {
     try {
       const res = await fetch(
         `${mediaServerBase}/api/people/${from.id}/merge`,
@@ -152,7 +163,7 @@ function useMergePeople(): (from: Person, into: Person) => Promise<void> {
         },
       });
     }
-  };
+  }, [authToken, libraryService, queryClient]);
 }
 
 // How many detected faces have no person yet — the work "Group new faces"
@@ -234,8 +245,57 @@ async function fetchUngroupedFaces(
   return { count: data.count ?? 0, faces: data.faces ?? [] };
 }
 
+// ── Face-crop blob-URL cache ──
+// A face id's crop never changes (rescans mint new ids), so cache the object
+// URLs across mounts: the virtualized grid remounts cards on every scroll,
+// and without this each remount refetched (HTTP cache or not) and flashed the
+// silhouette. Refcounted so eviction can never revoke a URL an <img> is still
+// displaying — LRU eviction skips entries with live references.
+type CropEntry = { url: string; refs: number };
+const cropCache = new Map<string, CropEntry>(); // Map order doubles as LRU
+const CROP_CACHE_MAX = 500;
+
+function acquireCrop(key: string): string | null {
+  const entry = cropCache.get(key);
+  if (!entry) return null;
+  entry.refs += 1;
+  cropCache.delete(key);
+  cropCache.set(key, entry); // LRU bump
+  return entry.url;
+}
+
+// Takes ownership of `url` (revokes it if another fetch won the race) and
+// returns the canonical URL with a reference held for the caller.
+function storeCrop(key: string, url: string): string {
+  const existing = cropCache.get(key);
+  if (existing) {
+    URL.revokeObjectURL(url);
+    existing.refs += 1;
+    return existing.url;
+  }
+  cropCache.set(key, { url, refs: 1 });
+  if (cropCache.size > CROP_CACHE_MAX) {
+    for (const [k, entry] of cropCache) {
+      if (cropCache.size <= CROP_CACHE_MAX) break;
+      if (entry.refs <= 0) {
+        URL.revokeObjectURL(entry.url);
+        cropCache.delete(k);
+      }
+    }
+  }
+  return url;
+}
+
+function releaseCrop(key: string) {
+  const entry = cropCache.get(key);
+  if (entry) entry.refs = Math.max(0, entry.refs - 1);
+}
+
 // A face crop loaded with auth (an <img src> can't carry a bearer token in
 // Electron), delivered as a blob URL. Falls back to a silhouette.
+// Lazy: uncached crops only fetch once the tile scrolls near the viewport,
+// so a modal with hundreds of faces (or the grid's overscan) doesn't fire
+// hundreds of requests up front — each one decodes a full image server-side.
 // Exported for the custom drag layer's person chip (controls/drag-layer.tsx).
 export function FaceCrop({
   faceId,
@@ -247,9 +307,40 @@ export function FaceCrop({
   size?: number;
 }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [nearViewport, setNearViewport] = useState(
+    typeof IntersectionObserver === 'undefined'
+  );
+  const holderRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    if (!faceId) return undefined;
-    let objectUrl: string | null = null;
+    if (nearViewport) return undefined;
+    const el = holderRef.current;
+    if (!el) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setNearViewport(true);
+      },
+      { rootMargin: '200px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [nearViewport]);
+
+  useEffect(() => {
+    if (!faceId) {
+      setUrl(null);
+      return undefined;
+    }
+    const key = `${faceId}@${size}`;
+    // Cached crops render immediately, even before the observer fires — a
+    // remounted row must not flash the silhouette.
+    const cached = acquireCrop(key);
+    if (cached) {
+      setUrl(cached);
+      return () => releaseCrop(key);
+    }
+    if (!nearViewport) return undefined;
+    let holdsRef = false;
     const controller = new AbortController();
     (async () => {
       try {
@@ -262,21 +353,31 @@ export function FaceCrop({
           }
         );
         if (!res.ok) return;
-        objectUrl = URL.createObjectURL(await res.blob());
-        setUrl(objectUrl);
+        const objectUrl = URL.createObjectURL(await res.blob());
+        if (controller.signal.aborted) {
+          // Unmounted while blob() was in flight — nobody will release.
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        holdsRef = true;
+        setUrl(storeCrop(key, objectUrl));
       } catch {
         // silhouette fallback
       }
     })();
     return () => {
       controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (holdsRef) releaseCrop(key);
     };
-  }, [faceId, authToken, size]);
+  }, [faceId, authToken, size, nearViewport]);
 
   if (url) return <img className="person-card-face" src={url} alt="" />;
   return (
-    <div className="person-card-face person-card-face--empty" aria-hidden="true">
+    <div
+      className="person-card-face person-card-face--empty"
+      aria-hidden="true"
+      ref={holderRef}
+    >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
         <circle cx="12" cy="8" r="4" />
         <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
@@ -471,8 +572,22 @@ export function PersonEditModal({
   const mergeFilter = mergeQuery.trim().toLowerCase();
   const matchesMergeFilter = (p: Person) =>
     !mergeFilter || displayTagLabel(p.name).toLowerCase().includes(mergeFilter);
-  const namedMatches = namedTargets.filter(matchesMergeFilter);
-  const unnamedMatches = unnamedTargets.filter(matchesMergeFilter);
+  // Cap the rendered dropdown: with thousands of people an unfiltered open
+  // would mount thousands of option buttons. Typing narrows within the full
+  // set; the footer row says how many matches are hidden.
+  const MERGE_LIST_CAP = 100;
+  const allNamedMatches = namedTargets.filter(matchesMergeFilter);
+  const allUnnamedMatches = unnamedTargets.filter(matchesMergeFilter);
+  const namedMatches = allNamedMatches.slice(0, MERGE_LIST_CAP);
+  const unnamedMatches = allUnnamedMatches.slice(
+    0,
+    Math.max(0, MERGE_LIST_CAP - namedMatches.length)
+  );
+  const mergeHidden =
+    allNamedMatches.length +
+    allUnnamedMatches.length -
+    namedMatches.length -
+    unnamedMatches.length;
   // Flattened in display order — the keyboard highlight indexes into this.
   const mergeMatches = [...namedMatches, ...unnamedMatches];
 
@@ -604,6 +719,12 @@ export function PersonEditModal({
                           )}
                           {unnamedMatches.map((p, i) =>
                             renderMergeOption(p, namedMatches.length + i)
+                          )}
+                          {mergeHidden > 0 && (
+                            <div className="person-merge-empty">
+                              +{mergeHidden.toLocaleString()} more — keep
+                              typing to narrow
+                            </div>
                           )}
                           {mergeMatches.length === 0 && (
                             <div className="person-merge-empty">
@@ -1363,7 +1484,10 @@ function NewGroupChip({ isDisabled }: { isDisabled: boolean }) {
 // Drag/drop goes through react-dnd (type 'PERSON') — the app runs react-dnd's
 // HTML5 backend globally (tag reorder, file drops), whose window-level capture
 // handlers break raw HTML5 draggable elements.
-function PersonCard({
+// Memoized: the grid re-renders on every stream broadcast / query change, and
+// each card carries drag+drop registrations that are expensive to rebuild.
+// The callback props are all useCallback-stable in the callers.
+const PersonCard = memo(function PersonCard({
   person,
   isDisabled,
   active,
@@ -1470,7 +1594,7 @@ function PersonCard({
       </button>
     </div>
   );
-}
+});
 
 export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   const { libraryService } = useContext(GlobalStateContext);
@@ -1588,20 +1712,28 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   // edit-modal Merge action; shared with the taxonomy search results.
   const handleMergeDrop = useMergePeople();
 
-  const handleSelect = (person: Person) => {
-    if (isDisabled) return;
-    libraryService.send({
-      type: 'ADD_PREDICATE',
-      data: {
-        predicate: {
-          type: 'tag',
-          value: person.name,
-          exclude: false,
-          join: filteringMode === 'OR' ? 'OR' : 'AND',
+  const handleSelect = useCallback(
+    (person: Person) => {
+      if (isDisabled) return;
+      libraryService.send({
+        type: 'ADD_PREDICATE',
+        data: {
+          predicate: {
+            type: 'tag',
+            value: person.name,
+            exclude: false,
+            join: filteringMode === 'OR' ? 'OR' : 'AND',
+          },
         },
-      },
-    });
-  };
+      });
+    },
+    [isDisabled, filteringMode, libraryService]
+  );
+  const handleEdit = useCallback((p: Person) => {
+    setEditing(p);
+    setEditOpen(true);
+  }, []);
+  const handleReview = useCallback((p: Person) => setReviewing(p), []);
 
   // The Ungrouped pseudo-card filters like a person card: clicking adds a
   // faces:ungrouped predicate (media with detected faces, NONE of them in a
@@ -1784,6 +1916,42 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     await runClusterJob(`faces --query64=${query64}`);
   };
 
+  // Split + card renderer live in hooks (above the early returns) so their
+  // identities survive re-renders — the virtualized grid and memoized cards
+  // depend on that to avoid rebuilding every visible row on each broadcast.
+  const { named, unknown } = useMemo(() => {
+    const all = people ?? [];
+    return {
+      named: all.filter((p) => !p.name.startsWith('Unknown #')),
+      unknown: all.filter((p) => p.name.startsWith('Unknown #')),
+    };
+  }, [people]);
+
+  const renderCard = useCallback(
+    (person: Person) => (
+      <PersonCard
+        key={person.id}
+        person={person}
+        isDisabled={isDisabled}
+        active={selectedTags.includes(person.name)}
+        authToken={authToken}
+        onSelect={handleSelect}
+        onEdit={handleEdit}
+        onReview={handleReview}
+        onMerge={handleMergeDrop}
+      />
+    ),
+    [
+      isDisabled,
+      selectedTags,
+      authToken,
+      handleSelect,
+      handleEdit,
+      handleReview,
+      handleMergeDrop,
+    ]
+  );
+
   // The status views below share the silhouette icon.
   const emptyIcon = (
     <div className="people-empty-icon" aria-hidden="true">
@@ -1865,28 +2033,61 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   }
 
   const list = people ?? [];
-  const named = list.filter((p) => !p.name.startsWith('Unknown #'));
-  const unknown = list.filter((p) => p.name.startsWith('Unknown #'));
 
-  const renderCard = (person: Person) => (
-    <PersonCard
-      key={person.id}
-      person={person}
-      isDisabled={isDisabled}
-      active={selectedTags.includes(person.name)}
-      authToken={authToken}
-      onSelect={handleSelect}
-      onEdit={(p) => {
-        setEditing(p);
-        setEditOpen(true);
-      }}
-      onReview={(p) => setReviewing(p)}
-      onMerge={handleMergeDrop}
-    />
+  // The "Not grouped yet" section trails the virtualized list inside its
+  // scroll container (or renders inline under the empty state).
+  const ungroupedSection = !!ungroupedCount && (
+    <>
+      <div className="people-grid-heading">Not grouped yet</div>
+      <div className="people-grid">
+        <div
+          className={`person-card people-ungrouped-card${
+            ungroupedFilterActive ? ' active' : ''
+          }${isDisabled ? ' disabled' : ''}`}
+          onClick={handleUngroupedFilter}
+          title={`${ungroupedCount.toLocaleString()} face${
+            ungroupedCount === 1 ? ' isn’t' : 's aren’t'
+          } in any group — click to filter the library to media whose faces aren’t grouped yet`}
+        >
+          <div
+            className="person-card-face person-card-face--empty"
+            aria-hidden="true"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="12" cy="8" r="4" strokeDasharray="3 2.5" />
+              <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" strokeDasharray="3 2.5" />
+            </svg>
+          </div>
+          <div className="person-card-info">
+            <span className="person-card-name">Ungrouped faces</span>
+            <span className="person-card-count">
+              {ungroupedCount.toLocaleString()}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="person-card-review"
+            onClick={(e) => {
+              e.stopPropagation();
+              setUngroupedOpen(true);
+            }}
+            title="Review ungrouped faces: assign them to people by hand"
+            aria-label="Review ungrouped faces"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1" />
+              <rect x="14" y="3" width="7" height="7" rx="1" />
+              <rect x="3" y="14" width="7" height="7" rx="1" />
+              <path d="M15 17.5l2 2 4-4.5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </>
   );
 
   return (
-    <div className="people-grid-wrap" ref={scrollRef}>
+    <div className="people-grid-wrap">
       {list.length > 0 && (
         <div className="people-grid-toolbar">
           <NewGroupChip isDisabled={isDisabled} />
@@ -2072,63 +2273,15 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           </p>
         </div>
       )}
-      {named.length > 0 && (
-        <div className="people-grid">{named.map(renderCard)}</div>
-      )}
-      {unknown.length > 0 && (
-        <>
-          <div className="people-grid-heading">Unnamed clusters</div>
-          <div className="people-grid">{unknown.map(renderCard)}</div>
-        </>
-      )}
-      {!!ungroupedCount && (
-        <>
-          <div className="people-grid-heading">Not grouped yet</div>
-          <div className="people-grid">
-            <div
-              className={`person-card people-ungrouped-card${
-                ungroupedFilterActive ? ' active' : ''
-              }${isDisabled ? ' disabled' : ''}`}
-              onClick={handleUngroupedFilter}
-              title={`${ungroupedCount.toLocaleString()} face${
-                ungroupedCount === 1 ? ' isn’t' : 's aren’t'
-              } in any group — click to filter the library to media whose faces aren’t grouped yet`}
-            >
-              <div
-                className="person-card-face person-card-face--empty"
-                aria-hidden="true"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <circle cx="12" cy="8" r="4" strokeDasharray="3 2.5" />
-                  <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" strokeDasharray="3 2.5" />
-                </svg>
-              </div>
-              <div className="person-card-info">
-                <span className="person-card-name">Ungrouped faces</span>
-                <span className="person-card-count">
-                  {ungroupedCount.toLocaleString()}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="person-card-review"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setUngroupedOpen(true);
-                }}
-                title="Review ungrouped faces: assign them to people by hand"
-                aria-label="Review ungrouped faces"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-                  <rect x="3" y="3" width="7" height="7" rx="1" />
-                  <rect x="14" y="3" width="7" height="7" rx="1" />
-                  <rect x="3" y="14" width="7" height="7" rx="1" />
-                  <path d="M15 17.5l2 2 4-4.5" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </>
+      {list.length === 0 && ungroupedSection}
+      {list.length > 0 && (
+        <VirtualizedPeopleGrid
+          named={named}
+          unknown={unknown}
+          renderCard={renderCard}
+          scrollRef={scrollRef}
+          after={ungroupedSection}
+        />
       )}
       {editOpen && (
         <PersonEditModal
@@ -2190,26 +2343,31 @@ export function PeopleSearchResults({
   const scrollRef = useRef<HTMLDivElement>(null);
   useDragAutoScroll(scrollRef, ['PERSON']);
 
+  const handleSelect = useCallback(
+    (person: Person) => {
+      if (isDisabled) return;
+      libraryService.send({
+        type: 'ADD_PREDICATE',
+        data: {
+          predicate: {
+            type: 'tag',
+            value: person.name,
+            exclude: false,
+            join: filteringMode === 'OR' ? 'OR' : 'AND',
+          },
+        },
+      });
+    },
+    [isDisabled, filteringMode, libraryService]
+  );
+  const handleEdit = useCallback((p: Person) => setEditing(p), []);
+  const handleReview = useCallback((p: Person) => setReviewing(p), []);
+
   const byName = new Map((people ?? []).map((p) => [p.name, p]));
   const matched = names
     .map((n) => byName.get(n))
     .filter((p): p is Person => !!p);
   if (matched.length === 0) return null;
-
-  const handleSelect = (person: Person) => {
-    if (isDisabled) return;
-    libraryService.send({
-      type: 'ADD_PREDICATE',
-      data: {
-        predicate: {
-          type: 'tag',
-          value: person.name,
-          exclude: false,
-          join: filteringMode === 'OR' ? 'OR' : 'AND',
-        },
-      },
-    });
-  };
 
   return (
     <div className="search-people-results" ref={scrollRef}>
@@ -2223,8 +2381,8 @@ export function PeopleSearchResults({
             active={selectedTags.includes(person.name)}
             authToken={authToken}
             onSelect={handleSelect}
-            onEdit={(p) => setEditing(p)}
-            onReview={(p) => setReviewing(p)}
+            onEdit={handleEdit}
+            onReview={handleReview}
             onMerge={handleMerge}
           />
         ))}

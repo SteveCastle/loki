@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -300,6 +301,35 @@ var (
 	cfg   Config
 )
 
+// Env-supplied storage roots (LOWKEY_ROOTS / LOWKEY_ROOT_<N>) override the
+// config file at runtime but must never be baked into it by Save. Track the
+// injected set so Save can recognize and skip it.
+var (
+	envRootsMu     sync.Mutex
+	envRootsActive bool
+	envRootsVal    []StorageRoot
+)
+
+// EnvRootsActive reports whether storage roots are currently supplied by
+// environment variables, meaning the config file's roots are overridden at
+// runtime and edits to them only take effect once the env vars are removed.
+func EnvRootsActive() bool {
+	envRootsMu.Lock()
+	defer envRootsMu.Unlock()
+	return envRootsActive
+}
+
+// downloadPathRoot builds the default local root migrated from DownloadPath
+// for configs that predate the storage-roots system.
+func downloadPathRoot(downloadPath string) []StorageRoot {
+	return []StorageRoot{{
+		Type:    "local",
+		Path:    downloadPath,
+		Label:   "Downloads",
+		Default: true,
+	}}
+}
+
 // defaultDownloadPath returns the default download path (~/media).
 func defaultDownloadPath() string {
 	home, err := os.UserHomeDir()
@@ -481,6 +511,13 @@ func Load() (Config, string, error) {
 			// Config file doesn't exist - create it with defaults
 			def := defaultConfig()
 
+			// Seed the default storage root from the download path BEFORE
+			// saving, so the file carries a real, user-editable root instead
+			// of regenerating a phantom one in memory on every boot.
+			if def.DownloadPath != "" {
+				def.Roots = downloadPathRoot(def.DownloadPath)
+			}
+
 			// Save the default config (without env overrides — env vars stay
 			// in the environment; the file only records persistent choices)
 			savedPath, saveErr := Save(def)
@@ -500,14 +537,11 @@ func Load() (Config, string, error) {
 				return Config{}, "", fmt.Errorf("failed to create database directory %s: %v", dbDir, err)
 			}
 
-			// Same DownloadPath → default-root migration as the existing-file path
-			if len(def.Roots) == 0 && def.DownloadPath != "" {
-				def.Roots = []StorageRoot{{
-					Type:    "local",
-					Path:    def.DownloadPath,
-					Label:   "Downloads",
-					Default: true,
-				}}
+			// Env roots replaced the seeded root entirely; otherwise follow an
+			// env-overridden download path in memory (the file keeps the
+			// persistent path — env values are never baked in).
+			if !EnvRootsActive() && len(def.Roots) == 1 {
+				def.Roots[0].Path = def.DownloadPath
 			}
 
 			Set(def)
@@ -519,6 +553,20 @@ func Load() (Config, string, error) {
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Config{}, path, fmt.Errorf("failed to parse config JSON: %v", err)
+	}
+
+	// Whether the file has an explicit roots key ("roots": null counts as
+	// absent). Distinguishes "config predates storage roots" (migrate the
+	// download path below) from "user deliberately cleared all roots"
+	// (respect the empty list — do not resurrect a Downloads root).
+	rootsKeyPresent := false
+	{
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err == nil {
+			if v, ok := raw["roots"]; ok && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+				rootsKeyPresent = true
+			}
+		}
 	}
 
 	// Merge defaults for any missing fields
@@ -668,6 +716,17 @@ func Load() (Config, string, error) {
 		needsSave = true
 	}
 
+	// Migrate DownloadPath into a default root for configs that predate the
+	// storage-roots system. Persisted so the root becomes a real entry the
+	// user can rename or delete; a file that already has an explicit roots
+	// key (even an empty list) is left alone.
+	migratedDownloadRoot := false
+	if !rootsKeyPresent && len(c.Roots) == 0 && c.DownloadPath != "" {
+		c.Roots = downloadPathRoot(c.DownloadPath)
+		migratedDownloadRoot = true
+		needsSave = true
+	}
+
 	// Ensure the database directory exists
 	dbDir := filepath.Dir(c.DBPath)
 	if err := os.MkdirAll(dbDir, 0755); err != nil {
@@ -692,15 +751,11 @@ func Load() (Config, string, error) {
 	// Apply environment variable overrides (useful for Docker / container deployments)
 	applyEnvOverrides(&c)
 
-	// Migrate DownloadPath into a default root if no roots exist yet.
-	// This preserves backwards compatibility for configs that only have downloadPath.
-	if len(c.Roots) == 0 && c.DownloadPath != "" {
-		c.Roots = []StorageRoot{{
-			Type:    "local",
-			Path:    c.DownloadPath,
-			Label:   "Downloads",
-			Default: true,
-		}}
+	// Env roots replace the migrated root entirely; otherwise follow an
+	// env-overridden download path in memory (the file keeps the persistent
+	// path — env values are never baked in).
+	if migratedDownloadRoot && !EnvRootsActive() && len(c.Roots) == 1 {
+		c.Roots[0].Path = c.DownloadPath
 	}
 
 	Set(c)
@@ -899,8 +954,10 @@ func applyEnvOverrides(c *Config) {
 	// mutually exclusive — if LOWKEY_ROOTS is set it wins; otherwise numbered
 	// LOWKEY_ROOT_* vars are collected. Either way, env roots replace any
 	// roots from the config file.
+	envRootsApplied := false
 	if roots, ok := parseEnvRoots(); ok {
 		c.Roots = roots
+		envRootsApplied = true
 	}
 
 	// LOWKEY_DEFAULT_ROOT sets which root is the default destination for
@@ -910,6 +967,16 @@ func applyEnvOverrides(c *Config) {
 	if v := os.Getenv("LOWKEY_DEFAULT_ROOT"); v != "" {
 		applyDefaultRoot(c, v)
 	}
+
+	// Snapshot the injected set (post-default-flag) so Save can recognize it
+	// and keep it out of the config file.
+	envRootsMu.Lock()
+	envRootsActive = envRootsApplied
+	envRootsVal = nil
+	if envRootsApplied {
+		envRootsVal = append([]StorageRoot(nil), c.Roots...)
+	}
+	envRootsMu.Unlock()
 }
 
 // applyDefaultRoot marks one root as default based on a 1-based index or label.
@@ -1027,6 +1094,16 @@ func Save(c Config) (string, error) {
 	if err := json.Unmarshal(marshaled, &incoming); err != nil {
 		return path, fmt.Errorf("failed to map config JSON: %v", err)
 	}
+
+	// Env-supplied storage roots must not be baked into the file: when the
+	// roots being saved are exactly the env-injected set, keep the file's own
+	// roots. Roots that differ were deliberately edited and are persisted
+	// (they still lose to the env vars at runtime until those are removed).
+	envRootsMu.Lock()
+	if envRootsActive && slices.Equal(c.Roots, envRootsVal) {
+		delete(incoming, "roots")
+	}
+	envRootsMu.Unlock()
 
 	deepMergeJSON(base, incoming)
 
