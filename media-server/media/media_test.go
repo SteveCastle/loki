@@ -42,6 +42,54 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
+// TestRemoteExistsRouting verifies s3:// paths are answered by the wired
+// remote checker (and default to existing when none is wired) while local
+// paths still go through os.Stat.
+func TestRemoteExistsRouting(t *testing.T) {
+	// No checker wired: remote paths must report as existing — "unknown"
+	// must not render as missing or filter items out of samplers.
+	SetRemoteExistsChecker(nil)
+	if !CheckFileExists("s3://bucket/unknown.jpg") {
+		t.Error("remote path should default to existing when no checker is wired")
+	}
+
+	SetRemoteExistsChecker(func(paths []string) map[string]bool {
+		out := make(map[string]bool, len(paths))
+		for _, p := range paths {
+			out[p] = p == "s3://bucket/yes.jpg"
+		}
+		return out
+	})
+	defer SetRemoteExistsChecker(nil)
+
+	tmpFile, err := os.CreateTemp("", "remote_exists_*.txt")
+	if err != nil {
+		t.Fatalf("Failed to create temporary file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.Close()
+	missingLocal := filepath.Join(filepath.Dir(tmpFile.Name()), "definitely-missing-98431.txt")
+
+	got := CheckFilesExistConcurrent([]string{
+		"s3://bucket/yes.jpg", "s3://bucket/no.jpg", tmpFile.Name(), missingLocal,
+	})
+	want := map[string]bool{
+		"s3://bucket/yes.jpg": true,
+		"s3://bucket/no.jpg":  false,
+		tmpFile.Name():        true,
+		missingLocal:          false,
+	}
+	for p, exp := range want {
+		if got[p] != exp {
+			t.Errorf("CheckFilesExistConcurrent[%s] = %v, want %v", p, got[p], exp)
+		}
+	}
+
+	if !CheckFileExists("s3://bucket/yes.jpg") || CheckFileExists("s3://bucket/no.jpg") {
+		t.Error("CheckFileExists should route s3:// paths through the remote checker")
+	}
+}
+
 // TestCheckFileExists tests the CheckFileExists function
 func TestCheckFileExists(t *testing.T) {
 	// Create a temporary file

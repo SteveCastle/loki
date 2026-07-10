@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -16,6 +17,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/media"
@@ -23,6 +26,57 @@ import (
 	"github.com/stevecastle/shrike/storage"
 	"github.com/stevecastle/shrike/tasks"
 )
+
+// redirectToPresigned sends the browser to a presigned URL for an s3://
+// object, matching mediaFileHandler's serving strategy.
+func redirectToPresigned(w http.ResponseWriter, r *http.Request, backend storage.Backend, path string) {
+	u, err := backend.MediaURL(path)
+	if err != nil {
+		log.Printf("Failed to generate presigned URL for %s: %v", path, err)
+		http.Error(w, "Failed to generate media URL", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, u, http.StatusFound)
+}
+
+// wireRemoteExistence gives the media package a way to answer existence for
+// s3:// paths (browser Exists flag, existence-filtered samplers). The
+// registry is updated in place on config reload, so capturing it once at
+// startup is safe. Network errors report as existing — "unknown" must not
+// render as missing.
+func wireRemoteExistence(reg *storage.Registry) {
+	const remoteExistsConcurrency = 16
+	media.SetRemoteExistsChecker(func(paths []string) map[string]bool {
+		out := make(map[string]bool, len(paths))
+		if len(paths) == 0 {
+			return out
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		sem := make(chan struct{}, remoteExistsConcurrency)
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for _, p := range paths {
+			backend := reg.BackendFor(p)
+			if backend == nil {
+				out[p] = false
+				continue
+			}
+			wg.Add(1)
+			go func(p string, b storage.Backend) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				exists, err := b.Exists(ctx, p)
+				mu.Lock()
+				out[p] = exists || err != nil
+				mu.Unlock()
+			}(p, backend)
+		}
+		wg.Wait()
+		return out
+	})
+}
 
 func formatFileSize(bytes int64) string {
 	const (
@@ -814,6 +868,50 @@ func mediaThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 			}
 		}
 
+		// A thumbnail recorded in the DB wins — for S3 media it's an
+		// s3:// object we can only find through the DB, and the POST
+		// preview handler stores its results there.
+		var dbThumb sql.NullString
+		deps.DB.QueryRow(
+			fmt.Sprintf("SELECT %s FROM media WHERE path = ?", cache),
+			filePath,
+		).Scan(&dbThumb)
+		if dbThumb.Valid && strings.HasPrefix(dbThumb.String, "s3://") {
+			if backend := deps.Storage.BackendFor(dbThumb.String); backend != nil {
+				if exists, _ := backend.Exists(r.Context(), dbThumb.String); exists {
+					redirectToPresigned(w, r, backend, dbThumb.String)
+					return
+				}
+			}
+		}
+
+		// S3 source: generate to the bucket (downloads the object, renders
+		// with ffmpeg, uploads the thumb) and redirect to a presigned URL.
+		if strings.HasPrefix(filePath, "s3://") {
+			backend := deps.Storage.BackendFor(filePath)
+			if backend == nil {
+				http.Error(w, "No storage backend for path", http.StatusNotFound)
+				return
+			}
+			s3b, ok := backend.(*storage.S3Backend)
+			if !ok {
+				http.Error(w, "Path is not on S3 storage", http.StatusBadRequest)
+				return
+			}
+			generated, genErr := generateS3ThumbnailThrottled(r.Context(), filePath, s3b, cache, timeStamp)
+			if genErr != nil {
+				log.Printf("S3 thumbnail generation failed for %s: %v", filePath, genErr)
+				http.Error(w, "Thumbnail generation failed", http.StatusInternalServerError)
+				return
+			}
+			deps.DB.Exec(
+				fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
+				generated, filePath,
+			)
+			redirectToPresigned(w, r, backend, generated)
+			return
+		}
+
 		dbPath := currentConfig.DBPath
 		if dbPath == "" {
 			http.Error(w, "No database configured", http.StatusInternalServerError)
@@ -821,15 +919,23 @@ func mediaThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		basePath := filepath.Dir(dbPath)
 
-		// Check if thumbnail already exists on disk
-		thumbPath := getThumbnailPath(filePath, basePath, cache, timeStamp)
+		// Check if thumbnail already exists on disk (DB-recorded local path
+		// first — it may have been generated with different inputs — then
+		// the deterministic computed path).
+		thumbPath := ""
+		if dbThumb.Valid && dbThumb.String != "" && !strings.HasPrefix(dbThumb.String, "s3://") {
+			if _, err := os.Stat(dbThumb.String); err == nil {
+				thumbPath = dbThumb.String
+			}
+		}
+		if thumbPath == "" {
+			thumbPath = getThumbnailPath(filePath, basePath, cache, timeStamp)
+		}
 		if _, err := os.Stat(thumbPath); err != nil {
 			// Not on disk — check if the source file exists before generating
-			if !strings.HasPrefix(filePath, "s3://") {
-				if !media.CheckFileExists(filePath) {
-					http.Error(w, "Source file not found", http.StatusNotFound)
-					return
-				}
+			if !media.CheckFileExists(filePath) {
+				http.Error(w, "Source file not found", http.StatusNotFound)
+				return
 			}
 
 			// Generate the thumbnail

@@ -120,9 +120,58 @@ func FormatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %s", b, sizes[i])
 }
 
+// Remote (s3://) existence is answered by the storage layer, wired in at
+// startup via SetRemoteExistsChecker. When no checker is wired, remote paths
+// report as existing: "unknown" must not render as missing in the browser or
+// filter items out of the existence-aware samplers.
+var (
+	remoteExistsMu      sync.RWMutex
+	remoteExistsChecker func(paths []string) map[string]bool
+)
+
+// SetRemoteExistsChecker installs the bulk existence checker used for
+// remote (s3://) paths.
+func SetRemoteExistsChecker(fn func(paths []string) map[string]bool) {
+	remoteExistsMu.Lock()
+	remoteExistsChecker = fn
+	remoteExistsMu.Unlock()
+}
+
+// IsRemotePath reports whether the media path lives in remote storage
+// rather than on a local filesystem.
+func IsRemotePath(path string) bool {
+	return strings.HasPrefix(path, "s3://")
+}
+
+func checkRemoteExists(paths []string) map[string]bool {
+	remoteExistsMu.RLock()
+	fn := remoteExistsChecker
+	remoteExistsMu.RUnlock()
+
+	out := make(map[string]bool, len(paths))
+	if fn == nil {
+		for _, p := range paths {
+			out[p] = true
+		}
+		return out
+	}
+	res := fn(paths)
+	for _, p := range paths {
+		if v, ok := res[p]; ok {
+			out[p] = v
+		} else {
+			out[p] = true
+		}
+	}
+	return out
+}
+
 // CheckFileExists checks if a file exists at the given path
 // Returns true if the file exists, false otherwise
 func CheckFileExists(path string) bool {
+	if IsRemotePath(path) {
+		return checkRemoteExists([]string{path})[path]
+	}
 	_, err := os.Stat(path)
 	return !os.IsNotExist(err)
 }
@@ -140,33 +189,51 @@ func CheckFilesExistConcurrent(paths []string) map[string]bool {
 		return make(map[string]bool)
 	}
 
-	workers := statConcurrency
-	if workers > len(paths) {
-		workers = len(paths)
+	// Remote paths go to the storage layer in one bulk call (it bounds its
+	// own network fan-out); only local paths hit the stat worker pool.
+	var local, remote []string
+	for _, p := range paths {
+		if IsRemotePath(p) {
+			remote = append(remote, p)
+		} else {
+			local = append(local, p)
+		}
 	}
+
+	remoteDone := make(chan map[string]bool, 1)
+	go func() { remoteDone <- checkRemoteExists(remote) }()
 
 	// Workers write disjoint indexes, so no locking is needed.
-	exists := make([]bool, len(paths))
-	indexes := make(chan int)
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range indexes {
-				exists[i] = CheckFileExists(paths[i])
-			}
-		}()
+	exists := make([]bool, len(local))
+	if len(local) > 0 {
+		workers := statConcurrency
+		if workers > len(local) {
+			workers = len(local)
+		}
+		indexes := make(chan int)
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := range indexes {
+					exists[i] = CheckFileExists(local[i])
+				}
+			}()
+		}
+		for i := range local {
+			indexes <- i
+		}
+		close(indexes)
+		wg.Wait()
 	}
-	for i := range paths {
-		indexes <- i
-	}
-	close(indexes)
-	wg.Wait()
 
 	existenceMap := make(map[string]bool, len(paths))
-	for i, p := range paths {
+	for i, p := range local {
 		existenceMap[p] = exists[i]
+	}
+	for p, v := range <-remoteDone {
+		existenceMap[p] = v
 	}
 	return existenceMap
 }

@@ -2401,6 +2401,7 @@ func main() {
 		log.Printf("Warning: storage backend init error: %v", err)
 	}
 	tasks.SetStorageRegistry(storageReg)
+	wireRemoteExistence(storageReg)
 	deps = &Dependencies{
 		Queue:   queue,
 		DB:      db,
