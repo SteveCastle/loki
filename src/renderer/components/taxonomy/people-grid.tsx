@@ -6,12 +6,14 @@
 // taxonomy tag stay in sync — renaming through the normal tag editor would
 // desync them. Cards show a face crop instead of a media preview.
 import { useContext, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
 import { useDrag, useDrop } from 'react-dnd';
 import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import useHideNativeDragPreview from '../../hooks/useHideNativeDragPreview';
+import useDragAutoScroll from '../../hooks/useDragAutoScroll';
 import { GlobalStateContext } from '../../state';
 import {
   isElectron,
@@ -122,6 +124,13 @@ function useMergePeople(): (from: Person, into: Person) => Promise<void> {
         }
       );
       if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+      // The merged-away person's tag no longer exists. If the current view
+      // filters on it, follow the faces to the surviving person instead of
+      // leaving a chip that matches nothing (no-op when not filtered on it).
+      libraryService.send({
+        type: 'RENAME_TAG_PREDICATE',
+        data: { from: from.name, to: into.name },
+      });
       libraryService.send({
         type: 'ADD_TOAST',
         data: {
@@ -294,6 +303,21 @@ export function PersonEditModal({
   // plain name is owned by a curated tag.
   const [name, setName] = useState(person ? displayTagLabel(person.name) : '');
   const [mergeInto, setMergeInto] = useState<number>(0);
+  // Type-ahead state for the merge-target picker — the person list can be
+  // hundreds long, so a plain <select> doesn't cut it.
+  const [mergeQuery, setMergeQuery] = useState('');
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeHighlight, setMergeHighlight] = useState(0);
+  const mergeComboRef = useRef<HTMLDivElement>(null);
+  const mergeListRef = useRef<HTMLDivElement>(null);
+  useOnClickOutside(mergeComboRef, () => setMergeOpen(false));
+  // Keep the keyboard highlight visible as it moves through the list.
+  useEffect(() => {
+    if (!mergeOpen) return;
+    mergeListRef.current
+      ?.querySelector('.person-merge-option.highlighted')
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [mergeHighlight, mergeOpen]);
   const ref = useRef(null);
   useOnClickOutside(ref, handleClose);
 
@@ -364,6 +388,15 @@ export function PersonEditModal({
         method: 'POST',
         body: JSON.stringify({ intoId: mergeInto }),
       });
+      // Same contract as rename: if the view filters on the merged-away
+      // person's tag, swap in the surviving person so it doesn't go blank.
+      const target = people.find((p) => p.id === mergeInto);
+      if (target) {
+        libraryService.send({
+          type: 'RENAME_TAG_PREDICATE',
+          data: { from: person.name, to: target.name },
+        });
+      }
       refresh();
       handleClose();
     } catch (err) {
@@ -427,8 +460,50 @@ export function PersonEditModal({
   const mergeTargets = person
     ? people.filter((p) => p.id !== person.id)
     : [];
+  // Same split as the grid itself: real names first, "Unknown #N" clusters
+  // after — merging into a named person is the overwhelmingly common case.
+  const namedTargets = mergeTargets.filter(
+    (p) => !p.name.startsWith('Unknown #')
+  );
+  const unnamedTargets = mergeTargets.filter((p) =>
+    p.name.startsWith('Unknown #')
+  );
+  const mergeFilter = mergeQuery.trim().toLowerCase();
+  const matchesMergeFilter = (p: Person) =>
+    !mergeFilter || displayTagLabel(p.name).toLowerCase().includes(mergeFilter);
+  const namedMatches = namedTargets.filter(matchesMergeFilter);
+  const unnamedMatches = unnamedTargets.filter(matchesMergeFilter);
+  // Flattened in display order — the keyboard highlight indexes into this.
+  const mergeMatches = [...namedMatches, ...unnamedMatches];
 
-  return (
+  const selectMergeTarget = (p: Person) => {
+    setMergeInto(p.id);
+    setMergeQuery(displayTagLabel(p.name));
+    setMergeOpen(false);
+  };
+
+  const renderMergeOption = (p: Person, idx: number) => (
+    <button
+      type="button"
+      key={p.id}
+      className={`person-merge-option${
+        idx === mergeHighlight ? ' highlighted' : ''
+      }${p.id === mergeInto ? ' selected' : ''}`}
+      onClick={() => selectMergeTarget(p)}
+      onMouseEnter={() => setMergeHighlight(idx)}
+    >
+      <span className="person-merge-option-name">
+        {displayTagLabel(p.name)}
+      </span>
+      <span className="person-merge-option-count">{p.faceCount}</span>
+    </button>
+  );
+
+  // Portaled to <body>: these modals can be launched from inside virtualized
+  // list rows, whose transform positioning turns any ancestor into the
+  // containing block for position:fixed — rendered in place, the "fixed"
+  // overlay would be sized to the row and clipped by it.
+  return createPortal(
     <div className="input-modal">
       <div className="input-modal-content" ref={ref}>
         <div className="input-modal-header">
@@ -476,18 +551,68 @@ export function PersonEditModal({
                       Move every face and tag of “{displayTagLabel(person.name)}” onto another
                       person, then remove this one
                     </div>
-                    <select
-                      className="person-merge-select"
-                      value={mergeInto}
-                      onChange={(e) => setMergeInto(Number(e.target.value))}
-                    >
-                      <option value={0}>Choose a person…</option>
-                      {mergeTargets.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {displayTagLabel(p.name)} ({p.faceCount})
-                        </option>
-                      ))}
-                    </select>
+                    <div className="person-merge-combo" ref={mergeComboRef}>
+                      <input
+                        type="text"
+                        className="person-merge-input"
+                        placeholder="Type to find a person…"
+                        role="combobox"
+                        aria-expanded={mergeOpen}
+                        aria-autocomplete="list"
+                        value={mergeQuery}
+                        onChange={(e) => {
+                          setMergeQuery(e.target.value);
+                          setMergeInto(0);
+                          setMergeOpen(true);
+                          setMergeHighlight(0);
+                        }}
+                        onFocus={() => setMergeOpen(true)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setMergeOpen(true);
+                            setMergeHighlight((h) =>
+                              Math.min(h + 1, mergeMatches.length - 1)
+                            );
+                          } else if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setMergeHighlight((h) => Math.max(h - 1, 0));
+                          } else if (e.key === 'Enter') {
+                            if (mergeOpen && mergeMatches[mergeHighlight]) {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              selectMergeTarget(mergeMatches[mergeHighlight]);
+                            }
+                          } else if (e.key === 'Escape' && mergeOpen) {
+                            e.stopPropagation();
+                            setMergeOpen(false);
+                          }
+                        }}
+                      />
+                      {mergeOpen && (
+                        <div className="person-merge-list" ref={mergeListRef}>
+                          {namedMatches.length > 0 && (
+                            <div className="person-merge-group-label">
+                              Named people
+                            </div>
+                          )}
+                          {namedMatches.map((p, i) => renderMergeOption(p, i))}
+                          {unnamedMatches.length > 0 && (
+                            <div className="person-merge-group-label">
+                              Unnamed clusters
+                            </div>
+                          )}
+                          {unnamedMatches.map((p, i) =>
+                            renderMergeOption(p, namedMatches.length + i)
+                          )}
+                          {mergeMatches.length === 0 && (
+                            <div className="person-merge-empty">
+                              No people match “{mergeQuery}”
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <button onClick={handleMerge} disabled={!mergeInto}>
                     Merge
@@ -543,7 +668,8 @@ export function PersonEditModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -738,7 +864,9 @@ export function FaceReviewModal({
     : 0;
   const allLocked = !!faces && faces.length > 0 && lockedCount === faces.length;
 
-  return (
+  // Portaled to <body> — see PersonEditModal for why (transform ancestors in
+  // list rows clip in-place position:fixed overlays).
+  return createPortal(
     <div className="input-modal">
       <div className="input-modal-content face-review-content" ref={ref}>
         <div className="input-modal-header">
@@ -924,7 +1052,8 @@ export function FaceReviewModal({
           even after regrouping with new settings.
         </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1080,7 +1209,9 @@ function UngroupedFacesModal({
     return displayTagLabel(a.name).localeCompare(displayTagLabel(b.name));
   });
 
-  return (
+  // Portaled to <body> — see PersonEditModal for why (transform ancestors in
+  // list rows clip in-place position:fixed overlays).
+  return createPortal(
     <div className="input-modal">
       <div className="input-modal-content face-review-content" ref={ref}>
         <div className="input-modal-header">
@@ -1188,7 +1319,8 @@ function UngroupedFacesModal({
           lookalikes in with it.
         </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -1360,6 +1492,11 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   const [reviewing, setReviewing] = useState<Person | null>(null);
   const [ungroupedOpen, setUngroupedOpen] = useState(false);
   const queryClient = useQueryClient();
+
+  // Keep the list scrolling while a person card is dragged near the top or
+  // bottom edge, so merges can target cards outside the visible window.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(scrollRef, ['PERSON']);
 
   const {
     data: people,
@@ -1749,7 +1886,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   );
 
   return (
-    <div className="people-grid-wrap">
+    <div className="people-grid-wrap" ref={scrollRef}>
       {list.length > 0 && (
         <div className="people-grid-toolbar">
           <NewGroupChip isDisabled={isDisabled} />
@@ -2048,6 +2185,11 @@ export function PeopleSearchResults({
   const [editing, setEditing] = useState<Person | null>(null);
   const [reviewing, setReviewing] = useState<Person | null>(null);
 
+  // The search-results strip scrolls independently (capped at 45% of the
+  // panel) — follow the drag there too.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useDragAutoScroll(scrollRef, ['PERSON']);
+
   const byName = new Map((people ?? []).map((p) => [p.name, p]));
   const matched = names
     .map((n) => byName.get(n))
@@ -2070,7 +2212,7 @@ export function PeopleSearchResults({
   };
 
   return (
-    <div className="search-people-results">
+    <div className="search-people-results" ref={scrollRef}>
       <div className="people-grid-heading">People</div>
       <div className="people-grid">
         {matched.map((person) => (

@@ -56,6 +56,7 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/people/{id}/curate", renderer.ApplyMiddlewares(personCurateHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/cover", renderer.ApplyMiddlewares(personCoverHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/assign-person", renderer.ApplyMiddlewares(mediaAssignPersonHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/reject-person", renderer.ApplyMiddlewares(mediaRejectPersonHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/assign", renderer.ApplyMiddlewares(faceAssignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/unassign", renderer.ApplyMiddlewares(faceUnassignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/reject", renderer.ApplyMiddlewares(faceRejectHandler(deps), renderer.RoleAdmin))
@@ -587,6 +588,54 @@ func mediaAssignPersonHandler(deps *Dependencies) http.HandlerFunc {
 			"created":  req.NewPerson,
 			"name":     personName,
 		})
+	}
+}
+
+// mediaRejectPersonHandler is the inverse of assign-person: POST
+// /api/media/reject-person with {path, personId} (or {path, name}) rejects
+// every face of that person on the item — veto + cannot-links + unassign, the
+// same permanent assertion as the per-face reject. Used when a person's tag
+// is removed from a media item so the group actually loses those faces (the
+// web-mode assignment DELETE calls the same logic server-side; this endpoint
+// exists for the Electron viewer, whose tag deletes go straight to SQLite).
+func mediaRejectPersonHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Path     string `json:"path"`
+			PersonID int64  `json:"personId"`
+			Name     string `json:"name"`
+		}
+		if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Path) == "" ||
+			(req.PersonID <= 0 && strings.TrimSpace(req.Name) == "") {
+			httpError(w, "path and personId (or name) required", http.StatusBadRequest)
+			return
+		}
+		personID := req.PersonID
+		if personID <= 0 {
+			p, found, err := media.GetPersonByDisplayName(deps.DB, strings.TrimSpace(req.Name))
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if !found {
+				httpError(w, "no such person", http.StatusNotFound)
+				return
+			}
+			personID = p.ID
+		}
+		ids, err := media.RejectPersonFacesOnMedia(deps.DB, req.Path, personID)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(ids) > 0 {
+			broadcastPeopleChanged()
+		}
+		writeJSON(w, map[string]any{"personId": personID, "rejectedFaceIds": ids})
 	}
 }
 

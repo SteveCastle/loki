@@ -656,6 +656,208 @@ func UnassignFace(db *sql.DB, faceID int64) error {
 	return tx.Commit()
 }
 
+// FaceAssignment is one face → person pair for AssignFacesAuto.
+type FaceAssignment struct {
+	FaceID   int64
+	PersonID int64
+}
+
+// AssignFacesAuto is the bulk form of AssignFace(..., "auto") for clustering
+// passes: ONE transaction for the whole batch instead of a commit plus three
+// point reads per face, which dominated the write side of large clustering
+// runs. Per-face behavior matches AssignFace — user assignments and vetoed
+// (face, person) pairs are silently skipped, the taxonomy bridge row and the
+// person's cover face are maintained. Faces or persons deleted since the
+// caller scored the batch are skipped too (the per-face form errored the
+// whole job over them; a mid-run deletion shouldn't abort clustering).
+// Returns the assignments actually written.
+func AssignFacesAuto(db *sql.DB, assignments []FaceAssignment) ([]FaceAssignment, error) {
+	if len(assignments) == 0 {
+		return nil, nil
+	}
+	// Person names drive tag + bridge maintenance; resolve once per person.
+	names := map[int64]string{}
+	missing := map[int64]bool{}
+	for _, a := range assignments {
+		if _, seen := names[a.PersonID]; seen || missing[a.PersonID] {
+			continue
+		}
+		p, ok, err := GetPersonByID(db, a.PersonID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			missing[a.PersonID] = true
+			continue
+		}
+		names[a.PersonID] = p.Name
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	getFace, err := tx.Prepare(
+		`SELECT media_path, COALESCE(frame_ts, 0), COALESCE(person_id, 0), COALESCE(assigned_by, '')
+		 FROM face WHERE id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	vetoed, err := tx.Prepare(`SELECT 1 FROM face_veto WHERE face_id = ? AND person_id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	setFace, err := tx.Prepare(`UPDATE face SET person_id = ?, assigned_by = 'auto' WHERE id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	inLibrary, err := tx.Prepare(`SELECT 1 FROM media WHERE path = ?`)
+	if err != nil {
+		return nil, err
+	}
+	bridge, err := tx.Prepare(
+		`INSERT OR IGNORE INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+		 VALUES (?, ?, ?, 0, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	cover, err := tx.Prepare(
+		`UPDATE person SET cover_face_id = ? WHERE id = ? AND (cover_face_id IS NULL OR cover_face_id = 0)`)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().Unix()
+	tagged := map[int64]bool{} // persons whose tag row is already ensured
+	applied := make([]FaceAssignment, 0, len(assignments))
+	for _, a := range assignments {
+		if missing[a.PersonID] {
+			continue
+		}
+		var mediaPath, assignedBy string
+		var frameTS float64
+		var prevPerson int64
+		err := getFace.QueryRow(a.FaceID).Scan(&mediaPath, &frameTS, &prevPerson, &assignedBy)
+		if err == sql.ErrNoRows {
+			continue // face deleted mid-run
+		}
+		if err != nil {
+			return nil, err
+		}
+		if assignedBy == "user" {
+			continue // manual labels are ground truth
+		}
+		var one int
+		err = vetoed.QueryRow(a.FaceID, a.PersonID).Scan(&one)
+		if err == nil {
+			continue // standing user assertion — never auto-assign this pair
+		}
+		if err != sql.ErrNoRows {
+			return nil, err
+		}
+		// Moving off a previous person: drop their bridge row if this face
+		// was their only one on that media/frame.
+		if prevPerson != 0 && prevPerson != a.PersonID {
+			f := Face{ID: a.FaceID, MediaPath: mediaPath, FrameTS: frameTS}
+			if err := removeBridgeRowIfLastFace(tx, f, prevPerson); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := setFace.Exec(a.PersonID, a.FaceID); err != nil {
+			return nil, err
+		}
+		if !tagged[a.PersonID] {
+			if err := ensurePersonTag(tx, names[a.PersonID]); err != nil {
+				return nil, err
+			}
+			tagged[a.PersonID] = true
+		}
+		// Bridge rows only exist for library media (see AssignFace).
+		var lib int
+		err = inLibrary.QueryRow(mediaPath).Scan(&lib)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		if err == nil {
+			if _, err := bridge.Exec(mediaPath, names[a.PersonID], PeopleCategory, frameTS, now); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := cover.Exec(a.FaceID, a.PersonID); err != nil {
+			return nil, err
+		}
+		applied = append(applied, a)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	// New People tags may make media eligible for tag-based pools.
+	InvalidateRandomSampleCache()
+	return applied, nil
+}
+
+// UnassignFacesBulk is the bulk form of UnassignFace: one transaction for the
+// whole batch (reset passes used to pay a commit per face). Already-unassigned
+// and deleted faces are skipped, as in the per-face form. Returns how many
+// faces were actually unassigned.
+func UnassignFacesBulk(db *sql.DB, faceIDs []int64) (int, error) {
+	if len(faceIDs) == 0 {
+		return 0, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	getFace, err := tx.Prepare(
+		`SELECT media_path, COALESCE(frame_ts, 0), COALESCE(person_id, 0) FROM face WHERE id = ?`)
+	if err != nil {
+		return 0, err
+	}
+	clearFace, err := tx.Prepare(`UPDATE face SET person_id = NULL, assigned_by = NULL WHERE id = ?`)
+	if err != nil {
+		return 0, err
+	}
+	clearCover, err := tx.Prepare(`UPDATE person SET cover_face_id = NULL WHERE id = ? AND cover_face_id = ?`)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, id := range faceIDs {
+		var mediaPath string
+		var frameTS float64
+		var personID int64
+		err := getFace.QueryRow(id).Scan(&mediaPath, &frameTS, &personID)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		if personID == 0 {
+			continue
+		}
+		// Same statement order as UnassignFace: clear first, so when several
+		// faces share a media/frame the LAST one cleared removes the bridge.
+		if _, err := clearFace.Exec(id); err != nil {
+			return 0, err
+		}
+		f := Face{ID: id, MediaPath: mediaPath, FrameTS: frameTS}
+		if err := removeBridgeRowIfLastFace(tx, f, personID); err != nil {
+			return 0, err
+		}
+		if _, err := clearCover.Exec(personID, id); err != nil {
+			return 0, err
+		}
+		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // removeBridgeRowIfLastFace deletes the (media, person, frame) taxonomy row
 // when no OTHER face of personID remains on the face's media path + frame.
 func removeBridgeRowIfLastFace(tx *sql.Tx, f Face, personID int64) error {

@@ -179,6 +179,41 @@ func RejectFaceFromPerson(db *sql.DB, faceID, personID int64) (int, error) {
 	return len(exemplars), nil
 }
 
+// RejectPersonFacesOnMedia is "this person is not in this item": every face
+// on mediaPath currently assigned to personID is rejected — veto +
+// cannot-links + unassign, exactly as RejectFaceFromPerson — so removing a
+// person's tag from a media item also discards those faces from the group,
+// permanently. Returns the rejected face ids (empty when the person has no
+// faces on the item).
+func RejectPersonFacesOnMedia(db *sql.DB, mediaPath string, personID int64) ([]int64, error) {
+	rows, err := db.Query(
+		`SELECT id FROM face WHERE media_path = ? AND person_id = ?`,
+		mediaPath, personID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		if _, err := RejectFaceFromPerson(db, id, personID); err != nil {
+			return nil, err
+		}
+	}
+	return ids, nil
+}
+
 // CuratePersonFaces applies a whole-group review in one call: every current
 // face of personID listed in keepIDs is locked (promoted to a user
 // assignment); every other face is rejected — veto + cannot-links + unassign,

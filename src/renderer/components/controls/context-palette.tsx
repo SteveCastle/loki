@@ -512,6 +512,10 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.libraryLoadId
   );
+  const streaming = useSelector(
+    libraryService,
+    (state) => state.context.streaming
+  );
   const filters = useSelector(
     libraryService,
     (state) => state.context.settings.filters
@@ -671,18 +675,30 @@ export default function ContextPalette() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [display, libraryService]);
 
-  // Close on library change
+  // Close on library change — but NOT on streaming growth. While a directory
+  // load streams in, EVERY LOAD_FILES_BATCH (and the final stream-complete
+  // assign) mints a new libraryLoadId for the SAME logical load — that id
+  // exists so list views re-key, not to signal a library switch. Closing on
+  // those made the palette collapse the instant the next batch arrived. A
+  // loadId change counts as a switch only when it didn't originate from an
+  // in-flight stream; a genuinely new load STARTED mid-stream is caught by
+  // its initialFile change instead.
   const prevLibraryLoadId = useRef(libraryLoadId);
+  const prevStreaming = useRef(streaming);
+  const prevInitialFile = useRef(initialFile);
   useEffect(() => {
-    if (
-      display &&
+    const loadIdSwitched =
       prevLibraryLoadId.current &&
-      prevLibraryLoadId.current !== libraryLoadId
-    ) {
+      prevLibraryLoadId.current !== libraryLoadId &&
+      !prevStreaming.current;
+    const loadTargetSwitched = prevInitialFile.current !== initialFile;
+    if (display && (loadIdSwitched || loadTargetSwitched)) {
       libraryService.send('HIDE_CONTEXT_PALETTE');
     }
     prevLibraryLoadId.current = libraryLoadId;
-  }, [display, libraryLoadId, libraryService]);
+    prevStreaming.current = streaming;
+    prevInitialFile.current = initialFile;
+  }, [display, libraryLoadId, streaming, initialFile, libraryService]);
 
   // Derived data
   const libraryCtx = {

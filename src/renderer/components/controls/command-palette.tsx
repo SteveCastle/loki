@@ -168,8 +168,14 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
     const hasVisual = useSelector(libraryService, (state: any) => {
       const predicates: Array<{ type: string }> =
         state.context.query?.predicates ?? [];
+      // Keep in sync with queryHasVisual in state.tsx: every score-ranked
+      // predicate type, including face-identity search.
       return predicates.some(
-        (p) => p.type === 'similar' || p.type === 'visual' || p.type === 'clip'
+        (p) =>
+          p.type === 'similar' ||
+          p.type === 'visual' ||
+          p.type === 'clip' ||
+          p.type === 'face'
       );
     });
 

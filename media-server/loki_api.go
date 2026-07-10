@@ -1500,6 +1500,27 @@ func lokiDeleteAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 					p, tagLabel)
 			}
 		}
+		// Person tags mirror face assignments: once an item no longer carries
+		// the person's tag at any timestamp, removing it means "this person is
+		// not in this item" — discard their faces from the group (veto +
+		// cannot-links) so clustering can't put them back.
+		if person, found, err := media.GetPersonByName(deps.DB, tagLabel); err == nil && found {
+			rejected := false
+			for _, p := range paths {
+				var remaining int
+				deps.DB.QueryRow(`SELECT COUNT(*) FROM media_tag_by_category
+					WHERE media_path = ? AND tag_label = ?`, p, tagLabel).Scan(&remaining)
+				if remaining > 0 {
+					continue // a timestamped copy survives; still tagged
+				}
+				if ids, err := media.RejectPersonFacesOnMedia(deps.DB, p, person.ID); err == nil && len(ids) > 0 {
+					rejected = true
+				}
+			}
+			if rejected {
+				broadcastPeopleChanged()
+			}
+		}
 		// Removing the path's last tag drops it from the swipe pool.
 		media.InvalidateRandomSampleCache()
 		writeJSON(w, map[string]string{})

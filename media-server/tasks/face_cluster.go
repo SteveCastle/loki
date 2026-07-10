@@ -3,10 +3,12 @@ package tasks
 import (
 	"database/sql"
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/embedvec"
@@ -350,24 +352,38 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 	}
 
 	// Phase 1: corroborated joins against assigned seeds, p.passes rounds.
+	// Each pass's assignments go to the DB as ONE transaction — the per-face
+	// AssignFace commit (plus its three point reads) used to dominate passes
+	// that joined thousands of faces. Only faces the bulk write actually
+	// applied become seeds; a face skipped by its defense-in-depth checks
+	// stays in the unassigned pool instead of masquerading as assigned.
 	for pass := 0; pass < p.passes && len(seeds) > 0 && len(unassigned) > 0; pass++ {
 		matches := scoreAgainstSeeds(unassigned, seeds, p.joinThreshold, vetoes, cannot)
-		var leftovers []media.Face
-		joinedThisPass := 0
+		var batch []media.FaceAssignment
 		for i, personID := range matches {
-			if personID == 0 {
-				leftovers = append(leftovers, unassigned[i])
-				continue
+			if personID != 0 {
+				batch = append(batch, media.FaceAssignment{FaceID: unassigned[i].ID, PersonID: personID})
 			}
-			if err := media.AssignFace(db, unassigned[i].ID, personID, "auto"); err != nil {
-				return stats, err
+		}
+		applied, err := media.AssignFacesAuto(db, batch)
+		if err != nil {
+			return stats, err
+		}
+		joined := make(map[int64]bool, len(applied))
+		for _, a := range applied {
+			joined[a.FaceID] = true
+		}
+		var leftovers []media.Face
+		for i, f := range unassigned {
+			if joined[f.ID] {
+				seeds = append(seeds, seed{id: f.ID, vec: f.Vec, personID: matches[i]})
+				stats.JoinedExisting++
+			} else {
+				leftovers = append(leftovers, f)
 			}
-			seeds = append(seeds, seed{id: unassigned[i].ID, vec: unassigned[i].Vec, personID: personID})
-			stats.JoinedExisting++
-			joinedThisPass++
 		}
 		unassigned = leftovers
-		if joinedThisPass == 0 {
+		if len(applied) == 0 {
 			break // converged early; further passes can't change anything
 		}
 	}
@@ -393,37 +409,30 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 	// near-random 0.17 scores ~0.41 against its own centroid and sails past
 	// the formation gate. Mean-to-members is the honest number.
 	sort.SliceStable(eligible, func(i, j int) bool { return eligible[i].Score > eligible[j].Score })
-	type cluster struct {
-		sum     []float32 // unnormalized sum of (unit) member vectors
-		members []media.Face
-	}
-	var clusters []cluster
-	for _, f := range eligible {
-		bestIdx := -1
-		var bestScore float32
-		cl := cannot[f.ID]
-		for ci := range clusters {
-			// A cannot-link to ANY member forbids the cluster: this is how a
-			// rejection outlives the person it was recorded against — the same
-			// visual group re-forming from its exemplars can't reabsorb the
-			// rejected face.
-			if len(cl) > 0 {
-				blocked := false
-				for _, m := range clusters[ci].members {
-					if cl[m.ID] {
-						blocked = true
-						break
-					}
-				}
-				if blocked {
-					continue
-				}
-			}
-			sc := dot32(f.Vec, clusters[ci].sum) / float32(len(clusters[ci].members))
-			if sc > bestScore {
-				bestScore, bestIdx = sc, ci
-			}
+	// Exact prescreen: face i only ever sees clusters built from faces before
+	// it in processing order, and a cluster's mean-to-members can't exceed its
+	// best single member match — so a face whose best similarity to EVERY
+	// earlier face is below the formation threshold is guaranteed to found a
+	// singleton, no cluster scan needed. A junk-heavy backlog (the common
+	// shape of a large ungrouped pool) is almost entirely such faces, which
+	// replaces the greedy loop's O(n²) growing-list traversal with this one
+	// blocked, cache-friendly, fully parallel pairwise pass.
+	canJoin := prescreenJoinable(eligible, p.formThreshold)
+	var clusters []faceCluster
+	// The scan below is the O(n²·d) hot spot of a big-backlog run: most
+	// leftover faces never cluster, so the cluster list grows toward n
+	// singletons and every face pays a full scan. The greedy join itself must
+	// stay sequential (each join changes what later faces see); bestCluster
+	// parallelizes each individual scan instead.
+	workers := runtime.GOMAXPROCS(0)
+	for fi, f := range eligible {
+		if !canJoin[fi] {
+			sum := make([]float32, len(f.Vec))
+			copy(sum, f.Vec)
+			clusters = append(clusters, faceCluster{sum: sum, members: []media.Face{f}})
+			continue
 		}
+		bestIdx, bestScore := bestCluster(f, cannot[f.ID], clusters, workers)
 		if bestIdx >= 0 && bestScore >= p.formThreshold {
 			c := &clusters[bestIdx]
 			for k := range c.sum {
@@ -433,7 +442,7 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 		} else {
 			sum := make([]float32, len(f.Vec))
 			copy(sum, f.Vec)
-			clusters = append(clusters, cluster{sum: sum, members: []media.Face{f}})
+			clusters = append(clusters, faceCluster{sum: sum, members: []media.Face{f}})
 		}
 	}
 
@@ -468,12 +477,15 @@ func clusterFaces(db *sql.DB, model FaceModel, p clusterParams) (clusterStats, e
 		if err != nil {
 			return stats, err
 		}
-		for _, m := range c.members {
-			if err := media.AssignFace(db, m.ID, pid, "auto"); err != nil {
-				return stats, err
-			}
-			stats.NewlyClustered++
+		batch := make([]media.FaceAssignment, len(c.members))
+		for i, m := range c.members {
+			batch[i] = media.FaceAssignment{FaceID: m.ID, PersonID: pid}
 		}
+		applied, err := media.AssignFacesAuto(db, batch)
+		if err != nil {
+			return stats, err
+		}
+		stats.NewlyClustered += len(applied)
 		stats.NewPeople++
 	}
 	return stats, nil
@@ -507,6 +519,159 @@ func dot32(a, b []float32) float32 {
 	return float32(d)
 }
 
+// dotf is the dot product for the two hot loops (phase-1 face×seed scoring,
+// phase-2 face×cluster scans), which compare billions of pairs on a big
+// backlog. All clustering vectors are unit (clusterFaces normalizes at load),
+// so this replaces CosineSim's per-call renormalization — 3× the arithmetic
+// for the same number — and skips dot32's per-element float64 conversion;
+// four independent accumulators break the add dependency chain so the CPU can
+// overlap the multiplies. Float32 accumulation over ≤1k-dim unit-scale inputs
+// is exact to ~1e-6, noise against thresholds compared at 1e-2 granularity.
+// Mismatched lengths return 0 (CosineSim's contract — mixed-model vectors
+// must never match).
+func dotf(a, b []float32) float32 {
+	if len(a) != len(b) {
+		return 0
+	}
+	b = b[:len(a)] // bounds-check elimination hint
+	var s0, s1, s2, s3 float32
+	i := 0
+	for ; i+4 <= len(a); i += 4 {
+		s0 += a[i] * b[i]
+		s1 += a[i+1] * b[i+1]
+		s2 += a[i+2] * b[i+2]
+		s3 += a[i+3] * b[i+3]
+	}
+	for ; i < len(a); i++ {
+		s0 += a[i] * b[i]
+	}
+	return (s0 + s1) + (s2 + s3)
+}
+
+// faceCluster is one forming phase-2 cluster: the unnormalized sum of its
+// (unit) member vectors plus the members themselves.
+type faceCluster struct {
+	sum     []float32
+	members []media.Face
+}
+
+// bestClusterIn scans clusters[lo:hi] for the candidate with the highest mean
+// cosine to f (dot with the unnormalized member sum / count — see the phase-2
+// comment in clusterFaces for why the metric is mean-to-members, not
+// centroid). A cluster holding any member f is cannot-linked to is skipped:
+// this is how a rejection outlives the person it was recorded against — the
+// same visual group re-forming from its exemplars can't reabsorb the rejected
+// face. Returns (-1, 0) when nothing in the range scores above zero; ties
+// resolve to the lowest index. Safe to run concurrently over disjoint ranges.
+func bestClusterIn(f media.Face, cl map[int64]bool, clusters []faceCluster, lo, hi int) (int, float32) {
+	bestIdx := -1
+	var bestScore float32
+	for ci := lo; ci < hi; ci++ {
+		if len(cl) > 0 {
+			blocked := false
+			for _, m := range clusters[ci].members {
+				if cl[m.ID] {
+					blocked = true
+					break
+				}
+			}
+			if blocked {
+				continue
+			}
+		}
+		sc := dotf(f.Vec, clusters[ci].sum) / float32(len(clusters[ci].members))
+		if sc > bestScore {
+			bestScore, bestIdx = sc, ci
+		}
+	}
+	return bestIdx, bestScore
+}
+
+// bestCluster finds the best-matching cluster for f — bestClusterIn chunked
+// across workers when the list is long enough to pay for the goroutines. The
+// chunk merge iterates in index order with a strict >, so equal scores
+// resolve to the lowest cluster index exactly like a single serial scan.
+func bestCluster(f media.Face, cl map[int64]bool, clusters []faceCluster, workers int) (int, float32) {
+	// Parallelism only pays once the list is long; short lists (and the hot
+	// cache they imply) scan faster on one core.
+	if len(clusters) < 4096 || workers < 2 {
+		return bestClusterIn(f, cl, clusters, 0, len(clusters))
+	}
+	type chunkBest struct {
+		idx   int
+		score float32
+	}
+	chunk := (len(clusters) + workers - 1) / workers
+	nChunks := (len(clusters) + chunk - 1) / chunk
+	partial := make([]chunkBest, nChunks)
+	var wg sync.WaitGroup
+	for slot := 0; slot < nChunks; slot++ {
+		lo := slot * chunk
+		hi := min(lo+chunk, len(clusters))
+		wg.Add(1)
+		go func(slot, lo, hi int) {
+			defer wg.Done()
+			idx, score := bestClusterIn(f, cl, clusters, lo, hi)
+			partial[slot] = chunkBest{idx: idx, score: score}
+		}(slot, lo, hi)
+	}
+	wg.Wait()
+	bestIdx, bestScore := -1, float32(0)
+	for _, h := range partial {
+		if h.idx >= 0 && h.score > bestScore {
+			bestIdx, bestScore = h.idx, h.score
+		}
+	}
+	return bestIdx, bestScore
+}
+
+// prescreenJoinable reports, per eligible face, whether ANY earlier face (in
+// the given processing order) is at least threshold-similar to it. False
+// means the greedy phase-2 loop is guaranteed to make this face a singleton
+// (a cluster's mean over members is bounded by its best member match, up to
+// ~1e-6 of float rounding), so its cluster scan can be skipped entirely.
+// Blocked so a tile of column vectors stays cache-hot across a tile of rows;
+// row tiles are handed to workers via an atomic counter, and each canJoin
+// entry is written only by the worker owning its row tile.
+func prescreenJoinable(eligible []media.Face, threshold float32) []bool {
+	n := len(eligible)
+	canJoin := make([]bool, n)
+	const tile = 128
+	rowTiles := (n + tile - 1) / tile
+	workers := min(runtime.GOMAXPROCS(0), rowTiles)
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				rt := int(next.Add(1)) - 1
+				if rt >= rowTiles {
+					return
+				}
+				iLo, iHi := rt*tile, min((rt+1)*tile, n)
+				for jLo := 0; jLo < iHi; jLo += tile {
+					jHi := min(jLo+tile, iHi)
+					for i := iLo; i < iHi; i++ {
+						if canJoin[i] {
+							continue
+						}
+						for j := jLo; j < min(jHi, i); j++ {
+							if dotf(eligible[i].Vec, eligible[j].Vec) >= threshold {
+								canJoin[i] = true
+								break
+							}
+						}
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	return canJoin
+}
+
 // meanPairwise computes the mean pairwise cosine of n unit vectors from their
 // unnormalized sum: ||Σx||² = n + Σ_{i≠j} xᵢ·xⱼ, so the pairwise mean is
 // (||Σx||² − n) / (n(n−1)). O(d) instead of O(n²d).
@@ -523,7 +688,9 @@ func meanPairwise(sum []float32, n int) float32 {
 // must ALSO pass the mean-similarity guard (see meanJoinSlack): the face's
 // mean cosine over all the person's seed faces stays within meanJoinSlack of
 // the threshold, or the join is a chain hop, not a match. Scoring is
-// parallel; the caller applies the writes serially.
+// parallel; the caller applies the writes serially. Face and seed vectors
+// MUST be unit-normalized (clusterFaces normalizes everything at load) —
+// similarity here is a raw dot product, not a full cosine.
 //
 // Human assertions shape the outcome three ways: a vetoed person is never a
 // candidate for that face; a person holding a seed the face is cannot-linked
@@ -571,10 +738,7 @@ func scoreAgainstSeeds(unassigned []media.Face, seeds []seed, threshold float32,
 		}
 	}
 	meanFloor := threshold - meanJoinSlack
-	workers := 8
-	if len(unassigned) < workers {
-		workers = len(unassigned)
-	}
+	workers := min(runtime.GOMAXPROCS(0), len(unassigned))
 	chunk := (len(unassigned) + workers - 1) / workers
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -613,7 +777,10 @@ func scoreAgainstSeeds(unassigned []media.Face, seeds []seed, threshold float32,
 					if forbidden[s.personID] {
 						continue
 					}
-					sc := embedvec.CosineSim(unassigned[i].Vec, s.vec)
+					// Raw dot: every clustering vector is unit (normalized at
+					// load), so this IS the cosine without CosineSim's
+					// per-call renormalization.
+					sc := dotf(unassigned[i].Vec, s.vec)
 					if sc < threshold-corroborationSlack {
 						continue // can neither win nor corroborate
 					}
@@ -704,23 +871,24 @@ func resetAssignments(db *sql.DB, query, model string) (int, error) {
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	for _, id := range ids {
-		if err := media.UnassignFace(db, id); err != nil {
-			return len(ids), err
-		}
+	// One transaction for the whole reset — per-face UnassignFace commits made
+	// a full --reset-all pay minutes of fsyncs before clustering even started.
+	n, err := media.UnassignFacesBulk(db, ids)
+	if err != nil {
+		return n, err
 	}
 	people, err := media.GetPeople(db)
 	if err != nil {
-		return len(ids), err
+		return n, err
 	}
 	for _, p := range people {
 		if p.FaceCount == 0 && strings.HasPrefix(p.Name, "Unknown #") {
 			if err := media.DeletePerson(db, p.ID); err != nil {
-				return len(ids), err
+				return n, err
 			}
 		}
 	}
-	return len(ids), nil
+	return n, nil
 }
 
 // jobArgValue extracts `--key=value` (or `--key value`) from job arguments.

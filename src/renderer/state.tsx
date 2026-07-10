@@ -174,9 +174,17 @@ type LibraryState = {
   masonryDimensionsCache: Record<string, { width: number; height: number }>;
 };
 
+// Predicate types resolved by the embedding backend and returned RANKED with
+// per-item scores (loki_api sortItemsByScore). 'face' ranks by face-embedding
+// cosine exactly like similar/clip/visual rank by SigLIP2 — all of them flip
+// the sort to 'similarity' so the ranking (and the % score badge) shows.
 const queryHasVisual = (predicates: Predicate[] = []): boolean =>
   predicates.some(
-    (p) => p.type === 'similar' || p.type === 'visual' || p.type === 'clip'
+    (p) =>
+      p.type === 'similar' ||
+      p.type === 'visual' ||
+      p.type === 'clip' ||
+      p.type === 'face'
   );
 
 const applySimilaritySort = assign<LibraryState, AnyEventObject>({

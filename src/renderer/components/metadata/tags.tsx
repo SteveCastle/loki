@@ -1,6 +1,11 @@
 import { useContext, memo, useRef, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
-import { invoke } from '../../platform';
+import {
+  invoke,
+  isElectron,
+  mediaServerBase,
+  mediaServerConfigured,
+} from '../../platform';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
 import { displayTagLabel } from '../../tag-display';
@@ -38,6 +43,31 @@ const loadTagsByMediaPath = (media: Item) => async (): Promise<Metadata> => {
 
 const deleteTag = async ({ path, tag }: { path: string; tag: Tag }) => {
   await invoke('delete-assignment', [path, tag]);
+};
+
+// Removing a person's tag from an item means "this person is not in this
+// item": their faces on it must leave the group too (veto + cannot-links on
+// the server, so clustering can't put them back). In web mode the assignment
+// DELETE endpoint does this itself; Electron's delete goes straight to SQLite
+// via IPC, so the face discard needs this explicit server call.
+const rejectPersonFaces = async (
+  path: string,
+  personName: string,
+  authToken: string | null
+) => {
+  const res = await fetch(`${mediaServerBase}/api/media/reject-person`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ path, name: personName }),
+  });
+  // 404 = tag label isn't a person (or already gone) — nothing to discard.
+  if (!res.ok && res.status !== 404) {
+    throw new Error((await res.text()) || `HTTP ${res.status}`);
+  }
 };
 
 const updateTimestamp = async ({ 
@@ -85,6 +115,10 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   // (no media server) the icon stays decorative.
   const [editingPerson, setEditingPerson] = useState<Person | null>(null);
   const { data: people } = usePeople(isVisible);
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken
+  );
   const hidePeopleTags = useSelector(
     libraryService,
     (state) => state.context.settings.hidePeopleTags
@@ -136,13 +170,40 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   });
 
   const { mutate } = useMutation({
-    mutationFn: deleteTag,
+    mutationFn: async (vars: { path: string; tag: Tag }) => {
+      await deleteTag(vars);
+      // Electron only: web mode's DELETE /api/assignments discards the faces
+      // server-side already. Best-effort — the tag is gone either way, but
+      // surface a failure so a still-grouped face isn't a silent surprise.
+      if (
+        isElectron &&
+        mediaServerConfigured &&
+        vars.tag.category_label === 'People'
+      ) {
+        try {
+          await rejectPersonFaces(vars.path, vars.tag.tag_label, authToken);
+        } catch (err) {
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: {
+              type: 'error',
+              title: 'Face not discarded from group',
+              message: `The tag was removed, but discarding the face from “${displayTagLabel(
+                vars.tag.tag_label
+              )}” failed: ${String(err)}`,
+            },
+          });
+        }
+      }
+    },
     onSuccess: () => {
       libraryService.send({ type: 'DELETED_ASSIGNMENT' });
       queryClient.invalidateQueries({
         queryKey: ['tags-by-path', item.path],
       });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      // Face counts in the People grid change when faces are discarded.
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
     },
   });
 

@@ -147,10 +147,6 @@ export default function QueryInput({
   const [blendKey, setBlendKey] = useState<string | null>(null);
   const [addText, setAddText] = useState('');
   const blendCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Keep the popover open while its controls have focus or the pointer is
-  // over the chip/popover (the two signals cover typing and mousing apart).
-  const blendFocusRef = useRef(false);
-  const blendHoverRef = useRef(false);
 
   const cancelBlendClose = useCallback(() => {
     if (blendCloseTimer.current) {
@@ -162,7 +158,6 @@ export default function QueryInput({
   const openBlend = useCallback(
     (p: Predicate) => {
       cancelBlendClose();
-      blendHoverRef.current = true;
       const key = predicateKey(p);
       if (blendKey === key) return;
       setBlendKey(key);
@@ -171,14 +166,57 @@ export default function QueryInput({
     [cancelBlendClose, blendKey]
   );
 
+  // The open chip's wrap (chip + popover), located by attribute rather than a
+  // conditionally-attached ref: the popover can move between chips in one
+  // commit, and React's detach-order on a switched ref object can null out
+  // the newly attached element.
+  const openBlendWrap = useCallback(
+    () =>
+      containerRef.current?.querySelector<HTMLElement>(
+        '.query-chip-wrap[data-blend-open="true"]'
+      ) ?? null,
+    []
+  );
+
+  // Deferred close that the LIVE DOM must confirm. Mouseleave/blur latches are
+  // not trusted here: a chip that re-renders under a new key while hovered
+  // (any node edit commits → the query re-runs → predicateKey changes) is
+  // replaced without ever firing mouseleave, and a latch that misses that
+  // event used to wedge the popover open forever. Instead the timer checks
+  // whether the wrap is actually hovered or holds focus, and RE-ARMS while it
+  // is — a skipped close is always retried, so no stale signal is permanent.
   const scheduleBlendClose = useCallback(() => {
-    blendHoverRef.current = false;
     cancelBlendClose();
-    blendCloseTimer.current = setTimeout(() => {
-      if (blendFocusRef.current || blendHoverRef.current) return;
+    const attempt = () => {
+      blendCloseTimer.current = null;
+      const wrap = openBlendWrap();
+      if (
+        wrap &&
+        (wrap.matches(':hover') || wrap.contains(document.activeElement))
+      ) {
+        blendCloseTimer.current = setTimeout(attempt, 250);
+        return;
+      }
       setBlendKey(null);
-    }, 250);
-  }, [cancelBlendClose]);
+    };
+    blendCloseTimer.current = setTimeout(attempt, 250);
+  }, [cancelBlendClose, openBlendWrap]);
+
+  // Hard close on any press outside the open chip+popover — the guaranteed
+  // manual escape even if every hover/focus signal above has gone stale.
+  useEffect(() => {
+    if (!blendKey) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const wrap = openBlendWrap();
+      if (!wrap || !wrap.contains(e.target as Node)) {
+        cancelBlendClose();
+        setBlendKey(null);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () =>
+      document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [blendKey, cancelBlendClose, openBlendWrap]);
 
   // Clear any pending popover-close timer on unmount.
   useEffect(() => cancelBlendClose, [cancelBlendClose]);
@@ -429,6 +467,7 @@ export default function QueryInput({
               <span
                 className="query-chip-wrap"
                 key={key}
+                data-blend-open={blendOpen ? 'true' : undefined}
                 onMouseEnter={canBlend ? () => openBlend(p) : undefined}
                 onMouseLeave={canBlend ? scheduleBlendClose : undefined}
               >
@@ -654,13 +693,8 @@ export default function QueryInput({
                               weight: Number(e.currentTarget.value) / 100,
                             });
                           }}
-                          onFocus={() => {
-                            blendFocusRef.current = true;
-                          }}
-                          onBlur={() => {
-                            blendFocusRef.current = false;
-                            scheduleBlendClose();
-                          }}
+                          onFocus={cancelBlendClose}
+                          onBlur={scheduleBlendClose}
                         />
                         <span className="query-blend-node-pct">{pct}%</span>
                         <button
@@ -709,18 +743,12 @@ export default function QueryInput({
                         setAddText('');
                       } else if (e.key === 'Escape') {
                         setAddText('');
-                        blendFocusRef.current = false;
                         setBlendKey(null);
                       }
                     }}
                     onKeyUp={(e) => e.stopPropagation()}
-                    onFocus={() => {
-                      blendFocusRef.current = true;
-                    }}
-                    onBlur={() => {
-                      blendFocusRef.current = false;
-                      scheduleBlendClose();
-                    }}
+                    onFocus={cancelBlendClose}
+                    onBlur={scheduleBlendClose}
                   />
                   <span className="query-blend-pop-hint">
                     Similar images added in ∩/∪ mode stack here as nodes.

@@ -805,3 +805,81 @@ func TestFacesUngroupedCount(t *testing.T) {
 		t.Fatalf("POST: %d", rec.Code)
 	}
 }
+
+// Removing a person's tag from a media item must discard their faces from the
+// group — veto + unassign, so clustering can't put them back — via both entry
+// points: the dedicated reject-person endpoint (Electron viewer) and the
+// assignments DELETE (web UI / lokictl).
+func TestRejectPersonFacesOnTagRemoval(t *testing.T) {
+	mux, deps := muxWithPeopleRoutes(t)
+
+	// Two of Carol's faces on a.jpg, one on b.jpg.
+	idsA, err := media.ReplaceFaces(deps.DB, "a.jpg", "m1", []media.NewFace{
+		{Score: 0.9, Vec: []float32{1, 0}},
+		{Score: 0.8, Vec: []float32{0.9, 0.1}},
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idsB, err := media.ReplaceFaces(deps.DB, "b.jpg", "m1", []media.NewFace{
+		{Score: 0.9, Vec: []float32{0.8, 0.2}},
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	carol, err := media.CreatePerson(deps.DB, "Carol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{idsA[0], idsA[1], idsB[0]} {
+		if err := media.AssignFace(deps.DB, id, carol, "user"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Electron path: reject by name, one item.
+	rec, out := doJSON(t, mux, http.MethodPost, "/api/media/reject-person",
+		`{"path":"a.jpg","name":"Carol"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reject-person: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := len(out["rejectedFaceIds"].([]any)); got != 2 {
+		t.Fatalf("rejected %d faces, want 2", got)
+	}
+	for _, id := range idsA {
+		f, _, _ := media.GetFaceByID(deps.DB, id)
+		if f.PersonID != 0 {
+			t.Fatalf("face %d still assigned after reject", id)
+		}
+		if vetoed, _ := media.FaceVetoExists(deps.DB, id, carol); !vetoed {
+			t.Fatalf("face %d has no veto", id)
+		}
+	}
+	// The other item's face is untouched.
+	if f, _, _ := media.GetFaceByID(deps.DB, idsB[0]); f.PersonID != carol {
+		t.Fatalf("b.jpg face lost its assignment: %+v", f)
+	}
+
+	// Unknown person → 404 (the caller treats it as nothing-to-discard).
+	rec, _ = doJSON(t, mux, http.MethodPost, "/api/media/reject-person",
+		`{"path":"a.jpg","name":"Nobody"}`)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown person: %d", rec.Code)
+	}
+
+	// Web path: deleting the person-tag assignment rejects the faces too.
+	amux := http.NewServeMux()
+	amux.HandleFunc("/api/assignments", lokiDeleteAssignmentHandler(deps))
+	rec, _ = doJSON(t, amux, http.MethodDelete, "/api/assignments",
+		`{"mediaPath":"b.jpg","tag":{"tag_label":"Carol"}}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete assignment: %d %s", rec.Code, rec.Body.String())
+	}
+	f, _, _ := media.GetFaceByID(deps.DB, idsB[0])
+	if f.PersonID != 0 {
+		t.Fatal("face still assigned after tag removal")
+	}
+	if vetoed, _ := media.FaceVetoExists(deps.DB, idsB[0], carol); !vetoed {
+		t.Fatal("tag removal recorded no veto")
+	}
+}
