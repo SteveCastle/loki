@@ -512,6 +512,10 @@ jobs:
 
       - name: Build and push image
         uses: docker/build-push-action@v6
+        env:
+          # Don't upload the .dockerbuild build-record artifact — nothing
+          # consumes it, and a corrupt upload once blocked the release job.
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
         with:
           context: .
           file: media-server/Dockerfile
@@ -599,10 +603,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      # Only the artifacts the release actually uses. Incidental artifacts
+      # (e.g. buildx's *.dockerbuild build record) must not be able to fail
+      # the release: one corrupt blob blocked v2.18.0 until it was deleted.
+      - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: '{electron-*,server-*,changelog}'
 
       - name: Display structure of downloaded files
         run: ls -R artifacts
