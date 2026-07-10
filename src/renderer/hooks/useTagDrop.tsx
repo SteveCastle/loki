@@ -1,6 +1,6 @@
 import { useContext, useRef, useState } from 'react';
 import { GlobalStateContext, Item } from '../state';
-import { invoke } from '../platform';
+import { invoke, mediaServerBase } from '../platform';
 import filter from '../filter';
 import { useQueryClient } from '@tanstack/react-query';
 import { useSelector } from '@xstate/react';
@@ -42,18 +42,21 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
 
   type DroppedTag = { label: string; category: string };
   type DroppedMedia = { path: string; timeStamp?: number };
+  // A person card dragged from the taxonomy People grid. id 0 = the "New
+  // group" chip: mint a brand-new person from this media item's face.
+  type DroppedPerson = { id: number; name: string };
   const isDroppedTag = (v: unknown): v is DroppedTag =>
     typeof v === 'object' && v != null && 'label' in v && 'category' in v;
   const isDroppedMedia = (v: unknown): v is DroppedMedia =>
     typeof v === 'object' && v != null && 'path' in v;
 
   const [collectedProps, drop] = useDrop<
-    DroppedTag | DroppedMedia,
+    DroppedTag | DroppedMedia | DroppedPerson,
     unknown,
     DropProps
   >(
     () => ({
-      accept: ['TAG', 'MEDIA'],
+      accept: ['TAG', 'MEDIA', 'PERSON'],
       collect: (monitor) => ({
         isOver: monitor.isOver({ shallow: true }),
         isSelf: (() => {
@@ -135,6 +138,104 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
               },
             });
           });
+        }
+
+        // A person card dropped on media: assign this item's face to that
+        // person (the server scans the item on the fly if it has no face
+        // vectors yet). Shift at drop time additionally makes the face the
+        // person's preview crop — analogous to the tag-preview behavior.
+        // The "New group" chip (id 0) instead MINTS a new person from this
+        // item's face — pulled out of whatever cluster it was in — ready to
+        // collect more faces by drag or clustering.
+        async function assignPersonToMedia(person: DroppedPerson) {
+          const isNew = person.id === 0;
+          const setCover = isNew || !!(window as any).__shiftHeld;
+          const headers: HeadersInit = { 'Content-Type': 'application/json' };
+          if (ctx.authToken) {
+            headers['Authorization'] = `Bearer ${ctx.authToken}`;
+          }
+          const res = await fetch(`${mediaServerBase}/api/media/assign-person`, {
+            method: 'POST',
+            headers,
+            credentials: 'include',
+            body: JSON.stringify(
+              isNew
+                ? { path: item.path, newPerson: true }
+                : { path: item.path, personId: person.id, setCover }
+            ),
+          });
+          if (!res.ok) {
+            let msg = `HTTP ${res.status}`;
+            try {
+              const body = await res.json();
+              if (body?.error) msg = body.error;
+            } catch {
+              /* keep status message */
+            }
+            throw new Error(msg);
+          }
+          if (isNew) {
+            let createdName = 'New group';
+            try {
+              const body = await res.json();
+              if (body?.name) createdName = body.name;
+            } catch {
+              /* keep placeholder */
+            }
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: {
+                type: 'success',
+                title: `New group “${createdName}” created`,
+                message:
+                  'Drag its card onto more images to add that person, or rename it in the People panel.',
+              },
+            });
+          } else {
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: {
+                type: 'success',
+                title: setCover
+                  ? `Assigned to ${person.name} + preview updated`
+                  : `Assigned to ${person.name}`,
+                message: item.path.split(/[/\\]/).pop() || item.path,
+              },
+            });
+          }
+          queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+          queryClient.invalidateQueries({ queryKey: ['metadata'] });
+          queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+        }
+        if (monitor.getItemType() === 'PERSON' && item.path) {
+          const person = droppedItem as DroppedPerson;
+          const isNew = person.id === 0;
+          // Scanning on the fly (video frame + ONNX) can take a few seconds —
+          // acknowledge the drop immediately so it doesn't feel dead.
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: {
+              type: 'info',
+              title: isNew
+                ? 'Creating a new group from this image…'
+                : `Matching face for ${person.name}…`,
+              durationMs: 2500,
+            },
+          });
+          assignPersonToMedia(person).catch((err) => {
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: {
+                type: 'error',
+                title: isNew
+                  ? 'Could not create a group from this image'
+                  : `Could not assign ${person.name}`,
+                message:
+                  err instanceof Error ? err.message : 'Assignment failed — try again.',
+              },
+            });
+          });
+          return;
         }
 
         async function updateAssignmentWeight(media: DroppedMedia) {

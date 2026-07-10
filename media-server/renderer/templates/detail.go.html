@@ -175,6 +175,43 @@
         background-color: var(--status-error);
       }
 
+      .job-status.paused,
+      .job-status.Paused {
+        background-color: transparent;
+        border: 2px solid var(--status-warning);
+      }
+
+      .job-progress-row {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        margin-bottom: var(--space-3);
+        max-width: 480px;
+      }
+
+      .job-progress-track {
+        flex: 1;
+        height: 6px;
+        border-radius: var(--radius-full);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        overflow: hidden;
+      }
+
+      .job-progress-fill {
+        height: 100%;
+        background: var(--accent-primary);
+        border-radius: var(--radius-full);
+        transition: width 0.25s ease;
+      }
+
+      .job-progress-label {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        white-space: nowrap;
+      }
+
       .status-text {
         font-weight: 600;
         padding: var(--space-1) var(--space-3);
@@ -205,6 +242,12 @@
       .status-text.error {
         color: var(--status-error);
         background-color: var(--status-error-dim);
+      }
+
+      .status-text.paused,
+      .status-text.Paused {
+        color: var(--status-warning);
+        background-color: var(--status-warning-dim);
       }
 
       /* Command styling */
@@ -628,6 +671,22 @@
               }
             });
 
+            es.addEventListener('progress', function (e) {
+              onActivity();
+              var p = JSON.parse(e.data);
+              if (String(p.id) !== '{{.Job.ID}}' || !p.total) return;
+              var bar = document.getElementById('job-progress-bar');
+              var wrap = document.getElementById('job-progress');
+              var label = document.getElementById('job-progress-label');
+              if (wrap) wrap.style.display = '';
+              var pct = Math.max(
+                0,
+                Math.min(100, Math.round((p.done / p.total) * 100))
+              );
+              if (bar) bar.style.width = pct + '%';
+              if (label) label.textContent = p.done + '/' + p.total;
+            });
+
             es.addEventListener(EVENT_UPDATE, function (e) {
               onActivity();
               var data = JSON.parse(e.data);
@@ -652,6 +711,8 @@
                   'Cancelled',
                   'error',
                   'Error',
+                  'paused',
+                  'Paused',
                 ];
                 if (statusIcon && statusText) {
                   stateClasses.forEach((cls) => {
@@ -669,6 +730,22 @@
                 ) {
                   var cancelBtn = document.getElementById('cancel');
                   if (cancelBtn) cancelBtn.style.display = 'none';
+                  var pauseBtn = document.getElementById('pause');
+                  if (pauseBtn) pauseBtn.style.display = 'none';
+                  var resumeBtn = document.getElementById('resume');
+                  if (resumeBtn) resumeBtn.style.display = 'none';
+                }
+                var pauseBtnEl = document.getElementById('pause');
+                var resumeBtnEl = document.getElementById('resume');
+                if (stateString === 'Paused') {
+                  if (pauseBtnEl) pauseBtnEl.style.display = 'none';
+                  if (resumeBtnEl) resumeBtnEl.style.display = '';
+                } else if (
+                  stateString === 'Pending' ||
+                  stateString === 'InProgress'
+                ) {
+                  if (pauseBtnEl) pauseBtnEl.style.display = '';
+                  if (resumeBtnEl) resumeBtnEl.style.display = 'none';
                 }
 
                 if (data.job.completed_at) {
@@ -752,6 +829,34 @@
           .catch((err) => console.error('Error:', err));
       }
 
+      function pauseJob(e) {
+        e.preventDefault();
+        const id = e.target.getAttribute('data-id');
+        fetch(`/job/${id}/pause`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+          .then((response) => response.text())
+          .then((result) => {
+            console.log('Server responded:', result);
+          })
+          .catch((err) => console.error('Error:', err));
+      }
+
+      function resumeJob(e) {
+        e.preventDefault();
+        const id = e.target.getAttribute('data-id');
+        fetch(`/job/${id}/resume`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+          .then((response) => response.text())
+          .then((result) => {
+            console.log('Server responded:', result);
+          })
+          .catch((err) => console.error('Error:', err));
+      }
+
       function jobStateToString(state) {
         // Handle both numeric and string states
         switch (state) {
@@ -775,6 +880,10 @@
           case 'error':
           case 'Error':
             return 'Error';
+          case 5:
+          case 'paused':
+          case 'Paused':
+            return 'Paused';
           default:
             return 'Unknown';
         }
@@ -803,6 +912,10 @@
           case 'error':
           case 'Error':
             return 'Error';
+          case 5:
+          case 'paused':
+          case 'Paused':
+            return 'Paused';
           default:
             return 'Pending';
         }

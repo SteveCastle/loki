@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 )
@@ -12,10 +13,15 @@ type InstallState string
 const (
 	StateQueued      InstallState = "queued"
 	StateDownloading InstallState = "downloading"
-	StateVerifying   InstallState = "verifying"
-	StateInstalled   InstallState = "installed"
-	StateFailed      InstallState = "failed"
-	StateCancelled   InstallState = "cancelled"
+	// StateExtracting: archive members are being unpacked. Reported
+	// separately from downloading because the byte totals differ wildly —
+	// e.g. faster-whisper downloads a 1.33 GB 7z that unpacks to ~4 GB, and
+	// presenting the unpack as "downloading 4 GB" reads as a wrong download.
+	StateExtracting InstallState = "extracting"
+	StateVerifying  InstallState = "verifying"
+	StateInstalled  InstallState = "installed"
+	StateFailed     InstallState = "failed"
+	StateCancelled  InstallState = "cancelled"
 )
 
 // Install is the current snapshot of one install attempt.
@@ -47,7 +53,7 @@ var Tracker = &tracker{
 // active for id, returns the existing one without starting another.
 func (t *tracker) StartInstall(id string) (*Install, error) {
 	t.mu.Lock()
-	if row, ok := t.rows[id]; ok && (row.State == StateDownloading || row.State == StateQueued || row.State == StateVerifying) {
+	if row, ok := t.rows[id]; ok && (row.State == StateDownloading || row.State == StateExtracting || row.State == StateQueued || row.State == StateVerifying) {
 		t.mu.Unlock()
 		return row, nil
 	}
@@ -143,6 +149,14 @@ func (t *tracker) run(ctx context.Context, id string) {
 			r.CurrentFile = file
 			r.BytesDone = done
 			r.BytesTotal = total
+			// The extractor reports progress under "<name> (extracting)";
+			// surface that as its own state so UIs don't present unpacked
+			// bytes (often much larger than the archive) as download size.
+			if strings.HasSuffix(file, "(extracting)") {
+				r.State = StateExtracting
+			} else {
+				r.State = StateDownloading
+			}
 		})
 	}
 	err := InstallModel(ctx, id, progressFn)

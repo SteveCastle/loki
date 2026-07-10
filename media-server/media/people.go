@@ -1,0 +1,920 @@
+package media
+
+import (
+	"database/sql"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// PeopleCategory is the taxonomy category that mirrors the person table.
+// Naming a person creates a tag with the person's name in this category and
+// media_tag_by_category rows for every media item their faces appear in
+// (time_stamp = the face's frame_ts) — so person filters work in every
+// existing tag-search surface for free. The category is face-managed: person
+// rename/merge/delete cascades into these tag rows, and DeleteAllFaceData
+// wipes the whole category.
+const PeopleCategory = "People"
+
+// Person is one identity: a named (or auto-named "Unknown #N") cluster of
+// faces. Every person has a name so it can live in the taxonomy.
+type Person struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	CoverFaceID int64  `json:"coverFaceId,omitempty"`
+	FaceCount   int    `json:"faceCount"`
+	MediaCount  int    `json:"mediaCount"`
+	// LockedCount is how many of the person's faces are user-assigned (ground
+	// truth): confirmed by hand, promoted via "lock group", or placed by the
+	// user. These survive every recluster and carry extra clustering weight.
+	LockedCount int   `json:"lockedCount"`
+	CreatedAt   int64 `json:"createdAt,omitempty"`
+	// Models lists the recognizer(s) the cluster's faces were embedded with
+	// (comma-separated; normally one) — e.g. "anime-ccip" identifies a drawn-
+	// character cluster vs a photographic face cluster. Empty when the person
+	// has no faces.
+	Models string `json:"models,omitempty"`
+}
+
+// PersonClusterSuffix disambiguates a person's tag from a hand-curated tag
+// with the same name. Tag labels are globally unique, and a curated tag (say,
+// the iconic shots of someone) can deliberately coexist with a face cluster
+// covering everything they appear in — so instead of rejecting the name, the
+// person is stored as "<name>_cluster". UIs strip the suffix for display.
+const PersonClusterSuffix = "_cluster"
+
+// resolvePersonName maps a requested person name to its stored form:
+// unchanged when the name is free (or already a People tag), suffixed with
+// PersonClusterSuffix when a tag in another category owns the plain name.
+func resolvePersonName(q interface {
+	QueryRow(string, ...any) *sql.Row
+}, name string) (string, error) {
+	var cat sql.NullString
+	err := q.QueryRow(`SELECT category_label FROM tag WHERE label = ?`, name).Scan(&cat)
+	if err == sql.ErrNoRows {
+		return name, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if cat.Valid && cat.String != "" && cat.String != PeopleCategory {
+		return name + PersonClusterSuffix, nil
+	}
+	return name, nil
+}
+
+// ensurePersonTag creates the People category and the person's tag row inside
+// an existing transaction.
+func ensurePersonTag(tx *sql.Tx, name string) error {
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO category (label, weight) VALUES (?, 0)`, PeopleCategory); err != nil {
+		return err
+	}
+	_, err := tx.Exec(
+		`INSERT INTO tag (label, category_label) VALUES (?, ?)
+		 ON CONFLICT(label) DO UPDATE SET category_label = excluded.category_label
+		 WHERE tag.category_label IS NULL OR tag.category_label = '' OR tag.category_label = ?`,
+		name, PeopleCategory, PeopleCategory,
+	)
+	return err
+}
+
+// CreatePerson creates a named person (plus their taxonomy tag) and returns
+// the new ID. The name must be non-empty, unique among persons, and not in
+// use by a tag outside the People category.
+func CreatePerson(db *sql.DB, name string) (int64, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return 0, fmt.Errorf("person name required")
+	}
+	name, err := resolvePersonName(db, name)
+	if err != nil {
+		return 0, err
+	}
+	if _, exists, err := GetPersonByName(db, name); err != nil {
+		return 0, err
+	} else if exists {
+		return 0, fmt.Errorf("person %q already exists", name)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`INSERT INTO person (name, created_at) VALUES (?, ?)`, name, time.Now().Unix())
+	if err != nil {
+		return 0, fmt.Errorf("create person %q: %w", name, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if err := ensurePersonTag(tx, name); err != nil {
+		return 0, err
+	}
+	return id, tx.Commit()
+}
+
+// NextUnknownName returns the next free auto-cluster name ("Unknown #N").
+func NextUnknownName(db *sql.DB) (string, error) {
+	rows, err := db.Query(`SELECT name FROM person WHERE name LIKE 'Unknown #%'`)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	max := 0
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return "", err
+		}
+		if n, err := strconv.Atoi(strings.TrimPrefix(name, "Unknown #")); err == nil && n > max {
+			max = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Unknown #%d", max+1), nil
+}
+
+// GetPeople lists all persons with their face and distinct-media counts,
+// ordered by face count descending (biggest clusters first).
+//
+// CoverFaceID is the EFFECTIVE cover: the stored cover when it still points
+// at one of the person's faces, otherwise the person's best face — highest
+// detection confidence weighted by bbox area, so covers favour clear,
+// close-up faces over tiny background ones. The fallback matters because
+// rescanning a media item replaces its face rows under new ids, silently
+// orphaning any stored cover that pointed there.
+func GetPeople(db *sql.DB) ([]Person, error) {
+	rows, err := db.Query(`
+		SELECT p.id, COALESCE(p.name, ''),
+		       COALESCE(
+		         (SELECT fc.id FROM face fc WHERE fc.id = p.cover_face_id AND fc.person_id = p.id),
+		         (SELECT fb.id FROM face fb WHERE fb.person_id = p.id
+		          ORDER BY fb.det_score * fb.bbox_w * fb.bbox_h DESC, fb.id ASC LIMIT 1),
+		         0),
+		       COALESCE(p.created_at, 0),
+		       COUNT(f.id), COUNT(DISTINCT f.media_path),
+		       COALESCE(SUM(CASE WHEN f.assigned_by = 'user' THEN 1 ELSE 0 END), 0),
+		       COALESCE(GROUP_CONCAT(DISTINCT f.model), '')
+		FROM person p
+		LEFT JOIN face f ON f.person_id = p.id
+		GROUP BY p.id
+		ORDER BY COUNT(f.id) DESC, p.id ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Person
+	for rows.Next() {
+		var p Person
+		if err := rows.Scan(&p.ID, &p.Name, &p.CoverFaceID, &p.CreatedAt, &p.FaceCount, &p.MediaCount, &p.LockedCount, &p.Models); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetPersonByID returns one person row (without counts).
+func GetPersonByID(db *sql.DB, id int64) (Person, bool, error) {
+	var p Person
+	err := db.QueryRow(
+		`SELECT id, COALESCE(name, ''), COALESCE(cover_face_id, 0), COALESCE(created_at, 0) FROM person WHERE id = ?`, id,
+	).Scan(&p.ID, &p.Name, &p.CoverFaceID, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		return Person{}, false, nil
+	}
+	if err != nil {
+		return Person{}, false, err
+	}
+	return p, true, nil
+}
+
+// GetPersonByDisplayName resolves a person from a user-visible name: exact
+// match first, then the "_cluster"-suffixed form a curated-tag collision
+// would have produced.
+func GetPersonByDisplayName(db *sql.DB, name string) (Person, bool, error) {
+	if p, ok, err := GetPersonByName(db, name); err != nil || ok {
+		return p, ok, err
+	}
+	return GetPersonByName(db, name+PersonClusterSuffix)
+}
+
+// GetPersonByName returns one person row by exact name.
+func GetPersonByName(db *sql.DB, name string) (Person, bool, error) {
+	var p Person
+	err := db.QueryRow(
+		`SELECT id, COALESCE(name, ''), COALESCE(cover_face_id, 0), COALESCE(created_at, 0) FROM person WHERE name = ?`, name,
+	).Scan(&p.ID, &p.Name, &p.CoverFaceID, &p.CreatedAt)
+	if err == sql.ErrNoRows {
+		return Person{}, false, nil
+	}
+	if err != nil {
+		return Person{}, false, err
+	}
+	return p, true, nil
+}
+
+// PersonFacesByQuality returns a person's faces best-first: detection
+// confidence weighted by bbox area, so the clearest close-up faces come
+// first. Used to pick cover crops.
+func PersonFacesByQuality(db *sql.DB, personID int64) ([]Face, error) {
+	rows, err := db.Query(
+		`SELECT id, media_path, model, frame_ts, bbox_x, bbox_y, bbox_w, bbox_h,
+		        det_score, vector, COALESCE(person_id, 0), COALESCE(assigned_by, ''), COALESCE(created_at, 0)
+		 FROM face WHERE person_id = ?
+		 ORDER BY det_score * bbox_w * bbox_h DESC, id ASC`,
+		personID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanFaceRows(rows)
+}
+
+// SetPersonCover stores an explicit cover face for a person. The face must
+// belong to the person.
+func SetPersonCover(db *sql.DB, personID, faceID int64) error {
+	res, err := db.Exec(
+		`UPDATE person SET cover_face_id = ?
+		 WHERE id = ? AND EXISTS (SELECT 1 FROM face WHERE id = ? AND person_id = ?)`,
+		faceID, personID, faceID, personID,
+	)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("face %d does not belong to person %d", faceID, personID)
+	}
+	return nil
+}
+
+// PersonMediaPaths returns the distinct media paths a person's faces appear
+// in, best detection first.
+func PersonMediaPaths(db *sql.DB, id int64) ([]string, error) {
+	rows, err := db.Query(
+		`SELECT media_path FROM face WHERE person_id = ? GROUP BY media_path ORDER BY MAX(det_score) DESC`, id,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// retagPerson rewrites the person's taxonomy rows from oldName to newName
+// inside a transaction: tag row and media_tag_by_category rows. Collisions
+// with already-existing target rows are resolved by dropping the old row.
+func retagPerson(tx *sql.Tx, oldName, newName string) error {
+	if err := ensurePersonTag(tx, newName); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`UPDATE OR IGNORE media_tag_by_category SET tag_label = ? WHERE tag_label = ? AND category_label = ?`,
+		newName, oldName, PeopleCategory,
+	); err != nil {
+		return err
+	}
+	// Rows that collided with existing (path, newName, ts) rows remain under
+	// the old name — they're duplicates now; drop them with the old tag.
+	if _, err := tx.Exec(
+		`DELETE FROM media_tag_by_category WHERE tag_label = ? AND category_label = ?`, oldName, PeopleCategory,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM tag WHERE label = ? AND category_label = ?`, oldName, PeopleCategory); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RenamePerson renames a person and cascades to their taxonomy rows. When
+// the requested name is owned by a tag in another category, the stored name
+// gets the "_cluster" suffix (see PersonClusterSuffix).
+func RenamePerson(db *sql.DB, id int64, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return fmt.Errorf("person name required")
+	}
+	p, ok, err := GetPersonByID(db, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no person with id %d", id)
+	}
+	newName, err = resolvePersonName(db, newName)
+	if err != nil {
+		return err
+	}
+	if p.Name == newName {
+		return nil
+	}
+	if other, exists, err := GetPersonByName(db, newName); err != nil {
+		return err
+	} else if exists && other.ID != id {
+		return fmt.Errorf("person %q already exists — merge instead", newName)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE person SET name = ? WHERE id = ?`, newName, id); err != nil {
+		return fmt.Errorf("rename person: %w", err)
+	}
+	if err := retagPerson(tx, p.Name, newName); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// MergePersons moves every face of fromID onto intoID (keeping each face's
+// assigned_by), rewrites taxonomy rows, and deletes the source person.
+func MergePersons(db *sql.DB, fromID, intoID int64) error {
+	if fromID == intoID {
+		return fmt.Errorf("cannot merge a person into itself")
+	}
+	from, ok, err := GetPersonByID(db, fromID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no person with id %d", fromID)
+	}
+	into, ok, err := GetPersonByID(db, intoID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no person with id %d", intoID)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE face SET person_id = ? WHERE person_id = ?`, intoID, fromID); err != nil {
+		return fmt.Errorf("merge faces: %w", err)
+	}
+	// Vetoes against the dissolving person carry over to the merge target
+	// (rejected-from-A means rejected-from-the-merged-A+B)…
+	if _, err := tx.Exec(
+		`UPDATE OR IGNORE face_veto SET person_id = ? WHERE person_id = ?`, intoID, fromID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM face_veto WHERE person_id = ?`, fromID); err != nil {
+		return err
+	}
+	// …but the merge itself is the user asserting the two groups ARE the same
+	// person, which contradicts any assertion between their members: drop
+	// vetoes now pointing at a face's own person and cannot-links that ended up
+	// with both ends inside the merged group.
+	if _, err := tx.Exec(
+		`DELETE FROM face_veto WHERE person_id = ?
+		   AND face_id IN (SELECT id FROM face WHERE person_id = ?)`, intoID, intoID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM face_cannot_link
+		 WHERE face_a IN (SELECT id FROM face WHERE person_id = ?)
+		   AND face_b IN (SELECT id FROM face WHERE person_id = ?)`, intoID, intoID,
+	); err != nil {
+		return err
+	}
+	if err := retagPerson(tx, from.Name, into.Name); err != nil {
+		return err
+	}
+	// Keep the target's cover face; adopt the source's if the target had none.
+	if _, err := tx.Exec(
+		`UPDATE person SET cover_face_id = COALESCE(NULLIF(cover_face_id, 0), ?) WHERE id = ?`,
+		nullableID(from.CoverFaceID), intoID,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM person WHERE id = ?`, fromID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeletePerson unassigns the person's faces, removes their taxonomy rows, and
+// deletes the person. Faces (and their vectors) are kept — they become
+// unassigned again.
+func DeletePerson(db *sql.DB, id int64) error {
+	p, ok, err := GetPersonByID(db, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no person with id %d", id)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE face SET person_id = NULL, assigned_by = NULL WHERE person_id = ?`, id); err != nil {
+		return err
+	}
+	// The person id is gone for good (AUTOINCREMENT), so vetoes against it are
+	// dead weight. Cannot-links stay — they encode face-level truth that must
+	// outlive the group (the whole point of recording them).
+	if _, err := tx.Exec(`DELETE FROM face_veto WHERE person_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM media_tag_by_category WHERE tag_label = ? AND category_label = ?`, p.Name, PeopleCategory,
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM tag WHERE label = ? AND category_label = ?`, p.Name, PeopleCategory); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM person WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeletePersonAndFaces deletes a person AND every face row assigned to them —
+// the cleanup for a hopelessly messy cluster. The deleted embeddings won't
+// re-cluster (their media stays marked scanned, so they only come back on an
+// explicit rescan). Returns the deleted face IDs so callers can evict them
+// from the live index.
+func DeletePersonAndFaces(db *sql.DB, id int64) ([]int64, error) {
+	p, ok, err := GetPersonByID(db, id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("no person with id %d", id)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`SELECT id FROM face WHERE person_id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	var faceIDs []int64
+	for rows.Next() {
+		var fid int64
+		if err := rows.Scan(&fid); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		faceIDs = append(faceIDs, fid)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if err := clearConstraintsForFacesTx(tx, `SELECT id FROM face WHERE person_id = ?`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM face_veto WHERE person_id = ?`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM face WHERE person_id = ?`, id); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(
+		`DELETE FROM media_tag_by_category WHERE tag_label = ? AND category_label = ?`, p.Name, PeopleCategory,
+	); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM tag WHERE label = ? AND category_label = ?`, p.Name, PeopleCategory); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(`DELETE FROM person WHERE id = ?`, id); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return faceIDs, nil
+}
+
+// AssignFace assigns a face to a person (assignedBy = "user" or "auto") and
+// maintains the taxonomy bridge row for the face's media item. Reassigning a
+// face moves it (removing the old person's bridge row when this was their
+// last face on that media/frame). Auto-assignment never overwrites a user
+// assignment.
+func AssignFace(db *sql.DB, faceID, personID int64, assignedBy string) error {
+	if assignedBy != "user" && assignedBy != "auto" {
+		return fmt.Errorf("assignedBy must be \"user\" or \"auto\"")
+	}
+	f, ok, err := GetFaceByID(db, faceID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no face with id %d", faceID)
+	}
+	if assignedBy == "auto" && f.AssignedBy == "user" {
+		return nil // manual labels are ground truth
+	}
+	if assignedBy == "auto" {
+		// Defense in depth behind the clustering paths' own constraint checks:
+		// a vetoed (face, person) pair is a standing user assertion that no
+		// automatic path may override.
+		if vetoed, err := FaceVetoExists(db, faceID, personID); err != nil {
+			return err
+		} else if vetoed {
+			return nil
+		}
+	}
+	p, ok, err := GetPersonByID(db, personID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no person with id %d", personID)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Moving off a previous person: drop their bridge row if this face was
+	// their only one on this media/frame.
+	if f.PersonID != 0 && f.PersonID != personID {
+		if err := removeBridgeRowIfLastFace(tx, f, f.PersonID); err != nil {
+			return err
+		}
+		// A user moving a face OFF a person is a negative assertion about that
+		// person — record it so no recluster ever puts the face back.
+		if assignedBy == "user" {
+			if _, err := tx.Exec(
+				`INSERT OR IGNORE INTO face_veto (face_id, person_id, created_at) VALUES (?, ?, ?)`,
+				faceID, f.PersonID, time.Now().Unix(),
+			); err != nil {
+				return err
+			}
+		}
+	}
+	// A user assignment contradicts (and therefore clears) any standing veto
+	// against the target person and any cannot-links to its current members —
+	// the newest human statement wins.
+	if assignedBy == "user" {
+		if err := clearContradictedConstraintsTx(tx, faceID, personID); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(
+		`UPDATE face SET person_id = ?, assigned_by = ? WHERE id = ?`, personID, assignedBy, faceID,
+	); err != nil {
+		return err
+	}
+	if err := ensurePersonTag(tx, p.Name); err != nil {
+		return err
+	}
+	// The bridge row only exists for library media. Faces scanned on arbitrary
+	// paths (explicit job input, query images) still get their assignment; the
+	// tag row would violate the media_path foreign key present in older
+	// databases and be unqueryable anyway.
+	var inLibrary int
+	if err := tx.QueryRow(`SELECT 1 FROM media WHERE path = ?`, f.MediaPath).Scan(&inLibrary); err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if inLibrary == 1 {
+		if _, err := tx.Exec(
+			`INSERT OR IGNORE INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+			 VALUES (?, ?, ?, 0, ?, ?)`,
+			f.MediaPath, p.Name, PeopleCategory, f.FrameTS, time.Now().Unix(),
+		); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(
+		`UPDATE person SET cover_face_id = ? WHERE id = ? AND (cover_face_id IS NULL OR cover_face_id = 0)`,
+		faceID, personID,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// New People tag may make media eligible for tag-based pools.
+	InvalidateRandomSampleCache()
+	return nil
+}
+
+// UnassignFace clears a face's person assignment and removes the taxonomy
+// bridge row when it was the person's last face on that media/frame.
+func UnassignFace(db *sql.DB, faceID int64) error {
+	f, ok, err := GetFaceByID(db, faceID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no face with id %d", faceID)
+	}
+	if f.PersonID == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE face SET person_id = NULL, assigned_by = NULL WHERE id = ?`, faceID); err != nil {
+		return err
+	}
+	if err := removeBridgeRowIfLastFace(tx, f, f.PersonID); err != nil {
+		return err
+	}
+	// Clear the cover if it pointed at this face.
+	if _, err := tx.Exec(`UPDATE person SET cover_face_id = NULL WHERE id = ? AND cover_face_id = ?`, f.PersonID, faceID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// FaceAssignment is one face → person pair for AssignFacesAuto.
+type FaceAssignment struct {
+	FaceID   int64
+	PersonID int64
+}
+
+// AssignFacesAuto is the bulk form of AssignFace(..., "auto") for clustering
+// passes: ONE transaction for the whole batch instead of a commit plus three
+// point reads per face, which dominated the write side of large clustering
+// runs. Per-face behavior matches AssignFace — user assignments and vetoed
+// (face, person) pairs are silently skipped, the taxonomy bridge row and the
+// person's cover face are maintained. Faces or persons deleted since the
+// caller scored the batch are skipped too (the per-face form errored the
+// whole job over them; a mid-run deletion shouldn't abort clustering).
+// Returns the assignments actually written.
+func AssignFacesAuto(db *sql.DB, assignments []FaceAssignment) ([]FaceAssignment, error) {
+	if len(assignments) == 0 {
+		return nil, nil
+	}
+	// Person names drive tag + bridge maintenance; resolve once per person.
+	names := map[int64]string{}
+	missing := map[int64]bool{}
+	for _, a := range assignments {
+		if _, seen := names[a.PersonID]; seen || missing[a.PersonID] {
+			continue
+		}
+		p, ok, err := GetPersonByID(db, a.PersonID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			missing[a.PersonID] = true
+			continue
+		}
+		names[a.PersonID] = p.Name
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	getFace, err := tx.Prepare(
+		`SELECT media_path, COALESCE(frame_ts, 0), COALESCE(person_id, 0), COALESCE(assigned_by, '')
+		 FROM face WHERE id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	vetoed, err := tx.Prepare(`SELECT 1 FROM face_veto WHERE face_id = ? AND person_id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	setFace, err := tx.Prepare(`UPDATE face SET person_id = ?, assigned_by = 'auto' WHERE id = ?`)
+	if err != nil {
+		return nil, err
+	}
+	inLibrary, err := tx.Prepare(`SELECT 1 FROM media WHERE path = ?`)
+	if err != nil {
+		return nil, err
+	}
+	bridge, err := tx.Prepare(
+		`INSERT OR IGNORE INTO media_tag_by_category (media_path, tag_label, category_label, weight, time_stamp, created_at)
+		 VALUES (?, ?, ?, 0, ?, ?)`)
+	if err != nil {
+		return nil, err
+	}
+	cover, err := tx.Prepare(
+		`UPDATE person SET cover_face_id = ? WHERE id = ? AND (cover_face_id IS NULL OR cover_face_id = 0)`)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().Unix()
+	tagged := map[int64]bool{} // persons whose tag row is already ensured
+	applied := make([]FaceAssignment, 0, len(assignments))
+	for _, a := range assignments {
+		if missing[a.PersonID] {
+			continue
+		}
+		var mediaPath, assignedBy string
+		var frameTS float64
+		var prevPerson int64
+		err := getFace.QueryRow(a.FaceID).Scan(&mediaPath, &frameTS, &prevPerson, &assignedBy)
+		if err == sql.ErrNoRows {
+			continue // face deleted mid-run
+		}
+		if err != nil {
+			return nil, err
+		}
+		if assignedBy == "user" {
+			continue // manual labels are ground truth
+		}
+		var one int
+		err = vetoed.QueryRow(a.FaceID, a.PersonID).Scan(&one)
+		if err == nil {
+			continue // standing user assertion — never auto-assign this pair
+		}
+		if err != sql.ErrNoRows {
+			return nil, err
+		}
+		// Moving off a previous person: drop their bridge row if this face
+		// was their only one on that media/frame.
+		if prevPerson != 0 && prevPerson != a.PersonID {
+			f := Face{ID: a.FaceID, MediaPath: mediaPath, FrameTS: frameTS}
+			if err := removeBridgeRowIfLastFace(tx, f, prevPerson); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := setFace.Exec(a.PersonID, a.FaceID); err != nil {
+			return nil, err
+		}
+		if !tagged[a.PersonID] {
+			if err := ensurePersonTag(tx, names[a.PersonID]); err != nil {
+				return nil, err
+			}
+			tagged[a.PersonID] = true
+		}
+		// Bridge rows only exist for library media (see AssignFace).
+		var lib int
+		err = inLibrary.QueryRow(mediaPath).Scan(&lib)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		if err == nil {
+			if _, err := bridge.Exec(mediaPath, names[a.PersonID], PeopleCategory, frameTS, now); err != nil {
+				return nil, err
+			}
+		}
+		if _, err := cover.Exec(a.FaceID, a.PersonID); err != nil {
+			return nil, err
+		}
+		applied = append(applied, a)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	// New People tags may make media eligible for tag-based pools.
+	InvalidateRandomSampleCache()
+	return applied, nil
+}
+
+// UnassignFacesBulk is the bulk form of UnassignFace: one transaction for the
+// whole batch (reset passes used to pay a commit per face). Already-unassigned
+// and deleted faces are skipped, as in the per-face form. Returns how many
+// faces were actually unassigned.
+func UnassignFacesBulk(db *sql.DB, faceIDs []int64) (int, error) {
+	if len(faceIDs) == 0 {
+		return 0, nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	getFace, err := tx.Prepare(
+		`SELECT media_path, COALESCE(frame_ts, 0), COALESCE(person_id, 0) FROM face WHERE id = ?`)
+	if err != nil {
+		return 0, err
+	}
+	clearFace, err := tx.Prepare(`UPDATE face SET person_id = NULL, assigned_by = NULL WHERE id = ?`)
+	if err != nil {
+		return 0, err
+	}
+	clearCover, err := tx.Prepare(`UPDATE person SET cover_face_id = NULL WHERE id = ? AND cover_face_id = ?`)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, id := range faceIDs {
+		var mediaPath string
+		var frameTS float64
+		var personID int64
+		err := getFace.QueryRow(id).Scan(&mediaPath, &frameTS, &personID)
+		if err == sql.ErrNoRows {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		if personID == 0 {
+			continue
+		}
+		// Same statement order as UnassignFace: clear first, so when several
+		// faces share a media/frame the LAST one cleared removes the bridge.
+		if _, err := clearFace.Exec(id); err != nil {
+			return 0, err
+		}
+		f := Face{ID: id, MediaPath: mediaPath, FrameTS: frameTS}
+		if err := removeBridgeRowIfLastFace(tx, f, personID); err != nil {
+			return 0, err
+		}
+		if _, err := clearCover.Exec(personID, id); err != nil {
+			return 0, err
+		}
+		n++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// removeBridgeRowIfLastFace deletes the (media, person, frame) taxonomy row
+// when no OTHER face of personID remains on the face's media path + frame.
+func removeBridgeRowIfLastFace(tx *sql.Tx, f Face, personID int64) error {
+	var name string
+	if err := tx.QueryRow(`SELECT COALESCE(name, '') FROM person WHERE id = ?`, personID).Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
+			return nil // person already gone; nothing to unbridge
+		}
+		return err
+	}
+	var others int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM face WHERE person_id = ? AND media_path = ? AND frame_ts = ? AND id != ?`,
+		personID, f.MediaPath, f.FrameTS, f.ID,
+	).Scan(&others); err != nil {
+		return err
+	}
+	if others > 0 {
+		return nil
+	}
+	_, err := tx.Exec(
+		`DELETE FROM media_tag_by_category WHERE media_path = ? AND tag_label = ? AND category_label = ? AND time_stamp = ?`,
+		f.MediaPath, name, PeopleCategory, f.FrameTS,
+	)
+	return err
+}
+
+// DeleteAllFaceData wipes every trace of the face-identity feature: faces,
+// scan markers, persons, and the face-managed People taxonomy rows. The
+// privacy escape hatch — everything is rebuildable by rescanning.
+func DeleteAllFaceData(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, stmt := range []string{
+		`DELETE FROM face`,
+		`DELETE FROM face_scan`,
+		`DELETE FROM face_veto`,
+		`DELETE FROM face_cannot_link`,
+		`DELETE FROM face_group_ban`,
+		`DELETE FROM face_group_ban_member`,
+		`DELETE FROM person`,
+		`DELETE FROM media_tag_by_category WHERE category_label = '` + PeopleCategory + `'`,
+		`DELETE FROM tag WHERE category_label = '` + PeopleCategory + `'`,
+	} {
+		if _, err := tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func nullableID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}

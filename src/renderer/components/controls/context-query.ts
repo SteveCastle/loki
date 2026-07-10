@@ -21,6 +21,9 @@ export const LEGACY_PREFIX: Partial<Record<Predicate['type'], string>> = {
   path: 'path:',
   description: 'description:',
   hash: 'hash:',
+  // Face-presence filter (faces:ungrouped) — the server task lexer compiles
+  // it to an EXISTS over the face table (media/search.go).
+  faces: 'faces:',
 };
 
 // Predicate types whose unified-query semantics are a substring match (the

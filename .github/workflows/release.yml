@@ -57,7 +57,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache-dependency-path: media-server/go.sum
 
       - name: Run Go tests
@@ -209,10 +209,54 @@ jobs:
             release/build/*.zip
           if-no-files-found: warn
 
-  build-go-server:
-    name: Build Go Media Server (Windows)
+  # Bundled media-server archives: server binary + bin/ (ffmpeg, ffprobe,
+  # ffplay, exiftool, onnxruntime, embed, onnxtag) + lokictl, per target.
+  # The server resolves bundled deps relative to its executable, so the
+  # bin/ folder MUST ship inside the archive — a bare binary boots with
+  # every media-processing feature broken.
+  build-media-server:
+    name: Build Media Server (${{ matrix.target }})
     needs: version-and-tag
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # server_cgo: the server binary itself is pure Go everywhere except
+          # macOS, where the menu-bar tray needs Cocoa (tray_darwin.go).
+          - os: windows-latest
+            target: windows-amd64
+            goos: windows
+            goarch: amd64
+            ext: .exe
+            server_cgo: '0'
+            # -H=windowsgui: tray-only app, no console window
+            ldflags: '-s -w -H=windowsgui'
+            fetch_cmd: 'powershell -File media-server/scripts/fetch-bundled-deps.ps1 -Target windows-amd64 -Mode verify'
+          - os: ubuntu-latest
+            target: linux-amd64
+            goos: linux
+            goarch: amd64
+            ext: ''
+            server_cgo: '0'
+            ldflags: '-s -w'
+            fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh linux-amd64 verify'
+          - os: macos-14 # Apple Silicon
+            target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            ext: ''
+            server_cgo: '1'
+            ldflags: '-s -w'
+            fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh darwin-arm64 verify'
+          - os: macos-13 # Intel
+            target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            ext: ''
+            server_cgo: '1'
+            ldflags: '-s -w'
+            fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh darwin-amd64 verify'
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -232,118 +276,247 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
           cache-dependency-path: media-server/go.sum
 
-      - name: Build Go binary for Windows
+      - name: Install jq (unix)
+        if: runner.os != 'Windows'
+        run: |
+          if ! command -v jq >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y jq || brew install jq
+          fi
+
+      # The embed/onnxtag workers require cgo (ONNX runtime C API); the fetch
+      # script builds them with CGO_ENABLED=1 and fails loudly without a C
+      # compiler. Linux/macOS runners ship one; Windows needs mingw-w64.
+      - name: Ensure C toolchain for cgo (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          if ! command -v gcc >/dev/null; then
+            choco install mingw -y --no-progress
+          fi
+          gcc --version | head -1
+
+      - name: Fetch bundled binaries
+        shell: bash
+        run: ${{ matrix.fetch_cmd }}
+
+      - name: Build server
         working-directory: ./media-server
         env:
-          GOOS: windows
-          GOARCH: amd64
-          CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-windows-amd64.exe"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.server_cgo }}
+        run: go build -ldflags="${{ matrix.ldflags }}" -o lowkeymediaserver${{ matrix.ext }} .
 
-      - name: Upload Go binary
+      - name: Build lokictl
+        working-directory: ./media-server
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: go build -ldflags="-s -w" -o lokictl${{ matrix.ext }} ./cmd/lokictl
+
+      - name: Stage release dir
+        shell: bash
+        run: |
+          mkdir -p release/${{ matrix.target }}/bin
+          cp media-server/lowkeymediaserver${{ matrix.ext }} release/${{ matrix.target }}/
+          cp media-server/lokictl${{ matrix.ext }} release/${{ matrix.target }}/
+          cp -R media-server/bin/* release/${{ matrix.target }}/bin/
+          # License notices (GPL ffmpeg builds require them in the distribution)
+          cp -R media-server/licenses release/${{ matrix.target }}/licenses
+          # Example systemd unit for Linux users
+          if [ "${{ matrix.goos }}" = "linux" ]; then
+            cp media-server/packaging/linux/lowkeymediaserver.service release/${{ matrix.target }}/
+          fi
+
+      # macOS: sign everything with the same Developer ID cert the Electron
+      # build uses, then notarize. Both steps skip cleanly when the signing
+      # secrets are absent (the release still ships, just unsigned). Without
+      # this, Gatekeeper hard-blocks the downloaded binaries.
+      # Credentials arrive exactly as they do for the Electron client build:
+      # the same secrets mapped into the same env var names on the step. The
+      # scripts skip gracefully when they're absent, so a fork or a
+      # credential rotation never breaks the release — it just ships
+      # unsigned.
+      - name: Sign macOS binaries
+        if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CSC_LINK:-}" ]; then
+            echo "CSC_LINK not provided — skipping code signing (unsigned build)"
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/server-sign.keychain-db"
+          KC_PASS="$(openssl rand -hex 16)"
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN"
+          # CSC_LINK is the base64-encoded .p12 (same convention as electron-builder)
+          echo "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -P "$CSC_KEY_PASSWORD" -A \
+            -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PASS" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep "Developer ID Application" | head -1 | awk '{print $2}')
+          echo "signing with identity $IDENTITY"
+
+          T=release/${{ matrix.target }}
+          # Plain Mach-O executables + the ONNX runtime dylib. exiftool and
+          # its lib/ are Perl scripts — not signable, not checked by
+          # notarization.
+          for f in "$T/lowkeymediaserver" "$T/lokictl" "$T/bin/ffmpeg" "$T/bin/ffprobe" "$T/bin/onnxruntime.dylib"; do
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp "$f"
+          done
+          # The workers dlopen the ONNX runtime — sign with the
+          # library-validation entitlement.
+          for f in "$T/bin/embed" "$T/bin/onnxtag"; do
+            codesign --force --sign "$IDENTITY" --options runtime --timestamp \
+              --entitlements media-server/packaging/macos/entitlements.plist "$f"
+          done
+          codesign --verify --strict "$T/lowkeymediaserver"
+
+      - name: Smoke test (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: media-server/scripts/smoke-bundled.sh release/${{ matrix.target }}
+
+      # The Mac-native artifact: a menu-bar agent .app inside a DMG. The
+      # bundle reuses the already-signed payload binaries (deps live under
+      # Contents/MacOS/bin, which the server's executable-relative resolver
+      # handles unchanged). Runs even without signing secrets — the DMG is
+      # just unsigned then.
+      - name: Package macOS app + DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          media-server/scripts/make-macos-app.sh \
+            "release/${{ matrix.target }}" dist-app "${{ needs.version-and-tag.outputs.version }}"
+          IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null \
+            | grep "Developer ID Application" | head -1 | awk '{print $2}' || true)
+          if [ -n "$IDENTITY" ]; then
+            # Nested Mach-Os were signed in the payload; sign the bundle
+            # itself (seals resources + re-signs the main executable).
+            codesign --force --options runtime --timestamp --sign "$IDENTITY" \
+              "dist-app/Lowkey Media Server.app"
+            codesign --verify --strict --deep "dist-app/Lowkey Media Server.app"
+          else
+            echo "no Developer ID identity in keychain — app left unsigned"
+          fi
+          ln -s /Applications dist-app/Applications
+          hdiutil create -volname "Lowkey Media Server" -srcfolder dist-app \
+            -ov -format UDZO "release/lowkey-media-server-${{ matrix.target }}.dmg"
+          if [ -n "$IDENTITY" ]; then
+            codesign --force --timestamp --sign "$IDENTITY" \
+              "release/lowkey-media-server-${{ matrix.target }}.dmg"
+          fi
+
+      # One notarization covers everything: tickets are recorded per code
+      # signature, so the identical signed binaries inside the tar.gz pass
+      # Gatekeeper's online check too. The DMG gets its ticket stapled for
+      # fully-offline verification.
+      - name: Notarize and staple DMG
+        if: runner.os == 'macOS'
+        env:
+          # Same secret set the Electron client build receives, same names.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASS: ${{ secrets.APPLE_ID_PASS }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # electron-builder accepts either password var; do the same.
+          PASSWORD="${APPLE_APP_SPECIFIC_PASSWORD:-${APPLE_ID_PASS:-}}"
+          if [ -z "${CSC_LINK:-}" ] || [ -z "${APPLE_ID:-}" ] || [ -z "$PASSWORD" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "Apple credentials not provided — skipping notarization"
+            exit 0
+          fi
+          xcrun notarytool submit "release/lowkey-media-server-${{ matrix.target }}.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "release/lowkey-media-server-${{ matrix.target }}.dmg"
+
+      - name: Smoke test (windows)
+        if: runner.os == 'Windows'
+        run: powershell -File media-server/scripts/smoke-bundled.ps1 release/windows-amd64
+
+      - name: Archive
+        shell: bash
+        run: |
+          cd release
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            7z a lowkey-media-server-${{ matrix.target }}.zip ${{ matrix.target }}/*
+          else
+            tar -czf lowkey-media-server-${{ matrix.target }}.tar.gz ${{ matrix.target }}
+          fi
+
+      # Friendly install path for Windows: per-user installer (no UAC), Start
+      # Menu entry, optional start-with-Windows, launches into the setup
+      # wizard at finish. Inno Setup 6 is preinstalled on windows runners.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            /DAppVersion=${{ needs.version-and-tag.outputs.version }} `
+            /DStageDir="$PWD\release\windows-amd64" `
+            /O"release" `
+            media-server\packaging\windows\setup.iss
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: media-server-windows-amd64
-          path: build/media-server-*
+          name: server-${{ matrix.target }}
+          path: |
+            release/lowkey-media-server-${{ matrix.target }}.*
+            release/lowkey-media-server-setup-windows-amd64.exe
 
-  build-go-server-macos:
-    name: Build Go Media Server (macOS)
+  # Container image — the easiest install path for Linux/NAS users. Publishes
+  # to GHCR with both a version tag and :latest.
+  publish-docker:
+    name: Publish Docker Image
     needs: version-and-tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          node-version: '18'
-          cache: 'npm'
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: npm install --frozen-lockfile
-
-      - name: Build web bundle
-        run: npm run build:web
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - name: Build and push image
+        uses: docker/build-push-action@v6
         with:
-          go-version: '1.24'
-          cache-dependency-path: media-server/go.sum
-
-      - name: Build Go binary for macOS (arm64)
-        working-directory: ./media-server
-        env:
-          GOOS: darwin
-          GOARCH: arm64
-          CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-darwin-arm64"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
-
-      - name: Build Go binary for macOS (amd64)
-        working-directory: ./media-server
-        env:
-          GOOS: darwin
-          GOARCH: amd64
-          CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-darwin-amd64"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
-
-      - name: Upload Go binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: media-server-darwin
-          path: build/media-server-*
-
-  build-go-server-linux:
-    name: Build Go Media Server (Linux)
-    needs: version-and-tag
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install --frozen-lockfile
-
-      - name: Build web bundle
-        run: npm run build:web
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache-dependency-path: media-server/go.sum
-
-      - name: Build Go binary for Linux (amd64)
-        working-directory: ./media-server
-        env:
-          GOOS: linux
-          GOARCH: amd64
-          CGO_ENABLED: 0
-        run: |
-          OUTPUT_NAME="media-server-linux-amd64"
-          go build -ldflags="-s -w" -o "../build/${OUTPUT_NAME}" .
-
-      - name: Upload Go binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: media-server-linux
-          path: build/media-server-*
+          context: .
+          file: media-server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/stevecastle/lowkey-media-server:latest
+            ghcr.io/stevecastle/lowkey-media-server:${{ needs.version-and-tag.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   generate-changelog:
     name: Generate AI Changelog
@@ -413,9 +586,7 @@ jobs:
         build-electron,
         build-electron-macos,
         build-electron-linux,
-        build-go-server,
-        build-go-server-macos,
-        build-go-server-linux,
+        build-media-server,
         generate-changelog,
       ]
     runs-on: ubuntu-latest
@@ -435,7 +606,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "media-server-*" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       - name: Create Release

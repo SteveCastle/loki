@@ -12,6 +12,7 @@ import type { Predicate } from '../../query/types';
 import { getNextFilterMode } from '../../../settings';
 import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
+import { displayTagLabel } from '../../tag-display';
 import type { TagConcept } from '../../hooks/useTagSearch';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
@@ -231,6 +232,27 @@ export default function CommandPaletteSearch({
             data: { key, join: j },
           })
         }
+        onUpdatePredicateBlend={(key, patch) =>
+          libraryService.send({
+            type: 'UPDATE_PREDICATE_BLEND',
+            data: { key, patch },
+          })
+        }
+        onAddBlendNode={(key, node) =>
+          libraryService.send({ type: 'ADD_BLEND_NODE', data: { key, node } })
+        }
+        onRemoveBlendNode={(key, index) =>
+          libraryService.send({
+            type: 'REMOVE_BLEND_NODE',
+            data: { key, index },
+          })
+        }
+        onUpdateBlendNode={(key, index, patch) =>
+          libraryService.send({
+            type: 'UPDATE_BLEND_NODE',
+            data: { key, index, patch },
+          })
+        }
         onClearText={clearText}
         onClearAll={() => {
           libraryService.send({ type: 'CLEAR_QUERY' });
@@ -277,7 +299,7 @@ export default function CommandPaletteSearch({
                   className={`suggestion-row${
                     safeIndex === i ? ' highlighted' : ''
                   }`}
-                  title={t.label}
+                  title={displayTagLabel(t.label)}
                   onMouseEnter={() => setHighlightIndex(i)}
                   onClick={() =>
                     commitPredicate({
@@ -288,7 +310,7 @@ export default function CommandPaletteSearch({
                   }
                 >
                   <span className="suggestion-prefix">#</span>
-                  <span className="suggestion-value">{t.label}</span>
+                  <span className="suggestion-value">{displayTagLabel(t.label)}</span>
                   {t.category && t.category !== 'Suggested' && (
                     <span className="suggestion-meta">{t.category}</span>
                   )}

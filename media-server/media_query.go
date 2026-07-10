@@ -3,13 +3,33 @@ package main
 
 import "strings"
 
+// BlendNode is one extra component of a composite similarity predicate: an
+// additional library image ("image" = media path), captured region ("clip" =
+// PNG data URL), or free text ("text") merged into the query vector alongside
+// the predicate's own value. Negative nodes steer the query away.
+type BlendNode struct {
+	Kind     string   `json:"kind"` // "image" | "clip" | "text"
+	Value    string   `json:"value"`
+	Weight   *float64 `json:"weight"` // 0..1 magnitude; nil = 1
+	Negative bool     `json:"negative"`
+}
+
 // Predicate mirrors src/renderer/query/types.ts Predicate.
 type Predicate struct {
-	Type     string   `json:"type"` // tag|category|path|description|hash|similar|visual|clip
-	Value    string   `json:"value"`
-	Exclude  bool     `json:"exclude"`
-	Join     string   `json:"join"`              // "AND" | "OR" | "" (empty falls back to mode)
-	Resolved []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
+	Type    string `json:"type"` // tag|category|path|description|hash|similar|visual|clip
+	Value   string `json:"value"`
+	Exclude bool   `json:"exclude"`
+	Join    string `json:"join"` // "AND" | "OR" | "" (empty falls back to mode)
+	// Blended search (similar/clip only): free text mixed into the image query
+	// and its share of the blend, 0..1 (0 = pure image, 1 = pure text). A nil
+	// TextWeight with Text set defaults to an even 0.5 blend. Legacy single-
+	// text form — new clients send Nodes instead.
+	Text       string   `json:"text"`
+	TextWeight *float64 `json:"textWeight"`
+	// Composite similarity (similar/clip/visual): extra image/clip/text nodes
+	// merged with the base value into ONE query vector (embedvec.Combine).
+	Nodes    []BlendNode `json:"nodes"`
+	Resolved []string    `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
 }
 
 // Columns returned for the library list. media.description is intentionally
@@ -61,7 +81,25 @@ func clauseFor(p Predicate, params *[]any) string {
 			return "(media.hash NOT LIKE ?)"
 		}
 		return "(media.hash LIKE ?)"
-	case "similar", "visual", "clip":
+	case "faces":
+		// faces:ungrouped — media whose detected faces are ALL still
+		// unassigned (the People panel's Ungrouped card). One grouped face
+		// disqualifies the item — it already carries a person tag, and
+		// secondary detections used to drag such media into this view.
+		// Unknown values match nothing rather than everything.
+		if strings.EqualFold(p.Value, "ungrouped") {
+			const ungroupedOnly = "(EXISTS (SELECT 1 FROM face f WHERE f.media_path = media.path AND COALESCE(f.person_id, 0) = 0)" +
+				" AND NOT EXISTS (SELECT 1 FROM face g WHERE g.media_path = media.path AND COALESCE(g.person_id, 0) <> 0))"
+			if p.Exclude {
+				return "(NOT " + ungroupedOnly + ")"
+			}
+			return ungroupedOnly
+		}
+		if p.Exclude {
+			return "(1=1)"
+		}
+		return "(1=0)"
+	case "similar", "visual", "clip", "face":
 		// Resolved is the path set produced by the handler (similarity search).
 		// Empty set: an include matches nothing; an exclude removes nothing.
 		if len(p.Resolved) == 0 {

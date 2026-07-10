@@ -27,11 +27,19 @@ export const TASK_REQUIREMENTS: Record<string, TaskRequirement> = {
   Descriptions: { depId: 'ollama', feature: 'AI descriptions', kind: 'external' },
   Transcripts: { depId: 'faster-whisper', feature: 'Transcription', kind: 'downloadable' },
   Embeddings: { depId: 'siglip2-base-patch16-224', feature: 'Visual similarity search', kind: 'downloadable' },
+  // Face scanning also needs the (tiny) YuNet detector; SFace is the big
+  // download and the default recognizer, so it's the one gated here. A
+  // configured bring-your-own recognizer still requires YuNet, which the
+  // server reports politely in the job log if missing.
+  Faces: { depId: 'sface', feature: 'Face recognition', kind: 'downloadable' },
 };
 
 export function fmtSize(n?: number): string {
   if (!n) return '';
-  const mb = n / 1024 / 1024;
+  const kb = n / 1024;
+  // Small models (face detectors are ~230 KB) must not round down to "0 MB".
+  if (kb < 1024) return `${Math.max(1, Math.round(kb))} KB`;
+  const mb = kb / 1024;
   if (mb < 1024) return `${mb.toFixed(0)} MB`;
   return `${(mb / 1024).toFixed(2)} GB`;
 }

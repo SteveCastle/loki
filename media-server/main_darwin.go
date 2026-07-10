@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pkg/browser"
 	_ "modernc.org/sqlite"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -84,7 +83,7 @@ type Dependencies struct {
 }
 
 // -----------------------------------------------------------------------------
-// Utility – run from the folder that contains the executable so the templates
+// Utility â€“ run from the folder that contains the executable so the templates
 // and static files are found even when launched from elsewhere (during dev
 // this still helps, but isn't strictly required for embedded files).
 // -----------------------------------------------------------------------------
@@ -199,6 +198,15 @@ func initDB() (*sql.DB, error) {
 	currentConfig = cfg
 	dbPath := cfg.DBPath
 	log.Printf("Using database path from config: %s", dbPath)
+
+	// A missing file means we are about to create a brand-new EMPTY library -
+	// legitimate on first run, but catastrophic-looking when dbPath silently
+	// changed (the Electron viewer shares config.json and writes the same
+	// "dbPath" key). Shout about it so a wrong path is obvious in the log
+	// instead of surfacing as "my library is empty and my login is gone".
+	if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+		log.Printf("WARNING: no database exists at %s - creating a NEW EMPTY library (fresh users/auth included). If you expected an existing library, stop the server and fix dbPath in config.json.", dbPath)
+	}
 
 	// Ensure the directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -326,7 +334,7 @@ func homeHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		// GET – render quick jobs launcher
+		// GET â€“ render quick jobs launcher
 		if err := renderer.Templates().ExecuteTemplate(w, "home", nil); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -868,7 +876,7 @@ func mediaHasTagHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Swipe view handlers – TikTok-like mobile experience
+// Swipe view handlers â€“ TikTok-like mobile experience
 // -----------------------------------------------------------------------------
 
 // swipeTemplateData holds data for the swipe template
@@ -991,7 +999,7 @@ func swipeManifestHandler() http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Tasks handler – lists all registered tasks/commands
+// Tasks handler â€“ lists all registered tasks/commands
 // -----------------------------------------------------------------------------
 
 // TaskInfo represents a task for the API response
@@ -1073,7 +1081,7 @@ func workflowHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// Ollama models handler – lists available models via `ollama ls`
+// Ollama models handler â€“ lists available models via `ollama ls`
 // -----------------------------------------------------------------------------
 
 func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
@@ -1116,7 +1124,7 @@ func ollamaModelsHandler(deps *Dependencies) http.HandlerFunc {
 			if strings.Contains(line, " ") {
 				line = strings.Fields(line)[0]
 			}
-			// Some outputs include tags like name:tag – keep as-is so user can choose full ref.
+			// Some outputs include tags like name:tag â€“ keep as-is so user can choose full ref.
 			models = append(models, line)
 		}
 
@@ -1217,6 +1225,7 @@ type configTemplateData struct {
 	ActiveDBPath           string
 	EmbeddingModels        []tasks.EmbedModel
 	TaggerModels           []tasks.TaggerModel
+	FaceModels             []tasks.FaceModel
 	DirectMLInstalled      bool
 	TranscriptionProviders []transcribe.Provider
 	TranscriptionModels    []transcribe.ModelChoice
@@ -1229,7 +1238,6 @@ type updateConfigRequest struct {
 	OllamaBaseURL        string `json:"ollamaBaseUrl"`
 	OllamaModel          string `json:"ollamaModel"`
 	DescribePrompt       string `json:"describePrompt"`
-	AutotagPrompt        string `json:"autotagPrompt"`
 	InferenceProvider    string `json:"inferenceProvider"`
 	RunPodEndpoint       string `json:"runpodEndpoint"`
 	RunPodAPIKey         string `json:"runpodApiKey"`
@@ -1245,6 +1253,7 @@ type updateConfigRequest struct {
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
+	LocalComputeConcurrency int `json:"localComputeConcurrency"`
 	OnnxModelPath             string                  `json:"onnxModelPath"`
 	OnnxLabelsPath            string                  `json:"onnxLabelsPath"`
 	OnnxConfigPath            string                  `json:"onnxConfigPath"`
@@ -1262,7 +1271,16 @@ type updateConfigRequest struct {
 	AutotagWorkers            int                     `json:"autotagWorkers"`
 	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
 	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
-	TranscriptionProvider     string                  `json:"transcriptionProvider"`
+	FaceModel                 string                  `json:"faceModel"`
+	FaceRouting               string                  `json:"faceRouting"`
+	FaceProvider              string                  `json:"faceProvider"`
+	FacePerformance           string                  `json:"facePerformance"`
+	FaceWorkers               int                     `json:"faceWorkers"`
+	FaceThreadsPerWorker      int                     `json:"faceThreadsPerWorker"`
+	// nil = field absent from the POST (leave stored entries alone);
+	// an explicit empty array clears the list.
+	ByoFaceModels         []appconfig.ByoFaceModel `json:"byoFaceModels"`
+	TranscriptionProvider string                   `json:"transcriptionProvider"`
 	TranscriptionModel        string                  `json:"transcriptionModel"`
 	TranscriptionLanguage     *string                 `json:"transcriptionLanguage"`
 	TranscriptionVADFilter    *bool                   `json:"transcriptionVadFilter"`
@@ -1416,12 +1434,16 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				ActiveDBPath:           cfg.DBPath,
 				EmbeddingModels:        tasks.EmbedModelList(),
 				TaggerModels:           tasks.TaggerModelList(),
+				FaceModels:             tasks.FaceModelList(),
 				DirectMLInstalled:      tasks.DirectMLRuntimeInstalled(),
 				TranscriptionProviders: transcribe.Providers(),
 			}
 			if p, err := transcribe.Active(); err == nil {
 				data.TranscriptionModels = p.Models()
 			}
+			// Never embed raw S3 credentials in the page; the POST handler
+			// treats the placeholder as "keep the stored value".
+			data.Config.Roots = redactRoots(cfg.Roots)
 			if err := renderer.Templates().ExecuteTemplate(w, "config", data); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 			}
@@ -1440,6 +1462,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			oldCfg := currentConfig
 			oldDBPath := currentConfig.DBPath
 			oldEmbeddingModel := currentConfig.EmbeddingModel
+			oldFaceModel := currentConfig.FaceModel
 			newCfg := currentConfig
 			newCfg.DBPath = req.DBPath
 			// Port: positive in-range values overwrite; 0 = field absent from a
@@ -1459,9 +1482,6 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.DescribePrompt != "" {
 				newCfg.DescribePrompt = req.DescribePrompt
 			}
-			if req.AutotagPrompt != "" {
-				newCfg.AutotagPrompt = req.AutotagPrompt
-			}
 			// Inference provider: assign unconditionally so changing tabs
 			// (including selecting Off) takes immediate effect.
 			if v := strings.ToLower(strings.TrimSpace(req.InferenceProvider)); v != "" {
@@ -1475,7 +1495,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.TrimSpace(req.RunPodEndpoint); v != "" {
 				newCfg.RunPodEndpoint = v
 			}
-			if v := strings.TrimSpace(req.RunPodAPIKey); v != "" {
+			if v := keepStoredIfRedacted(req.RunPodAPIKey, newCfg.RunPodAPIKey); v != "" {
 				newCfg.RunPodAPIKey = v
 			}
 			if v := strings.TrimSpace(req.LMStudioBaseURL); v != "" {
@@ -1484,7 +1504,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.TrimSpace(req.LMStudioModel); v != "" {
 				newCfg.LMStudioModel = v
 			}
-			if v := strings.TrimSpace(req.LMStudioAPIKey); v != "" {
+			if v := keepStoredIfRedacted(req.LMStudioAPIKey, newCfg.LMStudioAPIKey); v != "" {
 				newCfg.LMStudioAPIKey = v
 			}
 			if v := strings.TrimSpace(req.LlamaCppBaseURL); v != "" {
@@ -1493,7 +1513,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := strings.TrimSpace(req.LlamaCppModel); v != "" {
 				newCfg.LlamaCppModel = v
 			}
-			if v := strings.TrimSpace(req.LlamaCppAPIKey); v != "" {
+			if v := keepStoredIfRedacted(req.LlamaCppAPIKey, newCfg.LlamaCppAPIKey); v != "" {
 				newCfg.LlamaCppAPIKey = v
 			}
 			if req.InferenceConcurrency.Ollama > 0 {
@@ -1507,6 +1527,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if req.InferenceConcurrency.LlamaCpp > 0 {
 				newCfg.InferenceConcurrency.LlamaCpp = req.InferenceConcurrency.LlamaCpp
+			}
+			if req.LocalComputeConcurrency > 0 {
+				newCfg.LocalComputeConcurrency = req.LocalComputeConcurrency
 			}
 			newCfg.OnnxTagger.ModelPath = strings.TrimSpace(req.OnnxModelPath)
 			newCfg.OnnxTagger.LabelsPath = strings.TrimSpace(req.OnnxLabelsPath)
@@ -1552,6 +1575,29 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				// non-zero so a partial POST doesn't clobber it; negative = disabled.
 				newCfg.OnnxFileTimeoutSeconds = req.OnnxFileTimeoutSeconds
 			}
+			if v := strings.TrimSpace(req.FaceModel); v != "" {
+				newCfg.FaceModel = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.FaceRouting)); v == "auto" || v == "single" {
+				newCfg.FaceRouting = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.FaceProvider)); v != "" {
+				newCfg.FaceProvider = v
+			}
+			if v := strings.ToLower(strings.TrimSpace(req.FacePerformance)); v != "" {
+				newCfg.FacePerformance = v
+			}
+			if req.FaceWorkers > 0 {
+				newCfg.FaceWorkers = req.FaceWorkers
+			}
+			if req.FaceThreadsPerWorker > 0 {
+				newCfg.FaceThreadsPerWorker = req.FaceThreadsPerWorker
+			}
+			// nil = field omitted (partial POST) â†’ keep; an explicit empty
+			// array is a deliberate "remove all BYO entries".
+			if req.ByoFaceModels != nil {
+				newCfg.ByoFaceModels = req.ByoFaceModels
+			}
 			// Transcription: provider/model use the protective non-empty
 			// pattern; language and VAD are pointers so an explicit empty
 			// language ("auto-detect") or unchecked VAD box persists, while
@@ -1571,11 +1617,14 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
 			}
-			if strings.TrimSpace(req.DiscordToken) != "" {
-				newCfg.DiscordToken = strings.TrimSpace(req.DiscordToken)
+			if v := keepStoredIfRedacted(req.DiscordToken, newCfg.DiscordToken); v != "" {
+				newCfg.DiscordToken = v
 			}
 			if req.Roots != nil {
-				newCfg.Roots = req.Roots
+				// Recover S3 credentials for roots posted back with the
+				// "<redacted>" placeholder (both the config page and
+				// GET /api/config redact them on read).
+				newCfg.Roots = mergeIncomingRoots(req.Roots, currentConfig.Roots)
 			}
 			cfgPath, err := appconfig.Save(newCfg)
 			if err != nil {
@@ -1619,15 +1668,46 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 				}(deps.DB)
 			}
 
-			// Rebuild storage backends from new config
+			// Same for the face index when the active recognizer changed. Face
+			// vectors are model-keyed too, so this just reloads stored vectors.
+			if newCfg.FaceModel != oldFaceModel {
+				go func(db *sql.DB) {
+					model, n, err := tasks.RebuildActiveFaceIndex(db, nil)
+					if err != nil {
+						log.Printf("face index rebuild after model switch failed (model %s): %v", model, err)
+						return
+					}
+					log.Printf("face index rebuilt after model switch: %d faces (model %s)", n, model)
+				}(deps.DB)
+			}
+
+			// Rebuild storage backends from new config. Init failures are
+			// surfaced to the caller, not just logged — a default root that
+			// fails init silently re-routes uploads to the first backend.
 			newReg, regErrs := storage.BuildRegistry(newCfg.Roots)
+			storageWarnings := []string{}
 			for _, regErr := range regErrs {
 				log.Printf("Warning: storage backend init error: %v", regErr)
+				storageWarnings = append(storageWarnings, regErr.Error())
+			}
+			if backends := newReg.AllBackends(); newReg.DefaultIdx() == -1 && len(backends) > 0 {
+				for _, root := range newCfg.Roots {
+					if root.Default {
+						storageWarnings = append(storageWarnings, fmt.Sprintf(
+							"default storage root %q failed to initialize; uploads fall back to %q",
+							root.Label, backends[0].Root().Name))
+						break
+					}
+				}
+			}
+			if appconfig.EnvRootsActive() {
+				storageWarnings = append(storageWarnings,
+					"storage roots are overridden by environment variables (LOWKEY_ROOTS / LOWKEY_ROOT_*); saved roots take effect only after those are removed")
 			}
 			deps.Storage.ReplaceWithDefault(newReg.AllBackends(), newReg.DefaultIdx())
 
 			// Re-apply per-bucket concurrency caps so UI changes take effect
-			// immediately. Cheap idempotent operation — only future ClaimJob
+			// immediately. Cheap idempotent operation â€” only future ClaimJob
 			// calls consult the new value; in-flight jobs are untouched.
 			tasks.ApplyHostLimits(deps.Queue, newCfg)
 
@@ -1636,12 +1716,13 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"status":         "ok",
-				"configPath":     cfgPath,
-				"activeDBPath":   currentConfig.DBPath,
-				"changed":        changed,
-				"dbChanged":      dbChanged,
-				"logoutRequired": dbChanged,
+				"status":          "ok",
+				"configPath":      cfgPath,
+				"activeDBPath":    currentConfig.DBPath,
+				"changed":         changed,
+				"dbChanged":       dbChanged,
+				"logoutRequired":  dbChanged,
+				"storageWarnings": storageWarnings,
 			})
 		default:
 			http.Error(w, "Use GET or POST", http.StatusMethodNotAllowed)
@@ -1994,7 +2075,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 							w.WriteHeader(http.StatusForbidden)
 							w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
 						} else {
-							http.Redirect(w, r, "/login?setup=true", http.StatusFound)
+							http.Redirect(w, r, loginRedirectTarget("/login?setup=true"), http.StatusFound)
 						}
 						return
 					}
@@ -2010,7 +2091,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			if r.Header.Get("Accept") == "application/json" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
-				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
 			}
 			return
 		}
@@ -2021,7 +2102,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			if r.Header.Get("Accept") == "application/json" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			} else {
-				http.Redirect(w, r, "/login?redirect="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+				http.Redirect(w, r, loginRedirectTarget("/login?redirect="+url.QueryEscape(r.URL.RequestURI())), http.StatusFound)
 			}
 			return
 		}
@@ -2035,7 +2116,7 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 					w.WriteHeader(http.StatusForbidden)
 					w.Write([]byte(`{"error":"setup_required","message":"Please create a new user account"}`))
 				} else {
-					http.Redirect(w, r, "/login?setup=true", http.StatusFound)
+					http.Redirect(w, r, loginRedirectTarget("/login?setup=true"), http.StatusFound)
 				}
 				return
 			}
@@ -2051,6 +2132,12 @@ func loginPageHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "Use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		// Until first-run setup finishes there is no account to log into â€”
+		// the wizard owns account creation.
+		if !appconfig.Get().SetupComplete {
+			http.Redirect(w, r, "/setup", http.StatusFound)
 			return
 		}
 		if err := renderer.Templates().ExecuteTemplate(w, "login", nil); err != nil {
@@ -2231,6 +2318,15 @@ func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 			json.NewEncoder(w).Encode(map[string]interface{}{"users": users})
 
 		case http.MethodPost:
+			// First-account creation is open (the setup wizard and Electron
+			// onboarding run before any credential exists); once a real user
+			// exists, only an authenticated caller may create more.
+			if setupRequired, _ := deps.Auth.IsSetupRequired(); !setupRequired {
+				if !setupAuthed(deps, r) {
+					http.Error(w, `{"error":"unauthorized"}`, http.StatusForbidden)
+					return
+				}
+			}
 			var req struct {
 				Username string `json:"username"`
 				Password string `json:"password"`
@@ -2269,35 +2365,37 @@ func userManagementHandler(deps *Dependencies) http.HandlerFunc {
 }
 
 // -----------------------------------------------------------------------------
-// main – start server with signal handling (no systray on macOS headless mode)
+// main â€“ start server, then hand control to the menu-bar UI (cgo builds)
+// or a headless signal wait (see tray_darwin.go / tray_darwin_nocgo.go).
 // -----------------------------------------------------------------------------
 
 func main() {
-	// ––– initialize database –––
+	// â€“â€“â€“ initialize database â€“â€“â€“
 	db, err := initDB()
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
 	defer db.Close()
 
-	// ––– job queue and runners –––
+	// â€“â€“â€“ job queue and runners â€“â€“â€“
 	log.Println("Initializing job queue with database persistence...")
 	// Wire the host resolver before NewQueueWithDB so the DB-restore path
 	// uses the full task-aware policy when assigning buckets to persisted
 	// jobs.
 	jobqueue.SetHostResolver(tasks.ResolveHost)
+	jobqueue.SetResourceResolver(tasks.ResolveResources)
 	queue := jobqueue.NewQueueWithDB(db)
 	log.Printf("Job queue initialized. Current jobs: %d", len(queue.GetJobs()))
 	tasks.ApplyHostLimits(queue, currentConfig)
 	currentRunners = runners.New(queue)
 
-	// ––– auth service –––
+	// â€“â€“â€“ auth service â€“â€“â€“
 	authService := auth.NewAuthService(db, currentConfig.JWTSecret)
 	if err := authService.CreateDefaultUser(); err != nil {
 		log.Printf("Failed to create default user: %v", err)
 	}
 
-	// ––– create dependencies struct –––
+	// â€“â€“â€“ create dependencies struct â€“â€“â€“
 	storageReg, storageErrs := storage.BuildRegistry(currentConfig.Roots)
 	for _, err := range storageErrs {
 		log.Printf("Warning: storage backend init error: %v", err)
@@ -2310,26 +2408,36 @@ func main() {
 		Storage: storageReg,
 	}
 
-	// ––– embedding vector index (best-effort, non-fatal) –––
-	log.Printf("Building embedding search index…")
+	// Background idle scheduler (mode/config-gated; dormant when off). Reads
+	// deps.Queue on every tick, so it follows database switches transparently.
+	startAutoScheduler(deps)
+
+	// â€“â€“â€“ embedding vector index (best-effort, non-fatal) â€“â€“â€“
+	log.Printf("Building embedding search indexâ€¦")
 	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
 		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
 	} else {
 		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
 	}
+	buildFaceIndexAtStartup(db)
 
 	// Initialize renderer auth middleware
 	renderer.AuthMiddleware = func(next http.Handler, role renderer.AuthRole) http.Handler {
 		return authMiddleware(deps, next, role)
 	}
 
-	// ––– routes –––
+	// â€“â€“â€“ routes â€“â€“â€“
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", renderer.ApplyMiddlewares(homeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs", renderer.ApplyMiddlewares(jobsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs/list", renderer.ApplyMiddlewares(jobsListHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}", renderer.ApplyMiddlewares(detailHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/cancel", renderer.ApplyMiddlewares(cancelHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}/pause", renderer.ApplyMiddlewares(pauseJobHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/job/{id}/resume", renderer.ApplyMiddlewares(resumeJobHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scheduler", renderer.ApplyMiddlewares(schedulerStatusHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scheduler/mode", renderer.ApplyMiddlewares(schedulerModeHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/scheduler/run", renderer.ApplyMiddlewares(schedulerRunHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/copy", renderer.ApplyMiddlewares(copyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps), renderer.RoleAdmin))
@@ -2354,7 +2462,9 @@ func main() {
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
 	RegisterDepsRoutes(mux)
+	registerSetupRoutes(mux, deps)
 	RegisterVizRoutes(mux, deps)
+	RegisterFacesRoutes(mux, deps)
 	mux.HandleFunc("/open", renderer.ApplyMiddlewares(openPathHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/editor", renderer.ApplyMiddlewares(editorHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/workflow", renderer.ApplyMiddlewares(workflowHandler(deps), renderer.RoleAdmin))
@@ -2365,7 +2475,7 @@ func main() {
 	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
-	// Library stats API (stats_api.go) — powers the home page coverage cards
+	// Library stats API (stats_api.go) â€” powers the home page coverage cards
 	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RoleAdmin))
 
 	// Embeddings index + library data API (index_api.go / library_api.go)
@@ -2375,6 +2485,7 @@ func main() {
 	mux.HandleFunc("/api/index/missing", renderer.ApplyMiddlewares(indexMissingHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/embeddings", renderer.ApplyMiddlewares(embeddingsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/embeddings/prune", renderer.ApplyMiddlewares(embeddingsPruneHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/embeddings/all", renderer.ApplyMiddlewares(embeddingsWipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/transcript", renderer.ApplyMiddlewares(mediaTranscriptHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/rating", renderer.ApplyMiddlewares(mediaRatingHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/list", renderer.ApplyMiddlewares(tagsListHandler(deps), renderer.RoleAdmin))
@@ -2516,8 +2627,10 @@ func main() {
 	}()
 
 	srv = &http.Server{
-		Addr:    appconfig.Get().ListenAddr(),
-		Handler: mux,
+		Addr: appconfig.Get().ListenAddr(),
+		// Activity tracking wraps everything: user-intent requests feed the
+		// auto-scheduler's "app is in use" signal.
+		Handler: withActivityTracking(mux),
 	}
 
 	// Set up signal handling for graceful shutdown
@@ -2532,13 +2645,9 @@ func main() {
 		}
 	}()
 
-	// Try to open browser on macOS
-	_ = browser.OpenURL(appconfig.Get().LocalBaseURL() + "/")
-
-	// Wait for shutdown signal
-	sig := <-sigChan
-	log.Printf("Received signal %v, shutting down...", sig)
-	onExit()
+	// Menu-bar UI when built with cgo (the released .app); headless
+	// signal-wait otherwise. Opens the browser and blocks until shutdown.
+	runDarwinUI(sigChan)
 }
 
 // onExit is called when the application is shutting down.

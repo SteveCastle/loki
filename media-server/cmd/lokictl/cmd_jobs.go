@@ -26,8 +26,12 @@ type jobRow struct {
 	OutputFiles   []string `json:"output_files"`
 	SourceFiles   []string `json:"source_files"`
 	WorkflowID    string   `json:"workflow_id"`
+	ProgressDone  int      `json:"progress_done"`
+	ProgressTotal int      `json:"progress_total"`
 }
 
+// isTerminalState: paused is NOT terminal — a paused job holds its progress
+// and can be resumed, so `job wait` keeps waiting through a pause.
 func isTerminalState(s string) bool {
 	return s == "completed" || s == "cancelled" || s == "error"
 }
@@ -135,6 +139,10 @@ func init() {
 		run:     cmdJobLogs})
 	register(command{group: "job", name: "cancel", args: "<id>",
 		summary: "Cancel a job (POST /job/{id}/cancel)", run: jobAction("cancel")})
+	register(command{group: "job", name: "pause", args: "<id>",
+		summary: "Pause a job at the next item boundary; completed items are kept (POST /job/{id}/pause)", run: jobAction("pause")})
+	register(command{group: "job", name: "resume", args: "<id>",
+		summary: "Resume a paused job (POST /job/{id}/resume)", run: jobAction("resume")})
 	register(command{group: "job", name: "copy", args: "<id>",
 		summary: "Clone a job into a new pending job (POST /job/{id}/copy)", run: cmdJobCopy})
 	register(command{group: "job", name: "remove", args: "<id>",
@@ -276,7 +284,7 @@ func followJobStdout(ctx context.Context, a *App, id string) {
 func cmdJobList(a *App, args []string) int {
 	fs := flag.NewFlagSet("job list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	state := fs.String("state", "", "filter by state (pending|inProgress|completed|cancelled|error)")
+	state := fs.String("state", "", "filter by state (pending|in_progress|paused|completed|cancelled|error)")
 	if err := fs.Parse(args); err != nil {
 		return a.Usage(fs, err.Error())
 	}

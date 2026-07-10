@@ -31,18 +31,24 @@ func indexStatusHandler(deps *Dependencies) http.HandlerFunc {
 			Model string `json:"model"`
 			Count int    `json:"count"`
 			Dim   int    `json:"dim"`
+			Bytes int64  `json:"bytes"` // stored vector blob bytes for this model
 		}
 		stats := []modelStats{}
+		var totalCount int
+		var totalBytes int64
 		rows, err := deps.DB.Query(
-			`SELECT model, COUNT(*), MAX(dim) FROM media_embedding GROUP BY model ORDER BY model`)
+			`SELECT model, COUNT(*), MAX(dim), COALESCE(SUM(LENGTH(vector)), 0)
+			 FROM media_embedding GROUP BY model ORDER BY model`)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		for rows.Next() {
 			var s modelStats
-			if err := rows.Scan(&s.Model, &s.Count, &s.Dim); err == nil {
+			if err := rows.Scan(&s.Model, &s.Count, &s.Dim, &s.Bytes); err == nil {
 				stats = append(stats, s)
+				totalCount += s.Count
+				totalBytes += s.Bytes
 			}
 		}
 		rows.Close()
@@ -72,7 +78,36 @@ func indexStatusHandler(deps *Dependencies) http.HandlerFunc {
 			"missing_active_model": missing,
 			"orphaned":             orphaned,
 			"embeddings":           stats,
+			"total_count":          totalCount,
+			"total_bytes":          totalBytes,
 		})
+	}
+}
+
+// embeddingsWipeHandler is the embeddings twin of facesWipeHandler:
+// DELETE /api/embeddings/all wipes every stored embedding row (ALL models)
+// and clears the in-memory search index. Requires ?confirm=true — not
+// undoable, though re-running the embed task rebuilds everything.
+func embeddingsWipeHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			httpError(w, "use DELETE", http.StatusMethodNotAllowed)
+			return
+		}
+		if r.URL.Query().Get("confirm") != "true" {
+			httpError(w, "add ?confirm=true to delete all stored embeddings", http.StatusBadRequest)
+			return
+		}
+		res, err := deps.DB.Exec(`DELETE FROM media_embedding`)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		deleted, _ := res.RowsAffected()
+		// Drop the live search index too — similarity search falls back to a
+		// brute-force scan over the (now empty) table until the next rebuild.
+		tasks.SetVectorIndexForModel(nil, "")
+		writeJSON(w, map[string]any{"deleted": deleted})
 	}
 }
 

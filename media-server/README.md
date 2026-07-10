@@ -467,7 +467,6 @@ Most settings can also be set via environment variables (see the Docker section 
   "ollamaBaseUrl": "http://localhost:11434",
   "ollamaModel": "llama3.2-vision",
   "describePrompt": "Please describe this image...",
-  "autotagPrompt": "Please analyze this image and select tags...",
 
   "onnxTagger": {
     "modelPath": "C:\\path\\to\\model.onnx",

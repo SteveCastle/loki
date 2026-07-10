@@ -1,5 +1,5 @@
-.ContextPalette {
-  /* Local accent tokens — consolidates the previously-scattered green literals
+﻿.ContextPalette {
+  /* Local accent tokens â€” consolidates the previously-scattered green literals
      and adds a caution accent used when the Generate mode is "All" (replace). */
   --ctx-accent: #00c896;
   --ctx-accent-soft: rgba(0, 200, 150, 0.15);
@@ -26,7 +26,7 @@
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-/* ── Header ── */
+/* â”€â”€ Header â”€â”€ */
 
 .context-palette-header {
   display: flex;
@@ -87,7 +87,7 @@
   transform: translateY(0.5px);
 }
 
-/* ── States ── */
+/* â”€â”€ States â”€â”€ */
 
 .context-palette-login {
   padding: 4px 0;
@@ -101,7 +101,7 @@
   font-size: 12px;
 }
 
-/* ── Generate block (mode toggle + type chips) ── */
+/* â”€â”€ Generate block (mode toggle + type chips) â”€â”€ */
 
 .generate-block {
   display: flex;
@@ -206,7 +206,94 @@
   background: var(--ctx-caution-strong);
 }
 
-/* ── Dependency requirements under the Generate chips ── */
+.type-chip.selected {
+  background: var(--ctx-accent-soft);
+  border-color: var(--ctx-accent);
+  color: white;
+}
+
+.generate-block.caution .type-chip.selected {
+  background: var(--ctx-caution-soft);
+  border-color: var(--ctx-caution);
+  color: #fff3e2;
+}
+
+.chip-check {
+  margin-right: 5px;
+  font-size: 10px;
+}
+
+/* ── Run row under the chips ── */
+
+.generate-run-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  /* Fixed-height row: neither the button nor the hint may ever wrap, so
+     toggling chips can't shift the layout below. */
+  min-height: 28px;
+}
+
+.generate-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  background: var(--ctx-accent);
+  border: none;
+  border-radius: 5px;
+  color: #0b0b0b;
+  font-weight: 600;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 14px;
+  cursor: pointer;
+  transition: filter 0.1s, background-color 0.1s;
+}
+
+/* Op count inside the Run button — a compact badge instead of prose, so the
+   label width stays (nearly) constant no matter how many chips are on. */
+.generate-run-count {
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.generate-run-btn:disabled .generate-run-count {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.generate-run-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.generate-run-btn:disabled {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.35);
+  cursor: not-allowed;
+}
+
+.generate-block.caution .generate-run-btn:not(:disabled) {
+  background: var(--ctx-caution);
+}
+
+.generate-run-hint {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* â”€â”€ Dependency requirements under the Generate chips â”€â”€ */
 
 .type-chip.needs-dep {
   color: rgba(255, 255, 255, 0.45);
@@ -283,7 +370,7 @@
   transition: width 0.3s;
 }
 
-/* ── Workflow picker ── */
+/* â”€â”€ Workflow picker â”€â”€ */
 
 .context-palette-workflows {
   border-top: 1px solid var(--ctx-hairline);
@@ -378,7 +465,7 @@
   text-align: center;
 }
 
-/* ── Jobs footer ── */
+/* â”€â”€ Jobs footer â”€â”€ */
 
 .context-palette-footer {
   border-top: 1px solid var(--ctx-hairline);
@@ -463,4 +550,56 @@
 
 .job-cancel:hover {
   color: rgb(211, 3, 72);
+}
+
+/* â”€â”€ Person actions (People-category tag targets) â”€â”€ */
+
+.context-palette-person {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ctx-hairline);
+}
+
+.person-rename-row {
+  display: flex;
+  gap: 6px;
+}
+
+.person-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--ctx-hairline);
+  border-radius: 5px;
+  color: inherit;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.person-rename-input:focus {
+  outline: none;
+  border-color: var(--ctx-accent);
+}
+
+.person-rename-btn {
+  background: var(--ctx-accent-soft);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ctx-accent);
+  font-size: 12px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.person-rename-btn:hover:not(:disabled) {
+  background: var(--ctx-accent-strong);
+  border-color: var(--ctx-accent);
+  color: white;
+}
+
+.person-rename-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

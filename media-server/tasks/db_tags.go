@@ -21,59 +21,31 @@ func EnsureCategoryExists(db *sql.DB, label string, weight int) error {
 	return media.EnsureCategoryExists(db, label, weight)
 }
 
-// getAllAvailableTags fetches all unique tags and their categories from the database
-func getAllAvailableTags(db *sql.DB) ([]TagInfo, error) {
-	query := `
-		SELECT DISTINCT tag_label, category_label 
-		FROM media_tag_by_category 
-		ORDER BY category_label, tag_label`
-	rows, err := db.Query(query)
+// hasSuggestedTags reports whether a file already carries any ONNX-suggested
+// tags — the skip-existing marker for the autotag op (a re-run without
+// --overwrite skips files the tagger already processed).
+func hasSuggestedTags(db *sql.DB, filePath string) (bool, error) {
+	var one int
+	err := db.QueryRow(`SELECT 1 FROM media_tag_by_category WHERE media_path = ? AND category_label = ? LIMIT 1`,
+		filePath, suggestedCategory).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to query available tags: %w", err)
+		return false, err
 	}
-	defer rows.Close()
-	var tags []TagInfo
-	for rows.Next() {
-		var tag TagInfo
-		if err := rows.Scan(&tag.Label, &tag.Category); err != nil {
-			return nil, fmt.Errorf("failed to scan tag row: %w", err)
-		}
-		tags = append(tags, tag)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("error iterating over tag rows: %w", err)
-	}
-	return tags, nil
+	return true, nil
 }
 
-// getExistingTagsForFile checks if a file already has tags
-func getExistingTagsForFile(db *sql.DB, filePath string) ([]TagInfo, error) {
-	rows, err := db.Query(`
-		SELECT tag_label, category_label 
-		FROM media_tag_by_category 
-		WHERE media_path = ?`, filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var tags []TagInfo
-	for rows.Next() {
-		var tag TagInfo
-		if err := rows.Scan(&tag.Label, &tag.Category); err != nil {
-			return nil, err
-		}
-		tags = append(tags, tag)
-	}
-	return tags, nil
-}
-
-// removeExistingTagsForFile removes all existing tags for a file
-func removeExistingTagsForFile(db *sql.DB, filePath string) error {
-	_, err := db.Exec(`DELETE FROM media_tag_by_category WHERE media_path = ?`, filePath)
+// removeSuggestedTagsForFile removes only the ONNX-suggested tags for a file,
+// leaving user-applied tags in other categories intact. Used by the autotag
+// op's --overwrite path (e.g. re-tagging under a different tagger model).
+func removeSuggestedTagsForFile(db *sql.DB, filePath string) error {
+	_, err := db.Exec(`DELETE FROM media_tag_by_category WHERE media_path = ? AND category_label = ?`,
+		filePath, suggestedCategory)
 	if err != nil {
 		return err
 	}
-	// Stripping a path's last tag removes it from the swipe pool.
 	media.InvalidateRandomSampleCache()
 	return nil
 }

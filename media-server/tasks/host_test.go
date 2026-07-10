@@ -94,6 +94,163 @@ func TestResolveHostUnknownCommand(t *testing.T) {
 	}
 }
 
+// TestResolveResources pins the additional buckets each task occupies: every
+// local model workload must hold the shared local-compute slot, composite
+// jobs must hold the union of their ops' buckets, and remote inference must
+// NOT consume local compute.
+func TestResolveResources(t *testing.T) {
+	has := func(rs []string, want string) bool {
+		for _, r := range rs {
+			if r == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	setProvider(t, InferenceProviderOllama)
+
+	cases := []struct {
+		name      string
+		command   string
+		arguments []string
+		input     string
+		want      []string
+		absent    []string
+	}{
+		{name: "embed", command: "embed",
+			want: []string{HostBucketEmbed, HostBucketLocalCompute}},
+		{name: "autotag", command: "autotag",
+			want: []string{HostBucketAutotag, HostBucketLocalCompute}},
+		{name: "faces", command: "faces",
+			want: []string{HostBucketFaces, HostBucketLocalCompute}},
+		{name: "transcribe", command: "transcribe",
+			want: []string{HostBucketLocalCompute}},
+		{name: "describe local LLM", command: "describe",
+			want: []string{HostBucketOllama, HostBucketLocalCompute}},
+		{name: "process cheap ops", command: "process",
+			arguments: []string{"--ops=hash,dimensions"},
+			absent:    []string{HostBucketLocalCompute, HostBucketEmbed}},
+		{name: "process heavy union", command: "process",
+			arguments: []string{"--ops=describe,embed,faces"},
+			want: []string{HostBucketOllama, HostBucketLocalCompute, HostBucketEmbed, HostBucketFaces}},
+		{name: "process ops in input", command: "process",
+			input: "--ops=embed --query64=eA==",
+			want:  []string{HostBucketEmbed, HostBucketLocalCompute}},
+		{name: "legacy metadata type", command: "metadata",
+			arguments: []string{"--type", "transcript"},
+			want:      []string{HostBucketLocalCompute},
+			absent:    []string{HostBucketEmbed}},
+		{name: "cheap task", command: "hash",
+			absent: []string{HostBucketLocalCompute}},
+		{name: "unknown command", command: "wait",
+			absent: []string{HostBucketLocalCompute}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ResolveResources(c.command, c.arguments, c.input)
+			for _, w := range c.want {
+				if !has(got, w) {
+					t.Errorf("ResolveResources(%s) = %v; missing %q", c.command, got, w)
+				}
+			}
+			for _, a := range c.absent {
+				if has(got, a) {
+					t.Errorf("ResolveResources(%s) = %v; must not contain %q", c.command, got, a)
+				}
+			}
+		})
+	}
+
+	// Remote inference (RunPod) must not hold the local-compute slot.
+	setProvider(t, InferenceProviderRunPod)
+	got := ResolveResources("describe", nil, "")
+	if has(got, HostBucketLocalCompute) {
+		t.Errorf("remote describe resources = %v; must not hold local-compute", got)
+	}
+	if !has(got, HostBucketRunPod) {
+		t.Errorf("remote describe resources = %v; missing runpod bucket", got)
+	}
+}
+
+// TestLocalComputeSerializesHeavyJobs is the scenario from the field: an
+// embed job, an autotag job, and a faces job live in three different buckets
+// and used to run simultaneously, stacking three full-machine worker pools
+// onto one GPU. With the shared local-compute slot (limit 1) only one may
+// run at a time.
+func TestLocalComputeSerializesHeavyJobs(t *testing.T) {
+	jobqueue.SetHostResolver(ResolveHost)
+	jobqueue.SetResourceResolver(ResolveResources)
+	t.Cleanup(func() {
+		jobqueue.SetHostResolver(nil)
+		jobqueue.SetResourceResolver(nil)
+	})
+	setProvider(t, InferenceProviderOllama)
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	q := jobqueue.NewQueueWithDB(db)
+
+	cfg := appconfig.Get()
+	cfg.LocalComputeConcurrency = 1
+	ApplyHostLimits(q, cfg)
+
+	for _, cmd := range []string{"embed", "autotag", "faces"} {
+		if _, err := q.AddJob("", cmd, nil, "--query64=eA==", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, err := q.ClaimJob()
+	if err != nil || first == nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if second, _ := q.ClaimJob(); second != nil {
+		t.Fatalf("second heavy job %s claimed while local-compute was held by %s", second.Command, first.Command)
+	}
+
+	// Releasing the first frees the machine for the next one.
+	if err := q.CompleteJob(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := q.ClaimJob()
+	if err != nil || second == nil {
+		t.Fatalf("claim after release: %v", err)
+	}
+
+	// A combined process job holding embed+faces must exclude BOTH standalone
+	// jobs even at local-compute limit 2 (it occupies their buckets too).
+	if err := q.CompleteJob(second.ID); err != nil {
+		t.Fatal(err)
+	}
+	if third, _ := q.ClaimJob(); third != nil {
+		if err := q.CompleteJob(third.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg.LocalComputeConcurrency = 2
+	ApplyHostLimits(q, cfg)
+	procID, _ := q.AddJob("", "process", []string{"--ops=embed,faces"}, "--query64=eA==", nil)
+	embedID, _ := q.AddJob("", "embed", nil, "--query64=eA==", nil)
+	proc, err := q.ClaimJob()
+	if err != nil || proc == nil || proc.ID != procID {
+		t.Fatalf("claim process job: %v (%v)", err, proc)
+	}
+	if blocked, _ := q.ClaimJob(); blocked != nil {
+		t.Fatalf("standalone embed %s claimed while a process job holds the embed bucket", blocked.ID)
+	}
+	if err := q.CompleteJob(procID); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := q.ClaimJob()
+	if err != nil || claimed == nil || claimed.ID != embedID {
+		t.Fatalf("embed claim after process release: %v (%v)", err, claimed)
+	}
+}
+
 // TestApplyHostLimitsConcurrentClaims is the integration check the design
 // hangs on: configure RunPod with limit=2, submit two RunPod-bound jobs,
 // verify both claim simultaneously. Then drop the limit to 1 and confirm

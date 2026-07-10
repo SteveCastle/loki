@@ -12,6 +12,9 @@ export default function RegionSelect() {
   const authToken = useSelector(libraryService, (s) => s.context.authToken);
   const [altHeld, setAltHeld] = useState(false);
   const [box, setBox] = useState<Rect | null>(null);
+  // Shift during the drag switches the capture from whole-image similarity
+  // ('clip') to face-identity search ('face'); the box recolors as a cue.
+  const [faceMode, setFaceMode] = useState(false);
   const startRef = useRef<{ x: number; y: number } | null>(null);
 
   // Track Alt key globally.
@@ -70,6 +73,7 @@ export default function RegionSelect() {
       return;
     }
     if (!startRef.current) return;
+    setFaceMode(e.shiftKey);
     setBox(rectFromDrag(startRef.current, { x: e.clientX, y: e.clientY }));
   }, []);
 
@@ -78,6 +82,7 @@ export default function RegionSelect() {
       const start = startRef.current;
       startRef.current = null;
       if (!start) return;
+      const mode = e.shiftKey ? 'face' : 'clip';
       const rect = rectFromDrag(start, { x: e.clientX, y: e.clientY });
       // Hide the box SYNCHRONOUSLY before capture so capturePage grabs the media
       // under it, not the outline. flushSync forces the DOM commit before the
@@ -92,7 +97,12 @@ export default function RegionSelect() {
         requestAnimationFrame(() => requestAnimationFrame(() => r(null)))
       );
       try {
-        await runRegionSearch(rect, authToken, (ev) => libraryService.send(ev));
+        await runRegionSearch(
+          rect,
+          authToken,
+          (ev) => libraryService.send(ev),
+          mode
+        );
       } catch (err: any) {
         libraryService.send({
           type: 'ADD_TOAST',
@@ -122,8 +132,10 @@ export default function RegionSelect() {
             top: box.y,
             width: box.width,
             height: box.height,
-            border: '2px solid #4af',
-            background: 'rgba(68,170,255,0.12)',
+            border: faceMode ? '2px solid #fa4' : '2px solid #4af',
+            background: faceMode
+              ? 'rgba(255,170,68,0.12)'
+              : 'rgba(68,170,255,0.12)',
             pointerEvents: 'none',
           }}
         />

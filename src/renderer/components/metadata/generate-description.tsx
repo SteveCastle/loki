@@ -1,6 +1,7 @@
 import { useContext, useEffect, useId, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
+import useJobServerAvailable from '../../hooks/useJobServerAvailable';
 import './generate-description.css';
 import {
   getCachedDefaultPrompt,
@@ -12,6 +13,7 @@ import {
 import { SparkleIcon, TuneIcon } from './section-action-icons';
 import { useDepRequirement } from '../../onboarding/useDepRequirement';
 import { mediaServerBase } from '../../platform';
+import { createDescriptionJob } from './create-description-job';
 
 type Props = {
   path: string;
@@ -33,9 +35,7 @@ export default function GenerateDescription({
     (state) => state.context.authToken
   );
   const panelId = `gd-prompt-panel-${useId()}`;
-  const [jobServerAvailable, setJobServerAvailable] = useState<boolean | null>(
-    null
-  );
+  const jobServerAvailable = useJobServerAvailable(authToken);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [panelOpen, setPanelOpen] = useState<boolean>(false);
   const [promptDraft, setPromptDraft] = useState<string>(() =>
@@ -58,32 +58,6 @@ export default function GenerateDescription({
       </div>
     ) : null;
 
-  useEffect(() => {
-    const checkJobServer = async () => {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-        const headers: HeadersInit = {};
-        if (authToken) {
-          headers['Authorization'] = `Bearer ${authToken}`;
-        }
-
-        const response = await fetch(`${mediaServerBase}/health`, {
-          method: 'GET',
-          headers,
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        setJobServerAvailable(response.ok);
-      } catch (error) {
-        setJobServerAvailable(false);
-      }
-    };
-
-    checkJobServer();
-  }, [authToken]);
-
   // Lazily fetch the default prompt the first time the panel is opened, then
   // cache it module-wide so subsequent renders (and other component instances)
   // hit memory instead of the network.
@@ -99,7 +73,7 @@ export default function GenerateDescription({
         }
         const response = await fetch(
           `${mediaServerBase}/api/prompts/describe`,
-          { headers }
+          { headers, signal: AbortSignal.timeout(10000) }
         );
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = (await response.json()) as { prompt?: string };
@@ -122,37 +96,11 @@ export default function GenerateDescription({
   const handleGenerateDescription = async () => {
     try {
       setIsSubmitting(true);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-
-      if (authToken) {
-        headers['Authorization'] = `Bearer ${authToken}`;
-      }
-
       const trimmed = promptDraft.trim();
-      const body: { input: string; fields?: { prompt: string } } = {
-        input: `metadata --type description --apply all --overwrite "${path}"`,
-      };
       if (trimmed !== '') {
-        body.fields = { prompt: trimmed };
         setLastCustomPrompt(trimmed);
       }
-
-      const response = await fetch(`${mediaServerBase}/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
+      await createDescriptionJob(path, authToken, trimmed);
       // Let the ToastSystem show job lifecycle
     } catch (error) {
       console.error('Failed to create description job:', error);

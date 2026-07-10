@@ -14,6 +14,16 @@ export const mediaServerBase: string = isElectron
   ? (window as any).electron?.mediaServerBase || 'http://localhost:10111'
   : '';
 
+// Whether the local media server appears to be INSTALLED (its config.json
+// exists — the Go server writes one on first run — or LOWKEY_PORT points at
+// one explicitly). Distinguishes "not installed" from "installed but not
+// running" in server-dependent UI. Web mode is served BY the server, so it is
+// always true there; older preloads don't expose the flag, in which case we
+// default to true so the UI never claims "not installed" without evidence.
+export const mediaServerConfigured: boolean = isElectron
+  ? ((window as any).electron?.mediaServerConfigured ?? true)
+  : true;
+
 export const capabilities = {
   fileSystemAccess: true,
   clipboard: isElectron,
@@ -69,6 +79,10 @@ export function logEvent(entry: RendererLogEntry): void {
 const INVOKE_TIMEOUT_MS: Record<string, number> = {
   'load-db': 75_000,
 };
+
+// In-flight visual query (Electron path): newest query aborts the previous
+// one so re-runs can't stack sockets against the media-server origin.
+let visualQueryAbortRef: AbortController | null = null;
 
 function invokeTimeout<T>(channel: string, promise: Promise<T>): Promise<T> {
   const ms = INVOKE_TIMEOUT_MS[channel];
@@ -466,7 +480,10 @@ if (isElectron) {
     // (and require auth) when there's actually a visual query to run.
     const hasVisual = predicates.some(
       (p) =>
-        (p.type === 'similar' || p.type === 'visual' || p.type === 'clip') &&
+        (p.type === 'similar' ||
+          p.type === 'visual' ||
+          p.type === 'clip' ||
+          p.type === 'face') &&
         p.value !== ''
     );
     if (!hasVisual) {
@@ -481,14 +498,40 @@ if (isElectron) {
         'Visual search requires logging in to the local media server.'
       );
     }
-    const res = await fetch(`${mediaServerBase}/api/media/query`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${authToken}`,
-      },
-      body: JSON.stringify({ predicates, mode }),
-    });
+    // Latest-wins: abort any still-running visual query before starting a new
+    // one, and cap each at 2 minutes. Without this, every re-run (blend slider
+    // commits, rapid chip edits) stacked another in-flight request — and since
+    // Chromium allows only 6 connections per origin, a few slow/hung queries
+    // starved the socket pool and made the server look unreachable until the
+    // app was restarted.
+    visualQueryAbortRef?.abort();
+    const controller = new AbortController();
+    visualQueryAbortRef = controller;
+    const timer = setTimeout(() => controller.abort(), 120_000);
+    let res: Response;
+    try {
+      res = await fetch(`${mediaServerBase}/api/media/query`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ predicates, mode }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          visualQueryAbortRef === controller
+            ? 'Visual search timed out after 2 minutes.'
+            : 'Visual search superseded by a newer query.'
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      if (visualQueryAbortRef === controller) visualQueryAbortRef = null;
+    }
     if (!res.ok) {
       throw new Error(
         `Visual search failed (HTTP ${res.status}). Is the media server running?`

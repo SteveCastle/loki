@@ -151,6 +151,124 @@
         font-weight: 500;
       }
 
+      /* Auto-scheduler widget (Metadata Generation section head) */
+      .sched-widget {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        padding: var(--space-2) var(--space-3);
+        background: var(--bg-card);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-lg);
+        flex-shrink: 0;
+      }
+
+      .sched-status {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        min-width: 180px;
+      }
+
+      .sched-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: var(--radius-full);
+        background: var(--text-dim);
+        flex-shrink: 0;
+      }
+
+      .sched-dot.running {
+        background: transparent;
+        border: 2px solid var(--accent-cyan);
+        border-top-color: transparent;
+        animation: spin 1s linear infinite;
+      }
+
+      .sched-dot.waiting {
+        background: var(--status-pending);
+      }
+
+      .sched-dot.yielding {
+        background: var(--status-warning);
+      }
+
+      .sched-dot.complete {
+        background: var(--status-success);
+      }
+
+      .sched-text {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.3;
+        min-width: 0;
+      }
+
+      .sched-state {
+        font-size: var(--text-sm);
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+
+      .sched-reason {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 280px;
+      }
+
+      .sched-reason a {
+        color: var(--accent-primary);
+      }
+
+      .sched-controls {
+        display: flex;
+        gap: var(--space-1);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-subtle);
+        border-radius: var(--radius-md);
+        padding: 2px;
+      }
+
+      .sched-btn {
+        border: none;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        padding: var(--space-1) var(--space-3);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all var(--transition-fast);
+      }
+
+      .sched-btn:hover {
+        color: var(--text-primary);
+      }
+
+      .sched-btn.active {
+        background: var(--accent-primary-dim);
+        color: var(--accent-primary);
+      }
+
+      @media screen and (max-width: 900px) {
+        .section-head {
+          flex-direction: column;
+          align-items: stretch;
+        }
+
+        .sched-widget {
+          justify-content: space-between;
+        }
+
+        .sched-reason {
+          max-width: 160px;
+        }
+      }
+
       /* ------------------------------------------------------------------
          Active jobs panel
          ------------------------------------------------------------------ */
@@ -403,6 +521,9 @@
       }
       .task-card--fileinfo {
         --card-accent: var(--accent-cyan);
+      }
+      .task-card--faces {
+        --card-accent: var(--status-warning);
       }
       .task-card--cleanup {
         --card-accent: var(--status-error);
@@ -1265,9 +1386,45 @@
               so pausing is always safe.
             </p>
           </div>
-          <button class="btn btn-ghost" id="runAllBtn" onclick="runAllMetadata()">
-            ⚡ Run everything
-          </button>
+          <!-- Auto-scheduler widget: shows what the background scheduler is
+               doing and offers the three controls — Stop (force off), Auto
+               (run when the machine is idle, yield when it's busy), and
+               Run now (one full combined run immediately, ignoring idle). -->
+          <div class="sched-widget" id="schedWidget">
+            <div class="sched-status">
+              <span class="sched-dot" id="schedDot"></span>
+              <div class="sched-text">
+                <span class="sched-state" id="schedState">Scheduler</span>
+                <span class="sched-reason" id="schedReason">loading…</span>
+              </div>
+            </div>
+            <div class="sched-controls" role="radiogroup" aria-label="Scheduler mode">
+              <button
+                class="sched-btn"
+                id="schedBtnOff"
+                title="Stop background processing (pauses a running scheduled job; progress is kept)"
+                onclick="setSchedulerMode('off')"
+              >
+                Stop
+              </button>
+              <button
+                class="sched-btn"
+                id="schedBtnAuto"
+                title="Process automatically when the machine is idle or locked; yields when you're using it. Applies to this server session — every restart starts stopped."
+                onclick="setSchedulerMode('auto')"
+              >
+                Auto
+              </button>
+              <button
+                class="sched-btn"
+                id="schedBtnRun"
+                title="Run everything now, ignoring idle detection (the old Run everything)"
+                onclick="forceSchedulerRun()"
+              >
+                ⚡ Run now
+              </button>
+            </div>
+          </div>
         </div>
         <div id="runallStatus" class="status-message"></div>
 
@@ -1421,6 +1578,45 @@
               </button>
             </div>
             <div id="embedStatus" class="status-message"></div>
+          </div>
+
+          <!-- Faces & People -->
+          <div class="task-card task-card--faces" id="card-faces">
+            <div class="card-status" id="status-faces">
+              <span class="status-dot"></span>
+              <span class="status-text">Running</span>
+            </div>
+            <div class="card-header">
+              <div class="card-icon">👤</div>
+              <div class="card-titles">
+                <h3>Faces &amp; People</h3>
+                <p class="card-description">
+                  Detects faces and identity embeddings so they can be grouped
+                  into People. Photos and anime are routed to the right
+                  recognizer automatically.
+                </p>
+                <div class="chip-row">
+                  <span class="chip">Scope <span class="chip-value">All media</span></span>
+                  <span class="chip">
+                    Model <span class="chip-value" id="faceModelName">…</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="progress-block" data-progress="faces">
+              <div class="progress-top">
+                <span class="progress-counts">–</span>
+                <span class="progress-pct">–</span>
+              </div>
+              <div class="progress-track"><div class="progress-fill"></div></div>
+              <div class="progress-remaining">Loading…</div>
+            </div>
+            <div class="card-foot">
+              <button class="btn btn-primary btn-run" data-card="faces">
+                Start
+              </button>
+            </div>
+            <div id="facesStatus" class="status-message"></div>
           </div>
 
           <!-- File Info -->
@@ -1596,14 +1792,13 @@
           label: 'Description generation',
           statusEl: 'descriptionStatus',
           input: () =>
-            'metadata --type description --apply all --query64=' +
-            b64('description:null OR description:""'),
+            'describe --query64=' + b64('description:null OR description:""'),
         },
         transcript: {
           label: 'Transcription',
           statusEl: 'transcriptStatus',
           input: () =>
-            'metadata --type transcript --apply all --query64=' +
+            'transcribe --query64=' +
             b64('filetype:video AND (transcript:null OR transcript:"")'),
         },
         autotag: {
@@ -1618,11 +1813,19 @@
           // have a vector for the active model.
           input: () => 'embed --query64=' + b64('path:*'),
         },
+        faces: {
+          label: 'Face scanning',
+          statusEl: 'facesStatus',
+          // Whole library: the faces task skips items that already have a
+          // face_scan marker under the routed recognizer.
+          input: () => 'faces --query64=' + b64('path:*'),
+        },
         fileinfo: {
           label: 'File info generation',
           statusEl: 'fileinfoStatus',
+          // Hash + dimensions applied together per file in one pass.
           input: () =>
-            'metadata --type hash,dimensions --apply all --query64=' +
+            'process --ops=hash,dimensions --query64=' +
             b64('hash:null OR hash:"" OR size:null OR width:null OR height:null'),
         },
       };
@@ -1648,16 +1851,18 @@
         const task = METADATA_TASKS[cardType];
         const active = activeJobsForCard(cardType);
         if (active.length === 0) return;
+        // First-class pause: the job finishes its current item, keeps all
+        // progress, and parks in the Paused state until resumed.
         Promise.all(
           active.map((job) =>
-            fetch(`/job/${job.id || job.ID}/cancel`, { method: 'POST' })
+            fetch(`/job/${job.id || job.ID}/pause`, { method: 'POST' })
           )
         )
           .then(() => {
             if (task) {
               showStatus(
                 task.statusEl,
-                'Paused — progress is saved. Start again to resume where it left off.',
+                'Pausing — the current item finishes, then the job parks. Resume to continue.',
                 'info'
               );
             }
@@ -1665,31 +1870,131 @@
           .catch(() => {});
       }
 
-      function runAllMetadata() {
-        const metaInput =
-          'metadata --type hash,dimensions,description,transcript,autotag --apply all --query64=' +
-          b64('path:*');
-        const embedInput = METADATA_TASKS.embed.input();
-        Promise.all([postCreate(metaInput), postCreate(embedInput)])
-          .then(([meta, embed]) => {
+      function resumeCardJobs(cardType) {
+        const task = METADATA_TASKS[cardType];
+        const paused = pausedJobsForCard(cardType);
+        if (paused.length === 0) return false;
+        Promise.all(
+          paused.map((job) =>
+            fetch(`/job/${job.id || job.ID}/resume`, { method: 'POST' })
+          )
+        )
+          .then(() => {
+            if (task) {
+              showStatus(task.statusEl, 'Resumed.', 'info');
+            }
+          })
+          .catch(() => {});
+        return true;
+      }
+
+      // ------------------------------------------------------------------
+      // Auto-scheduler widget: status display + the three controls (Stop /
+      // Auto / Run now). Status arrives via the "scheduler" SSE event and an
+      // initial fetch; mode changes and forced runs go through /api/scheduler.
+      // ------------------------------------------------------------------
+      const SCHED_STATE_LABELS = {
+        disabled: 'Off',
+        waiting: 'Waiting for idle',
+        running: 'Running',
+        yielding: 'Paused',
+        complete: 'All caught up',
+      };
+
+      function renderScheduler(st) {
+        if (!st) return;
+        const dot = document.getElementById('schedDot');
+        const stateEl = document.getElementById('schedState');
+        const reasonEl = document.getElementById('schedReason');
+        if (!dot || !stateEl || !reasonEl) return;
+
+        let label = SCHED_STATE_LABELS[st.state] || st.state || '…';
+        if (st.forced) label = 'Running (forced)';
+        stateEl.textContent = label;
+
+        let reason = st.reason || '';
+        if (st.jobId && (st.state === 'running' || st.state === 'yielding')) {
+          reasonEl.innerHTML =
+            escapeHtml(reason) +
+            ` — <a href="/job/${escapeAttr(st.jobId)}">view job</a>`;
+        } else {
+          reasonEl.textContent = reason;
+        }
+
+        dot.className = 'sched-dot ' + (st.state || '');
+
+        const btnOff = document.getElementById('schedBtnOff');
+        const btnAuto = document.getElementById('schedBtnAuto');
+        const btnRun = document.getElementById('schedBtnRun');
+        if (btnOff && btnAuto && btnRun) {
+          btnOff.classList.toggle('active', st.mode !== 'auto' && !st.forced);
+          btnAuto.classList.toggle('active', st.mode === 'auto' && !st.forced);
+          btnRun.classList.toggle('active', !!st.forced);
+        }
+      }
+
+      function loadSchedulerStatus() {
+        fetch('/api/scheduler')
+          .then((r) => (r.ok ? r.json() : null))
+          .then((st) => renderScheduler(st))
+          .catch(() => {});
+      }
+
+      function setSchedulerMode(mode) {
+        fetch('/api/scheduler/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode }),
+        })
+          .then((r) => {
+            if (!r.ok) throw new Error('request failed');
+            return r.json();
+          })
+          .then((st) => renderScheduler(st))
+          .catch((err) =>
             showStatus(
               'runallStatus',
-              `Started full metadata run (<a href="/job/${meta.id}">metadata</a> + <a href="/job/${embed.id}">embeddings</a>).`,
-              'success',
-              true
-            );
+              'Failed to change scheduler mode: ' + err.message,
+              'error'
+            )
+          );
+      }
+
+      function forceSchedulerRun() {
+        // One full combined run (all operations, whole library), started
+        // immediately and exempt from idle detection — the old
+        // "Run everything" behavior. Ops skip what's already done.
+        fetch('/api/scheduler/run', { method: 'POST' })
+          .then((r) => {
+            if (!r.ok) throw new Error('request failed');
+            return r.json();
+          })
+          .then((st) => {
+            renderScheduler(st);
+            if (st.jobId) {
+              showStatus(
+                'runallStatus',
+                jobSuccessMessage('Full metadata run', st.jobId),
+                'success',
+                true
+              );
+            }
           })
           .catch((err) =>
             showStatus('runallStatus', 'Failed to start: ' + err.message, 'error')
           );
       }
 
-      // Start/Pause buttons
+      loadSchedulerStatus();
+
+      // Start/Pause/Resume buttons
       document.querySelectorAll('.btn-run').forEach((btn) => {
         btn.addEventListener('click', () => {
           const card = btn.getAttribute('data-card');
           if (btn.classList.contains('btn-pause')) {
             pauseCardJobs(card);
+          } else if (btn.classList.contains('btn-resume')) {
+            resumeCardJobs(card);
           } else {
             startCardJob(card);
           }
@@ -1934,6 +2239,28 @@
       // ------------------------------------------------------------------
       // Job → card mapping and card state
       // ------------------------------------------------------------------
+      // opToCard maps per-item op IDs (and their standalone task commands)
+      // to the generation card that owns them.
+      const OP_TO_CARD = {
+        describe: 'description',
+        transcribe: 'transcript',
+        hash: 'fileinfo',
+        dimensions: 'fileinfo',
+        autotag: 'autotag',
+        faces: 'faces',
+        embed: 'embed',
+      };
+
+      // isScheduledJob: jobs the auto-scheduler owns (marked --scheduled).
+      // They are controlled EXCLUSIVELY by the scheduler widget — the cards
+      // must never map to them, or a parked scheduled run turns every card's
+      // Start button into "Resume the entire combined job".
+      function isScheduledJob(job) {
+        const argsRaw = job.arguments || job.Arguments || [];
+        const args = Array.isArray(argsRaw) ? argsRaw : [String(argsRaw)];
+        return args.includes('--scheduled');
+      }
+
       function getCardTypeFromJob(job) {
         const cmd = (job.command || job.Command || '').toLowerCase();
         const argsRaw = job.arguments || job.Arguments || [];
@@ -1944,9 +2271,22 @@
         if (cmd === 'ingest') return 'ingest';
         if (cmd === 'autotag') return 'autotag';
         if (cmd === 'embed') return 'embed';
+        if (cmd === 'faces') return 'faces';
         if (cmd === 'cleanup') return 'cleanup';
+        // Split-out per-item tasks map straight to their card.
+        if (OP_TO_CARD[cmd]) return OP_TO_CARD[cmd];
+        if (cmd === 'process') {
+          // Combined runs: if every selected op belongs to one card, it's
+          // that card's job; otherwise it's a full run.
+          const m = args.match(/--ops[=\s]+([a-z0-9,_-]+)/);
+          const ops = m ? m[1].split(',').filter(Boolean) : [];
+          const cards = new Set(ops.map((op) => OP_TO_CARD[op] || 'allmetadata'));
+          if (cards.size === 1) return cards.values().next().value;
+          return 'allmetadata';
+        }
         if (cmd === 'metadata') {
-          // Single-type jobs map to their card; multi-type is a full run.
+          // Legacy jobs (pre-split): single-type maps to its card;
+          // multi-type is a full run.
           if (args.includes('--type transcript') && !args.includes(','))
             return 'transcript';
           if (args.includes('--type description') && !args.includes(','))
@@ -1974,24 +2314,46 @@
         if (state === 3 || state === 'cancelled' || state === 'Cancelled')
           return 'cancelled';
         if (state === 4 || state === 'error' || state === 'Error') return 'error';
+        if (state === 5 || state === 'paused' || state === 'Paused')
+          return 'paused';
         return null;
       }
 
-      function activeJobsForCard(cardType) {
+      function jobsForCardInStates(cardType, states) {
         const out = [];
         jobsState.jobs.forEach((job) => {
+          // Scheduler-owned jobs belong to the scheduler widget, not the
+          // cards: the card buttons only ever start/pause/resume MANUAL runs
+          // of their own task.
+          if (isScheduledJob(job)) return;
           const state = getJobState(job);
-          if (state !== 'pending' && state !== 'in_progress') return;
+          if (!states.includes(state)) return;
           const t = getCardTypeFromJob(job);
           if (t === cardType) out.push(job);
-          // A full run also occupies each individual metadata card.
+          // A manual full run (multi-op process / legacy multi-type metadata
+          // job) also occupies each individual metadata card.
           if (
             t === 'allmetadata' &&
-            ['description', 'transcript', 'autotag', 'fileinfo'].includes(cardType)
+            [
+              'description',
+              'transcript',
+              'autotag',
+              'fileinfo',
+              'embed',
+              'faces',
+            ].includes(cardType)
           )
             out.push(job);
         });
         return out;
+      }
+
+      function activeJobsForCard(cardType) {
+        return jobsForCardInStates(cardType, ['pending', 'in_progress']);
+      }
+
+      function pausedJobsForCard(cardType) {
+        return jobsForCardInStates(cardType, ['paused']);
       }
 
       function updateCardStatuses() {
@@ -2001,6 +2363,7 @@
           'transcript',
           'autotag',
           'embed',
+          'faces',
           'fileinfo',
           'cleanup',
         ];
@@ -2023,6 +2386,9 @@
               statusEl.className = 'card-status pending visible';
               statusEl.querySelector('.status-text').textContent =
                 pending > 1 ? `${pending} Queued` : 'Queued';
+            } else if (pausedJobsForCard(type).length > 0) {
+              statusEl.className = 'card-status pending visible';
+              statusEl.querySelector('.status-text').textContent = 'Paused';
             } else {
               statusEl.className = 'card-status';
             }
@@ -2032,18 +2398,27 @@
             cardEl.classList.toggle('working', running > 0);
           }
 
-          // Flip Start ↔ Pause on generation cards
+          // Flip Start ↔ Pause ↔ Resume on generation cards
           const btn = document.querySelector(`.btn-run[data-card="${type}"]`);
           if (btn) {
+            const paused = pausedJobsForCard(type);
             if (active.length > 0) {
               btn.textContent = '⏸ Pause';
               btn.classList.add('btn-pause');
+              btn.classList.remove('btn-resume');
               btn.classList.remove('btn-primary');
               btn.title =
-                'Cancels the active job. Progress is kept; Start resumes with what is still missing.';
+                'Pauses after the current item. Progress is kept; Resume continues where it left off.';
+            } else if (paused.length > 0) {
+              btn.textContent = '▶ Resume';
+              btn.classList.add('btn-resume');
+              btn.classList.remove('btn-pause');
+              btn.classList.add('btn-primary');
+              btn.title = 'Continue the paused job from where it stopped.';
             } else {
               btn.textContent = 'Start';
               btn.classList.remove('btn-pause');
+              btn.classList.remove('btn-resume');
               btn.classList.add('btn-primary');
               btn.title = '';
             }
@@ -2201,6 +2576,7 @@
         setProgress('transcript', s.videosWithTranscript, s.totalVideos);
         setProgress('autotag', s.withTags, s.totalMedia);
         setProgress('embed', s.withEmbedding, s.totalMedia);
+        setProgress('faces', s.withFaceScan || 0, s.totalMedia);
         setMiniProgress('hash', s.withHash, s.totalMedia);
         setMiniProgress('dimensions', s.withDimensions, s.totalMedia);
 
@@ -2242,6 +2618,10 @@
           document.getElementById('embedModelName').textContent =
             s.embedModel.name || s.embedModel.id;
         }
+        if (s.faceModel) {
+          const el = document.getElementById('faceModelName');
+          if (el) el.textContent = s.faceModel.name || s.faceModel.id;
+        }
 
         // Overall completeness ring: mean of each task's coverage ratio
         const ratios = [];
@@ -2249,6 +2629,7 @@
           ratios.push(s.withDescription / s.totalMedia);
           ratios.push(s.withTags / s.totalMedia);
           ratios.push(s.withEmbedding / s.totalMedia);
+          ratios.push((s.withFaceScan || 0) / s.totalMedia);
           ratios.push(s.withHash / s.totalMedia);
           ratios.push(s.withDimensions / s.totalMedia);
         }
@@ -2534,6 +2915,14 @@
                   libraryStats = data;
                   renderStats();
                 }
+              } catch (e) {}
+            });
+
+            // Auto-scheduler status (mode/state/reason) for the widget.
+            es.addEventListener('scheduler', (event) => {
+              onActivity();
+              try {
+                renderScheduler(JSON.parse(event.data));
               } catch (e) {}
             });
           } catch (e) {

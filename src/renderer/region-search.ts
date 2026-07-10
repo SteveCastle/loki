@@ -31,15 +31,17 @@ function pngToDataUrl(png: Uint8Array): string {
   return `data:image/png;base64,${btoa(binary)}`;
 }
 
-// Capture the region and commit it as a `clip` predicate on the unified query.
-// The query pipeline resolves it via the embedding backend exactly like a
-// `similar:` predicate, so the search shows up as a chip (with the clip as its
-// thumbnail), composes with other predicates, and is removable/restorable like
-// any other filter. Throws on failure (caller toasts).
+// Capture the region and commit it as a query predicate. Mode 'clip' searches
+// by whole-image similarity; mode 'face' searches by face identity (the server
+// takes the largest face in the capture and matches the face index). Either
+// way the search shows up as a chip (with the capture as its thumbnail),
+// composes with other predicates, and is removable/restorable like any other
+// filter. Throws on failure (caller toasts).
 export async function runRegionSearch(
   rect: Rect,
   authToken: string | null,
-  dispatch: (event: any) => void
+  dispatch: (event: any) => void,
+  mode: 'clip' | 'face' = 'clip'
 ): Promise<void> {
   if (!captureRegion) {
     throw new Error('Region capture is only available in the desktop app.');
@@ -54,7 +56,7 @@ export async function runRegionSearch(
   dispatch({
     type: 'ADD_PREDICATE',
     data: {
-      predicate: { type: 'clip', value: pngToDataUrl(png), exclude: false },
+      predicate: { type: mode, value: pngToDataUrl(png), exclude: false },
     },
   });
 }

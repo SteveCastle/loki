@@ -93,6 +93,44 @@
   cursor: default;
 }
 
+/* People tags come from face clustering — a subtle teal tint + person glyph
+   distinguishes them from hand-applied tags. Selected/confirming states win. */
+.Tags li.person-tag {
+  background-color: #22333a;
+  box-shadow: inset 0 0 0 1px rgba(94, 234, 212, 0.25);
+}
+
+.Tags li.person-tag.selected {
+  background-color: #5b3a8c;
+  box-shadow: inset 0 0 0 1px #b794f4;
+}
+
+/* The person glyph is a BUTTON: with the person resolved it opens their
+   settings modal (name / merge / delete) straight from the chip; disabled
+   (no server / list loading) it's just the cluster marker. Declared after
+   the generic `.Tags li button` would win on specificity anyway — these
+   override its centering/sizing so the glyph sits inline with the label. */
+.Tags li .person-tag-icon {
+  margin: 0 3px 0 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: 9px;
+  line-height: inherit;
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+.Tags li .person-tag-icon:hover:not(:disabled) {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+.Tags li .person-tag-icon:disabled {
+  cursor: inherit;
+  opacity: 0.8;
+}
+
 .Tags li span {
   margin-right: 12px;
 }

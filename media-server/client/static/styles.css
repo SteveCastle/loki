@@ -613,6 +613,11 @@ input[type='checkbox'] {
   background-color: var(--status-error);
 }
 
+.job-status.Paused {
+  background-color: transparent;
+  border: 2px solid var(--status-warning);
+}
+
 /* ----------------------------------------
    Messages
    ---------------------------------------- */

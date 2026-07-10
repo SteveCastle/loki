@@ -45,6 +45,7 @@ export type SettingKey =
   | 'followTranscript'
   | 'showTags'
   | 'hideSuggestedTags'
+  | 'hidePeopleTags'
   | 'showFileInfo'
   | 'showControls'
   | 'recursive'
@@ -55,7 +56,10 @@ export type SettingKey =
   | 'alwaysOnTop'
   | 'layoutMode'
   | 'useHLS'
-  | 'subtitlesEnabled';
+  | 'subtitlesEnabled'
+  | 'showDescriptionOverlay'
+  | 'descriptionOverlaySize'
+  | 'descriptionOverlayPadding';
 
 export type LayoutModeOption = 'grid' | 'masonry';
 
@@ -73,6 +77,7 @@ export type Settings = {
   battleMode: boolean;
   showTags: ShowTagOptions;
   hideSuggestedTags: boolean;
+  hidePeopleTags: boolean;
   showFileInfo: ShowFileInfoOptions;
   showControls: boolean;
   recursive: boolean;
@@ -91,6 +96,9 @@ export type Settings = {
   layoutMode: LayoutModeOption;
   useHLS: boolean;
   subtitlesEnabled: boolean;
+  showDescriptionOverlay: boolean;
+  descriptionOverlaySize: number;
+  descriptionOverlayPadding: number;
 };
 
 export const SCALE_MODES = {
@@ -295,6 +303,25 @@ export const SHOW_TAGS = {
 
 export const HIDE_SUGGESTED_TAGS = {
   title: 'Hide Suggested Tags',
+  reload: false,
+  display: 'general',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
+// Face clustering writes People tags automatically, so they're AI-suggested
+// like the autotagger's Suggested bucket — but they get their own toggle so
+// hiding one kind doesn't force hiding the other.
+export const HIDE_PEOPLE_TAGS = {
+  title: 'Hide People (Face) Tags',
   reload: false,
   display: 'general',
   options: {
@@ -542,6 +569,59 @@ export const SUBTITLES_ENABLED = {
   },
 };
 
+// Shows the media description as a closed-caption-style overlay across the
+// bottom of the detail view.
+export const SHOW_DESCRIPTION_OVERLAY = {
+  title: 'Description Overlay',
+  reload: false,
+  display: 'general',
+  options: {
+    yes: {
+      label: 'Yes',
+      value: true,
+    },
+    no: {
+      label: 'No',
+      value: false,
+    },
+  },
+};
+
+// Caption font size in pixels for the description overlay. The outline and
+// shadow scale with it (em units in the CSS).
+export const DESCRIPTION_OVERLAY_SIZE = {
+  title: 'Overlay Font Size',
+  reload: false,
+  display: 'general',
+  options: {
+    size: {
+      label: '18',
+      value: 18,
+      increment: 2,
+      min: 10,
+      max: 48,
+    },
+  },
+};
+
+// Horizontal padding for the description overlay, as a percentage of the
+// panel width per side. Larger values pull the caption into a narrower
+// column — easier to read on wide screens, at the cost of more lines.
+export const DESCRIPTION_OVERLAY_PADDING = {
+  title: 'Overlay Side Padding',
+  reload: false,
+  display: 'general',
+  options: {
+    percent: {
+      label: '4',
+      value: 4,
+      increment: 2,
+      min: 0,
+      max: 40,
+    },
+  },
+};
+
 export function getNextFilterMode(
   currentMode: FilterModeOption
 ): FilterModeOption {
@@ -574,6 +654,7 @@ export const SETTINGS: SettingsObject = {
   followTranscript: FOLLOW_TRANSCRIPT,
   showTags: SHOW_TAGS,
   hideSuggestedTags: HIDE_SUGGESTED_TAGS,
+  hidePeopleTags: HIDE_PEOPLE_TAGS,
   showFileInfo: SHOW_FILE_INFO,
   showControls: SHOW_CONTROLS,
   recursive: RECURSIVE,
@@ -585,4 +666,7 @@ export const SETTINGS: SettingsObject = {
   layoutMode: LAYOUT_MODE,
   useHLS: USE_HLS,
   subtitlesEnabled: SUBTITLES_ENABLED,
+  showDescriptionOverlay: SHOW_DESCRIPTION_OVERLAY,
+  descriptionOverlaySize: DESCRIPTION_OVERLAY_SIZE,
+  descriptionOverlayPadding: DESCRIPTION_OVERLAY_PADDING,
 };

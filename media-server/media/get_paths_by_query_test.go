@@ -190,6 +190,80 @@ func TestGetPathsByQuery_TranscriptTargeting(t *testing.T) {
 	}
 }
 
+// TestGetPathsByQuery_FacesUngrouped pins the faces:ungrouped predicate the
+// People panel's Ungrouped card emits: only media whose detected faces are
+// ALL unassigned match — one grouped face disqualifies the item (it already
+// carries a person tag; secondary detections used to drag fully-tagged media
+// into the Ungrouped view). Unknown values fail closed (unknown keys used to
+// compile to 1=1 and select the whole library).
+func TestGetPathsByQuery_FacesUngrouped(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	for _, p := range []string{"/lib/stray.jpg", "/lib/known.jpg", "/lib/mixed.jpg", "/lib/empty.jpg"} {
+		if _, err := db.Exec("INSERT INTO media (path) VALUES (?)", p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// setupTestDB's manual schema has the face table but not the constraint
+	// tables ReplaceFaces reconciles — create those minimally.
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS face_veto (face_id INTEGER, person_id INTEGER)`,
+		`CREATE TABLE IF NOT EXISTS face_cannot_link (face_a INTEGER, face_b INTEGER)`,
+		`CREATE TABLE IF NOT EXISTS face_group_ban_member (ban_id INTEGER, face_id INTEGER)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A stray face (never grouped) and a face assigned to a person.
+	if _, err := ReplaceFaces(db, "/lib/stray.jpg", "m1", []NewFace{
+		{X: 0.1, Y: 0.1, W: 0.2, H: 0.2, Score: 0.9, Vec: []float32{1, 0}},
+	}, 1); err != nil {
+		t.Fatal(err)
+	}
+	knownIDs, err := ReplaceFaces(db, "/lib/known.jpg", "m1", []NewFace{
+		{X: 0.1, Y: 0.1, W: 0.2, H: 0.2, Score: 0.9, Vec: []float32{0, 1}},
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`UPDATE face SET person_id = 7, assigned_by = 'user' WHERE id = ?`, knownIDs[0],
+	); err != nil {
+		t.Fatal(err)
+	}
+	// Mixed: the main face is grouped, a secondary detection isn't. The item
+	// already carries its person tag, so it must NOT read as "ungrouped".
+	mixedIDs, err := ReplaceFaces(db, "/lib/mixed.jpg", "m1", []NewFace{
+		{X: 0.1, Y: 0.1, W: 0.4, H: 0.4, Score: 0.95, Vec: []float32{1, 1}},
+		{X: 0.7, Y: 0.7, W: 0.1, H: 0.1, Score: 0.4, Vec: []float32{1, 2}},
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(
+		`UPDATE face SET person_id = 7, assigned_by = 'auto' WHERE id = ?`, mixedIDs[0],
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := GetPathsByQuery(db, "faces:ungrouped")
+	if err != nil {
+		t.Fatalf("GetPathsByQuery() error = %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "/lib/stray.jpg" {
+		t.Fatalf("faces:ungrouped matched %v, want only [/lib/stray.jpg]", paths)
+	}
+
+	paths, err = GetPathsByQuery(db, "faces:bogus")
+	if err != nil {
+		t.Fatalf("GetPathsByQuery() error = %v", err)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("faces:bogus matched %d paths, want 0 (%v)", len(paths), paths)
+	}
+}
+
 // TestGetPathsByQuery_FiletypeUnknownMatchesNothing guards the fail-closed
 // contract: an unrecognized filetype value must select zero rows, not the
 // whole library.

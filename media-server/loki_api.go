@@ -326,6 +326,62 @@ func decodeImageDataURL(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
+// blendTextWeight resolves a blended predicate's text share: clamped to [0,1],
+// defaulting to an even 0.5 when the client sent text without a weight.
+func blendTextWeight(w *float64) float32 {
+	if w == nil {
+		return 0.5
+	}
+	v := *w
+	if v < 0 {
+		v = 0
+	}
+	if v > 1 {
+		v = 1
+	}
+	return float32(v)
+}
+
+// compositeTerms builds the term list for a multi-node similarity predicate:
+// the base term (the predicate's own value, weight 1) plus every blend node,
+// each with its signed weight (0..1 magnitude, negated by Negative). The
+// legacy Text field folds in as one more text term for mixed old/new clients.
+func compositeTerms(base tasks.QueryTerm, p Predicate) ([]tasks.QueryTerm, error) {
+	terms := []tasks.QueryTerm{base}
+	if t := strings.TrimSpace(p.Text); t != "" {
+		terms = append(terms, tasks.QueryTerm{Kind: "text", Value: t, Weight: blendTextWeight(p.TextWeight)})
+	}
+	for _, n := range p.Nodes {
+		w := float32(1)
+		if n.Weight != nil {
+			w = blendTextWeight(n.Weight) // same 0..1 clamp
+		}
+		if w == 0 {
+			continue // zero-weight nodes contribute nothing
+		}
+		if n.Negative {
+			w = -w
+		}
+		switch n.Kind {
+		case "image":
+			terms = append(terms, tasks.QueryTerm{Kind: "path", Value: n.Value, Weight: w})
+		case "clip":
+			img, err := decodeImageDataURL(n.Value)
+			if err != nil {
+				return nil, fmt.Errorf("blend node clip: %w", err)
+			}
+			terms = append(terms, tasks.QueryTerm{Kind: "image", Image: img, Weight: w})
+		case "text":
+			if v := strings.TrimSpace(n.Value); v != "" {
+				terms = append(terms, tasks.QueryTerm{Kind: "text", Value: v, Weight: w})
+			}
+		default:
+			return nil, fmt.Errorf("unknown blend node kind %q", n.Kind)
+		}
+	}
+	return terms, nil
+}
+
 // sortItemsByScore orders items (each a map with "path") by descending score
 // from scoreByPath, attaching item["score"]. Stable for equal scores.
 func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
@@ -366,27 +422,74 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 		for i := range req.Predicates {
 			pt := req.Predicates[i].Type
 			val := req.Predicates[i].Value
-			if (pt == "similar" || pt == "visual" || pt == "clip") && val != "" {
+			if (pt == "similar" || pt == "visual" || pt == "clip" || pt == "face") && val != "" {
 				hasVisual = true
 				var hits []tasks.SimilarHit
 				var err error
+				// An image predicate carrying text becomes a blended query: one
+				// combined vector ((1-w)*image + w*text) cosine-scanned once,
+				// rather than two independently-resolved path sets.
+				blendText := strings.TrimSpace(req.Predicates[i].Text)
+				hasNodes := len(req.Predicates[i].Nodes) > 0
 				switch pt {
 				case "similar":
-					hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
+					if hasNodes {
+						var terms []tasks.QueryTerm
+						terms, err = compositeTerms(tasks.QueryTerm{Kind: "path", Value: val, Weight: 1}, req.Predicates[i])
+						if err == nil {
+							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+						}
+					} else if blendText != "" {
+						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
+					} else {
+						hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
+					}
 				case "clip":
 					// A captured screen region: the value is a PNG data URL.
 					var image []byte
 					if image, err = decodeImageDataURL(val); err == nil {
-						hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+						if hasNodes {
+							var terms []tasks.QueryTerm
+							terms, err = compositeTerms(tasks.QueryTerm{Kind: "image", Image: image, Weight: 1}, req.Predicates[i])
+							if err == nil {
+								hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+							}
+						} else if blendText != "" {
+							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
+						} else {
+							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+						}
 					}
-				default:
-					hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
+				case "face":
+					// Face identity: the value is a library path ("find this
+					// person") or a captured-region PNG data URL. Matches by
+					// face embedding, collapsed to one hit per media item.
+					var faceHits []tasks.FaceHit
+					if strings.HasPrefix(val, "data:") {
+						var image []byte
+						if image, err = decodeImageDataURL(val); err == nil {
+							faceHits, err = tasks.SearchFacesByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+						}
+					} else {
+						faceHits, err = tasks.SearchFacesByMediaPath(r.Context(), deps.DB, val, visualCandidateLimit)
+					}
+					hits = tasks.FaceHitsToMediaHits(faceHits)
+				default: // "visual": free-text → image search, composable like similar/clip
+					if hasNodes {
+						var terms []tasks.QueryTerm
+						terms, err = compositeTerms(tasks.QueryTerm{Kind: "text", Value: val, Weight: 1}, req.Predicates[i])
+						if err == nil {
+							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+						}
+					} else {
+						hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
+					}
 				}
 				if err != nil {
-					// A clip value is a multi-hundred-KB data URL — log its size, not the payload.
+					// A clip/face value can be a multi-hundred-KB data URL — log its size, not the payload.
 					logVal := val
-					if pt == "clip" {
-						logVal = fmt.Sprintf("<clip %d bytes>", len(val))
+					if pt == "clip" || strings.HasPrefix(val, "data:") {
+						logVal = fmt.Sprintf("<%s %d bytes>", pt, len(val))
 					}
 					log.Printf("query: %s predicate %q failed (model=%q): %v", pt, logVal, tasks.ActiveEmbedModel().ID, err)
 					httpError(w, err.Error(), http.StatusInternalServerError)
@@ -1395,6 +1498,27 @@ func lokiDeleteAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 				deps.DB.Exec(`DELETE FROM media_tag_by_category
 					WHERE media_path = ? AND tag_label = ?`,
 					p, tagLabel)
+			}
+		}
+		// Person tags mirror face assignments: once an item no longer carries
+		// the person's tag at any timestamp, removing it means "this person is
+		// not in this item" — discard their faces from the group (veto +
+		// cannot-links) so clustering can't put them back.
+		if person, found, err := media.GetPersonByName(deps.DB, tagLabel); err == nil && found {
+			rejected := false
+			for _, p := range paths {
+				var remaining int
+				deps.DB.QueryRow(`SELECT COUNT(*) FROM media_tag_by_category
+					WHERE media_path = ? AND tag_label = ?`, p, tagLabel).Scan(&remaining)
+				if remaining > 0 {
+					continue // a timestamped copy survives; still tagged
+				}
+				if ids, err := media.RejectPersonFacesOnMedia(deps.DB, p, person.ID); err == nil && len(ids) > 0 {
+					rejected = true
+				}
+			}
+			if rejected {
+				broadcastPeopleChanged()
 			}
 		}
 		// Removing the path's last tag drops it from the swipe pool.

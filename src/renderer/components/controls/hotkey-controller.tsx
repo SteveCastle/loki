@@ -5,6 +5,8 @@ import { useSelector } from '@xstate/react';
 import filter from '../../filter';
 import { GlobalStateContext, Item } from '../../state';
 import { invoke, send } from '../../platform';
+import { createDescriptionJob } from '../metadata/create-description-job';
+import { getLastCustomPrompt } from '../metadata/customPromptStore';
 
 type Action = {
   down: (arg: Event) => void;
@@ -109,6 +111,12 @@ export default function HotKeyController() {
   const cursor = useSelector(
     libraryService,
     (state) => state.context.cursor,
+    (a, b) => a === b
+  );
+
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken,
     (a, b) => a === b
   );
 
@@ -570,6 +578,33 @@ export default function HotKeyController() {
         libraryService.send({
           type: 'REFRESH_LIBRARY',
         });
+      },
+      up: () => {},
+    },
+    generateDescription: {
+      down: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Holding the key auto-repeats keydown — one job per press only.
+        if ((e as KeyboardEvent).repeat) return;
+        if (!item?.path) return;
+        const path = item.path;
+        // Same command the Generate button sends, including the session's
+        // custom-prompt override. Job lifecycle toasts come via SSE; only
+        // failures need surfacing here.
+        createDescriptionJob(path, authToken, getLastCustomPrompt()).catch(
+          (err) => {
+            console.error('Failed to create description job:', err);
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: {
+                type: 'error',
+                title: 'Failed to Create Job',
+                message: 'Could not communicate with job service',
+              },
+            });
+          }
+        );
       },
       up: () => {},
     },

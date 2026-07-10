@@ -12,7 +12,9 @@ import { getFileType } from 'file-types';
 import { useSelector } from '@xstate/react';
 import TagCount from './tag-count';
 import { invoke, mediaUrl, fetchTagPreview } from '../../platform';
+import useHideNativeDragPreview from '../../hooks/useHideNativeDragPreview';
 import { isClickWithinThreshold, Point } from './click-vs-drag';
+import { displayTagLabel } from '../../tag-display';
 
 type Concept = {
   label: string;
@@ -83,17 +85,19 @@ export default function Tag({
     return isLeft;
   }
 
-  const [{ isDragging, offset }, drag, dragPreview] = useDrag(
+  const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       collect: (monitor) => ({
         isDragging: monitor.isDragging(),
-        offset: monitor.getClientOffset(),
       }),
       type: 'TAG',
       item: tag,
     }),
     [tag]
   );
+  // The cursor-following chip in DragChipLayer stands in for the native
+  // whole-card drag ghost.
+  useHideNativeDragPreview(dragPreview);
 
   type DropProps = {
     isOver: boolean;
@@ -145,6 +149,7 @@ export default function Tag({
       className={[
         'tag',
         active ? 'active' : '',
+        isDragging ? 'dragging' : '',
         collectedProps.isOver && !collectedProps.isSelf ? 'hovered' : '',
         collectedProps.isOver && isLeft ? 'left' : '',
         collectedProps.isOver && !isLeft ? 'right' : '',
@@ -193,7 +198,7 @@ export default function Tag({
           />
         )
       ) : null}
-      <div className="label">{tag.label}</div>
+      <div className="label">{displayTagLabel(tag.label)}</div>
       {active && <img className="check" src={checkCircle} />}
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}

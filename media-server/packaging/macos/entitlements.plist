@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the ONNX worker binaries (embed, onnxtag) when signed
+  with the hardened runtime (required for notarization). The workers dlopen
+  onnxruntime.dylib at runtime; disable-library-validation keeps that
+  working regardless of how the dylib in a user's install is signed (e.g.
+  a user swapping in their own ONNX runtime build).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

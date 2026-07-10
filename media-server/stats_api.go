@@ -69,9 +69,11 @@ type statsAPIResponse struct {
 	WithDimensions       int `json:"withDimensions"`
 	VideosWithTranscript int `json:"videosWithTranscript"`
 	WithEmbedding        int `json:"withEmbedding"`
+	WithFaceScan         int `json:"withFaceScan"`
 
 	AutotagModel statsModelInfo `json:"autotagModel"`
 	EmbedModel   statsModelInfo `json:"embedModel"`
+	FaceModel    statsModelInfo `json:"faceModel"`
 }
 
 // addProgress folds one task progress delta into the counters. Kinds are the
@@ -92,6 +94,8 @@ func (s *statsAPIResponse) addProgress(kind string, n int) {
 		s.WithTags += n
 	case tasks.ProgressEmbedding:
 		s.WithEmbedding += n
+	case tasks.ProgressFaces:
+		s.WithFaceScan += n
 	}
 }
 
@@ -110,6 +114,7 @@ func (s *statsAPIResponse) clamp() {
 	capTo(&s.WithTags, s.TotalMedia)
 	capTo(&s.WithDimensions, s.TotalMedia)
 	capTo(&s.WithEmbedding, s.TotalMedia)
+	capTo(&s.WithFaceScan, s.TotalMedia)
 	capTo(&s.VideosWithTranscript, s.TotalVideos)
 }
 
@@ -249,15 +254,18 @@ func computeLibraryStats(deps *Dependencies) {
 	data := statsAPIResponse{Ready: true}
 
 	// One pass over media for everything derivable from the row itself.
+	// COALESCE matters: SUM over an EMPTY table yields NULL (not 0), which
+	// fails the int scan — a fresh/empty library must produce zeros, not an
+	// error, or the stats snapshot never installs.
 	err := deps.DB.QueryRowContext(ctx, `
         SELECT
             COUNT(*),
-            SUM(CASE WHEN `+videoExtCase+` THEN 1 ELSE 0 END),
-            SUM(CASE WHEN description IS NOT NULL AND TRIM(description) <> '' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN hash IS NOT NULL AND TRIM(hash) <> '' THEN 1 ELSE 0 END),
-            SUM(CASE WHEN size IS NOT NULL THEN 1 ELSE 0 END),
-            SUM(CASE WHEN width IS NOT NULL AND height IS NOT NULL THEN 1 ELSE 0 END),
-            SUM(CASE WHEN `+videoExtCase+` AND transcript IS NOT NULL AND TRIM(transcript) <> '' THEN 1 ELSE 0 END)
+            COALESCE(SUM(CASE WHEN `+videoExtCase+` THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN description IS NOT NULL AND TRIM(description) <> '' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN hash IS NOT NULL AND TRIM(hash) <> '' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN size IS NOT NULL THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN width IS NOT NULL AND height IS NOT NULL THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN `+videoExtCase+` AND transcript IS NOT NULL AND TRIM(transcript) <> '' THEN 1 ELSE 0 END), 0)
         FROM media
     `).Scan(
 		&data.TotalMedia,
@@ -297,9 +305,25 @@ func computeLibraryStats(deps *Dependencies) {
 		return
 	}
 
+	// Face-scan coverage: items scanned under ANY recognizer (auto routing
+	// splits the library across photo/anime models, so per-model counts would
+	// undercount), ignoring orphaned scan markers. The face_scan table may not
+	// exist on older databases — treat that as zero coverage, not an error.
+	err = deps.DB.QueryRowContext(ctx, `
+        SELECT COUNT(*)
+        FROM (SELECT DISTINCT media_path FROM face_scan) f
+        JOIN media m ON m.path = f.media_path
+    `).Scan(&data.WithFaceScan)
+	if err != nil {
+		log.Printf("stats: face scan coverage count failed (treating as 0): %v", err)
+		data.WithFaceScan = 0
+	}
+
+	faceModel := tasks.ActiveFaceModel()
 	data.TotalImages = data.TotalMedia - data.TotalVideos
 	data.AutotagModel = statsModelInfo{ID: taggerModel.ID, Name: taggerModel.DisplayName}
 	data.EmbedModel = statsModelInfo{ID: embedModel.ID, Name: embedModel.DisplayName}
+	data.FaceModel = statsModelInfo{ID: faceModel.ID, Name: faceModel.DisplayName}
 	data.GeneratedAt = time.Now().Unix()
 
 	libStats.mu.Lock()

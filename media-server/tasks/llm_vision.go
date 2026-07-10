@@ -54,6 +54,18 @@ const (
 	// LLM inference bucket for the same reasons as embed. Each autotag job
 	// parallelizes internally via its own worker pool (see runAutotagPool).
 	HostBucketAutotag = "autotag"
+	// HostBucketFaces is the local ONNX face-scanning bucket, separate for the
+	// same reasons. Each faces job parallelizes internally (see runFacesPool).
+	HostBucketFaces = "faces"
+	// HostBucketLocalCompute is the machine-wide cap on resource-intensive
+	// LOCAL work. Unlike the per-task buckets above (which exist so different
+	// kinds of work can be tuned independently), every local model workload —
+	// ONNX embed/autotag/faces, transcription, local-LLM inference — holds a
+	// local-compute slot IN ADDITION to its own bucket, so the per-task
+	// buckets can no longer stack three full-machine worker pools onto one
+	// GPU at the same time. Limit comes from config LocalComputeConcurrency
+	// (default 1). Remote inference (RunPod) does not hold a slot.
+	HostBucketLocalCompute = "local-compute"
 )
 
 // InferenceHost returns the concurrency bucket name for the currently
@@ -78,11 +90,33 @@ func InferenceHost() string {
 	}
 }
 
+// InferenceHostIsLocal reports whether the configured vision provider runs
+// on this machine (Ollama/LM Studio/llama.cpp) — those jobs consume the
+// shared local-compute slot. RunPod is remote and does not; "off"/unknown
+// jobs fail fast inside callVisionLLM so holding no slot is fine.
+func InferenceHostIsLocal() bool {
+	switch InferenceHost() {
+	case HostBucketOllama, HostBucketLMStudio, HostBucketLlamaCpp:
+		return true
+	default:
+		return false
+	}
+}
+
 // ErrInferenceDisabled is returned by callVisionLLM when the user has set
 // the inference provider to "off". Callers can match on this to surface a
 // friendlier "configure a provider" message instead of treating it as a
 // hard failure.
 var ErrInferenceDisabled = errors.New("inference disabled: set an InferenceProvider in config")
+
+// visionMaxOutputTokens caps generation length for every vision backend.
+// Descriptions and tag lists are at most a few paragraphs; without a cap, a
+// local model that misses its stop token (observed with LM Studio) generates
+// until the task's 10-minute deadline, wedging the provider's
+// one-at-a-time concurrency bucket the whole time. ~1024 tokens is roughly
+// 700 words — comfortably above any sane description, small enough that a
+// runaway generation ends in seconds instead of minutes.
+const visionMaxOutputTokens = 1024
 
 // callVisionLLM is the single entry point for image-conditioned LLM calls
 // (description, autotag). It dispatches based on the configured inference
@@ -134,8 +168,9 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 	img.logRequest("openai-compatible", model, endpoint, prompt)
 
 	payload := map[string]any{
-		"model":  model,
-		"stream": false,
+		"model":      model,
+		"stream":     false,
+		"max_tokens": visionMaxOutputTokens,
 		"messages": []map[string]any{
 			{
 				"role": "user",
@@ -211,8 +246,8 @@ func callOllamaVisionRaw(ctx context.Context, imagePath, prompt, baseURL, model 
 	}
 	base := strings.TrimRight(baseURL, "/")
 	img.logRequest("ollama", model, base+"/api/generate", prompt)
-	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"prompt":%s,"images":["%s"]}`,
-		model, strconv.Quote(prompt), img.base64())
+	reqJSON := fmt.Sprintf(`{"model":"%s","stream":false,"options":{"num_predict":%d},"prompt":%s,"images":["%s"]}`,
+		model, visionMaxOutputTokens, strconv.Quote(prompt), img.base64())
 	req, err := http.NewRequestWithContext(ctx, "POST", base+"/api/generate", strings.NewReader(reqJSON))
 	if err != nil {
 		return "", fmt.Errorf("failed to build request: %w", err)
@@ -259,6 +294,9 @@ func callRunPodVision(ctx context.Context, imagePath, prompt, endpoint, apiKey s
 
 	payload := map[string]any{
 		"input": map[string]any{
+			// Passed through to the worker's OpenAI-style handler; ignored
+			// by workers that don't support it.
+			"max_tokens": visionMaxOutputTokens,
 			"messages": []map[string]any{
 				{
 					"role": "user",

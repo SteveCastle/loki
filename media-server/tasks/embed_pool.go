@@ -9,13 +9,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/embedvec"
-	"github.com/stevecastle/shrike/jobqueue"
-	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/platform"
 )
 
@@ -49,6 +46,15 @@ func runWithTimeout[T any](ctx context.Context, d time.Duration, fn func() (T, e
 	case r := <-ch:
 		return r.v, r.e, false
 	}
+}
+
+// ExtractFrameForMedia returns a decodable image path for any media item: the
+// path itself for images, or a freshly-extracted temp frame for videos —
+// the SAME deterministic midpoint frame the scan tasks analyze, so relative
+// face bboxes recorded at scan time line up with it. tempFrame (when non-"")
+// is the caller's to delete. Exported for the face-crop endpoint.
+func ExtractFrameForMedia(ctx context.Context, mediaPath string) (imagePath, tempFrame string, err error) {
+	return extractFrameForFile(ctx, mediaPath, 30*time.Second)
 }
 
 // extractFrameForFile returns the path to feed the model plus a temp-frame path
@@ -131,13 +137,6 @@ func resolveONNXRuntime(requested string) (ortLib, provider string) {
 	return deps.BundledOrEmpty("onnxruntime"), "cpu"
 }
 
-// embedResult is one stored-or-failed embedding handed to the collector.
-type embedResult struct {
-	mediaPath string
-	vec       []float32
-	ok        bool
-}
-
 // serveWorker is one persistent embed.exe --serve subprocess plus its pipes.
 type serveWorker struct {
 	cmd    *exec.Cmd
@@ -147,10 +146,16 @@ type serveWorker struct {
 	stderr *strings.Builder
 }
 
-// startServeWorker launches one persistent worker and waits for its READY line.
-func startServeWorker(ctx context.Context, embedBin string, args []string) (*serveWorker, error) {
+// startServeWorker launches one persistent worker and waits for its READY
+// line. background workers run at below-normal OS priority so the machine's
+// foreground work (games, the user's apps) always wins the CPU — used for
+// scheduler-initiated jobs.
+func startServeWorker(ctx context.Context, embedBin string, args []string, background bool) (*serveWorker, error) {
 	cmd := exec.CommandContext(ctx, embedBin, args...)
 	platform.HideSubprocessWindow(cmd)
+	if background {
+		platform.SetBackgroundPriority(cmd)
+	}
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -163,6 +168,9 @@ func startServeWorker(ctx context.Context, embedBin string, args []string) (*ser
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
+	}
+	if background {
+		platform.DeprioritizeStarted(cmd.Process.Pid)
 	}
 	sc := bufio.NewScanner(stdoutPipe)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // base64 vectors can be large
@@ -242,166 +250,6 @@ func (w *serveWorker) kill() {
 func (w *serveWorker) close() {
 	_ = w.stdinC.Close()
 	_ = w.cmd.Wait()
-}
-
-// runEmbedPool embeds all paths using a pool of persistent worker processes,
-// storing each result under model.ID. It returns counts of processed/skipped.
-// The model is loaded once per worker (not per image), which is the dominant
-// speedup over the old spawn-per-image path.
-func runEmbedPool(ctx context.Context, j *jobqueue.Job, q *jobqueue.Queue, paths []string, fromQuery bool, model EmbedModel, imageModel, embedBin string) (int, int, error) {
-	workers, threads := ResolveEmbedResources()
-	ortLib, provider := resolveONNXRuntime(EmbedProviderFromConfig())
-	if EmbedProviderFromConfig() == "directml" && provider != "directml" {
-		q.PushJobStdout(j.ID, "DirectML runtime not installed; falling back to CPU. Install it from Dependencies.")
-	}
-	if workers > len(paths) {
-		workers = len(paths)
-	}
-	if workers < 1 {
-		workers = 1
-	}
-	q.PushJobStdout(j.ID, fmt.Sprintf("Embedding with %d worker(s), %d thread(s) each, provider=%s", workers, threads, provider))
-
-	baseArgs := buildServeArgs(imageModel, ortLib, model, provider, threads)
-
-	// Start the worker pool. If a worker fails to start, abort.
-	pool := make([]*serveWorker, 0, workers)
-	for i := 0; i < workers; i++ {
-		wkr, err := startServeWorker(ctx, embedBin, baseArgs)
-		if err != nil {
-			for _, p := range pool {
-				p.close()
-			}
-			return 0, 0, fmt.Errorf("start embed worker: %w", err)
-		}
-		pool = append(pool, wkr)
-	}
-
-	jobs := make(chan string)
-	results := make(chan embedResult, workers*2)
-
-	// Collector: single goroutine owns all DB writes (avoids sqlite write
-	// contention) and ANN index inserts.
-	var processed, skipped int
-	// The live coverage counter tracks the ACTIVE model only; a --model
-	// override run (background migration) must not advance it.
-	countsForStats := model.ID == ActiveEmbedModel().ID
-	var collectorWG sync.WaitGroup
-	collectorWG.Add(1)
-	go func() {
-		defer collectorWG.Done()
-		for r := range results {
-			if !r.ok {
-				skipped++
-				continue
-			}
-			if err := media.UpsertEmbedding(q.Db, r.mediaPath, model.ID, r.vec, 0); err != nil {
-				q.PushJobStdout(j.ID, "  Failed to store embedding: "+err.Error())
-				skipped++
-				continue
-			}
-			indexAdd(model.ID, r.mediaPath, r.vec) // index normalizes internally
-			q.RegisterOutputFile(j.ID, r.mediaPath)
-			if countsForStats {
-				notifyProgress(ProgressEmbedding, 1)
-			}
-			processed++
-			if (processed+skipped)%50 == 0 {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Progress: %d embedded, %d skipped (of %d)", processed, skipped, len(paths)))
-			}
-		}
-	}()
-
-	// Workers: each owns one subprocess and pulls paths off the channel.
-	timeout := OnnxFileTimeout()
-	var workerWG sync.WaitGroup
-	for _, wkr := range pool {
-		workerWG.Add(1)
-		go func(w *serveWorker) {
-			defer workerWG.Done()
-			defer func() {
-				if w != nil {
-					w.close()
-				}
-			}()
-			for mediaPath := range jobs {
-				if ctx.Err() != nil {
-					return
-				}
-				if shouldSkipEmbed(q.Db, mediaPath, model.ID) {
-					results <- embedResult{ok: false}
-					continue
-				}
-				if !fromQuery {
-					if _, err := os.Stat(mediaPath); os.IsNotExist(err) {
-						results <- embedResult{ok: false}
-						continue
-					}
-				}
-				imagePath, tempFrame, ferr := extractFrameForFile(ctx, mediaPath, timeout)
-				if ferr != nil {
-					q.PushJobStdout(j.ID, fmt.Sprintf("  frame extract failed/timed out (%s): %v", filepath.Base(mediaPath), ferr))
-					results <- embedResult{ok: false}
-					continue
-				}
-				if w == nil { // a previous restart failed; can't process — drain as skips
-					if tempFrame != "" {
-						_ = os.Remove(tempFrame)
-					}
-					results <- embedResult{ok: false}
-					continue
-				}
-				vec, err, timedOut := runWithTimeout(ctx, timeout, func() ([]float32, error) { return w.embed(imagePath) })
-				if tempFrame != "" {
-					_ = os.Remove(tempFrame)
-				}
-				if timedOut {
-					q.PushJobStdout(j.ID, fmt.Sprintf("  timed out after %s, skipping + restarting worker: %s", timeout, filepath.Base(mediaPath)))
-					w.kill()
-					if nw, rerr := startServeWorker(ctx, embedBin, baseArgs); rerr == nil {
-						w = nw
-					} else {
-						q.PushJobStdout(j.ID, "  worker restart failed; its remaining files will be skipped: "+rerr.Error())
-						w = nil
-					}
-					results <- embedResult{ok: false}
-					continue
-				}
-				if err != nil {
-					if ctx.Err() != nil {
-						return
-					}
-					q.PushJobStdout(j.ID, fmt.Sprintf("  embed failed (%s): %v", filepath.Base(mediaPath), err))
-					results <- embedResult{ok: false}
-					continue
-				}
-				results <- embedResult{mediaPath: mediaPath, vec: vec, ok: true}
-			}
-		}(wkr)
-	}
-
-	// Feed paths (stops early on cancel).
-	feedDone := make(chan struct{})
-	go func() {
-		defer close(feedDone)
-		defer close(jobs)
-		for _, p := range paths {
-			if ctx.Err() != nil {
-				return
-			}
-			jobs <- p
-		}
-	}()
-
-	<-feedDone
-	workerWG.Wait()
-	close(results)
-	collectorWG.Wait()
-
-	if ctx.Err() != nil {
-		return processed, skipped, ctx.Err()
-	}
-	return processed, skipped, nil
 }
 
 // buildServeArgs assembles the `embed.exe --serve` arguments for a model +

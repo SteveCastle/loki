@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import useScrollOnDrag from 'react-scroll-ondrag';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext, Item } from '../../state';
@@ -15,6 +15,7 @@ import './detail.css';
 import useTagDrop from 'renderer/hooks/useTagDrop';
 import Tags from '../metadata/tags';
 import BattleMode from '../elo/BattleMode';
+import DescriptionOverlay from './description-overlay';
 
 function resizeToCover(
   parentWidth: number,
@@ -237,11 +238,65 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   );
   const [coverSize, setCoverSize] = useState({ width: 0, height: 0 });
 
+  // Relative pan position as a fraction of the scrollable range on each axis
+  // (0 = top/left, 0.5 = centered, 1 = bottom/right). Kept across media
+  // changes so panning to a corner stays in that corner on the next item;
+  // same-sized media restores the identical pixel offset, differently-sized
+  // media lands at the same relative spot.
+  const panFractionRef = useRef({ x: 0.5, y: 0.5 });
+
+  const applyPan = () => {
+    const container = containerRef.current;
+    if (container === null) {
+      return;
+    }
+    const maxX = container.scrollWidth - container.clientWidth;
+    const maxY = container.scrollHeight - container.clientHeight;
+    if (maxX > 0) {
+      container.scrollLeft = panFractionRef.current.x * maxX;
+    }
+    if (maxY > 0) {
+      container.scrollTop = panFractionRef.current.y * maxY;
+    }
+  };
+
+  // Record the pan fraction from actual scrolls (drag-pan and touchpad
+  // scrolling both land here). Only record axes that currently overflow —
+  // when the media collapses between items the browser clamps scroll to 0,
+  // and recording that would wipe the remembered position.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null) {
+      return;
+    }
+    const recordPan = () => {
+      const maxX = container.scrollWidth - container.clientWidth;
+      const maxY = container.scrollHeight - container.clientHeight;
+      if (maxX > 0) {
+        panFractionRef.current.x = container.scrollLeft / maxX;
+      }
+      if (maxY > 0) {
+        panFractionRef.current.y = container.scrollTop / maxY;
+      }
+    };
+    container.addEventListener('scroll', recordPan, { passive: true });
+    return () => container.removeEventListener('scroll', recordPan);
+    // Keyed on `item?.path` for the same mount-timing reason as the wheel
+    // listener effect below.
+  }, [item?.path]);
+
+  // Re-apply the pan after a coverSize change resizes the media element.
+  // handleResize applies it at load time, but the element only takes its new
+  // dimensions on the re-render that setCoverSize triggers; a layout effect
+  // runs after that layout and before paint, so no repositioning is visible.
+  useLayoutEffect(() => {
+    applyPan();
+  }, [coverSize.width, coverSize.height]);
+
   const handleResize = () => {
     const parentDiv = containerRef.current;
     const media = mediaRef.current;
 
-    // Calculate the center of the image relative to the parent div
     if (media === null || parentDiv === null) {
       return;
     }
@@ -253,11 +308,10 @@ export function Detail({ offset = 0 }: { offset?: number }) {
 
     const parentWidth = parentDiv.clientWidth;
     const parentHeight = parentDiv.clientHeight;
-    const offsetX = (media.clientWidth - parentWidth) / 2;
-    const offsetY = (media.clientHeight - parentHeight) / 2;
-    // Set the scroll position of the parent div to the center of the image
-    parentDiv.scrollLeft = offsetX;
-    parentDiv.scrollTop = offsetY;
+    // Restore the remembered relative pan instead of recentering; for
+    // media the same size as the previous item this writes the value the
+    // scroll already has, so nothing moves.
+    applyPan();
 
     // If type is Video use videoheight and videowidth
     // If type is Image use naturalHeight and naturalWidth
@@ -378,6 +432,13 @@ export function Detail({ offset = 0 }: { offset?: number }) {
           mediaVersion
         )}
       </div>
+      {settings.showDescriptionOverlay ? (
+        <DescriptionOverlay
+          path={item.path}
+          fontSize={settings.descriptionOverlaySize}
+          sidePadding={settings.descriptionOverlayPadding}
+        />
+      ) : null}
       {!settings.showControls &&
         (getFileType(item.path) === 'video' ||
           getFileType(item.path) === 'audio') && (

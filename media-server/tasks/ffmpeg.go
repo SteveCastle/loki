@@ -25,39 +25,35 @@ var ffmpegCustomOptions = []TaskOption{
 func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildArgs func(abs, dir, name, ext string) (args []string, outputPath string)) error {
 	ctx := j.Ctx
 
-	var files []string
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, "ffmpeg: failed to load paths from query: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
-		files = mediaPaths
-	} else {
-		raw := strings.TrimSpace(j.Input)
-		if raw == "" {
-			q.PushJobStdout(j.ID, "ffmpeg: no input paths or query provided")
-			q.CompleteJob(j.ID)
-			return nil
-		}
-		files = parseInputPaths(raw)
+	res, rerr := resolveJobItemsRaw(j, q)
+	if rerr != nil {
+		q.PushJobStdout(j.ID, "ffmpeg: failed to resolve input: "+rerr.Error())
+		q.ErrorJob(j.ID)
+		return rerr
 	}
+	if res.FromQuery {
+		q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: query: %s", res.Query))
+	}
+	files := res.Paths
 
 	if len(files) == 0 {
 		q.PushJobStdout(j.ID, "ffmpeg: no files to process")
 		q.CompleteJob(j.ID)
 		return nil
 	}
+	_ = q.SetJobProgress(j.ID, 0, len(files))
 
-	for _, src := range files {
+	for done, src := range files {
 		select {
 		case <-ctx.Done():
 			q.PushJobStdout(j.ID, "ffmpeg: task canceled")
 			q.ErrorJob(j.ID)
 			return ctx.Err()
 		default:
+		}
+		if q.PauseRequested(j.ID) {
+			q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: paused at %d/%d - resume to continue", done, len(files)))
+			return jobqueue.ErrPaused
 		}
 
 		abs := src
@@ -131,6 +127,7 @@ func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildA
 
 		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
 		q.RegisterOutputFile(j.ID, outputPath, abs)
+		_ = q.SetJobProgress(j.ID, done+1, len(files))
 	}
 
 	q.CompleteJob(j.ID)
@@ -141,25 +138,16 @@ func runFFmpegOnFiles(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex, buildA
 func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
-	var files []string
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, "ffmpeg: failed to load paths from query: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
-		files = mediaPaths
-	} else {
-		raw := strings.TrimSpace(j.Input)
-		if raw == "" {
-			q.PushJobStdout(j.ID, "ffmpeg: no input paths or query provided")
-			q.CompleteJob(j.ID)
-			return nil
-		}
-		files = parseInputPaths(raw)
+	res, rerr := resolveJobItemsRaw(j, q)
+	if rerr != nil {
+		q.PushJobStdout(j.ID, "ffmpeg: failed to resolve input: "+rerr.Error())
+		q.ErrorJob(j.ID)
+		return rerr
 	}
+	if res.FromQuery {
+		q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: query: %s", res.Query))
+	}
+	files := res.Paths
 
 	if len(files) == 0 {
 		q.PushJobStdout(j.ID, "ffmpeg: no files to process")
@@ -173,6 +161,7 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		q.CompleteJob(j.ID)
 		return nil
 	}
+	_ = q.SetJobProgress(j.ID, 0, len(files))
 
 	for idx, src := range files {
 		select {
@@ -181,6 +170,10 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			q.ErrorJob(j.ID)
 			return ctx.Err()
 		default:
+		}
+		if q.PauseRequested(j.ID) {
+			q.PushJobStdout(j.ID, fmt.Sprintf("ffmpeg: paused at %d/%d - resume to continue", idx, len(files)))
+			return jobqueue.ErrPaused
 		}
 
 		abs := src
@@ -293,6 +286,7 @@ func ffmpegTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 		q.PushJobStdout(j.ID, "ffmpeg: completed for "+base)
 		q.RegisterOutputFile(j.ID, outputPath, abs)
+		_ = q.SetJobProgress(j.ID, idx+1, len(files))
 	}
 
 	q.CompleteJob(j.ID)

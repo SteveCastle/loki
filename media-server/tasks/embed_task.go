@@ -229,15 +229,38 @@ func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string,
 	if !found {
 		m = ActiveEmbedModel()
 	}
+	fresh, err := embedAndPersist(ctx, db, m, path)
+	if err != nil {
+		return nil, err
+	}
+	return SearchByVector(db, m.ID, fresh, limit)
+}
+
+// embedAndPersist embeds path under m, then persists + indexes the vector so
+// future searches over this item are instant.
+func embedAndPersist(ctx context.Context, db *sql.DB, m EmbedModel, path string) ([]float32, error) {
 	fresh, err := embedFileWithModel(ctx, path, m)
 	if err != nil {
 		return nil, fmt.Errorf("embed query item %q: %w", path, err)
 	}
-	// Persist + index so future searches over this item are instant.
 	if uerr := media.UpsertEmbedding(db, path, m.ID, fresh, 0); uerr == nil {
 		indexAdd(m.ID, path, fresh) // index normalizes internally
 	}
-	return SearchByVector(db, m.ID, fresh, limit)
+	return fresh, nil
+}
+
+// ImageQueryVectorForPath returns path's image embedding under m: the stored
+// vector when present, otherwise embedded on the fly (and persisted). Used as
+// the image half of a blended image+text query.
+func ImageQueryVectorForPath(ctx context.Context, db *sql.DB, m EmbedModel, path string) ([]float32, error) {
+	vec, ok, err := media.GetEmbedding(db, path, m.ID)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return vec, nil
+	}
+	return embedAndPersist(ctx, db, m, path)
 }
 
 // embedSubprocessError wraps a failed embed-subprocess run, surfacing the
@@ -283,6 +306,11 @@ func runEmbedSubprocess(ctx context.Context, embedBin, imageModelPath, ortLib, i
 	if ortLib != "" {
 		args = append(args, "--ort="+ortLib)
 	}
+	// Independent deadline: query-time embeds run on a REQUEST context, and a
+	// client that never disconnects must not be able to wedge this handler
+	// (and its socket) forever behind a hung ONNX call.
+	ctx, cancel := context.WithTimeout(ctx, OnnxFileTimeout())
+	defer cancel()
 	cmd := exec.CommandContext(ctx, embedBin, args...)
 	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
@@ -319,6 +347,10 @@ func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer,
 	if ortLib != "" {
 		args = append(args, "--ort="+ortLib)
 	}
+	// Same independent deadline as runEmbedSubprocess: a hung text encode must
+	// not pin a request handler forever.
+	ctx, cancel := context.WithTimeout(ctx, OnnxFileTimeout())
+	defer cancel()
 	cmd := exec.CommandContext(ctx, embedBin, args...)
 	platform.HideSubprocessWindow(cmd)
 	out, err := cmd.Output()
@@ -333,37 +365,50 @@ func runEmbedTextSubprocess(ctx context.Context, embedBin, textModel, tokenizer,
 	return embedvec.Decode(raw)
 }
 
-// SearchByText encodes text via the SigLIP 2 text encoder subprocess and
-// returns the top-limit most similar media by cosine similarity. Returns an
-// error (not a panic) when the model, tokenizer, or embed binary is absent.
-func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
+// TextQueryVector encodes text with the multimodal text-search model's text
+// encoder and returns the vector plus the model it belongs to (which is also
+// the image-embedding space the vector must be matched/blended against).
+// Returns an error (not a panic) when the model, tokenizer, or embed binary
+// is absent.
+func TextQueryVector(ctx context.Context, text string) ([]float32, EmbedModel, error) {
 	// Text->image search needs a text encoder; resolve the multimodal model
 	// (the active model if it's multimodal, otherwise SigLIP 2). Vectors are
 	// matched against this model's image embeddings.
 	m := TextSearchModel()
 	if !m.Multimodal || m.TextModelFile == "" {
-		return nil, fmt.Errorf("model %q does not support text search", m.ID)
+		return nil, m, fmt.Errorf("model %q does not support text search", m.ID)
 	}
 	textModel, err := deps.ModelPath(m.ID, m.TextModelFile)
 	if err != nil {
-		return nil, fmt.Errorf("text model not installed: %w", err)
+		return nil, m, fmt.Errorf("text model not installed: %w", err)
 	}
 	if textModel == "" {
-		return nil, fmt.Errorf("text model not installed")
+		return nil, m, fmt.Errorf("text model not installed")
 	}
 	tokenizer, err := deps.ModelPath(m.ID, m.TokenizerFile)
 	if err != nil {
-		return nil, fmt.Errorf("tokenizer not installed: %w", err)
+		return nil, m, fmt.Errorf("tokenizer not installed: %w", err)
 	}
 	if tokenizer == "" {
-		return nil, fmt.Errorf("tokenizer not installed")
+		return nil, m, fmt.Errorf("tokenizer not installed")
 	}
 	ortLib := deps.BundledOrEmpty("onnxruntime")
 	embedBin := deps.BundledOrEmpty("embed")
 	if embedBin == "" {
-		return nil, fmt.Errorf("embed binary not installed")
+		return nil, m, fmt.Errorf("embed binary not installed")
 	}
 	vec, err := runEmbedTextSubprocess(ctx, embedBin, textModel, tokenizer, ortLib, text, m)
+	if err != nil {
+		return nil, m, err
+	}
+	return vec, m, nil
+}
+
+// SearchByText encodes text via the SigLIP 2 text encoder subprocess and
+// returns the top-limit most similar media by cosine similarity. Returns an
+// error (not a panic) when the model, tokenizer, or embed binary is absent.
+func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
+	vec, m, err := TextQueryVector(ctx, text)
 	if err != nil {
 		return nil, err
 	}
@@ -388,83 +433,4 @@ func embedModelOverrideFromJob(j *jobqueue.Job) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-func embedTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
-	ctx := j.Ctx
-
-	var paths []string
-	fromQuery := false
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Using query: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, "Failed to load paths from query: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
-		paths = mediaPaths
-		fromQuery = true
-		q.PushJobStdout(j.ID, fmt.Sprintf("Query matched %d items", len(paths)))
-	} else {
-		raw := strings.TrimSpace(j.Input)
-		if raw == "" {
-			q.PushJobStdout(j.ID, "No image path provided")
-			q.CompleteJob(j.ID)
-			return nil
-		}
-		paths = parseInputPaths(raw)
-		q.PushJobStdout(j.ID, fmt.Sprintf("Processing %d files from input", len(paths)))
-	}
-	if len(paths) == 0 {
-		q.PushJobStdout(j.ID, "No files to process")
-		q.CompleteJob(j.ID)
-		return nil
-	}
-
-	// Resolve the embedding model. An explicit `--model=<id>` in the job
-	// overrides the configured active model — this enables zero-downtime
-	// migration: embed the whole library under a new model in the background
-	// while the active model still serves search, then flip the config.
-	model := ActiveEmbedModel()
-	if id, ok := embedModelOverrideFromJob(j); ok {
-		if m, known := EmbedModelByID(id); known {
-			model = m
-		} else {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Unknown --model %q; using active model %q", id, model.ID))
-		}
-	}
-	q.PushJobStdout(j.ID, fmt.Sprintf("Embedding model: %s (dim %d)", model.ID, model.Dim))
-
-	// Resolve model + runtime + binary (deps first, like autotag).
-	imageModel, _ := deps.ModelPath(model.ID, model.ImageModelFile)
-	if imageModel == "" {
-		q.PushJobStdout(j.ID, fmt.Sprintf("%s not installed; install it from Dependencies", model.DisplayName))
-		q.ErrorJob(j.ID)
-		return fmt.Errorf("model %s not installed", model.ID)
-	}
-	embedBin := deps.BundledOrEmpty("embed")
-	if embedBin == "" {
-		q.PushJobStdout(j.ID, "embed binary not installed; install it from Dependencies")
-		q.ErrorJob(j.ID)
-		return fmt.Errorf("embed binary not installed")
-	}
-
-	// Embed via a pool of persistent workers (model loaded once per worker, not
-	// per image). The pool size + ONNX threads come from the performance config.
-	processed, skipped, err := runEmbedPool(ctx, j, q, paths, fromQuery, model, imageModel, embedBin)
-	if err != nil {
-		if ctx.Err() != nil {
-			q.PushJobStdout(j.ID, "Task canceled")
-			_ = q.CancelJob(j.ID)
-			return err
-		}
-		q.PushJobStdout(j.ID, "Embedding failed: "+err.Error())
-		q.ErrorJob(j.ID)
-		return err
-	}
-
-	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d embedded, %d skipped", processed, skipped))
-	q.CompleteJob(j.ID)
-	return nil
 }

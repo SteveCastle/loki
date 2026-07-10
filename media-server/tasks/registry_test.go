@@ -30,11 +30,18 @@ func TestGetTasks(t *testing.T) {
 		{"remove", "Remove Media"},
 		{"cleanup", "CleanUp"},
 		{"ingest", "Ingest Media Files"},
-		{"metadata", "Generate Metadata"},
+		{"metadata", "Generate Metadata (Legacy)"},
 		{"move", "Move Media Files"},
 		{"autotag", "Auto Tag (ONNX)"},
 		{"lora-dataset", "Create LoRA Dataset"},
 		{"hls", "HLS Transcode"},
+		// Split-out per-item ops + the combined runner
+		{"describe", "Generate Descriptions"},
+		{"transcribe", "Generate Transcripts"},
+		{"hash", "Generate Hashes"},
+		{"dimensions", "Generate Dimensions"},
+		{"embed", "Visual Embedding (ONNX)"},
+		{"process", "Process Media (Combined Ops)"},
 	}
 
 	for _, expected := range expectedTasks {

@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
@@ -12,30 +11,20 @@ import (
 func removeFromDB(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
-	var paths []string
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("Using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Error loading media paths for query: %v", err))
-			q.ErrorJob(j.ID)
-			return err
-		}
-		paths = mediaPaths
-	} else {
-		pathsStr := strings.TrimSpace(j.Input)
-		if pathsStr == "" {
-			q.PushJobStdout(j.ID, "No paths provided for removal")
-			q.CompleteJob(j.ID)
-			return nil
-		}
-		rawPaths := strings.Split(pathsStr, "\n")
-		for _, path := range rawPaths {
-			cleanPath := strings.TrimSpace(path)
-			if cleanPath != "" {
-				paths = append(paths, cleanPath)
-			}
-		}
+	res, rerr := resolveJobItemsRaw(j, q)
+	if rerr != nil {
+		q.PushJobStdout(j.ID, "Failed to resolve input: "+rerr.Error())
+		q.ErrorJob(j.ID)
+		return rerr
+	}
+	if res.FromQuery {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Query: %s", res.Query))
+	}
+	paths := res.Paths
+	if len(paths) == 0 {
+		q.PushJobStdout(j.ID, "No paths provided for removal")
+		q.CompleteJob(j.ID)
+		return nil
 	}
 
 	q.PushJobStdout(j.ID, "Starting removal of media items from database")

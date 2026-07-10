@@ -1,0 +1,34 @@
+# Lowkey Media Server — example systemd unit.
+#
+# Quick start (user service — recommended, no root needed and the server can
+# read your files):
+#   mkdir -p ~/.config/systemd/user
+#   cp lowkeymediaserver.service ~/.config/systemd/user/
+#   # edit ExecStart/WorkingDirectory to where you extracted the archive
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now lowkeymediaserver
+#   loginctl enable-linger $USER   # keep it running after you log out
+#
+# The web UI is then at http://<host>:10111 (first visit runs the setup
+# wizard). Override the port with Environment=LOWKEY_PORT=... below.
+
+[Unit]
+Description=Lowkey Media Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust both paths to wherever you extracted the release archive.
+ExecStart=%h/lowkey-media-server/lowkeymediaserver
+WorkingDirectory=%h/lowkey-media-server
+Restart=on-failure
+RestartSec=5
+# Optional overrides — see the release notes for the full list:
+#Environment=LOWKEY_PORT=10111
+#Environment=LOWKEY_DB_PATH=%h/lowkey-media-server/data/media.db
+#Environment=LOWKEY_ADMIN_USER=me
+#Environment=LOWKEY_ADMIN_PASSWORD=change-me
+
+[Install]
+WantedBy=default.target

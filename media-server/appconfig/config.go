@@ -3,10 +3,12 @@ package appconfig
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,11 +33,42 @@ type StorageRoot struct {
 	ThumbnailPrefix string `json:"thumbnailPrefix,omitempty"`
 }
 
+// ByoFaceModel declares a bring-your-own face recognizer: a user-supplied
+// ONNX model (typically a research-licensed ArcFace/AdaFace export that can't
+// be shipped) usable as the active FaceModel. Detected faces are aligned to
+// the standard 112×112 five-landmark template and fed to this model.
+type ByoFaceModel struct {
+	ID   string `json:"id"`             // unique; face vectors are stored keyed by this
+	Name string `json:"name,omitempty"` // display name (defaults to ID)
+	// ModelPath is the absolute path to the recognizer ONNX file on disk.
+	ModelPath string `json:"modelPath"`
+	Dim       int    `json:"dim"` // embedding dimension (512 for ArcFace-family)
+	// Tensor names; default "data"/"fc1" when empty.
+	InputName  string `json:"inputName,omitempty"`
+	OutputName string `json:"outputName,omitempty"`
+	// Mean/Std are per-channel RGB on the 0..255 pixel scale; ArcFace-family
+	// models want 127.5/127.5. Empty means raw pixels (mean 0, std 1).
+	Mean []float64 `json:"mean,omitempty"`
+	Std  []float64 `json:"std,omitempty"`
+	// ColorOrder is "RGB" (ArcFace-family) or "BGR"; default "BGR".
+	ColorOrder string `json:"colorOrder,omitempty"`
+	// MatchThreshold is the cosine similarity at/above which two faces are
+	// considered the same person by clustering. 0 uses a conservative default,
+	// but recognizers differ (SFace and ArcFace have different score
+	// distributions) so BYO entries should set it explicitly.
+	MatchThreshold float64 `json:"matchThreshold,omitempty"`
+}
+
 // DefaultEmbeddingModel is the visual-embedding model used when none is
 // configured. Must match an ID in the tasks package's embed-model registry.
 // Kept as a literal here (not imported from tasks) so appconfig stays a leaf
 // package with no dependency cycle.
 const DefaultEmbeddingModel = "siglip2-base-patch16-224"
+
+// DefaultFaceModel is the face-identity recognizer used when none is
+// configured: SFace (OpenCV Zoo, Apache-2.0). Must match an ID in the tasks
+// package's face-model registry or a ByoFaceModels entry.
+const DefaultFaceModel = "sface"
 
 // DefaultTranscriptionProvider / DefaultTranscriptionModel are used when the
 // transcription section is empty. The provider id must match a registration
@@ -81,7 +114,6 @@ type Config struct {
 	OllamaBaseURL  string `json:"ollamaBaseUrl"`
 	OllamaModel    string `json:"ollamaModel"`
 	DescribePrompt string `json:"describePrompt"`
-	AutotagPrompt  string `json:"autotagPrompt"`
 
 	// RunPod serverless vision settings. Active when InferenceProvider ==
 	// "runpod". The worker is expected to expose an OpenAI-compatible
@@ -118,6 +150,28 @@ type Config struct {
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
+
+	// AutoProcessOps is the comma-separated per-item op list the scheduled
+	// combined job runs. Empty = every op (hash, dimensions, describe,
+	// transcribe, autotag, embed, faces).
+	//
+	// NOTE: the scheduler's on/off mode is deliberately NOT config — it is
+	// runtime-only state that resets to "stopped" on every server start, so
+	// background compute is always an affirmative per-session choice. (A
+	// legacy "autoProcessMode" key may linger in old config files; it is
+	// ignored.)
+	AutoProcessOps string `json:"autoProcessOps"`
+
+	// LocalComputeConcurrency caps how many resource-intensive LOCAL jobs
+	// (ONNX embed/autotag/faces, transcription, and local-LLM inference) may
+	// run at the same time, machine-wide, regardless of which per-task bucket
+	// each one lives in. Every such job holds a shared "local-compute" slot in
+	// addition to its own bucket. 1 (the default) serializes all heavy local
+	// work — each job still parallelizes internally via its worker pool, which
+	// is sized to own the machine. Raise it only if the hardware has headroom
+	// for genuinely concurrent model workloads. Remote inference (RunPod) does
+	// not consume a slot. Values <= 0 fall back to the default.
+	LocalComputeConcurrency int `json:"localComputeConcurrency"`
 
 	// ONNX tagger settings
 	OnnxTagger struct {
@@ -168,6 +222,40 @@ type Config struct {
 	AutotagWorkers          int    `json:"autotagWorkers"`
 	AutotagThreadsPerWorker int    `json:"autotagThreadsPerWorker"`
 
+	// Active face-identity recognizer ID: "sface" (built-in, Apache-2.0,
+	// downloadable from Dependencies) or the ID of a ByoFaceModels entry.
+	// Face vectors are stored keyed by model, so switching is non-destructive.
+	// Detection is always YuNet regardless of this setting.
+	FaceModel string `json:"faceModel"`
+
+	// Face task execution provider + performance, mirroring the embedding
+	// settings ("cpu" or "directml"; presets low/balanced/max/custom).
+	FaceProvider         string `json:"faceProvider"`
+	FacePerformance      string `json:"facePerformance"`
+	FaceWorkers          int    `json:"faceWorkers"`
+	FaceThreadsPerWorker int    `json:"faceThreadsPerWorker"`
+
+	// FaceRouting: "auto" (default) classifies each media item as photo vs
+	// anime via a SigLIP text probe and scans/searches it under the matching
+	// recognizer, so one faces job handles both domains; "single" pins
+	// everything to FaceModel (pre-routing behavior).
+	FaceRouting string `json:"faceRouting"`
+
+	// Saved grouping tuner (the People panel's Tune sliders). These apply to
+	// EVERY clustering pass — the Group new faces / Rebuild buttons, tuned
+	// regroups, and the incremental in-scan passes — with explicit
+	// faces-cluster job flags overriding them per run. Zero values mean
+	// "use the built-in default" (offset 0 IS the default; 0 min-cluster /
+	// min-quality read as unset).
+	FaceClusterThresholdOffset float64 `json:"faceClusterThresholdOffset"` // added to each recognizer's default threshold (−0.2…0.3)
+	FaceClusterMinCluster      int     `json:"faceClusterMinCluster"`      // members needed to mint a new group (default 3)
+	FaceClusterMinQuality      float64 `json:"faceClusterMinQuality"`      // detection-confidence floor for founding groups (default 0.75)
+
+	// Bring-your-own face recognizers (research-licensed models like ArcFace
+	// or AdaFace exports that can't be shipped). The user supplies the ONNX
+	// file; entries here make it selectable as FaceModel.
+	ByoFaceModels []ByoFaceModel `json:"byoFaceModels,omitempty"`
+
 	// Per-file processing timeout (seconds) for the local ONNX tasks (embed,
 	// autotag). A single file that exceeds this — e.g. a corrupt image stuck in
 	// decode or a bad video stuck in frame extraction — is skipped and the job
@@ -195,6 +283,12 @@ type Config struct {
 	// JWT Secret for authentication
 	JWTSecret string `json:"jwtSecret"`
 
+	// SetupComplete is true once the first-run setup wizard has finished (or
+	// been inferred complete for installs that predate the wizard). While
+	// false, unauthenticated page requests are funneled to /setup and the
+	// setup APIs are open; once true, the wizard locks behind admin auth.
+	SetupComplete bool `json:"setupComplete"`
+
 	// Storage roots for web filesystem browsing
 	Roots []StorageRoot `json:"roots"`
 
@@ -206,6 +300,35 @@ var (
 	cfgMu sync.RWMutex
 	cfg   Config
 )
+
+// Env-supplied storage roots (LOWKEY_ROOTS / LOWKEY_ROOT_<N>) override the
+// config file at runtime but must never be baked into it by Save. Track the
+// injected set so Save can recognize and skip it.
+var (
+	envRootsMu     sync.Mutex
+	envRootsActive bool
+	envRootsVal    []StorageRoot
+)
+
+// EnvRootsActive reports whether storage roots are currently supplied by
+// environment variables, meaning the config file's roots are overridden at
+// runtime and edits to them only take effect once the env vars are removed.
+func EnvRootsActive() bool {
+	envRootsMu.Lock()
+	defer envRootsMu.Unlock()
+	return envRootsActive
+}
+
+// downloadPathRoot builds the default local root migrated from DownloadPath
+// for configs that predate the storage-roots system.
+func downloadPathRoot(downloadPath string) []StorageRoot {
+	return []StorageRoot{{
+		Type:    "local",
+		Path:    downloadPath,
+		Label:   "Downloads",
+		Default: true,
+	}}
+}
 
 // defaultDownloadPath returns the default download path (~/media).
 func defaultDownloadPath() string {
@@ -241,6 +364,10 @@ func defaultConfig() Config {
 		AutotagModel:           DefaultAutotagModel,
 		AutotagProvider:        "cpu",
 		AutotagPerformance:     "balanced",
+		FaceModel:              DefaultFaceModel,
+		FaceProvider:           "cpu",
+		FacePerformance:        "balanced",
+		FaceRouting:            "auto",
 		OnnxFileTimeoutSeconds: 120,
 		TranscriptionProvider:  DefaultTranscriptionProvider,
 		TranscriptionModel:     DefaultTranscriptionModel,
@@ -249,7 +376,6 @@ func defaultConfig() Config {
 		OllamaBaseURL:          "http://localhost:11434",
 		OllamaModel:            "llama3.2-vision",
 		DescribePrompt:         "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
-		AutotagPrompt:          "Please analyze this image and select the most appropriate tags from the following list. Return your response as a JSON array containing objects with \"label\" and \"category\" fields.\n\n%s\n\nLook at the image carefully and select only the tags that accurately describe what you see. Focus on:\n- Objects and subjects visible in the image\n- Colors and visual characteristics\n- Composition and style elements\n- Setting or environment\n- Actions or activities if present\n\nReturn your response in this exact JSON format:\n[{\"label\": \"tag_name\", \"category\": \"category_name\"}]\n\nOnly select tags that clearly apply to this image. If no tags from the list match what you see, return an empty array [].",
 		LMStudioBaseURL:        "http://localhost:1234",
 		LlamaCppBaseURL:        "http://localhost:8080",
 		InferenceConcurrency: struct {
@@ -263,6 +389,7 @@ func defaultConfig() Config {
 			LMStudio: 1, // local single-GPU LM Studio: one at a time
 			LlamaCpp: 1, // local single-GPU llama.cpp: one at a time
 		},
+		LocalComputeConcurrency: 1, // one heavy local model workload at a time
 		OnnxTagger: struct {
 			ModelPath            string  `json:"modelPath"`
 			LabelsPath           string  `json:"labelsPath"`
@@ -338,8 +465,28 @@ func deepMergeJSON(dst, src map[string]json.RawMessage) {
 // getConfigPath returns the full path to the config.json file.
 // It is a variable so tests can override it to use temp directories.
 var getConfigPath = func() (string, error) {
+	// Explicit override first — deployments (Docker, tests, side-by-side
+	// instances) can pin the config file location.
+	if v := strings.TrimSpace(os.Getenv("LOWKEY_CONFIG_PATH")); v != "" {
+		return v, nil
+	}
+	// Safety net: under `go test`, NEVER touch the real config file. A unit
+	// test that reaches Save() through production code (as the scheduler's
+	// SetMode once did) must not overwrite the developer's live
+	// %APPDATA% config — that incident reset a real dbPath and jwtSecret.
+	// Tests that care about the path set LOWKEY_CONFIG_PATH explicitly (or
+	// override this var from inside the package).
+	if underGoTest() {
+		return filepath.Join(os.TempDir(), fmt.Sprintf("lowkey-test-config-%d.json", os.Getpid())), nil
+	}
 	configDir := DefaultConfigDir()
 	return filepath.Join(configDir, "config.json"), nil
+}
+
+// underGoTest reports whether we're running inside a `go test` binary (the
+// testing framework registers the test.v flag at init).
+func underGoTest() bool {
+	return flag.Lookup("test.v") != nil
 }
 
 // Load reads the config from disk and updates the in-memory config. It returns the config and path.
@@ -364,6 +511,13 @@ func Load() (Config, string, error) {
 			// Config file doesn't exist - create it with defaults
 			def := defaultConfig()
 
+			// Seed the default storage root from the download path BEFORE
+			// saving, so the file carries a real, user-editable root instead
+			// of regenerating a phantom one in memory on every boot.
+			if def.DownloadPath != "" {
+				def.Roots = downloadPathRoot(def.DownloadPath)
+			}
+
 			// Save the default config (without env overrides — env vars stay
 			// in the environment; the file only records persistent choices)
 			savedPath, saveErr := Save(def)
@@ -383,14 +537,11 @@ func Load() (Config, string, error) {
 				return Config{}, "", fmt.Errorf("failed to create database directory %s: %v", dbDir, err)
 			}
 
-			// Same DownloadPath → default-root migration as the existing-file path
-			if len(def.Roots) == 0 && def.DownloadPath != "" {
-				def.Roots = []StorageRoot{{
-					Type:    "local",
-					Path:    def.DownloadPath,
-					Label:   "Downloads",
-					Default: true,
-				}}
+			// Env roots replaced the seeded root entirely; otherwise follow an
+			// env-overridden download path in memory (the file keeps the
+			// persistent path — env values are never baked in).
+			if !EnvRootsActive() && len(def.Roots) == 1 {
+				def.Roots[0].Path = def.DownloadPath
 			}
 
 			Set(def)
@@ -402,6 +553,20 @@ func Load() (Config, string, error) {
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Config{}, path, fmt.Errorf("failed to parse config JSON: %v", err)
+	}
+
+	// Whether the file has an explicit roots key ("roots": null counts as
+	// absent). Distinguishes "config predates storage roots" (migrate the
+	// download path below) from "user deliberately cleared all roots"
+	// (respect the empty list — do not resurrect a Downloads root).
+	rootsKeyPresent := false
+	{
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(data, &raw); err == nil {
+			if v, ok := raw["roots"]; ok && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+				rootsKeyPresent = true
+			}
+		}
 	}
 
 	// Merge defaults for any missing fields
@@ -458,9 +623,6 @@ func Load() (Config, string, error) {
 	if c.DescribePrompt == "" {
 		c.DescribePrompt = def.DescribePrompt
 	}
-	if c.AutotagPrompt == "" {
-		c.AutotagPrompt = def.AutotagPrompt
-	}
 	if c.EmbeddingModel == "" {
 		c.EmbeddingModel = def.EmbeddingModel
 		needsSave = true
@@ -483,6 +645,22 @@ func Load() (Config, string, error) {
 	}
 	if c.AutotagPerformance == "" {
 		c.AutotagPerformance = def.AutotagPerformance
+		needsSave = true
+	}
+	if c.FaceModel == "" {
+		c.FaceModel = def.FaceModel
+		needsSave = true
+	}
+	if c.FaceProvider == "" {
+		c.FaceProvider = def.FaceProvider
+		needsSave = true
+	}
+	if c.FacePerformance == "" {
+		c.FacePerformance = def.FacePerformance
+		needsSave = true
+	}
+	if c.FaceRouting == "" {
+		c.FaceRouting = def.FaceRouting
 		needsSave = true
 	}
 	if c.OnnxFileTimeoutSeconds == 0 {
@@ -524,6 +702,9 @@ func Load() (Config, string, error) {
 	if c.InferenceConcurrency.LlamaCpp <= 0 {
 		c.InferenceConcurrency.LlamaCpp = def.InferenceConcurrency.LlamaCpp
 	}
+	if c.LocalComputeConcurrency <= 0 {
+		c.LocalComputeConcurrency = def.LocalComputeConcurrency
+	}
 	if c.LMStudioBaseURL == "" {
 		c.LMStudioBaseURL = def.LMStudioBaseURL
 	}
@@ -532,6 +713,17 @@ func Load() (Config, string, error) {
 	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = uuid.New().String()
+		needsSave = true
+	}
+
+	// Migrate DownloadPath into a default root for configs that predate the
+	// storage-roots system. Persisted so the root becomes a real entry the
+	// user can rename or delete; a file that already has an explicit roots
+	// key (even an empty list) is left alone.
+	migratedDownloadRoot := false
+	if !rootsKeyPresent && len(c.Roots) == 0 && c.DownloadPath != "" {
+		c.Roots = downloadPathRoot(c.DownloadPath)
+		migratedDownloadRoot = true
 		needsSave = true
 	}
 
@@ -559,15 +751,11 @@ func Load() (Config, string, error) {
 	// Apply environment variable overrides (useful for Docker / container deployments)
 	applyEnvOverrides(&c)
 
-	// Migrate DownloadPath into a default root if no roots exist yet.
-	// This preserves backwards compatibility for configs that only have downloadPath.
-	if len(c.Roots) == 0 && c.DownloadPath != "" {
-		c.Roots = []StorageRoot{{
-			Type:    "local",
-			Path:    c.DownloadPath,
-			Label:   "Downloads",
-			Default: true,
-		}}
+	// Env roots replace the migrated root entirely; otherwise follow an
+	// env-overridden download path in memory (the file keeps the persistent
+	// path — env values are never baked in).
+	if migratedDownloadRoot && !EnvRootsActive() && len(c.Roots) == 1 {
+		c.Roots[0].Path = c.DownloadPath
 	}
 
 	Set(c)
@@ -733,6 +921,28 @@ func applyEnvOverrides(c *Config) {
 			c.AutotagThreadsPerWorker = n
 		}
 	}
+	if v := os.Getenv("LOWKEY_FACE_MODEL"); v != "" {
+		c.FaceModel = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("LOWKEY_FACE_PROVIDER"); v != "" {
+		c.FaceProvider = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_FACE_PERFORMANCE"); v != "" {
+		c.FacePerformance = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_FACE_ROUTING"); v != "" {
+		c.FaceRouting = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v := os.Getenv("LOWKEY_FACE_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.FaceWorkers = n
+		}
+	}
+	if v := os.Getenv("LOWKEY_FACE_THREADS"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.FaceThreadsPerWorker = n
+		}
+	}
 	if v := os.Getenv("LOWKEY_ONNX_FILE_TIMEOUT"); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 			c.OnnxFileTimeoutSeconds = n
@@ -744,8 +954,10 @@ func applyEnvOverrides(c *Config) {
 	// mutually exclusive — if LOWKEY_ROOTS is set it wins; otherwise numbered
 	// LOWKEY_ROOT_* vars are collected. Either way, env roots replace any
 	// roots from the config file.
+	envRootsApplied := false
 	if roots, ok := parseEnvRoots(); ok {
 		c.Roots = roots
+		envRootsApplied = true
 	}
 
 	// LOWKEY_DEFAULT_ROOT sets which root is the default destination for
@@ -755,6 +967,16 @@ func applyEnvOverrides(c *Config) {
 	if v := os.Getenv("LOWKEY_DEFAULT_ROOT"); v != "" {
 		applyDefaultRoot(c, v)
 	}
+
+	// Snapshot the injected set (post-default-flag) so Save can recognize it
+	// and keep it out of the config file.
+	envRootsMu.Lock()
+	envRootsActive = envRootsApplied
+	envRootsVal = nil
+	if envRootsApplied {
+		envRootsVal = append([]StorageRoot(nil), c.Roots...)
+	}
+	envRootsMu.Unlock()
 }
 
 // applyDefaultRoot marks one root as default based on a 1-based index or label.
@@ -872,6 +1094,16 @@ func Save(c Config) (string, error) {
 	if err := json.Unmarshal(marshaled, &incoming); err != nil {
 		return path, fmt.Errorf("failed to map config JSON: %v", err)
 	}
+
+	// Env-supplied storage roots must not be baked into the file: when the
+	// roots being saved are exactly the env-injected set, keep the file's own
+	// roots. Roots that differ were deliberately edited and are persisted
+	// (they still lose to the env vars at runtime until those are removed).
+	envRootsMu.Lock()
+	if envRootsActive && slices.Equal(c.Roots, envRootsVal) {
+		delete(incoming, "roots")
+	}
+	envRootsMu.Unlock()
 
 	deepMergeJSON(base, incoming)
 

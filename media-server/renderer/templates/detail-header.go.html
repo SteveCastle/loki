@@ -6,7 +6,23 @@
     <a href="/jobs" class="breadcrumb-path">Jobs</a>
     <span class="breadcrumb-separator">›</span>
     <span class="breadcrumb-leaf">Job {{.ID}}</span>
-    {{ if or (eq .State 0) (eq .State 1) }}
+    {{ if or (eq .State 0) (eq .State 1) (eq .State 5) }}
+    <button
+      id="pause"
+      data-id="{{.ID}}"
+      onclick="pauseJob(event)"
+      {{ if eq .State 5 }}style="display: none"{{ end }}
+    >
+      Pause
+    </button>
+    <button
+      id="resume"
+      data-id="{{.ID}}"
+      onclick="resumeJob(event)"
+      {{ if ne .State 5 }}style="display: none"{{ end }}
+    >
+      Resume
+    </button>
     <button id="cancel" data-id="{{.ID}}" onclick="cancelJob(event)">
       Cancel
     </button>
@@ -17,6 +33,22 @@
       <strong>Status:</strong>
       <span class="job-status {{.State}}"></span>
       <span id="state" class="status-text {{.State}}">{{.State}}</span>
+    </div>
+    <div
+      id="job-progress"
+      class="job-progress-row"
+      {{ if not (gt .ProgressTotal 0) }}style="display: none"{{ end }}
+    >
+      <div class="job-progress-track">
+        <div
+          id="job-progress-bar"
+          class="job-progress-fill"
+          style="width: {{ progressPct .ProgressDone .ProgressTotal }}%"
+        ></div>
+      </div>
+      <span id="job-progress-label" class="job-progress-label"
+        >{{ .ProgressDone }}/{{ .ProgressTotal }}</span
+      >
     </div>
     <div class="command-section">
       <strong>Command:</strong>

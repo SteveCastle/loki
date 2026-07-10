@@ -1,7 +1,9 @@
 # Logs
 logs
 *.log
+query-log.jsonl
 *.exe
+*.exe.bak
 # Runtime data
 pids
 *.pid

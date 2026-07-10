@@ -247,6 +247,18 @@ contextBridge.exposeInMainWorld('electron', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   // Local media-server base URL with the configured port baked in.
   mediaServerBase: detectMediaServerBase(),
+  // Whether the media server appears to be INSTALLED on this machine: its
+  // config.json exists (the Go server writes it on first run), or the user
+  // points at one explicitly via LOWKEY_PORT. Lets the renderer tell
+  // "not installed" apart from "installed but not running / unreachable".
+  mediaServerConfigured: (() => {
+    if (process.env.LOWKEY_PORT) return true;
+    try {
+      return fs.existsSync(mediaServerConfigPath());
+    } catch {
+      return false;
+    }
+  })(),
   // Forward renderer errors/load failures to the main-process file logger.
   logEvent: (entry: RendererLogEntry) => {
     try {

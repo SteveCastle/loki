@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  fetchStatus,
+  fetchStatusShared,
   isDownloadableState,
   isDownloadingState,
   startModelDownload,
@@ -9,9 +9,12 @@ import {
 import { depsApiBase } from './requirements';
 
 // Tracks one dependency for a point-of-use surface (e.g. the per-file
-// "Generate" buttons). Fetches once on mount and polls only while a download
-// is in flight, so idle panels stay cheap. When the deps API is unreachable
-// `dep` stays null and callers should not gate their action.
+// "Generate" buttons). Uses the shared/deduplicated status fetch — these
+// surfaces remount on every media change, and each firing its own request
+// used to flood the per-origin socket pool. Polls (bypassing the cache) only
+// while a download is in flight, so idle panels stay cheap. When the deps
+// API is unreachable `dep` stays null and callers should not gate their
+// action.
 export function useDepRequirement(depId: string): {
   dep: DepStatus | null;
   needsDownload: boolean;
@@ -21,14 +24,17 @@ export function useDepRequirement(depId: string): {
 } {
   const [dep, setDep] = useState<DepStatus | null>(null);
 
-  const refresh = useCallback(async () => {
-    try {
-      const items = await fetchStatus(depsApiBase);
-      setDep(items.find((d) => d.id === depId) ?? null);
-    } catch {
-      setDep(null);
-    }
-  }, [depId]);
+  const refresh = useCallback(
+    async (force = false) => {
+      try {
+        const items = await fetchStatusShared(depsApiBase, force);
+        setDep(items.find((d) => d.id === depId) ?? null);
+      } catch {
+        setDep(null);
+      }
+    },
+    [depId]
+  );
 
   useEffect(() => {
     refresh();
@@ -37,7 +43,8 @@ export function useDepRequirement(depId: string): {
   const downloading = !!dep && isDownloadingState(dep.state);
   useEffect(() => {
     if (!downloading) return undefined;
-    const t = window.setInterval(refresh, 2000);
+    // Progress polling needs live data — bypass the shared cache.
+    const t = window.setInterval(() => refresh(true), 2000);
     return () => window.clearInterval(t);
   }, [downloading, refresh]);
 
@@ -49,7 +56,8 @@ export function useDepRequirement(depId: string): {
 
   const download = async () => {
     await startModelDownload(depId, depsApiBase);
-    await refresh();
+    // Force so the just-started download's state shows immediately.
+    await refresh(true);
   };
 
   return { dep, needsDownload, downloading, pct, download };

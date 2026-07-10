@@ -72,35 +72,27 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	// Gather files.
-	var files []string
-	if qstr, ok := extractQueryFromJob(j); ok {
-		q.PushJobStdout(j.ID, fmt.Sprintf("hls: using query to select files: %s", qstr))
-		mediaPaths, err := getMediaPathsByQueryFast(q.Db, qstr)
-		if err != nil {
-			q.PushJobStdout(j.ID, "hls: failed to load paths from query: "+err.Error())
-			q.ErrorJob(j.ID)
-			return err
-		}
-		files = mediaPaths
-	} else {
-		raw := strings.TrimSpace(j.Input)
-		if raw == "" {
-			q.PushJobStdout(j.ID, "hls: no input paths or query provided")
-			q.CompleteJob(j.ID)
-			return nil
-		}
-		files = parseInputPaths(raw)
+	res, rerr := resolveJobItemsRaw(j, q)
+	if rerr != nil {
+		q.PushJobStdout(j.ID, "hls: failed to resolve input: "+rerr.Error())
+		q.ErrorJob(j.ID)
+		return rerr
 	}
+	if res.FromQuery {
+		q.PushJobStdout(j.ID, fmt.Sprintf("hls: query: %s", res.Query))
+	}
+	files := res.Paths
 
 	if len(files) == 0 {
 		q.PushJobStdout(j.ID, "hls: no files to process")
 		q.CompleteJob(j.ID)
 		return nil
 	}
+	_ = q.SetJobProgress(j.ID, 0, len(files))
 
 	ffprobePath := deps.MustBundled("ffprobe")
 
-	for _, src := range files {
+	for fileIdx, src := range files {
 		select {
 		case <-ctx.Done():
 			q.PushJobStdout(j.ID, "hls: task canceled")
@@ -108,6 +100,13 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			return ctx.Err()
 		default:
 		}
+		if q.PauseRequested(j.ID) {
+			q.PushJobStdout(j.ID, fmt.Sprintf("hls: paused at %d/%d - resume to continue", fileIdx, len(files)))
+			return jobqueue.ErrPaused
+		}
+		// The loop body skips files with `continue`, so report progress as
+		// "files started"; the final call below closes it out at total/total.
+		_ = q.SetJobProgress(j.ID, fileIdx, len(files))
 
 		abs := src
 		if a, err := filepath.Abs(src); err == nil {
@@ -243,6 +242,7 @@ func hlsTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		q.RegisterOutputFile(j.ID, masterPath)
 	}
 
+	_ = q.SetJobProgress(j.ID, len(files), len(files))
 	q.CompleteJob(j.ID)
 	return nil
 }

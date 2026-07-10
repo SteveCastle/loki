@@ -1,12 +1,23 @@
 import { useContext, memo, useRef, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
-import { invoke } from '../../platform';
+import {
+  invoke,
+  isElectron,
+  mediaServerBase,
+  mediaServerConfigured,
+} from '../../platform';
 import { GlobalStateContext, Item } from '../../state';
 import { uniqueId } from 'lodash';
+import { displayTagLabel } from '../../tag-display';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import './tags.css';
 import TimestampTooltip from './timestamp-tooltip';
 import GenerateTags from './generate-tags';
+import {
+  usePeople,
+  PersonEditModal,
+  Person,
+} from '../taxonomy/people-grid';
 
 type Tag = {
   tag_label: string;
@@ -32,6 +43,31 @@ const loadTagsByMediaPath = (media: Item) => async (): Promise<Metadata> => {
 
 const deleteTag = async ({ path, tag }: { path: string; tag: Tag }) => {
   await invoke('delete-assignment', [path, tag]);
+};
+
+// Removing a person's tag from an item means "this person is not in this
+// item": their faces on it must leave the group too (veto + cannot-links on
+// the server, so clustering can't put them back). In web mode the assignment
+// DELETE endpoint does this itself; Electron's delete goes straight to SQLite
+// via IPC, so the face discard needs this explicit server call.
+const rejectPersonFaces = async (
+  path: string,
+  personName: string,
+  authToken: string | null
+) => {
+  const res = await fetch(`${mediaServerBase}/api/media/reject-person`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    },
+    credentials: 'include',
+    body: JSON.stringify({ path, name: personName }),
+  });
+  // 404 = tag label isn't a person (or already gone) — nothing to discard.
+  if (!res.ok && res.status !== 404) {
+    throw new Error((await res.text()) || `HTTP ${res.status}`);
+  }
 };
 
 const updateTimestamp = async ({ 
@@ -73,6 +109,20 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isVisible, setIsVisible] = useState(enableTagGeneration); // Always visible for metadata panel
   const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
+  // Person behind an open settings modal (rename/merge/delete), reached via
+  // the 👤 icon on a People chip. The people list is the shared cache from
+  // usePeople — one fetch serves every Tags mount; when it's unavailable
+  // (no media server) the icon stays decorative.
+  const [editingPerson, setEditingPerson] = useState<Person | null>(null);
+  const { data: people } = usePeople(isVisible);
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken
+  );
+  const hidePeopleTags = useSelector(
+    libraryService,
+    (state) => state.context.settings.hidePeopleTags
+  );
   const hideSuggestedTags = useSelector(
     libraryService,
     (state) => state.context.settings.hideSuggestedTags
@@ -120,13 +170,40 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   });
 
   const { mutate } = useMutation({
-    mutationFn: deleteTag,
+    mutationFn: async (vars: { path: string; tag: Tag }) => {
+      await deleteTag(vars);
+      // Electron only: web mode's DELETE /api/assignments discards the faces
+      // server-side already. Best-effort — the tag is gone either way, but
+      // surface a failure so a still-grouped face isn't a silent surprise.
+      if (
+        isElectron &&
+        mediaServerConfigured &&
+        vars.tag.category_label === 'People'
+      ) {
+        try {
+          await rejectPersonFaces(vars.path, vars.tag.tag_label, authToken);
+        } catch (err) {
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: {
+              type: 'error',
+              title: 'Face not discarded from group',
+              message: `The tag was removed, but discarding the face from “${displayTagLabel(
+                vars.tag.tag_label
+              )}” failed: ${String(err)}`,
+            },
+          });
+        }
+      }
+    },
     onSuccess: () => {
       libraryService.send({ type: 'DELETED_ASSIGNMENT' });
       queryClient.invalidateQueries({
         queryKey: ['tags-by-path', item.path],
       });
       queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      // Face counts in the People grid change when faces are discarded.
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
     },
   });
 
@@ -161,7 +238,13 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   if (isLoading || !data) return <div ref={containerRef} className={`Tags`} />;
   if (error) return <div ref={containerRef} className={`Tags`}><p>{error.message}</p></div>;
   const visibleTags = (data.tags || []).filter((tag) => {
-    if (!enableTagGeneration && hideSuggestedTags && tag.category_label === 'Suggested') {
+    if (enableTagGeneration) return true;
+    // Both buckets are AI-generated, but each has its own toggle: Suggested
+    // comes from the auto-tagger, People from face clustering.
+    if (hideSuggestedTags && tag.category_label === 'Suggested') {
+      return false;
+    }
+    if (hidePeopleTags && tag.category_label === 'People') {
       return false;
     }
     return true;
@@ -174,9 +257,13 @@ function Tags({ item, enableTagGeneration = false }: Props) {
             const liKey = `${tag.tag_label}-${tag.time_stamp || 0}-${idx}`;
             const isSelected = queryTags.includes(tag.tag_label);
             const isConfirming = confirmingKey === liKey;
+            // People tags come from face clustering, not hand tagging — mark
+            // them with a subtle person glyph + tint so they read as clusters.
+            const isPersonTag = tag.category_label === 'People';
             const className = [
               isSelected ? 'selected' : '',
               isConfirming ? 'confirming' : '',
+              isPersonTag ? 'person-tag' : '',
             ]
               .filter(Boolean)
               .join(' ');
@@ -238,7 +325,42 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                     />
                   </>
                 ) : null}
-                <span>{tag.tag_label}</span>
+                <span>
+                  {isPersonTag &&
+                    (() => {
+                      const person = (people ?? []).find(
+                        (p) => p.name === tag.tag_label
+                      );
+                      // With the person resolved the glyph becomes the door to
+                      // their settings — name an "Unknown #N" right from the
+                      // chip. Without it (list loading / server away) it stays
+                      // the decorative cluster marker.
+                      return (
+                        <button
+                          type="button"
+                          className="person-tag-icon"
+                          disabled={!person}
+                          title={
+                            person
+                              ? 'Open person settings — name, merge, or delete this group'
+                              : 'Face cluster (People)'
+                          }
+                          aria-label={
+                            person
+                              ? `Edit person ${displayTagLabel(tag.tag_label)}`
+                              : undefined
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (person) setEditingPerson(person);
+                          }}
+                        >
+                          👤
+                        </button>
+                      );
+                    })()}
+                  {displayTagLabel(tag.tag_label)}
+                </span>
                 {isConfirming ? (
                   <span className="confirm-actions">
                     <button
@@ -280,6 +402,13 @@ function Tags({ item, enableTagGeneration = false }: Props) {
         {item.elo && <li>{item.elo.toFixed(0)}</li>}
       </ul>
       {enableTagGeneration && <GenerateTags path={item.path} />}
+      {editingPerson && (
+        <PersonEditModal
+          person={editingPerson}
+          people={people ?? []}
+          handleClose={() => setEditingPerson(null)}
+        />
+      )}
     </div>
   );
 }

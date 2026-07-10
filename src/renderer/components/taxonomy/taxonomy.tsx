@@ -16,6 +16,12 @@ import VirtualizedTagGrid from './virtualized-tag-grid';
 import TagListView from './tag-list-view';
 import NewTagModal from './new-tag-modal';
 import NewCategoryModal from './new-category-modal';
+import PeopleGrid, {
+  PEOPLE_CATEGORY,
+  PersonEditModal,
+  PeopleSearchResults,
+  usePeople,
+} from './people-grid';
 import './taxonomy.css';
 import Category from './category';
 import SuggestionSections from './suggestion-sections';
@@ -129,6 +135,7 @@ export default function Taxonomy() {
   }, []);
 
   const [addingTag, setAddingTag] = useState<boolean>(false);
+  const [addingPerson, setAddingPerson] = useState<boolean>(false);
   const [addingCategory, setAddingCategory] = useState<boolean>(false);
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
@@ -253,6 +260,11 @@ export default function Taxonomy() {
   // pre-capped matches across all categories.
   const { results: searchResults } = useTagSearch(tagFilter, !!tagFilter);
 
+  // People list (shared cache) so search results can tell which People
+  // matches resolve to an actual person — those render as person cards; the
+  // rest (server away, person row gone) stay ordinary tag cards.
+  const { data: searchPeople } = usePeople(!!tagFilter);
+
   const tags = useMemo(() => {
     if (tagFilter) {
       // Worker-ranked, pre-capped matches across all categories. Briefly empty
@@ -333,6 +345,30 @@ export default function Taxonomy() {
               libraryService.send({
                 type: 'SET_PREDICATE_JOIN',
                 data: { key, join },
+              })
+            }
+            onUpdatePredicateBlend={(key, patch) =>
+              libraryService.send({
+                type: 'UPDATE_PREDICATE_BLEND',
+                data: { key, patch },
+              })
+            }
+            onAddBlendNode={(key, node) =>
+              libraryService.send({
+                type: 'ADD_BLEND_NODE',
+                data: { key, node },
+              })
+            }
+            onRemoveBlendNode={(key, index) =>
+              libraryService.send({
+                type: 'REMOVE_BLEND_NODE',
+                data: { key, index },
+              })
+            }
+            onUpdateBlendNode={(key, index, patch) =>
+              libraryService.send({
+                type: 'UPDATE_BLEND_NODE',
+                data: { key, index, patch },
               })
             }
             onSubmitVisual={(t) => {
@@ -433,7 +469,17 @@ export default function Taxonomy() {
           </div>
         </div>
         {activeCategory && (
-          <div className={`new-tag`} onClick={() => setAddingTag(true)}>
+          <div
+            className={`new-tag`}
+            onClick={() =>
+              // People is face-managed: "+" creates a person (which creates
+              // its tag through the server bridge), not a bare tag — a bare
+              // tag in People would have no person row behind it.
+              activeCategory === PEOPLE_CATEGORY
+                ? setAddingPerson(true)
+                : setAddingTag(true)
+            }
+          >
             <div className="tag-label">+</div>
           </div>
         )}
@@ -444,9 +490,35 @@ export default function Taxonomy() {
           // responsive two-column ⇄ stacked behaviour via a container query on
           // `.search-results`; here we only decide which panes exist so empty
           // regions collapse instead of reserving blank space.
+
+          // People-category matches that resolve to a person leave the tag
+          // grid and render as person cards (face crop + person controls) in
+          // a strip above it — as a plain tag card a person has no thumbnail
+          // (their preview is a face crop, not a tag preview) and the tag
+          // edit/delete controls would desync the person table. Unresolved
+          // ones (people list unavailable, person row gone) stay ordinary
+          // tag cards rather than disappearing.
+          const personNames = new Set(
+            (searchPeople ?? []).map((p) => p.name)
+          );
+          const isPersonMatch = (t: Concept) =>
+            t.category === PEOPLE_CATEGORY && personNames.has(t.label);
+          const peopleMatches = tagFilter ? tags.filter(isPersonMatch) : [];
+          const gridTags = tagFilter
+            ? tags.filter((t: Concept) => !isPersonMatch(t))
+            : tags;
+
           const resultsEl = (() => {
             if (!(activeCategory || tagFilter)) {
               return <div className={`tags`} />;
+            }
+            // People is a special case of a tag category: person names are
+            // real tags (kept in sync server-side), but browsing the category
+            // shows person cards with face crops and person-aware management
+            // (rename/merge/delete through /api/people). Search results show
+            // People matches through PeopleSearchResults (see above).
+            if (!tagFilter && activeCategory === PEOPLE_CATEGORY) {
+              return <PeopleGrid isDisabled={isDisabled} />;
             }
             // Search results span categories — always use card style.
             // For an active category, honour its persisted tagViewMode.
@@ -509,11 +581,11 @@ export default function Taxonomy() {
             // virtualized — `<Tag>` triggers an IPC preview fetch on mount,
             // so rendering all matches at once would saturate the IPC layer.
             if (tagFilter) {
-              const suggestedTags = tags.filter(
+              const suggestedTags = gridTags.filter(
                 (t: Concept) => t.category === 'Suggested'
               );
               if (suggestedTags.length > 0) {
-                const mainTags = tags.filter(
+                const mainTags = gridTags.filter(
                   (t: Concept) => t.category !== 'Suggested'
                 );
                 return (
@@ -543,19 +615,20 @@ export default function Taxonomy() {
                 );
               }
             }
-            // Searching with zero tag matches: collapse the results pane
-            // entirely (return null) so the suggestions column can take the
-            // full width instead of sitting beside an empty grid.
-            if (tagFilter && tags.length === 0) {
+            // Searching with zero (non-person) tag matches: collapse the tag
+            // grid entirely (return null) so the suggestions column can take
+            // the full width instead of sitting beside an empty grid. Person
+            // matches still render via the people strip.
+            if (tagFilter && gridTags.length === 0) {
               return null;
             }
             // Virtualize whenever searching (results can be large and each
             // <Tag> mounts an IPC preview fetch), or when browsing a
             // category that exceeds the static threshold.
-            if (tagFilter || tags.length > VIRTUALIZE_THRESHOLD) {
+            if (tagFilter || gridTags.length > VIRTUALIZE_THRESHOLD) {
               return (
                 <VirtualizedTagGrid
-                  tags={tags}
+                  tags={gridTags}
                   selectedTags={selectedTags}
                   isDisabled={isDisabled}
                   handleEditAction={setEditingTag}
@@ -584,8 +657,16 @@ export default function Taxonomy() {
             );
           })();
 
+          const peopleEl =
+            peopleMatches.length > 0 ? (
+              <PeopleSearchResults
+                names={peopleMatches.map((t: Concept) => t.label)}
+                isDisabled={isDisabled}
+              />
+            ) : null;
+
           const showSuggestions = !!tagFilter;
-          const hasResults = resultsEl !== null;
+          const hasResults = resultsEl !== null || peopleEl !== null;
           const wrapperClass = [
             'search-results',
             hasResults ? 'has-results' : 'no-results',
@@ -602,7 +683,10 @@ export default function Taxonomy() {
             <div className="search-results-container">
               <div className={wrapperClass}>
                 {hasResults && (
-                  <div className="results-pane">{resultsEl}</div>
+                  <div className="results-pane">
+                    {peopleEl}
+                    {resultsEl}
+                  </div>
                 )}
                 {showSuggestions && (
                   <div className="suggestions-pane">
@@ -633,6 +717,13 @@ export default function Taxonomy() {
         <NewTagModal
           categoryLabel={activeCategory}
           handleClose={() => setAddingTag(false)}
+        />
+      ) : null}
+      {addingPerson ? (
+        <PersonEditModal
+          person={null}
+          people={[]}
+          handleClose={() => setAddingPerson(false)}
         />
       ) : null}
       {addingCategory ? (

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stevecastle/shrike/platform"
@@ -77,6 +78,79 @@ func Detect(id string) (Status, error) {
 		}
 	}
 	return s, nil
+}
+
+// Live detection is expensive: LookPath walks PATH (which may include slow
+// network drives) and VersionArgs spawns a subprocess — yt-dlp and gallery-dl
+// are Python entry points that take 1–3s just to start. /api/deps/status runs
+// Detect for every manifest entry, and UI surfaces request it per-mount, so
+// serving live detection per request let a burst of status calls take
+// *minutes* to drain and starved the client's per-origin socket pool.
+// CachedDetect serves a snapshot instead: stale-while-revalidate with a
+// single-flight background refresh, so no request ever waits on a subprocess.
+var (
+	cacheMu    sync.Mutex
+	cache      map[string]Status
+	cachedAt   time.Time
+	refreshing bool
+)
+
+const cacheTTL = 30 * time.Second
+
+func detectAll() map[string]Status {
+	out := make(map[string]Status, len(Manifest))
+	for _, o := range Manifest {
+		s, err := Detect(o.ID)
+		if err != nil {
+			continue
+		}
+		out[o.ID] = s
+	}
+	return out
+}
+
+func refreshCacheLocked() {
+	if refreshing {
+		return
+	}
+	refreshing = true
+	go func() {
+		all := detectAll()
+		cacheMu.Lock()
+		cache = all
+		cachedAt = time.Now()
+		refreshing = false
+		cacheMu.Unlock()
+	}()
+}
+
+// CachedDetect returns the cached status for one tool, kicking off a
+// background refresh when the cache is stale or absent. It never blocks on
+// detection: before the first refresh completes it reports the tool as not
+// yet installed (with install hints populated), which the UI treats as a
+// soft state. Call Warm at startup to make that window negligible.
+func CachedDetect(id string) (Status, error) {
+	entry, ok := lookup(id)
+	if !ok {
+		return Status{}, fmt.Errorf("%w: %q", ErrUnknown, id)
+	}
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	if cache == nil || time.Since(cachedAt) >= cacheTTL {
+		refreshCacheLocked()
+	}
+	if s, ok := cache[id]; ok {
+		return s, nil
+	}
+	return Status{ID: entry.ID, Name: entry.Name, Hint: hintFor(entry)}, nil
+}
+
+// Warm populates the detection cache in the background so the first
+// /api/deps/status request after boot serves real states.
+func Warm() {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	refreshCacheLocked()
 }
 
 func lookup(id string) (Optional, bool) {

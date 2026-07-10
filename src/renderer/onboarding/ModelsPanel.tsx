@@ -28,7 +28,10 @@ export const ModelsPanel: React.FC<Props> = ({ items, onChange }) => {
 
 const fmtSize = (n?: number): string => {
   if (!n) return '';
-  const mb = n / 1024 / 1024;
+  const kb = n / 1024;
+  // Small models (face detectors are ~230 KB) must not round down to "0 MB".
+  if (kb < 1024) return `${Math.max(1, Math.round(kb))} KB`;
+  const mb = kb / 1024;
   if (mb < 1024) return `${mb.toFixed(0)} MB`;
   return `${(mb / 1024).toFixed(2)} GB`;
 };
@@ -38,6 +41,9 @@ const ModelRow: React.FC<{ item: DepStatus; onChange: () => void }> = ({ item, o
   const done: number = inst.bytes_done ?? 0;
   const total: number = inst.bytes_total ?? item.size_bytes ?? 0;
   const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  // Archive unpack phase: byte counts are UNCOMPRESSED output (often much
+  // larger than the download itself) — label them as such.
+  const extracting = item.state === 'extracting';
 
   const onDownload = async () => { await startModelDownload(item.id); onChange(); };
   const onCancel   = async () => { await cancelModelDownload(item.id); onChange(); };
@@ -74,10 +80,18 @@ const ModelRow: React.FC<{ item: DepStatus; onChange: () => void }> = ({ item, o
       {viaConfiguredPath && (
         <div className={styles.detail}><small>Using the binary configured in settings: {item.path}</small></div>
       )}
+      {item.state === 'installed' && !viaConfiguredPath && item.path && (
+        <div className={styles.detail}><small>Installed at: {item.path}</small></div>
+      )}
       {isDownloadingState(item.state) && total > 0 && (
         <div className={styles.detail}>
           <div className={styles.progressBar}><div className={styles.progressBarFill} style={{ width: `${pct}%` }} /></div>
-          <small>{fmtSize(done)} / {fmtSize(total)} ({pct}%) {inst.current_file && `- ${inst.current_file}`}</small>
+          <small>
+            {extracting
+              ? `Unpacking (one-time): ${fmtSize(done)} / ${fmtSize(total)} on disk (${pct}%)`
+              : `${fmtSize(done)} / ${fmtSize(total)} (${pct}%)`}
+            {!extracting && inst.current_file && ` - ${inst.current_file}`}
+          </small>
         </div>
       )}
       {item.error && <div className={styles.error}>{item.error}</div>}
@@ -89,6 +103,7 @@ function stateIcon(s: string): string {
   switch (s) {
     case 'installed': return 'OK';
     case 'downloading':
+    case 'extracting':
     case 'queued':
     case 'verifying': return '...';
     case 'failed': return 'X';

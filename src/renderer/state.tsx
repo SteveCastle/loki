@@ -16,11 +16,16 @@ import {
 import type { Query, Predicate } from './query/types';
 import { predicateKey } from './query/types';
 import {
-  addPredicateWithMode,
+  addOrMergeSimilarityPredicate,
   removePredicate,
+  renameTagPredicate,
   toggleExclude,
   applyTagClick,
   setPredicateJoin,
+  updatePredicateBlend,
+  addBlendNode,
+  removeBlendNode,
+  updateBlendNode,
   tagsFromQuery,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
@@ -169,9 +174,17 @@ type LibraryState = {
   masonryDimensionsCache: Record<string, { width: number; height: number }>;
 };
 
+// Predicate types resolved by the embedding backend and returned RANKED with
+// per-item scores (loki_api sortItemsByScore). 'face' ranks by face-embedding
+// cosine exactly like similar/clip/visual rank by SigLIP2 — all of them flip
+// the sort to 'similarity' so the ranking (and the % score badge) shows.
 const queryHasVisual = (predicates: Predicate[] = []): boolean =>
   predicates.some(
-    (p) => p.type === 'similar' || p.type === 'visual' || p.type === 'clip'
+    (p) =>
+      p.type === 'similar' ||
+      p.type === 'visual' ||
+      p.type === 'clip' ||
+      p.type === 'face'
   );
 
 const applySimilaritySort = assign<LibraryState, AnyEventObject>({
@@ -553,6 +566,7 @@ const getInitialContext = (): LibraryState => {
     ['followTranscript', true],
     ['showTags', 'all'],
     ['hideSuggestedTags', false],
+    ['hidePeopleTags', false],
     ['showFileInfo', 'none'],
     ['showControls', false],
     ['gridSize', [4, 4]],
@@ -566,6 +580,9 @@ const getInitialContext = (): LibraryState => {
     ['alwaysOnTop', false],
     ['useHLS', false],
     ['subtitlesEnabled', false],
+    ['showDescriptionOverlay', false],
+    ['descriptionOverlaySize', 18],
+    ['descriptionOverlayPadding', 4],
     ['incrementCursor', 'arrowright'],
     ['decrementCursor', 'arrowleft'],
     ['toggleTagPreview', 'shift'],
@@ -616,6 +633,7 @@ const getInitialContext = (): LibraryState => {
     ['applyTag9', '9'],
     ['togglePlayPause', ' '],
     ['refreshLibrary', 'r'],
+    ['generateDescription', 'g'],
     ['layoutMode', 'grid'],
     ['authToken', null],
   ] as [string, any][]);
@@ -683,6 +701,7 @@ const getInitialContext = (): LibraryState => {
       followTranscript: batched['followTranscript'] as boolean,
       showTags: batched['showTags'] as 'all' | 'list' | 'detail' | 'none',
       hideSuggestedTags: batched['hideSuggestedTags'] as boolean,
+      hidePeopleTags: batched['hidePeopleTags'] as boolean,
       showFileInfo: batched['showFileInfo'] as
         | 'all'
         | 'list'
@@ -704,6 +723,9 @@ const getInitialContext = (): LibraryState => {
       layoutMode: batched['layoutMode'] as 'grid' | 'masonry',
       useHLS: batched['useHLS'] as boolean,
       subtitlesEnabled: batched['subtitlesEnabled'] as boolean,
+      showDescriptionOverlay: batched['showDescriptionOverlay'] as boolean,
+      descriptionOverlaySize: batched['descriptionOverlaySize'] as number,
+      descriptionOverlayPadding: batched['descriptionOverlayPadding'] as number,
     },
     hotKeys: {
       incrementCursor: batched['incrementCursor'] as string,
@@ -756,6 +778,7 @@ const getInitialContext = (): LibraryState => {
       applyTag9: batched['applyTag9'] as string,
       togglePlayPause: batched['togglePlayPause'] as string,
       refreshLibrary: batched['refreshLibrary'] as string,
+      generateDescription: batched['generateDescription'] as string,
     },
     dbQuery: {
       tags: [],
@@ -799,7 +822,9 @@ const queryMutationOn = {
       assign<LibraryState, AnyEventObject>((context, event) => {
         // EXCLUSIVE mode replaces the entire query with the selected filter,
         // regardless of predicate type (tag/path/category/description/hash).
-        const q = addPredicateWithMode(
+        // In AND/OR, a new similar/clip image merges into an existing
+        // similarity chip as a blend node (vectors combine server-side).
+        const q = addOrMergeSimilarityPredicate(
           context.query,
           event.data.predicate,
           context.settings.filteringMode
@@ -835,10 +860,77 @@ const queryMutationOn = {
       return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
   },
+  // A person/tag was renamed on the server (the rename cascades to taxonomy
+  // rows): swap the new name into any tag chip filtering on the old one and
+  // re-run IN PLACE — same set, same scroll — instead of letting the stale
+  // chip match nothing. No-op (no re-query) when nothing referenced the name.
+  RENAME_TAG_PREDICATE: {
+    target: 'runningQuery',
+    cond: (context: LibraryState, event: AnyEventObject) =>
+      renameTagPredicate(context.query, event.data.from, event.data.to) !==
+      context.query,
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = renameTagPredicate(
+        context.query,
+        event.data.from,
+        event.data.to
+      );
+      return {
+        query: q,
+        dbQuery: { tags: tagsFromQuery(q) },
+        // In-place refresh: the list recognizes the upcoming setLibrary by
+        // this loadId and preserves scroll (same contract as
+        // DELETED_ASSIGNMENT).
+        preserveScrollFromLoadId: context.libraryLoadId,
+      };
+    }),
+  },
   SET_PREDICATE_JOIN: {
     target: 'runningQuery',
     actions: assign<LibraryState, AnyEventObject>((context, event) => {
       const q = setPredicateJoin(context.query, event.data.key, event.data.join);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  // Blend a similar/clip (image) predicate with text: patch text/textWeight on
+  // the chip and re-run. The chip UI commits only real changes, so every event
+  // here means the blend actually moved.
+  UPDATE_PREDICATE_BLEND: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = updatePredicateBlend(
+        context.query,
+        event.data.key,
+        event.data.patch
+      );
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  // Composite similarity nodes: add/remove/patch one component of a
+  // multi-node blend on a similar/clip chip (see query/reducer.ts).
+  ADD_BLEND_NODE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = addBlendNode(context.query, event.data.key, event.data.node);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  REMOVE_BLEND_NODE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = removeBlendNode(context.query, event.data.key, event.data.index);
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  UPDATE_BLEND_NODE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = updateBlendNode(
+        context.query,
+        event.data.key,
+        event.data.index,
+        event.data.patch
+      );
       return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
   },

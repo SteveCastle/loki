@@ -141,6 +141,15 @@
 
       select.input {
         cursor: pointer;
+        /* Replace the native arrow (which hugs the right edge) with a custom
+           chevron inset by the control's own padding. */
+        appearance: none;
+        -webkit-appearance: none;
+        padding-right: calc(var(--space-3) * 2 + 12px);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 4.5l3.5 3.5 3.5-3.5' fill='none' stroke='%23909090' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right var(--space-3) center;
+        background-size: 12px;
       }
 
       .actions {
@@ -177,6 +186,29 @@
       .btn-primary:hover {
         background: #00e6b8;
         box-shadow: var(--shadow-glow);
+      }
+
+      .btn-danger-outline {
+        background: transparent;
+        border: 1px solid var(--status-error);
+        color: var(--status-error);
+        border-radius: var(--radius-md);
+        padding: var(--space-1) var(--space-3);
+        font-size: var(--text-xs);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+      }
+
+      .btn-danger-outline:hover {
+        background: var(--status-error);
+        color: #fff;
+      }
+
+      .storage-info {
+        font-size: var(--text-xs);
+        color: var(--text-muted);
+        font-family: var(--font-mono);
+        line-height: 1.6;
       }
 
       .btn-secondary {
@@ -782,15 +814,27 @@
         </a>
 
         <div class="tabs">
-          <button class="tab-button active" data-tab="configuration">
-            Configuration
+          <button class="tab-button active" data-tab="general">
+            General
+          </button>
+          <button class="tab-button" data-tab="ai">
+            AI &amp; Inference
+          </button>
+          <button class="tab-button" data-tab="search">
+            Search &amp; Faces
+          </button>
+          <button class="tab-button" data-tab="transcription">
+            Transcription
+          </button>
+          <button class="tab-button" data-tab="access">
+            Access
           </button>
           <button class="tab-button" data-tab="dependencies">
             Dependencies
           </button>
         </div>
 
-        <div id="tab-configuration" class="tab-content active">
+        <div id="tab-general" class="tab-content active">
           <div class="config-sections">
             <div class="config-card config-card--blue">
               <div class="section-title">⚙️ General</div>
@@ -871,7 +915,11 @@
                 </div>
               </div>
             </div>
+          </div>
+        </div>
 
+        <div id="tab-ai" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--purple">
               <div class="section-title">🧠 Inference</div>
               <div class="section-subtitle">
@@ -1152,10 +1200,23 @@
                   >
                 </div>
                 <div class="field">
-                  <label class="label">Autotag prompt</label>
-                  <textarea id="autotag-prompt" class="input" rows="6">
-{{.Config.AutotagPrompt}}</textarea
-                  >
+                  <label class="label">Max concurrent local compute jobs</label>
+                  <input
+                    id="local-compute-concurrency"
+                    class="input"
+                    type="number"
+                    min="1"
+                    value="{{.Config.LocalComputeConcurrency}}"
+                  />
+                  <small class="hint">
+                    Machine-wide cap across ALL resource-intensive local jobs
+                    — embedding, tagging, face scanning, transcription, and
+                    local LLM inference — regardless of their individual
+                    limits above. 1 (recommended for a single GPU) runs one
+                    heavy job at a time; each job still parallelizes
+                    internally. Remote providers like RunPod don't count
+                    against it.
+                  </small>
                 </div>
               </div>
             </div>
@@ -1289,7 +1350,11 @@
                 </details>
               </div>
             </div>
+          </div>
+        </div>
 
+        <div id="tab-search" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--cyan">
               <div class="section-title">🖼️ Visual Embedding</div>
               <div class="fields">
@@ -1368,14 +1433,158 @@
                   <label class="label">Per-file timeout (seconds)</label>
                   <input id="onnx-file-timeout" class="input" type="number" min="1" step="1" value="{{.Config.OnnxFileTimeoutSeconds}}" />
                   <small class="hint">
-                    Applies to all ONNX tasks (embedding &amp; tagging). A single
-                    file that exceeds this — e.g. a corrupt image or video — is
-                    skipped and processing continues (the stuck worker is restarted).
+                    Applies to all ONNX tasks (embedding, tagging &amp; faces). A
+                    single file that exceeds this — e.g. a corrupt image or video
+                    — is skipped and processing continues (the stuck worker is
+                    restarted).
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Stored embeddings</label>
+                  <div id="embed-storage-info" class="storage-info">Loading…</div>
+                  <div style="margin-top: 8px">
+                    <button type="button" id="reset-embeddings-btn" class="btn-danger-outline">
+                      Delete ALL embeddings…
+                    </button>
+                    <span id="embed-storage-status" class="hint" style="margin-left: 8px"></span>
+                  </div>
+                  <small class="hint">
+                    Permanently removes every stored vector for every model and
+                    clears the live search index. Visual similarity and
+                    text→image search stop working until the Embeddings task is
+                    re-run. Not undoable.
                   </small>
                 </div>
               </div>
             </div>
 
+            <div class="config-card config-card--cyan">
+              <div class="section-title">🙂 Faces</div>
+              <div class="section-subtitle">
+                Face detection, person search, and clustering. Detection always
+                uses YuNet; the recognizer below produces the identity vectors.
+                Install both from the Dependencies tab.
+              </div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Recognizer (identity model)</label>
+                  <select id="face-model" class="input">
+                    {{range .FaceModels}}
+                    <option
+                      value="{{.ID}}"
+                      {{if eq .ID $.Config.FaceModel}}selected{{end}}
+                    >{{.DisplayName}}{{if .BYO}} — bring-your-own{{end}}</option>
+                    {{end}}
+                  </select>
+                  <small class="hint">
+                    Face vectors are stored per recognizer, so switching never
+                    deletes anything — but faces must be rescanned under a model
+                    before it can search or cluster them. Changing this rebuilds
+                    the face index in the background. Match thresholds are
+                    per-model (SFace 0.363 default; set
+                    <code>matchThreshold</code> on bring-your-own entries).
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Domain routing</label>
+                  <select id="face-routing" class="input">
+                    <option value="auto" {{if ne .Config.FaceRouting "single"}}selected{{end}}>Auto — classify each item (photo vs anime) and use the matching recognizer</option>
+                    <option value="single" {{if eq .Config.FaceRouting "single"}}selected{{end}}>Single — always use the recognizer above</option>
+                  </select>
+                  <small class="hint">
+                    Auto lets one Faces scan handle mixed libraries: items are
+                    classified via their SigLIP embedding (instant when already
+                    embedded) — photos use the recognizer above, drawn/anime
+                    content uses the anime recognizer. Clustering then groups
+                    each domain with its own threshold.
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Execution provider</label>
+                  <select id="face-provider" class="input">
+                    <option value="cpu" {{if eq .Config.FaceProvider "cpu"}}selected{{end}}>CPU</option>
+                    <option value="directml" {{if eq .Config.FaceProvider "directml"}}selected{{end}}>GPU (DirectML)</option>
+                  </select>
+                  <small class="hint">
+                    Shares the GPU runtime with Visual Embedding — install it
+                    there if you haven't.
+                  </small>
+                </div>
+
+                <div class="field">
+                  <label class="label">Performance</label>
+                  <select id="face-performance" class="input">
+                    <option value="low" {{if eq .Config.FacePerformance "low"}}selected{{end}}>Low — reserve CPU, stay responsive (~25% of cores)</option>
+                    <option value="balanced" {{if eq .Config.FacePerformance "balanced"}}selected{{end}}>Balanced (~50% of cores)</option>
+                    <option value="max" {{if eq .Config.FacePerformance "max"}}selected{{end}}>Max — all but one core</option>
+                    <option value="custom" {{if eq .Config.FacePerformance "custom"}}selected{{end}}>Custom (advanced)</option>
+                  </select>
+                  <small class="hint">
+                    Parallel workers + threads for the face-scanning task.
+                  </small>
+                </div>
+
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Advanced (Custom workers/threads)</summary>
+                  <div class="field-row" style="margin-top:6px">
+                    <div class="field">
+                      <label class="label">Workers</label>
+                      <input id="face-workers" class="input" type="number" min="0" step="1" value="{{.Config.FaceWorkers}}" />
+                    </div>
+                    <div class="field">
+                      <label class="label">Threads per worker</label>
+                      <input id="face-threads" class="input" type="number" min="0" step="1" value="{{.Config.FaceThreadsPerWorker}}" />
+                    </div>
+                  </div>
+                  <small class="hint">Used only when Performance = Custom (0 = derive from a preset).</small>
+                </details>
+
+                <details style="margin-top:4px">
+                  <summary class="label" style="cursor:pointer">Bring-your-own recognizers (advanced)</summary>
+                  <div class="field" style="margin-top:6px">
+                    <label class="label">byoFaceModels (JSON array)</label>
+                    <textarea id="byo-face-models" class="input" rows="8" spellcheck="false">{{.Config.ByoFaceModels | json}}</textarea>
+                    <small class="hint">
+                      Research-licensed recognizers (ArcFace / AdaFace exports)
+                      that can't ship with the app. Each entry:
+                      <code>{"id", "name", "modelPath", "dim", "inputName",
+                      "outputName", "mean", "std", "colorOrder",
+                      "matchThreshold"}</code>. mean/std are RGB on the 0–255
+                      scale (ArcFace-family: 127.5/127.5, colorOrder "RGB").
+                      matchThreshold is the same-person cosine cutoff used by
+                      clustering. Leave as-is to keep the current entries;
+                      invalid JSON blocks saving.
+                    </small>
+                    <div id="byo-face-models-status" class="hint"></div>
+                  </div>
+                </details>
+
+                <div class="field">
+                  <label class="label">Stored face data</label>
+                  <div id="faces-storage-info" class="storage-info">Loading…</div>
+                  <div style="margin-top: 8px">
+                    <button type="button" id="reset-faces-btn" class="btn-danger-outline">
+                      Delete ALL face data…
+                    </button>
+                    <span id="faces-storage-status" class="hint" style="margin-left: 8px"></span>
+                  </div>
+                  <small class="hint">
+                    Permanently removes every face vector, scan marker, person
+                    (named ones included), and People tag, and clears the live
+                    face index. Rescanning rebuilds everything except the names
+                    and manual assignments you gave people. Not undoable.
+                  </small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="tab-transcription" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--pink">
               <div class="section-title">🎙️ Transcription</div>
               <div class="fields">
@@ -1458,7 +1667,11 @@
                 </details>
               </div>
             </div>
+          </div>
+        </div>
 
+        <div id="tab-access" class="tab-content">
+          <div class="config-sections">
             <div class="config-card config-card--pink">
               <div class="section-title">👥 User Management</div>
               <div class="fields">
@@ -1633,7 +1846,7 @@
               <option value="local" ${!isS3 ? 'selected' : ''}>Local</option>
               <option value="s3" ${isS3 ? 'selected' : ''}>S3</option>
             </select>
-            <input class="input root-label" data-index="${index}" type="text" placeholder="Label" value="${esc(root.label || '')}" style="flex:1"/>
+            <input class="input root-label" data-index="${index}" data-field="label" type="text" placeholder="Label" value="${esc(root.label || '')}" style="flex:1"/>
             <button type="button" class="btn btn-secondary root-default" data-index="${index}" style="padding:var(--space-2) var(--space-3);flex-shrink:0;${isDefault ? 'color:var(--accent-primary);border-color:var(--accent-primary);font-weight:600' : ''}" title="Set as default upload destination">${isDefault ? '★ Default' : '☆ Default'}</button>
             <button type="button" class="btn btn-secondary root-remove" data-index="${index}" style="padding:var(--space-2) var(--space-3);color:var(--status-error);border-color:var(--status-error);flex-shrink:0">&times;</button>
           </div>
@@ -1838,10 +2051,143 @@
 
       function fmtBytes(n) {
         if (!n || n <= 0) return '';
-        const mb = n / 1024 / 1024;
+        const kb = n / 1024;
+        // Small models (face detectors are ~230 KB) must not show "0 MB".
+        if (kb < 1024) return Math.max(1, Math.round(kb)) + ' KB';
+        const mb = kb / 1024;
         if (mb < 1024) return mb.toFixed(0) + ' MB';
         return (mb / 1024).toFixed(2) + ' GB';
       }
+
+      // ------------------------------------------------------------------
+      // Vector storage panels: how big the embedding + face indexes are,
+      // and the confirmed full-reset actions.
+      // ------------------------------------------------------------------
+      let embedStorageTotals = { count: 0 };
+      let facesStorageTotals = { faces: 0, people: 0, named: 0 };
+
+      function loadVectorStorageStats() {
+        const embedEl = document.getElementById('embed-storage-info');
+        if (embedEl) {
+          fetch('/api/index/status')
+            .then((r) => r.json())
+            .then((d) => {
+              embedStorageTotals.count = d.total_count || 0;
+              const lines = (d.embeddings || []).map(
+                (s) =>
+                  `${s.model}: ${Number(s.count).toLocaleString()} vectors, ` +
+                  `${fmtBytes(s.bytes) || '0 KB'} (dim ${s.dim})`
+              );
+              if (lines.length === 0) lines.push('no embeddings stored');
+              lines.push(
+                `total on disk: ${fmtBytes(d.total_bytes) || '0 KB'} · ` +
+                  `in-memory index: ${Number(d.index?.vectors || 0).toLocaleString()} vectors` +
+                  (d.index?.model ? ` (${d.index.model})` : '')
+              );
+              if (d.orphaned > 0) {
+                lines.push(`orphaned rows (media deleted): ${Number(d.orphaned).toLocaleString()}`);
+              }
+              embedEl.innerHTML = lines.map(escDep).join('<br>');
+            })
+            .catch(() => { embedEl.textContent = 'Could not load embedding stats.'; });
+        }
+
+        const facesEl = document.getElementById('faces-storage-info');
+        if (facesEl) {
+          fetch('/api/faces/stats')
+            .then((r) => r.json())
+            .then((d) => {
+              facesStorageTotals = {
+                faces: d.total_faces || 0,
+                people: d.people?.total || 0,
+                named: d.people?.named || 0,
+              };
+              const lines = (d.faces || []).map(
+                (s) =>
+                  `${s.model}: ${Number(s.count).toLocaleString()} face vectors, ` +
+                  `${fmtBytes(s.bytes) || '0 KB'}`
+              );
+              if (lines.length === 0) lines.push('no face data stored');
+              lines.push(
+                `total on disk: ${fmtBytes(d.total_bytes) || '0 KB'} · ` +
+                  `scanned items: ${Number(d.scans || 0).toLocaleString()}`
+              );
+              lines.push(
+                `people: ${Number(d.people?.total || 0).toLocaleString()} ` +
+                  `(${Number(d.people?.named || 0).toLocaleString()} named) · ` +
+                  `in-memory index: ${Number(d.index?.vectors || 0).toLocaleString()} vectors` +
+                  (d.index?.model ? ` (${d.index.model})` : '')
+              );
+              facesEl.innerHTML = lines.map(escDep).join('<br>');
+            })
+            .catch(() => { facesEl.textContent = 'Could not load face stats.'; });
+        }
+      }
+
+      function wireVectorStorageResets() {
+        const embedBtn = document.getElementById('reset-embeddings-btn');
+        if (embedBtn) {
+          embedBtn.addEventListener('click', () => {
+            const n = Number(embedStorageTotals.count).toLocaleString();
+            if (
+              !confirm(
+                `Delete ALL ${n} stored embedding vectors (every model)?\n\n` +
+                  'Visual similarity and text search stop working until the ' +
+                  'Embeddings task is re-run over the library. This cannot be undone.'
+              )
+            )
+              return;
+            const status = document.getElementById('embed-storage-status');
+            embedBtn.disabled = true;
+            if (status) status.textContent = 'Deleting…';
+            fetch('/api/embeddings/all?confirm=true', { method: 'DELETE' })
+              .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+              .then((res) => {
+                if (status) status.textContent = `Deleted ${Number(res.deleted).toLocaleString()} vectors.`;
+                loadVectorStorageStats();
+              })
+              .catch((err) => { if (status) status.textContent = 'Failed: ' + err.message; })
+              .finally(() => { embedBtn.disabled = false; });
+          });
+        }
+
+        const facesBtn = document.getElementById('reset-faces-btn');
+        if (facesBtn) {
+          facesBtn.addEventListener('click', () => {
+            const t = facesStorageTotals;
+            const namedWarning =
+              t.named > 0
+                ? `\n\nWARNING: this includes ${Number(t.named).toLocaleString()} NAMED ` +
+                  'people — their names and manual assignments are lost forever.'
+                : '';
+            if (
+              !confirm(
+                `Delete ALL face data? (${Number(t.faces).toLocaleString()} face vectors, ` +
+                  `${Number(t.people).toLocaleString()} people, all scan markers and People tags)` +
+                  namedWarning +
+                  '\n\nRescanning rebuilds detection and grouping, but not names. This cannot be undone.'
+              )
+            )
+              return;
+            // Named people are irreplaceable — require a second, explicit yes.
+            if (t.named > 0 && !confirm('Really delete the named people too? Last chance.')) return;
+            const status = document.getElementById('faces-storage-status');
+            facesBtn.disabled = true;
+            if (status) status.textContent = 'Deleting…';
+            fetch('/api/faces/all?confirm=true', { method: 'DELETE' })
+              .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+              .then(() => {
+                if (status) status.textContent = 'All face data deleted.';
+                loadVectorStorageStats();
+              })
+              .catch((err) => { if (status) status.textContent = 'Failed: ' + err.message; })
+              .finally(() => { facesBtn.disabled = false; });
+          });
+        }
+      }
+
+      wireVectorStorageResets();
+      loadVectorStorageStats();
 
       function stateBadge(state) {
         const map = {
@@ -1853,6 +2199,7 @@
           not_installed: ['neutral', 'Not installed'],
           queued: ['info', 'Queued'],
           downloading: ['info', 'Downloading'],
+          extracting: ['info', 'Unpacking'],
           verifying: ['info', 'Verifying'],
           cancelled: ['neutral', 'Cancelled'],
         };
@@ -1927,7 +2274,7 @@
         const done = Number(inst.bytes_done || 0);
         const total = Number(inst.bytes_total || it.size_bytes || 0);
         const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
-        const isInFlight = ['downloading', 'queued', 'verifying'].includes(it.state);
+        const isInFlight = ['downloading', 'extracting', 'queued', 'verifying'].includes(it.state);
         let actions = '';
         if (it.state === 'installed') {
           actions = `<button type="button" class="btn btn-secondary dep-verify">Verify</button>
@@ -1954,7 +2301,9 @@
           ${isInFlight && total > 0 ? `
             <div class="dep-progress">
               <div class="dep-progress-bar"><div class="dep-progress-fill" style="width:${pct}%"></div></div>
-              <small>${escDep(fmtBytes(done))} / ${escDep(fmtBytes(total))} (${pct}%) ${inst.current_file ? '· ' + escDep(inst.current_file) : ''}</small>
+              <small>${it.state === 'extracting'
+                ? 'Unpacking (one-time): ' + escDep(fmtBytes(done)) + ' / ' + escDep(fmtBytes(total)) + ' on disk (' + pct + '%)'
+                : escDep(fmtBytes(done)) + ' / ' + escDep(fmtBytes(total)) + ' (' + pct + '%)' + (inst.current_file ? ' · ' + escDep(inst.current_file) : '')}</small>
             </div>` : ''}
           ${it.error ? `<div class="dep-error">${escDep(it.error)}</div>` : ''}
         </div>`;
@@ -2008,6 +2357,27 @@
           setStatus('dbPath cannot be empty', 'error');
           return;
         }
+        // Bring-your-own face recognizers: an empty/"null" textarea means
+        // "leave the stored entries alone" (omit the field); anything else
+        // must parse to a JSON array or the save is blocked so a typo can't
+        // wipe the list.
+        let byoFaceModels;
+        {
+          const byoStatusEl = document.getElementById('byo-face-models-status');
+          const raw = document.getElementById('byo-face-models').value.trim();
+          byoStatusEl.textContent = '';
+          if (raw !== '' && raw !== 'null') {
+            try {
+              const parsed = JSON.parse(raw);
+              if (!Array.isArray(parsed)) throw new Error('must be a JSON array');
+              byoFaceModels = parsed;
+            } catch (e) {
+              byoStatusEl.textContent = 'Invalid JSON: ' + e.message;
+              setStatus('byoFaceModels is not valid JSON — fix it or clear the box', 'error');
+              return;
+            }
+          }
+        }
         const payload = {
           dbPath,
           port:
@@ -2018,7 +2388,6 @@
             .value.trim(),
           ollamaModel: document.getElementById('ollama-model').value.trim(),
           describePrompt: document.getElementById('describe-prompt').value,
-          autotagPrompt: document.getElementById('autotag-prompt').value,
           inferenceProvider: document
             .getElementById('inference-provider')
             .value.trim(),
@@ -2068,6 +2437,11 @@
                 10
               ) || 0,
           },
+          localComputeConcurrency:
+            parseInt(
+              document.getElementById('local-compute-concurrency').value,
+              10
+            ) || 0,
           onnxModelPath: document
             .getElementById('onnx-model-path')
             .value.trim(),
@@ -2124,6 +2498,21 @@
             document.getElementById('onnx-file-timeout').value || '0',
             10
           ),
+          faceModel: document.getElementById('face-model').value.trim(),
+          faceRouting: document.getElementById('face-routing').value.trim(),
+          faceProvider: document.getElementById('face-provider').value.trim(),
+          facePerformance: document
+            .getElementById('face-performance')
+            .value.trim(),
+          faceWorkers: parseInt(
+            document.getElementById('face-workers').value || '0',
+            10
+          ),
+          faceThreadsPerWorker: parseInt(
+            document.getElementById('face-threads').value || '0',
+            10
+          ),
+          ...(byoFaceModels !== undefined ? { byoFaceModels } : {}),
           transcriptionProvider: document
             .getElementById('transcription-provider')
             .value.trim(),
@@ -2158,6 +2547,14 @@
                 window.location.href =
                   '/login?redirect=' + encodeURIComponent('/config');
               }, 1000);
+              return;
+            }
+            if (res.storageWarnings && res.storageWarnings.length) {
+              setStatus(
+                'Saved, with storage warnings: ' +
+                  res.storageWarnings.join(' • '),
+                'error'
+              );
               return;
             }
             setStatus(

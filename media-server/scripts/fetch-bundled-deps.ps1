@@ -38,17 +38,26 @@ try {
       $source = $entry.source
       $outName = $entry.extract[0].to  # use the destination filename as the binary name
       $outPath = Join-Path $extractDir $outName
-      Write-Host "building $bin from $source ($targetGoos/$targetGoarch) ..."
+      # The workers REQUIRE cgo (ONNX runtime C API): with CGO_ENABLED=0 the
+      # build silently succeeds with runtime stubs and every embed/autotag/
+      # faces job fails with "built without cgo". Force cgo so a missing C
+      # compiler (mingw-w64 gcc on Windows) is a loud build failure instead
+      # of a broken release.
+      Write-Host "building $bin from $source ($targetGoos/$targetGoarch, cgo) ..."
       $env:GOOS = $targetGoos
       $env:GOARCH = $targetGoarch
-      $env:CGO_ENABLED = "0"
+      $env:CGO_ENABLED = "1"
       try {
         Push-Location (Join-Path $root "media-server")
         & go build -ldflags="-s -w" -o $outPath $source
-        if ($LASTEXITCODE -ne 0) { Write-Error "go build failed for $bin" }
+        if ($LASTEXITCODE -ne 0) { Write-Error "go build failed for $bin (needs a C compiler on PATH for cgo)" }
       } finally {
         Pop-Location
         Remove-Item Env:GOOS, Env:GOARCH, Env:CGO_ENABLED -ErrorAction SilentlyContinue
+      }
+      # Belt-and-braces: reject a binary that compiled in the no-cgo stub.
+      if (Select-String -Path $outPath -Pattern 'built without cgo' -Quiet) {
+        Write-Error "$bin was built WITHOUT cgo (ONNX disabled at runtime). Ensure a C compiler is on PATH."
       }
       if ($Mode -eq "update") {
         $gotSum = (Get-FileHash -Algorithm SHA256 $outPath).Hash.ToLower()
@@ -67,7 +76,10 @@ try {
       }
       $archivePath = Join-Path $tmp ("$bin$archiveExt")
       Write-Host "fetching $bin ($($entry.url)) ..."
-      Invoke-WebRequest -Uri $entry.url -OutFile $archivePath -UseBasicParsing
+      # A wget-style User-Agent makes SourceForge (exiftool's host) serve the
+      # file directly; with a browser-ish UA it serves an HTML mirror page
+      # that then fails checksum verification.
+      Invoke-WebRequest -Uri $entry.url -OutFile $archivePath -UseBasicParsing -UserAgent 'Wget/1.21.4'
       $gotSum = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLower()
 
       if ($Mode -eq "update") {

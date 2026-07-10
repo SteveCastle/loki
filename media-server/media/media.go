@@ -1172,6 +1172,24 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 			return result, err
 		}
 
+		// Remove face rows + scan markers (face-identity sidecar tables). The
+		// registered removal hook evicts them from the in-memory face index.
+		// Person covers pointing at the doomed faces are cleared first so they
+		// don't dangle (GetPeople falls back to the person's best face).
+		for _, stmt := range []string{
+			`UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (SELECT id FROM face WHERE media_path IN (%s))`,
+			`DELETE FROM face WHERE media_path IN (%s)`,
+			`DELETE FROM face_scan WHERE media_path IN (%s)`,
+		} {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(stmt, strings.Join(placeholders, ",")), args...); err != nil {
+				tx.Rollback()
+				result.Errors = append(result.Errors, fmt.Errorf("failed to remove face rows for batch: %w", err))
+				result.MediaItemsRemoved = totalMediaRemoved
+				result.TagsRemoved = totalTagsRemoved
+				return result, err
+			}
+		}
+
 		// Commit this batch
 		if err := tx.Commit(); err != nil {
 			result.Errors = append(result.Errors, fmt.Errorf("failed to commit transaction for batch: %w", err))
@@ -2144,6 +2162,153 @@ func InitializeSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_media_embedding_model ON media_embedding(model)`,
 	); err != nil {
 		log.Printf("warning: failed to create idx_media_embedding_model: %v", err)
+	}
+
+	// Face identity tables (face detection/recognition feature). Decided up
+	// front because they're hard to reverse:
+	//   - bbox coordinates are RELATIVE ([0,1] of the image dimensions) so
+	//     video overlays and multi-frame scanning need no migration;
+	//   - frame_ts is the video timestamp the face was sampled from (0 for
+	//     images and single-frame scans);
+	//   - vectors are keyed by model so recognizers coexist non-destructively
+	//     (shipped SFace 128-dim vs BYO ArcFace-family 512-dim);
+	//   - assigned_by records whether person_id came from clustering ('auto')
+	//     or the user ('user') — reclustering must never overwrite 'user'.
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			media_path  TEXT NOT NULL,
+			model       TEXT NOT NULL,
+			frame_ts    REAL NOT NULL DEFAULT 0,
+			bbox_x      REAL NOT NULL,
+			bbox_y      REAL NOT NULL,
+			bbox_w      REAL NOT NULL,
+			bbox_h      REAL NOT NULL,
+			det_score   REAL NOT NULL,
+			vector      BLOB NOT NULL,
+			person_id   INTEGER,
+			assigned_by TEXT,
+			created_at  INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face table: %w", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS person (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			name          TEXT UNIQUE,
+			cover_face_id INTEGER,
+			created_at    INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create person table: %w", err)
+	}
+	// Seed the People taxonomy category so the People tab is present on every
+	// DB from first boot, not only after the first person is named. Naming a
+	// person creates this row lazily (ensurePersonTag), but a DB that has never
+	// clustered faces would otherwise have no People category at all. Idempotent
+	// (INSERT OR IGNORE) — this runs on every startup and every DB swap.
+	if _, err := db.Exec(
+		`INSERT OR IGNORE INTO category (label, weight) VALUES (?, 0)`, PeopleCategory,
+	); err != nil {
+		return fmt.Errorf("failed to seed People category: %w", err)
+	}
+	// face_scan marks media already scanned under a model so no-face media
+	// isn't rescanned on every run (absence of face rows can't distinguish
+	// "no faces" from "never scanned").
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_scan (
+			media_path TEXT NOT NULL,
+			model      TEXT NOT NULL,
+			face_count INTEGER NOT NULL DEFAULT 0,
+			scanned_at INTEGER,
+			PRIMARY KEY (media_path, model)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_scan table: %w", err)
+	}
+	// Human curation assertions for face clustering. Two complementary shapes,
+	// because they survive different lifecycles:
+	//   - face_veto ("this face is NEVER person P") is the direct, cheap check,
+	//     but a veto against an anonymous "Unknown #N" dies with the person row
+	//     when a reset dissolves it;
+	//   - face_cannot_link ("these two faces are NEVER the same person",
+	//     face_a < face_b normalized) is recorded against the group's exemplar
+	//     faces at rejection time, so the assertion still holds when the same
+	//     visual cluster re-forms under a fresh person id.
+	// Both are enforced by every clustering path and only ever removed by a
+	// contradicting USER action (assigning the face to that person, merging).
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_veto (
+			face_id    INTEGER NOT NULL,
+			person_id  INTEGER NOT NULL,
+			created_at INTEGER,
+			PRIMARY KEY (face_id, person_id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_veto table: %w", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_cannot_link (
+			face_a     INTEGER NOT NULL,
+			face_b     INTEGER NOT NULL,
+			created_at INTEGER,
+			PRIMARY KEY (face_a, face_b)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_cannot_link table: %w", err)
+	}
+	// Dissolved-group tombstones: when the user deletes a group (keeping its
+	// faces), the membership is snapshotted so no automatic clustering pass
+	// may reunite the majority of it — the same nonsense blob can't simply
+	// re-form. Keyed by face ids, so a ban outlives every person id.
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_group_ban (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_name TEXT,
+			created_at  INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_group_ban table: %w", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS face_group_ban_member (
+			ban_id  INTEGER NOT NULL,
+			face_id INTEGER NOT NULL,
+			PRIMARY KEY (ban_id, face_id)
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create face_group_ban_member table: %w", err)
+	}
+	for _, stmt := range []string{
+		`CREATE INDEX IF NOT EXISTS idx_face_media_path ON face(media_path)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_model ON face(model)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_person ON face(person_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_veto_person ON face_veto(person_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_cannot_link_b ON face_cannot_link(face_b)`,
+		`CREATE INDEX IF NOT EXISTS idx_face_group_ban_member_face ON face_group_ban_member(face_id)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Printf("warning: failed to create face index (will retry on next start): %v", err)
+		}
+	}
+
+	// One-time repair for DBs written before ReplaceFaces claimed the whole
+	// item per scan: drop face rows a newer scan under another model
+	// superseded. These ghosts appear as permanently "ungrouped" faces in the
+	// People review UI. Runs before the face index is built, so no live index
+	// eviction is needed. Best-effort — a failure only delays the repair.
+	if n, err := CleanupSupersededFaces(db); err != nil {
+		log.Printf("warning: superseded-face cleanup failed (will retry on next start): %v", err)
+	} else if n > 0 {
+		log.Printf("faces: removed %d stale face row(s) superseded by newer scans under another model", n)
 	}
 
 	log.Println("Database schema initialized successfully")

@@ -8,7 +8,9 @@ import { GlobalStateContext } from '../../state';
 import ConfirmDeleteTag from './confirm-delete-tag';
 import TagCount from './tag-count';
 import { invoke } from '../../platform';
+import useHideNativeDragPreview from '../../hooks/useHideNativeDragPreview';
 import { isClickWithinThreshold, Point } from './click-vs-drag';
+import { displayTagLabel } from '../../tag-display';
 
 type Concept = {
   label: string;
@@ -56,7 +58,7 @@ function TagListRow({
     return (mouseY || 0) < middleY;
   }
 
-  const [, drag] = useDrag(
+  const [{ isDragging }, drag, dragPreview] = useDrag(
     () => ({
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
       type: 'TAG',
@@ -64,6 +66,9 @@ function TagListRow({
     }),
     [tag]
   );
+  // The cursor-following chip in DragChipLayer stands in for the native
+  // full-width-row drag ghost.
+  useHideNativeDragPreview(dragPreview);
 
   type DropProps = {
     isOver: boolean;
@@ -109,6 +114,7 @@ function TagListRow({
       className={[
         'tag-list-row',
         active ? 'active' : '',
+        isDragging ? 'dragging' : '',
         collectedProps.isOver && !collectedProps.isSelf ? 'hovered' : '',
         collectedProps.isOver && isAbove ? 'above' : '',
         collectedProps.isOver && !isAbove ? 'below' : '',
@@ -144,8 +150,8 @@ function TagListRow({
         }
       }}
     >
-      <div className="label" title={tag.label}>
-        {tag.label}
+      <div className="label" title={displayTagLabel(tag.label)}>
+        {displayTagLabel(tag.label)}
       </div>
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}

@@ -9,6 +9,7 @@
  * Usage:  node scripts/build-server.js
  */
 const { execSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const process = require('process');
 
@@ -49,7 +50,44 @@ run(`go build${ldflags} -o media-server${ext} .`, { cwd: SERVER_DIR });
 
 console.log(`\n✓ Server built: media-server/media-server${ext}`);
 
-// 4. Build the lokictl CLI (ships next to the server binary).
+// 4. Build the bundled worker binaries (media-server/bin/). The server spawns
+// these as subprocesses and evolves their CLI flags in lockstep with its own
+// task code — an out-of-date embed.exe fails every embed/faces job with
+// "flag provided but not defined". They ship next to the server, so rebuild
+// them whenever the server is rebuilt. Skip with SKIP_BUNDLED=1.
+if (process.env.SKIP_BUNDLED !== '1') {
+  console.log('\n--- Building bundled worker binaries (bin/) ---');
+  // The workers REQUIRE cgo (ONNX runtime C API). Since Go 1.20, a missing C
+  // compiler makes CGO_ENABLED silently default to 0 and the build then
+  // SUCCEEDS with runtime stubs — every embed/autotag/faces job fails with
+  // "built without cgo; ONNX inference unavailable". Forcing CGO_ENABLED=1
+  // turns "no compiler on PATH" into a loud build failure instead.
+  const cgoEnv = { ...process.env, CGO_ENABLED: '1' };
+  try {
+    run(`go build -o bin${path.sep}embed${ext} ./cmd/embed`, { cwd: SERVER_DIR, env: cgoEnv });
+    run(`go build -o bin${path.sep}onnxtag${ext} ./cmd/onnxtag`, { cwd: SERVER_DIR, env: cgoEnv });
+  } catch (err) {
+    console.error(
+      '\n✗ Worker binaries failed to build. They need cgo, which needs a C ' +
+        'compiler on PATH (Windows: mingw-w64 gcc, e.g. C:\\ProgramData\\mingw64\\mingw64\\bin). ' +
+        'Fix the toolchain or rerun with SKIP_BUNDLED=1 to keep the existing binaries.'
+    );
+    throw err;
+  }
+  // Belt-and-braces: verify neither binary compiled in the no-cgo stub.
+  for (const name of ['embed', 'onnxtag']) {
+    const bin = fs.readFileSync(path.join(SERVER_DIR, 'bin', `${name}${ext}`));
+    if (bin.includes('built without cgo')) {
+      throw new Error(
+        `bin/${name}${ext} was built WITHOUT cgo (ONNX disabled at runtime). ` +
+          'Ensure a C compiler is on PATH and rebuild.'
+      );
+    }
+  }
+  console.log(`\n✓ Bundled binaries built (cgo verified): media-server/bin/{embed,onnxtag}${ext}`);
+}
+
+// 5. Build the lokictl CLI (ships next to the server binary).
 // Skip with SKIP_CLI=1 for a server-only rebuild.
 if (process.env.SKIP_CLI !== '1') {
   console.log('\n--- Building lokictl CLI ---');

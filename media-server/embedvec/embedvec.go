@@ -49,6 +49,65 @@ func Normalize(v []float32) []float32 {
 	return out
 }
 
+// Blend returns the L2-normalized weighted combination (1-w)*a + w*b — the
+// standard way to mix two same-space embeddings (e.g. a SigLIP 2 image vector
+// and text vector) into a single query vector. Both inputs are normalized
+// first so w is a true blend ratio even for legacy unnormalized rows. w is
+// clamped to [0,1]. Errors when the lengths differ.
+func Blend(a, b []float32, w float32) ([]float32, error) {
+	if len(a) != len(b) {
+		return nil, fmt.Errorf("embedvec: blend length mismatch: %d vs %d", len(a), len(b))
+	}
+	if w < 0 {
+		w = 0
+	}
+	if w > 1 {
+		w = 1
+	}
+	a = Normalize(a)
+	b = Normalize(b)
+	out := make([]float32, len(a))
+	for i := range a {
+		out[i] = (1-w)*a[i] + w*b[i]
+	}
+	return Normalize(out), nil
+}
+
+// Combine returns the L2-normalized signed weighted sum Σ wᵢ·vᵢ of same-space
+// embeddings — the N-way generalization of Blend for composite latent-space
+// queries ("this image + that image + 'at night' − 'blurry'"). Each vector is
+// normalized first so a weight is a true share regardless of input scale;
+// NEGATIVE weights steer the query away from that concept. Errors on empty
+// input, length mismatch, or when the weights cancel to a (near-)zero vector.
+func Combine(vecs [][]float32, weights []float32) ([]float32, error) {
+	if len(vecs) == 0 {
+		return nil, fmt.Errorf("embedvec: combine: no vectors")
+	}
+	if len(weights) != len(vecs) {
+		return nil, fmt.Errorf("embedvec: combine: %d vectors but %d weights", len(vecs), len(weights))
+	}
+	dim := len(vecs[0])
+	out := make([]float32, dim)
+	for i, v := range vecs {
+		if len(v) != dim {
+			return nil, fmt.Errorf("embedvec: combine length mismatch: %d vs %d", len(v), dim)
+		}
+		n := Normalize(v)
+		w := weights[i]
+		for k := range n {
+			out[k] += w * n[k]
+		}
+	}
+	var sum float64
+	for _, x := range out {
+		sum += float64(x) * float64(x)
+	}
+	if sum < 1e-12 {
+		return nil, fmt.Errorf("embedvec: combine: weights cancel to a zero vector")
+	}
+	return Normalize(out), nil
+}
+
 // Cosine returns the dot product of a and b. When both are unit vectors this
 // equals cosine similarity. Returns 0 if the lengths differ.
 func Cosine(a, b []float32) float32 {
