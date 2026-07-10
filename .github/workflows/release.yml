@@ -621,8 +621,12 @@ jobs:
           find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
+      # v2: re-running for an existing tag must replace assets. v1's
+      # existing-asset check compares raw filenames, but GitHub stores
+      # "Lowkey Media Viewer Setup.exe" as "Lowkey.Media.Viewer.Setup.exe",
+      # so spaced names were never deleted and the re-upload 422'd.
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.version-and-tag.outputs.tag }}
           name: Release ${{ needs.version-and-tag.outputs.version }}
