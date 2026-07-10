@@ -87,7 +87,9 @@ for bin in $bins; do
   # For each extract entry, glob and copy.
   jq -r --arg t "$TARGET" --arg b "$bin" '.binaries[$b][$t].extract[] | [.from, .to, (.type // "file")] | @tsv' "$CONF" |
   while IFS=$'\t' read -r from to type; do
-    matches=( $(cd "$extract_dir" && ls -1 $from 2>/dev/null || true) )
+    # -d: a glob matching a directory must resolve to the directory itself,
+    # not its contents (plain ls on a dir lists inside it).
+    matches=( $(cd "$extract_dir" && ls -d1 $from 2>/dev/null || true) )
     if [ ${#matches[@]} -eq 0 ]; then
       echo "no match for $from in $bin" >&2
       exit 1
