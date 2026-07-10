@@ -19,6 +19,7 @@ on:
       - 'package-lock.json'
       - 'tsconfig.json'
       - 'schema.sql'
+      - '.github/workflows/release.yml' # pipeline fixes should release too
   # Manual trigger so a release can be cut without a code change (e.g. re-run a
   # failed publish, or release after a tooling-only change).
   workflow_dispatch:
@@ -248,7 +249,10 @@ jobs:
             server_cgo: '1'
             ldflags: '-s -w'
             fetch_cmd: 'media-server/scripts/fetch-bundled-deps.sh darwin-arm64 verify'
-          - os: macos-13 # Intel
+          # macos-13 was retired 2025-12-04; macos-15-intel is the last
+          # x86_64 image and lives until August 2027, after which Intel
+          # macOS builds need another plan (or get dropped).
+          - os: macos-15-intel # Intel
             target: darwin-amd64
             goos: darwin
             goarch: amd64
