@@ -51,7 +51,7 @@ func TestRunItemOpsSkipsFinalizeOnPause(t *testing.T) {
 	registerTestOp(t, "test-op-finalize-pause", func(op *ItemOp) {
 		op.Prepare = func(run *ItemRun) (*ItemProcessor, error) {
 			return &ItemProcessor{
-				Process: func(ctx context.Context, path string) (*ItemCommit, error) {
+				Process: func(ctx context.Context, path, _ string) (*ItemCommit, error) {
 					_ = q.RequestPause(jobID)
 					return &ItemCommit{Commit: func() error { return nil }}, nil
 				},

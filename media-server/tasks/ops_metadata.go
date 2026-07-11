@@ -70,8 +70,8 @@ func prepareDescribeOp(run *ItemRun) (*ItemProcessor, error) {
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return hasExistingMetadata(db, path, "description") },
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
-			description, err := describeFileWithOllama(ctx, q, jobID, path, model, prompt)
+		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
+			description, err := describeFileWithOllama(ctx, q, jobID, localPath, model, prompt)
 			if err != nil {
 				return nil, err
 			}
@@ -95,8 +95,8 @@ func prepareTranscribeOp(run *ItemRun) (*ItemProcessor, error) {
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return hasExistingMetadata(db, path, "transcript") },
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
-			transcript, err := generateTranscriptWithFasterWhisper(ctx, q, jobID, path)
+		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
+			transcript, err := generateTranscriptWithFasterWhisper(ctx, q, jobID, localPath)
 			if err != nil {
 				return nil, err
 			}
@@ -120,12 +120,12 @@ func prepareHashOp(run *ItemRun) (*ItemProcessor, error) {
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return hasExistingMetadata(db, path, "hash") },
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
-			fi, err := os.Stat(path)
+		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
+			fi, err := os.Stat(localPath)
 			if err != nil {
 				return nil, fmt.Errorf("stat: %w", err)
 			}
-			file, err := os.Open(path)
+			file, err := os.Open(localPath)
 			if err != nil {
 				return nil, fmt.Errorf("open: %w", err)
 			}
@@ -157,13 +157,14 @@ func prepareDimensionsOp(run *ItemRun) (*ItemProcessor, error) {
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return hasExistingDimensions(db, path) },
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
+		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
 			var width, height int
 			var err error
+			// Type by the LIBRARY path's extension; bytes from the local copy.
 			if isImage(path) {
-				width, height, err = getImageDimensions(path)
+				width, height, err = getImageDimensions(localPath)
 			} else {
-				width, height, err = getVideoDimensionsFFProbe(path)
+				width, height, err = getVideoDimensionsFFProbe(localPath)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("get dimensions: %w", err)
@@ -181,4 +182,3 @@ func prepareDimensionsOp(run *ItemRun) (*ItemProcessor, error) {
 		},
 	}, nil
 }
-

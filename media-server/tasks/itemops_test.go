@@ -1,10 +1,12 @@
 package tasks
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/storage"
 	_ "modernc.org/sqlite"
 )
 
@@ -86,7 +89,7 @@ func registerTestOp(t *testing.T, id string, opts ...func(*ItemOp)) *sync.Map {
 		Name: "Test Op " + id,
 		Prepare: func(run *ItemRun) (*ItemProcessor, error) {
 			return &ItemProcessor{
-				Process: func(ctx context.Context, path string) (*ItemCommit, error) {
+				Process: func(ctx context.Context, path, _ string) (*ItemCommit, error) {
 					return &ItemCommit{
 						Commit: func() error {
 							processed.Store(id+"|"+path, true)
@@ -266,7 +269,7 @@ func TestRunItemOpsPausePreservesProgress(t *testing.T) {
 	processed := registerTestOp(t, "test-op-pause", func(op *ItemOp) {
 		op.Prepare = func(run *ItemRun) (*ItemProcessor, error) {
 			return &ItemProcessor{
-				Process: func(ctx context.Context, path string) (*ItemCommit, error) {
+				Process: func(ctx context.Context, path, _ string) (*ItemCommit, error) {
 					// Request pause during the first item: the feeder must stop
 					// before the next item while this one's commit still lands.
 					_ = q.RequestPause(jobID)
@@ -352,5 +355,99 @@ func TestMetadataAliasMapsTypesToOps(t *testing.T) {
 	}
 	if !hash.Valid || hash.String == "" {
 		t.Fatal("expected the legacy metadata task to run the hash op")
+	}
+}
+
+// fakeS3Backend is an in-memory storage.Backend for exercising the s3://
+// localize path without a real bucket.
+type fakeS3Backend struct {
+	files map[string][]byte
+}
+
+func (f *fakeS3Backend) List(ctx context.Context, path string) ([]storage.Entry, error) {
+	return nil, nil
+}
+func (f *fakeS3Backend) Scan(ctx context.Context, path string, recursive bool) ([]storage.FileInfo, error) {
+	return nil, nil
+}
+func (f *fakeS3Backend) Download(ctx context.Context, path string) (io.ReadCloser, error) {
+	b, ok := f.files[path]
+	if !ok {
+		return nil, fmt.Errorf("no such object: %s", path)
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
+}
+func (f *fakeS3Backend) Upload(ctx context.Context, path string, r io.Reader, contentType string) error {
+	return fmt.Errorf("not implemented")
+}
+func (f *fakeS3Backend) MediaURL(path string) (string, error) { return path, nil }
+func (f *fakeS3Backend) Exists(ctx context.Context, path string) (bool, error) {
+	_, ok := f.files[path]
+	return ok, nil
+}
+func (f *fakeS3Backend) Contains(path string) bool { return strings.HasPrefix(path, "s3://tb/") }
+func (f *fakeS3Backend) Root() storage.Entry {
+	return storage.Entry{Name: "tb", Path: "s3://tb/", IsDir: true, Type: "s3"}
+}
+
+// TestItemOps_S3ItemsLocalized: an input-list item with an s3:// path must
+// pass the existence gate (backend HEAD, not disk stat), be downloaded to a
+// readable temp file for the op, keep its s3 path as the commit identity,
+// and have the temp file removed afterwards.
+func TestItemOps_S3ItemsLocalized(t *testing.T) {
+	db := setupItemOpsDB(t)
+	const s3path = "s3://tb/uploads/img.jpg"
+	if _, err := db.Exec(`INSERT INTO media (path) VALUES (?)`, s3path); err != nil {
+		t.Fatal(err)
+	}
+
+	oldReg := storageReg
+	SetStorageRegistry(storage.NewRegistry([]storage.Backend{
+		&fakeS3Backend{files: map[string][]byte{s3path: []byte("s3-bytes")}},
+	}))
+	t.Cleanup(func() { storageReg = oldReg })
+
+	var gotLocal string
+	var gotBytes []byte
+	processed := registerTestOp(t, "test-op-s3", func(op *ItemOp) {
+		op.Prepare = func(run *ItemRun) (*ItemProcessor, error) {
+			return &ItemProcessor{
+				Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
+					gotLocal = localPath
+					b, err := os.ReadFile(localPath)
+					if err != nil {
+						return nil, err
+					}
+					gotBytes = b
+					return &ItemCommit{
+						Commit: func() error {
+							processedKey := "test-op-s3|" + path
+							_ = processedKey
+							return nil
+						},
+						Detail: "done",
+					}, nil
+				},
+			}, nil
+		}
+	})
+	_ = processed
+
+	q, j := newItemOpsJob(t, db, "test-op-s3", nil, s3path)
+	if err := runItemOps(j, q, []string{"test-op-s3"}, false); err != nil {
+		t.Fatalf("runItemOps: %v", err)
+	}
+
+	if gotLocal == "" || gotLocal == s3path {
+		t.Fatalf("op did not receive a localized path (got %q)", gotLocal)
+	}
+	if string(gotBytes) != "s3-bytes" {
+		t.Fatalf("localized file contents = %q, want s3-bytes", gotBytes)
+	}
+	if _, err := os.Stat(gotLocal); !os.IsNotExist(err) {
+		t.Fatalf("temp file %s should be cleaned up after the run", gotLocal)
+	}
+	if j.State != jobqueue.StateCompleted {
+		t.Fatalf("job state = %v, want completed", j.State)
 	}
 }

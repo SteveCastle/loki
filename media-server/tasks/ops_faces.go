@@ -253,8 +253,8 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 			}
 			return scanned[path], nil
 		},
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
-			return st.processOne(ctx, run, path)
+		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
+			return st.processOne(ctx, run, path, localPath)
 		},
 		Finalize: func() error {
 			if st.clusterEvery > 0 {
@@ -317,14 +317,14 @@ func maybeQueueFaceClustering(q *jobqueue.Queue, newFaces int64) (string, bool) 
 // is off, otherwise the SigLIP-classified domain model (stored vector when
 // present, embedded on the fly — which persists the vector — otherwise).
 // Classification failure falls back to the active model.
-func (st *facesOpState) modelFor(ctx context.Context, run *ItemRun, path string) FaceModel {
+func (st *facesOpState) modelFor(ctx context.Context, run *ItemRun, path, localPath string) FaceModel {
 	if st.anchors == nil {
 		return st.pinnedModel
 	}
 	if vec, ok, err := media.GetEmbedding(run.Queue.Db, path, st.embedModel.ID); err == nil && ok {
 		return routeVec(vec, st.anchors)
 	}
-	if fresh, err := ImageQueryVectorForPath(ctx, run.Queue.Db, st.embedModel, path); err == nil {
+	if fresh, err := ImageQueryVectorForPathAt(ctx, run.Queue.Db, st.embedModel, path, localPath); err == nil {
 		return routeVec(fresh, st.anchors)
 	}
 	return ActiveFaceModel()
@@ -371,14 +371,14 @@ func (st *facesOpState) poolFor(ctx context.Context, run *ItemRun, m FaceModel) 
 
 // processOne scans a single item: route → frame → worker → parse, returning
 // the serialized commit (store faces + index + incremental people assignment).
-func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path string) (*ItemCommit, error) {
-	model := st.modelFor(ctx, run, path)
+func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path, localPath string) (*ItemCommit, error) {
+	model := st.modelFor(ctx, run, path, localPath)
 	pool, perr := st.poolFor(ctx, run, model)
 	if perr != nil {
 		return nil, perr
 	}
 
-	imagePath, tempFrame, ferr := extractFrameForFile(ctx, path, st.timeout)
+	imagePath, tempFrame, ferr := extractFrameForFile(ctx, localPath, st.timeout)
 	if ferr != nil {
 		return nil, fmt.Errorf("frame extract: %w", ferr)
 	}

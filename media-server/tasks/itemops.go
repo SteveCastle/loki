@@ -21,6 +21,7 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,6 +29,42 @@ import (
 
 	"github.com/stevecastle/shrike/jobqueue"
 )
+
+// localizeItem returns a readable local file for a media path. Local paths
+// pass through untouched; s3:// items are downloaded to a temp file (with
+// the original extension — workers sniff type by extension) that cleanup
+// removes. The library path stays the DB key throughout; only reads use
+// the returned path.
+func localizeItem(ctx context.Context, path string) (localPath string, cleanup func(), err error) {
+	noop := func() {}
+	if !strings.HasPrefix(path, "s3://") {
+		return path, noop, nil
+	}
+	if storageReg == nil {
+		return "", noop, fmt.Errorf("no storage registry configured")
+	}
+	backend := storageReg.BackendFor(path)
+	if backend == nil {
+		return "", noop, fmt.Errorf("no storage backend for %s", path)
+	}
+	r, err := backend.Download(ctx, path)
+	if err != nil {
+		return "", noop, fmt.Errorf("download: %w", err)
+	}
+	defer r.Close()
+	tmp, err := os.CreateTemp("", "loki-op-src-*"+filepath.Ext(path))
+	if err != nil {
+		return "", noop, fmt.Errorf("temp file: %w", err)
+	}
+	if _, err := io.Copy(tmp, r); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", noop, fmt.Errorf("download copy: %w", err)
+	}
+	tmp.Close()
+	name := tmp.Name()
+	return name, func() { os.Remove(name) }, nil
+}
 
 // ItemRun is the per-job context handed to each op's Prepare.
 type ItemRun struct {
@@ -60,7 +97,10 @@ type ItemProcessor struct {
 	SkipExisting func(path string) (bool, error)
 	// Process computes the op for one item and returns the commit to apply.
 	// A nil ItemCommit with nil error means "nothing to do" (counted as a skip).
-	Process func(ctx context.Context, path string) (*ItemCommit, error)
+	// path is the item's library identity (DB key — may be an s3:// path);
+	// localPath is a readable file on local disk holding the item's bytes
+	// (identical to path for local media, a temp download for s3://).
+	Process func(ctx context.Context, path, localPath string) (*ItemCommit, error)
 	// Close releases prepare-time resources (worker pools). May be nil.
 	Close func()
 	// Finalize runs once after the whole run completes SUCCESSFULLY (all items
@@ -337,11 +377,27 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 					return
 				}
 				env := itemEnvelope{path: path}
-				// Input-list items may be arbitrary paths: require existence on
-				// disk and in the library. Query items came from the DB and are
-				// trusted (stat-ing millions of rows on a network drive stalls).
+				// Input-list items may be arbitrary paths: require existence
+				// (disk stat for local, backend HEAD for s3://) and library
+				// membership. Query items came from the DB and are trusted
+				// (stat-ing millions of rows on a network drive stalls).
 				if !res.FromQuery {
-					if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+					if strings.HasPrefix(path, "s3://") {
+						missing := storageReg == nil
+						if !missing {
+							b := storageReg.BackendFor(path)
+							if b == nil {
+								missing = true
+							} else if ok, herr := b.Exists(ctx, path); herr == nil && !ok {
+								missing = true
+							}
+						}
+						if missing {
+							env.errs = append(env.errs, "not found in storage")
+							commitCh <- env
+							continue
+						}
+					} else if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
 						env.errs = append(env.errs, "not found on disk")
 						commitCh <- env
 						continue
@@ -351,6 +407,20 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 						commitCh <- env
 						continue
 					}
+				}
+				// s3:// items are downloaded to a temp file lazily — only when
+				// an op actually runs (all-skipped items cost no bandwidth).
+				localPath, localCleanup, localized := path, func() {}, !strings.HasPrefix(path, "s3://")
+				ensureLocal := func() error {
+					if localized {
+						return nil
+					}
+					lp, cl, lerr := localizeItem(ctx, path)
+					if lerr != nil {
+						return lerr
+					}
+					localPath, localCleanup, localized = lp, cl, true
+					return nil
 				}
 				for i, op := range ops {
 					if ctx.Err() != nil {
@@ -364,7 +434,11 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 							continue
 						}
 					}
-					result, perr := procs[i].Process(ctx, path)
+					if lerr := ensureLocal(); lerr != nil {
+						env.errs = append(env.errs, fmt.Sprintf("%s: fetch: %v", op.ID, lerr))
+						continue
+					}
+					result, perr := procs[i].Process(ctx, path, localPath)
 					if perr != nil {
 						if ctx.Err() != nil {
 							break
@@ -377,6 +451,7 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 						env.commits = append(env.commits, *result)
 					}
 				}
+				localCleanup()
 				commitCh <- env
 			}
 		}()

@@ -265,8 +265,13 @@ func resolveJobItemsFiltered(j *jobqueue.Job, q *jobqueue.Queue, mediaOnly bool)
 		if strings.HasPrefix(p, "--") {
 			continue
 		}
-		if abs, err := filepath.Abs(p); err == nil {
-			p = filepath.FromSlash(abs)
+		// Absolutize LOCAL paths only — s3:// identities must survive
+		// verbatim (Abs/FromSlash would mangle the scheme into a bogus
+		// local path and every op would fail with "not found on disk").
+		if !strings.HasPrefix(p, "s3://") {
+			if abs, err := filepath.Abs(p); err == nil {
+				p = filepath.FromSlash(abs)
+			}
 		}
 		out = append(out, p)
 	}

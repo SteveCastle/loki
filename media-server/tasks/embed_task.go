@@ -239,12 +239,19 @@ func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string,
 // embedAndPersist embeds path under m, then persists + indexes the vector so
 // future searches over this item are instant.
 func embedAndPersist(ctx context.Context, db *sql.DB, m EmbedModel, path string) ([]float32, error) {
-	fresh, err := embedFileWithModel(ctx, path, m)
+	return embedAndPersistAt(ctx, db, m, path, path)
+}
+
+// embedAndPersistAt embeds the readable file at filePath but persists (and
+// indexes) the vector under dbPath — the two differ for s3:// media, where
+// the item is downloaded to a temp file first.
+func embedAndPersistAt(ctx context.Context, db *sql.DB, m EmbedModel, dbPath, filePath string) ([]float32, error) {
+	fresh, err := embedFileWithModel(ctx, filePath, m)
 	if err != nil {
-		return nil, fmt.Errorf("embed query item %q: %w", path, err)
+		return nil, fmt.Errorf("embed query item %q: %w", dbPath, err)
 	}
-	if uerr := media.UpsertEmbedding(db, path, m.ID, fresh, 0); uerr == nil {
-		indexAdd(m.ID, path, fresh) // index normalizes internally
+	if uerr := media.UpsertEmbedding(db, dbPath, m.ID, fresh, 0); uerr == nil {
+		indexAdd(m.ID, dbPath, fresh) // index normalizes internally
 	}
 	return fresh, nil
 }
@@ -253,14 +260,22 @@ func embedAndPersist(ctx context.Context, db *sql.DB, m EmbedModel, path string)
 // vector when present, otherwise embedded on the fly (and persisted). Used as
 // the image half of a blended image+text query.
 func ImageQueryVectorForPath(ctx context.Context, db *sql.DB, m EmbedModel, path string) ([]float32, error) {
-	vec, ok, err := media.GetEmbedding(db, path, m.ID)
+	return ImageQueryVectorForPathAt(ctx, db, m, path, path)
+}
+
+// ImageQueryVectorForPathAt is ImageQueryVectorForPath for media whose
+// readable file lives somewhere other than its library path (s3:// items
+// downloaded to a temp file): the DB lookup/persist key is dbPath, the
+// bytes come from filePath.
+func ImageQueryVectorForPathAt(ctx context.Context, db *sql.DB, m EmbedModel, dbPath, filePath string) ([]float32, error) {
+	vec, ok, err := media.GetEmbedding(db, dbPath, m.ID)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
 		return vec, nil
 	}
-	return embedAndPersist(ctx, db, m, path)
+	return embedAndPersistAt(ctx, db, m, dbPath, filePath)
 }
 
 // embedSubprocessError wraps a failed embed-subprocess run, surfacing the

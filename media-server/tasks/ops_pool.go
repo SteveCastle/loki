@@ -146,8 +146,8 @@ func prepareEmbedOp(run *ItemRun) (*ItemProcessor, error) {
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return media.HasEmbedding(db, path, model.ID) },
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
-			imagePath, tempFrame, ferr := extractFrameForFile(ctx, path, timeout)
+		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
+			imagePath, tempFrame, ferr := extractFrameForFile(ctx, localPath, timeout)
 			if ferr != nil {
 				return nil, fmt.Errorf("frame extract: %w", ferr)
 			}
@@ -268,8 +268,8 @@ func prepareAutotagOp(run *ItemRun) (*ItemProcessor, error) {
 
 	return &ItemProcessor{
 		SkipExisting: func(path string) (bool, error) { return hasSuggestedTags(db, path) },
-		Process: func(ctx context.Context, path string) (*ItemCommit, error) {
-			imagePath, tempFrame, ferr := extractFrameForFile(ctx, path, timeout)
+		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
+			imagePath, tempFrame, ferr := extractFrameForFile(ctx, localPath, timeout)
 			if ferr != nil {
 				return nil, fmt.Errorf("frame extract: %w", ferr)
 			}
