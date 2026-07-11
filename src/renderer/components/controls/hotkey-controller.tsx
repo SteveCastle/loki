@@ -120,6 +120,14 @@ export default function HotKeyController() {
     (a, b) => a === b
   );
 
+  // Write hotkeys are inert for view-only public visitors — buttons are
+  // hidden elsewhere, but global key handlers need their own gate.
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite,
+    (a, b) => a === b
+  );
+
   const filteredLibrary = filter(
     libraryLoadId,
     textFilter,
@@ -174,6 +182,7 @@ export default function HotKeyController() {
     down: (e: Event) => {
       e.preventDefault();
       e.stopPropagation();
+      if (!canWrite) return;
       const tags = storedTags[position];
       if (tags && tags.length > 0 && item?.path) {
         createAssignments(tags, item.path);
@@ -219,6 +228,7 @@ export default function HotKeyController() {
       down: (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!canWrite) return;
         async function createAssignment() {
           console.log('creating assignment', item.path, mostRecentTag);
           await invoke('create-assignment', [
@@ -488,6 +498,7 @@ export default function HotKeyController() {
     },
     moveToTop: {
       down: () => {
+        if (!canWrite) return;
         async function updateAssignmentWeight() {
           // New weight should be the number half way between 0 and the first item in the libraries weight.
           const newWeight = (library[0]?.weight || 1) / 2;
@@ -509,6 +520,7 @@ export default function HotKeyController() {
     },
     moveToEnd: {
       down: () => {
+        if (!canWrite) return;
         async function updateAssignmentWeight() {
           // New weight should be the number half way between 0 and the first item in the libraries weight.
           const newWeight = (library[library.length - 1]?.weight || 100) + 0.5;
@@ -554,6 +566,7 @@ export default function HotKeyController() {
     deleteFile: {
       down: (e) => {
         e.preventDefault();
+        if (!canWrite) return;
         libraryService.send({
           type: 'DELETE_FILE',
           data: { path: item.path },
@@ -585,6 +598,7 @@ export default function HotKeyController() {
       down: (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (!canWrite) return;
         // Holding the key auto-repeats keydown — one job per press only.
         if ((e as KeyboardEvent).repeat) return;
         if (!item?.path) return;

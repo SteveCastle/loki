@@ -105,6 +105,8 @@ export default function useFileDrop() {
         snapshot.matches({ library: 'loadedFromFS' }) ||
         snapshot.matches({ library: 'loadedFromDB' });
       if (!isLoaded) return;
+      // View-only public visitors can't upload or import.
+      if (!snapshot.context.canWrite) return;
 
       const nativeFiles = item.files;
       if (!nativeFiles || nativeFiles.length === 0) return;

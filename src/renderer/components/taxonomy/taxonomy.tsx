@@ -86,6 +86,12 @@ export default function Taxonomy() {
 
   // The unified query (chips) shown in QueryInput.
   const query = useSelector(libraryService, (state) => state.context.query);
+  // View-only public visitors: no tag/category/person creation and no
+  // apply-tag toggles; browsing, search, and reset stay.
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
 
   const state = useSelector(
     libraryService,
@@ -420,6 +426,8 @@ export default function Taxonomy() {
           >
             <img src={restart} />
           </button>
+          {canWrite && (
+          <>
           <button
             className={`${applyTagToAll ? 'active' : ''}`}
             data-tooltip-id="apply-tag-to-all"
@@ -446,14 +454,18 @@ export default function Taxonomy() {
           >
             <img src={addMediaImage} />
           </button>
+          </>
+          )}
         </div>
         <div className="categories-column">
-          <div
-            className={`new-category`}
-            onClick={() => setAddingCategory(true)}
-          >
-            <div className="category-label">+</div>
-          </div>
+          {canWrite && (
+            <div
+              className={`new-category`}
+              onClick={() => setAddingCategory(true)}
+            >
+              <div className="category-label">+</div>
+            </div>
+          )}
           <div className={`categories`} ref={categoryListRef}>
             {sortedCategories.map((category) => {
               return (
@@ -468,7 +480,7 @@ export default function Taxonomy() {
             })}
           </div>
         </div>
-        {activeCategory && (
+        {activeCategory && canWrite && (
           <div
             className={`new-tag`}
             onClick={() =>

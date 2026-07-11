@@ -40,6 +40,11 @@ function TagListRow({
     libraryService,
     (state) => state.context.settings.showTagCount
   );
+  // View-only public visitors: no edit/delete/drag (see tag.tsx).
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const queryClient = useQueryClient();
   const ref = React.useRef<HTMLDivElement>(null);
   // See tag.tsx for the rationale: HTML5 drag-and-drop suppresses synthetic
@@ -63,8 +68,9 @@ function TagListRow({
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
       type: 'TAG',
       item: tag,
+      canDrag: () => canWrite,
     }),
-    [tag]
+    [tag, canWrite]
   );
   // The cursor-following chip in DragChipLayer stands in for the native
   // full-width-row drag ghost.
@@ -155,6 +161,8 @@ function TagListRow({
       </div>
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}
+        {canWrite && (
+        <>
         <button
           disabled={isDisabled}
           className={isDisabled ? 'disabled' : ''}
@@ -179,6 +187,8 @@ function TagListRow({
         >
           <img src={deleteIcon} />
         </button>
+        </>
+        )}
       </div>
       {showDeleteModal ? (
         <ConfirmDeleteTag

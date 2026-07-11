@@ -882,6 +882,7 @@ func mediaHasTagHandler(deps *Dependencies) http.HandlerFunc {
 // swipeTemplateData holds data for the swipe template
 type swipeTemplateData struct {
 	SearchQuery string `json:"search_query"`
+	CanWrite    bool   `json:"can_write"`
 }
 
 // swipeHandler serves the swipe (TikTok-like) view page
@@ -894,8 +895,16 @@ func swipeHandler(deps *Dependencies) http.HandlerFunc {
 
 		searchQuery := r.URL.Query().Get("q")
 
+		// Anonymous visitors reach this page only while Allow Public
+		// Access is on; render it view-only for them (tagging hidden).
+		canWrite := true
+		if appconfig.Get().AllowPublicAccess {
+			canWrite = isAdminRequest(deps, r)
+		}
+
 		data := swipeTemplateData{
 			SearchQuery: searchQuery,
+			CanWrite:    canWrite,
 		}
 
 		if err := renderer.Templates().ExecuteTemplate(w, "swipe", data); err != nil {
@@ -1253,40 +1262,41 @@ type updateConfigRequest struct {
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
 	} `json:"inferenceConcurrency"`
-	LocalComputeConcurrency int `json:"localComputeConcurrency"`
-	OnnxModelPath             string                  `json:"onnxModelPath"`
-	OnnxLabelsPath            string                  `json:"onnxLabelsPath"`
-	OnnxConfigPath            string                  `json:"onnxConfigPath"`
-	OnnxORTSharedLibPath      string                  `json:"onnxOrtSharedLibPath"`
-	OnnxGeneralThreshold      float64                 `json:"onnxGeneralThreshold"`
-	OnnxCharacterThreshold    float64                 `json:"onnxCharacterThreshold"`
-	EmbeddingModel            string                  `json:"embeddingModel"`
-	EmbeddingProvider         string                  `json:"embeddingProvider"`
-	EmbeddingPerformance      string                  `json:"embeddingPerformance"`
-	EmbeddingWorkers          int                     `json:"embeddingWorkers"`
-	EmbeddingThreadsPerWorker int                     `json:"embeddingThreadsPerWorker"`
-	AutotagModel              string                  `json:"autotagModel"`
-	AutotagProvider           string                  `json:"autotagProvider"`
-	AutotagPerformance        string                  `json:"autotagPerformance"`
-	AutotagWorkers            int                     `json:"autotagWorkers"`
-	AutotagThreadsPerWorker   int                     `json:"autotagThreadsPerWorker"`
-	OnnxFileTimeoutSeconds    int                     `json:"onnxFileTimeoutSeconds"`
-	FaceModel                 string                  `json:"faceModel"`
-	FaceRouting               string                  `json:"faceRouting"`
-	FaceProvider              string                  `json:"faceProvider"`
-	FacePerformance           string                  `json:"facePerformance"`
-	FaceWorkers               int                     `json:"faceWorkers"`
-	FaceThreadsPerWorker      int                     `json:"faceThreadsPerWorker"`
+	LocalComputeConcurrency   int     `json:"localComputeConcurrency"`
+	OnnxModelPath             string  `json:"onnxModelPath"`
+	OnnxLabelsPath            string  `json:"onnxLabelsPath"`
+	OnnxConfigPath            string  `json:"onnxConfigPath"`
+	OnnxORTSharedLibPath      string  `json:"onnxOrtSharedLibPath"`
+	OnnxGeneralThreshold      float64 `json:"onnxGeneralThreshold"`
+	OnnxCharacterThreshold    float64 `json:"onnxCharacterThreshold"`
+	EmbeddingModel            string  `json:"embeddingModel"`
+	EmbeddingProvider         string  `json:"embeddingProvider"`
+	EmbeddingPerformance      string  `json:"embeddingPerformance"`
+	EmbeddingWorkers          int     `json:"embeddingWorkers"`
+	EmbeddingThreadsPerWorker int     `json:"embeddingThreadsPerWorker"`
+	AutotagModel              string  `json:"autotagModel"`
+	AutotagProvider           string  `json:"autotagProvider"`
+	AutotagPerformance        string  `json:"autotagPerformance"`
+	AutotagWorkers            int     `json:"autotagWorkers"`
+	AutotagThreadsPerWorker   int     `json:"autotagThreadsPerWorker"`
+	OnnxFileTimeoutSeconds    int     `json:"onnxFileTimeoutSeconds"`
+	FaceModel                 string  `json:"faceModel"`
+	FaceRouting               string  `json:"faceRouting"`
+	FaceProvider              string  `json:"faceProvider"`
+	FacePerformance           string  `json:"facePerformance"`
+	FaceWorkers               int     `json:"faceWorkers"`
+	FaceThreadsPerWorker      int     `json:"faceThreadsPerWorker"`
 	// nil = field absent from the POST (leave stored entries alone);
 	// an explicit empty array clears the list.
-	ByoFaceModels         []appconfig.ByoFaceModel `json:"byoFaceModels"`
-	TranscriptionProvider string                   `json:"transcriptionProvider"`
-	TranscriptionModel        string                  `json:"transcriptionModel"`
-	TranscriptionLanguage     *string                 `json:"transcriptionLanguage"`
-	TranscriptionVADFilter    *bool                   `json:"transcriptionVadFilter"`
-	FasterWhisperPath         string                  `json:"fasterWhisperPath"`
-	DiscordToken              string                  `json:"discordToken"`
-	Roots                     []appconfig.StorageRoot `json:"roots"`
+	ByoFaceModels          []appconfig.ByoFaceModel `json:"byoFaceModels"`
+	TranscriptionProvider  string                   `json:"transcriptionProvider"`
+	TranscriptionModel     string                   `json:"transcriptionModel"`
+	TranscriptionLanguage  *string                  `json:"transcriptionLanguage"`
+	TranscriptionVADFilter *bool                    `json:"transcriptionVadFilter"`
+	AllowPublicAccess      *bool                    `json:"allowPublicAccess"`
+	FasterWhisperPath      string                   `json:"fasterWhisperPath"`
+	DiscordToken           string                   `json:"discordToken"`
+	Roots                  []appconfig.StorageRoot  `json:"roots"`
 }
 
 // -----------------------------------------------------------------------------
@@ -1613,6 +1623,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if req.TranscriptionVADFilter != nil {
 				newCfg.TranscriptionVADFilter = *req.TranscriptionVADFilter
+			}
+			if req.AllowPublicAccess != nil {
+				newCfg.AllowPublicAccess = *req.AllowPublicAccess
 			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
@@ -2062,6 +2075,14 @@ func authMiddleware(deps *Dependencies, next http.Handler, requiredRole renderer
 			return
 		}
 
+		// Read-only routes open up to anonymous visitors while the
+		// Allow Public Access flag is on (checked per request so the
+		// config toggle applies without a restart).
+		if requiredRole == renderer.RolePublicRead && appconfig.Get().AllowPublicAccess {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Check header credentials first (Authorization Bearer JWT or lk_
 		// API key, or the X-API-Key header)
 		if tokenString := requestAuthToken(r); tokenString != "" {
@@ -2266,8 +2287,9 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 			if claims, err := verifyCredential(deps, tokenString); err == nil {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"loggedIn": true,
-					"username": claims.Username,
+					"loggedIn":     true,
+					"username":     claims.Username,
+					"publicAccess": appconfig.Get().AllowPublicAccess,
 				})
 				return
 			}
@@ -2276,21 +2298,28 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 		cookie, err := r.Cookie("auth_token")
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"loggedIn":false}`))
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"loggedIn":     false,
+				"publicAccess": appconfig.Get().AllowPublicAccess,
+			})
 			return
 		}
 
 		claims, err := deps.Auth.VerifyToken(cookie.Value)
 		if err != nil {
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"loggedIn":false}`))
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"loggedIn":     false,
+				"publicAccess": appconfig.Get().AllowPublicAccess,
+			})
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"loggedIn": true,
-			"username": claims.Username,
+			"loggedIn":     true,
+			"username":     claims.Username,
+			"publicAccess": appconfig.Get().AllowPublicAccess,
 		})
 	}
 }
@@ -2447,22 +2476,22 @@ func main() {
 	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/api", renderer.ApplyMiddlewares(mediaAPIHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/media/thumbnail", renderer.ApplyMiddlewares(mediaThumbnailHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/media/hls", renderer.ApplyMiddlewares(hlsHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/media/hls/", renderer.ApplyMiddlewares(hlsSegmentHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/media/suggest", renderer.ApplyMiddlewares(mediaSuggestHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/media/thumbnail", renderer.ApplyMiddlewares(mediaThumbnailHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/media/hls", renderer.ApplyMiddlewares(hlsHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/media/hls/", renderer.ApplyMiddlewares(hlsSegmentHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/media/suggest", renderer.ApplyMiddlewares(mediaSuggestHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/media/tag", renderer.ApplyMiddlewares(mediaTagHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/media/has-tag", renderer.ApplyMiddlewares(mediaHasTagHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/swipe", renderer.ApplyMiddlewares(swipeHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/swipe/api", renderer.ApplyMiddlewares(swipeAPIHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/media/has-tag", renderer.ApplyMiddlewares(mediaHasTagHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/swipe", renderer.ApplyMiddlewares(swipeHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/swipe/api", renderer.ApplyMiddlewares(swipeAPIHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/swipe/manifest.json", swipeManifestHandler())
 	mux.HandleFunc("/api/prompts/describe", renderer.ApplyMiddlewares(describePromptHandler, renderer.RoleAdmin))
 	mux.HandleFunc("/config", renderer.ApplyMiddlewares(configHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/stats", renderer.ApplyMiddlewares(statsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/ollama/models", renderer.ApplyMiddlewares(ollamaModelsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/tasks", renderer.ApplyMiddlewares(tasksHandler(deps), renderer.RoleAdmin))
-	RegisterDepsRoutes(mux)
+	RegisterDepsRoutes(mux, deps)
 	registerSetupRoutes(mux, deps)
 	RegisterVizRoutes(mux, deps)
 	RegisterFacesRoutes(mux, deps)
@@ -2477,7 +2506,7 @@ func main() {
 	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
 	// Library stats API (stats_api.go) â€” powers the home page coverage cards
-	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RolePublicRead))
 
 	// Embeddings index + library data API (index_api.go / library_api.go)
 	mux.HandleFunc("/api/index/status", renderer.ApplyMiddlewares(indexStatusHandler(deps), renderer.RoleAdmin))
@@ -2489,7 +2518,7 @@ func main() {
 	mux.HandleFunc("/api/embeddings/all", renderer.ApplyMiddlewares(embeddingsWipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/transcript", renderer.ApplyMiddlewares(mediaTranscriptHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/rating", renderer.ApplyMiddlewares(mediaRatingHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/tags/list", renderer.ApplyMiddlewares(tagsListHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/list", renderer.ApplyMiddlewares(tagsListHandler(deps), renderer.RolePublicRead))
 
 	// Auth routes
 	mux.HandleFunc("/login", renderer.ApplyMiddlewares(loginPageHandler(deps), renderer.RolePublic))
@@ -2507,23 +2536,23 @@ func main() {
 		if r.Method == http.MethodPost {
 			lokiMediaHandler(deps)(w, r)
 		}
-	}, renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/search", renderer.ApplyMiddlewares(lokiMediaSearchHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/query", renderer.ApplyMiddlewares(lokiMediaQueryHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/metadata", renderer.ApplyMiddlewares(lokiMediaMetadataHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/tags", renderer.ApplyMiddlewares(lokiMediaTagsHandler(deps), renderer.RoleAdmin))
+	}, renderer.RolePublicRead))
+	mux.HandleFunc("/api/media/search", renderer.ApplyMiddlewares(lokiMediaSearchHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/media/query", renderer.ApplyMiddlewares(lokiMediaQueryHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/media/metadata", renderer.ApplyMiddlewares(lokiMediaMetadataHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/media/tags", renderer.ApplyMiddlewares(lokiMediaTagsHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/media/description", renderer.ApplyMiddlewares(lokiUpdateDescriptionHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/preview", renderer.ApplyMiddlewares(lokiMediaPreviewHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/preview", renderer.ApplyMiddlewares(lokiMediaPreviewHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/media/delete", renderer.ApplyMiddlewares(lokiMediaDeleteHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/gif-metadata", renderer.ApplyMiddlewares(lokiGifMetadataHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/similar", renderer.ApplyMiddlewares(lokiSimilarHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/search/visual", renderer.ApplyMiddlewares(lokiVisualSearchHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/media/search/image", renderer.ApplyMiddlewares(lokiImageSearchHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/gif-metadata", renderer.ApplyMiddlewares(lokiGifMetadataHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/media/similar", renderer.ApplyMiddlewares(lokiSimilarHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/media/search/visual", renderer.ApplyMiddlewares(lokiVisualSearchHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/media/search/image", renderer.ApplyMiddlewares(lokiImageSearchHandler(deps), renderer.RolePublicRead))
 
-	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -2545,8 +2574,8 @@ func main() {
 			lokiRemoveTimestampHandler(deps)(w, r)
 		}
 	}, renderer.RoleAdmin))
-	mux.HandleFunc("/api/tags/preview", renderer.ApplyMiddlewares(lokiTagPreviewHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/tags/count", renderer.ApplyMiddlewares(lokiTagCountHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/tags/preview", renderer.ApplyMiddlewares(lokiTagPreviewHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/tags/count", renderer.ApplyMiddlewares(lokiTagCountHandler(deps), renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/categories", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -2569,7 +2598,7 @@ func main() {
 	}, renderer.RoleAdmin))
 	mux.HandleFunc("/api/assignments/weight", renderer.ApplyMiddlewares(lokiUpdateAssignmentWeightHandler(deps), renderer.RoleAdmin))
 
-	mux.HandleFunc("/api/thumbnails", renderer.ApplyMiddlewares(lokiThumbnailsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/thumbnails", renderer.ApplyMiddlewares(lokiThumbnailsHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/thumbnails/regenerate", renderer.ApplyMiddlewares(lokiRegenerateThumbnailHandler(deps), renderer.RoleAdmin))
 
 	// Filesystem browser (web mode)
@@ -2581,9 +2610,9 @@ func main() {
 		case http.MethodGet:
 			lokiSettingsGetHandler(deps)(w, r)
 		case http.MethodPut:
-			lokiSettingsPutHandler(deps)(w, r)
+			requireAuthWhenPublic(deps, lokiSettingsPutHandler(deps))(w, r)
 		}
-	}, renderer.RoleAdmin))
+	}, renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/session/keys", renderer.ApplyMiddlewares(lokiSessionDeleteKeysHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/session/", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
@@ -2591,24 +2620,24 @@ func main() {
 		case http.MethodGet:
 			lokiSessionGetHandler(deps)(w, r)
 		case http.MethodPut:
-			lokiSessionPutHandler(deps)(w, r)
+			requireAuthWhenPublic(deps, lokiSessionPutHandler(deps))(w, r)
 		}
-	}, renderer.RoleAdmin))
+	}, renderer.RolePublicRead))
 	mux.HandleFunc("/api/session", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			lokiSessionGetAllHandler(deps)(w, r)
 		case http.MethodPut:
-			lokiSessionPutHandler(deps)(w, r)
+			requireAuthWhenPublic(deps, lokiSessionPutHandler(deps))(w, r)
 		case http.MethodDelete:
-			lokiSessionDeleteHandler(deps)(w, r)
+			requireAuthWhenPublic(deps, lokiSessionDeleteHandler(deps))(w, r)
 		}
-	}, renderer.RoleAdmin))
+	}, renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/db/load", renderer.ApplyMiddlewares(lokiDBLoadHandler(deps), renderer.RoleAdmin))
 
 	// Loki SPA - serve webpack bundle
-	mux.HandleFunc("/app/", renderer.ApplyMiddlewares(lokiSPAHandler(spaFS), renderer.RoleAdmin))
+	mux.HandleFunc("/app/", renderer.ApplyMiddlewares(lokiSPAHandler(spaFS), renderer.RolePublicRead))
 
 	// Serve embedded static files
 	mux.Handle("/static/",

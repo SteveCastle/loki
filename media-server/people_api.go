@@ -46,12 +46,20 @@ func broadcastPeopleChanged() {
 //	POST   /api/faces/{id}/reject    — {personId?}: veto + cannot-links + unassign
 //	DELETE /api/faces/all?confirm=true — privacy wipe of ALL face data
 func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
-	mux.HandleFunc("/api/people", renderer.ApplyMiddlewares(peopleHandler(deps), renderer.RoleAdmin))
+	// GET (list) is public-readable so people browsing works in view-only
+	// mode; POST (create) stays admin-only while public access is on.
+	mux.HandleFunc("/api/people", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			peopleHandler(deps)(w, r)
+			return
+		}
+		requireAuthWhenPublic(deps, peopleHandler(deps))(w, r)
+	}, renderer.RolePublicRead))
 	mux.HandleFunc("/api/people/{id}/rename", renderer.ApplyMiddlewares(personRenameHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/merge", renderer.ApplyMiddlewares(personMergeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}", renderer.ApplyMiddlewares(personDeleteHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/people/{id}/media", renderer.ApplyMiddlewares(personMediaHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/people/{id}/faces", renderer.ApplyMiddlewares(personFacesHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/people/{id}/media", renderer.ApplyMiddlewares(personMediaHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/people/{id}/faces", renderer.ApplyMiddlewares(personFacesHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/people/{id}/lock", renderer.ApplyMiddlewares(personLockHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/curate", renderer.ApplyMiddlewares(personCurateHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/cover", renderer.ApplyMiddlewares(personCoverHandler(deps), renderer.RoleAdmin))
@@ -61,7 +69,7 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/faces/{id}/unassign", renderer.ApplyMiddlewares(faceUnassignHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/{id}/reject", renderer.ApplyMiddlewares(faceRejectHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/all", renderer.ApplyMiddlewares(facesWipeHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/faces/stats", renderer.ApplyMiddlewares(facesStatsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/faces/stats", renderer.ApplyMiddlewares(facesStatsHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/faces/ungrouped", renderer.ApplyMiddlewares(facesUngroupedHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/tuning", renderer.ApplyMiddlewares(facesTuningHandler(deps), renderer.RoleAdmin))
 }

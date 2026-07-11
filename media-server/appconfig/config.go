@@ -289,6 +289,14 @@ type Config struct {
 	// setup APIs are open; once true, the wizard locks behind admin auth.
 	SetupComplete bool `json:"setupComplete"`
 
+	// AllowPublicAccess opens the /swipe experience, the /app SPA, and the
+	// read/search API endpoints (including embedding-backed search) to
+	// unauthenticated visitors in view-only form. Writes, job launches, and
+	// deps/onboarding mutations always require admin credentials while this
+	// is on. Enforced per request in authMiddleware via
+	// renderer.RolePublicRead, so toggling it needs no restart.
+	AllowPublicAccess bool `json:"allowPublicAccess"`
+
 	// Storage roots for web filesystem browsing
 	Roots []StorageRoot `json:"roots"`
 
@@ -872,6 +880,16 @@ func applyEnvOverrides(c *Config) {
 			c.TranscriptionVADFilter = false
 		default:
 			log.Printf("Warning: LOWKEY_TRANSCRIPTION_VAD=%q is not a boolean; ignored", v)
+		}
+	}
+	if v := os.Getenv("LOWKEY_ALLOW_PUBLIC_ACCESS"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1", "yes", "on":
+			c.AllowPublicAccess = true
+		case "false", "0", "no", "off":
+			c.AllowPublicAccess = false
+		default:
+			log.Printf("Warning: LOWKEY_ALLOW_PUBLIC_ACCESS=%q is not a boolean; ignored", v)
 		}
 	}
 	if v := os.Getenv("LOWKEY_JWT_SECRET"); v != "" {

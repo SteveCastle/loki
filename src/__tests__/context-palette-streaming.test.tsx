@@ -42,6 +42,7 @@ function resetContext() {
     libraryLoadId: 'load-1',
     streaming: true,
     authToken: null,
+    canWrite: true,
   });
 }
 
@@ -176,5 +177,12 @@ describe('context palette during streaming directory loads', () => {
       initialFile: 'C:/other/b.jpg',
     });
     expect(hideCalls()).toBe(1);
+  });
+
+  it('renders nothing for view-only public visitors (canWrite=false)', () => {
+    resetContext();
+    mockContext.canWrite = false;
+    const { container } = renderPalette();
+    expect(container.querySelector('.ContextPalette')).toBeNull();
   });
 });

@@ -13,6 +13,7 @@ import {
   invoke, send, on, store, appArgs, capabilities, isElectron, mediaServerBase,
   loadMediaByQuery as platformLoadMediaByQuery,
 } from './platform';
+import { getAccess, initAccess } from './access';
 import type { Query, Predicate } from './query/types';
 import { predicateKey } from './query/types';
 import {
@@ -170,6 +171,9 @@ type LibraryState = {
   // "from" value, so no explicit clear is needed.
   preserveScrollFromLoadId: string | null;
   authToken: string | null;
+  // False for anonymous visitors on a public-access web server: every
+  // write/job-launching surface hides itself. Always true in Electron.
+  canWrite: boolean;
   // Cache for masonry layout dimensions to maintain stable layout across view switches
   masonryDimensionsCache: Record<string, { width: number; height: number }>;
 };
@@ -646,6 +650,7 @@ const getInitialContext = (): LibraryState => {
     initSessionId: '',
     textFilter: '',
     authToken: batched['authToken'] as string | null,
+    canWrite: getAccess().canWrite,
     activeCategory: batched['activeCategory'] as string,
     storedCategories: batched['storedCategories'] as { [key: string]: string },
     storedTags: batched['storedTags'] as { [key: string]: string[] },
@@ -1003,6 +1008,11 @@ export const libraryMachine = createMachine(
                 store.set('authToken', token);
                 return token;
               },
+            }),
+          },
+          SET_CAN_WRITE: {
+            actions: assign<LibraryState, AnyEventObject>({
+              canWrite: (_context, event) => !!event.canWrite,
             }),
           },
           CHANGE_SETTING: {
@@ -2105,6 +2115,7 @@ export const libraryMachine = createMachine(
                 }),
               },
               DELETE_FILE: {
+                cond: (context: LibraryState) => context.canWrite,
                 actions: [
                   assign<LibraryState, AnyEventObject>({
                     library: (context, event) => {
@@ -2665,6 +2676,7 @@ export const libraryMachine = createMachine(
                 }),
               },
               DELETE_FILE: {
+                cond: (context: LibraryState) => context.canWrite,
                 actions: [
                   assign<LibraryState, AnyEventObject>({
                     library: (context, event) => {
@@ -3019,14 +3031,23 @@ const GlobalStateProviderInner = (props: Props) => {
   );
 };
 
-export const GlobalStateProvider = (props: Props) => {
-  const [isReady, setIsReady] = React.useState(sessionStoreReady);
+let accessReady = false;
 
-  // Initialize session store on mount if not already done
+export const GlobalStateProvider = (props: Props) => {
+  const [isReady, setIsReady] = React.useState(
+    sessionStoreReady && accessReady
+  );
+
+  // Initialize the session store and (web) access state on mount. Both
+  // must resolve before the machine starts so getInitialContext reads a
+  // populated cache and the correct canWrite (no hidden-then-shown
+  // flicker for public visitors).
   React.useEffect(() => {
-    if (!sessionStoreReady) {
-      initializeSessionStore().then(() => setIsReady(true));
-    }
+    if (sessionStoreReady && accessReady) return;
+    Promise.all([initializeSessionStore(), initAccess()]).then(() => {
+      accessReady = true;
+      setIsReady(true);
+    });
   }, []);
 
   // Don't render until session store is initialized

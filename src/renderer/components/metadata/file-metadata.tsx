@@ -10,6 +10,7 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import { Description } from './description';
 import Embeddings from './embeddings';
 import PathActions from './path-actions';
+import { useCanWrite } from '../../hooks/useCanWrite';
 import { useContext } from 'react';
 import { GlobalStateContext } from '../../state';
 
@@ -26,6 +27,7 @@ const loadFileMetadata = (path: string) => async (): Promise<Metadata> => {
 export default function FileMetadata({ item }: { item: any }) {
   const { libraryService } = useContext(GlobalStateContext);
   const queryClient = useQueryClient();
+  const canWrite = useCanWrite();
   const path = item?.path;
   const { data, error, isLoading } = useQuery<Metadata, Error>(
     ['file-metadata', path],
@@ -111,6 +113,7 @@ export default function FileMetadata({ item }: { item: any }) {
                       key={tag}
                       className="tag"
                       onClick={() => {
+                        if (!canWrite) return; // chips are display-only for view-only visitors
                         async function createAssignment() {
                           await invoke(
                             'create-assignment',

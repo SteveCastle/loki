@@ -36,6 +36,10 @@ export default function GenerateDescription({
   );
   const panelId = `gd-prompt-panel-${useId()}`;
   const jobServerAvailable = useJobServerAvailable(authToken);
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [panelOpen, setPanelOpen] = useState<boolean>(false);
   const [promptDraft, setPromptDraft] = useState<string>(() =>
@@ -128,6 +132,8 @@ export default function GenerateDescription({
   const hasCustomPrompt = promptDraft.trim() !== '';
 
   const isCorner = variant === 'corner';
+
+  if (!canWrite) return null;
 
   // In the corner-pill context we stay quiet until the job service is
   // confirmed available — no placeholder, no warning box overlapping content.

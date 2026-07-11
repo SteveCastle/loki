@@ -5,8 +5,10 @@ import './description.css';
 import { debounce } from 'lodash';
 import { useQueryClient } from '@tanstack/react-query';
 import GenerateDescription from './generate-description';
+import { useCanWrite } from '../../hooks/useCanWrite';
 
 export function Description({ path, data }: { path: string; data: Metadata }) {
+  const canWrite = useCanWrite();
   const [editing, setEditing] = useState(false);
   const [description, setDescription] = useState(data?.description || '');
   const client = useQueryClient();
@@ -70,8 +72,8 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
         />
       ) : (
         <div
-          title="Double-click to enter text manually"
-          onDoubleClick={() => setEditing(true)}
+          title={canWrite ? 'Double-click to enter text manually' : undefined}
+          onDoubleClick={() => canWrite && setEditing(true)}
           className={`description-display ${
             !description ? 'empty-description' : ''
           }`}
@@ -80,9 +82,11 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
             description
           ) : (
             <div className="empty-content">
-              <span className="placeholder-text">
-                Double-click to enter text or use Generate
-              </span>
+              {canWrite && (
+                <span className="placeholder-text">
+                  Double-click to enter text or use Generate
+                </span>
+              )}
             </div>
           )}
         </div>

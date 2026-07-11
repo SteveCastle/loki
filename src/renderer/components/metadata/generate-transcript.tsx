@@ -24,6 +24,10 @@ export default function GenerateTranscript({
     (state) => state.context.authToken
   );
   const jobServerAvailable = useJobServerAvailable(authToken);
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const whisper = useDepRequirement('faster-whisper');
 
@@ -73,6 +77,8 @@ export default function GenerateTranscript({
       setIsSubmitting(false);
     }
   };
+
+  if (!canWrite) return null;
 
   if (jobServerAvailable === null) {
     return (

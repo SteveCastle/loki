@@ -52,6 +52,12 @@ export default function Tag({
     libraryService,
     (state) => state.context.settings.showTagCount
   );
+  // View-only public visitors: no edit/delete, no drag (drag = reorder or
+  // assign-to-media, both writes). Tag click stays — it's navigation.
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const queryClient = useQueryClient();
   const ref = React.useRef<HTMLDivElement>(null);
   // Tracks the mousedown coordinate so we can fire selection only on real
@@ -92,8 +98,9 @@ export default function Tag({
       }),
       type: 'TAG',
       item: tag,
+      canDrag: () => canWrite,
     }),
-    [tag]
+    [tag, canWrite]
   );
   // The cursor-following chip in DragChipLayer stands in for the native
   // whole-card drag ghost.
@@ -202,6 +209,8 @@ export default function Tag({
       {active && <img className="check" src={checkCircle} />}
       <div className="actions">
         {showTagCount ? <TagCount tag={tag} /> : null}
+        {canWrite && (
+        <>
         <button
           disabled={isDisabled}
           className={isDisabled ? 'disabled' : ''}
@@ -230,6 +239,8 @@ export default function Tag({
         >
           <img src={deleteIcon} />
         </button>
+        </>
+        )}
       </div>
       {showDeleteModal ? (
         <ConfirmDeleteTag

@@ -30,13 +30,17 @@ interface TimestampTooltipProps {
   timestamp: number;
   onEdit: (newTimestamp: number) => void;
   onRemove: () => void;
+  // When false the tooltip shows the time read-only (no edit/remove) —
+  // used for view-only public visitors.
+  canEdit?: boolean;
 }
 
-export default function TimestampTooltip({ 
-  id, 
-  timestamp, 
-  onEdit, 
-  onRemove 
+export default function TimestampTooltip({
+  id,
+  timestamp,
+  onEdit,
+  onRemove,
+  canEdit = true,
 }: TimestampTooltipProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(formatTimestamp(timestamp));
@@ -143,22 +147,24 @@ export default function TimestampTooltip({
           <div className="timestamp-value" onClick={handleContentClick}>
             {formatTimestamp(timestamp)}
           </div>
-          <div className="timestamp-controls">
-            <button 
-              className="edit-btn"
-              onClick={handleEdit}
-              title="Edit timestamp"
-            >
-              ✏️
-            </button>
-            <button 
-              className="remove-btn"
-              onClick={handleRemove}
-              title="Remove timestamp"
-            >
-              🗑️
-            </button>
-          </div>
+          {canEdit && (
+            <div className="timestamp-controls">
+              <button
+                className="edit-btn"
+                onClick={handleEdit}
+                title="Edit timestamp"
+              >
+                ✏️
+              </button>
+              <button
+                className="remove-btn"
+                onClick={handleRemove}
+                title="Remove timestamp"
+              >
+                🗑️
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

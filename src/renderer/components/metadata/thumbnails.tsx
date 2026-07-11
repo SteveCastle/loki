@@ -3,6 +3,7 @@ import { listThumbnails, regenerateThumbnail } from '../../platform';
 import { getFileType, FileTypes } from '../../../file-types';
 import { Image } from '../media-viewers/image';
 import { Video } from '../media-viewers/video';
+import { useCanWrite } from '../../hooks/useCanWrite';
 
 type ThumbInfo = {
   cache: 'thumbnail_path_100' | 'thumbnail_path_600' | 'thumbnail_path_1200';
@@ -15,6 +16,7 @@ export default function Thumbnails({ path }: { path: string }) {
   const [thumbs, setThumbs] = useState<ThumbInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [regening, setRegening] = useState<string | null>(null);
+  const canWrite = useCanWrite();
   const [version, setVersion] = useState(0);
 
   const fileType = useMemo(() => getFileType(path), [path]);
@@ -176,6 +178,7 @@ export default function Thumbnails({ path }: { path: string }) {
                   {t.path}
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
+                  {canWrite && (
                   <button
                     onClick={() => regenerate(t.cache)}
                     disabled={regening === t.cache}
@@ -193,6 +196,7 @@ export default function Thumbnails({ path }: { path: string }) {
                   >
                     {regening === t.cache ? 'Regenerating…' : 'Regenerate'}
                   </button>
+                  )}
                 </div>
               </div>
             </div>

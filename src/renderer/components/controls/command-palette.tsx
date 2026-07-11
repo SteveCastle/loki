@@ -507,6 +507,10 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
       },
       [libraryService]
     );
+    const canWrite = useSelector(
+      libraryService,
+      (state) => state.context.canWrite
+    );
 
     const renderTabContent = () => {
       switch (activeTab) {
@@ -532,9 +536,11 @@ const MenuContentArea: React.FC<MenuContentAreaProps> = React.memo(
             </div>
           );
         case 'dbOptions':
+          // View-only public visitors keep the login widget (the discreet
+          // sign-in path) but not the DB switcher.
           return (
             <div className="tabContent">
-              <DbPathWidget />
+              {canWrite && <DbPathWidget />}
               <CacheSetting />
               <LoginWidget />
             </div>

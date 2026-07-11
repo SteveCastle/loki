@@ -1247,3 +1247,54 @@ func TestMigratedRootFollowsEnvDownloadPath(t *testing.T) {
 		t.Errorf("file root should keep the persistent path %q, got %+v", fileDL, saved.Roots)
 	}
 }
+
+func TestAllowPublicAccessRoundTripAndEnvOverride(t *testing.T) {
+	dir := t.TempDir()
+	cfgFile := filepath.Join(dir, "config.json")
+
+	orig := getConfigPath
+	defer func() { getConfigPath = orig }()
+	getConfigPath = func() (string, error) { return cfgFile, nil }
+
+	// Default is off.
+	c, _, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.AllowPublicAccess {
+		t.Error("AllowPublicAccess should default to false")
+	}
+
+	// Save with the flag on, reload, expect it back.
+	c.AllowPublicAccess = true
+	if _, err := Save(c); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	c2, _, err := Load()
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !c2.AllowPublicAccess {
+		t.Error("AllowPublicAccess did not survive Save/Load round-trip")
+	}
+
+	// Env override forces it off despite the saved true.
+	t.Setenv("LOWKEY_ALLOW_PUBLIC_ACCESS", "off")
+	c3, _, err := Load()
+	if err != nil {
+		t.Fatalf("reload with env: %v", err)
+	}
+	if c3.AllowPublicAccess {
+		t.Error("LOWKEY_ALLOW_PUBLIC_ACCESS=off should override the saved true")
+	}
+
+	// Garbage env value is ignored (saved value wins).
+	t.Setenv("LOWKEY_ALLOW_PUBLIC_ACCESS", "banana")
+	c4, _, err := Load()
+	if err != nil {
+		t.Fatalf("reload with garbage env: %v", err)
+	}
+	if !c4.AllowPublicAccess {
+		t.Error("garbage env value should be ignored, keeping the saved true")
+	}
+}

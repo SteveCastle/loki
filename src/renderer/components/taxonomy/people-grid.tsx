@@ -1492,6 +1492,7 @@ const PersonCard = memo(function PersonCard({
   isDisabled,
   active,
   authToken,
+  canWrite,
   onSelect,
   onEdit,
   onReview,
@@ -1501,6 +1502,7 @@ const PersonCard = memo(function PersonCard({
   isDisabled: boolean;
   active: boolean;
   authToken: string | null;
+  canWrite: boolean;
   onSelect: (p: Person) => void;
   onEdit: (p: Person) => void;
   onReview: (p: Person) => void;
@@ -1510,10 +1512,11 @@ const PersonCard = memo(function PersonCard({
     () => ({
       type: 'PERSON',
       item: person,
-      canDrag: !isDisabled,
+      // drag = merge or assign-to-media, both writes
+      canDrag: !isDisabled && canWrite,
       collect: (monitor) => ({ isDragging: monitor.isDragging() }),
     }),
-    [person, isDisabled]
+    [person, isDisabled, canWrite]
   );
   useHideNativeDragPreview(dragPreview);
   const [{ isOver, canDrop }, drop] = useDrop<
@@ -1523,14 +1526,14 @@ const PersonCard = memo(function PersonCard({
   >(
     () => ({
       accept: 'PERSON',
-      canDrop: (item) => item.id !== person.id,
+      canDrop: (item) => canWrite && item.id !== person.id,
       drop: (item) => onMerge(item, person),
       collect: (monitor) => ({
         isOver: monitor.isOver(),
         canDrop: monitor.canDrop(),
       }),
     }),
-    [person, onMerge]
+    [person, onMerge, canWrite]
   );
 
   return (
@@ -1563,6 +1566,8 @@ const PersonCard = memo(function PersonCard({
         <span className="person-card-name">{displayTagLabel(person.name)}</span>
         <span className="person-card-count">{person.mediaCount}</span>
       </div>
+      {canWrite && (
+      <>
       <button
         type="button"
         className="person-card-review"
@@ -1592,6 +1597,8 @@ const PersonCard = memo(function PersonCard({
       >
         ✎
       </button>
+      </>
+      )}
     </div>
   );
 });
@@ -1599,6 +1606,9 @@ const PersonCard = memo(function PersonCard({
 export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (s) => s.context.authToken);
+  // View-only public visitors browse and filter people but get no
+  // grouping/merge/review/tuning controls.
+  const canWrite = useSelector(libraryService, (s) => s.context.canWrite);
   const initSessionId = useSelector(
     libraryService,
     (s) => s.context.initSessionId
@@ -1935,6 +1945,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
         isDisabled={isDisabled}
         active={selectedTags.includes(person.name)}
         authToken={authToken}
+        canWrite={canWrite}
         onSelect={handleSelect}
         onEdit={handleEdit}
         onReview={handleReview}
@@ -1945,6 +1956,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
       isDisabled,
       selectedTags,
       authToken,
+      canWrite,
       handleSelect,
       handleEdit,
       handleReview,
@@ -2064,6 +2076,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
               {ungroupedCount.toLocaleString()}
             </span>
           </div>
+          {canWrite && (
           <button
             type="button"
             className="person-card-review"
@@ -2081,6 +2094,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
               <path d="M15 17.5l2 2 4-4.5" />
             </svg>
           </button>
+          )}
         </div>
       </div>
     </>
@@ -2088,7 +2102,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
 
   return (
     <div className="people-grid-wrap">
-      {list.length > 0 && (
+      {list.length > 0 && canWrite && (
         <div className="people-grid-toolbar">
           <NewGroupChip isDisabled={isDisabled} />
           <button
@@ -2153,7 +2167,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           </button>
         </div>
       )}
-      {list.length > 0 && tuneOpen && (
+      {list.length > 0 && tuneOpen && canWrite && (
         <div className="people-tune-panel">
           <div className="people-tune-row">
             <label htmlFor="people-tune-strictness">
@@ -2258,6 +2272,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
             while the scan runs — name them, merge duplicates, and filter your
             library by who’s in the picture.
           </p>
+          {canWrite && (
           <button
             type="button"
             className="people-empty-cta"
@@ -2266,6 +2281,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           >
             {scanStarted ? 'Scanning — people will appear here' : 'Scan library for faces'}
           </button>
+          )}
           <p className="people-empty-hint">
             Photos and drawn characters are each matched with the right
             recognizer automatically. You can also start a scan anytime from
@@ -2283,7 +2299,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           after={ungroupedSection}
         />
       )}
-      {editOpen && (
+      {editOpen && canWrite && (
         <PersonEditModal
           person={editing}
           people={list}
@@ -2293,13 +2309,13 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
           }}
         />
       )}
-      {reviewing && (
+      {reviewing && canWrite && (
         <FaceReviewModal
           person={reviewing}
           handleClose={() => setReviewing(null)}
         />
       )}
-      {ungroupedOpen && (
+      {ungroupedOpen && canWrite && (
         <UngroupedFacesModal
           people={list}
           handleClose={() => setUngroupedOpen(false)}
@@ -2325,6 +2341,7 @@ export function PeopleSearchResults({
 }) {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (s) => s.context.authToken);
+  const canWrite = useSelector(libraryService, (s) => s.context.canWrite);
   const selectedTags = useSelector(
     libraryService,
     (s) => s.context.dbQuery.tags
@@ -2380,6 +2397,7 @@ export function PeopleSearchResults({
             isDisabled={isDisabled}
             active={selectedTags.includes(person.name)}
             authToken={authToken}
+            canWrite={canWrite}
             onSelect={handleSelect}
             onEdit={handleEdit}
             onReview={handleReview}
@@ -2387,14 +2405,14 @@ export function PeopleSearchResults({
           />
         ))}
       </div>
-      {editing && (
+      {editing && canWrite && (
         <PersonEditModal
           person={editing}
           people={people ?? []}
           handleClose={() => setEditing(null)}
         />
       )}
-      {reviewing && (
+      {reviewing && canWrite && (
         <FaceReviewModal
           person={reviewing}
           handleClose={() => setReviewing(null)}

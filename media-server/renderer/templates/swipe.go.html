@@ -1393,7 +1393,7 @@
       <div class="swipe-track" id="swipeTrack"></div>
 
       <div class="swipe-actions" id="swipeActions" style="display: none">
-        <button class="action-btn" id="likeBtn" title="Like">♥</button>
+        <button class="action-btn" id="likeBtn" title="Like" {{if not .CanWrite}}style="display: none"{{end}}>♥</button>
         <button class="action-btn" id="similarBtn" title="More like this">
           ≈
         </button>
@@ -1575,6 +1575,10 @@
       const tagList = document.getElementById('tagList');
       const selectedTagsContainer = document.getElementById('selectedTags');
       const likeBtn = document.getElementById('likeBtn');
+      // View-only mode (Allow Public Access + not signed in): tagging is
+      // hidden and its handlers are inert; the server rejects the writes
+      // regardless.
+      const CAN_WRITE = {{if .CanWrite}}true{{else}}false{{end}};
       const similarBtn = document.getElementById('similarBtn');
       const randomBtn = document.getElementById('randomBtn');
       const openBtn = document.getElementById('openBtn');
@@ -2208,6 +2212,7 @@
 
       // Update like button state
       async function updateLikeButton() {
+        if (!CAN_WRITE) return;
         if (items.length === 0) return;
         const currentPath = items[currentIndex].path;
 
@@ -2235,6 +2240,7 @@
 
       // Toggle like
       async function toggleLike() {
+        if (!CAN_WRITE) return;
         if (items.length === 0) return;
         const currentPath = items[currentIndex].path;
 
@@ -3626,6 +3632,7 @@
 
       // Long press detection
       function startLongPress(x, y) {
+        if (!CAN_WRITE) return; // long-press opens the tag menu
         // Position the indicator at touch point
         longPressIndicator.style.left = x + 'px';
         longPressIndicator.style.top = y + 'px';
@@ -3700,6 +3707,7 @@
 
       // Open the tag menu (show categories)
       function openTagMenu() {
+        if (!CAN_WRITE) return;
         if (items.length === 0) return;
 
         currentMediaTags = getCurrentMediaTags();
@@ -3785,6 +3793,7 @@
 
       // Select a tag (add it to the current media)
       async function selectTagFromMenu(tagLabel, categoryLabel) {
+        if (!CAN_WRITE) return;
         if (items.length === 0) return;
 
         const currentPath = items[currentIndex].path;

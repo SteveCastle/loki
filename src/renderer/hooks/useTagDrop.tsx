@@ -79,6 +79,9 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
         // Get latest snapshot to compute library only when needed
         const snapshot = libraryService.getSnapshot();
         const ctx = snapshot.context;
+        // Tag/person/reorder drops are all writes — inert for view-only
+        // public visitors.
+        if (!ctx.canWrite) return;
         const { applyTagPreview, applyTagToAll } = ctx.settings;
 
         async function createAssignment(tag: DroppedTag) {

@@ -121,6 +121,12 @@ export default function Embeddings({ path }: { path: string }) {
     libraryService,
     (state) => state.context.authToken
   );
+  // Generate/regenerate/delete-vector controls — whole card hidden for
+  // view-only public visitors (guard below the hooks).
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const queryClient = useQueryClient();
   // model id -> Date.now() when its embed job was created
   const [pending, setPending] = useState<Record<string, number>>({});
@@ -203,6 +209,7 @@ export default function Embeddings({ path }: { path: string }) {
   // Electron app running without the local server — render no card at all
   // rather than one that can't work. The component owns its whole section so
   // nothing (not even the header) is left behind in that case.
+  if (!canWrite) return null;
   if (modelsQuery.isError || embedsQuery.isError) return null;
 
   const models = modelsQuery.data?.models ?? [];

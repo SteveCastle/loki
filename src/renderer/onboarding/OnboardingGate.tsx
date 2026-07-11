@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { isElectron } from '../platform';
+import { getAccess } from '../access';
 import { OnboardingWizard } from './OnboardingWizard';
 
 interface OnboardingState {
@@ -13,7 +14,9 @@ export const OnboardingGate: React.FC = () => {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    if (isElectron) {
+    if (isElectron || !getAccess().canWrite) {
+      // Electron has its own setup flow; view-only public visitors never
+      // see the wizard (its model-download actions are admin-gated).
       setLoaded(true);
       return;
     }

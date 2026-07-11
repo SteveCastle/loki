@@ -45,10 +45,10 @@ func buildFaceIndexAtStartup(db *sql.DB) {
 //	GET  /api/faces/{id}/similar     — media ranked by similarity to one face
 //	GET  /media/facecrop?id=&size=   — JPEG crop of a stored face
 func RegisterFacesRoutes(mux *http.ServeMux, deps *Dependencies) {
-	mux.HandleFunc("/api/media/search/face", renderer.ApplyMiddlewares(lokiFaceSearchHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/faces", renderer.ApplyMiddlewares(facesForPathHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/faces/{id}/similar", renderer.ApplyMiddlewares(similarFacesHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/media/facecrop", renderer.ApplyMiddlewares(faceCropHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/search/face", renderer.ApplyMiddlewares(lokiFaceSearchHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/faces", renderer.ApplyMiddlewares(facesForPathHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/faces/{id}/similar", renderer.ApplyMiddlewares(similarFacesHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/media/facecrop", renderer.ApplyMiddlewares(faceCropHandler(deps), renderer.RolePublicRead))
 	RegisterPeopleRoutes(mux, deps)
 }
 

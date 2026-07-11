@@ -113,6 +113,12 @@ type AuthRole int
 const (
 	RolePublic AuthRole = iota
 	RoleAdmin
+	// RolePublicRead marks read-only routes that admins can always reach
+	// and anonymous visitors can reach while the AllowPublicAccess config
+	// flag is on. The flag check lives in authMiddleware (main*.go) so it
+	// is evaluated per request; with the flag off these routes behave
+	// exactly like RoleAdmin.
+	RolePublicRead
 )
 
 // AuthMiddleware is a function that takes a handler and a required role, returning a protected handler.

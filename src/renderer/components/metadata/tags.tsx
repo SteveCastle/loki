@@ -115,6 +115,10 @@ function Tags({ item, enableTagGeneration = false }: Props) {
   // (no media server) the icon stays decorative.
   const [editingPerson, setEditingPerson] = useState<Person | null>(null);
   const { data: people } = usePeople(isVisible);
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const authToken = useSelector(
     libraryService,
     (state) => state.context.authToken
@@ -296,6 +300,7 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                     <TimestampTooltip
                       id={`tooltip-${tag.tag_label}-${tag.time_stamp}-${idx}`}
                       timestamp={tag.time_stamp}
+                      canEdit={canWrite}
                       onEdit={(newTimestamp) => {
                         console.log('Editing timestamp:', { 
                           path: item.path, 
@@ -339,7 +344,7 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                         <button
                           type="button"
                           className="person-tag-icon"
-                          disabled={!person}
+                          disabled={!person || !canWrite}
                           title={
                             person
                               ? 'Open person settings — name, merge, or delete this group'
@@ -352,7 +357,7 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                           }
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (person) setEditingPerson(person);
+                            if (person && canWrite) setEditingPerson(person);
                           }}
                         >
                           👤
@@ -361,7 +366,7 @@ function Tags({ item, enableTagGeneration = false }: Props) {
                     })()}
                   {displayTagLabel(tag.tag_label)}
                 </span>
-                {isConfirming ? (
+                {!canWrite ? null : isConfirming ? (
                   <span className="confirm-actions">
                     <button
                       className="confirm"
@@ -401,7 +406,7 @@ function Tags({ item, enableTagGeneration = false }: Props) {
           })}
         {item.elo && <li>{item.elo.toFixed(0)}</li>}
       </ul>
-      {enableTagGeneration && <GenerateTags path={item.path} />}
+      {enableTagGeneration && canWrite && <GenerateTags path={item.path} />}
       {editingPerson && (
         <PersonEditModal
           person={editingPerson}

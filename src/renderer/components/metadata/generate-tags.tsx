@@ -19,6 +19,10 @@ export default function GenerateTags({ path }: Props) {
     (state) => state.context.authToken
   );
   const jobServerAvailable = useJobServerAvailable(authToken);
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const tagger = useDepRequirement('wd-eva02-large-tagger-v3');
 
   const handleGenerateTags = async () => {
@@ -64,7 +68,7 @@ export default function GenerateTags({ path }: Props) {
   };
 
   // Don't show anything if server is not available
-  if (jobServerAvailable !== true) {
+  if (jobServerAvailable !== true || !canWrite) {
     return null;
   }
 

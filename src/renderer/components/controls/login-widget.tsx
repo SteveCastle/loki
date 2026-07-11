@@ -2,7 +2,8 @@ import React, { useContext, useEffect, useState } from 'react';
 import { GlobalStateContext } from '../../state';
 import './login-widget.css';
 import { useSelector } from '@xstate/react';
-import { mediaServerBase } from '../../platform';
+import { mediaServerBase, isElectron } from '../../platform';
+import { initAccess } from '../../access';
 
 export default function LoginWidget() {
   const { libraryService } = useContext(GlobalStateContext);
@@ -67,6 +68,9 @@ export default function LoginWidget() {
 
       // Store the actual JWT token
       libraryService.send({ type: 'SET_AUTH_TOKEN', token });
+      // Signing in always grants full features — flips a public-access
+      // view-only session to the complete UI without a reload.
+      libraryService.send({ type: 'SET_CAN_WRITE', canWrite: true });
       setPassword('');
       setUsername('');
     } catch (err: unknown) {
@@ -77,8 +81,27 @@ export default function LoginWidget() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     libraryService.send({ type: 'SET_AUTH_TOKEN', token: null });
+    if (!isElectron) {
+      // Clear the auth cookie too, then re-derive access: on a
+      // public-access server the UI drops to view-only; otherwise the
+      // server-rendered login page takes over.
+      try {
+        await fetch('/auth/logout', {
+          method: 'POST',
+          credentials: 'include',
+        });
+      } catch {
+        // best effort — the token above is already gone
+      }
+      const access = await initAccess();
+      if (!access.loggedIn && !access.publicAccess) {
+        window.location.href = '/login';
+        return;
+      }
+      libraryService.send({ type: 'SET_CAN_WRITE', canWrite: access.canWrite });
+    }
   };
 
   if (authToken) {

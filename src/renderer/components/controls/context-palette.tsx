@@ -468,6 +468,12 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.contextPalette.display
   );
+  // The palette is primarily a job/AI launcher — hidden entirely for
+  // view-only public visitors (see render guard below the hooks).
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const position = useSelector(
     libraryService,
     (state) => state.context.contextPalette.position
@@ -966,7 +972,7 @@ export default function ContextPalette() {
     }
   };
 
-  if (!display) return null;
+  if (!display || !canWrite) return null;
 
   const style: React.CSSProperties = positionReady
     ? {
