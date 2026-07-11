@@ -836,6 +836,41 @@
 
         <div id="tab-general" class="tab-content active">
           <div class="config-sections">
+            <div class="config-card config-card--purple">
+              <div class="section-title">📦 Data Transfer</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Export library</label>
+                  <small class="hint">
+                    Download a portable archive of your <strong>tagged</strong>
+                    media plus everything referencing it — tags, embeddings,
+                    faces, descriptions, and the files themselves. Paths are
+                    stored root-relative so the archive imports onto any
+                    server. Thumbnails regenerate on import.
+                  </small>
+                  <div class="field-row" style="margin-top:6px">
+                    <button class="btn btn-secondary" id="export-btn">
+                      Download export
+                    </button>
+                    <span class="hint" id="export-status"></span>
+                  </div>
+                </div>
+                <div class="field" style="margin-top:12px">
+                  <label class="label">Import library</label>
+                  <small class="hint">
+                    Merge a <code>.lokiexport</code> archive into this server.
+                    Paths are rebased onto this server's default storage root
+                    (local ↔ S3 handled automatically); items already present
+                    are skipped.
+                  </small>
+                  <div class="field-row" style="margin-top:6px">
+                    <input id="import-file" type="file" accept=".lokiexport,.gz,application/gzip" />
+                    <button class="btn btn-secondary" id="import-btn">Import</button>
+                    <span class="hint" id="import-status"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="config-card config-card--blue">
               <div class="section-title">⚙️ General</div>
               <div class="fields">
@@ -1687,41 +1722,6 @@
 
         <div id="tab-access" class="tab-content">
           <div class="config-sections">
-            <div class="config-card config-card--purple">
-              <div class="section-title">📦 Data Transfer</div>
-              <div class="fields">
-                <div class="field">
-                  <label class="label">Export library</label>
-                  <small class="hint">
-                    Download a portable archive of your <strong>tagged</strong>
-                    media plus everything referencing it — tags, embeddings,
-                    faces, descriptions, and the files themselves. Paths are
-                    stored root-relative so the archive imports onto any
-                    server. Thumbnails regenerate on import.
-                  </small>
-                  <div class="field-row" style="margin-top:6px">
-                    <button class="btn btn-secondary" id="export-btn">
-                      Download export
-                    </button>
-                    <span class="hint" id="export-status"></span>
-                  </div>
-                </div>
-                <div class="field" style="margin-top:12px">
-                  <label class="label">Import library</label>
-                  <small class="hint">
-                    Merge a <code>.lokiexport</code> archive into this server.
-                    Paths are rebased onto this server's default storage root
-                    (local ↔ S3 handled automatically); items already present
-                    are skipped.
-                  </small>
-                  <div class="field-row" style="margin-top:6px">
-                    <input id="import-file" type="file" accept=".lokiexport,.gz,application/gzip" />
-                    <button class="btn btn-secondary" id="import-btn">Import</button>
-                    <span class="hint" id="import-status"></span>
-                  </div>
-                </div>
-              </div>
-            </div>
             <div class="config-card config-card--pink">
               <div class="section-title">🌐 Public Access</div>
               <div class="fields">
