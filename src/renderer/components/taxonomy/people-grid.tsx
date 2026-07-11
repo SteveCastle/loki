@@ -1807,7 +1807,9 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     ['taxonomy', 'face-tuning', initSessionId],
     () => fetchTuning(authToken),
     {
-      enabled: !!initSessionId,
+      // canWrite: the tuning endpoint is admin-only and only feeds the
+      // Tune sliders, which are hidden in view-only sessions.
+      enabled: !!initSessionId && canWrite,
       staleTime: 60_000,
       retry: 1,
       onSuccess: (server) => {

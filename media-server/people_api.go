@@ -70,7 +70,9 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/faces/{id}/reject", renderer.ApplyMiddlewares(faceRejectHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/all", renderer.ApplyMiddlewares(facesWipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/faces/stats", renderer.ApplyMiddlewares(facesStatsHandler(deps), renderer.RolePublicRead))
-	mux.HandleFunc("/api/faces/ungrouped", renderer.ApplyMiddlewares(facesUngroupedHandler(deps), renderer.RoleAdmin))
+	// GET-only read; the count powers the "Not grouped yet" browse card,
+	// which stays useful in public view-only mode.
+	mux.HandleFunc("/api/faces/ungrouped", renderer.ApplyMiddlewares(facesUngroupedHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/faces/tuning", renderer.ApplyMiddlewares(facesTuningHandler(deps), renderer.RoleAdmin))
 }
 
