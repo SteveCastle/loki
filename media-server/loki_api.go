@@ -1876,6 +1876,11 @@ func lokiSPAHandler(spaFS fs.FS) http.HandlerFunc {
 		}
 		if f, err := spaFS.Open(reqPath); err == nil {
 			f.Close()
+			// The bundle files are NOT content-hashed (renderer.js keeps its
+			// name across releases) and embedded files carry no modtime, so
+			// any heuristic caching serves a stale app after a server
+			// upgrade. Force revalidation on every load.
+			w.Header().Set("Cache-Control", "no-cache")
 			// Serve the static file
 			http.StripPrefix("/app/", fileServer).ServeHTTP(w, r)
 			return
@@ -1887,6 +1892,7 @@ func lokiSPAHandler(spaFS fs.FS) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(indexData)
 	}
 }
