@@ -23,7 +23,8 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
+	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -41,38 +42,66 @@ type dataxferManifest struct {
 	Note        string    `json:"note"`
 }
 
-// relKeyForPath converts an absolute media path into a storage-root-relative
-// key (forward-slash, no leading slash). If the path lives inside a
-// configured root, the root prefix is stripped. Otherwise the path is
-// sanitized (scheme/drive/leading separators removed) so it stays unique and
-// rebaseable.
-func relKeyForPath(reg *storage.Registry, p string) string {
-	if reg != nil {
-		if b := reg.BackendFor(p); b != nil {
-			base := strings.TrimRight(b.Root().Path, "/\\")
-			trimmed := strings.TrimPrefix(p, base)
-			trimmed = strings.TrimLeft(trimmed, "/\\")
-			if trimmed != "" {
-				return filepath.ToSlash(trimmed)
+// buildExportKeys assigns each selected media path a FLAT, collision-free
+// archive key. The source's storage roots are deliberately ignored: every
+// tagged file — whether it lived inside a configured root, on some other
+// drive, or in an S3 bucket — gets a simple key (its basename, disambiguated
+// with a counter). The destination rebases each key onto its own primary
+// root, so a library from a local host imports cleanly onto an S3 server
+// regardless of how the source was organized.
+//
+// Two different source paths NEVER share a key (even with the same basename),
+// so nothing is silently overwritten. The input is sorted first so key
+// assignment is stable across re-exports.
+func buildExportKeys(selected []string) map[string]string {
+	sorted := append([]string(nil), selected...)
+	sort.Strings(sorted)
+
+	keys := make(map[string]string, len(sorted))
+	used := make(map[string]bool, len(sorted))
+	for _, p := range sorted {
+		base := flatBaseName(p)
+		key := base
+		if used[key] {
+			ext := path.Ext(base)
+			stem := strings.TrimSuffix(base, ext)
+			for i := 1; used[key]; i++ {
+				key = fmt.Sprintf("%s-%d%s", stem, i, ext)
 			}
 		}
+		used[key] = true
+		keys[p] = key
 	}
-	// No owning root — flatten to a unique, rebaseable key.
-	s := p
-	if i := strings.Index(s, "://"); i >= 0 { // s3://bucket/key -> bucket/key
-		s = s[i+3:]
+	return keys
+}
+
+// flatBaseName returns the last path segment of any path (local Windows or
+// POSIX, or s3://), sanitized to a safe flat filename with no separators.
+func flatBaseName(p string) string {
+	s := strings.ReplaceAll(p, "\\", "/")
+	s = strings.TrimRight(s, "/")
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		s = s[i+1:]
 	}
-	if len(s) >= 2 && s[1] == ':' { // C:\... -> \...
-		s = s[2:]
+	s = strings.TrimSpace(s)
+	if s == "" || s == "." || s == ".." {
+		return "file"
 	}
-	s = strings.ReplaceAll(s, "\\", "/")
-	s = strings.TrimLeft(s, "/")
 	return s
 }
 
-// rebaseKey joins a destination root path with a relative key.
-func rebaseKey(destRoot, relKey string) string {
-	return strings.TrimRight(destRoot, "/\\") + "/" + relKey
+// safeFlatKey reports whether a key from an (untrusted) archive is a plain
+// flat filename — no separators, no traversal. Import rejects anything else.
+func safeFlatKey(key string) bool {
+	if key == "" || key == "." || key == ".." {
+		return false
+	}
+	return !strings.ContainsAny(key, "/\\") && !strings.Contains(key, "..")
+}
+
+// rebaseKey joins a destination root path with a flat archive key.
+func rebaseKey(destRoot, key string) string {
+	return strings.TrimRight(destRoot, "/\\") + "/" + key
 }
 
 // openMediaSource returns a reader for a media path, via its storage backend
@@ -145,7 +174,7 @@ func exportHandler(deps *Dependencies) http.HandlerFunc {
 			CreatedAt:   time.Now().UTC(),
 			SourceRoots: roots,
 			MediaCount:  len(selected),
-			Note:        "tagged media + referencing tags/embeddings/faces; thumbnails regenerate on import",
+			Note:        "tagged media + referencing tags/embeddings/faces; flat root-agnostic keys; thumbnails regenerate on import",
 		}
 		manifestJSON, _ := json.MarshalIndent(manifest, "", "  ")
 		if err := writeTarBytes(tw, "manifest.json", manifestJSON); err != nil {
@@ -196,10 +225,9 @@ func selectTaggedPaths(db *sql.DB) ([]string, error) {
 
 // buildExportDB creates a fresh SQLite at dbPath containing only the selected
 // media and their referencing rows, with every media path rewritten to a
-// storage-root-relative key. Returns the path->relkey map for file staging.
+// flat, root-agnostic archive key. Returns the path->key map for file staging.
 func buildExportDB(deps *Dependencies, dbPath string, selected []string) (map[string]string, error) {
 	src := deps.DB
-	reg := deps.Storage
 
 	dst, err := sql.Open("sqlite", dbPath)
 	if err != nil {
@@ -210,10 +238,7 @@ func buildExportDB(deps *Dependencies, dbPath string, selected []string) (map[st
 		return nil, err
 	}
 
-	relByPath := make(map[string]string, len(selected))
-	for _, p := range selected {
-		relByPath[p] = relKeyForPath(reg, p)
-	}
+	relByPath := buildExportKeys(selected)
 
 	tx, err := dst.Begin()
 	if err != nil {

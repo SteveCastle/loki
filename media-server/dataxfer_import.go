@@ -225,7 +225,13 @@ func mergeImport(ctx context.Context, deps *Dependencies, workDir string, dest s
 
 	// --- copy file bytes for newly-imported items ---
 	for rel := range newPaths {
-		srcFile := filepath.Join(workDir, "files", filepath.FromSlash(rel))
+		// Keys are flat filenames; reject anything else from an untrusted
+		// archive so a crafted key can't escape the extract dir.
+		if !safeFlatKey(rel) {
+			res.Warnings = append(res.Warnings, "unsafe archive key skipped: "+rel)
+			continue
+		}
+		srcFile := filepath.Join(workDir, "files", rel)
 		f, err := os.Open(srcFile)
 		if err != nil {
 			res.Warnings = append(res.Warnings, "missing file bytes for "+rel)

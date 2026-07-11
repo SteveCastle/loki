@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stevecastle/shrike/media"
@@ -223,5 +224,47 @@ func TestExportImportMergeSkipsExisting(t *testing.T) {
 	dstDB.QueryRow(`SELECT COUNT(*) FROM media`).Scan(&n)
 	if n != 1 {
 		t.Fatalf("dest media count after 2 imports = %d, want 1 (no dup)", n)
+	}
+}
+
+// TestExportKeys_CollisionAndOutsideRoot pins the root-agnostic key scheme:
+// same-basename files from different source folders/roots get DISTINCT flat
+// keys (no silent overwrite), and files outside any root still get a clean
+// flat key. Deterministic given the input set.
+func TestExportKeys_CollisionAndOutsideRoot(t *testing.T) {
+	selected := []string{
+		`/mnt/photos/a.jpg`,        // root A
+		`/mnt/videos/a.jpg`,        // root B — same basename, MUST NOT collide
+		`s3://bucket/lib/a.jpg`,    // s3 — same basename again
+		`C:\Users\steve\loose.png`, // outside any root (Electron local)
+		`/mnt/photos/b.jpg`,
+	}
+	keys := buildExportKeys(selected)
+
+	// Every distinct source path gets a distinct key.
+	seen := map[string]string{}
+	for src, k := range keys {
+		if k == "" || strings.ContainsAny(k, "/\\") {
+			t.Errorf("key for %q is not a clean flat name: %q", src, k)
+		}
+		if prev, ok := seen[k]; ok {
+			t.Fatalf("key collision: %q and %q both -> %q", prev, src, k)
+		}
+		seen[k] = src
+	}
+	if len(seen) != len(selected) {
+		t.Fatalf("got %d unique keys for %d sources", len(seen), len(selected))
+	}
+
+	// The three a.jpg's disambiguate to a.jpg / a-1.jpg / a-2.jpg.
+	aKeys := []string{keys[`/mnt/photos/a.jpg`], keys[`/mnt/videos/a.jpg`], keys[`s3://bucket/lib/a.jpg`]}
+	for _, k := range aKeys {
+		if !strings.HasPrefix(k, "a") || !strings.HasSuffix(k, ".jpg") {
+			t.Errorf("a.jpg-family key looks wrong: %q", k)
+		}
+	}
+	// The Windows loose file flattens to its basename.
+	if keys[`C:\Users\steve\loose.png`] != "loose.png" {
+		t.Errorf("outside-root key = %q, want loose.png", keys[`C:\Users\steve\loose.png`])
 	}
 }
