@@ -724,6 +724,11 @@ func lokiMediaPreviewHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		// Reads/generates a thumbnail from req.Path — scope it for anon.
+		if !mediaReadAllowed(deps, r, req.Path) {
+			httpError(w, "path is not within any configured storage root", http.StatusForbidden)
+			return
+		}
 
 		// Return the thumbnail path if it exists in DB
 		var thumbPath sql.NullString
@@ -1010,6 +1015,13 @@ func lokiGifMetadataHandler(deps *Dependencies) http.HandlerFunc {
 		var req pathRequest
 		if err := readJSON(r, &req); err != nil {
 			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// ffprobe runs on req.Path (a subprocess that speaks network
+		// protocols) — scope it for anon so it can't probe arbitrary files
+		// or URLs.
+		if !mediaReadAllowed(deps, r, req.Path) {
+			httpError(w, "path is not within any configured storage root", http.StatusForbidden)
 			return
 		}
 		// Use ffprobe to get gif metadata

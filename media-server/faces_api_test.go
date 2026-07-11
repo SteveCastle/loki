@@ -133,6 +133,13 @@ func TestFaceCropHandler(t *testing.T) {
 	}
 	fh.Close()
 
+	// A face's source is always a scanned library item — insert the row so
+	// the crop handler's scope gate (mediaReadAllowed) recognizes it as
+	// curated content rather than an arbitrary out-of-root path.
+	if _, err := db.Exec(`INSERT INTO media (path) VALUES (?)`, imgPath); err != nil {
+		t.Fatal(err)
+	}
+
 	// Face bbox = the red region, relative: x=0.5 w=0.3, y=0.2 h=0.6.
 	ids, err := media.ReplaceFaces(db, imgPath, model.ID, []media.NewFace{
 		{X: 0.5, Y: 0.2, W: 0.3, H: 0.6, Score: 0.9, Vec: []float32{1, 0}},

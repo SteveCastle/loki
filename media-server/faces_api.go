@@ -233,6 +233,12 @@ func faceCropHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "no such face", http.StatusNotFound)
 			return
 		}
+		// The served image is decoded from the face's source media — scope
+		// it for anon so out-of-root library items aren't enumerable via id.
+		if !mediaReadAllowed(deps, r, f.MediaPath) {
+			httpError(w, "path is not within any configured storage root", http.StatusForbidden)
+			return
+		}
 
 		img, err := decodeFaceSource(r.Context(), deps.DB, f.MediaPath)
 		if err != nil {

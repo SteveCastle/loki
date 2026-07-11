@@ -1796,6 +1796,14 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Scope gate for non-admin requesters (public view-only mode):
+		// only configured-root paths or curated library rows, never an
+		// http(s):// URL (SSRF). Admins keep unrestricted access.
+		if !mediaReadAllowed(deps, r, filePath) {
+			http.Error(w, "path is not within any configured storage root", http.StatusForbidden)
+			return
+		}
+
 		// If local path, enforce absolute path to avoid traversal via relative inputs
 		if !strings.HasPrefix(filePath, "http://") && !strings.HasPrefix(filePath, "https://") && !strings.HasPrefix(filePath, "s3://") {
 			if !filepath.IsAbs(filePath) {
@@ -1830,13 +1838,6 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 		// Handle local files
 		// Clean the path for consistency
 		filePath = filepath.Clean(filePath)
-
-		// Non-admin requesters may only read local files inside a
-		// configured storage root.
-		if !pathAllowedForRequest(deps, r, filePath) {
-			http.Error(w, "path is not within any configured storage root", http.StatusForbidden)
-			return
-		}
 
 		// Check if file exists
 		if !media.CheckFileExists(filePath) {
