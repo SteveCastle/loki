@@ -1637,6 +1637,14 @@ export const libraryMachine = createMachine(
             }),
             always: [
               { target: 'loadingFromDB', cond: hasPersistedFilter },
+              // View-only public visitors can't use the directory picker
+              // (an admin feature — its fs endpoints require auth), so a
+              // fresh session bootstraps into the full library instead of
+              // auto-opening a picker that can only fail.
+              {
+                target: 'loadingFromDB',
+                cond: (context: LibraryState) => !context.canWrite,
+              },
               { target: 'selectingDirectory' },
             ],
           },
