@@ -2634,7 +2634,11 @@ func main() {
 		}
 	}, renderer.RolePublicRead))
 
-	mux.HandleFunc("/api/db/load", renderer.ApplyMiddlewares(lokiDBLoadHandler(deps), renderer.RoleAdmin))
+	// The SPA's web boot handshake — the handler is a no-op acknowledgment
+	// (web mode can't switch the server's DB), so it must be reachable in
+	// public view-only mode or anonymous boots dead-end in the setup wizard.
+	// If this ever becomes a real DB switch, the write path must gate.
+	mux.HandleFunc("/api/db/load", renderer.ApplyMiddlewares(lokiDBLoadHandler(deps), renderer.RolePublicRead))
 
 	// Loki SPA - serve webpack bundle
 	mux.HandleFunc("/app/", renderer.ApplyMiddlewares(lokiSPAHandler(spaFS), renderer.RolePublicRead))

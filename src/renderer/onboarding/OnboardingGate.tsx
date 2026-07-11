@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { isElectron } from '../platform';
-import { getAccess } from '../access';
+import { initAccess } from '../access';
 import { OnboardingWizard } from './OnboardingWizard';
 
 interface OnboardingState {
@@ -14,17 +14,30 @@ export const OnboardingGate: React.FC = () => {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    if (isElectron || !getAccess().canWrite) {
-      // Electron has its own setup flow; view-only public visitors never
-      // see the wizard (its model-download actions are admin-gated).
+    if (isElectron) {
+      // Electron has its own setup flow.
       setLoaded(true);
       return;
     }
     let cancelled = false;
-    fetch('/api/onboarding/state')
-      .then((r) => (r.ok ? r.json() : { shown: true } as OnboardingState))
-      .then((s: OnboardingState) => {
-        if (cancelled) return;
+    // Await the access state (don't read the cache synchronously — this can
+    // mount before the fetch resolves): view-only public visitors never see
+    // the wizard (its model-download actions are admin-gated anyway).
+    initAccess()
+      .then((access) => {
+        if (cancelled) return null;
+        if (!access.canWrite) {
+          setLoaded(true);
+          return null;
+        }
+        return fetch('/api/onboarding/state');
+      })
+      .then((r) => {
+        if (cancelled || r === null) return null;
+        return r.ok ? r.json() : ({ shown: true } as OnboardingState);
+      })
+      .then((s: OnboardingState | null) => {
+        if (cancelled || s === null) return;
         setVisible(!s.shown);
         setLoaded(true);
       })

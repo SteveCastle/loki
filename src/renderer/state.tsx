@@ -2986,7 +2986,18 @@ export async function initializeSessionStore(): Promise<void> {
 
 // Inner component that only renders after session store is ready
 const GlobalStateProviderInner = (props: Props) => {
-  const libraryService = useInterpret(libraryMachine);
+  // libraryMachine's context was captured when this module loaded — before
+  // initAccess() resolved — so inject the real canWrite at interpret time
+  // (Inner only mounts after the provider awaited initAccess()).
+  const machineWithAccess = React.useMemo(
+    () =>
+      libraryMachine.withContext({
+        ...(libraryMachine.context as LibraryState),
+        canWrite: getAccess().canWrite,
+      }),
+    []
+  );
+  const libraryService = useInterpret(machineWithAccess);
 
   React.useEffect(() => {
     const offBatch = on(
