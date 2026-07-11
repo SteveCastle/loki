@@ -1179,7 +1179,9 @@ export const libraryMachine = createMachine(
             actions: assign<LibraryState, AnyEventObject>({
               toasts: (context, event) => {
                 const newToast = {
-                  id: uniqueId(),
+                  // Caller may supply an id to update later (progress toasts);
+                  // otherwise one is generated.
+                  id: event.data.id || uniqueId(),
                   type: event.data.type || 'info',
                   title: event.data.title,
                   message: event.data.message,
@@ -1188,6 +1190,32 @@ export const libraryMachine = createMachine(
                 };
                 return [...context.toasts, newToast];
               },
+            }),
+          },
+          UPDATE_TOAST: {
+            // Merge new fields into an existing toast by id (no-op if gone).
+            // Used to drive a live progress toast without stacking new ones.
+            actions: assign<LibraryState, AnyEventObject>({
+              toasts: (context, event) =>
+                context.toasts.map((toast) =>
+                  toast.id === event.data.id
+                    ? {
+                        ...toast,
+                        ...(event.data.type !== undefined && {
+                          type: event.data.type,
+                        }),
+                        ...(event.data.title !== undefined && {
+                          title: event.data.title,
+                        }),
+                        ...(event.data.message !== undefined && {
+                          message: event.data.message,
+                        }),
+                        ...(event.data.durationMs !== undefined && {
+                          durationMs: event.data.durationMs,
+                        }),
+                      }
+                    : toast
+                ),
             }),
           },
           REMOVE_TOAST: {

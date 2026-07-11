@@ -227,67 +227,138 @@ export default function useFileDrop() {
   }
 
   async function handleWebDrop(files: File[]) {
-    try {
-      const formData = new FormData();
-      for (const file of files) {
-        formData.append('files', file);
-      }
+    if (files.length === 0) return;
 
-      // In FS mode, tell the server to place files in the browsed directory
-      if (currentStateType === 'fs' && initialFile) {
-        const destination = resolveDirectory(initialFile);
-        formData.append('destination', destination);
-      }
+    // Upload files through a bounded queue instead of one giant request:
+    // at most UPLOAD_CONCURRENCY in flight, the rest queued, with a live
+    // progress toast. Keeps memory/bandwidth sane for large drops and lets
+    // one bad file fail in isolation instead of sinking the whole batch.
+    const UPLOAD_CONCURRENCY = 3;
+    const total = files.length;
+    const toastId = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const destination =
+      currentStateType === 'fs' && initialFile
+        ? resolveDirectory(initialFile)
+        : '';
+
+    const uploadedPaths: string[] = [];
+    let done = 0;
+    let failed = 0;
+    let unauthorized = false;
+
+    const progressMessage = () =>
+      `${done} / ${total}${failed > 0 ? ` — ${failed} failed` : ''}`;
+
+    libraryService.send('ADD_TOAST', {
+      data: {
+        id: toastId,
+        type: 'info',
+        title: 'Uploading…',
+        message: progressMessage(),
+        // Effectively sticky while the queue drains; set to a short duration
+        // on completion below.
+        durationMs: 10 * 60 * 1000,
+      },
+    });
+
+    const uploadOne = async (file: File) => {
+      const formData = new FormData();
+      formData.append('files', file);
+      if (destination) formData.append('destination', destination);
 
       const response = await fetch('/api/upload', {
         method: 'POST',
         credentials: 'include',
         body: formData,
       });
-
       if (response.status === 401) {
-        window.location.href = '/login';
-        return;
+        unauthorized = true;
+        throw new Error('unauthorized');
       }
       if (!response.ok) {
-        throw new Error(`Upload failed: ${response.status}`);
+        throw new Error(`HTTP ${response.status}`);
       }
-
       const result = await response.json();
-      const uploadedPaths: string[] = result.files || [];
+      for (const p of (result.files as string[]) || []) uploadedPaths.push(p);
+    };
 
-      // Apply tags if in DB mode
-      if (currentStateType === 'db' && dbQueryTags.length > 0 && uploadedPaths.length > 0) {
-        for (const tagLabel of dbQueryTags) {
-          await invoke('create-assignment', [
-            uploadedPaths,
-            tagLabel,
-            activeCategory || '',
-            null,
-            false,
-          ]);
+    const queue = [...files];
+    const worker = async () => {
+      while (queue.length > 0 && !unauthorized) {
+        const file = queue.shift()!;
+        try {
+          await uploadOne(file);
+        } catch (err) {
+          failed += 1;
+          console.error('Upload failed:', file.name, err);
+        } finally {
+          done += 1;
+          libraryService.send('UPDATE_TOAST', {
+            data: { id: toastId, message: progressMessage() },
+          });
         }
       }
+    };
 
-      const count = uploadedPaths.length;
-      let message = `Added ${count} file${count !== 1 ? 's' : ''}`;
-      if (currentStateType === 'fs') {
-        message += ` to ${resolveDirectory(initialFile)}`;
-      } else if (dbQueryTags.length > 0) {
-        message += `, tagged: ${dbQueryTags.join(', ')}`;
-      }
+    await Promise.all(
+      Array.from({ length: Math.min(UPLOAD_CONCURRENCY, total) }, worker)
+    );
 
-      libraryService.send('ADD_TOAST', {
-        data: { type: 'success', title: 'Import complete', message, durationMs: 4000 },
-      });
-
-      refreshCurrentView();
-    } catch (err) {
-      console.error('Upload failed:', err);
-      libraryService.send('ADD_TOAST', {
-        data: { type: 'error', title: 'Upload failed', message: String(err), durationMs: 5000 },
-      });
+    if (unauthorized) {
+      window.location.href = '/login';
+      return;
     }
+
+    // Apply tags if in DB mode
+    if (
+      currentStateType === 'db' &&
+      dbQueryTags.length > 0 &&
+      uploadedPaths.length > 0
+    ) {
+      for (const tagLabel of dbQueryTags) {
+        await invoke('create-assignment', [
+          uploadedPaths,
+          tagLabel,
+          activeCategory || '',
+          null,
+          false,
+        ]);
+      }
+    }
+
+    const count = uploadedPaths.length;
+    if (count === 0) {
+      libraryService.send('UPDATE_TOAST', {
+        data: {
+          id: toastId,
+          type: 'error',
+          title: 'Upload failed',
+          message: `All ${total} file${total !== 1 ? 's' : ''} failed to upload`,
+          durationMs: 6000,
+        },
+      });
+      return;
+    }
+
+    let message = `Added ${count} file${count !== 1 ? 's' : ''}`;
+    if (currentStateType === 'fs') {
+      message += ` to ${destination}`;
+    } else if (dbQueryTags.length > 0) {
+      message += `, tagged: ${dbQueryTags.join(', ')}`;
+    }
+    if (failed > 0) message += ` (${failed} failed)`;
+
+    libraryService.send('UPDATE_TOAST', {
+      data: {
+        id: toastId,
+        type: failed > 0 ? 'info' : 'success',
+        title: 'Import complete',
+        message,
+        durationMs: 4000,
+      },
+    });
+
+    refreshCurrentView();
   }
 
   const [{ isOver, canDrop }, dropRef] = useDrop(
