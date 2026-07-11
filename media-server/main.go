@@ -2561,6 +2561,12 @@ func main() {
 	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
+	// Full-library data export/import (admin only). Export streams a
+	// .lokiexport of the tagged library; import merges one in, rebasing
+	// paths onto this server's storage root.
+	mux.HandleFunc("/api/export", renderer.ApplyMiddlewares(exportHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/import", renderer.ApplyMiddlewares(importHandler(deps), renderer.RoleAdmin))
+
 	// Embeddings index + library data API (index_api.go / library_api.go)
 	mux.HandleFunc("/api/index/status", renderer.ApplyMiddlewares(indexStatusHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/index/models", renderer.ApplyMiddlewares(indexModelsHandler(deps), renderer.RoleAdmin))

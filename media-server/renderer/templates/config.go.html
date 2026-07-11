@@ -1687,6 +1687,41 @@
 
         <div id="tab-access" class="tab-content">
           <div class="config-sections">
+            <div class="config-card config-card--purple">
+              <div class="section-title">📦 Data Transfer</div>
+              <div class="fields">
+                <div class="field">
+                  <label class="label">Export library</label>
+                  <small class="hint">
+                    Download a portable archive of your <strong>tagged</strong>
+                    media plus everything referencing it — tags, embeddings,
+                    faces, descriptions, and the files themselves. Paths are
+                    stored root-relative so the archive imports onto any
+                    server. Thumbnails regenerate on import.
+                  </small>
+                  <div class="field-row" style="margin-top:6px">
+                    <button class="btn btn-secondary" id="export-btn">
+                      Download export
+                    </button>
+                    <span class="hint" id="export-status"></span>
+                  </div>
+                </div>
+                <div class="field" style="margin-top:12px">
+                  <label class="label">Import library</label>
+                  <small class="hint">
+                    Merge a <code>.lokiexport</code> archive into this server.
+                    Paths are rebased onto this server's default storage root
+                    (local ↔ S3 handled automatically); items already present
+                    are skipped.
+                  </small>
+                  <div class="field-row" style="margin-top:6px">
+                    <input id="import-file" type="file" accept=".lokiexport,.gz,application/gzip" />
+                    <button class="btn btn-secondary" id="import-btn">Import</button>
+                    <span class="hint" id="import-status"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="config-card config-card--pink">
               <div class="section-title">🌐 Public Access</div>
               <div class="fields">
@@ -2688,6 +2723,71 @@
             }
           })
           .catch(() => {});
+      })();
+
+      // Data Transfer (export / import)
+      (function () {
+        const exportBtn = document.getElementById('export-btn');
+        const exportStatus = document.getElementById('export-status');
+        const importBtn = document.getElementById('import-btn');
+        const importFile = document.getElementById('import-file');
+        const importStatus = document.getElementById('import-status');
+
+        if (exportBtn) {
+          exportBtn.addEventListener('click', async () => {
+            exportBtn.disabled = true;
+            exportStatus.textContent = 'Preparing export…';
+            try {
+              const res = await fetch('/api/export');
+              if (!res.ok) throw new Error((await res.text()) || res.status);
+              const blob = await res.blob();
+              const cd = res.headers.get('Content-Disposition') || '';
+              const m = cd.match(/filename="?([^"]+)"?/);
+              const name = m ? m[1] : 'lowkey-export.lokiexport';
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = name;
+              a.click();
+              URL.revokeObjectURL(url);
+              exportStatus.textContent = 'Downloaded ' + name;
+            } catch (e) {
+              exportStatus.textContent = 'Export failed: ' + e.message;
+            } finally {
+              exportBtn.disabled = false;
+            }
+          });
+        }
+
+        if (importBtn) {
+          importBtn.addEventListener('click', async () => {
+            const file = importFile.files && importFile.files[0];
+            if (!file) {
+              importStatus.textContent = 'Choose a .lokiexport file first';
+              return;
+            }
+            importBtn.disabled = true;
+            importStatus.textContent = 'Importing… (large libraries can take a while)';
+            try {
+              const fd = new FormData();
+              fd.append('file', file);
+              const res = await fetch('/api/import', { method: 'POST', body: fd });
+              if (!res.ok) throw new Error((await res.text()) || res.status);
+              const r = await res.json();
+              let msg =
+                'Imported ' + r.imported + ', skipped ' + r.skipped +
+                ', files ' + r.files + ' → ' + r.dest_root;
+              if (r.warnings && r.warnings.length) {
+                msg += ' (' + r.warnings.length + ' warning(s))';
+              }
+              importStatus.textContent = msg;
+            } catch (e) {
+              importStatus.textContent = 'Import failed: ' + e.message;
+            } finally {
+              importBtn.disabled = false;
+            }
+          });
+        }
       })();
 
       // User Management

@@ -2519,6 +2519,12 @@ func main() {
 	mux.HandleFunc("/api/db/query", renderer.ApplyMiddlewares(dbQueryHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/config", renderer.ApplyMiddlewares(configGetAPIHandler(deps), renderer.RoleAdmin))
 
+	// Full-library data export/import (admin only). Export streams a
+	// .lokiexport of the tagged library; import merges one in, rebasing
+	// paths onto this server's storage root.
+	mux.HandleFunc("/api/export", renderer.ApplyMiddlewares(exportHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/import", renderer.ApplyMiddlewares(importHandler(deps), renderer.RoleAdmin))
+
 	// Library stats API (stats_api.go) â€” powers the home page coverage cards
 	mux.HandleFunc("/api/stats", renderer.ApplyMiddlewares(statsAPIHandler(deps), renderer.RolePublicRead))
 
