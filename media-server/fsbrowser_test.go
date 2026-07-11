@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stevecastle/shrike/auth"
@@ -268,5 +271,71 @@ func TestComputeParent_S3Path(t *testing.T) {
 	got := computeParent("s3://bucket/media/photos/")
 	if got != "s3://bucket/media/" {
 		t.Errorf("computeParent s3 = %q, want 's3://bucket/media/'", got)
+	}
+}
+
+// scanFakeS3 is a minimal storage.Backend for exercising the s3 file-pick
+// path: Scan returns the objects directly under a prefix; Exists reports a
+// non-"/" key present in the object set.
+type scanFakeS3 struct{ objs map[string]bool }
+
+func (f *scanFakeS3) List(ctx context.Context, path string) ([]storage.Entry, error) {
+	return nil, nil
+}
+func (f *scanFakeS3) Scan(ctx context.Context, path string, recursive bool) ([]storage.FileInfo, error) {
+	var out []storage.FileInfo
+	for k := range f.objs {
+		if strings.HasPrefix(k, path) && k != path {
+			rest := strings.TrimPrefix(k, path)
+			if recursive || !strings.Contains(rest, "/") {
+				out = append(out, storage.FileInfo{Path: k})
+			}
+		}
+	}
+	return out, nil
+}
+func (f *scanFakeS3) Download(ctx context.Context, p string) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(nil)), nil
+}
+func (f *scanFakeS3) Upload(ctx context.Context, p string, r io.Reader, ct string) error {
+	return nil
+}
+func (f *scanFakeS3) MediaURL(p string) (string, error) { return p, nil }
+func (f *scanFakeS3) Exists(ctx context.Context, p string) (bool, error) {
+	return f.objs[p], nil
+}
+func (f *scanFakeS3) Contains(p string) bool { return strings.HasPrefix(p, "s3://b/") }
+func (f *scanFakeS3) Root() storage.Entry {
+	return storage.Entry{Name: "b", Path: "s3://b/", IsDir: true, Type: "s3"}
+}
+
+// TestFsScanHandler_S3FilePicksParent: picking a specific s3 FILE must scan
+// its parent prefix and set the cursor to that file (the reported bug: a
+// file path was scanned as a prefix -> empty library).
+func TestFsScanHandler_S3FilePicksParent(t *testing.T) {
+	b := &scanFakeS3{objs: map[string]bool{
+		"s3://b/photos/a.jpg": true,
+		"s3://b/photos/b.jpg": true,
+		"s3://b/photos/c.jpg": true,
+	}}
+	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry([]storage.Backend{b})}
+	handler := fsScanHandler(deps)
+
+	body, _ := json.Marshal(map[string]any{"path": "s3://b/photos/b.jpg", "recursive": false})
+	req := httptest.NewRequest(http.MethodPost, "/api/fs/scan", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp fsScanResponse
+	json.Unmarshal(rr.Body.Bytes(), &resp)
+	if len(resp.Library) != 3 {
+		t.Fatalf("expected the parent folder's 3 files, got %d: %v", len(resp.Library), resp.Library)
+	}
+	if resp.Library[resp.Cursor].Path != "s3://b/photos/b.jpg" {
+		t.Fatalf("cursor points at %q, want the picked file s3://b/photos/b.jpg", resp.Library[resp.Cursor].Path)
 	}
 }

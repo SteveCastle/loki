@@ -145,12 +145,19 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 		// and remember the selected file so we can set the cursor to it.
 		scanPath := req.Path
 		selectedFile := ""
-		// File detection only works for local paths
-		if !strings.HasPrefix(req.Path, "s3://") {
-			if info, err := os.Stat(req.Path); err == nil && !info.IsDir() {
-				selectedFile = req.Path
-				scanPath = filepath.Dir(req.Path)
+		if strings.HasPrefix(req.Path, "s3://") {
+			// S3 directories from the picker carry a trailing "/"; a file
+			// does not. Confirm it's a real object before treating it as the
+			// selected file (a bare prefix without "/" is still a folder).
+			if !strings.HasSuffix(req.Path, "/") {
+				if ok, _ := backend.Exists(r.Context(), req.Path); ok {
+					selectedFile = req.Path
+					scanPath = computeParent(req.Path)
+				}
 			}
+		} else if info, err := os.Stat(req.Path); err == nil && !info.IsDir() {
+			selectedFile = req.Path
+			scanPath = filepath.Dir(req.Path)
 		}
 
 		storageFiles, err := backend.Scan(r.Context(), scanPath, req.Recursive)
@@ -172,9 +179,19 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 
 		cursor := 0
 		if selectedFile != "" {
-			cleanSelected := filepath.Clean(selectedFile)
+			// S3 keys are already canonical; filepath.Clean would mangle the
+			// s3:// scheme, so match those directly.
+			isS3 := strings.HasPrefix(selectedFile, "s3://")
+			cleanSelected := selectedFile
+			if !isS3 {
+				cleanSelected = filepath.Clean(selectedFile)
+			}
 			for i, f := range files {
-				if filepath.Clean(f.Path) == cleanSelected {
+				fp := f.Path
+				if !isS3 {
+					fp = filepath.Clean(fp)
+				}
+				if fp == cleanSelected {
 					cursor = i
 					break
 				}
