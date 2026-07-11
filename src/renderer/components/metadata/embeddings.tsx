@@ -131,10 +131,13 @@ export default function Embeddings({ path }: { path: string }) {
   // model id -> Date.now() when its embed job was created
   const [pending, setPending] = useState<Record<string, number>>({});
 
+  // enabled: canWrite — the card renders null for view-only visitors, but
+  // hooks still run, and these endpoints are admin-only; don't spray
+  // doomed requests.
   const modelsQuery = useQuery<{ models: EmbedModelInfo[] }, Error>(
     ['embed-models'],
     () => getJSON(`${depsApiBase}/api/index/models`, authToken),
-    { staleTime: 60_000, retry: false }
+    { staleTime: 60_000, retry: false, enabled: canWrite }
   );
 
   const pendingCount = Object.keys(pending).length;
@@ -145,7 +148,11 @@ export default function Embeddings({ path }: { path: string }) {
         `${depsApiBase}/api/embeddings?path=${encodeURIComponent(path)}`,
         authToken
       ),
-    { retry: false, refetchInterval: pendingCount > 0 ? 3000 : false }
+    {
+      retry: false,
+      refetchInterval: pendingCount > 0 ? 3000 : false,
+      enabled: canWrite,
+    }
   );
 
   const rows = embedsQuery.data?.embeddings ?? [];
