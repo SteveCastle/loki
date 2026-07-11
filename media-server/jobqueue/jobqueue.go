@@ -37,6 +37,12 @@ const (
 	StatePaused
 )
 
+// maxJobResumes bounds how many times an interrupted (still-in-progress at
+// startup) job is auto-resumed before it is failed. One retry survives a
+// benign restart mid-job; a job that keeps killing the server (OOM) then
+// fails instead of crashlooping forever.
+const maxJobResumes = 1
+
 // ErrPaused is returned by task functions that stopped at a pause point in
 // response to RequestPause. The runner translates it into PauseJob rather
 // than treating it as a failure. All per-item work completed before the pause
@@ -150,6 +156,13 @@ type Job struct {
 	ProgressDone  int `json:"progress_done"`
 	ProgressTotal int `json:"progress_total"`
 
+	// InterruptCount is how many times this job was found still in-progress
+	// at server startup (i.e. its runner process died without finishing —
+	// crash, OOM, or an unclean shutdown). Capped auto-resume uses it to
+	// stop a "poison" job (e.g. one that OOMs the pod) from crashlooping
+	// the server forever: after maxJobResumes it is failed instead.
+	InterruptCount int `json:"interrupt_count"`
+
 	// Throttling bookkeeping for progress broadcasts/persists (not serialized).
 	lastProgressBroadcast time.Time
 	lastProgressPersist   time.Time
@@ -258,6 +271,7 @@ func (q *Queue) createJobsTable() error {
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN progress_done INTEGER")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN progress_total INTEGER")
 	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN resources TEXT")
+	_, _ = q.Db.Exec("ALTER TABLE jobs ADD COLUMN interrupt_count INTEGER")
 
 	return nil
 }
@@ -289,8 +303,9 @@ func (q *Queue) saveJobToDB(job *Job) error {
 	INSERT OR REPLACE INTO jobs (
 		id, command, arguments, input, original_input, host, stdout, dependencies, state,
 		created_at, claimed_at, completed_at, errored_at, job_order_position,
-		output_files, source_files, workflow_id, progress_done, progress_total, resources
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		output_files, source_files, workflow_id, progress_done, progress_total, resources,
+		interrupt_count
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := q.Db.Exec(query,
 		job.ID,
@@ -313,6 +328,7 @@ func (q *Queue) saveJobToDB(job *Job) error {
 		job.ProgressDone,
 		job.ProgressTotal,
 		string(resourcesJSON),
+		job.InterruptCount,
 	)
 
 	return err
@@ -328,7 +344,8 @@ func (q *Queue) loadJobsFromDB() error {
 	SELECT id, command, arguments, input, COALESCE(original_input, ''), COALESCE(host, ''), stdout, dependencies, state,
 		   created_at, claimed_at, completed_at, errored_at, job_order_position,
 		   COALESCE(output_files, '[]'), COALESCE(source_files, '[]'), COALESCE(workflow_id, ''),
-		   COALESCE(progress_done, 0), COALESCE(progress_total, 0), COALESCE(resources, '')
+		   COALESCE(progress_done, 0), COALESCE(progress_total, 0), COALESCE(resources, ''),
+		   COALESCE(interrupt_count, 0)
 	FROM jobs
 	ORDER BY job_order_position`
 
@@ -339,6 +356,7 @@ func (q *Queue) loadJobsFromDB() error {
 	defer rows.Close()
 
 	var resumedJobs []string
+	var interruptedIDs []string
 
 	for rows.Next() {
 		var job Job
@@ -367,6 +385,7 @@ func (q *Queue) loadJobsFromDB() error {
 			&job.ProgressDone,
 			&job.ProgressTotal,
 			&resourcesJSON,
+			&job.InterruptCount,
 		)
 		if err != nil {
 			log.Printf("Error scanning job row: %v", err)
@@ -405,11 +424,25 @@ func (q *Queue) loadJobsFromDB() error {
 			job.Resources = getResources(job.Command, job.Arguments, job.Input)
 		}
 
-		// If job was in progress, reset it to pending so it can be resumed
+		// A job still in-progress at startup means its runner died without
+		// finishing (crash, OOM, unclean shutdown). Resume it a bounded
+		// number of times, then fail it — otherwise a job that kills the
+		// server (e.g. OOM) resumes on every boot and crashloops forever.
 		if job.State == StateInProgress {
-			job.State = StatePending
-			job.ClaimedAt = time.Time{} // Reset claimed time
-			resumedJobs = append(resumedJobs, job.ID)
+			job.ClaimedAt = time.Time{}
+			if job.InterruptCount >= maxJobResumes {
+				job.State = StateError
+				job.ErroredAt = time.Now()
+				job.Stdout = append(job.Stdout, fmt.Sprintf(
+					"Not auto-resumed: interrupted %d times without completing "+
+						"(possible out-of-memory). Restart it manually if intended.",
+					job.InterruptCount))
+			} else {
+				job.InterruptCount++
+				job.State = StatePending
+				resumedJobs = append(resumedJobs, job.ID)
+			}
+			interruptedIDs = append(interruptedIDs, job.ID)
 		}
 
 		// Recreate context and cancel function
@@ -419,6 +452,18 @@ func (q *Queue) loadJobsFromDB() error {
 
 		q.Jobs[job.ID] = &job
 		q.JobOrder = append(q.JobOrder, job.ID)
+	}
+
+	// Persist the interrupt decisions now that the SELECT cursor is closed
+	// (writing mid-iteration deadlocks on SQLITE_BUSY). Doing it before the
+	// resumed jobs are signaled means the incremented count / failed state
+	// is durable even if a resumed job OOMs the pod again immediately.
+	for _, id := range interruptedIDs {
+		if j, ok := q.Jobs[id]; ok {
+			if err := q.saveJobToDB(j); err != nil {
+				log.Printf("failed to persist interrupt decision for job %s: %v", id, err)
+			}
+		}
 	}
 
 	if len(resumedJobs) > 0 {

@@ -995,3 +995,53 @@ func TestWorkflowEndToEndOutputFiles(t *testing.T) {
 		t.Errorf("save input should contain blur output; got %q", save.Input)
 	}
 }
+
+// TestInterruptedJobResumeCap: a job left in-progress at startup resumes at
+// most maxJobResumes times, then is failed instead of crashlooping the
+// server. Regression for the OOM poison-job outage.
+func TestInterruptedJobResumeCap(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := dir + "/jobs.db"
+	open := func() (*sql.DB, *Queue) {
+		db, err := sql.Open("sqlite", dbPath)
+		if err != nil {
+			t.Fatalf("open db: %v", err)
+		}
+		return db, NewQueueWithDB(db)
+	}
+
+	db, q := open()
+	id, err := q.AddJob("", "embed", nil, "s3://loki/uploads", nil)
+	if err != nil {
+		t.Fatalf("AddJob: %v", err)
+	}
+	// Simulate the runner claiming it then the pod dying (unclean): the row
+	// is left in-progress.
+	if _, err := db.Exec("UPDATE jobs SET state=1 WHERE id=?", id); err != nil {
+		t.Fatalf("set in-progress: %v", err)
+	}
+	db.Close()
+
+	// First restart: auto-resume (pending), interrupt_count -> 1.
+	db2, q2 := open()
+	j2 := q2.Jobs[id]
+	if j2 == nil || j2.State != StatePending {
+		t.Fatalf("first restart: state=%v, want Pending", j2.State)
+	}
+	if j2.InterruptCount != 1 {
+		t.Fatalf("first restart: interrupt_count=%d, want 1", j2.InterruptCount)
+	}
+	// It dies again mid-run.
+	if _, err := db2.Exec("UPDATE jobs SET state=1 WHERE id=?", id); err != nil {
+		t.Fatalf("set in-progress 2: %v", err)
+	}
+	db2.Close()
+
+	// Second restart: cap reached — failed, NOT resumed (server stays up).
+	db3, q3 := open()
+	defer db3.Close()
+	j3 := q3.Jobs[id]
+	if j3 == nil || j3.State != StateError {
+		t.Fatalf("second restart: state=%v, want Error (capped)", j3.State)
+	}
+}
