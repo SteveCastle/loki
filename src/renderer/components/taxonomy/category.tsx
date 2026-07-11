@@ -1,5 +1,6 @@
 import { useContext, useRef, useState, useEffect } from 'react';
 import { useDrop } from 'react-dnd';
+import { useSelector } from '@xstate/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import ConfirmDeleteCategory from './confirm-delete-category';
 import editPencil from '../../../../assets/edit-pencil.svg';
@@ -36,6 +37,12 @@ export default function Category({
   handleEditAction,
 }: Props) {
   const { libraryService } = useContext(GlobalStateContext);
+  // View-only public visitors: no rename/delete, no drop-to-move-tag.
+  // Category click (browse) stays.
+  const canWrite = useSelector(
+    libraryService,
+    (state) => state.context.canWrite
+  );
   const ref = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -50,17 +57,19 @@ export default function Category({
   const [collectedProps, drop] = useDrop(
     () => ({
       accept: ['TAG'],
+      canDrop: () => canWrite,
       collect: (monitor) => ({
         isOver: monitor.isOver(),
       }),
       drop: (droppedTag: any, monitor) => {
+        if (!canWrite) return;
         mutate({
           tag: droppedTag.label,
           category: category.label,
         });
       },
     }),
-    [category]
+    [category, canWrite]
   );
 
   drop(ref);
@@ -84,25 +93,27 @@ export default function Category({
       }}
     >
       <div className="category-label">{category.label}</div>
-      <div className="actions">
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleEditAction(category.label);
-          }}
-        >
-          <img src={editPencil} />
-        </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowDeleteModal(true);
-          }}
-        >
-          <img src={deleteIcon} />
-        </button>
-      </div>
-      {showDeleteModal ? (
+      {canWrite && (
+        <div className="actions">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEditAction(category.label);
+            }}
+          >
+            <img src={editPencil} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowDeleteModal(true);
+            }}
+          >
+            <img src={deleteIcon} />
+          </button>
+        </div>
+      )}
+      {showDeleteModal && canWrite ? (
         <ConfirmDeleteCategory
           handleClose={() => setShowDeleteModal(false)}
           currentValue={category.label}
