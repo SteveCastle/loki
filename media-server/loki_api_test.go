@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -32,6 +33,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			label TEXT PRIMARY KEY,
 			category_label TEXT,
 			weight REAL,
+			thumbnail_path_600 TEXT,
 			FOREIGN KEY (category_label) REFERENCES category (label)
 		)`,
 		`CREATE TABLE media (
@@ -264,5 +266,61 @@ func TestLokiSettingsPutAndGet(t *testing.T) {
 	}
 	if settings["theme"] != "dark" {
 		t.Errorf("expected theme=dark, got %v", settings["theme"])
+	}
+}
+
+// Shift-drag tag-preview: create-assignment with applyTagPreview must copy
+// the media's (existing) thumbnail onto the tag row, like the Electron
+// main process does.
+func TestLokiCreateAssignment_ApplyTagPreview(t *testing.T) {
+	deps := testDeps(t)
+
+	// A thumbnail that already exists on disk — the resolver must reuse it
+	// without invoking any generation machinery.
+	thumbFile, err := os.CreateTemp("", "tag_preview_*.png")
+	if err != nil {
+		t.Fatalf("temp thumb: %v", err)
+	}
+	thumbFile.Close()
+	defer os.Remove(thumbFile.Name())
+	if _, err := deps.DB.Exec(
+		"UPDATE media SET thumbnail_path_600 = ? WHERE path = '/photos/c.jpg'",
+		thumbFile.Name(),
+	); err != nil {
+		t.Fatalf("seed thumb: %v", err)
+	}
+
+	rr := postJSON(lokiCreateAssignmentHandler(deps), map[string]any{
+		"mediaPaths":      []string{"/photos/c.jpg"},
+		"tagLabel":        "sunset",
+		"categoryLabel":   "Subject",
+		"applyTagPreview": true,
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("create assignment: %d %s", rr.Code, rr.Body.String())
+	}
+
+	var got sql.NullString
+	deps.DB.QueryRow(
+		"SELECT thumbnail_path_600 FROM tag WHERE label = 'sunset'",
+	).Scan(&got)
+	if !got.Valid || got.String != thumbFile.Name() {
+		t.Fatalf("tag thumbnail = %v, want %q", got, thumbFile.Name())
+	}
+
+	// Without the flag the tag preview must stay untouched.
+	rr = postJSON(lokiCreateAssignmentHandler(deps), map[string]any{
+		"mediaPaths":    []string{"/photos/b.jpg"},
+		"tagLabel":      "sunset",
+		"categoryLabel": "Subject",
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("second assignment: %d", rr.Code)
+	}
+	deps.DB.QueryRow(
+		"SELECT thumbnail_path_600 FROM tag WHERE label = 'sunset'",
+	).Scan(&got)
+	if got.String != thumbFile.Name() {
+		t.Fatalf("tag thumbnail changed without applyTagPreview: %v", got)
 	}
 }

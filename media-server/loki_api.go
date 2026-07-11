@@ -1542,6 +1542,65 @@ func lokiDeleteCategoryHandler(deps *Dependencies) http.HandlerFunc {
 
 // ---- Assignment handlers ----
 
+// resolveThumbnailPath returns a servable thumbnail path for mediaPath,
+// generating one (and recording it on the media row) when none exists yet.
+// Mirrors the POST /api/media/preview get-or-generate flow for both local
+// and s3:// media. cache must be a whitelisted thumbnail column name.
+func resolveThumbnailPath(ctx context.Context, deps *Dependencies, mediaPath, cache string, timeStamp float64) (string, error) {
+	var dbThumb sql.NullString
+	deps.DB.QueryRow(
+		fmt.Sprintf("SELECT %s FROM media WHERE path = ?", cache),
+		mediaPath,
+	).Scan(&dbThumb)
+	if dbThumb.Valid && dbThumb.String != "" {
+		if strings.HasPrefix(dbThumb.String, "s3://") {
+			if b := deps.Storage.BackendFor(dbThumb.String); b != nil {
+				if ok, _ := b.Exists(ctx, dbThumb.String); ok {
+					return dbThumb.String, nil
+				}
+			}
+		} else if _, err := os.Stat(dbThumb.String); err == nil {
+			return dbThumb.String, nil
+		}
+	}
+
+	if strings.HasPrefix(mediaPath, "s3://") {
+		backend := deps.Storage.BackendFor(mediaPath)
+		s3b, ok := backend.(*storage.S3Backend)
+		if backend == nil || !ok {
+			return "", fmt.Errorf("no S3 backend for %s", mediaPath)
+		}
+		generated, err := generateS3ThumbnailThrottled(ctx, mediaPath, s3b, cache, timeStamp)
+		if err != nil {
+			return "", err
+		}
+		deps.DB.Exec(
+			fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
+			generated, mediaPath,
+		)
+		return generated, nil
+	}
+
+	dbPath := currentConfig.DBPath
+	if dbPath == "" {
+		return "", fmt.Errorf("no database configured")
+	}
+	basePath := filepath.Dir(dbPath)
+	generated := getThumbnailPath(mediaPath, basePath, cache, timeStamp)
+	if _, err := os.Stat(generated); err != nil {
+		var genErr error
+		generated, genErr = generateThumbnailThrottled(mediaPath, basePath, cache, timeStamp)
+		if genErr != nil {
+			return "", genErr
+		}
+	}
+	deps.DB.Exec(
+		fmt.Sprintf("UPDATE media SET %s = ? WHERE path = ?", cache),
+		generated, mediaPath,
+	)
+	return generated, nil
+}
+
 func lokiCreateAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req assignmentRequest
@@ -1576,6 +1635,23 @@ func lokiCreateAssignmentHandler(deps *Dependencies) http.HandlerFunc {
 		tx.Commit()
 		// New assignments may add previously-untagged paths to the swipe pool.
 		media.InvalidateRandomSampleCache()
+
+		// Shift-drag (or the tag-preview toggle): the tagged media's
+		// thumbnail becomes the tag's preview image, mirroring the
+		// Electron main-process behavior (src/main/taxonomy.ts).
+		if req.ApplyTagPreview {
+			thumb, err := resolveThumbnailPath(
+				r.Context(), deps, paths[0], "thumbnail_path_600", req.TimeStamp,
+			)
+			if err != nil {
+				log.Printf("apply tag preview for %q: %v", req.TagLabel, err)
+			} else {
+				deps.DB.Exec(
+					"UPDATE tag SET thumbnail_path_600 = ? WHERE label = ?",
+					thumb, req.TagLabel,
+				)
+			}
+		}
 		writeJSON(w, map[string]string{})
 	}
 }
