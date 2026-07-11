@@ -33,7 +33,11 @@ export function Description({ path, data }: { path: string; data: Metadata }) {
   );
 
   useEffect(() => {
-    if (description !== data?.description) {
+    // Normalize null/undefined to '' before comparing — otherwise a media
+    // item with no description ('' state vs null data) "differs" on mount
+    // and fires a pointless PUT on every view (a doomed 302 for view-only
+    // visitors). And never write at all without write access.
+    if (canWrite && description !== (data?.description || '')) {
       debouncedUpdateDescription.current(description);
     }
   }, [description]);
