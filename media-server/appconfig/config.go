@@ -289,6 +289,12 @@ type Config struct {
 	// setup APIs are open; once true, the wizard locks behind admin auth.
 	SetupComplete bool `json:"setupComplete"`
 
+	// DefaultStartPath, when set, is the folder (local path or s3:// prefix)
+	// the web app opens on a fresh session instead of showing the directory
+	// picker. Empty = current behavior (picker for signed-in users, whole
+	// library for public view-only visitors).
+	DefaultStartPath string `json:"defaultStartPath"`
+
 	// AllowPublicAccess opens the /swipe experience, the /app SPA, and the
 	// read/search API endpoints (including embedding-backed search) to
 	// unauthenticated visitors in view-only form. Writes, job launches, and
@@ -881,6 +887,9 @@ func applyEnvOverrides(c *Config) {
 		default:
 			log.Printf("Warning: LOWKEY_TRANSCRIPTION_VAD=%q is not a boolean; ignored", v)
 		}
+	}
+	if v := os.Getenv("LOWKEY_DEFAULT_START_PATH"); v != "" {
+		c.DefaultStartPath = v
 	}
 	if v := os.Getenv("LOWKEY_ALLOW_PUBLIC_ACCESS"); v != "" {
 		switch strings.ToLower(v) {

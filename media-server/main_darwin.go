@@ -1294,6 +1294,7 @@ type updateConfigRequest struct {
 	TranscriptionLanguage  *string                  `json:"transcriptionLanguage"`
 	TranscriptionVADFilter *bool                    `json:"transcriptionVadFilter"`
 	AllowPublicAccess      *bool                    `json:"allowPublicAccess"`
+	DefaultStartPath       *string                  `json:"defaultStartPath"`
 	FasterWhisperPath      string                   `json:"fasterWhisperPath"`
 	DiscordToken           string                   `json:"discordToken"`
 	Roots                  []appconfig.StorageRoot  `json:"roots"`
@@ -1627,6 +1628,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.AllowPublicAccess != nil {
 				newCfg.AllowPublicAccess = *req.AllowPublicAccess
 			}
+			if req.DefaultStartPath != nil {
+				newCfg.DefaultStartPath = strings.TrimSpace(*req.DefaultStartPath)
+			}
 			if strings.TrimSpace(req.FasterWhisperPath) != "" {
 				newCfg.FasterWhisperPath = strings.TrimSpace(req.FasterWhisperPath)
 			}
@@ -1825,6 +1829,13 @@ func mediaFileHandler(deps *Dependencies) http.HandlerFunc {
 		// Handle local files
 		// Clean the path for consistency
 		filePath = filepath.Clean(filePath)
+
+		// Non-admin requesters may only read local files inside a
+		// configured storage root.
+		if !pathAllowedForRequest(deps, r, filePath) {
+			http.Error(w, "path is not within any configured storage root", http.StatusForbidden)
+			return
+		}
 
 		// Check if file exists
 		if !media.CheckFileExists(filePath) {
@@ -2287,9 +2298,10 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 			if claims, err := verifyCredential(deps, tokenString); err == nil {
 				w.Header().Set("Content-Type", "application/json")
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"loggedIn":     true,
-					"username":     claims.Username,
-					"publicAccess": appconfig.Get().AllowPublicAccess,
+					"loggedIn":         true,
+					"username":         claims.Username,
+					"publicAccess":     appconfig.Get().AllowPublicAccess,
+					"defaultStartPath": appconfig.Get().DefaultStartPath,
 				})
 				return
 			}
@@ -2317,9 +2329,10 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"loggedIn":     true,
-			"username":     claims.Username,
-			"publicAccess": appconfig.Get().AllowPublicAccess,
+			"loggedIn":         true,
+			"username":         claims.Username,
+			"publicAccess":     appconfig.Get().AllowPublicAccess,
+			"defaultStartPath": appconfig.Get().DefaultStartPath,
 		})
 	}
 }
@@ -2602,8 +2615,10 @@ func main() {
 	mux.HandleFunc("/api/thumbnails/regenerate", renderer.ApplyMiddlewares(lokiRegenerateThumbnailHandler(deps), renderer.RoleAdmin))
 
 	// Filesystem browser (web mode)
-	mux.HandleFunc("/api/fs/list", renderer.ApplyMiddlewares(fsListHandler(deps), renderer.RoleAdmin))
-	mux.HandleFunc("/api/fs/scan", renderer.ApplyMiddlewares(fsScanHandler(deps), renderer.RoleAdmin))
+	// Root-scoped by BackendFor (403 outside configured roots), so safe for
+	// view-only visitors; the scan's library-import only runs for admins.
+	mux.HandleFunc("/api/fs/list", renderer.ApplyMiddlewares(fsListHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/fs/scan", renderer.ApplyMiddlewares(fsScanHandler(deps), renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/settings", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

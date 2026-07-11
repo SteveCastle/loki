@@ -85,9 +85,16 @@ func hlsHandler(d *Dependencies) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		switch r.Method {
 		case http.MethodGet:
+			// GET can trigger a transcode of ?path= — scope non-admin
+			// requesters to configured storage roots.
+			if p := r.URL.Query().Get("path"); p != "" && !pathAllowedForRequest(d, r, p) {
+				http.Error(w, "path is not within any configured storage root", http.StatusForbidden)
+				return
+			}
 			hlsStatus(w, r)
 		case http.MethodDelete:
-			hlsCleanup(w, r)
+			// Cache cleanup is a write.
+			requireAuthWhenPublic(d, hlsCleanup)(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -96,10 +103,10 @@ func hlsHandler(d *Dependencies) http.HandlerFunc {
 
 type hlsStatusResponse struct {
 	Status   string  `json:"status"`             // "ready", "processing", "error"
-	URL      string  `json:"url,omitempty"`       // manifest URL when ready
-	Progress float64 `json:"progress,omitempty"`  // 0.0-1.0 when processing
-	Error    string  `json:"error,omitempty"`     // error message
-	Duration float64 `json:"duration,omitempty"`  // source duration in seconds
+	URL      string  `json:"url,omitempty"`      // manifest URL when ready
+	Progress float64 `json:"progress,omitempty"` // 0.0-1.0 when processing
+	Error    string  `json:"error,omitempty"`    // error message
+	Duration float64 `json:"duration,omitempty"` // source duration in seconds
 }
 
 // hlsStatus returns the HLS generation status for a media file.
@@ -396,7 +403,7 @@ func generatePassthroughHLS(ctx context.Context, mediaPath, cacheDir string, dur
 				lastProgressTime = time.Now()
 				hlsInflightMu.Unlock()
 
-				pct := int(progress * 10) * 10
+				pct := int(progress*10) * 10
 				if pct > lastLoggedPct {
 					lastLoggedPct = pct
 					log.Printf("[hls] progress %d%% — %s", pct, filepath.Base(mediaPath))

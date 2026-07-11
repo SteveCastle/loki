@@ -54,16 +54,16 @@ type PipelineSpec struct {
 // Detector is unavailable without cgo.
 type Detector struct{}
 
-func NewDetector(cfg DetectorConfig) (*Detector, error)          { return nil, ErrCGORequired }
-func (d *Detector) Detect(img image.Image) ([]Detection, error)  { return nil, ErrCGORequired }
-func (d *Detector) Close() error                                 { return nil }
+func NewDetector(cfg DetectorConfig) (*Detector, error)         { return nil, ErrCGORequired }
+func (d *Detector) Detect(img image.Image) ([]Detection, error) { return nil, ErrCGORequired }
+func (d *Detector) Close() error                                { return nil }
 
 // Recognizer is unavailable without cgo.
 type Recognizer struct{}
 
-func NewRecognizer(cfg RecognizerConfig) (*Recognizer, error)          { return nil, ErrCGORequired }
-func (r *Recognizer) Embed(aligned *image.NRGBA) ([]float32, error)    { return nil, ErrCGORequired }
-func (r *Recognizer) Close() error                                     { return nil }
+func NewRecognizer(cfg RecognizerConfig) (*Recognizer, error)       { return nil, ErrCGORequired }
+func (r *Recognizer) Embed(aligned *image.NRGBA) ([]float32, error) { return nil, ErrCGORequired }
+func (r *Recognizer) Close() error                                  { return nil }
 
 // Pipeline is unavailable without cgo.
 type Pipeline struct {

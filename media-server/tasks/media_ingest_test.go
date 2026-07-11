@@ -33,9 +33,9 @@ func TestParseIngestOptions_Tags(t *testing.T) {
 
 func TestParseTagArg(t *testing.T) {
 	tests := []struct {
-		input    string
-		wantL    string
-		wantC    string
+		input string
+		wantL string
+		wantC string
 	}{
 		{"sunset:subject", "sunset", "subject"},
 		{"portrait", "portrait", ""},
@@ -77,8 +77,8 @@ func TestResolveTagCategories(t *testing.T) {
 
 	tags := []TagInfo{
 		{Label: "sunset", Category: ""},        // should resolve to "Subject" from DB
-		{Label: "portrait", Category: ""},       // unknown, should default to "General"
-		{Label: "beach", Category: "Location"},  // explicit category, should be preserved
+		{Label: "portrait", Category: ""},      // unknown, should default to "General"
+		{Label: "beach", Category: "Location"}, // explicit category, should be preserved
 	}
 
 	resolved := resolveTagCategories(db, tags)

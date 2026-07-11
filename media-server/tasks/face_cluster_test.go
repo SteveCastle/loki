@@ -543,7 +543,7 @@ func TestSecondPassPullsInNearDuplicates(t *testing.T) {
 	alice, _ := media.CreatePerson(db, "Alice")
 	seedIDs := seedFaces(t, db, "seed.jpg", "m1", vecAt(0))
 	_ = media.AssignFace(db, seedIDs[0], alice, "user")
-	seedFaces(t, db, "a.jpg", "m1", vecAt(0.4027)) // cos ≈ 0.920
+	seedFaces(t, db, "a.jpg", "m1", vecAt(0.4027))         // cos ≈ 0.920
 	bIDs := seedFaces(t, db, "b.jpg", "m1", vecAt(0.5359)) // cos ≈ 0.860 to seed
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}

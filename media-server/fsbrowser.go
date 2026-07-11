@@ -164,7 +164,11 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 			files = append(files, fsScanFile{Path: f.Path, MtimeMs: f.MtimeMs})
 		}
 
-		insertBulkMediaPaths(deps.DB, files)
+		// Importing scanned paths into the library is a WRITE — view-only
+		// public visitors browse the listing without mutating the library.
+		if isAdminRequest(deps, r) {
+			insertBulkMediaPaths(deps.DB, files)
+		}
 
 		cursor := 0
 		if selectedFile != "" {

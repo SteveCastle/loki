@@ -116,8 +116,8 @@ func TestLokiTaxonomyHandler(t *testing.T) {
 	}
 
 	var resp map[string]struct {
-		Label  string `json:"label"`
-		Weight float64 `json:"weight"`
+		Label  string           `json:"label"`
+		Weight float64          `json:"weight"`
 		Tags   []map[string]any `json:"tags"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {

@@ -912,6 +912,13 @@ func mediaThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Non-admin requesters may only thumbnail local files inside a
+		// configured storage root.
+		if !pathAllowedForRequest(deps, r, filePath) {
+			http.Error(w, "path is not within any configured storage root", http.StatusForbidden)
+			return
+		}
+
 		dbPath := currentConfig.DBPath
 		if dbPath == "" {
 			http.Error(w, "No database configured", http.StatusInternalServerError)

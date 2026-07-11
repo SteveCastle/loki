@@ -13,13 +13,13 @@ func TestPresetResources(t *testing.T) {
 		wantWorkers int
 		wantThreads int
 	}{
-		{"low", 8, 1, 2},      // target=2 → 1 worker × 2 threads
-		{"balanced", 8, 1, 4}, // target=4 → 1 × 4
-		{"max", 8, 2, 4},      // target=7 → 2 × 4
-		{"low", 4, 1, 1},      // target=1 → 1 × 1
-		{"balanced", 16, 2, 4},// target=8 → 2 × 4
-		{"max", 32, 8, 4},     // target=31 → 8 × 4
-		{"balanced", 1, 1, 1}, // tiny host
+		{"low", 8, 1, 2},       // target=2 → 1 worker × 2 threads
+		{"balanced", 8, 1, 4},  // target=4 → 1 × 4
+		{"max", 8, 2, 4},       // target=7 → 2 × 4
+		{"low", 4, 1, 1},       // target=1 → 1 × 1
+		{"balanced", 16, 2, 4}, // target=8 → 2 × 4
+		{"max", 32, 8, 4},      // target=31 → 8 × 4
+		{"balanced", 1, 1, 1},  // tiny host
 	}
 	for _, c := range cases {
 		w, th := presetResources(c.preset, c.cpus)

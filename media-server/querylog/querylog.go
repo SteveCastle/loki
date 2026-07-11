@@ -44,14 +44,14 @@ func ensureFile() *os.File {
 
 // Entry is one log record. Source defaults to "go-server" when empty.
 type Entry struct {
-	Ts         string        `json:"ts"`
-	Source     string        `json:"source"`
-	Name       string        `json:"name,omitempty"`
-	SQL        string        `json:"sql"`
-	Params     []any `json:"params,omitempty"`
-	DurationMs float64       `json:"duration_ms"`
-	Rows       *int          `json:"rows,omitempty"`
-	Error      string        `json:"error,omitempty"`
+	Ts         string  `json:"ts"`
+	Source     string  `json:"source"`
+	Name       string  `json:"name,omitempty"`
+	SQL        string  `json:"sql"`
+	Params     []any   `json:"params,omitempty"`
+	DurationMs float64 `json:"duration_ms"`
+	Rows       *int    `json:"rows,omitempty"`
+	Error      string  `json:"error,omitempty"`
 }
 
 // Log writes a single entry. Caller is responsible for setting fields except

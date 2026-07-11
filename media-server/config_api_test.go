@@ -25,11 +25,11 @@ func TestRedactConfig(t *testing.T) {
 	got := redactConfig(cfg)
 
 	for name, v := range map[string]string{
-		"JWTSecret":      got.JWTSecret,
-		"DiscordToken":   got.DiscordToken,
-		"RunPodAPIKey":   got.RunPodAPIKey,
-		"LMStudioAPIKey": got.LMStudioAPIKey,
-		"LlamaCppAPIKey": got.LlamaCppAPIKey,
+		"JWTSecret":          got.JWTSecret,
+		"DiscordToken":       got.DiscordToken,
+		"RunPodAPIKey":       got.RunPodAPIKey,
+		"LMStudioAPIKey":     got.LMStudioAPIKey,
+		"LlamaCppAPIKey":     got.LlamaCppAPIKey,
 		"Roots[0].AccessKey": got.Roots[0].AccessKey,
 		"Roots[0].SecretKey": got.Roots[0].SecretKey,
 	} {

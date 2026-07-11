@@ -165,14 +165,6 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
       (state: any) => state.context.settings.sortBy
     );
 
-    // Open-file/open-directory browse the server's storage roots and load
-    // new content — hidden for view-only public visitors (the backing
-    // /api/fs/* endpoints are admin-only).
-    const canWrite = useSelector(
-      libraryService,
-      (state: any) => state.context.canWrite
-    );
-
     const hasVisual = useSelector(libraryService, (state: any) => {
       const predicates: Array<{ type: string }> =
         state.context.query?.predicates ?? [];
@@ -234,26 +226,22 @@ const ActionButtons: React.FC<ActionButtonsProps> = React.memo(
 
     return (
       <div className="menuBarRight">
-        {canWrite && (
-          <>
-            <ActionButton
-              icon={imageIcon}
-              onClick={() => libraryService.send('SELECT_FILE')}
-              tooltipId="select-file"
-            />
-            <ActionButton
-              icon={folderIcon}
-              onClick={() => libraryService.send('SELECT_DIRECTORY')}
-              tooltipId="select-directory"
-            />
-            <ActionButton
-              icon={recursiveIcon}
-              onClick={() => handleSettingChange('recursive', !recursive, true)}
-              isSelected={recursive}
-              tooltipId="recursive"
-            />
-          </>
-        )}
+        <ActionButton
+          icon={imageIcon}
+          onClick={() => libraryService.send('SELECT_FILE')}
+          tooltipId="select-file"
+        />
+        <ActionButton
+          icon={folderIcon}
+          onClick={() => libraryService.send('SELECT_DIRECTORY')}
+          tooltipId="select-directory"
+        />
+        <ActionButton
+          icon={recursiveIcon}
+          onClick={() => handleSettingChange('recursive', !recursive, true)}
+          isSelected={recursive}
+          tooltipId="recursive"
+        />
         <ActionButton
           icon={shuffleIcon}
           onClick={() => libraryService.send('SHUFFLE')}

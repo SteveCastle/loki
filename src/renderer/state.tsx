@@ -1637,10 +1637,20 @@ export const libraryMachine = createMachine(
             }),
             always: [
               { target: 'loadingFromDB', cond: hasPersistedFilter },
-              // View-only public visitors can't use the directory picker
-              // (an admin feature — its fs endpoints require auth), so a
-              // fresh session bootstraps into the full library instead of
-              // auto-opening a picker that can only fail.
+              // A server-configured default start path opens directly on a
+              // fresh session instead of the picker — for every web
+              // visitor. (View-only sessions get a read-only folder scan:
+              // the server skips the library import for them.)
+              {
+                target: 'loadingFromFS',
+                cond: () => !!getAccess().defaultStartPath,
+                actions: assign<LibraryState, AnyEventObject>({
+                  initialFile: () => getAccess().defaultStartPath,
+                }),
+              },
+              // No default path: view-only visitors bootstrap into the full
+              // library (the auto-opening picker was a jarring first paint);
+              // they can still browse folders from the command palette.
               {
                 target: 'loadingFromDB',
                 cond: (context: LibraryState) => !context.canWrite,

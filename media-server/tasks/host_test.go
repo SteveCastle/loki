@@ -133,7 +133,7 @@ func TestResolveResources(t *testing.T) {
 			absent:    []string{HostBucketLocalCompute, HostBucketEmbed}},
 		{name: "process heavy union", command: "process",
 			arguments: []string{"--ops=describe,embed,faces"},
-			want: []string{HostBucketOllama, HostBucketLocalCompute, HostBucketEmbed, HostBucketFaces}},
+			want:      []string{HostBucketOllama, HostBucketLocalCompute, HostBucketEmbed, HostBucketFaces}},
 		{name: "process ops in input", command: "process",
 			input: "--ops=embed --query64=eA==",
 			want:  []string{HostBucketEmbed, HostBucketLocalCompute}},

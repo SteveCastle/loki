@@ -90,9 +90,9 @@ func TestByoFaceModelDefaults(t *testing.T) {
 func TestByoFaceModelInvalidEntriesSkipped(t *testing.T) {
 	setFaceConfig(t, func(c *appconfig.Config) {
 		c.ByoFaceModels = []appconfig.ByoFaceModel{
-			{ID: "", ModelPath: `C:\m.onnx`, Dim: 512},   // no ID
-			{ID: "no-path", Dim: 512},                    // no path
-			{ID: "no-dim", ModelPath: `C:\m.onnx`},       // no dim
+			{ID: "", ModelPath: `C:\m.onnx`, Dim: 512},    // no ID
+			{ID: "no-path", Dim: 512},                     // no path
+			{ID: "no-dim", ModelPath: `C:\m.onnx`},        // no dim
 			{ID: "sface", ModelPath: `C:\m.onnx`, Dim: 4}, // shadows built-in
 		}
 	})

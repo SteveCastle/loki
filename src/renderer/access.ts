@@ -8,6 +8,9 @@ export interface AccessInfo {
   loggedIn: boolean;
   publicAccess: boolean;
   canWrite: boolean;
+  // Server-configured folder a fresh session opens instead of the picker
+  // (signed-in web sessions only; '' = no default).
+  defaultStartPath: string;
 }
 
 // Flag-off + logged-out never renders the SPA (the server 302s /app/ to
@@ -20,7 +23,12 @@ export function deriveCanWrite(a: {
   return a.loggedIn || !a.publicAccess;
 }
 
-let cached: AccessInfo = { loggedIn: true, publicAccess: false, canWrite: true };
+let cached: AccessInfo = {
+  loggedIn: true,
+  publicAccess: false,
+  canWrite: true,
+  defaultStartPath: '',
+};
 
 // Fetches /auth/status before the state machine starts so canWrite is
 // correct in the machine's initial context (no hidden-then-shown flicker).
@@ -39,6 +47,8 @@ export async function initAccess(): Promise<AccessInfo> {
         loggedIn: !!data.loggedIn,
         publicAccess: !!data.publicAccess,
       }),
+      defaultStartPath:
+        typeof data.defaultStartPath === 'string' ? data.defaultStartPath : '',
     };
   } catch {
     // Server unreachable: keep the permissive default — the server still

@@ -66,8 +66,8 @@ func TestOnnxFileTimeout(t *testing.T) {
 	}{
 		{120, 120 * time.Second},
 		{5, 5 * time.Second},
-		{0, 0},   // unset → disabled at use time
-		{-1, 0},  // negative → disabled
+		{0, 0},  // unset → disabled at use time
+		{-1, 0}, // negative → disabled
 	} {
 		cfg := prev
 		cfg.OnnxFileTimeoutSeconds = c.secs

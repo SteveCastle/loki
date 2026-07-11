@@ -40,6 +40,19 @@ func isSetupLockedAdmin(deps *Dependencies, claims *auth.Claims) bool {
 	return setupRequired
 }
 
+// pathAllowedForRequest scopes media-path access for non-admin requesters:
+// s3:// paths must live inside a configured storage root, and LOCAL paths
+// outside every root are admin-only (an anonymous public-access visitor
+// must never read arbitrary files off the server's filesystem). Admins keep
+// today's unrestricted behavior — the Electron viewer serves arbitrary
+// local files through its own server.
+func pathAllowedForRequest(deps *Dependencies, r *http.Request, path string) bool {
+	if deps.Storage != nil && deps.Storage.BackendFor(path) != nil {
+		return true
+	}
+	return isAdminRequest(deps, r)
+}
+
 func writeUnauthorizedJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusUnauthorized)

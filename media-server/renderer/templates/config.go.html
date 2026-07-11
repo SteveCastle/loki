@@ -858,6 +858,21 @@
                   </div>
                 </div>
                 <div class="field">
+                  <label class="label">Default start path</label>
+                  <input
+                    id="default-start-path"
+                    class="input"
+                    type="text"
+                    placeholder="s3://bucket/prefix or /path/to/folder (empty = show picker)"
+                    value="{{.Config.DefaultStartPath}}"
+                  />
+                  <small class="hint">
+                    The folder the web viewer opens on a fresh visit instead
+                    of the directory picker. Accepts a storage-root local
+                    path or an s3:// prefix.
+                  </small>
+                </div>
+                <div class="field">
                   <label class="label">Server port</label>
                   <input
                     id="server-port"
@@ -2548,6 +2563,9 @@
             .checked,
           allowPublicAccess: document.getElementById('allow-public-access')
             .checked,
+          defaultStartPath: document
+            .getElementById('default-start-path')
+            .value.trim(),
           fasterWhisperPath: document
             .getElementById('faster-whisper-path')
             .value.trim(),

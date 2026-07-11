@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stevecastle/shrike/auth"
 	"github.com/stevecastle/shrike/storage"
 )
 
@@ -183,25 +184,75 @@ func TestFsScanHandler_InsertsIntoDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.WriteFile(filepath.Join(tmpDir, "photo.jpg"), []byte("fake"), 0644)
 
-	b := storage.NewLocalBackend(tmpDir, "test")
-	deps := &Dependencies{DB: setupTestDB(t), Storage: storage.NewRegistry([]storage.Backend{b})}
-	handler := fsScanHandler(deps)
-
-	body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})
-	req := httptest.NewRequest(http.MethodPost, "/api/fs/scan", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rr.Code)
+	db := setupTestDB(t)
+	// Auth tables + a user so the test can make an ADMIN request: importing
+	// scanned paths into the library only happens for admins — anonymous
+	// (public view-only) scans return the listing without mutating the DB.
+	for _, stmt := range []string{
+		`CREATE TABLE users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT UNIQUE NOT NULL,
+			password_hash TEXT NOT NULL,
+			created_at INTEGER
+		)`,
+		`CREATE TABLE api_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			name TEXT NOT NULL,
+			key_hash TEXT UNIQUE NOT NULL,
+			prefix TEXT NOT NULL,
+			created_at INTEGER,
+			last_used_at INTEGER
+		)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("create auth tables: %v", err)
+		}
+	}
+	svc := auth.NewAuthService(db, "test-secret")
+	if err := svc.Register("steve", "pw"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	token, err := svc.Login("steve", "pw")
+	if err != nil {
+		t.Fatalf("login: %v", err)
 	}
 
+	b := storage.NewLocalBackend(tmpDir, "test")
+	deps := &Dependencies{DB: db, Auth: svc, Storage: storage.NewRegistry([]storage.Backend{b})}
+	handler := fsScanHandler(deps)
+
+	scan := func(authed bool) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"path": tmpDir, "recursive": false})
+		req := httptest.NewRequest(http.MethodPost, "/api/fs/scan", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if authed {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr
+	}
+
+	// Anonymous: 200 with the listing, but no library import.
+	if rr := scan(false); rr.Code != http.StatusOK {
+		t.Fatalf("anonymous scan: expected 200, got %d", rr.Code)
+	}
 	var count int
 	deps.DB.QueryRow("SELECT COUNT(*) FROM media WHERE path = ?",
 		filepath.Join(tmpDir, "photo.jpg")).Scan(&count)
+	if count != 0 {
+		t.Fatalf("anonymous scan must not import: got %d rows", count)
+	}
+
+	// Admin: 200 and the path lands in the media table.
+	if rr := scan(true); rr.Code != http.StatusOK {
+		t.Fatalf("admin scan: expected 200, got %d", rr.Code)
+	}
+	deps.DB.QueryRow("SELECT COUNT(*) FROM media WHERE path = ?",
+		filepath.Join(tmpDir, "photo.jpg")).Scan(&count)
 	if count != 1 {
-		t.Fatalf("expected 1 row in media table, got %d", count)
+		t.Fatalf("expected 1 row in media table after admin scan, got %d", count)
 	}
 }
 
