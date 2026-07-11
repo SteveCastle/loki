@@ -171,3 +171,32 @@ func TestS3BackendContains_PrefixIsSegmentAligned(t *testing.T) {
 		t.Error("Contains(photosX) = true, want false")
 	}
 }
+
+// --- isThumbnailKey ---
+
+func TestS3IsThumbnailKey(t *testing.T) {
+	b := newTestS3Backend("my-bucket", "", "Test", "_thumbnails")
+
+	thumbs := []string{
+		"_thumbnails",
+		"_thumbnails/abc123.png",
+		"_thumbnails/deep/nested.mp4",
+	}
+	for _, k := range thumbs {
+		if !b.isThumbnailKey(k) {
+			t.Errorf("isThumbnailKey(%q) = false, want true", k)
+		}
+	}
+
+	media := []string{
+		"uploads/photo.jpg",
+		"_thumbnails-not-really/photo.jpg", // sibling dir must not match
+		"media/_thumbnails/inside.jpg",     // only the cache at the key root
+		"",
+	}
+	for _, k := range media {
+		if b.isThumbnailKey(k) {
+			t.Errorf("isThumbnailKey(%q) = true, want false", k)
+		}
+	}
+}

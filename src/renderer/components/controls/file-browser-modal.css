@@ -108,9 +108,21 @@
 .file-browser-footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border-color, #333);
+}
+
+/* The path "Open" will load — first child so it soaks up remaining width */
+.file-browser-open-target {
+  margin-right: auto;
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .file-browser-footer button {

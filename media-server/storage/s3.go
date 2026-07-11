@@ -105,6 +105,15 @@ func (b *S3Backend) ThumbnailPath(filename string) string {
 	return b.keyToPath(key)
 }
 
+// isThumbnailKey reports whether an object key lives in the thumbnail cache
+// directory. Thumbnails are a system cache, not library media: List and
+// Scan hide them so pickers don't show the directory and library loads
+// don't import generated thumbnails as media.
+func (b *S3Backend) isThumbnailKey(key string) bool {
+	return key == b.thumbnailPrefix ||
+		strings.HasPrefix(key, b.thumbnailPrefix+"/")
+}
+
 // Root returns the Entry representing the top-level directory of this backend.
 func (b *S3Backend) Root() Entry {
 	rootPath := "s3://" + b.bucket + "/"
@@ -159,6 +168,9 @@ func (b *S3Backend) List(ctx context.Context, dirPath string) ([]Entry, error) {
 				continue
 			}
 			dirKey := strings.TrimSuffix(*cp.Prefix, "/")
+			if b.isThumbnailKey(dirKey) {
+				continue
+			}
 			name := path.Base(dirKey)
 			entries = append(entries, Entry{
 				Name:  name,
@@ -229,6 +241,9 @@ func (b *S3Backend) Scan(ctx context.Context, dirPath string, recursive bool) ([
 				continue
 			}
 			if *obj.Key == key {
+				continue
+			}
+			if b.isThumbnailKey(*obj.Key) {
 				continue
 			}
 			name := path.Base(*obj.Key)
