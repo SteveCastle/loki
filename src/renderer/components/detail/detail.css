@@ -9,8 +9,16 @@
   cursor: grab;
 }
 
-.DetailContainer.comicMode {
+/* Comic and battle modes render two Details side by side in the flex-row
+   .panel. Reserve exactly half the panel for each: without min-width: 0 a
+   flex item's automatic minimum size tracks the media's min-content width
+   (cover-sized or natural-size images are wider than half the panel), which
+   blocks shrinking and lets the first panel swallow the whole viewport in
+   every scale mode except fit. */
+.DetailContainer.dualPane {
+  flex: 0 0 50%;
   width: 50%;
+  min-width: 0;
 }
 
 .Detail {

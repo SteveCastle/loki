@@ -395,7 +395,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       ref={drop}
       className={[
         'DetailContainer',
-        settings.comicMode ? 'comicMode' : '',
+        settings.comicMode || settings.battleMode ? 'dualPane' : '',
         settings.controlMode === 'mouse' ? 'grabbable' : '',
       ].join(' ')}
     >
