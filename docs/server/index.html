@@ -101,7 +101,6 @@
               <li><a href="#initial-setup">Initial Setup</a></li>
               <li><a href="#dependencies">Installing Dependencies</a></li>
               <li><a href="#web-ui">Web Interface</a></li>
-              <li><a href="#browser-extension">Browser Extension</a></li>
             </ul>
           </li>
           <li><a href="#docker">Docker Quick Start</a>
@@ -110,8 +109,12 @@
               <li><a href="#docker-compose">Docker Compose + MinIO</a></li>
               <li><a href="#docker-local-storage">Local Storage</a></li>
               <li><a href="#docker-s3-storage">S3-Compatible Storage</a></li>
-              <li><a href="#docker-env">Environment Variables</a></li>
               <li><a href="#docker-data">Data Persistence</a></li>
+            </ul>
+          </li>
+          <li><a href="#config">Configuration</a>
+            <ul>
+              <li><a href="#docker-env">Environment Variables</a></li>
             </ul>
           </li>
           <li><a href="#users">Users &amp; Permissions</a>
@@ -128,6 +131,7 @@
               <li><a href="#creating-jobs">Creating Jobs</a></li>
               <li><a href="#monitoring">Monitoring Progress</a></li>
               <li><a href="#job-management">Job Management</a></li>
+              <li><a href="#tasks">Available Tasks</a></li>
             </ul>
           </li>
           <li><a href="#ingestion">Media Ingestion</a>
@@ -148,6 +152,7 @@
               <li><a href="#embeddings-viz">3D Embedding Visualization</a></li>
             </ul>
           </li>
+          <li><a href="#app-experience">App Experience</a></li>
           <li><a href="#media-browser">Media Browser</a>
             <ul>
               <li><a href="#browse">Browsing & Search</a></li>
@@ -155,9 +160,7 @@
             </ul>
           </li>
           <li><a href="#swipe-app">Swipe App</a></li>
-          <li><a href="#app-experience">App Experience</a></li>
-          <li><a href="#tasks">Available Tasks</a></li>
-          <li><a href="#config">Configuration</a></li>
+          <li><a href="#browser-extension">Browser Extensions</a></li>
           <li><a href="#api">API Reference</a></li>
         </ul>
       </nav>
@@ -246,22 +249,6 @@
         </p>
         <div class="placeholder-video">Web UI Demo Video</div>
 
-        <h3 id="browser-extension">Browser Extension</h3>
-        <p>
-          Install the browser extension for Chrome or Firefox to quickly create jobs from any webpage.
-        </p>
-        <ul>
-          <li><strong>Chrome</strong>: Load unpacked from <code>chrome-extension/</code> folder</li>
-          <li><strong>Firefox</strong>: Load from <code>firefox-extension/</code> folder</li>
-        </ul>
-        <p>Features:</p>
-        <ul>
-          <li>One-click task creation with current page URL</li>
-          <li>Command selection dropdown</li>
-          <li>Custom arguments support</li>
-          <li>Real-time job status updates</li>
-        </ul>
-        <div class="placeholder-video">Browser Extension Demo Video</div>
       </section>
 
       <section id="docker">
@@ -402,38 +389,16 @@
           <tr><td>DigitalOcean Spaces</td><td><code>https://&lt;region&gt;.digitaloceanspaces.com</code></td></tr>
         </table>
 
-        <h3 id="docker-env">Environment Variables</h3>
+        <h3 id="docker-env-image">Environment Variables</h3>
         <p>
-          All server settings can be configured with environment variables, no config file needed.
-          Environment variables always win over <code>config.json</code>, which wins over built-in
-          defaults. Storage roots supplied via env are never written back into the config file.
-        </p>
-        <table>
-          <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-          <tr><td><code>LOWKEY_PORT</code></td><td><code>10111</code></td><td>HTTP listen port (in Docker, map it with <code>-p host:10111</code> instead)</td></tr>
-          <tr><td><code>LOWKEY_DB_PATH</code></td><td><code>/data/db/media.db</code> (set in image)</td><td>SQLite database path</td></tr>
-          <tr><td><code>LOWKEY_CONFIG_PATH</code></td><td>data dir + <code>config.json</code></td><td>Config file location override</td></tr>
-          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>/data/downloads</code> (set in image)</td><td>Fallback download directory when no storage root is configured</td></tr>
-          <tr><td><code>LOWKEY_ADMIN_USER</code> / <code>LOWKEY_ADMIN_PASSWORD</code></td><td></td><td>Provision the admin account on first boot (headless setup)</td></tr>
-          <tr><td><code>LOWKEY_ALLOW_PUBLIC_ACCESS</code></td><td><code>false</code></td><td>View-only anonymous access to the gallery, search, and Swipe app</td></tr>
-          <tr><td><code>LOWKEY_JWT_SECRET</code></td><td>(auto-generated)</td><td>JWT signing secret for authentication</td></tr>
-          <tr><td><code>LOWKEY_OLLAMA_BASE_URL</code></td><td><code>http://host.docker.internal:11434</code> (set in image)</td><td>Ollama API endpoint for LLM features</td></tr>
-          <tr><td><code>LOWKEY_OLLAMA_MODEL</code></td><td><code>llama3.2-vision</code></td><td>Vision model for image descriptions</td></tr>
-          <tr><td><code>LOWKEY_DISCORD_TOKEN</code></td><td></td><td>Discord token for media export</td></tr>
-          <tr><td><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td></td><td>Path to an existing faster-whisper install</td></tr>
-          <tr><td><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td></td><td>Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
-          <tr><td><code>LOWKEY_DEFAULT_ROOT</code></td><td>first root</td><td>Which <code>LOWKEY_ROOT_&lt;N&gt;</code> receives uploads/downloads (1-based index or label)</td></tr>
-          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots, local and S3 (set <code>"default":true</code> on one); wins over <code>LOWKEY_ROOT_&lt;N&gt;</code></td></tr>
-        </table>
-        <p>
-          Every other config key has an env twin as well: inference providers
-          (<code>LOWKEY_INFERENCE_PROVIDER</code>, <code>LOWKEY_LMSTUDIO_*</code>,
-          <code>LOWKEY_LLAMACPP_*</code>, <code>LOWKEY_RUNPOD_*</code>,
-          <code>LOWKEY_INFERENCE_&lt;PROVIDER&gt;_CONCURRENCY</code>), transcription
-          (<code>LOWKEY_TRANSCRIPTION_PROVIDER|MODEL|LANGUAGE|VAD</code>), and ONNX task tuning
-          (<code>LOWKEY_EMBEDDING_*</code>, <code>LOWKEY_AUTOTAG_*</code>, <code>LOWKEY_FACE_*</code>,
-          <code>LOWKEY_ONNX_FILE_TIMEOUT</code>). See <a href="#config">Configuration</a> for the
-          matching keys.
+          Every server setting can be set with an environment variable &mdash; the full table lives in
+          <a href="#docker-env">Configuration</a>. The image itself presets
+          <code>LOWKEY_DB_PATH=/data/db/media.db</code>,
+          <code>LOWKEY_DOWNLOAD_PATH=/data/downloads</code>,
+          <code>XDG_DATA_HOME=/data</code> (so config and models persist in the volume), and
+          <code>LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434</code>. The container
+          listens on <code>10111</code>; pick the host port with <code>-p</code> rather than
+          <code>LOWKEY_PORT</code>.
         </p>
         <p>
           If you're running <a href="https://ollama.com" target="_blank">Ollama</a> on the host machine for AI descriptions,
@@ -465,6 +430,89 @@
           <code>  -v /path/to/lowkey-data:/data \</code><br>
           <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
         </div>
+      </section>
+
+      <section id="config">
+        <h2>Configuration</h2>
+        <p>Configure the server through the web interface at <code>/config</code> or edit the config file directly:</p>
+        <div class="code-block">
+          <code>Windows: %APPDATA%\Lowkey Media Viewer\config.json</code><br>
+          <code>Linux: ~/.local/share/lowkey-media-viewer/config.json (or $XDG_DATA_HOME/lowkey-media-viewer/)</code><br>
+          <code>macOS: ~/Library/Application Support/Lowkey Media Viewer/config.json</code>
+        </div>
+        <p>
+          Set <code>LOWKEY_CONFIG_PATH</code> to use a different location. Precedence is
+          environment variables &gt; <code>config.json</code> &gt; built-in defaults; nearly every
+          key below has a matching <code>LOWKEY_*</code> env var (see the
+          <a href="#docker-env">table at the end of this section</a>). Storage roots supplied via
+          env are never written back into the file.
+        </p>
+        <h4>Server</h4>
+        <ul>
+          <li><strong>port</strong> - HTTP listen port (default 10111; restart to apply)</li>
+          <li><strong>dbPath</strong> - Path to the SQLite database</li>
+          <li><strong>roots</strong> - Storage roots (local directories and S3 buckets); mark one <code>"default": true</code> to receive uploads and downloads</li>
+          <li><strong>downloadPath</strong> - Fallback download directory when no storage root is configured</li>
+          <li><strong>defaultStartPath</strong> - Folder the web app opens on a fresh session</li>
+          <li><strong>allowPublicAccess</strong> - View-only anonymous access (default false; applies without restart)</li>
+          <li><strong>jwtSecret</strong> - JWT signing secret (auto-generated if unset)</li>
+          <li><strong>setupComplete</strong> - Set by the setup wizard; clear it to re-run the wizard</li>
+          <li><strong>discordToken</strong> - Discord token for media export</li>
+        </ul>
+        <h4>LLM &amp; Vision</h4>
+        <ul>
+          <li><strong>inferenceProvider</strong> - <code>off</code>, <code>ollama</code> (default), <code>runpod</code>, <code>lmstudio</code>, or <code>llamacpp</code></li>
+          <li><strong>ollamaBaseUrl / ollamaModel</strong> - defaults <code>http://localhost:11434</code> / <code>llama3.2-vision</code></li>
+          <li><strong>lmstudioBaseUrl / lmstudioModel / lmstudioApiKey</strong>, <strong>llamacppBaseUrl / llamacppModel / llamacppApiKey</strong>, <strong>runpodEndpoint / runpodApiKey</strong> - alternate providers</li>
+          <li><strong>describePrompt</strong> - Prompt used for image descriptions</li>
+          <li><strong>inferenceConcurrency</strong> - Per-provider request caps</li>
+        </ul>
+        <h4>Transcription</h4>
+        <ul>
+          <li><strong>transcriptionProvider / transcriptionModel / transcriptionLanguage / transcriptionVadFilter</strong> - defaults <code>whisper-cli</code> / provider default / <code>en</code> / on</li>
+          <li><strong>fasterWhisperPath</strong> - Use an existing Faster Whisper install instead of the downloadable one</li>
+        </ul>
+        <h4>ONNX Tasks (embedding, autotag, faces)</h4>
+        <ul>
+          <li><strong>embeddingModel / embeddingProvider / embeddingPerformance / embeddingWorkers / embeddingThreads</strong> - defaults <code>siglip2-base-patch16-224</code>, <code>cpu</code>, <code>balanced</code></li>
+          <li><strong>autotagModel / autotagProvider / autotagPerformance / autotagWorkers / autotagThreads</strong> - default model <code>wd-eva02-large-tagger-v3</code></li>
+          <li><strong>onnxTagger.generalThreshold / characterThreshold</strong> - tag confidence cutoffs (defaults 0.35 / 0.85)</li>
+          <li><strong>faceModel / faceProvider / facePerformance / faceRouting</strong> - defaults <code>sface</code>, <code>cpu</code>, <code>balanced</code>, <code>auto</code>; <strong>byoFaceModels</strong> registers bring-your-own ONNX recognizers</li>
+          <li><strong>onnxFileTimeoutSeconds</strong> - Per-file watchdog (default 120; 0 disables)</li>
+        </ul>
+
+        <h3 id="docker-env">Environment Variables</h3>
+        <p>
+          All server settings can be configured with environment variables, no config file needed.
+          Environment variables always win over <code>config.json</code>, which wins over built-in
+          defaults. Storage roots supplied via env are never written back into the config file.
+        </p>
+        <table>
+          <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+          <tr><td><code>LOWKEY_PORT</code></td><td><code>10111</code></td><td>HTTP listen port</td></tr>
+          <tr><td><code>LOWKEY_DB_PATH</code></td><td>data dir + <code>media.db</code></td><td>SQLite database path</td></tr>
+          <tr><td><code>LOWKEY_CONFIG_PATH</code></td><td>data dir + <code>config.json</code></td><td>Config file location override</td></tr>
+          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>~/media</code></td><td>Fallback download directory when no storage root is configured</td></tr>
+          <tr><td><code>LOWKEY_ADMIN_USER</code> / <code>LOWKEY_ADMIN_PASSWORD</code></td><td></td><td>Provision the admin account on first boot (headless setup)</td></tr>
+          <tr><td><code>LOWKEY_ALLOW_PUBLIC_ACCESS</code></td><td><code>false</code></td><td>View-only anonymous access to the gallery, search, and Swipe app</td></tr>
+          <tr><td><code>LOWKEY_JWT_SECRET</code></td><td>(auto-generated)</td><td>JWT signing secret for authentication</td></tr>
+          <tr><td><code>LOWKEY_OLLAMA_BASE_URL</code></td><td><code>http://localhost:11434</code></td><td>Ollama API endpoint for LLM features</td></tr>
+          <tr><td><code>LOWKEY_OLLAMA_MODEL</code></td><td><code>llama3.2-vision</code></td><td>Vision model for image descriptions</td></tr>
+          <tr><td><code>LOWKEY_DISCORD_TOKEN</code></td><td></td><td>Discord token for media export</td></tr>
+          <tr><td><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td></td><td>Path to an existing faster-whisper install</td></tr>
+          <tr><td><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td></td><td>Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
+          <tr><td><code>LOWKEY_DEFAULT_ROOT</code></td><td>first root</td><td>Which <code>LOWKEY_ROOT_&lt;N&gt;</code> receives uploads/downloads (1-based index or label)</td></tr>
+          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots, local and S3 (set <code>"default":true</code> on one); wins over <code>LOWKEY_ROOT_&lt;N&gt;</code></td></tr>
+        </table>
+        <p>
+          Every other config key has an env twin as well: inference providers
+          (<code>LOWKEY_INFERENCE_PROVIDER</code>, <code>LOWKEY_LMSTUDIO_*</code>,
+          <code>LOWKEY_LLAMACPP_*</code>, <code>LOWKEY_RUNPOD_*</code>,
+          <code>LOWKEY_INFERENCE_&lt;PROVIDER&gt;_CONCURRENCY</code>), transcription
+          (<code>LOWKEY_TRANSCRIPTION_PROVIDER|MODEL|LANGUAGE|VAD</code>), and ONNX task tuning
+          (<code>LOWKEY_EMBEDDING_*</code>, <code>LOWKEY_AUTOTAG_*</code>, <code>LOWKEY_FACE_*</code>,
+          <code>LOWKEY_ONNX_FILE_TIMEOUT</code>), matching the keys above.
+        </p>
       </section>
 
       <section id="users">
@@ -617,6 +665,29 @@
           <li><strong>Remove</strong> - Delete a job from the queue</li>
           <li><strong>Clear</strong> - Remove all non-running jobs</li>
         </ul>
+
+        <h3 id="tasks">Available Tasks</h3>
+        <table class="task-table">
+          <tr><th>Task ID</th><th>Name</th><th>Description</th></tr>
+          <tr><td><code>ingest</code></td><td>Ingest Media Files</td><td>Scan a local directory or storage root, or download from YouTube / Discord / gallery URLs (yt-dlp, DiscordChatExporter, gallery-dl), with optional follow-up processing</td></tr>
+          <tr><td><code>process</code></td><td>Process Media (Combined Ops)</td><td>Run any combination of the per-item ops below in a single pass over a query or path</td></tr>
+          <tr><td><code>describe</code></td><td>Generate Descriptions</td><td>LLM vision descriptions via the configured inference provider</td></tr>
+          <tr><td><code>transcribe</code></td><td>Generate Transcripts</td><td>Video transcription (Faster Whisper)</td></tr>
+          <tr><td><code>hash</code></td><td>Generate Hashes</td><td>Content hash + file size</td></tr>
+          <tr><td><code>dimensions</code></td><td>Generate Dimensions</td><td>Image/video width and height</td></tr>
+          <tr><td><code>autotag</code></td><td>Auto Tag (ONNX)</td><td>ML-based automatic image tagging</td></tr>
+          <tr><td><code>embed</code></td><td>Visual Embedding (ONNX)</td><td>Compute embeddings for similarity search</td></tr>
+          <tr><td><code>faces</code></td><td>Detect Faces (ONNX)</td><td>Detect and embed faces, clustering incrementally</td></tr>
+          <tr><td><code>faces-cluster</code></td><td>Cluster Faces into People</td><td>Group stored faces into people</td></tr>
+          <tr><td><code>metadata</code></td><td>Generate Metadata (Legacy)</td><td>Legacy alias that maps <code>--type</code> onto the ops above</td></tr>
+          <tr><td><code>hls</code></td><td>HLS Transcode</td><td>Adaptive streaming renditions for large videos</td></tr>
+          <tr><td><code>move</code></td><td>Move Media Files</td><td>Move files and update database references</td></tr>
+          <tr><td><code>remove</code></td><td>Remove Media</td><td>Remove entries from the database</td></tr>
+          <tr><td><code>cleanup</code></td><td>CleanUp</td><td>Remove orphaned database entries</td></tr>
+          <tr><td><code>lora-dataset</code></td><td>Create LoRA Dataset</td><td>Generate datasets for ML training</td></tr>
+          <tr><td><code>ffmpeg</code>, <code>ffmpeg-*</code></td><td>FFmpeg Operations</td><td>Custom ffmpeg runs plus scale, convert, extract-audio, screenshot, thumbnail, reverse, speed, grayscale, blur, resize, crop, rotate, caption, and thumbnail-sheet variants</td></tr>
+          <tr><td><code>save</code></td><td>Save File</td><td>Save a file into the library</td></tr>
+        </table>
       </section>
 
       <section id="ingestion">
@@ -805,42 +876,6 @@
         </p>
       </section>
 
-      <section id="media-browser">
-        <h2>Media Browser</h2>
-
-        <h3 id="browse">Browsing & Search</h3>
-        <p>
-          Browse your media collection through the web interface at <code>/media</code>.
-          Full-text search across filenames, descriptions, and tags.
-        </p>
-        <div class="placeholder-video">Media Browser Demo Video</div>
-
-        <h3 id="file-serving">File Serving</h3>
-        <p>
-          Stream media files directly from the server with caching headers for performance.
-          Access files at <code>/media/file?path=...</code>
-        </p>
-      </section>
-
-      <section id="swipe-app">
-        <h2>Swipe App</h2>
-        <p>
-          The Swipe App is a progressive web app (PWA) that provides a TikTok-like experience for browsing your media database.
-          Install it on your smartphone to swipe through your collection with a mobile-optimized interface.
-        </p>
-        <ul>
-          <li><strong>Installable PWA</strong> - Add to your home screen for a native app experience</li>
-          <li><strong>Swipe Navigation</strong> - Swipe up/down to browse through media</li>
-          <li><strong>Mobile Optimized</strong> - Designed for touch and vertical video viewing</li>
-          <li><strong>Tag & Filter</strong> - Browse by tags and filter your collection</li>
-          <li><strong>More Like This</strong> - Switch to similarity mode to see media that looks like the current item, and re-anchor as you go</li>
-        </ul>
-        <p>
-          Access the Swipe App at <code>http://[server-ip]:10111/swipe</code> on your mobile device.
-        </p>
-        <div class="placeholder-video">Swipe App Demo Video</div>
-      </section>
-
       <section id="app-experience">
         <h2>App Experience</h2>
         <p>
@@ -889,74 +924,59 @@
         <div class="placeholder-video">App Experience Demo Video</div>
       </section>
 
-      <section id="tasks">
-        <h2>Available Tasks</h2>
-        <table class="task-table">
-          <tr><th>Task ID</th><th>Name</th><th>Description</th></tr>
-          <tr><td><code>ingest</code></td><td>Ingest Media</td><td>Scan directories and add files to database</td></tr>
-          <tr><td><code>metadata</code></td><td>Generate Metadata</td><td>Generate descriptions, transcripts, hashes</td></tr>
-          <tr><td><code>autotag</code></td><td>Auto Tag</td><td>ML-based automatic image tagging</td></tr>
-          <tr><td><code>embed</code></td><td>Generate Embeddings</td><td>Compute visual embeddings for similarity search</td></tr>
-          <tr><td><code>faces</code></td><td>Detect Faces (ONNX)</td><td>Detect and embed faces, clustering incrementally</td></tr>
-          <tr><td><code>faces-cluster</code></td><td>Cluster Faces into People</td><td>Group stored faces into people</td></tr>
-          <tr><td><code>yt-dlp</code></td><td>yt-dlp</td><td>Download videos from YouTube, etc.</td></tr>
-          <tr><td><code>gallery-dl</code></td><td>gallery-dl</td><td>Download media from gallery sites</td></tr>
-          <tr><td><code>ffmpeg</code></td><td>ffmpeg</td><td>Process and convert media files</td></tr>
-          <tr><td><code>move</code></td><td>Move Media</td><td>Move files and update database references</td></tr>
-          <tr><td><code>remove</code></td><td>Remove Media</td><td>Remove entries from database</td></tr>
-          <tr><td><code>cleanup</code></td><td>Cleanup</td><td>Remove orphaned database entries</td></tr>
-          <tr><td><code>lora-dataset</code></td><td>LoRA Dataset</td><td>Generate datasets for ML training</td></tr>
-        </table>
+      <section id="media-browser">
+        <h2>Media Browser</h2>
+
+        <h3 id="browse">Browsing & Search</h3>
+        <p>
+          Browse your media collection through the web interface at <code>/media</code>.
+          Full-text search across filenames, descriptions, and tags.
+        </p>
+        <div class="placeholder-video">Media Browser Demo Video</div>
+
+        <h3 id="file-serving">File Serving</h3>
+        <p>
+          Stream media files directly from the server with caching headers for performance.
+          Access files at <code>/media/file?path=...</code>
+        </p>
       </section>
 
-      <section id="config">
-        <h2>Configuration</h2>
-        <p>Configure the server through the web interface at <code>/config</code> or edit the config file directly:</p>
-        <div class="code-block">
-          <code>Windows: %APPDATA%\Lowkey Media Viewer\config.json</code><br>
-          <code>Linux: ~/.local/share/lowkey-media-viewer/config.json (or $XDG_DATA_HOME/lowkey-media-viewer/)</code><br>
-          <code>macOS: ~/Library/Application Support/Lowkey Media Viewer/config.json</code>
-        </div>
+      <section id="swipe-app">
+        <h2>Swipe App</h2>
         <p>
-          Set <code>LOWKEY_CONFIG_PATH</code> to use a different location. Precedence is
-          environment variables &gt; <code>config.json</code> &gt; built-in defaults; nearly every
-          key below has a matching <code>LOWKEY_*</code> env var (see
-          <a href="#docker-env">Environment Variables</a>). Storage roots supplied via env are
-          never written back into the file.
+          The Swipe App is a progressive web app (PWA) that provides a TikTok-like experience for browsing your media database.
+          Install it on your smartphone to swipe through your collection with a mobile-optimized interface.
         </p>
-        <h4>Server</h4>
         <ul>
-          <li><strong>port</strong> - HTTP listen port (default 10111; restart to apply)</li>
-          <li><strong>dbPath</strong> - Path to the SQLite database</li>
-          <li><strong>roots</strong> - Storage roots (local directories and S3 buckets); mark one <code>"default": true</code> to receive uploads and downloads</li>
-          <li><strong>downloadPath</strong> - Fallback download directory when no storage root is configured</li>
-          <li><strong>defaultStartPath</strong> - Folder the web app opens on a fresh session</li>
-          <li><strong>allowPublicAccess</strong> - View-only anonymous access (default false; applies without restart)</li>
-          <li><strong>jwtSecret</strong> - JWT signing secret (auto-generated if unset)</li>
-          <li><strong>setupComplete</strong> - Set by the setup wizard; clear it to re-run the wizard</li>
-          <li><strong>discordToken</strong> - Discord token for media export</li>
+          <li><strong>Installable PWA</strong> - Add to your home screen for a native app experience</li>
+          <li><strong>Swipe Navigation</strong> - Swipe up/down to browse through media</li>
+          <li><strong>Mobile Optimized</strong> - Designed for touch and vertical video viewing</li>
+          <li><strong>Tag & Filter</strong> - Browse by tags and filter your collection</li>
+          <li><strong>More Like This</strong> - Switch to similarity mode to see media that looks like the current item, and re-anchor as you go</li>
         </ul>
-        <h4>LLM &amp; Vision</h4>
+        <p>
+          Access the Swipe App at <code>http://[server-ip]:10111/swipe</code> on your mobile device.
+        </p>
+        <div class="placeholder-video">Swipe App Demo Video</div>
+      </section>
+
+      <section id="browser-extension">
+        <h2>Browser Extensions</h2>
+        <p>
+          Install the browser extension for Chrome or Firefox to quickly create jobs from any webpage.
+        </p>
         <ul>
-          <li><strong>inferenceProvider</strong> - <code>off</code>, <code>ollama</code> (default), <code>runpod</code>, <code>lmstudio</code>, or <code>llamacpp</code></li>
-          <li><strong>ollamaBaseUrl / ollamaModel</strong> - defaults <code>http://localhost:11434</code> / <code>llama3.2-vision</code></li>
-          <li><strong>lmstudioBaseUrl / lmstudioModel / lmstudioApiKey</strong>, <strong>llamacppBaseUrl / llamacppModel / llamacppApiKey</strong>, <strong>runpodEndpoint / runpodApiKey</strong> - alternate providers</li>
-          <li><strong>describePrompt</strong> - Prompt used for image descriptions</li>
-          <li><strong>inferenceConcurrency</strong> - Per-provider request caps</li>
+          <li><strong>Chrome</strong>: Load unpacked from <code>chrome-extension/</code> folder</li>
+          <li><strong>Firefox</strong>: Load from <code>firefox-extension/</code> folder</li>
         </ul>
-        <h4>Transcription</h4>
+        <p>Features:</p>
         <ul>
-          <li><strong>transcriptionProvider / transcriptionModel / transcriptionLanguage / transcriptionVadFilter</strong> - defaults <code>whisper-cli</code> / provider default / <code>en</code> / on</li>
-          <li><strong>fasterWhisperPath</strong> - Use an existing Faster Whisper install instead of the downloadable one</li>
+          <li>One-click task creation with current page URL</li>
+          <li>Command selection dropdown</li>
+          <li>Custom arguments support</li>
+          <li>Real-time job status updates</li>
         </ul>
-        <h4>ONNX Tasks (embedding, autotag, faces)</h4>
-        <ul>
-          <li><strong>embeddingModel / embeddingProvider / embeddingPerformance / embeddingWorkers / embeddingThreads</strong> - defaults <code>siglip2-base-patch16-224</code>, <code>cpu</code>, <code>balanced</code></li>
-          <li><strong>autotagModel / autotagProvider / autotagPerformance / autotagWorkers / autotagThreads</strong> - default model <code>wd-eva02-large-tagger-v3</code></li>
-          <li><strong>onnxTagger.generalThreshold / characterThreshold</strong> - tag confidence cutoffs (defaults 0.35 / 0.85)</li>
-          <li><strong>faceModel / faceProvider / facePerformance / faceRouting</strong> - defaults <code>sface</code>, <code>cpu</code>, <code>balanced</code>, <code>auto</code>; <strong>byoFaceModels</strong> registers bring-your-own ONNX recognizers</li>
-          <li><strong>onnxFileTimeoutSeconds</strong> - Per-file watchdog (default 120; 0 disables)</li>
-        </ul>
+        <div class="placeholder-video">Browser Extension Demo Video</div>
       </section>
 
       <section id="api">

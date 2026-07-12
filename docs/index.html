@@ -147,28 +147,24 @@
           <h2>Table of Contents</h2>
           <ul>
             <li><a href="#viewer-overview">Overview</a></li>
-            <li><a href="#viewer-filetypes">Supported File Types</a></li>
             <li>
-              <a href="#viewer-navigation">Basic Navigation</a>
+              <a href="#viewer-getting-started">Getting Started</a>
               <ul>
                 <li><a href="#viewer-open-file">Open a File/Directory</a></li>
                 <li><a href="#viewer-recursive">Recursive File Loading</a></li>
                 <li><a href="#viewer-open-archive">Open a Comic Archive</a></li>
                 <li><a href="#viewer-comic-mode">Comic View Mode</a></li>
                 <li><a href="#viewer-drag-drop">Drag &amp; Drop Import</a></li>
+              </ul>
+            </li>
+            <li>
+              <a href="#viewer-navigation">Interface &amp; Navigation</a>
+              <ul>
                 <li><a href="#viewer-panels">Using Panels</a></li>
                 <li><a href="#viewer-command">Command Palette</a></li>
                 <li><a href="#viewer-context-palette">Context Palette</a></li>
                 <li><a href="#viewer-grid">Grid Size</a></li>
                 <li><a href="#viewer-shuffle">Shuffle</a></li>
-              </ul>
-            </li>
-            <li>
-              <a href="#viewer-file-management">File Management</a>
-              <ul>
-                <li><a href="#viewer-copy-file">Copy the Active File</a></li>
-                <li><a href="#viewer-copy-all">Copy the Whole List</a></li>
-                <li><a href="#viewer-delete-file">Delete the Active File</a></li>
               </ul>
             </li>
             <li>
@@ -179,6 +175,14 @@
               </ul>
             </li>
             <li>
+              <a href="#viewer-playback">Video & Audio Playback</a>
+              <ul>
+                <li><a href="#viewer-controls">Playback Controls</a></li>
+                <li><a href="#viewer-autoplay">Autoplay Settings</a></li>
+                <li><a href="#viewer-looping">Looping</a></li>
+              </ul>
+            </li>
+            <li>
               <a href="#viewer-curation">Curation & Tagging</a>
               <ul>
                 <li><a href="#viewer-create-tag">Creating Tags</a></li>
@@ -186,15 +190,16 @@
                 <li><a href="#viewer-tag-preview">Tag Previews</a></li>
                 <li><a href="#viewer-bulk-tag">Bulk Tagging</a></li>
                 <li><a href="#viewer-reorder">Reordering</a></li>
-                <li><a href="#viewer-filtering">Filtering by Tags</a></li>
-                <li><a href="#viewer-search">Search</a></li>
                 <li><a href="#viewer-edit-tags">Edit & Delete Tags</a></li>
                 <li><a href="#viewer-descriptions">Tag &amp; Category Descriptions</a></li>
+                <li><a href="#viewer-battle">Battle Mode (ELO Rating)</a></li>
               </ul>
             </li>
             <li>
-              <a href="#viewer-visual-search">Visual Search (AI)</a>
+              <a href="#viewer-visual-search">Search &amp; Filtering</a>
               <ul>
+                <li><a href="#viewer-filtering">Filtering by Tags</a></li>
+                <li><a href="#viewer-search">Tag &amp; Filename Search</a></li>
                 <li><a href="#viewer-query-chips">Search &amp; Filter Chips</a></li>
                 <li><a href="#viewer-find-similar">Find Similar Images</a></li>
                 <li><a href="#viewer-search-meaning">Search by Meaning</a></li>
@@ -218,14 +223,6 @@
               </ul>
             </li>
             <li>
-              <a href="#viewer-playback">Video & Audio Playback</a>
-              <ul>
-                <li><a href="#viewer-controls">Playback Controls</a></li>
-                <li><a href="#viewer-autoplay">Autoplay Settings</a></li>
-                <li><a href="#viewer-looping">Looping</a></li>
-              </ul>
-            </li>
-            <li>
               <a href="#viewer-metadata">Metadata & Transcripts</a>
               <ul>
                 <li>
@@ -245,13 +242,16 @@
               </ul>
             </li>
             <li>
-              <a href="#viewer-advanced">Advanced Features</a>
+              <a href="#viewer-file-management">File Management</a>
               <ul>
-                <li><a href="#viewer-battle">Battle Mode (ELO Rating)</a></li>
+                <li><a href="#viewer-copy-file">Copy the Active File</a></li>
+                <li><a href="#viewer-copy-all">Copy the Whole List</a></li>
+                <li><a href="#viewer-delete-file">Delete the Active File</a></li>
                 <li><a href="#viewer-duplicates">Duplicate Detection</a></li>
-                <li><a href="#viewer-hotkeys">Keyboard Shortcuts</a></li>
               </ul>
             </li>
+            <li><a href="#viewer-filetypes">Supported File Types</a></li>
+            <li><a href="#viewer-hotkeys">Keyboard Shortcuts</a></li>
             <li><a href="#viewer-support">Contact & Support</a></li>
           </ul>
         </nav>
@@ -364,214 +364,14 @@
             </p>
           </section>
 
-          <section id="viewer-filetypes">
-            <h2>Supported File Types</h2>
+          <section id="viewer-getting-started">
+            <h2>Getting Started</h2>
             <p>
-              Lowkey Media Viewer reads a wide range of image, video, and
-              audio formats natively. Comic book archives are extracted
-              automatically and their contents load like a directory.
-            </p>
-
-            <!-- Shared SVG icon sprite -->
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              style="display: none"
-              aria-hidden="true"
-            >
-              <symbol id="icon-image" viewBox="0 0 24 24">
-                <rect x="3" y="5" width="18" height="14" rx="2" />
-                <circle cx="8.5" cy="10" r="1.5" />
-                <path d="M21 16l-5-5L6 19" />
-              </symbol>
-              <symbol id="icon-video" viewBox="0 0 24 24">
-                <rect x="3" y="5" width="18" height="14" rx="2" />
-                <path d="M3 9h3M3 15h3M18 9h3M18 15h3" />
-                <path d="M10 9l5 3-5 3z" />
-              </symbol>
-              <symbol id="icon-audio" viewBox="0 0 24 24">
-                <path d="M4 12v2" />
-                <path d="M8 9v8" />
-                <path d="M12 5v14" />
-                <path d="M16 8v10" />
-                <path d="M20 11v4" />
-              </symbol>
-              <symbol id="icon-archive" viewBox="0 0 24 24">
-                <rect x="4" y="4" width="16" height="16" rx="2" />
-                <path d="M12 4v2M12 8v2M12 12v2M12 16v2" />
-                <rect x="10" y="14" width="4" height="5" rx="0.5" />
-              </symbol>
-            </svg>
-
-            <ul class="fileTypes-summary">
-              <li class="images">
-                <strong>Images</strong>
-                <span>jpg, jpeg, png, gif, bmp, svg, jfif, pjpeg, pjp, webp, avif</span>
-              </li>
-              <li class="video">
-                <strong>Video</strong>
-                <span>mp4, mov, webm, mkv, m4v, ogg</span>
-              </li>
-              <li class="audio">
-                <strong>Audio</strong>
-                <span>mp3, wav, flac, aac, ogg, m4a, opus, wma, aiff, ape</span>
-              </li>
-              <li class="archive">
-                <strong>Archives</strong>
-                <span>cbz, cbr, zip</span>
-              </li>
-            </ul>
-
-            <div class="fileTypes-group images">
-              <h4>Images</h4>
-              <div class="fileTypes-grid">
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.jpg</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.jpeg</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.png</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.gif</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.webp</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.avif</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.bmp</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.svg</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.jfif</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.pjpeg</span>
-                </span>
-                <span class="fileTypes-chip images">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
-                  <span class="fileTypes-chip-label">.pjp</span>
-                </span>
-              </div>
-            </div>
-
-            <div class="fileTypes-group video">
-              <h4>Video</h4>
-              <div class="fileTypes-grid">
-                <span class="fileTypes-chip video">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
-                  <span class="fileTypes-chip-label">.mp4</span>
-                </span>
-                <span class="fileTypes-chip video">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
-                  <span class="fileTypes-chip-label">.mov</span>
-                </span>
-                <span class="fileTypes-chip video">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
-                  <span class="fileTypes-chip-label">.webm</span>
-                </span>
-                <span class="fileTypes-chip video">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
-                  <span class="fileTypes-chip-label">.mkv</span>
-                </span>
-                <span class="fileTypes-chip video">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
-                  <span class="fileTypes-chip-label">.m4v</span>
-                </span>
-                <span class="fileTypes-chip video">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
-                  <span class="fileTypes-chip-label">.ogg</span>
-                </span>
-              </div>
-            </div>
-
-            <div class="fileTypes-group audio">
-              <h4>Audio</h4>
-              <div class="fileTypes-grid">
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.mp3</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.wav</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.flac</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.aac</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.ogg</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.m4a</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.opus</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.wma</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.aiff</span>
-                </span>
-                <span class="fileTypes-chip audio">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
-                  <span class="fileTypes-chip-label">.ape</span>
-                </span>
-              </div>
-            </div>
-
-            <div class="fileTypes-group archive">
-              <h4>Archives</h4>
-              <div class="fileTypes-grid">
-                <span class="fileTypes-chip archive">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
-                  <span class="fileTypes-chip-label">.cbz</span>
-                </span>
-                <span class="fileTypes-chip archive">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
-                  <span class="fileTypes-chip-label">.cbr</span>
-                </span>
-                <span class="fileTypes-chip archive">
-                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
-                  <span class="fileTypes-chip-label">.zip</span>
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <section id="viewer-navigation">
-            <h2>Basic Navigation</h2>
-            <p>
-              The main design principle of Lowkey Media Viewer is that you
-              should spend most of your time and screen real estate on your
-              images and videos.
+              Download the installer for your platform from the button at the
+              top of this page — a native installer for Windows, a signed and
+              notarized DMG for macOS (Apple Silicon and Intel), or an
+              AppImage for Linux. Launch it and point it at a folder: there is
+              no import step, no account, and nothing to configure first.
             </p>
 
             <h3 id="viewer-open-file">
@@ -649,6 +449,15 @@
               instead of copying. When you're viewing a tag instead of a
               folder, dropped files are placed in your configured default
               import path and the active tags are applied automatically.
+            </p>
+          </section>
+
+          <section id="viewer-navigation">
+            <h2>Interface &amp; Navigation</h2>
+            <p>
+              The main design principle of Lowkey Media Viewer is that you
+              should spend most of your time and screen real estate on your
+              images and videos.
             </p>
 
             <h3 id="viewer-panels">Using Panels</h3>
@@ -762,61 +571,6 @@
             <video src="./static/shuffle.mp4" muted loop playsinline controls preload="metadata"></video>
           </section>
 
-          <section id="viewer-file-management">
-            <h2>File Management</h2>
-            <p>
-              Beyond viewing and tagging, Lowkey Media Viewer can act on the
-              underlying files themselves — copy them out to another folder or
-              remove them from disk — without ever leaving the keyboard. These
-              actions work on the <strong>active file</strong> (the item
-              currently in the detail view) or on your whole filtered list.
-            </p>
-
-            <h3 id="viewer-copy-file">
-              <img class="inline-icon" src="./icons/copy.svg" alt="" />
-              Copy the Active File
-            </h3>
-            <p>
-              Press <kbd>Ctrl</kbd> + <kbd>C</kbd> to copy the active file to
-              the system clipboard as a real file reference. Switch to Explorer,
-              Finder, or your Linux file manager and paste
-              (<kbd>Ctrl</kbd> + <kbd>V</kbd>) to drop a copy wherever you like
-              — exactly as if you'd copied the file from the file manager
-              itself.
-            </p>
-
-            <h3 id="viewer-copy-all">
-              <img class="inline-icon" src="./icons/file-list-2-fill.svg" alt="" />
-              Copy the Whole List
-            </h3>
-            <p>
-              Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> to copy
-              <em>every</em> item in your current list view at once. Whatever
-              your active filter, search, or tag selection has narrowed the list
-              down to is placed on the clipboard together, so you can paste the
-              entire set into another folder in a single step — handy for
-              pulling a whole tag or search result out to disk.
-            </p>
-
-            <h3 id="viewer-delete-file">
-              <img class="inline-icon" src="./icons/delete.svg" alt="" />
-              Delete the Active File
-            </h3>
-            <p>
-              Press <kbd>Delete</kbd> to remove the active file. It's sent to
-              your operating system's Recycle Bin / Trash rather than being
-              erased outright, its entry is removed from the library, and the
-              viewer advances to the next item so you can keep moving. If the
-              file can't be moved to the trash for some reason, it's deleted
-              directly — so treat <kbd>Delete</kbd> as a destructive action.
-            </p>
-            <p>
-              All three shortcuts appear in the
-              <a href="#viewer-hotkeys">Keyboard Shortcuts</a> table and can be
-              rebound from the Hotkeys tab of the command palette.
-            </p>
-          </section>
-
           <section id="viewer-display">
             <h2>Display & Scaling</h2>
 
@@ -837,6 +591,50 @@
               Choose between traditional grid layout or Pinterest-style masonry
               layout for your thumbnail view. Toggle between layouts in the
               command palette under List settings.
+            </p>
+          </section>
+
+          <section id="viewer-playback">
+            <h2>Video & Audio Playback</h2>
+
+            <h3 id="viewer-controls">
+              <img class="inline-icon" src="./icons/play.svg" alt="" />
+              Playback Controls
+            </h3>
+            <p>Full video and audio playback with:</p>
+            <ul>
+              <li>
+                <img class="inline-icon" src="./icons/play.svg" alt="" />
+                <img class="inline-icon" src="./icons/pause.svg" alt="" />
+                Play/Pause toggle (spacebar)
+              </li>
+              <li>Progress bar with scrubbing and hover preview</li>
+              <li>Time display (current/total)</li>
+              <li>
+                <img class="inline-icon" src="./icons/sound-high.svg" alt="" />
+                <img class="inline-icon" src="./icons/sound-off.svg" alt="" />
+                Volume control with mute toggle
+              </li>
+            </ul>
+
+            <h3 id="viewer-autoplay">
+              <img class="inline-icon" src="./icons/autoplay.svg" alt="" />
+              Autoplay Settings
+            </h3>
+            <p>Configure autoplay behavior in the command palette:</p>
+            <ul>
+              <li>Enable/disable autoplay on media selection</li>
+              <li>Set delay before playing (5-second increments)</li>
+              <li>Configure video loop count before advancing</li>
+            </ul>
+
+            <h3 id="viewer-looping">
+              <img class="inline-icon" src="./icons/repeat.svg" alt="" />
+              Looping
+            </h3>
+            <p>
+              Set custom loop durations (1s, 2s, 5s, 10s) for focused viewing of
+              specific segments.
             </p>
           </section>
 
@@ -897,6 +695,50 @@
             </p>
             <video src="./static/reorder.mp4" muted loop playsinline controls preload="metadata"></video>
 
+            <h3 id="viewer-edit-tags">
+              <img class="inline-icon" src="./icons/edit-pencil.svg" alt="" />
+              <img class="inline-icon" src="./icons/delete.svg" alt="" />
+              Edit and Delete Tags
+            </h3>
+            <p>
+              Edit tag names or delete tags. Editing updates all associated
+              assignments. Deleting removes all assignments (not reversible).
+            </p>
+            <video src="./static/edit-tags.mp4" muted loop playsinline controls preload="metadata"></video>
+
+            <h3 id="viewer-descriptions">Tag &amp; Category Descriptions</h3>
+            <p>
+              Tags and categories now support descriptions. Add notes about
+              what a tag is for, what to include, or anything else worth
+              remembering — descriptions appear inline in the tagging panel
+              and can be edited from the redesigned tag and category modals.
+            </p>
+
+            <h3 id="viewer-battle">Battle Mode (ELO Rating)</h3>
+            <p>
+              Compare two media items side-by-side and vote for your preference.
+              The ELO rating system automatically updates scores based on your
+              choices. Great for ranking and curating large collections.
+            </p>
+          </section>
+
+          <section id="viewer-visual-search">
+            <h2>Search &amp; Filtering</h2>
+            <p>
+              Find things the way you think about them: filter by tags,
+              search filenames and descriptions, find images that look like
+              another image, describe what you want in plain words, or draw
+              a box around anything on screen and find more like it.
+            </p>
+            <p>
+              Tag and text filtering work out of the box. The visual and
+              semantic searches are powered by on-device AI image embeddings
+              (SigLIP 2) through the optional
+              <a class="requires-server" href="./server/">Media Server</a>
+              — nothing leaves your machine. See
+              <a href="#viewer-visual-setup">Setup Requirements</a>.
+            </p>
+
             <h3 id="viewer-filtering">
               <img class="inline-icon" src="./icons/selective.svg" alt="" />
               Selecting Tags to View
@@ -928,39 +770,6 @@
               or search tags in your collection.
             </p>
             <video src="./static/search.mp4" muted loop playsinline controls preload="metadata"></video>
-
-            <h3 id="viewer-edit-tags">
-              <img class="inline-icon" src="./icons/edit-pencil.svg" alt="" />
-              <img class="inline-icon" src="./icons/delete.svg" alt="" />
-              Edit and Delete Tags
-            </h3>
-            <p>
-              Edit tag names or delete tags. Editing updates all associated
-              assignments. Deleting removes all assignments (not reversible).
-            </p>
-            <video src="./static/edit-tags.mp4" muted loop playsinline controls preload="metadata"></video>
-
-            <h3 id="viewer-descriptions">Tag &amp; Category Descriptions</h3>
-            <p>
-              Tags and categories now support descriptions. Add notes about
-              what a tag is for, what to include, or anything else worth
-              remembering — descriptions appear inline in the tagging panel
-              and can be edited from the redesigned tag and category modals.
-            </p>
-          </section>
-
-          <section id="viewer-visual-search">
-            <h2>
-              Visual Search (AI)
-              <a class="requires-server" href="./server/">Requires Media Server</a>
-            </h2>
-            <p>
-              Search your library the way you think about it: find images
-              that look like another image, describe what you want in plain
-              words, or draw a box around anything on screen and find more
-              like it. Visual search is powered by on-device AI image
-              embeddings (SigLIP 2) — nothing leaves your machine.
-            </p>
 
             <h3 id="viewer-query-chips">Search &amp; Filter Chips</h3>
             <p>
@@ -1277,50 +1086,6 @@
             </ul>
           </section>
 
-          <section id="viewer-playback">
-            <h2>Video & Audio Playback</h2>
-
-            <h3 id="viewer-controls">
-              <img class="inline-icon" src="./icons/play.svg" alt="" />
-              Playback Controls
-            </h3>
-            <p>Full video and audio playback with:</p>
-            <ul>
-              <li>
-                <img class="inline-icon" src="./icons/play.svg" alt="" />
-                <img class="inline-icon" src="./icons/pause.svg" alt="" />
-                Play/Pause toggle (spacebar)
-              </li>
-              <li>Progress bar with scrubbing and hover preview</li>
-              <li>Time display (current/total)</li>
-              <li>
-                <img class="inline-icon" src="./icons/sound-high.svg" alt="" />
-                <img class="inline-icon" src="./icons/sound-off.svg" alt="" />
-                Volume control with mute toggle
-              </li>
-            </ul>
-
-            <h3 id="viewer-autoplay">
-              <img class="inline-icon" src="./icons/autoplay.svg" alt="" />
-              Autoplay Settings
-            </h3>
-            <p>Configure autoplay behavior in the command palette:</p>
-            <ul>
-              <li>Enable/disable autoplay on media selection</li>
-              <li>Set delay before playing (5-second increments)</li>
-              <li>Configure video loop count before advancing</li>
-            </ul>
-
-            <h3 id="viewer-looping">
-              <img class="inline-icon" src="./icons/repeat.svg" alt="" />
-              Looping
-            </h3>
-            <p>
-              Set custom loop durations (1s, 2s, 5s, 10s) for focused viewing of
-              specific segments.
-            </p>
-          </section>
-
           <section id="viewer-metadata">
             <h2>Metadata & Transcripts</h2>
             <p>
@@ -1377,14 +1142,58 @@
             </p>
           </section>
 
-          <section id="viewer-advanced">
-            <h2>Advanced Features</h2>
-
-            <h3 id="viewer-battle">Battle Mode (ELO Rating)</h3>
+          <section id="viewer-file-management">
+            <h2>File Management</h2>
             <p>
-              Compare two media items side-by-side and vote for your preference.
-              The ELO rating system automatically updates scores based on your
-              choices. Great for ranking and curating large collections.
+              Beyond viewing and tagging, Lowkey Media Viewer can act on the
+              underlying files themselves — copy them out to another folder or
+              remove them from disk — without ever leaving the keyboard. These
+              actions work on the <strong>active file</strong> (the item
+              currently in the detail view) or on your whole filtered list.
+            </p>
+
+            <h3 id="viewer-copy-file">
+              <img class="inline-icon" src="./icons/copy.svg" alt="" />
+              Copy the Active File
+            </h3>
+            <p>
+              Press <kbd>Ctrl</kbd> + <kbd>C</kbd> to copy the active file to
+              the system clipboard as a real file reference. Switch to Explorer,
+              Finder, or your Linux file manager and paste
+              (<kbd>Ctrl</kbd> + <kbd>V</kbd>) to drop a copy wherever you like
+              — exactly as if you'd copied the file from the file manager
+              itself.
+            </p>
+
+            <h3 id="viewer-copy-all">
+              <img class="inline-icon" src="./icons/file-list-2-fill.svg" alt="" />
+              Copy the Whole List
+            </h3>
+            <p>
+              Press <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd> to copy
+              <em>every</em> item in your current list view at once. Whatever
+              your active filter, search, or tag selection has narrowed the list
+              down to is placed on the clipboard together, so you can paste the
+              entire set into another folder in a single step — handy for
+              pulling a whole tag or search result out to disk.
+            </p>
+
+            <h3 id="viewer-delete-file">
+              <img class="inline-icon" src="./icons/delete.svg" alt="" />
+              Delete the Active File
+            </h3>
+            <p>
+              Press <kbd>Delete</kbd> to remove the active file. It's sent to
+              your operating system's Recycle Bin / Trash rather than being
+              erased outright, its entry is removed from the library, and the
+              viewer advances to the next item so you can keep moving. If the
+              file can't be moved to the trash for some reason, it's deleted
+              directly — so treat <kbd>Delete</kbd> as a destructive action.
+            </p>
+            <p>
+              All three shortcuts appear in the
+              <a href="#viewer-hotkeys">Keyboard Shortcuts</a> table and can be
+              rebound from the Hotkeys tab of the command palette.
             </p>
 
             <h3 id="viewer-duplicates">
@@ -1395,11 +1204,215 @@
               Find and manage duplicate or similar media files. Merge duplicates
               to consolidate entries while preserving tag assignments.
             </p>
+          </section>
 
-            <h3 id="viewer-hotkeys">
+          <section id="viewer-filetypes">
+            <h2>Supported File Types</h2>
+            <p>
+              Lowkey Media Viewer reads a wide range of image, video, and
+              audio formats natively. Comic book archives are extracted
+              automatically and their contents load like a directory.
+            </p>
+
+            <!-- Shared SVG icon sprite -->
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              style="display: none"
+              aria-hidden="true"
+            >
+              <symbol id="icon-image" viewBox="0 0 24 24">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <circle cx="8.5" cy="10" r="1.5" />
+                <path d="M21 16l-5-5L6 19" />
+              </symbol>
+              <symbol id="icon-video" viewBox="0 0 24 24">
+                <rect x="3" y="5" width="18" height="14" rx="2" />
+                <path d="M3 9h3M3 15h3M18 9h3M18 15h3" />
+                <path d="M10 9l5 3-5 3z" />
+              </symbol>
+              <symbol id="icon-audio" viewBox="0 0 24 24">
+                <path d="M4 12v2" />
+                <path d="M8 9v8" />
+                <path d="M12 5v14" />
+                <path d="M16 8v10" />
+                <path d="M20 11v4" />
+              </symbol>
+              <symbol id="icon-archive" viewBox="0 0 24 24">
+                <rect x="4" y="4" width="16" height="16" rx="2" />
+                <path d="M12 4v2M12 8v2M12 12v2M12 16v2" />
+                <rect x="10" y="14" width="4" height="5" rx="0.5" />
+              </symbol>
+            </svg>
+
+            <ul class="fileTypes-summary">
+              <li class="images">
+                <strong>Images</strong>
+                <span>jpg, jpeg, png, gif, bmp, svg, jfif, pjpeg, pjp, webp, avif</span>
+              </li>
+              <li class="video">
+                <strong>Video</strong>
+                <span>mp4, mov, webm, mkv, m4v, ogg</span>
+              </li>
+              <li class="audio">
+                <strong>Audio</strong>
+                <span>mp3, wav, flac, aac, ogg, m4a, opus, wma, aiff, ape</span>
+              </li>
+              <li class="archive">
+                <strong>Archives</strong>
+                <span>cbz, cbr, zip</span>
+              </li>
+            </ul>
+
+            <div class="fileTypes-group images">
+              <h4>Images</h4>
+              <div class="fileTypes-grid">
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.jpg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.jpeg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.png</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.gif</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.webp</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.avif</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.bmp</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.svg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.jfif</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.pjpeg</span>
+                </span>
+                <span class="fileTypes-chip images">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-image" /></svg></span>
+                  <span class="fileTypes-chip-label">.pjp</span>
+                </span>
+              </div>
+            </div>
+
+            <div class="fileTypes-group video">
+              <h4>Video</h4>
+              <div class="fileTypes-grid">
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.mp4</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.mov</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.webm</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.mkv</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.m4v</span>
+                </span>
+                <span class="fileTypes-chip video">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-video" /></svg></span>
+                  <span class="fileTypes-chip-label">.ogg</span>
+                </span>
+              </div>
+            </div>
+
+            <div class="fileTypes-group audio">
+              <h4>Audio</h4>
+              <div class="fileTypes-grid">
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.mp3</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.wav</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.flac</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.aac</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.ogg</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.m4a</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.opus</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.wma</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.aiff</span>
+                </span>
+                <span class="fileTypes-chip audio">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-audio" /></svg></span>
+                  <span class="fileTypes-chip-label">.ape</span>
+                </span>
+              </div>
+            </div>
+
+            <div class="fileTypes-group archive">
+              <h4>Archives</h4>
+              <div class="fileTypes-grid">
+                <span class="fileTypes-chip archive">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
+                  <span class="fileTypes-chip-label">.cbz</span>
+                </span>
+                <span class="fileTypes-chip archive">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
+                  <span class="fileTypes-chip-label">.cbr</span>
+                </span>
+                <span class="fileTypes-chip archive">
+                  <span class="fileTypes-chip-icon"><svg><use href="#icon-archive" /></svg></span>
+                  <span class="fileTypes-chip-label">.zip</span>
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <section id="viewer-advanced">
+            <h2 id="viewer-hotkeys">
               <img class="inline-icon" src="./icons/keyboard.svg" alt="" />
               Keyboard Shortcuts
-            </h3>
+            </h2>
             <p>
               Customize all keyboard shortcuts in the Hotkeys tab of the command
               palette.
