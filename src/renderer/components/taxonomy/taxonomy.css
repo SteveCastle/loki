@@ -4,17 +4,20 @@
      the rest. Previously this was a wrapping flex row where the content items
      used height:100% — but on the wrapped second line that resolves to the FULL
      panel height, so the results/list overhung the panel bottom by the search
-     bar's height and the last row was clipped under the bottom overlay. */
+     bar's height and the last row was clipped. */
   flex-direction: column;
   margin: 0.3rem 0.2rem;
   width: 100%;
-  height: 100%;
+  /* No explicit height: the parent .panel is a flex row, so cross-axis stretch
+     sizes this to the panel height MINUS the margins above. height:100% here
+     ignored the margins, pushing the bottom 0.3rem past the panel's
+     overflow:hidden — the tag list's last row was clipped, not padded. */
   overflow: hidden;
 }
 
 /* Fills the height remaining under the search bar. The content columns
    (controls / categories / new-tag / results) size their height:100% against
-   THIS row, so their scroll areas keep their full bottom padding. */
+   THIS row, so their scroll areas end exactly at the panel's bottom edge. */
 .Taxonomy .taxonomy-body {
   flex: 1 1 0;
   min-height: 0;
@@ -141,7 +144,6 @@
   flex-direction: column;
   overflow-y: scroll;
   padding: 0.5rem;
-  padding-bottom: 66px;
 }
 
 .Taxonomy .category {
@@ -228,10 +230,12 @@
   flex: 8 1 0;
   /* Vertical-only: these are width-fitting grids/lists that should never
      scroll sideways. `overflow: auto` on both axes produced a phantom
-     horizontal scrollbar once the vertical scrollbar claimed its ~6px. */
+     horizontal scrollbar once the vertical scrollbar claimed its ~6px.
+     No bottom padding: these scroll areas run flush to the panel's bottom
+     edge. The old 77px clearance was for a floating bottom overlay that no
+     longer exists. */
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: 77px;
   height: 100%;
 }
 
@@ -240,7 +244,6 @@
   flex: 8 1 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: 77px;
   height: 100%;
 }
 
@@ -249,7 +252,6 @@
   flex: 8 1 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: 77px;
   height: 100%;
   /* Block flex items default to min-height: auto (= content size).
      The virtualized inner div is thousands of px tall, which would
@@ -282,7 +284,6 @@
 }
 
 .Taxonomy .tags-blended .tags-blended-cards .tags.virtualized {
-  padding-bottom: 0;
   height: 100%;
   flex: 1 1 auto;
 }
@@ -300,13 +301,11 @@
 /* The suggested list is virtualized, so it needs a bounded scroll height —
    but only as a CAP. height: auto lets it shrink to its actual content (the
    virtualizer's intrinsic sizer height) when there are just a few items, and
-   max-height caps it so long lists scroll instead of growing without bound.
-   Drop the 77px bottom padding here: this list isn't against the panel edge. */
+   max-height caps it so long lists scroll instead of growing without bound. */
 .Taxonomy .tags-blended .suggested-section .tag-list-view {
   flex: 0 1 auto;
   height: auto;
   max-height: 400px;
-  padding-bottom: 0;
 }
 
 .Taxonomy .tags-blended .suggested-heading {
@@ -407,10 +406,6 @@
      ellipsis instead (see .suggestion-value). */
   overflow-x: hidden;
   overflow-y: auto;
-  /* Clear the floating controls/overlay at the bottom of the panel so the
-     last rows can scroll into view instead of sitting underneath it
-     (matches the padding the other scroll areas use). */
-  padding-bottom: 77px;
 }
 
 .Taxonomy .search-results.has-results .suggestions-pane {
@@ -787,7 +782,6 @@
   background-color: rgb(56, 56, 78);
   border-radius: 2px;
   cursor: pointer;
-  margin-bottom: 66px;
 }
 
 .Taxonomy .new-tag:hover {

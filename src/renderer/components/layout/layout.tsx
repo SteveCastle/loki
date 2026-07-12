@@ -216,13 +216,22 @@ const Layout = () => {
       <CommandPalette />
       <ContextPalette />
       <RegionSelect />
+      {/* defaultSize props below only apply on first run (or after clearing
+          stored layouts) — once the user resizes anything, useDefaultLayout
+          restores their persisted layout instead. First-run layout: list and
+          detail split the width evenly, metadata starts collapsed, taxonomy
+          gets ~20% (bottom strip or left column depending on libraryLayout). */}
       <PanelGroup
         orientation="vertical"
         id="main-group"
         defaultLayout={mainGroupLayout.defaultLayout}
         onLayoutChange={mainGroupLayout.onLayoutChange}
       >
-        <Panel className="panel" id="main-panel" defaultSize="100%">
+        <Panel
+          className="panel"
+          id="main-panel"
+          defaultSize={libraryLayout === 'bottom' ? '80%' : '100%'}
+        >
           <PanelGroup
             orientation="horizontal"
             id="inner-group"
@@ -245,7 +254,7 @@ const Layout = () => {
           <CollapsiblePanel
             id="list-panel"
             className="panel"
-            defaultSize="50%"
+            defaultSize={libraryLayout === 'left' ? '40%' : '50%'}
             imperativeRef={listRef}
             renderId={renderID}
           >
@@ -257,6 +266,7 @@ const Layout = () => {
           <CollapsiblePanel
             id="detail-panel"
             className="panel"
+            defaultSize={libraryLayout === 'left' ? '40%' : '50%'}
             imperativeRef={detailRef}
             renderId={renderID}
           >
@@ -273,6 +283,7 @@ const Layout = () => {
           <VerticalHandle />
           <CollapsiblePanel
             id="metadata-panel"
+            defaultSize="0%"
             imperativeRef={metaDataRef}
             renderId={renderID}
           >

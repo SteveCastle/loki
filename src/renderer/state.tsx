@@ -996,6 +996,21 @@ export const libraryMachine = createMachine(
           },
         }),
       },
+      // Handled at the machine root (always active in a parallel machine) so
+      // the taxonomy panel's auto-select fallback works no matter which
+      // library state is current. This used to live only in loadingFromFS /
+      // loadedFromFS / loadedFromDB, so a SET_ACTIVE_CATEGORY sent while a DB
+      // switch was mid-flight (loadingFromPersisted, runningQuery, ...) was
+      // silently dropped and the panel kept a blank or stale category.
+      SET_ACTIVE_CATEGORY: {
+        actions: assign<LibraryState, AnyEventObject>({
+          activeCategory: (context, event) => {
+            console.log('SET_ACTIVE_CATEGORY', context, event);
+            store.set('activeCategory', event.data.category);
+            return event.data.category;
+          },
+        }),
+      },
     },
     states: {
       // jobQueue: removed - jobs now handled by external job runner service
@@ -1876,18 +1891,6 @@ export const libraryMachine = createMachine(
                   }
                 ),
               },
-              SET_ACTIVE_CATEGORY: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  activeCategory: (context, event) => {
-                    console.log('SET_ACTIVE_CATEGORY', context, event);
-                    store.set(
-                      'activeCategory',
-                      event.data.category
-                    );
-                    return event.data.category;
-                  },
-                }),
-              },
               SET_CURSOR: {
                 actions: assign<LibraryState, AnyEventObject>({
                   userMovedCursorDuringStreaming: (context) =>
@@ -2139,19 +2142,6 @@ export const libraryMachine = createMachine(
               },
               SELECT_DIRECTORY: {
                 target: 'selectingDirectory',
-              },
-              SET_ACTIVE_CATEGORY: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  activeCategory: (context, event) => {
-                    console.log('SET_ACTIVE_CATEGORY', context, event);
-
-                    store.set(
-                      'activeCategory',
-                      event.data.category
-                    );
-                    return event.data.category;
-                  },
-                }),
               },
               SET_FILE: {
                 target: 'loadingFromFS',
@@ -2600,15 +2590,6 @@ export const libraryMachine = createMachine(
                     initialFile: (context, event) => event.path,
                   }),
                 ],
-              },
-              SET_ACTIVE_CATEGORY: {
-                actions: assign<LibraryState, AnyEventObject>({
-                  activeCategory: (context, event) => {
-                    console.log('SET_ACTIVE_CATEGORY', context, event);
-                    store.set('activeCategory', event.data.category);
-                    return event.data.category;
-                  },
-                }),
               },
               CHANGE_DB_PATH: {
                 target: 'selectingDB',
