@@ -95,6 +95,13 @@
         <h2>Table of Contents</h2>
         <ul>
           <li><a href="#overview">Overview</a></li>
+          <li><a href="#concepts">Core Concepts</a>
+            <ul>
+              <li><a href="#concept-library">The Library</a></li>
+              <li><a href="#storage-roots">Storage Roots</a></li>
+              <li><a href="#concept-jobs">Jobs, Tasks &amp; Workflows</a></li>
+            </ul>
+          </li>
           <li><a href="#getting-started">Getting Started</a>
             <ul>
               <li><a href="#installation">Installation</a></li>
@@ -185,6 +192,136 @@
         </ul>
       </section>
 
+      <section id="concepts">
+        <h2>Core Concepts</h2>
+        <p>
+          Three ideas carry the whole server: a <strong>library database</strong> that catalogs
+          your media without moving it, <strong>storage roots</strong> that define where that
+          media lives, and a <strong>job queue</strong> that does every piece of heavy work
+          asynchronously. Everything else in these docs builds on them.
+        </p>
+
+        <h3 id="concept-library">The Library</h3>
+        <p>
+          The library is a single SQLite database. Every media item is one row keyed by its
+          path &mdash; the server never moves, renames, or re-encodes your files to manage them.
+          Adding media to the library means recording where it is, not copying it somewhere.
+        </p>
+        <p>
+          Everything the server knows about an item hangs off that row: tags and categories,
+          the AI description, the transcript, hash, file size and dimensions, visual embeddings,
+          detected faces and the people they group into, and its Battle Mode ELO rating.
+          Deleting an item from the library removes the row and its metadata; the file itself
+          is only touched by explicitly destructive actions.
+        </p>
+        <p>
+          The desktop viewer and the server share this same database, so tagging in one is
+          instantly visible in the other &mdash; they are two views of one library.
+        </p>
+
+        <h3 id="storage-roots">Storage Roots</h3>
+        <p>
+          A storage root is a place the server is allowed to read and write media: a local
+          directory, or a bucket (optionally scoped to a key prefix) on any S3-compatible
+          object store. A library can span several roots of either kind, and every feature
+          &mdash; browsing, ingest, thumbnails, AI processing, the web viewer &mdash; works the
+          same over both.
+        </p>
+        <p>
+          Roots are also the server's security boundary. The file browser, library scans, and
+          media serving are confined to configured roots, and view-only public visitors can
+          never reach a path outside them.
+        </p>
+        <h4>The default root</h4>
+        <p>
+          One root is the <strong>default</strong> &mdash; the destination for anything the
+          server creates: uploads from the web UI land under <code>uploads/</code>, and media
+          ingested from YouTube, Discord, or gallery URLs lands under <code>downloads/</code>.
+          Mark a root as default explicitly (the wizard and Config page have a toggle;
+          <code>"default": true</code> in JSON); otherwise the first root is used.
+        </p>
+        <h4>Local vs. S3-compatible roots</h4>
+        <p>
+          The abstraction is the same, but the mechanics differ in ways worth knowing:
+        </p>
+        <table>
+          <tr><th></th><th>Local root</th><th>S3-compatible root</th></tr>
+          <tr><td>Path stored in the library</td><td>Absolute filesystem path</td><td><code>s3://bucket/key</code></td></tr>
+          <tr><td>Browsing &amp; scanning</td><td>Reads the filesystem directly</td><td>Lists objects via the S3 API</td></tr>
+          <tr><td>Serving media</td><td>Streamed by the server (<code>/media/file</code>)</td><td>Presigned URL &mdash; the browser fetches straight from the object store (1-hour expiry)</td></tr>
+          <tr><td>Processing tasks (hash, embed, describe, faces, &hellip;)</td><td>Read the file in place</td><td>The object is downloaded to a temporary local copy for the task, then cleaned up</td></tr>
+          <tr><td>New files (uploads, URL ingests)</td><td>Written directly into the folder</td><td>Staged locally, then uploaded to the bucket</td></tr>
+          <tr><td>Thumbnails</td><td>Generated into a local cache directory</td><td>Stored in the bucket under <code>thumbnailPrefix</code> (default <code>_thumbnails</code>, hidden from browsing)</td></tr>
+        </table>
+        <p>
+          The practical takeaway: S3 roots make the library location-independent and shareable,
+          but every per-item processing task pays a download first &mdash; big batch jobs
+          (embedding or transcribing an entire bucket) move a lot of bytes. Local roots are the
+          fast path for processing; a common pattern is a local working root plus an S3 archive
+          root in the same library.
+        </p>
+        <h4>Configuring roots</h4>
+        <p>
+          Three ways, in increasing order of precedence:
+        </p>
+        <ul>
+          <li><strong>Setup wizard</strong> &mdash; the first-run <code>/setup</code> flow registers local and S3 roots, with a connection test for S3.</li>
+          <li><strong>Config page</strong> (<code>/config</code>) or <code>config.json</code> &mdash; the <code>roots</code> key. Saving applies immediately; no restart needed.</li>
+          <li><strong>Environment variables</strong> &mdash; <code>LOWKEY_ROOT_&lt;N&gt;</code> for local paths, or <code>LOWKEY_ROOTS</code> as a JSON array for anything (see <a href="#docker-env">Environment Variables</a>). Env-supplied roots fully replace the config file's roots for that run and are never written back to the file &mdash; this is what the <a href="#docker">Docker</a> examples use.</li>
+        </ul>
+        <h4>S3 root fields</h4>
+        <p>
+          An S3 root is described by these fields, whether it's defined in the wizard,
+          <code>config.json</code>, or <code>LOWKEY_ROOTS</code>:
+        </p>
+        <table>
+          <tr><th>Field</th><th>Required</th><th>Description</th></tr>
+          <tr><td><code>type</code></td><td>Yes</td><td>Must be <code>"s3"</code></td></tr>
+          <tr><td><code>label</code></td><td>Yes</td><td>Display name in the UI</td></tr>
+          <tr><td><code>endpoint</code></td><td>Yes</td><td>S3 API endpoint URL</td></tr>
+          <tr><td><code>region</code></td><td>Yes</td><td>AWS region or equivalent</td></tr>
+          <tr><td><code>bucket</code></td><td>Yes</td><td>Bucket name</td></tr>
+          <tr><td><code>accessKey</code></td><td>Yes</td><td>Access key ID</td></tr>
+          <tr><td><code>secretKey</code></td><td>Yes</td><td>Secret access key</td></tr>
+          <tr><td><code>prefix</code></td><td>No</td><td>Key prefix to scope browsing (e.g. <code>"photos/"</code>)</td></tr>
+          <tr><td><code>thumbnailPrefix</code></td><td>No</td><td>Separate prefix or bucket path for generated thumbnails</td></tr>
+          <tr><td><code>default</code></td><td>No</td><td>Set to <code>true</code> to make this root the upload/download destination</td></tr>
+        </table>
+        <h4>Tested S3-compatible services</h4>
+        <table>
+          <tr><th>Service</th><th>Endpoint Format</th></tr>
+          <tr><td>AWS S3</td><td><code>https://s3.&lt;region&gt;.amazonaws.com</code></td></tr>
+          <tr><td>MinIO</td><td><code>http://&lt;host&gt;:9000</code></td></tr>
+          <tr><td>Backblaze B2</td><td><code>https://s3.&lt;region&gt;.backblazeb2.com</code></td></tr>
+          <tr><td>Cloudflare R2</td><td><code>https://&lt;account-id&gt;.r2.cloudflarestorage.com</code></td></tr>
+          <tr><td>DigitalOcean Spaces</td><td><code>https://&lt;region&gt;.digitaloceanspaces.com</code></td></tr>
+        </table>
+
+        <h3 id="concept-jobs">Jobs, Tasks &amp; Workflows</h3>
+        <p>
+          Every operation the server performs &mdash; an ingest, a batch of descriptions, an
+          ffmpeg conversion &mdash; runs as a <strong>job</strong> in a persistent queue. Jobs
+          survive restarts, stream their output live, and can be cancelled, copied, and
+          monitored from the home page (see <a href="#job-queue">Job Queue</a>).
+        </p>
+        <p>
+          A <strong>task</strong> is the thing a job runs. Most tasks are per-item operations
+          (describe, transcribe, hash, dimensions, autotag, embed, faces) that share one
+          contract: give them a query or a path, and they process each matching item, skipping
+          items that already have the result unless you ask them to overwrite. The
+          <code>process</code> task combines several of these ops into a single pass over the
+          library. The full list is in <a href="#tasks">Available Tasks</a>.
+        </p>
+        <p>
+          A <strong>workflow</strong> is a saved, named graph of tasks with dependencies
+          between steps &mdash; ingest, then hash, then embed and describe in parallel, for
+          example. If a step fails, its pending dependents are cancelled rather than run
+          against missing input. Workflows are created and run from the
+          <code>/workflows</code> pages, and can also be launched from the viewer's Context
+          Palette against whatever you clicked.
+        </p>
+      </section>
+
       <section id="getting-started">
         <h2>Getting Started</h2>
 
@@ -201,9 +338,9 @@
           real account (the server boots with a temporary
           <code>admin</code> / <code>admin</code> user that is deleted as
           soon as your account exists), choosing or reusing a SQLite
-          database file, registering storage roots &mdash; local
-          directories and/or S3-compatible buckets, with a
-          <em>Test connection</em> check for S3 &mdash; and downloading
+          database file, registering <a href="#storage-roots">storage
+          roots</a> &mdash; local directories and/or S3-compatible
+          buckets, with a <em>Test connection</em> check for S3 &mdash; and downloading
           the optional AI models. Finishing the wizard sets
           <code>setupComplete</code> in the config file; after that the
           setup pages require an admin login.
@@ -289,7 +426,7 @@
         <h3 id="docker-local-storage">Local Storage</h3>
         <p>
           To browse media from your local filesystem, bind-mount your directories into the container
-          and register them as storage roots with environment variables.
+          and register them as <a href="#storage-roots">storage roots</a> with environment variables.
         </p>
         <div class="code-block">
           <code>docker run -d --name lowkey-media-server \</code><br>
@@ -364,30 +501,11 @@
           <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
         </div>
 
-        <h4>S3 Storage Root Fields</h4>
-        <table>
-          <tr><th>Field</th><th>Required</th><th>Description</th></tr>
-          <tr><td><code>type</code></td><td>Yes</td><td>Must be <code>"s3"</code></td></tr>
-          <tr><td><code>label</code></td><td>Yes</td><td>Display name in the UI</td></tr>
-          <tr><td><code>endpoint</code></td><td>Yes</td><td>S3 API endpoint URL</td></tr>
-          <tr><td><code>region</code></td><td>Yes</td><td>AWS region or equivalent</td></tr>
-          <tr><td><code>bucket</code></td><td>Yes</td><td>Bucket name</td></tr>
-          <tr><td><code>accessKey</code></td><td>Yes</td><td>Access key ID</td></tr>
-          <tr><td><code>secretKey</code></td><td>Yes</td><td>Secret access key</td></tr>
-          <tr><td><code>prefix</code></td><td>No</td><td>Key prefix to scope browsing (e.g. <code>"photos/"</code>)</td></tr>
-          <tr><td><code>thumbnailPrefix</code></td><td>No</td><td>Separate prefix or bucket path for generated thumbnails</td></tr>
-          <tr><td><code>default</code></td><td>No</td><td>Set to <code>true</code> to make this root the upload/download destination</td></tr>
-        </table>
-
-        <h4>Tested S3-Compatible Services</h4>
-        <table>
-          <tr><th>Service</th><th>Endpoint Format</th></tr>
-          <tr><td>AWS S3</td><td><code>https://s3.&lt;region&gt;.amazonaws.com</code></td></tr>
-          <tr><td>MinIO</td><td><code>http://&lt;host&gt;:9000</code></td></tr>
-          <tr><td>Backblaze B2</td><td><code>https://s3.&lt;region&gt;.backblazeb2.com</code></td></tr>
-          <tr><td>Cloudflare R2</td><td><code>https://&lt;account-id&gt;.r2.cloudflarestorage.com</code></td></tr>
-          <tr><td>DigitalOcean Spaces</td><td><code>https://&lt;region&gt;.digitaloceanspaces.com</code></td></tr>
-        </table>
+        <p>
+          The full S3 field reference, the list of tested S3-compatible services, and the
+          behavioral differences between local and S3 roots are covered in
+          <a href="#storage-roots">Storage Roots</a>.
+        </p>
 
         <h3 id="docker-env-image">Environment Variables</h3>
         <p>
@@ -451,7 +569,7 @@
         <ul>
           <li><strong>port</strong> - HTTP listen port (default 10111; restart to apply)</li>
           <li><strong>dbPath</strong> - Path to the SQLite database</li>
-          <li><strong>roots</strong> - Storage roots (local directories and S3 buckets); mark one <code>"default": true</code> to receive uploads and downloads</li>
+          <li><strong>roots</strong> - <a href="#storage-roots">Storage roots</a> (local directories and S3 buckets); mark one <code>"default": true</code> to receive uploads and downloads</li>
           <li><strong>downloadPath</strong> - Fallback download directory when no storage root is configured</li>
           <li><strong>defaultStartPath</strong> - Folder the web app opens on a fresh session</li>
           <li><strong>allowPublicAccess</strong> - View-only anonymous access (default false; applies without restart)</li>
