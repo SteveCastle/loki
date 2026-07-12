@@ -119,7 +119,7 @@
             Support on Patreon
           </a>
         </p>
-        <p class="version">Version 2.19.3</p>
+        <p class="version">Version 2.19.4</p>
         <div class="header-links">
           <a href="./v1/" target="_blank" class="v1">V1 Docs</a>
           <a
@@ -437,6 +437,7 @@
               the spread forward. Turn it on from the image settings in the
               command palette.
             </p>
+            <video src="./static/comics-view-mode.mp4" muted loop playsinline controls preload="metadata"></video>
 
             <h3 id="viewer-drag-drop">
               <img class="inline-icon" src="./icons/folder-upload-fill.svg" alt="" />
@@ -545,7 +546,7 @@
               you're not signed in to the Media Server, the palette shows a
               login prompt in place of the action blocks.
             </p>
-            <div class="placeholder-video">Context Palette Demo Video</div>
+            <video src="./static/context-menu.mp4" muted loop playsinline controls preload="metadata"></video>
 
             <h3 id="viewer-grid">
               <img class="inline-icon" src="./icons/view-grid.svg" alt="" />
@@ -592,6 +593,7 @@
               layout for your thumbnail view. Toggle between layouts in the
               command palette under List settings.
             </p>
+            <video src="./static/grid-vs-masonry.mp4" muted loop playsinline controls preload="metadata"></video>
           </section>
 
           <section id="viewer-playback">
@@ -720,6 +722,7 @@
               The ELO rating system automatically updates scores based on your
               choices. Great for ranking and curating large collections.
             </p>
+            <video src="./static/battle-mode.mp4" muted loop playsinline controls preload="metadata"></video>
           </section>
 
           <section id="viewer-visual-search">
@@ -879,7 +882,7 @@
               results genuinely reflect the whole recipe. Results are
               ranked with a match-score badge on every item.
             </p>
-            <div class="placeholder-video">Composite Query Node Editor Demo Video</div>
+            <video src="./static/composite-query-vector-editor.mp4" muted loop playsinline controls preload="metadata"></video>
 
             <h3 id="viewer-visual-setup">Setup Requirements</h3>
             <p>
@@ -1542,7 +1545,7 @@
 
       const el = document.getElementById('downloadButton');
       const RELEASE_BASE =
-        'https://github.com/SteveCastle/loki/releases/download/v2.19.3/';
+        'https://github.com/SteveCastle/loki/releases/download/v2.19.4/';
       const RELEASES_PAGE =
         'https://github.com/SteveCastle/loki/releases/latest';
       const platform = window.navigator.platform || '';
@@ -1552,14 +1555,14 @@
       let label = 'Download | Free';
 
       if (/Win/i.test(platform) || /Windows/i.test(ua)) {
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer.Setup.2.19.3.exe';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer.Setup.2.19.4.exe';
         label = 'Download | Free for Windows';
       } else if (/Mac/i.test(platform) || /Mac OS/i.test(ua)) {
         // Default to Apple Silicon; Intel Macs can grab the x64 .dmg from the releases page.
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.19.3-arm64.dmg';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.19.4-arm64.dmg';
         label = 'Download | Free for Mac';
       } else if (/Linux/i.test(platform) || /Linux/i.test(ua)) {
-        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.19.3.AppImage';
+        href = RELEASE_BASE + 'Lowkey.Media.Viewer-2.19.4.AppImage';
         label = 'Download | Free for Linux';
       }
 
