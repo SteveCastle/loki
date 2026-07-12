@@ -107,6 +107,7 @@
           <li><a href="#docker">Docker Quick Start</a>
             <ul>
               <li><a href="#docker-run">Run the Container</a></li>
+              <li><a href="#docker-compose">Docker Compose + MinIO</a></li>
               <li><a href="#docker-local-storage">Local Storage</a></li>
               <li><a href="#docker-s3-storage">S3-Compatible Storage</a></li>
               <li><a href="#docker-env">Environment Variables</a></li>
@@ -192,32 +193,49 @@
 
         <h3 id="initial-setup">Initial Setup</h3>
         <p>
-          On first launch the server creates a temporary
-          <code>admin</code> / <code>admin</code> account and forces you
-          through a setup wizard to replace it with a real user. The
-          default admin is deleted as soon as your real account exists.
-          See <a href="#users">Users &amp; Permissions</a> for the full
-          flow, JWT details, and how to add or remove users later.
+          On first launch every page redirects to a setup wizard at
+          <code>/setup</code>. The wizard walks you through creating a
+          real account (the server boots with a temporary
+          <code>admin</code> / <code>admin</code> user that is deleted as
+          soon as your account exists), choosing or reusing a SQLite
+          database file, registering storage roots &mdash; local
+          directories and/or S3-compatible buckets, with a
+          <em>Test connection</em> check for S3 &mdash; and downloading
+          the optional AI models. Finishing the wizard sets
+          <code>setupComplete</code> in the config file; after that the
+          setup pages require an admin login.
+        </p>
+        <p>
+          For headless installs, set <code>LOWKEY_ADMIN_USER</code> and
+          <code>LOWKEY_ADMIN_PASSWORD</code> to provision the account on
+          first boot and skip the interactive account step. See
+          <a href="#users">Users &amp; Permissions</a> for JWT details and
+          how to add or remove users later.
         </p>
         <div class="placeholder-video">Initial Setup Demo Video</div>
 
         <h3 id="dependencies">Installing Dependencies</h3>
         <p>
-          The Media Server uses external tools for media processing. On the setup page, you can download and install
-          the required dependencies with a single click. Dependencies are extracted on demand when a task requires them.
+          The Media Server uses external tools and AI models for media processing. They come in three flavors:
         </p>
-        <p>Dependencies are downloaded to:</p>
-        <div class="code-block">
-          <code>Windows: %ProgramData%\Lowkey Media Server\tmp\</code><br>
-          <code>Linux: /var/tmp/lowkeymediaserver/</code>
-        </div>
-        <p>Available dependencies include:</p>
         <ul>
-          <li><strong>ffmpeg / ffprobe</strong> - Media processing and conversion</li>
-          <li><strong>yt-dlp</strong> - Video downloading from YouTube and other sites</li>
-          <li><strong>gallery-dl</strong> - Image gallery downloading</li>
-          <li><strong>faster-whisper</strong> - Video transcription</li>
-          <li><strong>ONNX Runtime</strong> - AI model inference for auto-tagging</li>
+          <li><strong>Bundled binaries</strong> &mdash; <code>ffmpeg</code>, <code>ffprobe</code>, <code>exiftool</code>, the ONNX worker binaries, and the ONNX Runtime library ship in the <code>bin/</code> folder next to the server executable. Nothing to install.</li>
+          <li><strong>Optional tools</strong> &mdash; <code>yt-dlp</code>, <code>gallery-dl</code>, <code>ollama</code>, and DiscordChatExporter are detected on the system <code>PATH</code>. Install them with your package manager to unlock the corresponding tasks; the Dependencies page shows what each one enables.</li>
+          <li><strong>Downloadable models</strong> &mdash; the AI models are downloaded on demand from the setup wizard or the <strong>Dependencies</strong> page (<code>/settings/dependencies</code>). Downloads are resumable and verified against pinned SHA-256 checksums before use.</li>
+        </ul>
+        <p>Downloaded models are stored under the server's data directory:</p>
+        <div class="code-block">
+          <code>Windows: %APPDATA%\Lowkey Media Viewer\models\</code><br>
+          <code>Linux: ~/.local/share/lowkey-media-viewer/models/</code><br>
+          <code>macOS: ~/Library/Application Support/Lowkey Media Viewer/models/</code>
+        </div>
+        <p>Available model downloads include:</p>
+        <ul>
+          <li><strong>wd-eva02-large-tagger-v3</strong> - auto-tagging (~1.3&nbsp;GB)</li>
+          <li><strong>siglip2-base-patch16-224</strong> - visual similarity and text-to-image search (~1.5&nbsp;GB)</li>
+          <li><strong>dinov2-base</strong> - image-only similarity (~350&nbsp;MB)</li>
+          <li><strong>yunet / sface / anime-head / ccip</strong> - face detection and recognition for photos and anime</li>
+          <li><strong>faster-whisper</strong> - video transcription (~1.5&nbsp;GB; setting <code>fasterWhisperPath</code> to an existing install works too)</li>
         </ul>
         <div class="placeholder-video">Dependency Setup Demo Video</div>
 
@@ -262,8 +280,24 @@
           <code>  ghcr.io/stevecastle/lowkey-media-server:latest</code>
         </div>
         <p>
-          Open <code>http://localhost:10111</code> in your browser. The server is ready to use.
+          Open <code>http://localhost:10111</code> in your browser. The first visit lands on the
+          <a href="#initial-setup">setup wizard</a>; set <code>LOWKEY_ADMIN_USER</code> and
+          <code>LOWKEY_ADMIN_PASSWORD</code> to provision the admin account without it.
         </p>
+
+        <h3 id="docker-compose">Docker Compose + MinIO</h3>
+        <p>
+          The repo ships a compose file that starts the server together with a MinIO S3 backend,
+          pre-wired as the default storage root (buckets <code>media</code> and
+          <code>media-thumbnails</code> are created automatically):
+        </p>
+        <div class="code-block">
+          <code>docker compose -f media-server/docker-compose.yml up --build</code>
+        </div>
+        <ul>
+          <li>Server: <code>http://localhost:18090</code> (change the host port with <code>LOWKEY_PORT=... docker compose up</code>)</li>
+          <li>MinIO console: <code>http://localhost:19001</code> (<code>admin</code> / <code>adminadmin</code>)</li>
+        </ul>
 
         <h3 id="docker-local-storage">Local Storage</h3>
         <p>
@@ -369,20 +403,38 @@
         </table>
 
         <h3 id="docker-env">Environment Variables</h3>
-        <p>All server settings can be configured with environment variables, no config file needed.</p>
+        <p>
+          All server settings can be configured with environment variables, no config file needed.
+          Environment variables always win over <code>config.json</code>, which wins over built-in
+          defaults. Storage roots supplied via env are never written back into the config file.
+        </p>
         <table>
           <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
-          <tr><td><code>LOWKEY_DB_PATH</code></td><td><code>/data/db/media.db</code></td><td>SQLite database path</td></tr>
-          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>/data/media</code></td><td>Download directory (deprecated &mdash; use a default storage root instead)</td></tr>
-          <tr><td><code>LOWKEY_OLLAMA_BASE_URL</code></td><td><code>http://host.docker.internal:11434</code></td><td>Ollama API endpoint for LLM features</td></tr>
-          <tr><td><code>LOWKEY_OLLAMA_MODEL</code></td><td><code>llama3.2-vision</code></td><td>Vision model for image descriptions</td></tr>
+          <tr><td><code>LOWKEY_PORT</code></td><td><code>10111</code></td><td>HTTP listen port (in Docker, map it with <code>-p host:10111</code> instead)</td></tr>
+          <tr><td><code>LOWKEY_DB_PATH</code></td><td><code>/data/db/media.db</code> (set in image)</td><td>SQLite database path</td></tr>
+          <tr><td><code>LOWKEY_CONFIG_PATH</code></td><td>data dir + <code>config.json</code></td><td>Config file location override</td></tr>
+          <tr><td><code>LOWKEY_DOWNLOAD_PATH</code></td><td><code>/data/downloads</code> (set in image)</td><td>Fallback download directory when no storage root is configured</td></tr>
+          <tr><td><code>LOWKEY_ADMIN_USER</code> / <code>LOWKEY_ADMIN_PASSWORD</code></td><td></td><td>Provision the admin account on first boot (headless setup)</td></tr>
+          <tr><td><code>LOWKEY_ALLOW_PUBLIC_ACCESS</code></td><td><code>false</code></td><td>View-only anonymous access to the gallery, search, and Swipe app</td></tr>
           <tr><td><code>LOWKEY_JWT_SECRET</code></td><td>(auto-generated)</td><td>JWT signing secret for authentication</td></tr>
+          <tr><td><code>LOWKEY_OLLAMA_BASE_URL</code></td><td><code>http://host.docker.internal:11434</code> (set in image)</td><td>Ollama API endpoint for LLM features</td></tr>
+          <tr><td><code>LOWKEY_OLLAMA_MODEL</code></td><td><code>llama3.2-vision</code></td><td>Vision model for image descriptions</td></tr>
           <tr><td><code>LOWKEY_DISCORD_TOKEN</code></td><td></td><td>Discord token for media export</td></tr>
-          <tr><td><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td></td><td>Path to faster-whisper binary</td></tr>
+          <tr><td><code>LOWKEY_FASTER_WHISPER_PATH</code></td><td></td><td>Path to an existing faster-whisper install</td></tr>
           <tr><td><code>LOWKEY_ROOT_1</code>, <code>_2</code>, ...</td><td></td><td>Local storage roots (<code>path</code> or <code>path:label</code>)</td></tr>
-          <tr><td><code>LOWKEY_DEFAULT_ROOT</code></td><td><code>1</code></td><td>Which root receives uploads/downloads (1-based index or label)</td></tr>
-          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots (set <code>"default":true</code> on one)</td></tr>
+          <tr><td><code>LOWKEY_DEFAULT_ROOT</code></td><td>first root</td><td>Which <code>LOWKEY_ROOT_&lt;N&gt;</code> receives uploads/downloads (1-based index or label)</td></tr>
+          <tr><td><code>LOWKEY_ROOTS</code></td><td></td><td>JSON array of storage roots, local and S3 (set <code>"default":true</code> on one); wins over <code>LOWKEY_ROOT_&lt;N&gt;</code></td></tr>
         </table>
+        <p>
+          Every other config key has an env twin as well: inference providers
+          (<code>LOWKEY_INFERENCE_PROVIDER</code>, <code>LOWKEY_LMSTUDIO_*</code>,
+          <code>LOWKEY_LLAMACPP_*</code>, <code>LOWKEY_RUNPOD_*</code>,
+          <code>LOWKEY_INFERENCE_&lt;PROVIDER&gt;_CONCURRENCY</code>), transcription
+          (<code>LOWKEY_TRANSCRIPTION_PROVIDER|MODEL|LANGUAGE|VAD</code>), and ONNX task tuning
+          (<code>LOWKEY_EMBEDDING_*</code>, <code>LOWKEY_AUTOTAG_*</code>, <code>LOWKEY_FACE_*</code>,
+          <code>LOWKEY_ONNX_FILE_TIMEOUT</code>). See <a href="#config">Configuration</a> for the
+          matching keys.
+        </p>
         <p>
           If you're running <a href="https://ollama.com" target="_blank">Ollama</a> on the host machine for AI descriptions,
           the default <code>LOWKEY_OLLAMA_BASE_URL</code> will find it automatically on macOS and Windows.
@@ -397,10 +449,11 @@
         </p>
         <div class="code-block">
           <code>/data/</code><br>
-          <code>  db/media.db        &mdash; SQLite database</code><br>
-          <code>  media/             &mdash; Downloaded and ingested media</code><br>
-          <code>  config/            &mdash; Auto-generated configuration</code><br>
-          <code>  packages/          &mdash; Auto-downloaded tools (yt-dlp, gallery-dl, etc.)</code>
+          <code>  db/media.db                      &mdash; SQLite database</code><br>
+          <code>  downloads/                       &mdash; Downloaded media (when no default storage root is set)</code><br>
+          <code>  lowkey-media-viewer/config.json  &mdash; Auto-generated configuration</code><br>
+          <code>  lowkey-media-viewer/models/      &mdash; Downloaded AI models</code><br>
+          <code>  cache/                           &mdash; Runtime caches</code>
         </div>
         <p>
           To back up your data, use <code>docker cp</code> or mount a host directory instead
@@ -434,12 +487,13 @@
           <code>password: admin</code>
         </div>
         <p>
-          Visit <code>http://localhost:10111</code>, log in with those
-          credentials, and you'll be redirected to a setup wizard at
-          <code>/login?setup=true</code> that forces you to register a
-          real account. The default admin is deleted as soon as your
-          new user is created — there is no way to skip this step while
-          the default admin is still present.
+          Visit <code>http://localhost:10111</code> and you'll be
+          redirected to the setup wizard at <code>/setup</code>, which has
+          you register a real account. The default admin is deleted as
+          soon as your new user is created — there is no way to skip this
+          step while the default admin is still present. Headless installs
+          can pre-provision the account with <code>LOWKEY_ADMIN_USER</code>
+          / <code>LOWKEY_ADMIN_PASSWORD</code>.
         </p>
         <p>
           Pick a username and a strong password. Passwords are stored as
@@ -860,16 +914,48 @@
         <p>Configure the server through the web interface at <code>/config</code> or edit the config file directly:</p>
         <div class="code-block">
           <code>Windows: %APPDATA%\Lowkey Media Viewer\config.json</code><br>
-          <code>Linux: ~/.config/lowkeymediaviewer/config.json</code>
+          <code>Linux: ~/.local/share/lowkey-media-viewer/config.json (or $XDG_DATA_HOME/lowkey-media-viewer/)</code><br>
+          <code>macOS: ~/Library/Application Support/Lowkey Media Viewer/config.json</code>
         </div>
-        <h4>Configuration Options</h4>
+        <p>
+          Set <code>LOWKEY_CONFIG_PATH</code> to use a different location. Precedence is
+          environment variables &gt; <code>config.json</code> &gt; built-in defaults; nearly every
+          key below has a matching <code>LOWKEY_*</code> env var (see
+          <a href="#docker-env">Environment Variables</a>). Storage roots supplied via env are
+          never written back into the file.
+        </p>
+        <h4>Server</h4>
         <ul>
+          <li><strong>port</strong> - HTTP listen port (default 10111; restart to apply)</li>
           <li><strong>dbPath</strong> - Path to the SQLite database</li>
-          <li><strong>port</strong> - HTTP listen port (default 10111; the <code>LOWKEY_PORT</code> env var overrides it)</li>
-          <li><strong>ollamaBaseUrl</strong> - Ollama server URL (default: http://localhost:11434)</li>
-          <li><strong>ollamaModel</strong> - Vision model for descriptions</li>
-          <li><strong>fasterWhisperPath</strong> - Path to Faster Whisper executable</li>
-          <li><strong>onnxTagger</strong> - ONNX model configuration for auto-tagging</li>
+          <li><strong>roots</strong> - Storage roots (local directories and S3 buckets); mark one <code>"default": true</code> to receive uploads and downloads</li>
+          <li><strong>downloadPath</strong> - Fallback download directory when no storage root is configured</li>
+          <li><strong>defaultStartPath</strong> - Folder the web app opens on a fresh session</li>
+          <li><strong>allowPublicAccess</strong> - View-only anonymous access (default false; applies without restart)</li>
+          <li><strong>jwtSecret</strong> - JWT signing secret (auto-generated if unset)</li>
+          <li><strong>setupComplete</strong> - Set by the setup wizard; clear it to re-run the wizard</li>
+          <li><strong>discordToken</strong> - Discord token for media export</li>
+        </ul>
+        <h4>LLM &amp; Vision</h4>
+        <ul>
+          <li><strong>inferenceProvider</strong> - <code>off</code>, <code>ollama</code> (default), <code>runpod</code>, <code>lmstudio</code>, or <code>llamacpp</code></li>
+          <li><strong>ollamaBaseUrl / ollamaModel</strong> - defaults <code>http://localhost:11434</code> / <code>llama3.2-vision</code></li>
+          <li><strong>lmstudioBaseUrl / lmstudioModel / lmstudioApiKey</strong>, <strong>llamacppBaseUrl / llamacppModel / llamacppApiKey</strong>, <strong>runpodEndpoint / runpodApiKey</strong> - alternate providers</li>
+          <li><strong>describePrompt</strong> - Prompt used for image descriptions</li>
+          <li><strong>inferenceConcurrency</strong> - Per-provider request caps</li>
+        </ul>
+        <h4>Transcription</h4>
+        <ul>
+          <li><strong>transcriptionProvider / transcriptionModel / transcriptionLanguage / transcriptionVadFilter</strong> - defaults <code>whisper-cli</code> / provider default / <code>en</code> / on</li>
+          <li><strong>fasterWhisperPath</strong> - Use an existing Faster Whisper install instead of the downloadable one</li>
+        </ul>
+        <h4>ONNX Tasks (embedding, autotag, faces)</h4>
+        <ul>
+          <li><strong>embeddingModel / embeddingProvider / embeddingPerformance / embeddingWorkers / embeddingThreads</strong> - defaults <code>siglip2-base-patch16-224</code>, <code>cpu</code>, <code>balanced</code></li>
+          <li><strong>autotagModel / autotagProvider / autotagPerformance / autotagWorkers / autotagThreads</strong> - default model <code>wd-eva02-large-tagger-v3</code></li>
+          <li><strong>onnxTagger.generalThreshold / characterThreshold</strong> - tag confidence cutoffs (defaults 0.35 / 0.85)</li>
+          <li><strong>faceModel / faceProvider / facePerformance / faceRouting</strong> - defaults <code>sface</code>, <code>cpu</code>, <code>balanced</code>, <code>auto</code>; <strong>byoFaceModels</strong> registers bring-your-own ONNX recognizers</li>
+          <li><strong>onnxFileTimeoutSeconds</strong> - Per-file watchdog (default 120; 0 disables)</li>
         </ul>
       </section>
 
