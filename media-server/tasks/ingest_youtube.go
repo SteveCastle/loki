@@ -169,24 +169,23 @@ func ingestYouTubeTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 
 	// In direct mode the downloaded paths are already final; otherwise upload
 	// the staged files to the default storage backend.
-	var finalFiles []string
+	var finalFiles []storedFile
 	if target.direct {
-		finalFiles = downloadedFiles
+		finalFiles = localStoredFiles(downloadedFiles)
 	} else {
 		finalFiles = uploadStagedFiles(ctx, q, j.ID, downloadedFiles, target.dir, "downloads/")
 	}
 
 	// Add final files to database
 	var insertedFiles []string
-	for _, filePath := range finalFiles {
-		size := fileSizeOrZero(filePath)
-		if err := insertMediaRecord(q.Db, filePath, size); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", filePath, err))
+	for _, f := range finalFiles {
+		if err := insertMediaRecord(q.Db, f.Path, f.Size); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", f.Path, err))
 			continue
 		}
-		insertedFiles = append(insertedFiles, filePath)
-		q.PushJobStdout(j.ID, fmt.Sprintf("Added to database: %s", filePath))
-		q.RegisterOutputFile(j.ID, filePath)
+		insertedFiles = append(insertedFiles, f.Path)
+		q.PushJobStdout(j.ID, fmt.Sprintf("Added to database: %s", f.Path))
+		q.RegisterOutputFile(j.ID, f.Path)
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Download completed: %d files added to database", len(insertedFiles)))

@@ -65,14 +65,31 @@ func resolveIngestDir(jobID, destPrefix string) (ingestTarget, error) {
 	return ingestTarget{dir: dir, direct: false, cleanup: func() { cleanupStaging(dir) }}, nil
 }
 
+// storedFile pairs a final library path with its byte size, captured from the
+// staged local copy before upload — os.Stat can't size an S3 key afterwards.
+type storedFile struct {
+	Path string
+	Size int64
+}
+
+// localStoredFiles wraps local paths as storedFiles, sizing each via os.Stat.
+func localStoredFiles(paths []string) []storedFile {
+	out := make([]storedFile, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, storedFile{Path: p, Size: fileSizeOrZero(p)})
+	}
+	return out
+}
+
 // uploadStagedFiles copies every file from stagingDir into the default storage
 // backend under destPrefix (e.g. "downloads/"). It returns the list of final
-// paths as they exist in the backend (for database insertion).
+// paths as they exist in the backend (for database insertion), each paired
+// with the size of the staged local copy.
 //
 // If no default backend is configured the staged files are left in place and
 // their local paths are returned — this preserves backwards-compatible behaviour
 // for setups that have no storage roots yet.
-func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, stagedFiles []string, stagingBase string, destPrefix string) []string {
+func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, stagedFiles []string, stagingBase string, destPrefix string) []storedFile {
 	backend := defaultBackend()
 
 	// DEBUG: trace backend resolution
@@ -83,7 +100,7 @@ func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, sta
 		// No storage backend — return local paths as-is (legacy behaviour)
 		log.Printf("[uploadStagedFiles] WARNING: defaultBackend() returned nil — returning raw local paths")
 		q.PushJobStdout(jobID, "DEBUG: no storage backend configured, returning local staged paths as-is")
-		return stagedFiles
+		return localStoredFiles(stagedFiles)
 	}
 
 	// The backend root tells us whether we need to resolve relative paths
@@ -94,7 +111,7 @@ func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, sta
 	log.Printf("[uploadStagedFiles] backend root: Type=%s Path=%s Name=%s", root.Type, root.Path, root.Name)
 	q.PushJobStdout(jobID, fmt.Sprintf("DEBUG: backend root Type=%s Path=%s Name=%s", root.Type, root.Path, root.Name))
 
-	var finalPaths []string
+	var finalFiles []storedFile
 	for _, localPath := range stagedFiles {
 		destKey := stagedDestKey(localPath, stagingBase, destPrefix)
 		log.Printf("[uploadStagedFiles] localPath=%s destKey=%s", localPath, destKey)
@@ -115,12 +132,12 @@ func uploadStagedFiles(ctx context.Context, q *jobqueue.Queue, jobID string, sta
 
 		storePath := storePathForKey(root, destKey)
 		log.Printf("[uploadStagedFiles] storePath=%s (root.Type=%s root.Path=%s destKey=%s)", storePath, root.Type, root.Path, destKey)
-		finalPaths = append(finalPaths, storePath)
+		finalFiles = append(finalFiles, storedFile{Path: storePath, Size: fileSizeOrZero(localPath)})
 		q.PushJobStdout(jobID, fmt.Sprintf("Uploaded to storage: %s", storePath))
 	}
 
-	log.Printf("[uploadStagedFiles] final paths: %v", finalPaths)
-	return finalPaths
+	log.Printf("[uploadStagedFiles] final files: %v", finalFiles)
+	return finalFiles
 }
 
 // defaultBackend is a small helper so callers don't need to nil-check the registry.

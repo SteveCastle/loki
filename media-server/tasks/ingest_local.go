@@ -213,9 +213,13 @@ func getExistingMediaPaths(db *sql.DB, dirPath string) (map[string]struct{}, err
 	return result, nil
 }
 
-// insertMediaRecord inserts a basic media record into the database
+// insertMediaRecord inserts a basic media record into the database. Existing
+// rows are left alone except for size, which is backfilled when a real size is
+// now known and the stored one is NULL/0 (older S3 ingests never set it).
 func insertMediaRecord(db *sql.DB, path string, size int64) error {
-	stmt := `INSERT OR IGNORE INTO media (path, size) VALUES (?, ?)`
+	stmt := `INSERT INTO media (path, size) VALUES (?, ?)
+		ON CONFLICT(path) DO UPDATE SET size = excluded.size
+		WHERE excluded.size > 0 AND (media.size IS NULL OR media.size = 0)`
 	_, err := db.Exec(stmt, path, size)
 	return err
 }

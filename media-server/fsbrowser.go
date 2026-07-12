@@ -15,6 +15,7 @@ type fsEntry struct {
 	Path    string  `json:"path"`
 	IsDir   bool    `json:"isDir"`
 	MtimeMs float64 `json:"mtimeMs"`
+	Size    int64   `json:"size"`
 	Type    string  `json:"type,omitempty"`
 }
 
@@ -87,6 +88,7 @@ func fsListHandler(deps *Dependencies) http.HandlerFunc {
 				Path:    e.Path,
 				IsDir:   e.IsDir,
 				MtimeMs: e.MtimeMs,
+				Size:    e.Size,
 			})
 		}
 
@@ -117,6 +119,7 @@ func fsListHandler(deps *Dependencies) http.HandlerFunc {
 type fsScanFile struct {
 	Path    string  `json:"path"`
 	MtimeMs float64 `json:"mtimeMs"`
+	Size    int64   `json:"size"`
 }
 
 type fsScanResponse struct {
@@ -168,7 +171,7 @@ func fsScanHandler(deps *Dependencies) http.HandlerFunc {
 
 		files := make([]fsScanFile, 0, len(storageFiles))
 		for _, f := range storageFiles {
-			files = append(files, fsScanFile{Path: f.Path, MtimeMs: f.MtimeMs})
+			files = append(files, fsScanFile{Path: f.Path, MtimeMs: f.MtimeMs, Size: f.Size})
 		}
 
 		// Importing scanned paths into the library is a WRITE — view-only
@@ -213,7 +216,11 @@ func insertBulkMediaPaths(db *sql.DB, files []fsScanFile) {
 	if err != nil {
 		return
 	}
-	stmt, err := tx.Prepare("INSERT INTO media (path) VALUES (?) ON CONFLICT(path) DO NOTHING")
+	// Backfill size on conflict: rows ingested before sizes flowed through the
+	// storage layer (S3 roots especially) sit at NULL/0 and self-heal on browse.
+	stmt, err := tx.Prepare(`INSERT INTO media (path, size) VALUES (?, ?)
+		ON CONFLICT(path) DO UPDATE SET size = excluded.size
+		WHERE excluded.size > 0 AND (media.size IS NULL OR media.size = 0)`)
 	if err != nil {
 		tx.Rollback()
 		return
@@ -221,7 +228,7 @@ func insertBulkMediaPaths(db *sql.DB, files []fsScanFile) {
 	defer stmt.Close()
 
 	for _, f := range files {
-		stmt.Exec(f.Path)
+		stmt.Exec(f.Path, f.Size)
 	}
 	tx.Commit()
 }

@@ -12,6 +12,7 @@ type Entry struct {
 	Path    string  `json:"path"`
 	IsDir   bool    `json:"isDir"`
 	MtimeMs float64 `json:"mtimeMs"`
+	Size    int64   `json:"size"` // bytes; 0 for directories
 	Type    string  `json:"type,omitempty"` // "local" or "s3"
 }
 
@@ -19,6 +20,7 @@ type Entry struct {
 type FileInfo struct {
 	Path    string  `json:"path"`
 	MtimeMs float64 `json:"mtimeMs"`
+	Size    int64   `json:"size"`
 }
 
 // Backend is the storage abstraction used by the media server.

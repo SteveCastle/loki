@@ -202,6 +202,7 @@ func (b *S3Backend) List(ctx context.Context, dirPath string) ([]Entry, error) {
 				Path:    b.keyToPath(*obj.Key),
 				IsDir:   false,
 				MtimeMs: mtimeMs,
+				Size:    aws.ToInt64(obj.Size),
 				Type:    "s3",
 			})
 		}
@@ -257,6 +258,7 @@ func (b *S3Backend) Scan(ctx context.Context, dirPath string, recursive bool) ([
 			files = append(files, FileInfo{
 				Path:    b.keyToPath(*obj.Key),
 				MtimeMs: mtimeMs,
+				Size:    aws.ToInt64(obj.Size),
 			})
 		}
 	}

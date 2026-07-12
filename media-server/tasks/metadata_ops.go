@@ -43,6 +43,21 @@ func hasExistingMetadata(db *sql.DB, path, metadataType string) (bool, error) {
 	return value.Valid && value.String != "", nil
 }
 
+// hasExistingHashAndSize reports whether path already has both a hash and a
+// non-zero size. Used by the hash op's skip check so items hashed before size
+// population existed still get their size repaired.
+func hasExistingHashAndSize(db *sql.DB, path string) (bool, error) {
+	var hash sql.NullString
+	var size sql.NullInt64
+	if err := db.QueryRow(`SELECT hash, size FROM media WHERE path = ?`, path).Scan(&hash, &size); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	return hash.Valid && hash.String != "" && size.Valid && size.Int64 > 0, nil
+}
+
 func hasExistingDimensions(db *sql.DB, path string) (bool, error) {
 	var width, height sql.NullInt64
 	if err := db.QueryRow(`SELECT width, height FROM media WHERE path = ?`, path).Scan(&width, &height); err != nil {

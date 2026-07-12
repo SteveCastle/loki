@@ -119,7 +119,9 @@ func prepareHashOp(run *ItemRun) (*ItemProcessor, error) {
 	db := run.Queue.Db
 
 	return &ItemProcessor{
-		SkipExisting: func(path string) (bool, error) { return hasExistingMetadata(db, path, "hash") },
+		// The op writes hash AND size; a hash alone must not skip the item, or
+		// rows whose size was never populated (older S3 ingests) stay 0 forever.
+		SkipExisting: func(path string) (bool, error) { return hasExistingHashAndSize(db, path) },
 		Process: func(ctx context.Context, path, localPath string) (*ItemCommit, error) {
 			fi, err := os.Stat(localPath)
 			if err != nil {

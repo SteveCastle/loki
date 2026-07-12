@@ -197,14 +197,13 @@ func ingestDiscordTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.M
 
 		finalFiles := uploadStagedFiles(ctx, q, j.ID, stagedFiles, stagingPath, "downloads/")
 
-		for _, filePath := range finalFiles {
-			size := fileSizeOrZero(filePath)
-			if err := insertMediaRecord(q.Db, filePath, size); err != nil {
-				q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", filePath, err))
+		for _, f := range finalFiles {
+			if err := insertMediaRecord(q.Db, f.Path, f.Size); err != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", f.Path, err))
 				continue
 			}
-			q.PushJobStdout(j.ID, fmt.Sprintf("Added to database: %s", filePath))
-			q.RegisterOutputFile(j.ID, filePath)
+			q.PushJobStdout(j.ID, fmt.Sprintf("Added to database: %s", f.Path))
+			q.RegisterOutputFile(j.ID, f.Path)
 		}
 	}
 

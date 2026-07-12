@@ -56,6 +56,7 @@ func (b *LocalBackend) List(_ context.Context, path string) ([]Entry, error) {
 				Path:    filepath.Join(path, de.Name()),
 				IsDir:   false,
 				MtimeMs: float64(info.ModTime().UnixMilli()),
+				Size:    info.Size(),
 				Type:    "local",
 			})
 		}
@@ -98,6 +99,7 @@ func (b *LocalBackend) Scan(_ context.Context, path string, recursive bool) ([]F
 				files = append(files, FileInfo{
 					Path:    p,
 					MtimeMs: float64(info.ModTime().UnixMilli()),
+					Size:    info.Size(),
 				})
 			}
 			return nil
@@ -119,6 +121,7 @@ func (b *LocalBackend) Scan(_ context.Context, path string, recursive bool) ([]F
 				files = append(files, FileInfo{
 					Path:    filepath.Join(path, de.Name()),
 					MtimeMs: float64(info.ModTime().UnixMilli()),
+					Size:    info.Size(),
 				})
 			}
 		}

@@ -93,11 +93,12 @@ func ingestBackendTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, _ *sync.Mu
 		return err
 	}
 
-	var allPaths, newFiles []string
+	var allPaths []string
+	var newFiles []storage.FileInfo
 	for _, f := range files {
 		allPaths = append(allPaths, f.Path)
 		if _, ok := existingPaths[f.Path]; !ok {
-			newFiles = append(newFiles, f.Path)
+			newFiles = append(newFiles, f)
 		}
 	}
 
@@ -109,7 +110,7 @@ func ingestBackendTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, _ *sync.Mu
 	}
 
 	var insertedFiles []string
-	for i, filePath := range newFiles {
+	for i, f := range newFiles {
 		select {
 		case <-ctx.Done():
 			q.PushJobStdout(j.ID, "Task was canceled")
@@ -118,13 +119,12 @@ func ingestBackendTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, _ *sync.Mu
 		default:
 		}
 
-		// Object size isn't available from Scan; the metadata task fills it in.
-		if err := insertMediaRecord(q.Db, filePath, 0); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", filePath, err))
+		if err := insertMediaRecord(q.Db, f.Path, f.Size); err != nil {
+			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", f.Path, err))
 			continue
 		}
-		insertedFiles = append(insertedFiles, filePath)
-		q.RegisterOutputFile(j.ID, filePath)
+		insertedFiles = append(insertedFiles, f.Path)
+		q.RegisterOutputFile(j.ID, f.Path)
 		if (i+1)%100 == 0 || i == len(newFiles)-1 {
 			q.PushJobStdout(j.ID, fmt.Sprintf("Progress: %d/%d files ingested", i+1, len(newFiles)))
 		}
