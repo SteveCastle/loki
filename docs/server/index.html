@@ -1219,6 +1219,114 @@
           }
         });
       });
+
+      // TOC scrollspy: highlight the section currently in view
+      (() => {
+        const toc = document.querySelector('.toc');
+        if (!toc) return;
+        const links = Array.from(toc.querySelectorAll('a[href^="#"]'));
+        const targets = links
+          .map((link) => {
+            const el = document.getElementById(
+              link.getAttribute('href').slice(1)
+            );
+            return el ? { link, el } : null;
+          })
+          .filter(Boolean);
+        if (!targets.length) return;
+
+        let current = null;
+        let suppress = false;
+        let suppressTimer = null;
+
+        function setActive(link) {
+          if (link === current) return;
+          current = link;
+          toc.querySelectorAll('.active, .active-parent').forEach((el) => {
+            el.classList.remove('active', 'active-parent');
+          });
+          if (!link) return;
+          link.classList.add('active');
+          const sublist = link.closest('.toc ul ul');
+          if (sublist) {
+            const parentLink = sublist
+              .closest('.toc > ul > li')
+              .querySelector(':scope > a');
+            if (parentLink) parentLink.classList.add('active-parent');
+          }
+          // Keep the active link visible inside the scrollable TOC
+          const linkRect = link.getBoundingClientRect();
+          const tocRect = toc.getBoundingClientRect();
+          if (linkRect.top < tocRect.top + 48) {
+            toc.scrollTop += linkRect.top - (tocRect.top + 48);
+          } else if (linkRect.bottom > tocRect.bottom - 24) {
+            toc.scrollTop += linkRect.bottom - (tocRect.bottom - 24);
+          }
+        }
+
+        function update() {
+          const atBottom =
+            window.innerHeight + window.scrollY >=
+            document.documentElement.scrollHeight - 2;
+          if (atBottom) {
+            setActive(targets[targets.length - 1].link);
+            return;
+          }
+          // Last target whose anchor point has scrolled past the header
+          // (sections use scroll-margin-top: 100px, so 110 = anchor + fudge)
+          let best = null;
+          for (const t of targets) {
+            if (t.el.getBoundingClientRect().top <= 110) best = t;
+          }
+          setActive(best ? best.link : targets[0].link);
+        }
+
+        function holdForClick() {
+          suppress = true;
+          clearTimeout(suppressTimer);
+          suppressTimer = setTimeout(() => {
+            suppress = false;
+          }, 150);
+        }
+
+        links.forEach((link) => {
+          link.addEventListener('click', () => {
+            holdForClick();
+            setActive(link);
+          });
+        });
+
+        let ticking = false;
+        window.addEventListener(
+          'scroll',
+          () => {
+            if (suppress) {
+              // Smooth scroll from a click is in flight; keep the clicked
+              // link active until scrolling settles.
+              holdForClick();
+              return;
+            }
+            if (!ticking) {
+              ticking = true;
+              requestAnimationFrame(() => {
+                ticking = false;
+                update();
+              });
+            }
+          },
+          { passive: true }
+        );
+
+        window.addEventListener(
+          'resize',
+          () => {
+            if (!suppress) update();
+          },
+          { passive: true }
+        );
+
+        update();
+      })();
     </script>
   </body>
 </html>

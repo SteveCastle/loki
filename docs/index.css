@@ -437,6 +437,29 @@ main {
   color: #f1f5f9;
 }
 
+.toc a.active {
+  color: #f472b6;
+}
+
+.toc ul ul a.active {
+  position: relative;
+}
+
+.toc ul ul a.active::before {
+  content: '';
+  position: absolute;
+  left: calc(-0.875rem - 1px);
+  top: 0.25rem;
+  bottom: 0.25rem;
+  width: 1px;
+  background-color: #f472b6;
+}
+
+.toc > ul > li > a.active,
+.toc > ul > li > a.active-parent {
+  color: #f1f5f9;
+}
+
 /* Sections */
 section {
   scroll-margin-top: 100px;
@@ -704,6 +727,12 @@ h3 .requires-server {
 
   .toc > ul > li > a:hover {
     background-color: rgba(148, 163, 184, 0.12);
+  }
+
+  .toc > ul > li > a.active,
+  .toc > ul > li > a.active-parent {
+    background-color: rgba(244, 114, 182, 0.15);
+    color: #f472b6;
   }
 }
 
