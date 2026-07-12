@@ -594,6 +594,44 @@ code {
   color: #fb7185;
 }
 
+/* "Requires Media Server" badge */
+.requires-server {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  vertical-align: middle;
+  padding: 0.2rem 0.6rem;
+  margin-left: 0.6rem;
+  border-radius: 999px;
+  background-color: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  color: #b48af7;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.requires-server::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+a.requires-server:hover {
+  color: #cbadfa;
+  border-color: rgba(168, 85, 247, 0.5);
+}
+
+h2 .requires-server,
+h3 .requires-server {
+  transform: translateY(-1px);
+}
+
 /* Placeholder videos */
 .placeholder-video {
   width: 100%;

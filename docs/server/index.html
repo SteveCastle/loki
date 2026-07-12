@@ -141,7 +141,9 @@
               <li><a href="#autotag">Auto-Tagging (ONNX)</a></li>
               <li><a href="#llm-vision">LLM Vision Descriptions</a></li>
               <li><a href="#transcription">Transcription</a></li>
+              <li><a href="#faces">Face Recognition &amp; People</a></li>
               <li><a href="#visual-similarity">Visual Similarity Search</a></li>
+              <li><a href="#composite-search">Composite &amp; Blended Queries</a></li>
               <li><a href="#embeddings-viz">3D Embedding Visualization</a></li>
             </ul>
           </li>
@@ -170,6 +172,8 @@
           <li>Job queue with persistence and real-time status updates</li>
           <li>Media ingestion from local directories, YouTube, and gallery sites</li>
           <li>AI-powered auto-tagging using ONNX models</li>
+          <li>Visual similarity search with local image embeddings</li>
+          <li>Face recognition that clusters faces into people (photos and anime)</li>
           <li>LLM vision integration for image descriptions</li>
           <li>Video transcription with Faster Whisper</li>
           <li>Browser extensions for Chrome and Firefox</li>
@@ -622,9 +626,66 @@
         </p>
         <div class="placeholder-video">Transcription Demo Video</div>
 
+        <h3 id="faces">Face Recognition &amp; People</h3>
+        <p>
+          The server can detect the faces in your library, compute a compact embedding
+          for each one, and cluster them into people that show up in the viewer's
+          <strong>People</strong> view. It handles photographs and drawn/anime-style
+          characters, and everything runs locally.
+        </p>
+        <h4>Tasks</h4>
+        <ul>
+          <li>
+            <strong><code>faces</code> — Detect Faces (ONNX)</strong> - Scans media,
+            detects faces, stores an embedding per face, and clusters incrementally
+            as it goes, so people appear while a large scan is still running. Videos
+            are scanned on a representative frame.
+          </li>
+          <li>
+            <strong><code>faces-cluster</code> — Cluster Faces into People</strong> -
+            Groups stored faces into people. Supports flags for the match threshold,
+            minimum cluster size, quality floor, and two reset levels:
+            <code>--reset</code> rebuilds only the anonymous "Unknown" groups, while
+            <code>--reset-all</code> rebuilds everything except user-confirmed labels.
+          </li>
+        </ul>
+        <h4>Models &amp; Automatic Domain Routing</h4>
+        <p>
+          Two recognition pipelines ship built-in, installable from the Dependencies
+          page:
+        </p>
+        <ul>
+          <li><strong>Photos</strong> - YuNet face detector + SFace recognizer</li>
+          <li><strong>Anime / drawn art</strong> - anime head detector + CCIP character recognizer</li>
+        </ul>
+        <p>
+          With routing set to <code>auto</code> (the default), each item is classified
+          photo-vs-anime using a SigLIP 2 text probe and sent to the right pipeline —
+          one <code>faces</code> job covers a mixed library. Advanced users can also
+          point the config at their own ArcFace-family ONNX recognizer. Face inference
+          supports GPU acceleration via DirectML on Windows, configurable per-task from
+          the Config page.
+        </p>
+        <h4>Curation Model</h4>
+        <p>
+          Clustering respects your manual curation permanently:
+        </p>
+        <ul>
+          <li><strong>Locks</strong> - Faces you confirm are ground truth: they anchor the person, carry extra clustering weight, and survive every regroup.</li>
+          <li><strong>Rejections</strong> - A face you reject from a person can never rejoin that group, even after it dissolves and re-forms.</li>
+          <li><strong>Group bans</strong> - Deleting a person prevents the same group from silently re-forming on the next cluster pass.</li>
+        </ul>
+        <p>
+          Grouping thresholds (match strictness, minimum group size, quality floor)
+          are stored in server config and adjustable from the viewer's Tune panel or
+          via <code>GET/POST /api/faces/tuning</code>. A privacy wipe is available with
+          <code>DELETE /api/faces/all?confirm=true</code>.
+        </p>
+        <div class="placeholder-video">Face Detection &amp; Clustering Demo Video</div>
+
         <h3 id="visual-similarity">Visual Similarity Search</h3>
         <p>
-          Search the library by what media <em>looks like</em>, powered by SigLIP 2 image
+          Search the library by what media <em>looks like</em>, powered by image
           embeddings computed entirely on your machine. Generate embeddings with the
           <code>embed</code> task, then search three ways:
         </p>
@@ -635,9 +696,52 @@
         </ul>
         <p>
           Similarity predicates compose with tags, paths, and other filters in one query, and
-          results are ranked by match score. The SigLIP 2 model (~1.5 GB) installs from the
-          Dependencies page.
+          results are ranked by match score. Two embedding models are available from the
+          Dependencies page and can coexist — vectors are stored per model:
         </p>
+        <ul>
+          <li>
+            <strong>SigLIP 2</strong> (~1.5 GB, default) - Multimodal: powers image → image,
+            text → image, and the blended image + text queries below.
+          </li>
+          <li>
+            <strong>DINOv2</strong> (~350 MB) - Image-only alternative with strong purely
+            visual matching; text queries automatically fall back to SigLIP 2.
+          </li>
+        </ul>
+        <p>
+          Embedding runs on persistent worker processes (the model loads once per job,
+          not once per file) at below-normal OS priority, with optional DirectML GPU
+          acceleration on Windows. Search is an exact, parallelized cosine scan — no
+          approximate index, so the top match is always the true top match — and stays
+          at a few milliseconds even at tens of thousands of items. New media is added
+          to the in-memory index the moment it's embedded, so fresh imports are
+          searchable immediately.
+        </p>
+        <div class="placeholder-video">Visual Similarity Search Demo Video</div>
+
+        <h3 id="composite-search">Composite &amp; Blended Queries</h3>
+        <p>
+          Similarity predicates aren't limited to a single reference. A query can carry a
+          <strong>blend</strong> of nodes — library images, uploaded clips, and text
+          concepts, each with a signed weight. The server normalizes every component,
+          combines them into <em>one</em> weighted query vector in a shared embedding
+          space, and runs a single ranked scan. That means "like this image, plus
+          <em>'at night'</em> at 50%, minus <em>'blurry'</em>" is one coherent search,
+          not several searches intersected after the fact.
+        </p>
+        <ul>
+          <li>Weights are true shares of the final direction (each vector is normalized first)</li>
+          <li>Negative weights steer results <em>away</em> from a concept or image</li>
+          <li>Mixed text + image blends are embedded with the multimodal model so all nodes share one space</li>
+        </ul>
+        <p>
+          Composite queries are sent through <code>POST /api/media/query</code> as
+          <code>nodes</code> on a <code>similar</code>, <code>clip</code>, or
+          <code>visual</code> predicate. In the viewer this is the hover blend editor on
+          visual search chips.
+        </p>
+        <div class="placeholder-video">Composite Blend Query Demo Video</div>
 
         <h3 id="embeddings-viz">3D Embedding Visualization</h3>
         <p>
@@ -738,6 +842,9 @@
           <tr><td><code>ingest</code></td><td>Ingest Media</td><td>Scan directories and add files to database</td></tr>
           <tr><td><code>metadata</code></td><td>Generate Metadata</td><td>Generate descriptions, transcripts, hashes</td></tr>
           <tr><td><code>autotag</code></td><td>Auto Tag</td><td>ML-based automatic image tagging</td></tr>
+          <tr><td><code>embed</code></td><td>Generate Embeddings</td><td>Compute visual embeddings for similarity search</td></tr>
+          <tr><td><code>faces</code></td><td>Detect Faces (ONNX)</td><td>Detect and embed faces, clustering incrementally</td></tr>
+          <tr><td><code>faces-cluster</code></td><td>Cluster Faces into People</td><td>Group stored faces into people</td></tr>
           <tr><td><code>yt-dlp</code></td><td>yt-dlp</td><td>Download videos from YouTube, etc.</td></tr>
           <tr><td><code>gallery-dl</code></td><td>gallery-dl</td><td>Download media from gallery sites</td></tr>
           <tr><td><code>ffmpeg</code></td><td>ffmpeg</td><td>Process and convert media files</td></tr>
@@ -792,6 +899,22 @@
           <tr><td>GET</td><td><code>/api/media/similar</code></td><td>Find media similar to a library item</td></tr>
           <tr><td>GET</td><td><code>/api/media/search/visual</code></td><td>Text-to-image semantic search</td></tr>
           <tr><td>POST</td><td><code>/api/media/search/image</code></td><td>Search by an uploaded image</td></tr>
+        </table>
+        <h4>People &amp; Faces</h4>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/people</code></td><td>List people</td></tr>
+          <tr><td>POST</td><td><code>/api/people</code></td><td>Create a person</td></tr>
+          <tr><td>POST</td><td><code>/api/people/{id}/rename</code></td><td>Rename a person</td></tr>
+          <tr><td>POST</td><td><code>/api/people/{id}/merge</code></td><td>Merge a person into another</td></tr>
+          <tr><td>DELETE</td><td><code>/api/people/{id}</code></td><td>Delete a person (<code>?deleteFaces=true</code> also purges faces)</td></tr>
+          <tr><td>GET</td><td><code>/api/people/{id}/faces</code></td><td>A person's faces, least typical first</td></tr>
+          <tr><td>POST</td><td><code>/api/faces/{id}/assign</code></td><td>Assign a face to a person (confirmed)</td></tr>
+          <tr><td>POST</td><td><code>/api/faces/{id}/reject</code></td><td>Reject a face from its person (permanent)</td></tr>
+          <tr><td>GET</td><td><code>/api/faces/ungrouped</code></td><td>Media or faces not yet grouped</td></tr>
+          <tr><td>POST</td><td><code>/api/media/search/face</code></td><td>Face-identity search by image</td></tr>
+          <tr><td>GET/POST</td><td><code>/api/faces/tuning</code></td><td>Read or set clustering thresholds</td></tr>
+          <tr><td>DELETE</td><td><code>/api/faces/all?confirm=true</code></td><td>Delete all face data (privacy wipe)</td></tr>
         </table>
         <h4>System</h4>
         <table class="api-table">

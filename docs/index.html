@@ -199,7 +199,22 @@
                 <li><a href="#viewer-find-similar">Find Similar Images</a></li>
                 <li><a href="#viewer-search-meaning">Search by Meaning</a></li>
                 <li><a href="#viewer-clip-search">Screen Clip Search</a></li>
+                <li><a href="#viewer-blend">Blending Image + Text</a></li>
+                <li><a href="#viewer-composite">Composite Queries</a></li>
                 <li><a href="#viewer-visual-setup">Setup Requirements</a></li>
+              </ul>
+            </li>
+            <li>
+              <a href="#viewer-faces">Faces &amp; People</a>
+              <ul>
+                <li><a href="#viewer-faces-scan">Scanning for Faces</a></li>
+                <li><a href="#viewer-people-view">The People View</a></li>
+                <li><a href="#viewer-people-manage">Naming, Merging &amp; Deleting</a></li>
+                <li><a href="#viewer-face-review">Reviewing a Person's Faces</a></li>
+                <li><a href="#viewer-faces-ungrouped">Ungrouped Faces</a></li>
+                <li><a href="#viewer-find-person">Find This Person</a></li>
+                <li><a href="#viewer-faces-tuning">Tuning the Grouping</a></li>
+                <li><a href="#viewer-faces-setup">Setup Requirements</a></li>
               </ul>
             </li>
             <li>
@@ -655,15 +670,73 @@
             </p>
             <video src="./static/command.mp4" muted loop playsinline controls preload="metadata"></video>
 
-            <h3 id="viewer-context-palette">Using the Context Palette</h3>
+            <h3 id="viewer-context-palette">
+              Using the Context Palette
+              <a class="requires-server" href="./server/">Requires Media Server</a>
+            </h3>
             <p>
-              <kbd>Shift</kbd> + right-click on any media item to open the
-              context palette. Unlike the full command palette, it shows only
-              actions relevant to what you clicked — run a saved workflow
-              (if you're using the Media Server), copy, delete, tag, and more.
-              Jobs started from the palette stay in a footer so you can watch
-              progress or cancel them without losing your place.
+              <kbd>Shift</kbd> + right-click to open the context palette —
+              the launcher for AI and batch actions. Where the command
+              palette holds the viewer's own settings, the context palette
+              is <em>context-aware</em>: it acts on exactly what you
+              clicked.
             </p>
+            <ul>
+              <li>
+                <strong>The selected media item or detail view</strong> —
+                actions target that single file.
+              </li>
+              <li>
+                <strong>Any other item or empty panel space</strong> —
+                actions target your whole current list (with filters
+                applied).
+              </li>
+              <li>
+                <strong>A tag or category</strong> — actions target every
+                item carrying that tag or category.
+              </li>
+            </ul>
+            <p>
+              The header shows what you're acting on and how many items
+              that is. For a single file it also offers two quick searches:
+              <strong>Find visually similar</strong> and
+              <strong>Find this person</strong> (face match) — see
+              <a href="#viewer-visual-search">Visual Search</a> and
+              <a href="#viewer-faces">Faces &amp; People</a>.
+            </p>
+            <p>The palette is organized into three blocks:</p>
+            <ul>
+              <li>
+                <strong>Generate</strong> — pick one or more operations
+                (<strong>Tags</strong>, <strong>Descriptions</strong>,
+                <strong>Transcripts</strong>, <strong>File info</strong>,
+                <strong>Embeddings</strong>, <strong>Faces</strong>) and
+                hit <strong>Run</strong> to launch them as a single job on
+                the server. A <strong>Missing / All</strong> toggle decides
+                whether to fill in only what's missing (the default) or
+                regenerate everything. Operations that need a model or tool
+                you haven't installed show a small <em>setup</em> badge
+                with a one-click download right in the palette.
+              </li>
+              <li>
+                <strong>Workflows</strong> — every workflow saved on the
+                server, with a filter box and arrow-key navigation. Click
+                one (or press <kbd>Enter</kbd>) to run it against the
+                current context.
+              </li>
+              <li>
+                <strong>Active Jobs</strong> — a footer listing the jobs
+                currently running or queued, each with a live status and a
+                cancel button, so you can keep working while batches run.
+              </li>
+            </ul>
+            <p>
+              When you shift + right-click a person's tag, the palette also
+              offers a <strong>Rename</strong> field for that person. If
+              you're not signed in to the Media Server, the palette shows a
+              login prompt in place of the action blocks.
+            </p>
+            <div class="placeholder-video">Context Palette Demo Video</div>
 
             <h3 id="viewer-grid">
               <img class="inline-icon" src="./icons/view-grid.svg" alt="" />
@@ -877,7 +950,10 @@
           </section>
 
           <section id="viewer-visual-search">
-            <h2>Visual Search (AI)</h2>
+            <h2>
+              Visual Search (AI)
+              <a class="requires-server" href="./server/">Requires Media Server</a>
+            </h2>
             <p>
               Search your library the way you think about it: find images
               that look like another image, describe what you want in plain
@@ -897,6 +973,7 @@
               <li><strong>path:</strong> - Filename or folder contains text</li>
               <li><strong>description:</strong> - Description contains text</li>
               <li><strong>hash:</strong> - File hash contains text</li>
+              <li><strong>faces:ungrouped</strong> - Media with detected but ungrouped faces (see <a href="#viewer-faces">Faces &amp; People</a>)</li>
             </ul>
             <p>
               Click a chip to exclude it (NOT), and click the join between
@@ -932,8 +1009,68 @@
               detail inside a larger picture — and the viewer searches your
               library for visually similar media. The clip appears as a chip
               in the search input with its own thumbnail, and composes with
-              your other filters like any other search.
+              your other filters like any other search. Screen clip capture
+              is a desktop-app feature; in the browser you can still search
+              by uploading an image.
             </p>
+
+            <h3 id="viewer-blend">Blending Image + Text</h3>
+            <p>
+              Any visual search can be steered with words. Hover a
+              similar-image, screen-clip, or text chip and a small blend
+              editor pops up. Type into the
+              <strong>"Add concept…"</strong> box — say
+              <em>"at night"</em> or <em>"close up"</em> — and press
+              <kbd>Enter</kbd> to fold that concept into the search. A
+              slider sets how strongly it pulls (it starts at 50%), so you
+              can nudge "images like this one" toward "images like this
+              one, but at night." The chip shows a small ✨ badge with the
+              blended text so you can always see what's active.
+            </p>
+            <div class="placeholder-video">Image + Text Blend Demo Video</div>
+
+            <h3 id="viewer-composite">Composite Queries</h3>
+            <p>
+              Blends aren't limited to one image and one phrase — a single
+              visual chip can hold a whole recipe of
+              <strong>nodes</strong>: images, screen clips, and text
+              concepts, each with its own weight. While your filter mode is
+              AND or OR, running another <strong>Find Similar</strong> or
+              capturing another clip <em>stacks</em> it into the existing
+              visual chip as a new node instead of adding a separate
+              filter (in Exclusive mode it replaces the search, as
+              before). The chip's badge switches to ⊕ with a node count.
+            </p>
+            <p>Hover the chip to open the node editor, where you can:</p>
+            <ul>
+              <li>
+                <strong>Adjust weights</strong> — each node has a slider
+                (5–100%) controlling its share of the search.
+              </li>
+              <li>
+                <strong>Steer away</strong> — the <strong>−</strong> toggle
+                turns a node negative, pushing results <em>away</em> from
+                that image or concept ("like these two photos, but
+                <em>not</em> blurry").
+              </li>
+              <li>
+                <strong>Remove nodes</strong> — the × on each row drops it
+                from the blend; the first (base) node anchors the search
+                and always stays.
+              </li>
+              <li>
+                <strong>Add concepts</strong> — the same "Add concept…"
+                box adds more text nodes.
+              </li>
+            </ul>
+            <p>
+              Everything in the chip is combined into a single query on the
+              server — one weighted direction in the same visual space —
+              rather than several separate searches mashed together, so
+              results genuinely reflect the whole recipe. Results are
+              ranked with a match-score badge on every item.
+            </p>
+            <div class="placeholder-video">Composite Query Node Editor Demo Video</div>
 
             <h3 id="viewer-visual-setup">Setup Requirements</h3>
             <p>
@@ -953,6 +1090,189 @@
                 Context Palette (<strong>Generate embeddings</strong>) or a
                 batch job on the server. New media can be embedded as it's
                 ingested.
+              </li>
+            </ul>
+          </section>
+
+          <section id="viewer-faces">
+            <h2>
+              Faces &amp; People
+              <a class="requires-server" href="./server/#faces">Requires Media Server</a>
+            </h2>
+            <p>
+              The viewer can find the faces in your library, group them
+              into people, and let you name, curate, and search by them.
+              It works on photographs <em>and</em> drawn or anime-style
+              characters — each image is automatically routed to the right
+              recognition model. Like visual search, everything runs on
+              your own machine through the Media Server; no faces ever
+              leave your computer.
+            </p>
+
+            <h3 id="viewer-faces-scan">Scanning for Faces</h3>
+            <p>
+              Two ways to start: open the <strong>People</strong> category
+              in the tagging panel and click
+              <strong>Scan library for faces</strong>, or
+              <kbd>Shift</kbd> + right-click anything and pick the
+              <strong>Faces</strong> chip in the Context Palette's
+              Generate block. The scan detects faces, computes a compact
+              signature for each one, and groups them as it goes — new
+              people start appearing in the People view while the scan is
+              still running. Videos are scanned on a representative frame.
+            </p>
+            <div class="placeholder-video">Face Scan Demo Video</div>
+
+            <h3 id="viewer-people-view">The People View</h3>
+            <p>
+              Select the <strong>People</strong> category in the tagging
+              panel to see everyone found in your library. Each person is
+              a card with a face-crop preview, their name, a media count,
+              and a green ✓ badge showing how many of their faces you've
+              personally confirmed. People you've named come first,
+              followed by automatic groups labeled
+              <strong>Unknown #1</strong>, <strong>Unknown #2</strong>,
+              and so on.
+            </p>
+            <ul>
+              <li>
+                <strong>Click a card</strong> to filter the library to
+                that person — person names behave exactly like tags, so
+                they combine with all your other filters.
+              </li>
+              <li>
+                <strong>Drag a card onto a media item</strong> to tell the
+                viewer that person is in it.
+              </li>
+              <li>
+                <strong>Drag the "New group" chip onto an item</strong> to
+                start a brand-new person from the face in that image.
+              </li>
+              <li>
+                <strong>Group new faces</strong> (toolbar) folds newly
+                scanned faces into your existing people;
+                <strong>Rebuild groups</strong> dissolves the automatic
+                "Unknown" groups and regroups from scratch — named people
+                and faces you've confirmed are never touched.
+              </li>
+            </ul>
+            <div class="placeholder-video">People View Demo Video</div>
+
+            <h3 id="viewer-people-manage">Naming, Merging &amp; Deleting</h3>
+            <p>
+              The ✎ button on a card opens the person editor: rename them,
+              pick a new preview face, or merge them into another person
+              with the <strong>Merge into</strong> picker. You can also
+              merge by simply dragging one person's card onto another.
+              Deleting offers two strengths:
+              <strong>Delete person</strong> ungroups their faces (the
+              faces stay and can be regrouped later) and remembers not to
+              re-form that same group on its own, while
+              <strong>Delete person and faces</strong> also discards the
+              face data so a bad group can't come back — your media files
+              are never affected.
+            </p>
+
+            <h3 id="viewer-face-review">Reviewing a Person's Faces</h3>
+            <p>
+              Automatic grouping is good but not perfect, so every card
+              has a review button that opens all of that person's faces in
+              a grid, sorted <strong>suspects first</strong> — the faces
+              least like the rest of the group float to the top, which is
+              where the mistakes live. On each face:
+            </p>
+            <ul>
+              <li>
+                <strong>✓ It's them</strong> — confirms (locks) the face.
+                Locked faces are treated as ground truth: they anchor who
+                the person "is" and survive every regroup.
+              </li>
+              <li>
+                <strong>✕ Not them</strong> — removes the face and
+                permanently bars it from this person, even if the group is
+                later dissolved and rebuilt.
+              </li>
+            </ul>
+            <p>
+              <strong>Lock all</strong> confirms the whole group at once
+              when it looks right, and the checkbox mode lets you sweep a
+              messy group in one pass: check the keepers and hit
+              <strong>Keep checked, discard rest</strong>.
+            </p>
+            <div class="placeholder-video">Face Review Demo Video</div>
+
+            <h3 id="viewer-faces-ungrouped">Ungrouped Faces</h3>
+            <p>
+              Faces that haven't matched anyone yet collect behind a
+              <strong>Not grouped yet</strong> card at the end of the
+              People view. Click it to filter the library with the
+              <code>faces:ungrouped</code> predicate — media that has
+              faces, none of them grouped — or open its review grid to
+              deal with the faces directly: pick a person from the
+              <strong>Assign clicked faces to…</strong> dropdown and click
+              faces to file them, or hit <strong>＋</strong> on a face to
+              start a new person from it.
+            </p>
+
+            <h3 id="viewer-find-person">Find This Person</h3>
+            <p>
+              <kbd>Shift</kbd> + right-click any image and choose
+              <strong>Find this person</strong> in the Context Palette to
+              search your whole library for the person in that photo — no
+              naming or grouping required. In the desktop app you can also
+              hold <kbd>Shift</kbd> + <kbd>Alt</kbd> and drag a box around
+              a face anywhere on screen to search from just that region.
+              The search lands in the input as a face chip and composes
+              with your other filters like everything else.
+            </p>
+            <div class="placeholder-video">Find This Person Demo Video</div>
+
+            <h3 id="viewer-faces-tuning">Tuning the Grouping</h3>
+            <p>
+              The <strong>Tune</strong> button in the People view opens
+              three sliders if the automatic grouping is too eager or too
+              shy:
+            </p>
+            <ul>
+              <li>
+                <strong>Match strictness</strong> — looser makes bigger
+                groups that may mix people; stricter makes purer, smaller
+                groups.
+              </li>
+              <li>
+                <strong>Minimum group size</strong> — how many matching
+                faces it takes before a new "Unknown" person is created.
+              </li>
+              <li>
+                <strong>Face quality floor</strong> — ignore blurry or
+                tiny detections when forming new groups.
+              </li>
+            </ul>
+            <p>
+              <strong>Regroup with these settings</strong> rebuilds every
+              automatic group under the new values. Faces you've confirmed
+              and rejections you've made always survive — your curation is
+              never thrown away.
+            </p>
+
+            <h3 id="viewer-faces-setup">Setup Requirements</h3>
+            <p>Face recognition uses the Lowkey Media Server:</p>
+            <ul>
+              <li>
+                Run the Lowkey Media Server and sign in from the viewer.
+              </li>
+              <li>
+                Install the face models from the server's Dependencies
+                page (or straight from the Context Palette's setup
+                prompts): the face detector and recognizer for photos,
+                plus the anime head detector and character recognizer if
+                your library includes drawn artwork. The SigLIP 2 model
+                used by visual search also powers the automatic
+                photo-vs-anime routing.
+              </li>
+              <li>
+                Run a face scan. On Windows the server can use your GPU
+                (DirectML) to speed this up considerably.
               </li>
             </ul>
           </section>
