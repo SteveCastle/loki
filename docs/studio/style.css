@@ -1225,3 +1225,13 @@ body.mask-editing #mask-overlay {
 }
 .modal input:focus, .modal select:focus { outline: none; border-color: var(--accent); }
 .modal-actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+
+.modal .confirm-msg {
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 340px;
+  margin: 0 0 4px;
+}
+.btn-danger { border-color: #c0504d; color: #e58784; }
+.btn-danger:hover { background: #90312f; border-color: #c0504d; color: #fff; }

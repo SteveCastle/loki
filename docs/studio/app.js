@@ -1151,6 +1151,16 @@ async function idbGet(key) {
   });
 }
 
+async function idbDelete(key) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('media', 'readwrite');
+    tx.objectStore('media').delete(key);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 let saveTimer = null;
 function scheduleSave() {
   clearTimeout(saveTimer);
@@ -1341,6 +1351,51 @@ function promptName(defaultVal = '') {
   });
 }
 
+/** In-app confirmation dialog (window.confirm blocks the page). */
+function confirmDialog({ title = 'Are you sure?', message = '', confirmLabel = 'Delete' } = {}) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-wrap';
+    wrap.innerHTML = `
+      <div class="modal">
+        <h3></h3>
+        <p class="confirm-msg"></p>
+        <div class="modal-actions">
+          <span style="flex:1"></span>
+          <button class="btn" data-a="cancel">Cancel</button>
+          <button class="btn btn-danger" data-a="ok"></button>
+        </div>
+      </div>`;
+    wrap.querySelector('h3').textContent = title;
+    wrap.querySelector('.confirm-msg').textContent = message;
+    wrap.querySelector('[data-a=ok]').textContent = confirmLabel;
+    const done = (v) => {
+      wrap.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); done(false); } };
+    document.addEventListener('keydown', onKey);
+    wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) done(false); });
+    wrap.querySelector('[data-a=cancel]').addEventListener('click', () => done(false));
+    wrap.querySelector('[data-a=ok]').addEventListener('click', () => done(true));
+    document.body.appendChild(wrap);
+  });
+}
+
+async function deleteProject(name) {
+  const ok = await confirmDialog({
+    title: `Delete project '${name}'?`,
+    message: 'The saved comp (clips, keyframes, masks, custom shaders) is removed from this browser permanently. Imported media files stay cached for other projects. If the project is open right now it stays open, just unsaved.',
+    confirmLabel: 'Delete project',
+  });
+  if (!ok) return;
+  try { await idbDelete(`project:${name}`); } catch {}
+  const idx = projectIndex().filter((p) => p.name !== name);
+  try { localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx)); } catch {}
+  setStatus(`deleted project '${name}'`);
+}
+
 async function saveFlow(alwaysAsk) {
   let name = projectName;
   if (alwaysAsk || !name) name = await promptName(name ?? '');
@@ -1364,6 +1419,19 @@ $('btn-project').addEventListener('click', (e) => {
         checked: p.name === projectName,
         action: () => openProject(p.name),
       });
+    items.push('-');
+    items.push({
+      label: '🗑 Delete a project…',
+      danger: true,
+      action: () => {
+        const rows = projectIndex().map((p) => ({
+          label: `🗑 ${p.name}`,
+          danger: true,
+          action: () => deleteProject(p.name),
+        }));
+        showMenu(r.left, r.bottom + 4, rows);
+      },
+    });
   }
   showMenu(r.left, r.bottom + 4, items);
 });
@@ -2439,8 +2507,14 @@ function renderCustomEditor(clip) {
   forget.textContent = 'Forget';
   forget.title = 'delete this saved shader from localStorage (the clip keeps running)';
   forget.hidden = !clip.savedName;
-  forget.onclick = () => {
+  forget.onclick = async () => {
     if (!clip.savedName) return;
+    const ok = await confirmDialog({
+      title: `Delete saved shader '${clip.savedName}'?`,
+      message: 'It disappears from the add-effect menu in this browser. Clips already using it keep their own copy of the code.',
+      confirmLabel: 'Delete shader',
+    });
+    if (!ok) return;
     const saves = loadSaved();
     delete saves[clip.savedName];
     storeSaved(saves);
