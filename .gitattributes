@@ -17,3 +17,4 @@
 src/main/resources/bin/win32/* binary
 # Shell scripts should keep LF line endings
 *.sh text eol=lf
+*.wasm  binary
