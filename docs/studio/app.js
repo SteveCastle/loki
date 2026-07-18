@@ -40,7 +40,7 @@ const addLayerList = $('add-layer-list');
 
 const VIDEO_EXTS = /\.(mp4|mov|mkv|webm|avi|m4v|gif)$/i;
 const PROJECT_KEY = 'lowkey-studio.project.v2';
-const DEFAULT_IMAGE_DUR = 4;
+const DEFAULT_VIDEO_DUR = 4;   // fallback when a video reports no duration
 
 function setStatus(msg) { statusEl.textContent = msg; }
 
@@ -806,10 +806,15 @@ async function importFiles(files, { t = null, trackIdx = null } = {}) {
       await applyCompSize();
     }
 
-    const dur = asset.kind === 'video'
-      ? (asset.duration ?? DEFAULT_IMAGE_DUR)
-      : DEFAULT_IMAGE_DUR;
-    const clip = newMediaClip(comp, asset, quantize(at, comp.fps), quantize(Math.max(dur, 1 / comp.fps), comp.fps));
+    // Videos land at the playhead with their source length; images fill
+    // the whole timeline by default (trim down as needed).
+    let clip;
+    if (asset.kind === 'video') {
+      const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
+      clip = newMediaClip(comp, asset, quantize(at, comp.fps), dur);
+    } else {
+      clip = newMediaClip(comp, asset, 0, Math.max(1 / comp.fps, comp.dur));
+    }
     if (asset.w && (asset.w !== comp.width || asset.h !== comp.height)) {
       const fit = Math.round(Math.min(comp.width / asset.w, comp.height / asset.h) * 10000) / 100;
       clip.props.scaleX.v = fit;
@@ -823,7 +828,8 @@ async function importFiles(files, { t = null, trackIdx = null } = {}) {
     }
     track.clips.push(clip);
     if (comp._autoSize) comp.dur = Math.max(comp.dur, clipEnd(clip));
-    at = clipEnd(clip);            // multiple files land back-to-back
+    // Only videos advance the drop cursor (images span the full comp).
+    if (asset.kind === 'video') at = clipEnd(clip);
     timeline.selectClip(clip.id);
   }
   ensureDur(comp);
