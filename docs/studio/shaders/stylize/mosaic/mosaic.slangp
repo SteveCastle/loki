@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = mosaic.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;cell;grout;grout_dark;variance"
+amount     = 1.0
+cell       = 16.0
+grout      = 0.06
+grout_dark = 0.6
+variance   = 0.08

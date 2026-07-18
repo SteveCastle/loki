@@ -51,7 +51,7 @@ void main()
 
     vec4 sum = vec4(0.0);
     float wsum = 0.0;
-    for (int i = -12; i <= 12; ++i) {
+    for (int i = -16; i <= 16; ++i) {
         float y = float(i) * spacing;
         float w = exp(-0.5 * (y * y) / (sigma * sigma));
         sum += texture(Source, uv + float(i) * step_uv) * w;

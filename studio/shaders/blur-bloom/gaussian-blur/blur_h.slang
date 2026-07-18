@@ -16,7 +16,7 @@ layout(push_constant) uniform Push
     float radius;
 } params;
 
-#pragma parameter radius "Blur: radius (px)" 3.0 0.25 32.0 0.25
+#pragma parameter radius "Blur: radius (px)" 3.0 0.25 100.0 0.25
 
 layout(std140, set = 0, binding = 0) uniform UBO { mat4 MVP; } global;
 
@@ -39,7 +39,7 @@ void main()
 
     vec4 sum = vec4(0.0);
     float wsum = 0.0;
-    for (int i = -12; i <= 12; ++i) {
+    for (int i = -16; i <= 16; ++i) {
         float x = float(i) * spacing;
         float w = exp(-0.5 * (x * x) / (sigma * sigma));
         sum += texture(Source, vTexCoord + float(i) * step_uv) * w;

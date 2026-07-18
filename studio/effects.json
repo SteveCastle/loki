@@ -113,8 +113,18 @@
       "category": "blur-bloom"
     },
     {
+      "name": "directional-blur",
+      "path": "shaders/blur-bloom/directional-blur/directional-blur.slangp",
+      "category": "blur-bloom"
+    },
+    {
       "name": "gaussian-blur",
       "path": "shaders/blur-bloom/gaussian-blur/gaussian-blur.slangp",
+      "category": "blur-bloom"
+    },
+    {
+      "name": "radial-blur",
+      "path": "shaders/blur-bloom/radial-blur/radial-blur.slangp",
       "category": "blur-bloom"
     },
     {
@@ -350,6 +360,11 @@
     {
       "name": "kaleidoscope",
       "path": "shaders/stylize/kaleidoscope/kaleidoscope.slangp",
+      "category": "stylize"
+    },
+    {
+      "name": "mosaic",
+      "path": "shaders/stylize/mosaic/mosaic.slangp",
       "category": "stylize"
     },
     {

@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = radial-blur.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;strength;center_x;center_y;falloff"
+amount   = 1.0
+strength = 0.25
+center_x = 0.5
+center_y = 0.5
+falloff  = 0.0
