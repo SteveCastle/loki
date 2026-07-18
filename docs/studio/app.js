@@ -153,6 +153,8 @@ let looping = true;
 let clock = { perf: 0, t: 0 };
 let timeline = null;
 
+let trimPreviewT = null;   // render-time override while trimming a clip edge
+
 let chainKey = '';
 let chainDirty = false;
 let chainBuilding = false;
@@ -285,7 +287,9 @@ function tick() {
     }
   }
 
-  const t = tCur;
+  // While a trim handle is being dragged, render the frame at the cut
+  // point instead of the playhead (the playhead UI itself stays put).
+  const t = trimPreviewT ?? tCur;
   const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
   syncMedia(t, activeMedia);
   compositeFrame(t);
@@ -710,6 +714,11 @@ const timelineHost = {
   onModelChange,
   onSelect: () => renderInspector(),
   addMediaAt: (files, t, trackIdx) => importFiles(files, { t, trackIdx }),
+  setTrimPreview: (t) => {
+    trimPreviewT = t;
+    const badge = $('trim-badge');
+    if (badge) badge.hidden = t == null;
+  },
   status: setStatus,
   undo: appUndo,
   redo: appRedo,

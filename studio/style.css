@@ -237,6 +237,23 @@ body.has-media #view-controls { display: flex; }
 #preview-wrap:hover #view-controls { opacity: 1; }
 #view-controls .btn.active { border-color: var(--accent); color: var(--accent); }
 
+/* Shown while a trim handle is dragged — the viewer is displaying the
+ * frame at the cut point, not the playhead. */
+#trim-badge {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  z-index: 7;
+  background: rgba(16, 18, 21, 0.85);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 11.5px;
+  pointer-events: none;
+}
+#trim-badge[hidden] { display: none; }
+
 #drop-hint {
   position: absolute;
   inset: 0;

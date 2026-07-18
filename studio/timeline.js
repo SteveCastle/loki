@@ -821,6 +821,13 @@ export class Timeline {
         const ne = this._snapTime(orig.start + orig.dur + dxT, { excludeClip: clip });
         clip.dur = clamp(ne - orig.start, minDur, Math.max(minDur, comp.dur - orig.start));
       }
+      // While trimming, preview the frame at the cut point so you can see
+      // exactly where the clip will start / end when released.
+      if (mode === 'trim-l') {
+        this.host.setTrimPreview?.(clip.start);
+      } else if (mode === 'trim-r') {
+        this.host.setTrimPreview?.(Math.max(clip.start, clipEnd(clip) - 1 / comp.fps));
+      }
       ensureDur(comp);
       this.host.onModelChange({ structural: false, transient: true });
       this.render();
@@ -829,6 +836,7 @@ export class Timeline {
     const onUp = (ev) => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      this.host.setTrimPreview?.(null);
       if (moved) {
         this.host.history.commit(comp);
         this.host.onModelChange({ structural: true });
