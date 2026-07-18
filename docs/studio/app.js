@@ -935,16 +935,50 @@ volumeSlider.addEventListener('input', () => {
 updateAudioUI();
 
 /* =====================================================================
- * Viewer sizing / fullscreen (unchanged behavior from the live demo)
+ * Viewer sizing / zoom / fullscreen
  * =================================================================== */
 
 const viewer = $('viewer');
+const canvasStack = $('canvas-stack');
+const zoomReadout = $('zoom-readout');
 const VIEWMODE_KEY = 'lowkey-studio.viewmode';
 
+/* Free view — wheel zoom / pan layered over Fit. The frame gets an
+ * explicit pixel size and offset inside the pane (no CSS transforms, so
+ * every getBoundingClientRect-based mapping — gizmo, snapping, mask
+ * painting — keeps working untouched). zoom multiplies the fit scale;
+ * panX/panY offset the frame center from the pane center in screen px. */
+let freeView = null;
+const ZOOM_MIN = 0.05;
+const ZOOM_MAX = 32;
+
+function fitScale() {
+  return Math.min(viewer.clientWidth / canvas.width, viewer.clientHeight / canvas.height) || 1;
+}
+
 function applyViewSizing() {
+  if (freeView && !document.fullscreenElement) {
+    viewer.classList.add('free-view');
+    const s = fitScale() * freeView.zoom;
+    const w = Math.max(1, canvas.width * s);
+    const h = Math.max(1, canvas.height * s);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    canvas.style.maxWidth = '';
+    canvas.style.maxHeight = '';
+    canvasStack.style.left = `${(viewer.clientWidth - w) / 2 + freeView.panX}px`;
+    canvasStack.style.top = `${(viewer.clientHeight - h) / 2 + freeView.panY}px`;
+    zoomReadout.hidden = false;
+    zoomReadout.textContent = `${Math.round(s * 100)}%`;
+    return;
+  }
+  viewer.classList.remove('free-view');
+  canvasStack.style.left = '';
+  canvasStack.style.top = '';
+  zoomReadout.hidden = true;
   if (viewer.classList.contains('size-fit') && !document.fullscreenElement) {
     // True fit: scale the canvas up OR down to fill the pane (contain).
-    const scale = Math.min(viewer.clientWidth / canvas.width, viewer.clientHeight / canvas.height);
+    const scale = fitScale();
     if (Number.isFinite(scale) && scale > 0) {
       canvas.style.width = `${Math.max(1, Math.floor(canvas.width * scale))}px`;
       canvas.style.height = `${Math.max(1, Math.floor(canvas.height * scale))}px`;
@@ -963,34 +997,99 @@ new ResizeObserver(applyViewSizing).observe(viewer);
 document.addEventListener('fullscreenchange', applyViewSizing);
 
 function setViewMode(mode) {
+  freeView = null;
   viewer.className = `size-${mode}`;
-  for (const b of document.querySelectorAll('#view-controls .btn'))
+  for (const b of document.querySelectorAll('#view-controls .btn[data-mode]'))
     b.classList.toggle('active', b.dataset.mode === mode);
   applyViewSizing();
   try { localStorage.setItem(VIEWMODE_KEY, mode); } catch {}
 }
 
-for (const b of document.querySelectorAll('#view-controls .btn'))
+for (const b of document.querySelectorAll('#view-controls .btn[data-mode]'))
   b.addEventListener('click', () => setViewMode(b.dataset.mode));
+zoomReadout.addEventListener('click', () => setViewMode('fit'));
 setViewMode(localStorage.getItem(VIEWMODE_KEY) ?? 'fit');
+
+/** Seed free view from wherever the frame currently sits on screen so the
+ * first wheel tick / pan continues from the current framing (works from
+ * Fit, Cover, and 1:1 alike). */
+function enterFreeView() {
+  if (freeView) return;
+  const d = canvasDisplayRect();
+  const vr = viewer.getBoundingClientRect();
+  freeView = {
+    zoom: (d.s / fitScale()) || 1,
+    panX: d.left + comp.width * d.s / 2 - (vr.left + vr.width / 2),
+    panY: d.top + comp.height * d.s / 2 - (vr.top + vr.height / 2),
+  };
+  viewer.className = 'size-fit free-view';
+  for (const b of document.querySelectorAll('#view-controls .btn[data-mode]'))
+    b.classList.remove('active');
+  applyViewSizing();
+}
+
+/* Keep at least a sliver of the frame reachable — a wild fling can't lose
+ * it off-pane entirely. */
+function clampPan() {
+  const s = fitScale() * freeView.zoom;
+  const mx = (viewer.clientWidth + canvas.width * s) / 2 - 24;
+  const my = (viewer.clientHeight + canvas.height * s) / 2 - 24;
+  freeView.panX = clamp(freeView.panX, -mx, mx);
+  freeView.panY = clamp(freeView.panY, -my, my);
+}
+
+viewer.addEventListener('wheel', (e) => {
+  if (document.fullscreenElement || !document.body.classList.contains('has-media')) return;
+  e.preventDefault();
+  enterFreeView();
+  const vr = viewer.getBoundingClientRect();
+  const s0 = fitScale() * freeView.zoom;
+  const dy = e.deltaY * (e.deltaMode === 1 ? 40 : 1);   // line-scroll mice
+  const zoom = clamp(freeView.zoom * Math.exp(-dy * 0.0015), ZOOM_MIN, ZOOM_MAX);
+  const s1 = fitScale() * zoom;
+  // Anchor the comp point under the cursor while the scale changes.
+  const cx = e.clientX - (vr.left + vr.width / 2);
+  const cy = e.clientY - (vr.top + vr.height / 2);
+  freeView.panX = cx - (cx - freeView.panX) * (s1 / s0);
+  freeView.panY = cy - (cy - freeView.panY) * (s1 / s0);
+  freeView.zoom = zoom;
+  clampPan();
+  applyViewSizing();
+}, { passive: false });
 
 let panState = null;
 viewer.addEventListener('pointerdown', (e) => {
-  if (!viewer.classList.contains('size-actual') || maskEdit) return;
   if (e.target.closest('.btn')) return;
-  panState = { x: e.clientX, y: e.clientY, sl: viewer.scrollLeft, st: viewer.scrollTop };
+  if (viewer.classList.contains('size-actual')) {
+    if (maskEdit) return;
+    panState = { kind: 'scroll', x: e.clientX, y: e.clientY, sl: viewer.scrollLeft, st: viewer.scrollTop };
+  } else {
+    // Free-view pan: middle-drag anywhere, left-drag on the empty space
+    // around the frame.
+    if (document.fullscreenElement || !document.body.classList.contains('has-media')) return;
+    const emptySpace = e.target === viewer || e.target === canvasStack;
+    if (!(e.button === 1 || (e.button === 0 && emptySpace && !maskEdit))) return;
+    e.preventDefault();                     // middle-click autoscroll
+    enterFreeView();
+    panState = { kind: 'free', x: e.clientX, y: e.clientY, px: freeView.panX, py: freeView.panY };
+  }
   viewer.classList.add('panning');
   try { viewer.setPointerCapture(e.pointerId); } catch {}
 });
 viewer.addEventListener('pointermove', (e) => {
   if (!panState) return;
-  viewer.scrollLeft = panState.sl - (e.clientX - panState.x);
-  viewer.scrollTop = panState.st - (e.clientY - panState.y);
+  if (panState.kind === 'scroll') {
+    viewer.scrollLeft = panState.sl - (e.clientX - panState.x);
+    viewer.scrollTop = panState.st - (e.clientY - panState.y);
+  } else {
+    freeView.panX = panState.px + (e.clientX - panState.x);
+    freeView.panY = panState.py + (e.clientY - panState.y);
+    clampPan();
+    applyViewSizing();
+  }
 });
 viewer.addEventListener('pointerup', () => { panState = null; viewer.classList.remove('panning'); });
 viewer.addEventListener('pointercancel', () => { panState = null; viewer.classList.remove('panning'); });
-
-const canvasStack = $('canvas-stack');
 
 function toggleFullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
@@ -1567,7 +1666,7 @@ let painting = false;
 let lastPt = null;
 
 maskOverlay.addEventListener('pointerdown', (e) => {
-  if (!maskEdit) return;
+  if (!maskEdit || e.button !== 0) return;
   try { maskOverlay.setPointerCapture(e.pointerId); } catch {}
   if (brush.tool === 'brush') {
     painting = true;
@@ -2245,7 +2344,9 @@ function renderInspector() {
       · ▸ on a clip twirls out its keyframable properties<br>
       · <b>⏱</b> starts animating a property; change its value at another
       time to add keyframes; right-click a ◆ for easing<br>
-      · Ctrl+wheel zooms the timeline down to single frames</p>`;
+      · Ctrl+wheel zooms the timeline down to single frames<br>
+      · wheel over the preview zooms the viewport; drag the space around
+      the frame (or middle-drag anywhere) to pan</p>`;
     inspectorEl.appendChild(div);
     return;
   }

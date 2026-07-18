@@ -221,7 +221,24 @@ main { flex: 1; display: flex; min-height: 0; }
 
 #viewer.size-actual { overflow: auto; cursor: grab; scrollbar-width: none; }
 #viewer.size-actual::-webkit-scrollbar { display: none; }
-#viewer.size-actual.panning { cursor: grabbing; user-select: none; }
+#viewer.panning { cursor: grabbing; user-select: none; }
+
+/* Free view — wheel zoom + pan: the frame floats at an explicit size and
+ * offset inside the pane, giving working room around it. Sizing is done
+ * with layout (not transforms) so screen-rect math stays valid. */
+body.has-media #viewer { cursor: grab; }
+body.has-media #viewer #canvas-stack { cursor: default; }
+#viewer.free-view #canvas-stack {
+  position: absolute;
+  margin: 0;
+}
+#viewer.free-view #canvas-inner,
+#viewer.free-view #preview {
+  max-width: none;
+  max-height: none;
+}
+#zoom-readout[hidden] { display: none; }
+#zoom-readout { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
 
 #view-controls {
   position: absolute;
