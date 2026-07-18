@@ -1,0 +1,22 @@
+shaders = 2
+
+# Pass 0 � horizontal Gaussian at full resolution.
+shader0        = blur_h.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+# Float framebuffer: an 8-bit intermediate re-quantizes the smooth gradient
+# the blur just created — that is where banding comes from.
+float_framebuffer0 = true
+
+# Pass 1 � vertical Gaussian + mix against the clean Original.
+shader1        = gaussian-blur.slang
+filter_linear1 = true
+scale_type1    = viewport
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+parameters = "amount;radius"
+amount = 1.0
+radius = 3.0

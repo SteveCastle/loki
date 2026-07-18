@@ -1,0 +1,36 @@
+shaders = 4
+
+# Pass 0 — bright-pass at half resolution (cheap wide blur).
+shader0        = brightpass.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 0.5
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — horizontal blur (stays at half res).
+shader1        = blur_h.slang
+filter_linear1 = true
+scale_type1    = source
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+# Pass 2 — vertical blur.
+shader2        = blur_v.slang
+filter_linear2 = true
+scale_type2    = source
+scale2         = 1.0
+wrap_mode2     = clamp_to_edge
+
+# Pass 3 — composite over the clean Original at full output resolution.
+shader3        = bloom.slang
+filter_linear3 = true
+scale_type3    = viewport
+scale3         = 1.0
+wrap_mode3     = clamp_to_edge
+
+parameters = "threshold;radius;amount;intensity;sat"
+threshold = 0.65
+radius    = 3.0
+amount    = 1.0
+intensity = 1.3
+sat       = 1.4

@@ -1,0 +1,26 @@
+shaders = 2
+
+# Pass 0 — clean passthrough so pass 1 can read the previous frame.
+shader0        = passthrough.slang
+alias0         = FrameNow
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — motion-gated shatter glitch.
+shader1        = motion-shatter.slang
+filter_linear1 = true
+scale_type1    = source
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+parameters = "amount;sensitivity;gamma;block_size;displace;rgb_split;global_boost;seed"
+amount       = 1.0
+sensitivity  = 10.0
+gamma        = 0.8
+block_size   = 14.0
+displace     = 0.06
+rgb_split    = 2.0
+global_boost = 0.4
+seed         = 17.0

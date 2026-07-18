@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = split-tone.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;shadow_hue;shadow_amt;high_hue;high_amt;balance"
+amount       = 1.0
+shadow_hue   = 0.6
+shadow_amt   = 0.0
+high_hue     = 0.08
+high_amt     = 0.0
+balance      = 0.0

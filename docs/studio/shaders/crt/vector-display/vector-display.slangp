@@ -1,0 +1,9 @@
+# vector-display — XY vector monitor: glowing beam strokes, phosphor trails,
+# jitter, graticule.
+shaders = 1
+
+shader0        = vector-display.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

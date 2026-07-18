@@ -1,0 +1,9 @@
+# flow-dither — duotone dither whose threshold field flows like ink in
+# water; crank warp for marbling.
+shaders = 1
+
+shader0        = flow-dither.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = chroma-shift.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;aberration;falloff;vignette;sat"
+amount     = 1.0
+aberration = 0.40
+falloff    = 2.2
+vignette   = 0.55
+sat        = 1.3

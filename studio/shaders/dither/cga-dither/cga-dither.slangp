@@ -1,0 +1,9 @@
+# cga-dither — four colors, no mercy: ordered dither to CGA-era palettes
+# (cyan/magenta, green/red/brown, or 1-bit).
+shaders = 1
+
+shader0        = cga-dither.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

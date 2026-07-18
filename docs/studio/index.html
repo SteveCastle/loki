@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Lowkey Studio — shader compositor</title>
+  <meta name="description" content="Lowkey Studio — a keyframe compositor for layering media and GPU shader effects, running entirely in your browser on WebGPU.">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="./studio-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav class="site-tabs">
+    <a href="../" class="site-tab">
+      <img src="../logo.png" alt="Media Viewer">
+      <span>Media Viewer</span>
+    </a>
+    <a href="../server/" class="site-tab">
+      <img src="../server-icon.png" alt="Media Server">
+      <span>Media Server</span>
+    </a>
+    <a href="./" class="site-tab active">
+      <img src="./studio-icon.png" alt="Studio">
+      <span>Studio</span>
+    </a>
+  </nav>
+  <header>
+    <h1><img src="./studio-icon.png" class="app-icon" alt="">Lowkey <span class="accent">Studio</span> <span class="tag">shader compositor / WebGPU</span></h1>
+    <div class="toolbar">
+      <button id="btn-project" class="btn" title="project — new, save, load, recents">☰ untitled</button>
+      <label class="btn">
+        Import media…
+        <input type="file" id="file-input" accept="video/*,image/*" multiple hidden>
+      </label>
+      <button id="btn-settings" class="btn" title="composition settings — size, frame rate, duration">⚙ Comp</button>
+      <button id="btn-export-png" class="btn" title="Export current frame as PNG">Frame PNG</button>
+      <button id="btn-export-webm" class="btn" title="Render the whole comp to WebM (plays it through once)">Render WebM</button>
+    </div>
+    <div class="toolbar audio">
+      <button id="btn-mute" class="btn" title="mute / unmute">🔊</button>
+      <input type="range" id="volume" min="0" max="1" step="0.01" value="1" title="volume">
+    </div>
+  </header>
+
+  <main>
+    <section id="preview-wrap">
+      <div id="drop-hint">drop videos / images here<br><small>they become clips on the timeline</small></div>
+      <div id="viewer" class="size-fit">
+        <div id="canvas-stack">
+          <div id="canvas-inner">
+            <canvas id="preview"></canvas>
+            <canvas id="mask-overlay"></canvas>
+          </div>
+          <button id="btn-fullscreen" class="btn" title="fullscreen (double-click the preview also works)">⛶</button>
+        </div>
+      </div>
+      <div id="view-controls">
+        <button class="btn" data-mode="fit" title="scale to fit the pane">Fit</button>
+        <button class="btn" data-mode="cover" title="fill the pane (crops)">Cover</button>
+        <button class="btn" data-mode="actual" title="native pixels — drag to pan">1:1</button>
+      </div>
+    </section>
+
+    <aside id="panel">
+      <div id="add-section">
+        <div class="search-wrap">
+          <span class="search-icon">＋</span>
+          <input type="text" id="add-layer-search" placeholder="Add an effect — search or browse" spellcheck="false" autocomplete="off">
+          <kbd>/</kbd>
+        </div>
+        <div id="add-layer-list"></div>
+      </div>
+      <h2>Inspector</h2>
+      <div id="inspector"></div>
+      <div id="status">loading toolchain…</div>
+    </aside>
+  </main>
+
+  <div id="tl-resize" title="drag to resize the timeline"></div>
+  <div id="timeline"></div>
+
+  <div id="media-pool" hidden></div>
+  <input type="file" id="stamp-file-input" accept="image/*" hidden>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

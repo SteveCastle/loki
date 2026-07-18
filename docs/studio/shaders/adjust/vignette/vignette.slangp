@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = vignette.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;strength;v_size;softness;roundness"
+amount       = 1.0
+strength     = 0.35
+v_size       = 0.75
+softness     = 0.45
+roundness    = 1.0

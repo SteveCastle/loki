@@ -1,0 +1,29 @@
+shaders = 2
+
+# Pass 0 — clean passthrough so pass 1 can read the previous frame.
+shader0        = passthrough.slang
+alias0         = FrameNow
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — Perlin domain-warp melt. Self-feedback (PassFeedback1) is the
+# flowing accumulator; float framebuffer keeps long melts clean.
+shader1            = perlin-flow.slang
+filter_linear1     = true
+scale_type1        = source
+scale1             = 1.0
+wrap_mode1         = clamp_to_edge
+float_framebuffer1 = true
+
+parameters = "amount;scale;warp;motion_warp;speed;decay;flow;trip;sensitivity"
+amount      = 1.0
+scale       = 3.0
+warp        = 0.06
+motion_warp = 0.14
+speed       = 0.30
+decay       = 0.90
+flow        = 0.05
+trip        = 0.55
+sensitivity = 9.0

@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = duotone.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;shadow_hue;light_hue;contrast;grain"
+amount     = 1.0
+shadow_hue = 0.62
+light_hue  = 0.08
+contrast   = 1.2
+grain      = 0.06

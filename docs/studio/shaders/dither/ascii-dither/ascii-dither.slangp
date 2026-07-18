@@ -1,0 +1,9 @@
+# ascii-dither — terminal glyph ramp ( .:*o&8@ ) per cell, green-on-black or
+# colored.
+shaders = 1
+
+shader0        = ascii-dither.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

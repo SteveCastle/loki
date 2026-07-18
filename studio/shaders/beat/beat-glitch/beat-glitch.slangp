@@ -1,0 +1,20 @@
+shaders = 1
+
+shader0        = beat-glitch.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bpm;fps;beat_div;attack_decay;accent_every;slice_amount;rgb_split;block_scramble;bands;seed"
+amount         = 1.0
+bpm            = 120.0
+fps            = 24.0
+beat_div       = 1.0
+attack_decay   = 7.0
+accent_every   = 4.0
+slice_amount   = 0.15
+rgb_split      = 2.0
+block_scramble = 0.5
+bands          = 40.0
+seed           = 13.0

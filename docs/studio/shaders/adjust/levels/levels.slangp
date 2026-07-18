@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = levels.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;in_black;in_white;mid_gamma;out_black;out_white"
+amount       = 1.0
+in_black     = 0.0
+in_white     = 1.0
+mid_gamma    = 1.0
+out_black    = 0.0
+out_white    = 1.0

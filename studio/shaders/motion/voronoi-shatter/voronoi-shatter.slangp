@@ -1,0 +1,29 @@
+shaders = 2
+
+# Pass 0 — clean passthrough so pass 1 can read the previous frame.
+shader0        = passthrough.slang
+alias0         = FrameNow
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — animated Voronoi shatter with glowing cracks. Self-feedback
+# (PassFeedback1) is the glow accumulator; float framebuffer keeps it clean.
+shader1            = voronoi-shatter.slang
+filter_linear1     = true
+scale_type1        = source
+scale1             = 1.0
+wrap_mode1         = clamp_to_edge
+float_framebuffer1 = true
+
+parameters = "amount;cells;jitter;shatter;crack;swirl;speed;decay;sensitivity"
+amount      = 1.0
+cells       = 14.0
+jitter      = 0.85
+shatter     = 0.30
+crack       = 1.2
+swirl       = 1.0
+speed       = 0.40
+decay       = 0.85
+sensitivity = 9.0

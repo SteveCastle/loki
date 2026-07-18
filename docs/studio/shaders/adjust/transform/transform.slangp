@@ -1,0 +1,16 @@
+shaders = 1
+
+shader0        = transform.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;zoom;pan_x;pan_y;rot_deg;flip_h;flip_v"
+amount       = 1.0
+zoom         = 1.0
+pan_x        = 0.0
+pan_y        = 0.0
+rot_deg      = 0.0
+flip_h       = 0.0
+flip_v       = 0.0

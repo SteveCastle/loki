@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = posterize-pop.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;levels;sat;outline;thickness"
+amount    = 1.0
+levels    = 5.0
+sat       = 1.5
+outline   = 1.0
+thickness = 1.0

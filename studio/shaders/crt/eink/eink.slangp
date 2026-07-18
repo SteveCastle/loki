@@ -1,0 +1,8 @@
+# eink — e-paper: warm paper + ink, ordered dither, refresh ghosting.
+shaders = 1
+
+shader0        = eink.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

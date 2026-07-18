@@ -1,0 +1,9 @@
+# line-screen — engraving-style line halftone: angled ink lines, thickness =
+# tone, hand-printed wobble.
+shaders = 1
+
+shader0        = line-screen.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

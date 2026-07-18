@@ -1,0 +1,9 @@
+# chromatic-aberration — soft multi-tap lens fringing, growing toward the
+# edges.
+shaders = 1
+
+shader0        = chromatic-aberration.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

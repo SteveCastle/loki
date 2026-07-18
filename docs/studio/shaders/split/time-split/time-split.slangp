@@ -1,0 +1,9 @@
+# time-split — channels lag across frames: motion pulls rainbow fringes,
+# stills stay registered.
+shaders = 1
+
+shader0        = time-split.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

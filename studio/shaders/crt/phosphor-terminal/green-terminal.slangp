@@ -1,0 +1,13 @@
+# green-terminal — P1 green phosphor (VT100 / IBM 5151).
+shaders = 1
+
+shader0        = phosphor.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "tint_r;tint_g;tint_b"
+tint_r = 0.25
+tint_g = 1.05
+tint_b = 0.30

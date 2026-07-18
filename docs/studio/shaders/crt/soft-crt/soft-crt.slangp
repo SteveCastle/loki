@@ -1,0 +1,38 @@
+shaders = 3
+
+# Pass 0 — horizontal Gaussian at half resolution (wide + cheap; the blurred
+# frame feeds both the soften mix and the bloom glow).
+shader0        = blur_h.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 0.5
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — vertical Gaussian (stays at half res).
+shader1        = blur_v.slang
+filter_linear1 = true
+scale_type1    = source
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+# Pass 2 — composite over the clean Original at full output resolution:
+# soften + bloom + contrast + scanlines + grain, each on its own slider.
+shader2        = soft-crt.slang
+filter_linear2 = true
+scale_type2    = viewport
+scale2         = 1.0
+wrap_mode2     = clamp_to_edge
+
+parameters = "amount;soften;radius;bloom_threshold;bloom_intensity;exposure;contrast;scan_strength;scan_period;vignette;noise_strength;noise_size"
+amount          = 1.0
+soften          = 0.25
+radius          = 2.0
+bloom_threshold = 0.6
+bloom_intensity = 0.7
+exposure        = 1.0
+contrast        = 1.15
+scan_strength   = 0.12
+scan_period     = 3.0
+vignette        = 0.25
+noise_strength  = 0.05
+noise_size      = 1.5

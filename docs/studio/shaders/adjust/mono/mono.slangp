@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = mono.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;red_w;green_w;blue_w;tint_hue;tint_amt"
+amount       = 1.0
+red_w        = 0.30
+green_w      = 0.59
+blue_w       = 0.11
+tint_hue     = 0.10
+tint_amt     = 0.0

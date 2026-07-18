@@ -1,0 +1,13 @@
+# amber-terminal — P3 amber phosphor (Wyse / Hercules).
+shaders = 1
+
+shader0        = phosphor.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "tint_r;tint_g;tint_b"
+tint_r = 1.10
+tint_g = 0.62
+tint_b = 0.14

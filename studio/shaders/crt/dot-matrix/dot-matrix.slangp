@@ -1,0 +1,9 @@
+# dot-matrix — amber LED marquee board: round dots, quantized levels, unlit
+# husks.
+shaders = 1
+
+shader0        = dot-matrix.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

@@ -1,0 +1,9 @@
+# blue-noise-dither — IGN thresholds: organic, pattern-free grain, optional
+# temporal re-roll.
+shaders = 1
+
+shader0        = blue-noise-dither.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

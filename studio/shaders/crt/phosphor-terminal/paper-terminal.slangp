@@ -1,0 +1,18 @@
+# paper-terminal — paper-white mono (VT320 / NeXT MegaPixel): crisper and
+# faster phosphor than the green/amber tubes, so less glow and persistence.
+shaders = 1
+
+shader0        = phosphor.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "tint_r;tint_g;tint_b;glow;persistence;scan_strength;flicker"
+tint_r        = 0.96
+tint_g        = 0.99
+tint_b        = 1.06
+glow          = 0.30
+persistence   = 0.15
+scan_strength = 0.25
+flicker       = 0.04

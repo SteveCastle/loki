@@ -1,0 +1,13 @@
+shaders = 1
+
+shader0        = halftone.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;dot_size;angle;sharp"
+amount   = 1.0
+dot_size = 10.0
+angle    = 15.0
+sharp    = 0.12

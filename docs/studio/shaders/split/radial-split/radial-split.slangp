@@ -1,0 +1,9 @@
+# radial-split — red and blue counter-rotate around centre, edges twist
+# into RGB pinwheels.
+shaders = 1
+
+shader0        = radial-split.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

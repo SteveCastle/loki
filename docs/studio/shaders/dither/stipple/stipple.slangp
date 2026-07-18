@@ -1,0 +1,9 @@
+# stipple — etching-style stipple: static random dots, density by tone,
+# jittered centers.
+shaders = 1
+
+shader0        = stipple.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

@@ -1,0 +1,9 @@
+# mac-1bit — System 7 one-bit: 8×8 Bayer, chunky pixels, platinum paper +
+# soft black ink.
+shaders = 1
+
+shader0        = mac-1bit.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

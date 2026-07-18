@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = grain.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;strength;g_size;shadow_bias;colored"
+amount       = 1.0
+strength     = 0.08
+g_size       = 1.5
+shadow_bias  = 0.5
+colored      = 0.0

@@ -1,0 +1,52 @@
+shaders = 4
+
+shader0 = accumulate.slang
+alias0 = accum1
+scale0 = 1.0
+scale_type0 = source
+filter_linear0 = true
+
+shader1 = blur_horiz.slang
+alias1 = blur1
+scale_1 = 1.0
+scale_type1 = source
+filter_linear1 = true
+
+shader2 = blur_vert.slang
+alias2 = blur2
+scale_2 = 1.0
+scale_type2 = source
+filter_linear2 = true
+
+shader3 = scrambled-crt.slang
+filter_linear3 = true
+scale_type3 = viewport
+
+textures = "frametexture"
+frametexture = crtframe.png
+frametexture_linear = true
+frametexture_wrap_mode = clamp_to_border
+
+# Tunable defaults (override here or pass via --params).
+parameters = "scramble_amount;scramble_freq;scramble_speed;chroma_break;hum_strength;static_strength;tear_freq;instability;jitter;vroll_freq;agc_pump;detune_walk;detune_range;lock_freq;lock_chance;lock_depth;lock_jitter;curvature;vignette;ghosting;wiggle_toggle"
+scramble_amount  = 0.50
+scramble_freq    = 32.0
+scramble_speed   = 2.0
+chroma_break     = 1.0
+hum_strength     = 0.22
+static_strength  = 0.95
+tear_freq        = 2.5
+instability      = 1.0
+jitter           = 0.85
+vroll_freq       = 0.4
+agc_pump         = 0.6
+detune_walk      = 0.25
+detune_range     = 0.35
+lock_freq        = 1.5
+lock_chance      = 0.10
+lock_depth       = 0.85
+lock_jitter      = 0.6
+curvature        = 1.5
+vignette         = 0.7
+ghosting         = 0.8
+wiggle_toggle    = 1.0

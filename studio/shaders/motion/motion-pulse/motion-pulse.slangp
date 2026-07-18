@@ -1,0 +1,24 @@
+shaders = 2
+
+# Pass 0 — clean passthrough so pass 1 can read the previous frame.
+shader0        = passthrough.slang
+alias0         = FrameNow
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — motion-driven pulse.
+shader1        = motion-pulse.slang
+filter_linear1 = true
+scale_type1    = source
+scale0         = 1.0
+wrap_mode1     = clamp_to_edge
+
+parameters = "amount;sensitivity;gamma;zoom_punch;flash;rgb_kick"
+amount      = 1.0
+sensitivity = 6.0
+gamma       = 0.7
+zoom_punch  = 0.10
+flash       = 0.5
+rgb_kick    = 0.5

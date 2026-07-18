@@ -1,0 +1,9 @@
+# channel-drift — R/G/B wander independent Lissajous orbits; woozy
+# projector-plate misregistration.
+shaders = 1
+
+shader0        = channel-drift.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

@@ -1,0 +1,8 @@
+# spectrum-smear — prismatic rainbow streak, linear or radial.
+shaders = 1
+
+shader0        = spectrum-smear.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge

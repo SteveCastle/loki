@@ -1,0 +1,18 @@
+shaders = 1
+
+shader0        = beat-kaleido.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bpm;fps;beat_div;segments;spin;beat_kick;zoom_pulse;pulse_decay"
+amount      = 1.0
+bpm         = 120.0
+fps         = 24.0
+beat_div    = 1.0
+segments    = 6.0
+spin        = 0.2
+beat_kick   = 0.5
+zoom_pulse  = 0.18
+pulse_decay = 5.0

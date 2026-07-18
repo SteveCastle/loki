@@ -1,0 +1,29 @@
+shaders = 3
+
+# Pass 0/1 — separable Gaussian blur of the whole frame.
+shader0        = blur_h.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+shader1        = blur_v.slang
+filter_linear1 = true
+scale_type1    = source
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+# Pass 2 — composite the sharp Original back inside the focus band.
+shader2        = tilt-shift.slang
+filter_linear2 = true
+scale_type2    = source
+scale2         = 1.0
+wrap_mode2     = clamp_to_edge
+
+parameters = "radius;amount;focus;band;softness;pop"
+radius   = 4.0
+amount   = 1.0
+focus    = 0.5
+band     = 0.16
+softness = 0.18
+pop      = 0.4

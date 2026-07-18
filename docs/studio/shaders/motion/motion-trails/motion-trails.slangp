@@ -1,0 +1,28 @@
+shaders = 2
+
+# Pass 0 — clean passthrough so pass 1 can read the previous frame.
+shader0        = passthrough.slang
+alias0         = FrameNow
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — motion-keyed echo trails. Self-feedback (PassFeedback1) is the trail
+# accumulator; float framebuffer keeps long trails clean.
+shader1            = motion-trails.slang
+filter_linear1     = true
+scale_type1        = source
+scale1             = 1.0
+wrap_mode1         = clamp_to_edge
+float_framebuffer1 = true
+
+parameters = "amount;sensitivity;gamma;decay;smear_len;tear;hue_drift;sat"
+amount      = 1.0
+sensitivity = 10.0
+gamma       = 0.6
+decay       = 0.94
+smear_len   = 0.07
+tear        = 0.03
+hue_drift   = 6.0
+sat         = 1.6

@@ -1,0 +1,13 @@
+shaders = 1
+
+shader0        = saturation.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;saturation;vibrance;hue_deg"
+amount       = 1.0
+saturation   = 1.0
+vibrance     = 0.0
+hue_deg      = 0.0

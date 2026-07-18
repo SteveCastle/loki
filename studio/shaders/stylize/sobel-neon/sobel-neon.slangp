@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = sobel-neon.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;scale;threshold;glow;hue_shift;bg"
+amount    = 1.0
+scale     = 2.0
+threshold = 0.10
+glow      = 1.4
+hue_shift = 0.0
+bg        = 0.18

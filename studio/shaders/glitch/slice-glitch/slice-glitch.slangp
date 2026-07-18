@@ -1,0 +1,18 @@
+shaders = 1
+
+shader0        = slice-glitch.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;slice_amount;slice_density;bands;rgb_split;burst_freq;block_invert;speed;seed"
+amount        = 1.0
+slice_amount  = 0.12
+slice_density = 0.45
+bands         = 48.0
+rgb_split     = 1.2
+burst_freq    = 3.5
+block_invert  = 0.5
+speed         = 1.0
+seed          = 11.0

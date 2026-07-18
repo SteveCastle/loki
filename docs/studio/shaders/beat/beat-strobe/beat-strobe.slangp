@@ -1,0 +1,18 @@
+shaders = 1
+
+shader0        = beat-strobe.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bpm;fps;beat_div;strobe;zoom_punch;punch_decay;rgb_kick;invert_every"
+amount       = 1.0
+bpm          = 120.0
+fps          = 24.0
+beat_div     = 1.0
+strobe       = 0.6
+zoom_punch   = 0.12
+punch_decay  = 6.0
+rgb_kick     = 0.4
+invert_every = 0.0

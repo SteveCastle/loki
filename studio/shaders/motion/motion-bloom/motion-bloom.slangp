@@ -1,0 +1,44 @@
+shaders = 5
+
+# Pass 0 — clean passthrough so pass 1 can read the previous frame.
+shader0        = passthrough.slang
+alias0         = FrameNow
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — motion bright-pass (half res). Source = current, PassFeedback0 = prev.
+shader1        = motionbright.slang
+filter_linear1 = true
+scale_type1    = source
+scale1         = 0.5
+wrap_mode1     = clamp_to_edge
+
+# Pass 2/3 — separable blur of the motion glow.
+shader2        = blur_h.slang
+filter_linear2 = true
+scale_type2    = source
+scale2         = 1.0
+wrap_mode2     = clamp_to_edge
+
+shader3        = blur_v.slang
+filter_linear3 = true
+scale_type3    = source
+scale3         = 1.0
+wrap_mode3     = clamp_to_edge
+
+# Pass 4 — composite glow over the clean Original at full output resolution.
+shader4        = motion-bloom.slang
+filter_linear4 = true
+scale_type4    = viewport
+scale4         = 1.0
+wrap_mode4     = clamp_to_edge
+
+parameters = "sensitivity;gamma;radius;amount;intensity;sat"
+sensitivity = 12.0
+gamma       = 0.7
+radius      = 3.0
+amount      = 1.0
+intensity   = 2.0
+sat         = 1.6

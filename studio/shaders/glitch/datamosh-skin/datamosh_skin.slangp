@@ -1,0 +1,39 @@
+shaders = 2
+
+# Pass 0 — skin-masked mosh accumulator (self-feedback, float framebuffer).
+shader0            = datamosh_skin.slang
+alias0             = MoshPass
+filter_linear0     = true
+scale_type0        = source
+scale0             = 1.0
+wrap_mode0         = clamp_to_edge
+float_framebuffer0 = true
+
+# Pass 1 — present (cosmetic artifacts, skin-masked via Original input).
+shader1        = datamosh_skin_present.slang
+filter_linear1 = true
+scale_type1    = viewport
+wrap_mode1     = clamp_to_edge
+
+# Tunable defaults. skin_floor = how much effect survives off skin (0 = none);
+# skin_tolerance = chroma radius (bigger catches more colours); skin_gamma
+# sharpens the mask.
+parameters = "mosh_amount;bleed;flow_strength;flow_scale;block_size;streak;fall_speed;block_glitch;block_drift;freeze_amount;trail_decay;speed;chroma_shift;quantize;seed;skin_floor;skin_tolerance;skin_gamma"
+mosh_amount    = 0.65
+bleed          = 0.08
+flow_strength  = 0.80
+flow_scale     = 3.0
+block_size     = 7.0
+streak         = 5.0
+fall_speed     = 0.6
+block_glitch   = 0.40
+block_drift    = 0.5
+freeze_amount  = 0.18
+trail_decay    = 0.975
+speed          = 1.0
+chroma_shift   = 0.4
+quantize       = 0.5
+seed           = 7.0
+skin_floor     = 0.05
+skin_tolerance = 0.055
+skin_gamma     = 1.6

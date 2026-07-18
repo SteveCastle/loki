@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = exposure.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;exposure;brightness;contrast;gamma_adj"
+amount       = 1.0
+exposure     = 0.0
+brightness   = 0.0
+contrast     = 1.0
+gamma_adj    = 1.0

@@ -1,0 +1,13 @@
+shaders = 1
+
+shader0        = temperature.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;temperature;tint;luma_lock"
+amount       = 1.0
+temperature  = 0.0
+tint         = 0.0
+luma_lock    = 1.0

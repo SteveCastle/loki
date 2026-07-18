@@ -1,0 +1,16 @@
+shaders = 1
+
+shader0        = pixelsort.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;threshold;sort_length;invert;invert_dir;wobble;speed"
+amount      = 1.0
+threshold   = 0.50
+sort_length = 180.0
+invert      = 0.0
+invert_dir  = 0.0
+wobble      = 0.15
+speed       = 1.0

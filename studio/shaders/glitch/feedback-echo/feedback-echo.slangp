@@ -1,0 +1,17 @@
+shaders = 1
+
+shader0            = feedback-echo.slang
+filter_linear0     = true
+scale_type0        = source
+scale0             = 1.0
+wrap_mode0         = clamp_to_edge
+float_framebuffer0 = true
+
+parameters = "amount;persistence;zoom;rotate;decay;hue_rate;speed"
+amount      = 0.95
+persistence = 0.72
+zoom        = 1.02
+rotate      = 0.6
+decay       = 0.98
+hue_rate    = 4.0
+speed       = 1.0

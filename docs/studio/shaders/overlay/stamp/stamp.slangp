@@ -1,0 +1,14 @@
+# stamp — composite the Stamp texture over the frame with position / size /
+# rotation / opacity / blend sliders. The web tuner can swap the texture for
+# any image, or render text into it (title tool).
+shaders = 1
+
+shader0        = stamp.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+textures      = "Stamp"
+Stamp         = stamp-default.png
+Stamp_linear  = true
