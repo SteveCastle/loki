@@ -12,15 +12,19 @@ const BASE_COLUMNS = 'media.path, media.elo, media.height, media.width';
 
 // Tag columns are NULL for category-driven / no-tag queries (a category spans
 // many tags, so there's no single per-tag weight/timestamp to surface).
+// battles rides at the end (battle-mode pairing needs per-item match counts);
+// every consumer of these column lists joins `media`.
 const NULL_TAG_COLS =
-  'NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at';
+  'NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at, ' +
+  'media.battles AS battles';
 
 // Columns when the query is DRIVEN from media_tag_by_category (mtcw), surfacing
 // the per-assignment weight/tag/timestamp.
 const DRIVEN_TAG_COLUMNS =
   'mtcw.media_path AS path, media.elo AS elo, media.height AS height, ' +
   'media.width AS width, mtcw.weight AS weight, mtcw.tag_label AS tag_label, ' +
-  'mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at';
+  'mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at, ' +
+  'media.battles AS battles';
 
 function clauseFor(p: Predicate, params: string[]): string {
   const like = `%${p.value}%`;
@@ -101,7 +105,8 @@ function mediaScan(
   if (primaryTag) {
     select =
       `SELECT ${BASE_COLUMNS}, mtcw.weight AS weight, mtcw.tag_label AS tag_label, ` +
-      `mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at ` +
+      `mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at, ` +
+      `media.battles AS battles ` +
       `FROM media LEFT JOIN media_tag_by_category mtcw ` +
       `ON mtcw.media_path = media.path AND mtcw.tag_label = ?`;
     params.push(primaryTag); // JOIN param comes first in the SQL

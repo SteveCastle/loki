@@ -30,7 +30,7 @@ export type Channels =
   | 'toggle-fullscreen'
   | 'set-always-on-top'
   | 'add-media'
-  | 'update-elo'
+  | 'record-battle'
   | 'update-description'
   | 'copy-file-into-clipboard'
   | 'load-categories'

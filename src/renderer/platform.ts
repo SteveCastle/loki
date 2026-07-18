@@ -193,6 +193,16 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'PUT',
       argsToBody: (args) => ({ path: args[0], description: args[1] }),
     },
+    // record-battle args: [winnerPath, loserPath, outcome?]
+    'record-battle': {
+      url: '/api/media/battle',
+      method: 'POST',
+      argsToBody: (args) => ({
+        winnerPath: args[0],
+        loserPath: args[1],
+        outcome: args[2],
+      }),
+    },
     'delete-file': {
       url: '/api/media/delete',
       method: 'DELETE',
@@ -564,7 +574,7 @@ if (isElectron) {
   const stubbedChannels = [
     'select-db', 'select-new-path',
     'refresh-library', 'copy-file-into-clipboard',
-    'check-for-updates', 'update-elo',
+    'check-for-updates',
     'load-duplicates-by-path', 'merge-duplicates-by-path',
   ];
 

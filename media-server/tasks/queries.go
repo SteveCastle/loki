@@ -253,9 +253,16 @@ func resolveJobItemsFiltered(j *jobqueue.Job, q *jobqueue.Queue, mediaOnly bool)
 		return resolvedItems{Paths: paths, FromQuery: true, Query: qstr}, nil
 	}
 
-	raw := strings.TrimSpace(j.Input)
+	return resolvedItems{Paths: parseExplicitPaths(j.Input, mediaOnly)}, nil
+}
+
+// parseExplicitPaths turns a raw path-list input into concrete item paths:
+// flag tokens dropped, local paths absolutized, and (when mediaOnly)
+// non-media files filtered out.
+func parseExplicitPaths(raw string, mediaOnly bool) []string {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return resolvedItems{}, nil
+		return nil
 	}
 	var out []string
 	for _, p := range parseInputPaths(raw) {
@@ -278,5 +285,18 @@ func resolveJobItemsFiltered(j *jobqueue.Job, q *jobqueue.Queue, mediaOnly bool)
 	if mediaOnly {
 		out = filterMediaPaths(out)
 	}
-	return resolvedItems{Paths: out}, nil
+	return out
+}
+
+// ResolveItems is the entry point handed to jobqueue.SetItemsResolver: it
+// derives a job's concrete item list from its definition alone, for the
+// path→job index. Query jobs return nil — their membership needs the
+// database and is reported by the runner (Queue.SetJobItems) once the job
+// resolves its input at claim time.
+func ResolveItems(command string, arguments []string, input string) []string {
+	probe := &jobqueue.Job{Command: command, Arguments: arguments, Input: input}
+	if _, ok := extractQueryFromJob(probe); ok {
+		return nil
+	}
+	return parseExplicitPaths(input, true)
 }

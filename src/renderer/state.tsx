@@ -51,6 +51,9 @@ export type Item = {
   weight?: number;
   timeStamp?: number;
   elo?: number | null;
+  // Battles fought (from the battle log); drives anchor selection in
+  // battle-mode pairing. NULL/undefined on legacy rows and fs loads.
+  battles?: number | null;
   description?: string;
   height?: number | null;
   width?: number | null;
@@ -1036,6 +1039,23 @@ export const libraryMachine = createMachine(
                 console.log('CHANGE_SETTING', context, event);
                 const processedData = { ...event.data };
 
+                // Battle mode drives its own pairing order: entering it
+                // switches sort to 'battle' (informative pair selection in
+                // filter.ts); leaving it falls back to shuffle so the
+                // battle ordering doesn't linger in normal browsing.
+                if (
+                  processedData.battleMode === true &&
+                  processedData.sortBy === undefined
+                ) {
+                  processedData.sortBy = 'battle';
+                } else if (
+                  processedData.battleMode === false &&
+                  processedData.sortBy === undefined &&
+                  context.settings.sortBy === 'battle'
+                ) {
+                  processedData.sortBy = 'shuffle';
+                }
+
                 for (const key in processedData) {
                   // Clamp volume to valid range [0, 1]
                   if (
@@ -1069,8 +1089,18 @@ export const libraryMachine = createMachine(
                 ) {
                   return uniqueId();
                 }
+                // Toggling battle mode reorders (new pair / back to
+                // shuffle), so it always needs a fresh seed.
+                if (event?.data?.battleMode !== undefined) {
+                  return uniqueId();
+                }
                 return context.libraryLoadId;
               },
+              // The battle pair lives at view positions 0/1, so entering
+              // battle mode must move the cursor there (BATTLE_MODE has no
+              // resetCursor flag — it's a plain toggle setting).
+              cursor: (context, event) =>
+                event?.data?.battleMode === true ? 0 : context.cursor,
             }),
           },
           SET_AVAILABLE_AUDIO_TRACKS: {
@@ -2281,6 +2311,18 @@ export const libraryMachine = createMachine(
                   },
                 }),
               },
+              // Sent after each battle vote: re-seed so filter.ts's battle
+              // ordering picks the next informative pair.
+              NEXT_BATTLE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'battle',
+                  }),
+                }),
+              },
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
@@ -2677,6 +2719,18 @@ export const libraryMachine = createMachine(
                   },
                 }),
               },
+              // Sent after each battle vote: re-seed so filter.ts's battle
+              // ordering picks the next informative pair.
+              NEXT_BATTLE: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  cursor: 0,
+                  libraryLoadId: () => uniqueId(),
+                  settings: (context) => ({
+                    ...context.settings,
+                    sortBy: 'battle',
+                  }),
+                }),
+              },
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
@@ -2691,11 +2745,14 @@ export const libraryMachine = createMachine(
                 actions: assign<LibraryState, AnyEventObject>({
                   library: (context, event) => {
                     console.log('UPDATE_MEDIA_ELO', context, event);
-                    const { path, elo } = event;
+                    const { path, elo, battles } = event;
                     const library = [...context.library];
                     const item = library.find((item) => item.path === path);
                     if (item) {
                       item.elo = elo;
+                      if (battles !== undefined) {
+                        item.battles = battles;
+                      }
                     }
                     return library;
                   },

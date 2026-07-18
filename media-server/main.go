@@ -936,6 +936,12 @@ func swipeAPIHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// "For You": never-ending algorithmic feed built from the user's
+		// swipe favorites. Shared across platform builds.
+		if maybeHandleSwipeFeed(w, r, deps) {
+			return
+		}
+
 		// Parse query parameters
 		offsetStr := r.URL.Query().Get("offset")
 		limitStr := r.URL.Query().Get("limit")
@@ -2461,6 +2467,7 @@ func main() {
 	// when assigning buckets to persisted jobs.
 	jobqueue.SetHostResolver(tasks.ResolveHost)
 	jobqueue.SetResourceResolver(tasks.ResolveResources)
+	jobqueue.SetItemsResolver(tasks.ResolveItems)
 	queue := jobqueue.NewQueueWithDB(db)
 	log.Printf("Job queue initialized. Current jobs: %d", len(queue.GetJobs()))
 	// Apply per-bucket concurrency caps from config. Safe to call before
@@ -2524,6 +2531,7 @@ func main() {
 	mux.HandleFunc("/job/{id}/copy", renderer.ApplyMiddlewares(copyHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/jobs/for-path", renderer.ApplyMiddlewares(jobsForPathHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/stream", streamHandler())
 	mux.HandleFunc("/health", healthHandler(deps))
 	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))
@@ -2577,6 +2585,7 @@ func main() {
 	mux.HandleFunc("/api/embeddings/all", renderer.ApplyMiddlewares(embeddingsWipeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/transcript", renderer.ApplyMiddlewares(mediaTranscriptHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/rating", renderer.ApplyMiddlewares(mediaRatingHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/battle", renderer.ApplyMiddlewares(mediaBattleHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/tags/list", renderer.ApplyMiddlewares(tagsListHandler(deps), renderer.RolePublicRead))
 
 	// Auth routes

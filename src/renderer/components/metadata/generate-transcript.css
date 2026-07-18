@@ -16,22 +16,32 @@
   justify-content: center;
 }
 
-.GenerateTranscript button {
-  background-color: rgb(56, 56, 78);
-  color: white;
-  border: none;
+/* Minimal ghost button: quiet until hovered, no heavy fill. */
+.GenerateTranscript button.generate {
+  background: transparent;
+  color: #b9b9c6;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   outline: none;
-  padding: 10px 20px;
-  border-radius: 2px;
+  padding: 6px 16px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  width: 100%;
-  transition: background-color 0.2s ease-in-out;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  transition: color 0.15s ease, border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
-.GenerateTranscript button:hover {
-  background-color: rgb(74, 74, 105);
+.GenerateTranscript button.generate:hover:not(:disabled) {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.GenerateTranscript button.generate:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .GenerateTranscript .checking-server {
@@ -85,21 +95,28 @@
   font-size: 13px;
 }
 
+/* Job status indicator: same footprint and tone as the ghost button, so the
+   button ↔ status swap doesn't jump the layout. */
 .GenerateTranscript .job-running {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
-  color: #ddd;
-  font-size: 14px;
+  gap: 10px;
+  padding: 5px 10px 5px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: #a9a9b8;
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .GenerateTranscript .loading-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-left-color: #fff;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  border-left-color: #cfcfe0;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
+  animation: spin 0.9s linear infinite;
 }
 
 @keyframes spin {
@@ -112,5 +129,27 @@
 }
 
 .GenerateTranscript .job-status {
-  font-style: italic;
+  font-variant-numeric: tabular-nums;
+}
+
+.GenerateTranscript .job-cancel {
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 3px 8px;
+  border-radius: 3px;
+  color: #77778a;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.GenerateTranscript .job-cancel:hover:not(:disabled) {
+  color: #ff9d9d;
+  background-color: rgba(255, 100, 100, 0.08);
+}
+
+.GenerateTranscript .job-cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

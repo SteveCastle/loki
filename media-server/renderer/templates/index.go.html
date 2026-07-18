@@ -262,6 +262,16 @@
 
         .sched-widget {
           justify-content: space-between;
+          /* Status text + control buttons don't fit side by side on a
+             phone; let the controls drop to their own row instead of
+             widening the page. */
+          flex-wrap: wrap;
+          gap: var(--space-2) var(--space-4);
+        }
+
+        .sched-status {
+          min-width: 0;
+          flex: 1 1 auto;
         }
 
         .sched-reason {

@@ -53,3 +53,83 @@
 .BattleMode button:hover {
   opacity: 1;
 }
+
+.BattleMode button:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* Pair-level controls (Draw / Skip / confidence). Rendered by the offset=1
+   instance, whose pane's LEFT edge is the seam where the two vote buttons
+   meet; translateX(-50%) centers the cluster on that seam, just below the
+   vote buttons, so the whole thing reads as one control group. Buttons pick
+   up the .BattleMode button slab styling via the cascade and only get scaled
+   down here. */
+.BattleMode .battle-pair-controls {
+  position: absolute;
+  left: 0; /* the seam */
+  top: calc(50% + 1.6rem); /* just under the vote buttons */
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px; /* echoes the 2px margin between the vote buttons */
+  pointer-events: none;
+}
+
+.BattleMode .battle-pair-controls .pair-buttons {
+  display: flex;
+  gap: 2px;
+}
+
+.BattleMode .battle-pair-controls button {
+  margin: 0;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+}
+
+/* Confidence: same dark slab, holding a tiny progress meter and a white
+   percent chip that echoes the .elo-score chip on the vote buttons. */
+.BattleMode .battle-confidence {
+  pointer-events: auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  background: #212021;
+  border-radius: 2px;
+  padding: 0.25rem 0.5rem;
+  opacity: 0.6;
+  cursor: help;
+  transition: cubic-bezier(1, 0, 0, 1) 0.2s;
+}
+
+.BattleMode .battle-confidence:hover {
+  opacity: 1;
+}
+
+.BattleMode .battle-confidence .confidence-meter {
+  flex: 1;
+  height: 0.28rem;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.BattleMode .battle-confidence .confidence-fill {
+  display: block;
+  height: 100%;
+  background: #ffffff;
+  border-radius: 999px;
+}
+
+.BattleMode .battle-confidence .confidence-value {
+  background: #ffffff;
+  color: black;
+  border-radius: 8px; /* matches .elo-score */
+  padding: 0.05rem 0.35rem;
+  font-size: 0.6rem;
+  font-weight: 400;
+}

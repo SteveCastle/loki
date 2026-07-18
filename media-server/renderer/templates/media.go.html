@@ -2744,6 +2744,10 @@
         });
 
       // Media preview functionality
+      // Touch / no-hover devices (phones, tablets) can't hover, so the
+      // tooltip preview is disabled there; tapping a row opens the
+      // fullscreen lightbox instead (see openLocalPath).
+      const touchPreviewMode = window.matchMedia('(hover: none)').matches;
       let previewTimeout;
       let hideTimeout;
       let loadingTimeoutId = null;
@@ -2849,6 +2853,9 @@
       }
 
       function showMediaPreview(event, mediaPath) {
+        // No hover on touch devices — taps preview via the lightbox instead.
+        if (touchPreviewMode) return;
+
         clearTimeout(hideTimeout);
 
         // Cancel any pending loading timeout from previous preview
@@ -3233,6 +3240,14 @@
         event.stopPropagation();
         const path = element.getAttribute('data-media-path');
         if (!path) return;
+
+        // Touch devices: no hover preview exists, and /open would launch
+        // the file on the server's desktop, not the phone — show the
+        // fullscreen lightbox instead.
+        if (touchPreviewMode && (isImageFile(path) || isVideoFile(path))) {
+          openLightbox(path);
+          return;
+        }
 
         fetch('/open', {
           method: 'POST',

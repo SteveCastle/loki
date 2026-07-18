@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/stevecastle/shrike/feed"
 	"github.com/stevecastle/shrike/platform"
 )
 
@@ -302,6 +303,14 @@ type Config struct {
 	// is on. Enforced per request in authMiddleware via
 	// renderer.RolePublicRead, so toggling it needs no restart.
 	AllowPublicAccess bool `json:"allowPublicAccess"`
+
+	// SwipeFeed tunes the /swipe "For You" algorithmic feed (mode=feed):
+	// lane mix (exploit/fresh/bridge/wildcard), taste clustering, cache
+	// TTLs, and which tag counts as a like. Zero/omitted fields fall back
+	// to the feed package's defaults at use time, so the whole section is
+	// optional and individual knobs can be set sparsely. Changes apply
+	// live (no restart) — the feed re-reads this on every page.
+	SwipeFeed feed.Tuning `json:"swipeFeed"`
 
 	// Storage roots for web filesystem browsing
 	Roots []StorageRoot `json:"roots"`

@@ -186,6 +186,38 @@ async function generateVideoThumbnail(
   }
 }
 
+// mp4HasFrames scans top-level MP4 boxes for an mdat with a non-empty
+// payload. ffmpeg exits 0 but encodes zero frames when the seek lands after
+// the last frame (e.g. single-frame GIFs), leaving a frameless mp4 behind.
+async function mp4HasFrames(filePath) {
+  let buf;
+  try {
+    buf = await fs.promises.readFile(filePath);
+  } catch (_) {
+    return false;
+  }
+  let offset = 0;
+  while (offset + 8 <= buf.length) {
+    let size = buf.readUInt32BE(offset);
+    const boxType = buf.toString('ascii', offset + 4, offset + 8);
+    let payload = size - 8;
+    if (size === 0) {
+      // box extends to end of file
+      size = buf.length - offset;
+      payload = size - 8;
+    } else if (size === 1) {
+      // 64-bit largesize follows the type
+      if (offset + 16 > buf.length) return false;
+      size = Number(buf.readBigUInt64BE(offset + 8));
+      payload = size - 16;
+    }
+    if (boxType === 'mdat' && payload > 0) return true;
+    if (size < 8) return false;
+    offset += size;
+  }
+  return false;
+}
+
 async function createVideoThumbnail(
   videoFilePath,
   thumbnailFullPath,
@@ -193,8 +225,17 @@ async function createVideoThumbnail(
 ) {
   try {
     const metadata = await getVideoMetadata(videoFilePath);
-    const duration_sec = metadata.format.duration || 0;
-    const thumbnailTime = timeStamp || duration_sec / 2;
+    const duration_sec = Number(metadata.format.duration) || 0;
+    let thumbnailTime = timeStamp || duration_sec / 2;
+    // Seeking near the end of a very short file (e.g. a single-frame GIF,
+    // duration ~0.04s) lands after the only frame and encodes nothing —
+    // take the first frame instead.
+    if (
+      duration_sec > 0 &&
+      (duration_sec < 1 || thumbnailTime >= duration_sec)
+    ) {
+      thumbnailTime = 0;
+    }
     const useMiddle = duration_sec > 6;
 
     await generateVideoThumbnail(
@@ -203,6 +244,19 @@ async function createVideoThumbnail(
       thumbnailFullPath,
       useMiddle
     );
+    if (!(await mp4HasFrames(thumbnailFullPath))) {
+      if (thumbnailTime > 0) {
+        await generateVideoThumbnail(videoFilePath, 0, thumbnailFullPath, false);
+      }
+      if (!(await mp4HasFrames(thumbnailFullPath))) {
+        try {
+          await fs.promises.unlink(thumbnailFullPath);
+        } catch (e) {
+          void 0;
+        }
+        throw new Error('ffmpeg produced an empty video thumbnail');
+      }
+    }
   } catch (err) {
     try {
       log.error('Error during thumbnail generation', videoFilePath);

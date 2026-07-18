@@ -19,12 +19,20 @@ func newLibraryTestDeps(t *testing.T) *Dependencies {
 	for _, stmt := range []string{
 		`CREATE TABLE media (
 			path TEXT PRIMARY KEY, description TEXT, transcript TEXT,
-			elo REAL, views INTEGER, wins INTEGER, losses INTEGER)`,
+			elo REAL, views INTEGER, wins INTEGER, losses INTEGER,
+			battles INTEGER)`,
 		`CREATE TABLE tag (label TEXT PRIMARY KEY, category_label TEXT, weight REAL)`,
 		`CREATE TABLE media_tag_by_category (
 			media_path TEXT, tag_label TEXT, category_label TEXT,
 			weight REAL, time_stamp REAL, created_at INTEGER,
 			PRIMARY KEY(media_path, tag_label, category_label, time_stamp))`,
+		`CREATE TABLE battle (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			winner_path TEXT NOT NULL, loser_path TEXT NOT NULL,
+			outcome REAL NOT NULL DEFAULT 1,
+			winner_elo_before REAL, loser_elo_before REAL,
+			winner_elo_after REAL, loser_elo_after REAL,
+			created_at INTEGER)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatalf("create table: %v", err)

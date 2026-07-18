@@ -46,7 +46,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 			height INTEGER,
 			thumbnail_path_600 TEXT,
 			thumbnail_path_1200 TEXT,
-			elo REAL
+			elo REAL,
+			battles INTEGER
 		)`,
 		`CREATE TABLE media_tag_by_category (
 			media_path TEXT,
@@ -281,6 +282,9 @@ func TestLokiCreateAssignment_ApplyTagPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("temp thumb: %v", err)
 	}
+	// Must be non-empty: zero-byte thumbnails read as broken and would be
+	// regenerated instead of reused.
+	thumbFile.WriteString("\x89PNG fake")
 	thumbFile.Close()
 	defer os.Remove(thumbFile.Name())
 	if _, err := deps.DB.Exec(

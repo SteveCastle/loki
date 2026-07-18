@@ -1,3 +1,6 @@
+/* Transcript panel — quiet, flat surfaces with one blue accent. Buttons are
+   ghost-style (transparent + 1px border) to match generate-transcript.css. */
+
 .Transcript {
   height: 100%;
   overflow-y: scroll;
@@ -15,7 +18,7 @@
   padding: 0.5rem;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   background: rgba(13, 17, 23, 0.92);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -26,19 +29,18 @@
 .transcript-search-input {
   flex: 1 1 auto;
   min-width: 0;
-  background: #161b22;
-  border: 1px solid #30363d;
-  border-radius: 6px;
+  background: transparent;
+  border: 1px solid #262c36;
+  border-radius: 4px;
   color: #e6edf3;
-  font-size: 0.85rem;
-  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.6rem;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease;
 }
 
 .transcript-search-input:focus {
-  border-color: #58a6ff;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.25);
+  border-color: rgba(88, 166, 255, 0.6);
 }
 
 .transcript-search-input::placeholder {
@@ -47,8 +49,8 @@
 
 .transcript-search-counter {
   flex: 0 0 auto;
-  color: #7d8590;
-  font-size: 0.75rem;
+  color: #6e7681;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   min-width: 3.5rem;
   text-align: right;
@@ -56,48 +58,47 @@
 
 .transcript-search-nav {
   flex: 0 0 auto;
-  background: #21262d;
-  border: 1px solid #30363d;
+  background: transparent;
+  border: 1px solid #262c36;
   border-radius: 4px;
-  color: #c9d1d9;
-  font-size: 0.7rem;
-  width: 26px;
-  height: 26px;
+  color: #8b949e;
+  font-size: 0.65rem;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 
 .transcript-search-nav:hover:not(:disabled) {
-  background: #2d333b;
-  border-color: #58a6ff;
+  color: #e6edf3;
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .transcript-search-nav:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+  opacity: 0.35;
+  cursor: default;
 }
 
 /* Per-substring highlight inside cue text. */
 .transcript-match {
-  background: rgba(255, 215, 0, 0.35);
+  background: rgba(255, 215, 0, 0.28);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
 }
 
 .transcript-match.current {
-  background: rgba(255, 215, 0, 0.85);
+  background: rgba(255, 215, 0, 0.8);
   color: #1c2128;
-  box-shadow: 0 0 0 1px rgba(255, 215, 0, 0.95);
 }
 
-/* Subtle outline on the cue card containing the active match so the
+/* The cue card containing the active match gets a soft gold edge so the
    highlighted text inside is easier to spot when scrolling. */
-.cue-container.current-match {
-  box-shadow: 0 0 0 2px rgba(255, 215, 0, 0.7);
+.cue-container.current-match .cue {
+  border-color: rgba(255, 215, 0, 0.55);
 }
 
 /* Actions bar at top for regenerate/generate + insert */
@@ -105,29 +106,30 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   margin-bottom: 0.5rem;
 }
 
+/* Small ghost button, sized to sit beside the (Re)generate button. */
 .transcript-insert-btn {
-  background: linear-gradient(135deg, #1f6feb 0%, #0969da 100%);
-  border: 1px solid #1f6feb;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 0.8rem;
-  font-weight: 500;
-  padding: 0.35rem 0.7rem;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  color: #b9b9c6;
+  font-size: 0.75rem;
+  font-weight: 400;
+  padding: 0.3rem 0.6rem;
   cursor: pointer;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  transition: filter 0.15s ease, transform 0.05s ease;
+  transition: color 0.15s ease, border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .transcript-insert-btn:hover {
-  filter: brightness(1.1);
-}
-
-.transcript-insert-btn:active {
-  transform: translateY(1px);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.35);
+  background-color: rgba(255, 255, 255, 0.05);
 }
 
 .transcript-empty {
@@ -155,48 +157,34 @@
 .cue-container {
   position: relative;
   border-radius: 6px;
-  overflow: hidden;
-  transition: all 0.2s ease;
 }
 
-.cue-container:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-}
-
-.cue-container.active {
-  box-shadow: 0 0 0 2px #58a6ff;
-}
-
-.cue-container.editing {
-  box-shadow: 0 0 0 2px #f85149;
-}
-
-/* Main Cue */
+/* Main Cue — flat card; state changes live in the border and a faint tint,
+   never a full-color fill. */
 .cue {
-  background: linear-gradient(135deg, #21262d 0%, #1c2128 100%);
-  border: 1px solid #30363d;
+  background: #12161d;
+  border: 1px solid #21262d;
   border-radius: 6px;
-  padding: 0.75rem;
+  padding: 0.6rem 0.75rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
   position: relative;
 }
 
 .cue:hover {
-  background: linear-gradient(135deg, #262c36 0%, #1f252e 100%);
-  border-color: #424a53;
+  background: #161b22;
+  border-color: #2d333b;
 }
 
 .cue-container.active .cue {
-  background: linear-gradient(135deg, #0d419d 0%, #0969da 100%);
-  border-color: #1f6feb;
-  color: white;
+  background: rgba(88, 166, 255, 0.07);
+  border-color: rgba(88, 166, 255, 0.45);
 }
 
 .cue-container.editing .cue {
-  background: linear-gradient(135deg, #2d1117 0%, #21262d 100%);
-  border-color: #f85149;
+  background: #12161d;
+  border-color: rgba(255, 255, 255, 0.3);
+  cursor: default;
 }
 
 /* Header */
@@ -204,69 +192,63 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.35rem;
 }
 
+/* Timestamps — plain muted monospace, no pill badges. */
 .timestamps {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas,
     'Courier New', monospace;
-  font-size: 0.75rem;
-  font-weight: 500;
+  font-size: 0.7rem;
+  font-weight: 400;
 }
 
 .start-time,
 .end-time {
-  color: #7d8590;
-  background: rgba(110, 118, 129, 0.1);
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  border: 1px solid transparent;
-  transition: all 0.2s ease;
+  color: #6e7681;
 }
 
 .cue-container.active .start-time,
 .cue-container.active .end-time {
-  color: rgba(255, 255, 255, 0.8);
-  background: rgba(255, 255, 255, 0.15);
+  color: #79b8ff;
 }
 
 .time-separator {
-  color: #7d8590;
-  font-weight: bold;
+  color: #484f58;
 }
 
 .cue-container.active .time-separator {
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(121, 184, 255, 0.6);
 }
 
 /* Time Inputs */
 .time-input {
-  background: #0d1117;
+  background: transparent;
   border: 1px solid #30363d;
   border-radius: 4px;
-  color: #f0f6fc;
+  color: #e6edf3;
   font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas,
     'Courier New', monospace;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.4rem;
   width: 80px;
   outline: none;
-  transition: all 0.2s ease;
+  transition: border-color 0.15s ease;
 }
 
 .time-input:focus {
-  border-color: #58a6ff;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+  border-color: rgba(88, 166, 255, 0.6);
 }
 
 .time-input::placeholder {
   color: #6e7681;
 }
 
-/* Edit Actions */
+/* Edit Actions — quiet glyph buttons; color says what they do, hover adds
+   only a faint tint. */
 .edit-actions {
   display: flex;
   gap: 0.25rem;
@@ -274,43 +256,42 @@
 
 .save-btn,
 .cancel-btn {
-  background: none;
-  border: 1px solid;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 4px;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 0.75rem;
-  font-weight: bold;
-  transition: all 0.2s ease;
+  font-size: 0.7rem;
+  transition: color 0.15s ease, border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .save-btn {
-  border-color: #238636;
   color: #3fb950;
 }
 
 .save-btn:hover:not(:disabled) {
-  background: #238636;
-  color: white;
+  border-color: rgba(63, 185, 80, 0.5);
+  background: rgba(63, 185, 80, 0.1);
 }
 
 .save-btn:disabled {
   opacity: 0.5;
-  cursor: not-allowed;
+  cursor: default;
 }
 
 .cancel-btn {
-  border-color: #da3633;
-  color: #f85149;
+  color: #8b949e;
 }
 
 .cancel-btn:hover {
-  background: #da3633;
-  color: white;
+  color: #ff9d9d;
+  border-color: rgba(248, 81, 73, 0.4);
+  background: rgba(248, 81, 73, 0.08);
 }
 
 /* Content */
@@ -319,61 +300,60 @@
 }
 
 .text-display {
-  font-size: 0.875rem;
-  line-height: 1.4;
-  color: #e6edf3;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #c9d1d9;
   white-space: pre-wrap;
   word-wrap: break-word;
 }
 
 .cue-container.active .text-display {
-  color: rgba(255, 255, 255, 0.95);
+  color: #e6edf3;
 }
 
 .text-input {
   width: 100%;
-  background: #0d1117;
+  background: transparent;
   border: 1px solid #30363d;
   border-radius: 4px;
-  color: #f0f6fc;
-  font-size: 0.875rem;
-  line-height: 1.4;
-  padding: 0.5rem;
+  color: #e6edf3;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  padding: 0.4rem 0.5rem;
   resize: vertical;
   min-height: 2.5rem;
   outline: none;
   font-family: inherit;
-  transition: all 0.2s ease;
+  transition: border-color 0.15s ease;
 }
 
 .text-input:focus {
-  border-color: #58a6ff;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+  border-color: rgba(88, 166, 255, 0.6);
 }
 
 .text-input::placeholder {
   color: #6e7681;
 }
 
-/* Delete cue button — top-right of each cue card, only visible on hover. */
+/* Delete cue button — top-right of each cue card, only visible on hover.
+   Quiet ✕ that tints red on hover, no filled circle. */
 .cue-delete-btn {
   position: absolute;
-  top: 0.4rem;
-  right: 0.4rem;
-  width: 22px;
-  height: 22px;
+  top: 0.35rem;
+  right: 0.35rem;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(218, 54, 51, 0.85);
-  color: #fff;
-  border: 1px solid rgba(248, 81, 73, 0.9);
-  border-radius: 50%;
+  background: transparent;
+  color: #6e7681;
+  border: none;
+  border-radius: 4px;
   font-size: 0.7rem;
-  font-weight: bold;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.2s ease, background 0.15s ease, transform 0.05s ease;
+  transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
   z-index: 2;
 }
 
@@ -382,32 +362,26 @@
 }
 
 .cue-delete-btn:hover {
-  background: #f85149;
-}
-
-.cue-delete-btn:active {
-  transform: scale(0.95);
+  color: #ff9d9d;
+  background: rgba(248, 81, 73, 0.1);
 }
 
 .cue-delete-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  opacity: 0.4;
+  cursor: default;
 }
 
 /* Edit Hint */
 .edit-hint {
   position: absolute;
-  top: 0.5rem;
-  right: 2.2rem;
+  top: 0.45rem;
+  right: 2rem;
   font-size: 0.6rem;
   color: #6e7681;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.15s ease;
   pointer-events: none;
-  background: rgba(13, 17, 23, 0.9);
-  padding: 0.25rem 0.5rem;
-  border-radius: 3px;
-  backdrop-filter: blur(4px);
+  padding: 0.15rem 0.4rem;
 }
 
 .cue-container:hover .edit-hint {
@@ -441,7 +415,7 @@
 }
 
 .Transcript::-webkit-scrollbar-track {
-  background: #161b22;
+  background: transparent;
 }
 
 .Transcript::-webkit-scrollbar-thumb {
@@ -460,7 +434,7 @@
   }
 
   .timestamps {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
   }
 
   .text-display,
@@ -470,24 +444,20 @@
 
   .time-input {
     width: 70px;
-    font-size: 0.7rem;
+    font-size: 0.65rem;
   }
 }
 
 /* Accessibility */
 @media (prefers-reduced-motion: reduce) {
-  .cue-container,
   .cue,
   .time-input,
   .text-input,
   .save-btn,
   .cancel-btn,
+  .cue-delete-btn,
   .edit-hint {
     transition: none;
-  }
-
-  .cue-container:hover {
-    transform: none;
   }
 }
 

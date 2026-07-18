@@ -7,6 +7,9 @@ export type SortByOption =
   | 'date'
   | 'weight'
   | 'shuffle'
+  // Battle-mode pairing order: not user-selectable in the sort picker; set
+  // automatically while battleMode is on (see CHANGE_SETTING / NEXT_BATTLE).
+  | 'battle'
   | 'elo'
   | 'stream'
   | 'similarity';

@@ -5,6 +5,8 @@ import { useDepRequirement } from '../../onboarding/useDepRequirement';
 import { fmtSize } from '../../onboarding/requirements';
 import { mediaServerBase } from '../../platform';
 import useJobServerAvailable from '../../hooks/useJobServerAvailable';
+import useJobsForPath from '../../hooks/useJobsForPath';
+import { jobStatusLabel, pickActiveJob } from '../../job-status';
 import './generate-transcript.css';
 
 type Props = {
@@ -29,9 +31,18 @@ export default function GenerateTranscript({
     (state) => state.context.canWrite
   );
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [isCancelling, setIsCancelling] = useState<boolean>(false);
   const whisper = useDepRequirement('faster-whisper');
 
-  // No SSE subscription here; ToastSystem handles job progress globally
+  // Path→job index lookup: while a transcribe job is queued/running for this
+  // file, the button is replaced by a live status indicator. State/progress
+  // updates arrive over the shared SSE bus; toasts stay ToastSystem's job.
+  const { jobs, noteJob } = useJobsForPath(
+    path,
+    authToken,
+    canWrite && jobServerAvailable === true
+  );
+  const activeJob = pickActiveJob(jobs, ['transcribe']);
 
   const handleGenerateTranscript = async () => {
     try {
@@ -62,7 +73,16 @@ export default function GenerateTranscript({
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // Let the ToastSystem show job lifecycle
+      // Flip to the status indicator immediately; SSE updates take over from
+      // here. The ToastSystem still shows the global job lifecycle.
+      try {
+        const created = (await response.json()) as { id?: string };
+        if (created.id) {
+          noteJob({ id: created.id, command: 'transcribe', state: 'pending' });
+        }
+      } catch {
+        // No id in the response — the SSE 'create' refetch will pick it up.
+      }
     } catch (error) {
       console.error('Failed to create transcript job:', error);
       libraryService.send({
@@ -75,6 +95,41 @@ export default function GenerateTranscript({
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Cancel the active job via the server's existing cancel endpoint; the SSE
+  // 'update' event (state → cancelled) is what clears the indicator.
+  const handleCancelJob = async (jobId: string) => {
+    try {
+      setIsCancelling(true);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const headers: HeadersInit = {};
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`;
+      }
+      const response = await fetch(`${mediaServerBase}/job/${jobId}/cancel`, {
+        method: 'POST',
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Failed to cancel transcript job:', error);
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Cancel Job',
+          message: 'Could not communicate with job service',
+        },
+      });
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -130,6 +185,30 @@ export default function GenerateTranscript({
         <button className="generate" disabled>
           Downloading transcription tool… {whisper.pct}%
         </button>
+      </div>
+    );
+  }
+
+  // A transcribe job is already queued/running for this file — show its
+  // status (with a cancel affordance) instead of offering to submit another.
+  if (activeJob) {
+    return (
+      <div className={`GenerateTranscript ${variant}`}>
+        <div className="job-running">
+          <div className="loading-spinner" />
+          <span className="job-status">
+            {jobStatusLabel(activeJob, 'Transcribing')}
+          </span>
+          <button
+            type="button"
+            className="job-cancel"
+            onClick={() => handleCancelJob(activeJob.id)}
+            disabled={isCancelling}
+            title="Cancel this job — work finished so far is kept"
+          >
+            {isCancelling ? 'Cancelling…' : 'Cancel'}
+          </button>
+        </div>
       </div>
     );
   }

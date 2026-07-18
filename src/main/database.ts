@@ -255,6 +255,7 @@ export async function initDB(db: Database) {
   views INTEGER,
   wins INTEGER,
   losses INTEGER,
+  battles INTEGER,
   size INTEGER,
   hash TEXT,
   width INTEGER,
@@ -278,6 +279,39 @@ export async function initDB(db: Database) {
   files TEXT
 )`);
 
+  // Battle log — append-only record of battle-mode votes. media.elo is a
+  // derived cache of this log; the log enables recomputation, rematch
+  // suppression, and per-item match counts (K decay). outcome is the
+  // winner_path score: 1 win, 0.5 draw. Mirrored in the Go media-server's
+  // InitializeSchema (media-server/media/media.go) — both processes open
+  // the same database.
+  await db.run(`CREATE TABLE IF NOT EXISTS battle (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  winner_path TEXT NOT NULL,
+  loser_path TEXT NOT NULL,
+  outcome REAL NOT NULL DEFAULT 1,
+  winner_elo_before REAL,
+  loser_elo_before REAL,
+  winner_elo_after REAL,
+  loser_elo_after REAL,
+  created_at INTEGER
+)`);
+  // Match-count lookups filter on either side of the pairing. Wrapped like
+  // idx_mtc_tag_label below: index creation must never kill startup.
+  try {
+    await db.run(
+      `CREATE INDEX IF NOT EXISTS idx_battle_winner ON battle(winner_path)`
+    );
+    await db.run(
+      `CREATE INDEX IF NOT EXISTS idx_battle_loser ON battle(loser_path)`
+    );
+  } catch (e) {
+    console.warn(
+      '[initDB] failed to create battle indexes (will retry next start):',
+      e
+    );
+  }
+
   // Migrate existing media table if needed
   const mediaTable = await db.get(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='media'`
@@ -289,6 +323,7 @@ export async function initDB(db: Database) {
       { name: 'views', type: 'INTEGER' },
       { name: 'wins', type: 'INTEGER' },
       { name: 'losses', type: 'INTEGER' },
+      { name: 'battles', type: 'INTEGER' },
       { name: 'size', type: 'INTEGER' },
       { name: 'hash', type: 'TEXT' },
       { name: 'width', type: 'INTEGER' },

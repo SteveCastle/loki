@@ -85,10 +85,46 @@ function getMediaCachePath(
 async function checkIfMediaCacheExists(cachePath: string): Promise<boolean> {
   try {
     await fs.promises.access(cachePath);
-    return true;
   } catch {
     return false;
   }
+  // Frameless .mp4 thumbnails (empty mdat box) were cached by older builds
+  // for single-frame GIFs — ffmpeg exits 0 after seeking past the only
+  // frame. Treat them as missing so they get regenerated.
+  if (path.extname(cachePath).toLowerCase() === '.mp4') {
+    return mp4ThumbnailHasFrames(cachePath);
+  }
+  return true;
+}
+
+// Scans top-level MP4 boxes for an mdat with a non-empty payload.
+async function mp4ThumbnailHasFrames(filePath: string): Promise<boolean> {
+  let buf: Buffer;
+  try {
+    buf = await fs.promises.readFile(filePath);
+  } catch {
+    return false;
+  }
+  let offset = 0;
+  while (offset + 8 <= buf.length) {
+    let size = buf.readUInt32BE(offset);
+    const boxType = buf.toString('ascii', offset + 4, offset + 8);
+    let payload = size - 8;
+    if (size === 0) {
+      // box extends to end of file
+      size = buf.length - offset;
+      payload = size - 8;
+    } else if (size === 1) {
+      // 64-bit largesize follows the type
+      if (offset + 16 > buf.length) return false;
+      size = Number(buf.readBigUInt64BE(offset + 8));
+      payload = size - 16;
+    }
+    if (boxType === 'mdat' && payload > 0) return true;
+    if (size < 8) return false;
+    offset += size;
+  }
+  return false;
 }
 
 function parseSearchString(search: string): string[] {
@@ -284,7 +320,7 @@ const loadMediaByDescriptionSearch =
     // DISTINCT was unnecessary too: this query has no joins (tag conditions
     // are EXISTS subqueries), so each media row appears at most once.
     const sql = `
-    SELECT media.path, media.description, media.elo, media.height, media.width
+    SELECT media.path, media.description, media.elo, media.battles, media.height, media.width
     FROM media
     ${whereClause}
   `;
@@ -296,6 +332,7 @@ const loadMediaByDescriptionSearch =
         path: m.path,
         description: m.description,
         elo: m.elo,
+        battles: m.battles,
         height: m.height,
         width: m.width,
       }));
@@ -317,6 +354,7 @@ const loadMediaByQuery =
       const library = mediaRows.map((m: any) => ({
         path: m.path,
         elo: m.elo,
+        battles: m.battles,
         height: m.height,
         width: m.width,
         weight: m.weight ?? undefined,
@@ -334,7 +372,7 @@ const loadMediaByQuery =
 const loadMediaByTags =
   (db: Database) => async (_: IpcMainInvokeEvent, args: LoadMediaInput) => {
     const tableName = 'media_tag_by_category';
-    let sql = `SELECT mtc.media_path, mtc.tag_label, mtc.category_label, mtc.weight, mtc.time_stamp, mtc.created_at, m.height, m.width, m.elo FROM ${tableName} mtc left join media m on m.path = mtc.media_path`;
+    let sql = `SELECT mtc.media_path, mtc.tag_label, mtc.category_label, mtc.weight, mtc.time_stamp, mtc.created_at, m.height, m.width, m.elo, m.battles FROM ${tableName} mtc left join media m on m.path = mtc.media_path`;
     const tags = args[0];
     const mode = args[1];
     const params: string[] = [];
@@ -378,6 +416,7 @@ const loadMediaByTags =
         mtimeMs: media.created_at || 0,
         timeStamp: media.time_stamp,
         elo: media.elo,
+        battles: media.battles,
         tagLabel: media.tag_label,
         height: media.height,
         width: media.width,
@@ -435,17 +474,100 @@ const copyFileIntoClipboard =
     console.log('copied files into clipboard');
   };
 
-type UpdateEloInput = [string, number, string, number];
-const updateElo =
-  (db: Database) => async (_: IpcMainInvokeEvent, args: UpdateEloInput) => {
-    const winningPath = args[0];
-    const newWinnerElo = args[1];
-    const losingPath = args[2];
-    const newLoserElo = args[3];
-    // Update the elo in the database if the path isn't already there create it.
-    const updateElo = `INSERT INTO media (path, elo) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET elo = ?`;
-    await db.run(updateElo, [winningPath, newWinnerElo, newWinnerElo]);
-    await db.run(updateElo, [losingPath, newLoserElo, newLoserElo]);
+// Elo K-factor by battles played: provisional ratings move fast, established
+// ones stabilise. Mirrored in the Go media-server (battle_api.go) — keep the
+// schedules identical or shared databases drift.
+const battleKFactor = (n: number) => (n < 10 ? 48 : n < 30 ? 24 : 12);
+
+const DEFAULT_ELO = 1500;
+
+// record-battle args: [winnerPath, loserPath, outcome?] where outcome is the
+// winner's score: 1 (default) or 0.5 for a draw. The client only reports who
+// won; the Elo math runs here inside a transaction so concurrent voters can't
+// clobber each other with stale ratings, and every vote lands in the
+// append-only battle log (media.elo is a derived cache of that log).
+type RecordBattleInput = [string, string, number?];
+const recordBattle =
+  (db: Database) => async (_: IpcMainInvokeEvent, args: RecordBattleInput) => {
+    const [winnerPath, loserPath] = args;
+    const outcome = args[2] ?? 1;
+    if (!winnerPath || !loserPath || winnerPath === loserPath) {
+      throw new Error('record-battle: two distinct paths required');
+    }
+    if (outcome !== 1 && outcome !== 0.5) {
+      throw new Error('record-battle: outcome must be 1 or 0.5');
+    }
+    return db.withTransaction(async () => {
+      const readSide = async (path: string) => {
+        const row = await db.get(
+          `SELECT elo FROM media WHERE path = ?`,
+          [path],
+          'recordBattle:elo'
+        );
+        const count = await db.get(
+          `SELECT COUNT(*) AS n FROM battle WHERE winner_path = ? OR loser_path = ?`,
+          [path, path],
+          'recordBattle:matches'
+        );
+        return { elo: row?.elo ?? DEFAULT_ELO, matches: count?.n ?? 0 };
+      };
+      const winner = await readSide(winnerPath);
+      const loser = await readSide(loserPath);
+
+      const expectedWinner = 1 / (1 + 10 ** ((loser.elo - winner.elo) / 400));
+      const winnerElo =
+        winner.elo + battleKFactor(winner.matches) * (outcome - expectedWinner);
+      const loserElo =
+        loser.elo +
+        battleKFactor(loser.matches) * (1 - outcome - (1 - expectedWinner));
+
+      // wins/losses/battles are convenience counters for display and pairing;
+      // draws bump only battles. The battle log is the authoritative record,
+      // so battles is (re)set from the fresh log count — self-healing for
+      // rows written before the log existed.
+      const winInc = outcome === 1 ? 1 : 0;
+      const upsert = `INSERT INTO media (path, elo, wins, losses, battles) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(path) DO UPDATE SET
+          elo = excluded.elo,
+          wins = COALESCE(wins, 0) + ?,
+          losses = COALESCE(losses, 0) + ?,
+          battles = excluded.battles`;
+      await db.run(
+        upsert,
+        [winnerPath, winnerElo, winInc, 0, winner.matches + 1, winInc, 0],
+        'recordBattle:winner'
+      );
+      await db.run(
+        upsert,
+        [loserPath, loserElo, 0, winInc, loser.matches + 1, 0, winInc],
+        'recordBattle:loser'
+      );
+      await db.run(
+        `INSERT INTO battle
+          (winner_path, loser_path, outcome,
+           winner_elo_before, loser_elo_before, winner_elo_after, loser_elo_after, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          winnerPath,
+          loserPath,
+          outcome,
+          winner.elo,
+          loser.elo,
+          winnerElo,
+          loserElo,
+          Date.now(),
+        ],
+        'recordBattle:log'
+      );
+      return {
+        winnerPath,
+        winnerElo,
+        winnerMatches: winner.matches + 1,
+        loserPath,
+        loserElo,
+        loserMatches: loser.matches + 1,
+      };
+    });
   };
 
 type UpdateDescriptionInput = [string, string];
@@ -679,7 +801,7 @@ export {
   fetchMediaPreview,
   copyFileIntoClipboard,
   deleteMedia,
-  updateElo,
+  recordBattle,
   updateDescription,
   loadDuplicatesByPath,
   mergeDuplicatesByPath,

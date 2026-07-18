@@ -362,7 +362,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('remove-timestamp');
   ipcMain.removeHandler('fetch-media-preview');
   ipcMain.removeHandler('add-media');
-  ipcMain.removeHandler('update-elo');
+  ipcMain.removeHandler('record-battle');
   ipcMain.removeHandler('update-description');
   ipcMain.removeHandler('select-new-path');
   ipcMain.removeHandler('rename-category');
@@ -407,7 +407,7 @@ ipcMain.handle('load-db', async (event, args) => {
     mediaModule.loadMediaByDescriptionSearch(db)
   );
   ipcMain.handle('load-media-by-query', mediaModule.loadMediaByQuery(db));
-  ipcMain.handle('update-elo', mediaModule.updateElo(db));
+  ipcMain.handle('record-battle', mediaModule.recordBattle(db));
   ipcMain.handle('update-description', mediaModule.updateDescription(db));
   ipcMain.handle(
     'copy-file-into-clipboard',

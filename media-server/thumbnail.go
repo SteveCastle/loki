@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,6 +39,59 @@ var inflightMu sync.Mutex
 // Key is "mediaPath|cache|timeStamp", value is a channel that closes when done.
 var inflight = map[string]chan struct{}{}
 
+// thumbnailFileValid reports whether an on-disk thumbnail is usable. A
+// frameless .mp4 (empty mdat box) is what older builds cached for
+// single-frame GIFs — ffmpeg exits 0 after seeking past the only frame — so
+// those must read as missing to get regenerated.
+func thumbnailFileValid(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return false
+	}
+	if strings.ToLower(filepath.Ext(path)) != ".mp4" {
+		return true
+	}
+	return mp4HasFrames(path, info.Size())
+}
+
+// mp4HasFrames scans top-level MP4 boxes for an mdat with a non-empty payload.
+func mp4HasFrames(path string, fileSize int64) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	hdr := make([]byte, 16)
+	var offset int64
+	for offset+8 <= fileSize {
+		if _, err := f.ReadAt(hdr[:8], offset); err != nil {
+			return false
+		}
+		size := int64(binary.BigEndian.Uint32(hdr[:4]))
+		boxType := string(hdr[4:8])
+		payload := size - 8
+		switch size {
+		case 0: // box extends to end of file
+			size = fileSize - offset
+			payload = size - 8
+		case 1: // 64-bit largesize follows the type
+			if _, err := f.ReadAt(hdr[8:16], offset+8); err != nil {
+				return false
+			}
+			size = int64(binary.BigEndian.Uint64(hdr[8:16]))
+			payload = size - 16
+		}
+		if boxType == "mdat" && payload > 0 {
+			return true
+		}
+		if size < 8 {
+			return false
+		}
+		offset += size
+	}
+	return false
+}
+
 // formatTimeStamp formats a float64 timestamp the same way JavaScript's
 // Number.toString() does — no trailing zeros, no exponent for normal values.
 // This ensures the hash matches the Electron app's thumbnail cache.
@@ -65,7 +119,7 @@ func generateThumbnailThrottled(mediaPath, basePath, cache string, timeStamp flo
 		<-ch
 		// The other goroutine already generated it; check the result on disk
 		thumbPath := getThumbnailPath(mediaPath, basePath, cache, timeStamp)
-		if _, err := os.Stat(thumbPath); err == nil {
+		if thumbnailFileValid(thumbPath) {
 			return thumbPath, nil
 		}
 		return "", fmt.Errorf("in-flight thumbnail generation failed for %s", mediaPath)
@@ -199,7 +253,7 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 	tmpSource.Close()
 
 	// Generate thumbnail to temp output using existing ffmpeg functions
-	ffmpegPath := depspkg.MustBundled("ffmpeg")
+	ffmpegPath := depspkg.BundledOrEmpty("ffmpeg")
 	if ffmpegPath == "" {
 		return "", fmt.Errorf("ffmpeg not found")
 	}
@@ -253,7 +307,7 @@ func generateS3ThumbnailThrottled(ctx context.Context, mediaPath string, backend
 // generateThumbnail creates a thumbnail for the given media file using ffmpeg.
 // Returns the full path to the generated thumbnail.
 func generateThumbnail(mediaPath, basePath, cache string, timeStamp float64) (string, error) {
-	ffmpegPath := depspkg.MustBundled("ffmpeg")
+	ffmpegPath := depspkg.BundledOrEmpty("ffmpeg")
 	if ffmpegPath == "" {
 		return "", fmt.Errorf("ffmpeg not found")
 	}
@@ -316,7 +370,7 @@ func generateImageThumbnail(ffmpegPath, mediaPath, thumbPath, cache string) erro
 }
 
 func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, cache string, timeStamp float64) error {
-	ffprobePath := depspkg.MustBundled("ffprobe")
+	ffprobePath := depspkg.BundledOrEmpty("ffprobe")
 
 	// Get video duration using ffprobe (with its own timeout)
 	durationSec := 0.0
@@ -350,34 +404,60 @@ func generateVideoThumbnail(ffmpegPath, mediaPath, thumbPath, cache string, time
 	if thumbnailTime == 0 {
 		thumbnailTime = durationSec / 2
 	}
+	// Seeking near the end of a very short file (e.g. a single-frame GIF,
+	// duration ~0.04s) lands after the only frame: ffmpeg exits 0 but
+	// encodes nothing. Take the first frame instead.
+	if durationSec > 0 && (durationSec < 1 || thumbnailTime >= durationSec) {
+		thumbnailTime = 0
+	}
 	useMiddle := durationSec > 6
 
-	timeStr := fmt.Sprintf("%.3f", thumbnailTime)
 	targetSize := 600
 	if sz, ok := cacheSizes[cache]; ok {
 		targetSize = sz
 	}
 	scaleExpr := fmt.Sprintf("scale='min(%d,iw)':'min(%d,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2", targetSize, targetSize)
 
-	var args []string
-	if useMiddle {
-		args = []string{"-y", "-ss", timeStr, "-i", mediaPath, "-vf", scaleExpr, "-t", "2", "-an", thumbPath}
-	} else {
-		args = []string{"-y", "-i", mediaPath, "-ss", timeStr, "-vf", scaleExpr, "-t", "2", "-an", thumbPath}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), videoThumbTimeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, ffmpegPath, args...)
-	platform.HideSubprocessWindow(cmd)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			log.Printf("ffmpeg video thumbnail timed out after %v for %s", videoThumbTimeout, mediaPath)
-			return fmt.Errorf("ffmpeg timed out after %v", videoThumbTimeout)
+	run := func(seek float64) error {
+		timeStr := fmt.Sprintf("%.3f", seek)
+		var args []string
+		if useMiddle && seek > 0 {
+			args = []string{"-y", "-ss", timeStr, "-i", mediaPath, "-vf", scaleExpr, "-t", "2", "-an", thumbPath}
+		} else {
+			args = []string{"-y", "-i", mediaPath, "-ss", timeStr, "-vf", scaleExpr, "-t", "2", "-an", thumbPath}
 		}
-		log.Printf("ffmpeg video thumbnail failed for %s: %s", mediaPath, string(output))
-		return fmt.Errorf("ffmpeg failed: %w", err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), videoThumbTimeout)
+		defer cancel()
+
+		cmd := exec.CommandContext(ctx, ffmpegPath, args...)
+		platform.HideSubprocessWindow(cmd)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			if ctx.Err() == context.DeadlineExceeded {
+				log.Printf("ffmpeg video thumbnail timed out after %v for %s", videoThumbTimeout, mediaPath)
+				return fmt.Errorf("ffmpeg timed out after %v", videoThumbTimeout)
+			}
+			log.Printf("ffmpeg video thumbnail failed for %s: %s", mediaPath, string(output))
+			return fmt.Errorf("ffmpeg failed: %w", err)
+		}
+		return nil
 	}
-	return nil
+
+	if err := run(thumbnailTime); err != nil {
+		return err
+	}
+	if thumbnailFileValid(thumbPath) {
+		return nil
+	}
+	if thumbnailTime > 0 {
+		log.Printf("ffmpeg encoded no frames at %.3fs for %s, retrying from first frame", thumbnailTime, mediaPath)
+		if err := run(0); err != nil {
+			return err
+		}
+		if thumbnailFileValid(thumbPath) {
+			return nil
+		}
+	}
+	os.Remove(thumbPath)
+	return fmt.Errorf("ffmpeg produced an empty thumbnail for %s", mediaPath)
 }

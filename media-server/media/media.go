@@ -2149,6 +2149,7 @@ func InitializeSchema(db *sql.DB) error {
 			views INTEGER,
 			wins INTEGER,
 			losses INTEGER,
+			battles INTEGER,
 			"size" INTEGER,
 			hash TEXT,
 			width INTEGER,
@@ -2158,6 +2159,45 @@ func InitializeSchema(db *sql.DB) error {
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create media table: %w", err)
+	}
+
+	// Idempotent migration for databases that pre-date the battles counter
+	// (errors fire when the column already exists — same pattern as the
+	// category migrations above).
+	_, _ = db.Exec(`ALTER TABLE media ADD COLUMN battles INTEGER`)
+
+	// Create battle table — append-only log of battle-mode votes. The elo
+	// column on media is a derived cache; this log is the source of truth,
+	// enabling recomputation, rematch suppression, and per-item match counts
+	// (used for K decay). outcome is the winner_path score: 1 win, 0.5 draw.
+	// Mirrored in the Electron viewer's initDB (src/main/database.ts) since
+	// both processes open the same database.
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS battle (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			winner_path TEXT NOT NULL,
+			loser_path TEXT NOT NULL,
+			outcome REAL NOT NULL DEFAULT 1,
+			winner_elo_before REAL,
+			loser_elo_before REAL,
+			winner_elo_after REAL,
+			loser_elo_after REAL,
+			created_at INTEGER
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to create battle table: %w", err)
+	}
+	// Match-count lookups filter on either side of the pairing.
+	if _, err := db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_battle_winner ON battle(winner_path)`,
+	); err != nil {
+		log.Printf("warning: failed to create idx_battle_winner: %v", err)
+	}
+	if _, err := db.Exec(
+		`CREATE INDEX IF NOT EXISTS idx_battle_loser ON battle(loser_path)`,
+	); err != nil {
+		log.Printf("warning: failed to create idx_battle_loser: %v", err)
 	}
 
 	// Create users table

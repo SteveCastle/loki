@@ -38,15 +38,18 @@ type Predicate struct {
 // renderer sorts results, so queries emit no ORDER BY. Mirror of query-sql.ts.
 const baseColumns = "media.path, media.elo, media.height, media.width"
 
-// Tag columns are NULL for category-driven / no-tag queries.
-const nullTagCols = "NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at"
+// Tag columns are NULL for category-driven / no-tag queries. battles rides at
+// the end (battle-mode pairing needs per-item match counts); every consumer
+// of these column lists joins `media`.
+const nullTagCols = "NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at, " +
+	"media.battles AS battles"
 
 // Aliased column list for the index-driven paths, matching the TS builder so
-// the handler scans the same 8 columns by position regardless of path:
-// path, elo, height, width, weight, tag_label, time_stamp, created_at.
+// the handler scans the same 9 columns by position regardless of path:
+// path, elo, height, width, weight, tag_label, time_stamp, created_at, battles.
 const drivenColumns = "mtcw.media_path AS path, media.elo AS elo, media.height AS height, " +
 	"media.width AS width, mtcw.weight AS weight, mtcw.tag_label AS tag_label, " +
-	"mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at"
+	"mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at, media.battles AS battles"
 
 func clauseFor(p Predicate, params *[]any) string {
 	like := "%" + p.Value + "%"
@@ -151,6 +154,7 @@ func mediaScan(valid []Predicate, connectors []string) (string, []any) {
 	if primaryTag != "" {
 		selectClause = "SELECT " + baseColumns +
 			", mtcw.weight AS weight, mtcw.tag_label AS tag_label, mtcw.time_stamp AS time_stamp, mtcw.created_at AS created_at" +
+			", media.battles AS battles" +
 			" FROM media LEFT JOIN media_tag_by_category mtcw ON mtcw.media_path = media.path AND mtcw.tag_label = ?"
 		params = append(params, primaryTag)
 	} else {

@@ -238,6 +238,9 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 		q.PushJobStdout(j.ID, fmt.Sprintf("Query: %s", res.Query))
 	}
 	items := res.Paths
+	// Publish the resolved item list to the path→job index — this is the
+	// moment query jobs (and dependency-fed inputs) become path-queryable.
+	q.SetJobItems(j.ID, items)
 	total := len(items)
 	opNames := make([]string, len(ops))
 	for i, op := range ops {

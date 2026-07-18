@@ -2,6 +2,7 @@ import { getMediaType } from 'file-types';
 import { FilterOption, SortByOption } from 'settings';
 import naturalCompare from 'natural-compare';
 import type { Item } from './state';
+import { orderForBattle } from './battle-pairing';
 
 // Single-entry memoization cache keyed by libraryLoadId + filters + sortBy
 let lastCacheKey: string | null = null;
@@ -46,6 +47,17 @@ function filter(
     lastCacheKey = cacheKey;
     lastResult = filtered;
     return filtered;
+  }
+
+  // Battle mode: the first two items are an informative pair (anchor that
+  // needs rating signal + a close-rated opponent, occasionally a random one)
+  // instead of two uniformly random items. Deterministic per libraryLoadId,
+  // same as shuffle; each vote re-seeds via NEXT_BATTLE.
+  if (sortBy === 'battle') {
+    const result = orderForBattle(filtered, libraryLoadId);
+    lastCacheKey = cacheKey;
+    lastResult = result;
+    return result;
   }
 
   // Deterministic shuffle based on libraryLoadId. This prevents re-shuffling on

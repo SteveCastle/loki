@@ -8,7 +8,7 @@ describe('buildMediaQuery', () => {
   it('returns base query with no predicates', () => {
     const { sql, params } = buildMediaQuery([], 'AND');
     expect(norm(sql)).toBe(
-      norm('SELECT media.path, media.elo, media.height, media.width, NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at FROM media')
+      norm('SELECT media.path, media.elo, media.height, media.width, NULL AS weight, NULL AS tag_label, NULL AS time_stamp, NULL AS created_at, media.battles AS battles FROM media')
     );
     expect(params).toEqual([]);
   });

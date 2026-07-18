@@ -19,13 +19,16 @@ func enrichScoredItems(db *sql.DB, hits []tasks.SimilarHit) ([]map[string]any, e
 		scoreByPath[h.Path] = h.Score
 		item := map[string]any{"path": h.Path, "mtimeMs": int64(0)}
 		var elo sql.NullFloat64
-		var height, width sql.NullInt64
+		var height, width, battles sql.NullInt64
 		err := db.QueryRow(
-			`SELECT elo, height, width FROM media WHERE path = ?`, h.Path,
-		).Scan(&elo, &height, &width)
+			`SELECT elo, height, width, battles FROM media WHERE path = ?`, h.Path,
+		).Scan(&elo, &height, &width, &battles)
 		if err == nil {
 			if elo.Valid {
 				item["elo"] = elo.Float64
+			}
+			if battles.Valid {
+				item["battles"] = battles.Int64
 			}
 			if height.Valid {
 				item["height"] = height.Int64

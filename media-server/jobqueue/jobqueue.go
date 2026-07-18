@@ -196,6 +196,10 @@ type Queue struct {
 	// PauseRequested between items and stop gracefully (returning ErrPaused)
 	// so the current item's writes always land before the job parks.
 	pauseRequests map[string]struct{}
+	// Path→job index for ACTIVE jobs (see items.go). jobItems maps job ID to
+	// its normalized item keys; pathJobs is the reverse. Lazily initialized.
+	jobItems map[string][]string
+	pathJobs map[string]map[string]struct{}
 }
 
 // NewQueue initializes and returns a new Queue.
@@ -452,6 +456,9 @@ func (q *Queue) loadJobsFromDB() error {
 
 		q.Jobs[job.ID] = &job
 		q.JobOrder = append(q.JobOrder, job.ID)
+		// Rebuild the path→job index for jobs that are still active. Query
+		// jobs re-enter the index when they re-resolve at claim time.
+		q.indexJobFromDefinitionLocked(&job)
 	}
 
 	// Persist the interrupt decisions now that the SELECT cursor is closed
@@ -540,6 +547,7 @@ func (q *Queue) AddJob(id string, command string, arguments []string, input stri
 	}
 	q.Jobs[id] = job
 	q.JobOrder = append(q.JobOrder, id)
+	q.indexJobFromDefinitionLocked(job)
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -628,6 +636,7 @@ func (q *Queue) CopyJob(id string) (string, error) {
 
 	q.Jobs[newID] = &newJob
 	q.JobOrder = append(q.JobOrder, newID)
+	q.indexJobFromDefinitionLocked(&newJob)
 
 	// Save to database
 	if err := q.saveJobToDB(&newJob); err != nil {
@@ -736,6 +745,7 @@ func (q *Queue) ErrorJob(id string) error {
 	job.ErroredAt = time.Now()
 	q.decRunningLocked(job)
 	delete(q.pauseRequests, id)
+	q.dropJobItemsLocked(id)
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -774,6 +784,7 @@ func (q *Queue) cancelWorkflowDependentsLocked(erroredID, workflowID string) {
 					j.State = StateCancelled
 					j.Cancel()
 					cancelled[j.ID] = true
+					q.dropJobItemsLocked(j.ID)
 					changed = true
 					if err := q.saveJobToDB(j); err != nil {
 						log.Printf("Failed to save cancelled job %s: %v", j.ID, err)
@@ -808,6 +819,7 @@ func (q *Queue) CancelJob(id string) error {
 
 	job.State = StateCancelled
 	delete(q.pauseRequests, id)
+	q.dropJobItemsLocked(id)
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -1061,6 +1073,7 @@ func (q *Queue) CompleteJob(id string) error {
 	job.CompletedAt = time.Now()
 	q.decRunningLocked(job)
 	delete(q.pauseRequests, id)
+	q.dropJobItemsLocked(id)
 
 	// Save to database
 	if err := q.saveJobToDB(job); err != nil {
@@ -1177,6 +1190,7 @@ func (q *Queue) RemoveJob(id string) error {
 	}
 
 	delete(q.pauseRequests, id)
+	q.dropJobItemsLocked(id)
 	delete(q.Jobs, id)
 	for i, jobId := range q.JobOrder {
 		if jobId == id {
@@ -1217,6 +1231,7 @@ func (q *Queue) ClearNonRunningJobs() (int, error) {
 
 	// Remove the jobs
 	for _, jobID := range jobsToRemove {
+		q.dropJobItemsLocked(jobID)
 		delete(q.Jobs, jobID)
 
 		// Remove from job order
