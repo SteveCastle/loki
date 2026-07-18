@@ -505,7 +505,7 @@ export class Timeline {
     const grip = document.createElement('span');
     grip.className = 'tl-track-grip';
     grip.textContent = '≡';
-    grip.title = 'track — clips here composite over lower tracks';
+    grip.title = 'drag to reorder — clips here composite over lower tracks';
 
     const name = document.createElement('span');
     name.className = 'tl-track-name';
@@ -530,8 +530,6 @@ export class Timeline {
       input.select();
     });
 
-    const up = this._miniBtn('▲', 'move track up', trackIdx === 0, () => this._moveTrack(trackIdx, -1));
-    const down = this._miniBtn('▼', 'move track down', trackIdx === comp.tracks.length - 1, () => this._moveTrack(trackIdx, +1));
     const del = this._miniBtn('✕', 'delete track (and its clips)', false, () => {
       this.host.history.record(comp, () => {
         comp.tracks.splice(trackIdx, 1);
@@ -539,7 +537,8 @@ export class Timeline {
       });
       this.host.onModelChange({ structural: true });
     });
-    head.append(eye, spk, grip, name, up, down, del);
+    head.append(eye, spk, grip, name, del);
+    head.addEventListener('pointerdown', (e) => this._trackDragStart(e, trackIdx, head));
 
     const row = this._mkRow('track', TRACK_H);
     row.dataset.trackIdx = String(trackIdx);
@@ -557,14 +556,96 @@ export class Timeline {
     return b;
   }
 
-  _moveTrack(i, dir) {
-    const comp = this.host.comp();
-    const j = i + dir;
-    if (j < 0 || j >= comp.tracks.length) return;
-    this.host.history.record(comp, () => {
-      [comp.tracks[i], comp.tracks[j]] = [comp.tracks[j], comp.tracks[i]];
+  /* ---- track drag-reorder ---- */
+
+  /** Head rows and body rows are appended in lockstep (one of each per
+   * track, then per expanded prop lane), so the timeline groups into
+   * per-track blocks by walking both lists and splitting on `.track`. */
+  _trackBlocks() {
+    const heads = [...this.headRows.children];
+    const rows = [...this.rowsEl.children];
+    const blocks = [];
+    heads.forEach((headEl, i) => {
+      if (headEl.classList.contains('track')) blocks.push({ els: [], h: 0 });
+      const b = blocks[blocks.length - 1];
+      b.els.push(headEl, rows[i]);
+      b.h += headEl.offsetHeight;
     });
-    this.host.onModelChange({ structural: true });
+    for (const b of blocks) b.top = b.els[0].getBoundingClientRect().top;
+    return blocks;
+  }
+
+  /** Drag a track head vertically to reorder tracks. Other blocks shift
+   * out of the way live; the drop commits one splice to the model. */
+  _trackDragStart(e, trackIdx, head) {
+    if (e.button !== 0) return;
+    if (e.target.closest('button, input')) return;
+    const comp = this.host.comp();
+    if (comp.tracks.length < 2) return;
+    const y0 = e.clientY;
+    const pointerId = e.pointerId;
+    let blocks = null;         // built once the drag passes the threshold
+    let target = trackIdx;
+
+    const move = (ev) => {
+      if (ev.pointerId !== pointerId) return;
+      if (!blocks) {
+        if (Math.abs(ev.clientY - y0) < 5) return;
+        blocks = this._trackBlocks();
+        this.root.classList.add('tl-reordering');
+        for (const el of blocks[trackIdx].els) el.classList.add('tl-drag-src');
+        try { head.setPointerCapture(pointerId); } catch {}
+      }
+      const src = blocks[trackIdx];
+      const last = blocks[blocks.length - 1];
+      const rawDy = ev.clientY - y0;
+      const dy = clamp(rawDy,
+        blocks[0].top - src.top,
+        last.top + last.h - (src.top + src.h));
+      // Judge the drop target from the unclamped intent — a hard fling
+      // past either end must still land the track there, not tie on the
+      // clamped midpoint.
+      const center = src.top + rawDy + src.h / 2;
+      target = 0;
+      blocks.forEach((b, i) => {
+        if (i === trackIdx) {
+          for (const el of b.els) el.style.transform = `translateY(${dy}px)`;
+          return;
+        }
+        const mid = b.top + b.h / 2;
+        if (mid < center) target++;
+        const shift = i > trackIdx
+          ? (mid < center ? -src.h : 0)
+          : (mid > center ? src.h : 0);
+        for (const el of b.els) el.style.transform = shift ? `translateY(${shift}px)` : '';
+      });
+    };
+
+    const finish = (commit) => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      removeEventListener('pointercancel', cancel);
+      if (!blocks) return;
+      for (const b of blocks) {
+        for (const el of b.els) {
+          el.style.transform = '';
+          el.classList.remove('tl-drag-src');
+        }
+      }
+      this.root.classList.remove('tl-reordering');
+      if (commit && target !== trackIdx) {
+        this.host.history.record(comp, () => {
+          const [tr] = comp.tracks.splice(trackIdx, 1);
+          comp.tracks.splice(target, 0, tr);
+        });
+        this.host.onModelChange({ structural: true });
+      }
+    };
+    const up = (ev) => { if (ev.pointerId === pointerId) finish(true); };
+    const cancel = (ev) => { if (ev.pointerId === pointerId) finish(false); };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+    addEventListener('pointercancel', cancel);
   }
 
   /* ---- clip ---- */

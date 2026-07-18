@@ -842,10 +842,23 @@ body.mask-editing #mask-overlay {
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   overflow: hidden;
 }
-.tl-head-row.track { background: var(--bg3); font-weight: 600; }
+.tl-head-row.track { background: var(--bg3); font-weight: 600; cursor: grab; }
 .tl-head-row.prop { padding-left: 14px; font-weight: 400; }
 
-.tl-track-grip { color: var(--dim); cursor: default; font-size: 11px; }
+.tl-track-grip { color: var(--dim); cursor: grab; font-size: 11px; }
+
+/* Track drag-reorder: the dragged track's rows follow the pointer while
+ * the others animate out of the way. */
+.tl.tl-reordering { cursor: grabbing; user-select: none; }
+.tl-reordering .tl-head-row,
+.tl-reordering .tl-row { transition: transform 0.12s; }
+.tl-drag-src {
+  transition: none !important;
+  position: relative;
+  z-index: 4;
+  opacity: 0.9;
+}
+.tl-head-row.tl-drag-src { box-shadow: 0 2px 12px rgba(0, 0, 0, 0.55); }
 
 .tl-flag { font-size: 12px; padding: 0 2px; opacity: 0.85; }
 .tl-flag:hover { opacity: 1; }
