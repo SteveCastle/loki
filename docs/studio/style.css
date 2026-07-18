@@ -271,6 +271,34 @@ body.has-media #view-controls { display: flex; }
 }
 #trim-badge[hidden] { display: none; }
 
+/* ---- onboarding demo card ------------------------------------------ */
+
+#demo-card {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 7;
+  width: min(430px, calc(100% - 40px));
+  background: rgba(22, 24, 29, 0.92);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+}
+#demo-card h3 { margin: 0 0 6px; font-size: 14px; }
+#demo-card p { margin: 0 0 10px; font-size: 12px; line-height: 1.55; color: var(--dim); }
+#demo-card p b { color: var(--fg); }
+.demo-actions { display: flex; gap: 8px; }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #10222c;
+  font-weight: 600;
+}
+.btn.primary:hover { filter: brightness(1.1); }
+
 #drop-hint {
   position: absolute;
   inset: 0;

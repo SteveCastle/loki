@@ -1304,6 +1304,7 @@ function unloadAssets() {
 /** Make `data` ({comp, assets, t, name}) the current project. */
 async function applyProjectData(data) {
   stopMaskEdit();
+  document.getElementById('demo-card')?.remove();
   unloadAssets();
   fxSpecs.clear();
   paramMetaCache.clear();
@@ -1346,9 +1347,85 @@ async function applyProjectData(data) {
 async function restoreProject() {
   let data = null;
   try { data = JSON.parse(localStorage.getItem(PROJECT_KEY)); } catch {}
-  if (!data?.comp) return;
-  setStatus('restoring project…');
-  await applyProjectData(data);
+  if (data?.comp) {
+    setStatus('restoring project…');
+    await applyProjectData(data);
+  } else {
+    await loadDemoProject();
+  }
+  if (comp._demo) showDemoCard();
+}
+
+/* =====================================================================
+ * Onboarding — first boot (no saved project) lands in a live demo comp:
+ * an image clip with a keyframed slow zoom and a CRT effect over it, so
+ * the first thing a new user sees is media + effects + keyframes already
+ * working. A card offers the jump to a fresh project.
+ * =================================================================== */
+
+const DEMO_IMAGE = 'demo/seagull.jpg';   // bundled, pre-sized to 1280×720
+
+async function loadDemoProject() {
+  let asset;
+  try {
+    const res = await fetch(DEMO_IMAGE);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const file = new File([await res.blob()], 'seagull.jpg', { type: 'image/jpeg' });
+    asset = await createAsset(file);
+    idbSet(`asset:${asset.id}`, file).catch(() => {});
+  } catch (e) {
+    // No demo asset (or it failed to decode) — boot into the empty comp.
+    console.warn('slangfx: demo project unavailable:', e);
+    return;
+  }
+  setStatus('loading demo project…');
+  comp.width = asset.w;
+  comp.height = asset.h;
+  comp.dur = 12;
+
+  const media = newMediaClip(comp, asset, 0, comp.dur);
+  // Slow push-in — keyframes visible on the timeline out of the box.
+  for (const k of ['scaleX', 'scaleY']) {
+    upsertKey(media.props[k], 0, 100);
+    upsertKey(media.props[k], comp.dur, 108);
+  }
+  const mediaTrack = newTrack(media.name);
+  mediaTrack.clips.push(media);
+
+  const fxClip = newFxClip(
+    { fxKind: 'preset', path: 'shaders/crt/crt-tv/crt-tv.slangp', label: 'crt-tv' },
+    0, comp.dur);
+  const fxTrack = newTrack(fxClip.name);
+  fxTrack.clips.push(fxClip);
+
+  comp.tracks = [fxTrack, mediaTrack];   // fx above the media it styles
+  comp._demo = true;
+  scheduleSave();
+}
+
+function showDemoCard() {
+  if (document.getElementById('demo-card')) return;
+  const card = document.createElement('div');
+  card.id = 'demo-card';
+  card.innerHTML = `
+    <h3>👋 Welcome to Lowkey Studio</h3>
+    <p>This demo comp is live: an image clip with a slow keyframed zoom and
+    a CRT effect layered over it. Press <b>Space</b> to play, click a clip
+    to tweak it in the inspector — or start clean.</p>
+    <div class="demo-actions">
+      <button class="btn primary" id="demo-new">Start a new project</button>
+      <button class="btn" id="demo-keep">Explore the demo</button>
+    </div>`;
+  $('preview-wrap').appendChild(card);
+  card.querySelector('#demo-new').addEventListener('click', async () => {
+    card.remove();
+    await newProject();
+  });
+  card.querySelector('#demo-keep').addEventListener('click', () => {
+    delete comp._demo;      // card stays dismissed on future reloads
+    scheduleSave();
+    card.remove();
+  });
 }
 
 /* =====================================================================
@@ -1379,6 +1456,10 @@ function relTimeLabel(ts) {
 }
 
 async function saveNamedProject(name, { silent = false } = {}) {
+  if (comp._demo) {          // explicitly saved → it's the user's project now
+    delete comp._demo;
+    document.getElementById('demo-card')?.remove();
+  }
   projectName = name;
   saveProject();                       // autosave slot follows the name too
   await idbSet(`project:${name}`, JSON.stringify(projectPayload()));
@@ -1390,8 +1471,10 @@ async function saveNamedProject(name, { silent = false } = {}) {
 }
 
 /** Never lose work: before switching away, silently save the current comp
- * (auto-naming it if it was never saved). */
+ * (auto-naming it if it was never saved). The onboarding demo is not the
+ * user's work — leaving it must not clutter the projects list. */
 async function stashCurrent() {
+  if (comp._demo) return;
   if (!comp.tracks.some((t) => t.clips.length)) return;
   const name = projectName ?? `Untitled ${new Date().toLocaleString()}`;
   await saveNamedProject(name, { silent: true });

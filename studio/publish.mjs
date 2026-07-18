@@ -12,7 +12,7 @@ const FILES = [
   'index.html', 'style.css', 'effects.json', 'studio-icon.png',
   'app.js', 'comp.js', 'compositor.js', 'timeline.js', 'shader-editor.js',
 ];
-const DIRS = ['engine', 'vendor', 'shaders'];
+const DIRS = ['engine', 'vendor', 'shaders', 'demo'];
 
 rmSync(dest, { recursive: true, force: true });
 mkdirSync(dest, { recursive: true });
