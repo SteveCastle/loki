@@ -27,27 +27,29 @@ body {
   overflow: hidden;
 }
 
-/* Back to the Lowkey docs site — kept inside the app header to save
- * vertical space. */
-.back-link {
+/* Site-wide tab bar (matches the docs pages). */
+.site-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: #0d0f13;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.site-tab {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  color: var(--dim);
+  gap: 8px;
+  padding: 5px 16px;
+  border-radius: 8px;
+  color: #64748b;
+  font-size: 12.5px;
   text-decoration: none;
-  font-size: 15px;
-  border: 1px solid transparent;
-  flex: none;
-  margin-right: -6px;
 }
-.back-link:hover {
-  color: var(--fg);
-  border-color: var(--border);
-  background: var(--bg3);
-}
+.site-tab img { width: 20px; height: 20px; border-radius: 5px; }
+.site-tab:hover { color: var(--fg); background: rgba(148, 163, 184, 0.06); }
+.site-tab.active { color: #f1f5f9; background: rgba(148, 163, 184, 0.1); }
 
 header {
   display: flex;
