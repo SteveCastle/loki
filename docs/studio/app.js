@@ -295,6 +295,7 @@ function tick() {
   const t = trimPreviewT ?? tCur;
   const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
   syncMedia(t, activeMedia);
+  prepareMasks(t);   // media masks must compose before compositeFrame samples them
   compositeFrame(t);
   syncFxChain(t);
   applyParams(t);
@@ -393,6 +394,8 @@ function drawForClip(clip, t) {
   const asset = assets.get(clip.assetId);
   if (!asset?.ready) return null;
   const tc = t - clip.start;
+  const mm = mediaMasks.get(clip.id);
+  const masked = mm?.view && mm.maskState?.nodes?.length;
   return {
     clipId: clip.id,
     view: asset.view,
@@ -405,6 +408,9 @@ function drawForClip(clip, t) {
     scaleY: evalProp(clip.props.scaleY, tc) / 100,
     rot: evalProp(clip.props.rot, tc),
     opacity: clamp(evalProp(clip.props.opacity, tc) / 100, 0, 1),
+    maskView: masked ? mm.view : null,
+    maskOpacity: masked ? mm.maskState.opacity ?? 1 : 0,
+    maskInvert: masked ? !!mm.maskState.invert : false,
   };
 }
 
@@ -505,15 +511,14 @@ async function restoreSpecExtras(clip, spec) {
       }
     }
   }
-  if (clip.mask?.dataURL) {
-    const img = new Image();
-    await new Promise((res) => { img.onload = res; img.onerror = res; img.src = clip.mask.dataURL; });
-    const c = document.createElement('canvas');
-    c.width = comp.width;
-    c.height = comp.height;
-    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-    spec.maskState = { source: c, opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert };
-    dirty = true;
+  if (clip.mask) {
+    // Legacy single painted mask → a one-node stack (white base + painted
+    // canvas added over black composes to the identical result).
+    const nodes = await loadMaskNodes(clip.mask);
+    if (nodes.length) {
+      spec.maskState = { opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert, nodes };
+      dirty = true;
+    }
   }
   if (dirty) chainDirty = true;
 }
@@ -1416,18 +1421,72 @@ function scheduleSave() {
   saveTimer = setTimeout(saveProject, 700);
 }
 
+function serializeMaskState(m) {
+  if (!m?.nodes?.length) return null;
+  return {
+    opacity: m.opacity ?? 1,
+    invert: !!m.invert,
+    nodes: m.nodes.map((n) => {
+      const out = {
+        id: n.id, kind: n.kind, enabled: n.enabled !== false,
+        blend: n.blend, invert: !!n.invert, strength: n.strength ?? 1,
+      };
+      if (n.kind === 'paint') {
+        const dataURL = n.source.toDataURL('image/png');
+        if (dataURL.length <= 2_000_000) out.dataURL = dataURL;
+      } else if (n.kind === 'key') {
+        out.keyColor = n.keyColor;
+        out.similarity = n.similarity;
+        out.smoothness = n.smoothness;
+        out.sourceClipId = n.sourceClipId ?? null;
+      } else if (n.kind === 'layer') {
+        out.sourceClipId = n.sourceClipId ?? null;
+        out.channel = n.channel;
+      }
+      return out;
+    }),
+  };
+}
+
+/** Rebuild runtime mask nodes from a persisted clip.mask (legacy single
+ * painted mask included). Async: paint dataURLs decode through <img>. */
+async function loadMaskNodes(maskModel) {
+  const saved = maskModel.nodes
+    ?? (maskModel.dataURL
+      ? [{ id: uid(), kind: 'paint', enabled: true, blend: 'add', invert: false, strength: 1, dataURL: maskModel.dataURL }]
+      : []);
+  const nodes = [];
+  for (const n of saved) {
+    const node = { ...n };
+    delete node.dataURL;
+    if (n.kind === 'paint') {
+      node.source = makeMaskCanvas();
+      if (n.dataURL) {
+        const img = new Image();
+        await new Promise((res) => { img.onload = res; img.onerror = res; img.src = n.dataURL; });
+        if (img.width) {
+          const ctx2d = node.source.getContext('2d');
+          ctx2d.clearRect(0, 0, node.source.width, node.source.height);
+          ctx2d.drawImage(img, 0, 0, node.source.width, node.source.height);
+        }
+      }
+    }
+    prepareMaskNode(node);
+    nodes.push(node);
+  }
+  return nodes;
+}
+
 function projectPayload() {
-  // Sync live mask canvases into the model before serializing.
+  // Sync live mask state (painted canvases + node params) into the model
+  // before serializing.
   for (const track of comp.tracks)
     for (const clip of track.clips) {
-      if (clip.kind !== 'fx') continue;
-      const spec = fxSpecs.get(clip.id);
-      if (spec?.maskState) {
-        const dataURL = spec.maskState.source.toDataURL('image/png');
-        clip.mask = dataURL.length > 2_000_000
-          ? null
-          : { dataURL, opacity: spec.maskState.opacity ?? 1, invert: !!spec.maskState.invert };
-      }
+      const m = clip.kind === 'fx'
+        ? (fxSpecs.has(clip.id) ? fxSpecs.get(clip.id).maskState : undefined)
+        : clip.kind === 'media' ? mediaMasks.get(clip.id)?.maskState ?? (clip.mask ? undefined : null)
+        : undefined;
+      if (m !== undefined) clip.mask = serializeMaskState(m);
     }
   const assetMeta = [...assets.values()].map((a) => ({ id: a.id, name: a.name, kind: a.kind }));
   return { comp, assets: assetMeta, t: tCur, name: projectName };
@@ -1459,6 +1518,8 @@ async function applyProjectData(data) {
   unloadAssets();
   fxSpecs.clear();
   paramMetaCache.clear();
+  for (const clipId of [...mediaMasks.keys()]) destroyMediaMaskEntry(clipId);
+  for (const [id, t] of matteTargets) { t.tex.destroy(); matteTargets.delete(id); }
   comp = migrateComp(data.comp);
   removeEmptyTracks(comp);
   projectName = data.name ?? null;
@@ -1467,6 +1528,20 @@ async function applyProjectData(data) {
   chainKey = '';
   chainDirty = true;
   fx.layers = [];
+
+  // Media clip masks live outside fxSpecs — rebuild their runtime state
+  // (fx clip masks rebuild lazily via specFor/restoreSpecExtras).
+  for (const track of comp.tracks)
+    for (const clip of track.clips) {
+      if (clip.kind !== 'media' || !clip.mask) continue;
+      const nodes = await loadMaskNodes(clip.mask);
+      if (!nodes.length) continue;
+      mediaMasks.set(clip.id, {
+        maskState: { opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert, nodes },
+        tex: null, view: null, w: 0, h: 0,
+      });
+      buildMediaMaskGpu(clip.id);
+    }
 
   const ids = new Set();
   for (const track of comp.tracks)
@@ -1781,7 +1856,248 @@ $('btn-project').addEventListener('click', (e) => {
 
 const maskOverlay = $('mask-overlay');
 const brush = { size: 60, soft: 0.5, mode: 'hide', tool: 'brush' };
-let maskEdit = null;   // { clipId } | null
+/* ---- mask node stack -------------------------------------------------
+ * A layer's mask is an ordered stack of nodes composited on the GPU every
+ * frame (engine MaskComposer): paint canvases, chroma keys, and other
+ * layers used as mattes. Everything reduces to "a texture per frame", so a
+ * future AI-roto node is just one more source that swaps its view between
+ * frames — no pipeline changes needed. */
+
+const matteTargets = new Map();   // mask node id -> { tex, view, w, h }
+
+function newMaskNode(kind) {
+  const base = { id: uid(), kind, enabled: true, blend: 'add', invert: false, strength: 1 };
+  if (kind === 'paint') return { ...base, source: makeMaskCanvas() };
+  // Keys default inverted: mask = everything EXCEPT the key color, so
+  // adding one reads as "remove this color" (green screen) rather than
+  // blanking the layer until a color is picked.
+  if (kind === 'key') return { ...base, invert: true, keyColor: '#00b140', similarity: 0.18, smoothness: 0.1, sourceClipId: null };
+  return { ...base, sourceClipId: null, channel: 'alpha' };   // 'layer'
+}
+
+function hexToRgb01(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex ?? '');
+  const v = parseInt(m ? m[1] : '00b140', 16);
+  return [(v >> 16 & 255) / 255, (v >> 8 & 255) / 255, (v & 255) / 255];
+}
+
+/** Comp-sized render target for a node whose source is another layer,
+ * recreated on comp resize. The node's `view` feeds the engine bind group. */
+function ensureMatteTarget(node) {
+  let t = matteTargets.get(node.id);
+  if (!t || t.w !== comp.width || t.h !== comp.height) {
+    t?.tex.destroy();
+    const tex = fx.device.createTexture({
+      label: 'slangfx matte target',
+      size: [comp.width, comp.height],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    t = { tex, view: tex.createView(), w: comp.width, h: comp.height };
+    matteTargets.set(node.id, t);
+  }
+  node.view = t.view;
+  return t;
+}
+
+/** Normalize a node's runtime fields after load or an edit. */
+function prepareMaskNode(node) {
+  if (node.kind === 'key') node.keyRGB = hexToRgb01(node.keyColor);
+  node.useInput = node.kind === 'key' && !node.sourceClipId;
+  if (node.sourceClipId) ensureMatteTarget(node);
+  else node.view = null;
+  if (node.kind === 'layer' && !node.channel) node.channel = 'alpha';
+}
+
+/* ---- media clip masks ------------------------------------------------
+ * Media clips share the same node stack model as fx layers, but the result
+ * multiplies the clip's ALPHA when it composites (true green-screen: keyed
+ * pixels go transparent and lower tracks show through). The engine owns fx
+ * mask GPU state; media mask GPU state is owned here. */
+
+const mediaMasks = new Map();   // media clipId -> { maskState, tex, view, w, h }
+
+function ensureMediaMaskTex(entry) {
+  if (!entry.tex || entry.w !== comp.width || entry.h !== comp.height) {
+    entry.tex?.destroy();
+    entry.tex = fx.device.createTexture({
+      label: 'slangfx media mask',
+      size: [comp.width, comp.height],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    entry.view = entry.tex.createView();
+    entry.w = comp.width;
+    entry.h = comp.height;
+  }
+}
+
+/** (Re)create GPU state for a media clip's mask nodes — the app-side twin
+ * of the engine's _buildLayerMask. */
+function buildMediaMaskGpu(clipId) {
+  const entry = mediaMasks.get(clipId);
+  if (!entry || !fx?.device) return;
+  ensureMediaMaskTex(entry);
+  for (const node of entry.maskState.nodes) {
+    node._optsBuf?.destroy();
+    node._tex?.destroy();
+    node._optsBuf = fx.device.createBuffer({
+      size: 48,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    node._tex = null;
+    if (node.source) {
+      node._tex = fx.device.createTexture({
+        label: 'slangfx mask node source',
+        size: [comp.width, comp.height],
+        format: 'rgba8unorm',
+        // RENDER_ATTACHMENT: required by copyExternalImageToTexture's
+        // GPU-canvas blit path.
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      fx.device.queue.copyExternalImageToTexture(
+        { source: node.source }, { texture: node._tex }, [comp.width, comp.height]);
+    }
+    const view = node._tex?.createView() ?? node.view ?? compositor.whiteView;
+    node._bindGroup = fx.maskComposer.bindGroup(view, fx.inputSampler, node._optsBuf);
+  }
+}
+
+function destroyMaskNodeGpu(node) {
+  node._optsBuf?.destroy();
+  node._tex?.destroy();
+  node._optsBuf = node._tex = node._bindGroup = null;
+  const t = matteTargets.get(node.id);
+  if (t) { t.tex.destroy(); matteTargets.delete(node.id); }
+}
+
+function destroyMediaMaskEntry(clipId) {
+  const entry = mediaMasks.get(clipId);
+  if (!entry) return;
+  for (const node of entry.maskState.nodes) destroyMaskNodeGpu(node);
+  entry.tex?.destroy();
+  mediaMasks.delete(clipId);
+}
+
+/** Clip entries for every layer-sourced mask node active at t (fed to the
+ * offline exporter's exact seek alongside the visible media). */
+function matteSourceClips(t) {
+  const out = [];
+  const collect = (nodes) => {
+    for (const node of nodes ?? []) {
+      if (!node.sourceClipId || node.enabled === false) continue;
+      const hit = findClip(comp, node.sourceClipId);
+      if (hit && t >= hit.clip.start && t < clipEnd(hit.clip)) out.push({ clip: hit.clip });
+    }
+  };
+  for (const layer of fx.layers) collect(layer.maskState?.nodes);
+  for (const entry of mediaMasks.values()) collect(entry.maskState?.nodes);
+  return out;
+}
+
+/* Resolve which layer-sourced nodes are live at t and render each source
+ * clip (with its transform, no mask of its own — mattes are raw content)
+ * into its matte target. Matte sources render even when their track is
+ * hidden — a hidden track is the natural home for matte-only footage. */
+function prepareNodeSources(nodes, t, getEncoder) {
+  for (const node of nodes) {
+    if (!node.sourceClipId) { node.active = true; continue; }
+    const hit = findClip(comp, node.sourceClipId);
+    const clip = hit?.clip;
+    const asset = clip && assets.get(clip.assetId);
+    if (!clip || !asset?.ready || t < clip.start || t >= clipEnd(clip)) {
+      node.active = false;
+      continue;
+    }
+    if (asset.kind === 'gif') {
+      syncGifFrame(asset, clip, t);
+    } else if (asset.kind === 'video') {
+      // Hidden-track sources never go through syncMedia — chase the comp
+      // clock with paused seeks (the offline exporter seeks exactly).
+      const el = asset.el;
+      const src = clip.in + (t - clip.start);
+      const len = asset.duration ?? 0;
+      const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+      if (!el.seeking && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
+        el.currentTime = desired;
+      if (el.readyState >= 2) uploadVideoFrame(asset);
+    }
+    const d = drawForClip(clip, t);
+    if (!d) { node.active = false; continue; }
+    node.active = true;
+    const tgt = ensureMatteTarget(node);
+    // ':matte' keys a separate compositor item so the raw matte draw does
+    // not fight the clip's on-screen draw over one uniform buffer.
+    compositor.composite(getEncoder(), tgt.view, comp.width, comp.height,
+      [{ ...d, clipId: d.clipId + ':matte', maskView: null }], { transparent: true });
+  }
+}
+
+/** Per-frame mask prep for both fx layers and media clips. Media stacks
+ * compose here (before compositeFrame samples them); fx stacks compose
+ * inside fx.render(). */
+function prepareMasks(t) {
+  let encoder = null;
+  const getEncoder = () => (encoder ??= fx.device.createCommandEncoder());
+  for (const layer of fx.layers) {
+    const nodes = layer.maskState?.nodes;
+    if (nodes?.length) prepareNodeSources(nodes, t, getEncoder);
+  }
+  for (const [clipId, entry] of mediaMasks) {
+    const nodes = entry.maskState?.nodes;
+    if (!nodes?.length) continue;
+    const hit = findClip(comp, clipId);
+    if (!hit || t < hit.clip.start || t >= clipEnd(hit.clip)) continue;
+    prepareNodeSources(nodes, t, getEncoder);
+    ensureMediaMaskTex(entry);
+    fx.maskComposer.encode(getEncoder(), { maskState: entry.maskState, maskView: entry.view });
+  }
+  if (encoder) fx.device.queue.submit([encoder.finish()]);
+}
+
+/* ---- key-color eyedropper -------------------------------------------- */
+
+let pickState = null;   // { node } while waiting for a preview click
+
+function startColorPick(node) {
+  pickState = { node };
+  canvasStack.style.cursor = 'crosshair';
+  setStatus('click the preview to sample the key color (Esc cancels)');
+}
+
+function endColorPick() {
+  pickState = null;
+  canvasStack.style.cursor = '';
+}
+
+/* Capture phase on the canvas stack so the pick wins over gizmo / pan. */
+canvasStack.addEventListener('pointerdown', async (e) => {
+  if (!pickState || e.button !== 0) return;
+  e.stopPropagation();
+  e.preventDefault();
+  const { node } = pickState;
+  endColorPick();
+  const rect = canvas.getBoundingClientRect();
+  const x = clamp(Math.floor((e.clientX - rect.left) / rect.width * comp.width), 0, comp.width - 1);
+  const y = clamp(Math.floor((e.clientY - rect.top) / rect.height * comp.height), 0, comp.height - 1);
+  // Sample the pre-effect composite — that's what key nodes see.
+  const { pixels, width } = await fx.readPixels(fx.inputTexture);
+  const i = (y * width + x) * 4;
+  node.keyColor = '#' + [pixels[i], pixels[i + 1], pixels[i + 2]]
+    .map((v) => v.toString(16).padStart(2, '0')).join('');
+  prepareMaskNode(node);
+  scheduleSave();
+  renderInspector();
+  setStatus(`key color ${node.keyColor}`);
+}, true);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && pickState) endColorPick();
+});
+
+/* ---- mask painting --------------------------------------------------- */
+
+let maskEdit = null;   // { clipId, nodeId } | null
 let gradState = null;
 
 function makeMaskCanvas() {
@@ -1827,19 +2143,35 @@ function stampBrush(ctx, x, y, erase) {
   ctx.restore();
 }
 
-function maskSpec() {
-  return maskEdit ? fxSpecs.get(maskEdit.clipId) : null;
+function maskStateFor(clipId) {
+  return fxSpecs.get(clipId)?.maskState ?? mediaMasks.get(clipId)?.maskState ?? null;
 }
 
-function pushMaskToGpu() {
-  const idx = maskEdit ? activeIndexOfClip(maskEdit.clipId) : -1;
+function maskEditNode() {
+  if (!maskEdit) return null;
+  return maskStateFor(maskEdit.clipId)?.nodes.find((n) => n.id === maskEdit.nodeId) ?? null;
+}
+
+/** Push a paint node's canvas to the GPU after a stroke or clear. */
+function uploadPaintNode(clipId, node) {
+  if (mediaMasks.has(clipId)) {
+    if (node?._tex && node.source)
+      fx.device.queue.copyExternalImageToTexture(
+        { source: node.source }, { texture: node._tex }, [comp.width, comp.height]);
+    return;
+  }
+  const idx = activeIndexOfClip(clipId);
   if (idx >= 0) fx.updateLayerMask(idx);
 }
 
+function pushMaskToGpu() {
+  if (maskEdit) uploadPaintNode(maskEdit.clipId, maskEditNode());
+}
+
 function maskStroke(x, y) {
-  const spec = maskSpec();
-  if (!spec?.maskState) return;
-  const mctx = spec.maskState.source.getContext('2d');
+  const node = maskEditNode();
+  if (!node?.source) return;
+  const mctx = node.source.getContext('2d');
   const rctx = maskOverlay.getContext('2d');
   if (brush.mode === 'hide') {
     mctx._stampColor = 'rgba(0,0,0,';
@@ -1855,10 +2187,10 @@ function maskStroke(x, y) {
 }
 
 function applyGradient(from, to) {
-  const spec = maskSpec();
-  if (!spec?.maskState) return;
+  const node = maskEditNode();
+  if (!node?.source) return;
   if (Math.hypot(to[0] - from[0], to[1] - from[1]) < 2) return;
-  const src = spec.maskState.source;
+  const src = node.source;
   const hide = brush.mode === 'hide';
 
   const ramp = (ctx, c0, c1) => {
@@ -1939,23 +2271,21 @@ maskOverlay.addEventListener('pointerup', (e) => {
   scheduleSave();
 });
 
-async function startMaskEdit(clip) {
-  const idx = activeIndexOfClip(clip.id);
-  if (idx < 0) {
+async function startMaskEdit(clip, nodeId) {
+  if (clip.kind === 'fx' && activeIndexOfClip(clip.id) < 0) {
     setStatus('move the playhead over this clip to edit its mask');
     return;
   }
   if (viewer.classList.contains('size-cover')) setViewMode('fit');
-  const spec = specFor(clip);
-  if (!spec.maskState) {
-    spec.maskState = { source: makeMaskCanvas(), opacity: 1, invert: false };
-    chainDirty = true;
-    await syncFxChain(tCur);
-  }
-  maskEdit = { clipId: clip.id };
-  rebuildRuby(spec.maskState.source);
+  if (clip.kind === 'fx') specFor(clip);
+  const node = maskStateFor(clip.id)?.nodes.find((n) => n.id === nodeId);
+  if (!node?.source) return;
+  maskEdit = { clipId: clip.id, nodeId };
+  rebuildRuby(node.source);
   document.body.classList.add('mask-editing');
-  setStatus('painting mask — red = effect hidden');
+  setStatus(clip.kind === 'media'
+    ? 'painting mask — red = clip hidden'
+    : 'painting mask — red = effect hidden');
   renderInspector();
 }
 
@@ -1967,14 +2297,23 @@ function stopMaskEdit() {
 }
 
 function rescaleMasks() {
-  for (const spec of fxSpecs.values()) {
-    const src = spec.maskState?.source;
-    if (!src || (src.width === comp.width && src.height === comp.height)) continue;
-    const scaled = document.createElement('canvas');
-    scaled.width = comp.width;
-    scaled.height = comp.height;
-    scaled.getContext('2d').drawImage(src, 0, 0, scaled.width, scaled.height);
-    spec.maskState.source = scaled;
+  const rescaleNodes = (nodes) => {
+    for (const node of nodes ?? []) {
+      const src = node.source;
+      if (src && (src.width !== comp.width || src.height !== comp.height)) {
+        const scaled = document.createElement('canvas');
+        scaled.width = comp.width;
+        scaled.height = comp.height;
+        scaled.getContext('2d').drawImage(src, 0, 0, scaled.width, scaled.height);
+        node.source = scaled;
+      }
+      if (node.sourceClipId && fx?.device) ensureMatteTarget(node);
+    }
+  };
+  for (const spec of fxSpecs.values()) rescaleNodes(spec.maskState?.nodes);
+  for (const [clipId, entry] of mediaMasks) {
+    rescaleNodes(entry.maskState?.nodes);
+    buildMediaMaskGpu(clipId);   // node textures + mask target track comp size
   }
 }
 
@@ -2692,8 +3031,8 @@ function renderInspector() {
   if (clip.kind === 'fx' && spec?.runtime?.preset?.textures?.length)
     renderOverlayControls(clip, spec);
 
-  /* -- mask -- */
-  if (clip.kind === 'fx') renderMaskSection(clip);
+  /* -- mask (fx: gates the effect; media: cuts the clip's alpha) -- */
+  if (clip.kind === 'fx' || clip.kind === 'media') renderMaskSection(clip);
 
   /* -- properties -- */
   const defs = propDefs(clip);
@@ -2995,108 +3334,317 @@ function renderOverlayControls(clip, spec) {
   }
 }
 
+const MASK_BLEND_MODES = ['add', 'subtract', 'multiply', 'max', 'min'];
+const MASK_KIND_LABEL = { paint: 'Paint', key: 'Color key', layer: 'Layer matte' };
+
+/** Uniform access to a clip's mask stack — fx masks live on the engine
+ * layer spec, media masks in the app-owned mediaMasks registry. */
+function maskContextFor(clip) {
+  if (clip.kind === 'fx') {
+    const spec = specFor(clip);
+    return {
+      state: () => spec.maskState,
+      ensure() {
+        spec.maskState ??= { opacity: 1, invert: false, nodes: [] };
+        return spec.maskState;
+      },
+      structure() { chainDirty = true; },
+      clear() {
+        for (const n of spec.maskState?.nodes ?? []) destroyMaskNodeGpu(n);
+        spec.maskState = null;
+        clip.mask = null;
+        chainDirty = true;
+      },
+      setOpts(o) {
+        const idx = activeIndexOfClip(clip.id);
+        if (idx >= 0) fx.setLayerMaskOptions(idx, o);
+      },
+      keySelfDefault: null,      // key nodes sample the layer's input
+    };
+  }
+  return {
+    state: () => mediaMasks.get(clip.id)?.maskState,
+    ensure() {
+      let e = mediaMasks.get(clip.id);
+      if (!e) {
+        e = { maskState: { opacity: 1, invert: false, nodes: [] }, tex: null, view: null, w: 0, h: 0 };
+        mediaMasks.set(clip.id, e);
+      }
+      return e.maskState;
+    },
+    structure() { buildMediaMaskGpu(clip.id); },
+    clear() { destroyMediaMaskEntry(clip.id); clip.mask = null; },
+    setOpts() {},                // compositor reads the live maskState each frame
+    keySelfDefault: clip.id,     // key nodes key the clip's own pixels
+  };
+}
+
+function maskSourceOptions(selfId) {
+  const out = [];
+  for (const tr of comp.tracks)
+    for (const c of tr.clips)
+      if (c.kind === 'media')
+        out.push({ id: c.id, label: c.id === selfId ? 'this clip' : (c.name ?? 'clip') });
+  return out;
+}
+
 function renderMaskSection(clip) {
-  const spec = fxSpecs.get(clip.id);
-  const editing = maskEdit?.clipId === clip.id;
+  const ctx = maskContextFor(clip);
+  const state = ctx.state();
   const mc = document.createElement('div');
   mc.className = 'mask-controls';
 
-  const maskBtn = document.createElement('button');
-  maskBtn.className = 'btn' + (editing ? ' active' : '');
-  maskBtn.textContent = spec?.maskState ? (editing ? 'Done' : 'Edit mask') : 'Add mask';
-  maskBtn.title = 'paint where the effect should NOT apply';
-  maskBtn.onclick = () => (editing ? stopMaskEdit() : startMaskEdit(clip));
-  mc.appendChild(maskBtn);
-
-  if (editing && spec?.maskState) {
-    const toolBtn = (tool, icon, title) => {
-      const b = document.createElement('button');
-      b.className = 'btn' + (brush.tool === tool ? ' active' : '');
-      b.textContent = icon;
-      b.title = title;
-      b.onclick = () => { brush.tool = tool; renderInspector(); };
-      return b;
+  const head = document.createElement('div');
+  head.className = 'mask-head';
+  const title = document.createElement('span');
+  title.className = 'mask-title';
+  title.textContent = 'Mask';
+  const addNode = (kind, label, tip) => {
+    const b = document.createElement('button');
+    b.className = 'btn';
+    b.textContent = label;
+    b.title = tip;
+    b.onclick = () => {
+      const st = ctx.ensure();
+      const node = newMaskNode(kind);
+      if (kind === 'key') node.sourceClipId = ctx.keySelfDefault;
+      prepareMaskNode(node);
+      st.nodes.push(node);
+      ctx.structure();
+      scheduleSave();
+      renderInspector();
+      if (kind === 'paint') startMaskEdit(clip, node.id);
     };
-    mc.append(
-      toolBtn('brush', '🖌', 'brush'),
-      toolBtn('linear', '▤', 'linear gradient — drag across the preview'),
-      toolBtn('radial', '◎', 'radial gradient — drag outward from the center'),
-    );
+    return b;
+  };
+  head.append(title,
+    addNode('paint', '+Paint', 'paint a mask by hand'),
+    addNode('key', '+Key', clip.kind === 'media'
+      ? 'green screen — key a color out of this clip'
+      : 'chroma key — build the mask from a color'),
+    addNode('layer', '+Matte', "use another layer's alpha or luma as the mask"));
+  mc.appendChild(head);
 
-    const modeBtn = (mode, label) => {
-      const b = document.createElement('button');
-      b.className = 'btn' + (brush.mode === mode ? ' active' : '');
-      b.textContent = label;
-      b.onclick = () => { brush.mode = mode; renderInspector(); };
-      return b;
-    };
-    mc.append(modeBtn('hide', 'Hide fx'), modeBtn('show', 'Show fx'));
+  for (const node of state?.nodes ?? [])
+    mc.appendChild(maskNodeRow(clip, ctx, node));
 
-    const isBrush = brush.tool === 'brush';
-    const rng = (label, min, max, step, get, set, disabled = false) => {
-      const l = document.createElement('label');
-      l.textContent = label;
-      const r = document.createElement('input');
-      r.type = 'range';
-      r.min = String(min); r.max = String(max); r.step = String(step);
-      r.value = String(get());
-      r.disabled = disabled;
-      r.oninput = () => set(parseFloat(r.value));
-      l.appendChild(r);
-      return l;
-    };
-    mc.append(
-      rng('size', 8, 300, 1, () => brush.size, (v) => { brush.size = v; }, !isBrush),
-      rng('soft', 0, 0.9, 0.05, () => brush.soft, (v) => { brush.soft = v; }, !isBrush),
-      rng('opacity', 0, 1, 0.01, () => spec.maskState.opacity ?? 1, (v) => {
-        spec.maskState.opacity = v;
-        const idx = activeIndexOfClip(clip.id);
-        if (idx >= 0) fx.setLayerMaskOptions(idx, { opacity: v });
-        scheduleSave();
-      }),
-    );
-
+  if (state?.nodes?.length) {
+    const foot = document.createElement('div');
+    foot.className = 'mask-foot';
+    const rng = maskRange('opacity', 0, 1, 0.01, () => state.opacity ?? 1, (v) => {
+      state.opacity = v;
+      ctx.setOpts({ opacity: v });
+      scheduleSave();
+    });
     const invLabel = document.createElement('label');
     const inv = document.createElement('input');
     inv.type = 'checkbox';
-    inv.checked = !!spec.maskState.invert;
+    inv.checked = !!state.invert;
     inv.onchange = () => {
-      spec.maskState.invert = inv.checked;
-      const idx = activeIndexOfClip(clip.id);
-      if (idx >= 0) fx.setLayerMaskOptions(idx, { invert: inv.checked });
+      state.invert = inv.checked;
+      ctx.setOpts({ invert: inv.checked });
       scheduleSave();
     };
     invLabel.append(inv, 'invert');
-    mc.appendChild(invLabel);
-
-    const clear = document.createElement('button');
-    clear.className = 'btn';
-    clear.textContent = 'Clear';
-    clear.onclick = () => {
-      const src = spec.maskState.source;
-      const ctx2 = src.getContext('2d');
-      ctx2.globalCompositeOperation = 'source-over';
-      ctx2.fillStyle = '#fff';
-      ctx2.fillRect(0, 0, src.width, src.height);
-      maskOverlay.getContext('2d').clearRect(0, 0, maskOverlay.width, maskOverlay.height);
-      pushMaskToGpu();
-      scheduleSave();
-    };
-
-    const remove = document.createElement('button');
-    remove.className = 'btn';
-    remove.textContent = 'Remove';
-    remove.onclick = () => {
+    const removeAll = document.createElement('button');
+    removeAll.className = 'btn';
+    removeAll.textContent = 'Remove mask';
+    removeAll.onclick = () => {
       stopMaskEdit();
-      spec.maskState = null;
-      clip.mask = null;
-      chainDirty = true;
+      ctx.clear();
       scheduleSave();
       renderInspector();
     };
-    mc.append(clear, remove);
+    foot.append(rng, invLabel, removeAll);
+    mc.appendChild(foot);
   }
   inspectorEl.appendChild(mc);
+}
+
+function maskRange(label, min, max, step, get, set, disabled = false) {
+  const l = document.createElement('label');
+  l.textContent = label;
+  const r = document.createElement('input');
+  r.type = 'range';
+  r.min = String(min); r.max = String(max); r.step = String(step);
+  r.value = String(get());
+  r.disabled = disabled;
+  r.oninput = () => set(parseFloat(r.value));
+  l.appendChild(r);
+  return l;
+}
+
+function maskNodeRow(clip, ctx, node) {
+  const row = document.createElement('div');
+  row.className = 'mask-node';
+
+  const top = document.createElement('div');
+  top.className = 'mn-top';
+  const en = document.createElement('input');
+  en.type = 'checkbox';
+  en.checked = node.enabled !== false;
+  en.title = 'enable / bypass this node';
+  en.onchange = () => { node.enabled = en.checked; scheduleSave(); };
+  const name = document.createElement('span');
+  name.className = 'mn-name';
+  name.textContent = MASK_KIND_LABEL[node.kind] ?? node.kind;
+  const blendSel = document.createElement('select');
+  blendSel.title = 'how this node combines with the stack above it';
+  for (const m of MASK_BLEND_MODES) {
+    const o = document.createElement('option');
+    o.value = m;
+    o.textContent = m;
+    blendSel.appendChild(o);
+  }
+  blendSel.value = node.blend ?? 'add';
+  blendSel.onchange = () => { node.blend = blendSel.value; scheduleSave(); };
+  const invLabel = document.createElement('label');
+  invLabel.className = 'mn-inv';
+  const inv = document.createElement('input');
+  inv.type = 'checkbox';
+  inv.checked = !!node.invert;
+  inv.onchange = () => { node.invert = inv.checked; scheduleSave(); };
+  invLabel.append(inv, 'inv');
+  const del = document.createElement('button');
+  del.className = 'mn-del';
+  del.textContent = '✕';
+  del.title = 'delete this mask node';
+  del.onclick = () => {
+    if (maskEdit?.nodeId === node.id) stopMaskEdit();
+    const st = ctx.state();
+    st.nodes = st.nodes.filter((n) => n !== node);
+    destroyMaskNodeGpu(node);
+    if (st.nodes.length) ctx.structure();
+    else ctx.clear();
+    scheduleSave();
+    renderInspector();
+  };
+  top.append(en, name, blendSel, invLabel, del);
+  row.appendChild(top);
+
+  const body = document.createElement('div');
+  body.className = 'mn-body';
+
+  if (node.kind === 'paint') {
+    const editing = maskEdit?.nodeId === node.id;
+    const editBtn = document.createElement('button');
+    editBtn.className = 'btn' + (editing ? ' active' : '');
+    editBtn.textContent = editing ? 'Done' : 'Edit';
+    editBtn.onclick = () => (editing ? stopMaskEdit() : startMaskEdit(clip, node.id));
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn';
+    clearBtn.textContent = 'Clear';
+    clearBtn.onclick = () => {
+      const ctx2 = node.source.getContext('2d');
+      ctx2.globalCompositeOperation = 'source-over';
+      ctx2.fillStyle = '#fff';
+      ctx2.fillRect(0, 0, node.source.width, node.source.height);
+      if (editing)
+        maskOverlay.getContext('2d').clearRect(0, 0, maskOverlay.width, maskOverlay.height);
+      uploadPaintNode(clip.id, node);
+      scheduleSave();
+    };
+    body.append(editBtn, clearBtn);
+    if (editing) {
+      const toolBtn = (tool, icon, tip) => {
+        const b = document.createElement('button');
+        b.className = 'btn' + (brush.tool === tool ? ' active' : '');
+        b.textContent = icon;
+        b.title = tip;
+        b.onclick = () => { brush.tool = tool; renderInspector(); };
+        return b;
+      };
+      const modeBtn = (mode, label) => {
+        const b = document.createElement('button');
+        b.className = 'btn' + (brush.mode === mode ? ' active' : '');
+        b.textContent = label;
+        b.onclick = () => { brush.mode = mode; renderInspector(); };
+        return b;
+      };
+      const isBrush = brush.tool === 'brush';
+      body.append(
+        toolBtn('brush', '🖌', 'brush'),
+        toolBtn('linear', '▤', 'linear gradient — drag across the preview'),
+        toolBtn('radial', '◎', 'radial gradient — drag outward from the center'),
+        modeBtn('hide', 'Hide'), modeBtn('show', 'Show'),
+        maskRange('size', 8, 300, 1, () => brush.size, (v) => { brush.size = v; }, !isBrush),
+        maskRange('soft', 0, 0.9, 0.05, () => brush.soft, (v) => { brush.soft = v; }, !isBrush),
+      );
+    }
+  } else if (node.kind === 'key') {
+    const colorWrap = document.createElement('span');
+    colorWrap.className = 'mn-colorwrap';
+    const color = document.createElement('input');
+    color.type = 'color';
+    color.value = node.keyColor ?? '#00b140';
+    color.oninput = () => {
+      node.keyColor = color.value;
+      prepareMaskNode(node);
+      scheduleSave();
+    };
+    const pick = document.createElement('button');
+    pick.className = 'btn';
+    pick.textContent = '⌖';
+    pick.title = 'pick the key color from the preview';
+    pick.onclick = () => startColorPick(node);
+    colorWrap.append(color, pick);
+    body.append(
+      colorWrap,
+      maskRange('similar', 0.005, 0.6, 0.005, () => node.similarity ?? 0.18, (v) => {
+        node.similarity = v;
+        scheduleSave();
+      }),
+      maskRange('soften', 0, 0.5, 0.005, () => node.smoothness ?? 0.1, (v) => {
+        node.smoothness = v;
+        scheduleSave();
+      }),
+      maskSourceSelect(clip, ctx, node, { allowInput: clip.kind === 'fx' }),
+    );
+  } else {   // layer matte
+    const chanSel = document.createElement('select');
+    for (const [v, l] of [['alpha', 'alpha'], ['luma', 'luma']]) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = l;
+      chanSel.appendChild(o);
+    }
+    chanSel.value = node.channel ?? 'alpha';
+    chanSel.onchange = () => { node.channel = chanSel.value; scheduleSave(); };
+    body.append(maskSourceSelect(clip, ctx, node, { allowInput: false }), chanSel);
+  }
+  row.appendChild(body);
+  return row;
+}
+
+function maskSourceSelect(clip, ctx, node, { allowInput }) {
+  const sel = document.createElement('select');
+  sel.title = 'mask source';
+  const opts = maskSourceOptions(clip.id);
+  if (allowInput) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = 'layer input';
+    sel.appendChild(o);
+  } else if (!node.sourceClipId) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = opts.length ? '(choose a layer)' : '(no media clips)';
+    sel.appendChild(o);
+  }
+  for (const { id, label } of opts) {
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  sel.value = node.sourceClipId ?? '';
+  sel.onchange = () => {
+    node.sourceClipId = sel.value || null;
+    prepareMaskNode(node);
+    ctx.structure();
+    scheduleSave();
+  };
+  return sel;
 }
 
 /* =====================================================================
@@ -3289,8 +3837,9 @@ async function renderCompOffline(job) {
     const t = f / fps;
     tCur = t;
     const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
-    await seekMediaExact(t, activeMedia);
+    await seekMediaExact(t, [...activeMedia, ...matteSourceClips(t)]);
     uploadMediaFrames(t, activeMedia);
+    prepareMasks(t);   // media masks must compose before compositeFrame samples them
     compositeFrame(t);
     await syncFxChainSettled(t);
     applyParams(t);

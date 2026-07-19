@@ -17,13 +17,15 @@ struct Xform {
   sizes : vec4<f32>,
   // place: center x, center y (comp px, y-down), scale x, scale y (1 = 100%)
   place : vec4<f32>,
-  // misc: opacity 0..1, rotation (rad)
+  // misc: opacity 0..1, rotation (rad), mask opacity, mask invert (0/1)
   misc  : vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> xf : Xform;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
+// Comp-space mask multiplied into the clip's alpha (1x1 white = no mask).
+@group(0) @binding(3) var maskTex : texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -56,7 +58,10 @@ fn vs(@builtin(vertex_index) i : u32) -> VSOut {
 @fragment
 fn fs(in : VSOut) -> @location(0) vec4<f32> {
   let color = textureSample(tex, smp, in.uv);
-  return vec4<f32>(color.rgb, color.a * xf.misc.x);
+  var m = textureSample(maskTex, smp, in.pos.xy / xf.sizes.xy).r;
+  if (xf.misc.w > 0.5) { m = 1.0 - m; }
+  let a = color.a * xf.misc.x * mix(1.0, m, xf.misc.z);
+  return vec4<f32>(color.rgb, a);
 }
 `;
 
@@ -69,8 +74,15 @@ export class Compositor {
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
+    const white = device.createTexture({
+      size: [1, 1], format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture({ texture: white }, new Uint8Array([255, 255, 255, 255]), {}, [1, 1]);
+    this.whiteView = white.createView();
     this.pipeline = device.createRenderPipeline({
       label: 'slangfx compositor',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.layout] }),
@@ -92,9 +104,10 @@ export class Compositor {
     this.items = new Map(); // clipId -> {ubo, bindGroup, view}
   }
 
-  _item(clipId, view) {
+  _item(clipId, view, maskView) {
+    const mask = maskView ?? this.whiteView;
     let item = this.items.get(clipId);
-    if (!item || item.view !== view) {
+    if (!item || item.view !== view || item.maskView !== mask) {
       const ubo = item?.ubo ?? this.device.createBuffer({
         size: 48,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -102,12 +115,14 @@ export class Compositor {
       item = {
         ubo,
         view,
+        maskView: mask,
         bindGroup: this.device.createBindGroup({
           layout: this.layout,
           entries: [
             { binding: 0, resource: { buffer: ubo } },
             { binding: 1, resource: view },
             { binding: 2, resource: this.sampler },
+            { binding: 3, resource: mask },
           ],
         }),
       };
@@ -128,13 +143,14 @@ export class Compositor {
    * @param {Array<{clipId, view, w, h, x, y, scaleX, scaleY, rot, opacity}>}
    *        draws bottom-most first; scale 1 = 100%, rot degrees, opacity 0..1
    */
-  composite(encoder, targetView, compW, compH, draws, { over = false } = {}) {
+  composite(encoder, targetView, compW, compH, draws, { over = false, transparent = false } = {}) {
     for (const d of draws) {
-      const item = this._item(d.clipId, d.view);
+      const item = this._item(d.clipId, d.view, d.maskView);
       this.device.queue.writeBuffer(item.ubo, 0, new Float32Array([
         compW, compH, d.w, d.h,
         d.x, d.y, d.scaleX, d.scaleY,
-        d.opacity, d.rot * Math.PI / 180, 0, 0,
+        d.opacity, d.rot * Math.PI / 180,
+        d.maskView ? (d.maskOpacity ?? 1) : 0, d.maskInvert ? 1 : 0,
       ]));
     }
     const pass = encoder.beginRenderPass({
@@ -142,7 +158,9 @@ export class Compositor {
         view: targetView,
         loadOp: over ? 'load' : 'clear',
         storeOp: 'store',
-        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        // transparent: matte targets need a=0 background so a clip's own
+        // alpha can serve as the mask outside its quad.
+        clearValue: { r: 0, g: 0, b: 0, a: transparent ? 0 : 1 },
       }],
     });
     pass.setPipeline(this.pipeline);

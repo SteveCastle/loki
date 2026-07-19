@@ -608,6 +608,76 @@ body.mask-editing #mask-overlay {
 .mask-controls label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .mask-controls input[type=range] { width: 64px; accent-color: var(--accent); }
 .mask-controls .btn.active { border-color: var(--accent); color: var(--accent); }
+.mask-controls { flex-direction: column; align-items: stretch; }
+.mask-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mask-title {
+  flex: 1;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.mask-node {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mn-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mn-name { flex: 1; color: var(--fg); }
+.mn-inv { color: var(--dim); }
+.mn-del {
+  border: 0;
+  background: none;
+  color: #e58784;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.6;
+}
+.mn-del:hover { opacity: 1; }
+.mn-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.mn-body select,
+.mask-node select {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 4px;
+  max-width: 110px;
+}
+.mn-colorwrap { display: flex; align-items: center; gap: 4px; }
+.mn-colorwrap input[type=color] {
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.mask-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 .overlay-controls {
   display: flex;

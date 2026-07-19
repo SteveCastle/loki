@@ -28,7 +28,7 @@
 import { parsePreset, dirnameOf } from './slangp.js';
 import { compileSlang } from './compiler.js';
 import { renameReserved } from './preprocess.js';
-import { Blitter, MaskBlender } from './blit.js';
+import { Blitter, MaskBlender, MaskComposer } from './blit.js';
 
 /* Quad matching the native vertex contract (location 0 = vec4 Position,
  * location 1 = vec2 TexCoord), with v oriented so that every pass keeps
@@ -608,6 +608,7 @@ export class SlangFx {
     fx.device.queue.writeTexture({ texture: white }, new Uint8Array([255, 255, 255, 255]), {}, [1, 1]);
     fx.whiteView = white.createView();
     fx.maskBlender = new MaskBlender(fx.device);
+    fx.maskComposer = new MaskComposer(fx.device);
 
     if (opts.canvas) {
       fx.canvas = opts.canvas;
@@ -688,10 +689,20 @@ export class SlangFx {
 
   async clearLayers() { this.layers = []; await this.rebuild(); }
 
-  /* Create (or recreate) a layer's mask texture at input dims, cleared to
-   * white (= effect fully visible), then upload the painted source if its
-   * dimensions match. */
-  _buildLayerMask(layer) {
+  /* Create (or recreate) a layer's mask texture at input dims plus the GPU
+   * state for every mask node in the stack. The stack is re-composited into
+   * maskTex each frame by MaskComposer (see render()), so node sources are
+   * free to change between frames — painted canvases re-upload, matte /
+   * roto sources swap views.
+   *
+   * Node fields the engine consumes:
+   *   kind        'tex' semantics via source/view + channel, or 'key'
+   *   source      canvas/image backing (engine owns a texture for it)
+   *   view        externally-owned GPUTextureView (matte scratch, roto frame)
+   *   useInput    sample this layer's input (chroma key on own content)
+   *   channel     'r' | 'luma' | 'alpha'   blend  'add'|'subtract'|'multiply'|'max'|'min'
+   *   keyRGB, similarity, smoothness, strength, invert, enabled, active */
+  _buildLayerMask(layer, layerInput) {
     layer.maskTex?.destroy();
     layer.maskTex = this.device.createTexture({
       label: 'slangfx layer mask',
@@ -700,12 +711,27 @@ export class SlangFx {
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
     layer.maskView = layer.maskTex.createView();
-    const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{ view: layer.maskView, loadOp: 'clear', storeOp: 'store', clearValue: { r: 1, g: 1, b: 1, a: 1 } }],
-    });
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
+    for (const node of layer.maskState.nodes) {
+      node._optsBuf = this.device.createBuffer({
+        size: 48,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      node._tex = null;
+      if (node.source) {
+        node._tex = this.device.createTexture({
+          label: 'slangfx mask node source',
+          size: [this.inputW, this.inputH],
+          format: 'rgba8unorm',
+          // RENDER_ATTACHMENT: copyExternalImageToTexture's GPU-canvas blit
+          // path requires it — without it uploads fail silently.
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+        });
+      }
+      const view = node._tex?.createView()
+        ?? node.view
+        ?? (node.useInput ? layerInput : this.whiteView);
+      node._bindGroup = this.maskComposer.bindGroup(view, this.inputSampler, node._optsBuf);
+    }
     this.updateLayerMask(this.layers.indexOf(layer));
   }
 
@@ -715,6 +741,11 @@ export class SlangFx {
     layer.maskOptsBuf?.destroy();
     layer.maskTex = layer.maskView = layer.blendTex = layer.blendView = null;
     layer.blendBindGroup = layer.maskOptsBuf = null;
+    for (const node of layer.maskState?.nodes ?? []) {
+      node._optsBuf?.destroy();
+      node._tex?.destroy();
+      node._optsBuf = node._tex = node._bindGroup = null;
+    }
   }
 
   /** Rebuild every layer's GPU state (structural changes + source resize). */
@@ -731,8 +762,12 @@ export class SlangFx {
     let inputView = this.inputView;
     for (const layer of this.layers) {
       if (!layer.enabled) continue;
-      if (layer.maskState) this._buildLayerMask(layer);
       const layerInput = inputView;
+      // Decide once: maskState can be assigned asynchronously (project
+      // restore) while this rebuild awaits a compile — the blend section
+      // below must not see a mask the top of the loop never built.
+      const hasMask = !!layer.maskState?.nodes?.length;
+      if (hasMask) this._buildLayerMask(layer, layerInput);
       const buildOnce = async (compileOpts) => {
         const presetText = await this.readFile(layer.path);
         const preset = parsePreset(presetText, dirnameOf(layer.path));
@@ -756,7 +791,7 @@ export class SlangFx {
           rt = await buildOnce({ textureLodWorkaround: true });
         }
         layer.runtime = rt;
-        if (layer.maskState) {
+        if (hasMask) {
           layer.blendTex = this.device.createTexture({
             label: 'slangfx masked out',
             size: [this.inputW, this.inputH],
@@ -786,14 +821,12 @@ export class SlangFx {
       new Float32Array([layer.maskState.opacity ?? 1, layer.maskState.invert ? 1 : 0, 0, 0]));
   }
 
-  /** Attach (or replace) a painted mask on a layer. `source` is any
-   * canvas/image whose pixels' red channel is the mask (white = effect
-   * fully visible). Keep the source around and call updateLayerMask()
-   * after painting into it. */
-  async setLayerMask(i, source, { opacity = 1, invert = false } = {}) {
+  /** Attach (or replace) a layer's mask stack: { opacity, invert, nodes }.
+   * See _buildLayerMask for the node contract. */
+  async setLayerMask(i, maskState) {
     const layer = this.layers[i];
     if (!layer) return;
-    layer.maskState = { source, opacity, invert };
+    layer.maskState = maskState;
     await this.rebuild();
   }
 
@@ -805,14 +838,17 @@ export class SlangFx {
     await this.rebuild();
   }
 
-  /** Re-upload a layer's mask pixels from its source (cheap — call during
-   * brush strokes; no rebuild). */
+  /** Re-upload canvas-backed mask node pixels (cheap — call during brush
+   * strokes; no rebuild). The stack recomposites automatically next frame. */
   updateLayerMask(i) {
     const layer = this.layers[i];
-    const src = layer?.maskState?.source;
-    if (!layer?.maskTex || !src) return;
-    if ((src.width ?? 0) !== this.inputW || (src.height ?? 0) !== this.inputH) return;
-    this.device.queue.copyExternalImageToTexture({ source: src }, { texture: layer.maskTex }, [this.inputW, this.inputH]);
+    if (!layer?.maskTex) return;
+    for (const node of layer.maskState?.nodes ?? []) {
+      const src = node.source;
+      if (!node._tex || !src) continue;
+      if ((src.width ?? 0) !== this.inputW || (src.height ?? 0) !== this.inputH) continue;
+      this.device.queue.copyExternalImageToTexture({ source: src }, { texture: node._tex }, [this.inputW, this.inputH]);
+    }
   }
 
   /** Replace one of a layer's external textures (preset `textures = ...`)
@@ -904,6 +940,10 @@ export class SlangFx {
 
     const encoder = this.device.createCommandEncoder();
     for (const layer of this.activeLayers) {
+      // Recomposite the mask node stack first — the layer's passes and the
+      // blend below sample maskTex this same submission.
+      if (layer.maskState?.nodes?.length && layer.maskView)
+        this.maskComposer.encode(encoder, layer);
       layer.runtime.writeUniforms(timeSec);
       layer.runtime.encode(encoder);
       if (layer.blendBindGroup)
@@ -929,9 +969,11 @@ export class SlangFx {
     this.device.queue.submit([encoder.finish()]);
   }
 
-  /** Read back the current processed frame as RGBA8 pixels. */
-  async readPixels() {
-    const tex = this.finalTexture;
+  /** Read back a frame as RGBA8 pixels — the processed output by default,
+   * or any COPY_SRC-capable texture of input dims (e.g. inputTexture, used
+   * by the mask eyedropper to sample pre-effect colors). */
+  async readPixels(texture = null) {
+    const tex = texture ?? this.finalTexture;
     const w = this.inputW;
     const h = this.inputH;
     const bytesPerRow = Math.ceil((w * 4) / 256) * 256;
