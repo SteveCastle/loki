@@ -351,16 +351,36 @@ function syncMedia(t, activeMedia) {
       if (!el.seeking && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
         el.currentTime = desired;
     }
-    if (el.readyState >= 2) {
-      try {
-        fx.device.queue.copyExternalImageToTexture(
-          { source: el }, { texture: asset.texture }, [asset.w, asset.h]);
-      } catch { /* frame not ready */ }
-    }
+    if (el.readyState >= 2) uploadVideoFrame(asset);
   }
   for (const asset of assets.values())
     if (asset.kind === 'video' && asset.ready && !used.has(asset.id) && !asset.el.paused)
       asset.el.pause();
+}
+
+/* Firefox's WebGPU rejects HTMLVideoElement as a copyExternalImageToTexture
+ * source (TypeError; only bitmaps/canvases are accepted), so after the first
+ * rejection all video uploads reroute through a 2D scratch canvas. */
+let videoNeedsCanvasHop = false;
+
+function uploadVideoFrame(asset) {
+  if (!videoNeedsCanvasHop) {
+    try {
+      fx.device.queue.copyExternalImageToTexture(
+        { source: asset.el }, { texture: asset.texture }, [asset.w, asset.h]);
+      return;
+    } catch (e) {
+      if (!(e instanceof TypeError)) return;   // frame not ready
+      videoNeedsCanvasHop = true;
+    }
+  }
+  const c = (asset.scratch ??= new OffscreenCanvas(asset.w, asset.h));
+  const ctx2d = (asset.scratchCtx ??= c.getContext('2d'));
+  ctx2d.drawImage(asset.el, 0, 0, asset.w, asset.h);
+  try {
+    fx.device.queue.copyExternalImageToTexture(
+      { source: c }, { texture: asset.texture }, [asset.w, asset.h]);
+  } catch { /* frame not ready */ }
 }
 
 function drawForClip(clip, t) {
