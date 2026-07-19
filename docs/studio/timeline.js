@@ -81,9 +81,27 @@ export function showMenu(x, y, items) {
     }
     const row = document.createElement('div');
     row.className = 'ctx-item' + (it.checked ? ' checked' : '') + (it.danger ? ' danger' : '');
-    row.textContent = it.label;
     row.addEventListener('pointerdown', (e) => e.stopPropagation());
     row.addEventListener('click', () => { closeMenu(); it.action(); });
+    if (it.trailing) {
+      // Secondary action button at the row's right edge (e.g. delete).
+      row.classList.add('has-trail');
+      const lab = document.createElement('span');
+      lab.className = 'ctx-label';
+      lab.textContent = it.label;
+      const btn = document.createElement('button');
+      btn.className = 'ctx-trail' + (it.trailing.danger ? ' danger' : '');
+      btn.textContent = it.trailing.label;
+      if (it.trailing.title) btn.title = it.trailing.title;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMenu();
+        it.trailing.action();
+      });
+      row.append(lab, btn);
+    } else {
+      row.textContent = it.label;
+    }
     menuEl.appendChild(row);
   }
   document.body.appendChild(menuEl);

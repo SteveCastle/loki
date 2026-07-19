@@ -408,6 +408,30 @@ function drawForClip(clip, t) {
   };
 }
 
+/* Axis-aligned bounding box of every visible media clip's transformed
+ * quad at comp time t, or null when nothing is on screen. */
+function contentBounds(t) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const { track, clip } of activeClips(comp, t, 'media')) {
+    if (track.hidden) continue;
+    const d = drawForClip(clip, t);
+    if (!d) continue;
+    const hw = (d.w * Math.abs(d.scaleX)) / 2;
+    const hh = (d.h * Math.abs(d.scaleY)) / 2;
+    const r = (d.rot * Math.PI) / 180;
+    const c = Math.cos(r), s = Math.sin(r);
+    for (const [px, py] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]) {
+      const x = d.x + px * c - py * s;
+      const y = d.y + px * s + py * c;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return minX === Infinity ? null : { minX, minY, maxX, maxY };
+}
+
 /* Layer-true rendering: walking the stack bottom → top, media below the
  * first effect goes into the chain input; media sitting ABOVE an effect
  * is composited onto that effect's output (via fx.onAfterLayer), so only
@@ -708,6 +732,9 @@ function afterModelReplace(what) {
   chainKey = '';
   chainDirty = true;
   tCur = clamp(tCur, 0, comp.dur);
+  // The restored state may carry a different comp size than the canvas.
+  if (canvas.width !== comp.width || canvas.height !== comp.height)
+    applyCompSize();
   refreshDropHint();
   timeline.render();
   renderInspector();
@@ -1254,6 +1281,7 @@ $('btn-settings').addEventListener('click', () => {
       <label>Duration (s) <input id="cs-dur" type="number" min="0.5" max="7200" step="0.5" value="${comp.dur}"></label>
       <div class="modal-actions">
         <button class="btn" id="cs-match">Match first media</button>
+        <button class="btn" id="cs-fit" title="resize the frame to the bounding box of what's on screen at the playhead">Fit to contents</button>
         <span style="flex:1"></span>
         <button class="btn" id="cs-cancel">Cancel</button>
         <button class="btn" id="cs-apply">Apply</button>
@@ -1285,6 +1313,41 @@ $('btn-settings').addEventListener('click', () => {
     if (!first) return;
     wrap.querySelector('#cs-w').value = first.w;
     wrap.querySelector('#cs-h').value = first.h;
+  });
+  // Fit to contents applies immediately: besides resizing, every media
+  // clip shifts so the box lands centered — Apply can't express that.
+  const fitBtn = wrap.querySelector('#cs-fit');
+  fitBtn.disabled = !contentBounds(tCur);
+  fitBtn.addEventListener('click', async () => {
+    const b = contentBounds(tCur);
+    if (!b) return;
+    const bw = b.maxX - b.minX;
+    const bh = b.maxY - b.minY;
+    const w = clamp(2 * Math.round(bw / 2), 16, 7680);
+    const h = clamp(2 * Math.round(bh / 2), 16, 4320);
+    const dx = (w - bw) / 2 - b.minX;
+    const dy = (h - bh) / 2 - b.minY;
+    const shift = (prop, d) => {
+      if (!prop || !d) return;
+      prop.v += d;
+      for (const k of prop.keys) k.v += d;
+    };
+    wrap.remove();
+    history.record(comp, () => {
+      for (const tr of comp.tracks)
+        for (const c of tr.clips) {
+          if (c.kind !== 'media') continue;
+          shift(c.props.x, dx);
+          shift(c.props.y, dy);
+        }
+      comp.width = w;
+      comp.height = h;
+      comp._autoSize = false;
+    });
+    await applyCompSize();
+    setTime(tCur);
+    onModelChange({ structural: true });
+    setStatus(`comp fit to contents: ${w}×${h}`);
   });
   wrap.querySelector('#cs-apply').addEventListener('click', async () => {
     const w = clamp(parseInt(wrap.querySelector('#cs-w').value, 10) || comp.width, 16, 7680);
@@ -1688,20 +1751,8 @@ $('btn-project').addEventListener('click', (e) => {
         label: `🗂 ${p.name} · ${relTimeLabel(p.savedAt)}`,
         checked: p.name === projectName,
         action: () => openProject(p.name),
+        trailing: { label: '🗑', title: 'delete project', danger: true, action: () => deleteProject(p.name) },
       });
-    items.push('-');
-    items.push({
-      label: '🗑 Delete a project…',
-      danger: true,
-      action: () => {
-        const rows = projectIndex().map((p) => ({
-          label: `🗑 ${p.name}`,
-          danger: true,
-          action: () => deleteProject(p.name),
-        }));
-        showMenu(r.left, r.bottom + 4, rows);
-      },
-    });
   }
   showMenu(r.left, r.bottom + 4, items);
 });
