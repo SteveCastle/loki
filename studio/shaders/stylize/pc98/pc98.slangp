@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = pc98.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;res_x;res_y;levels;dither;pattern"
+amount  = 1.0
+res_x   = 640.0
+res_y   = 400.0
+levels  = 6.0
+dither  = 1.0
+pattern = 1.0

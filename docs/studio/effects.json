@@ -368,6 +368,11 @@
       "category": "stylize"
     },
     {
+      "name": "pc98",
+      "path": "shaders/stylize/pc98/pc98.slangp",
+      "category": "stylize"
+    },
+    {
       "name": "pixelate",
       "path": "shaders/stylize/pixelate/pixelate.slangp",
       "category": "stylize"
