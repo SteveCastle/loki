@@ -28,6 +28,7 @@ import {
   clamp, History, uid, newProp, migrateComp, trackOf,
 } from './comp.js';
 import { Compositor } from './compositor.js';
+import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Timeline, fmtTimecode, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 
@@ -270,6 +271,7 @@ function pause() {
 function tick() {
   requestAnimationFrame(tick);
   if (!fx?.inputTexture) return;
+  if (offlineJob) return;   // the offline render loop owns the pipeline
 
   if (playing) {
     tCur = clock.t + (performance.now() - clock.perf) / 1000;
@@ -311,18 +313,7 @@ function syncMedia(t, activeMedia) {
     if (!asset?.ready) continue;
     used.add(asset.id);
     if (asset.kind === 'gif') {
-      // A GIF is a pre-decoded frame strip, not a <video>: pick the loop
-      // frame for the clip's local time, upload only when it changes.
-      const src = clip.in + (t - clip.start);
-      const len = asset.duration || 1;
-      const local = ((src % len) + len) % len;
-      let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
-      if (idx < 0) idx = asset.frames.length - 1;
-      if (idx !== asset._frameIdx) {
-        asset._frameIdx = idx;
-        fx.device.queue.copyExternalImageToTexture(
-          { source: asset.frames[idx].bitmap }, { texture: asset.texture }, [asset.w, asset.h]);
-      }
+      syncGifFrame(asset, clip, t);
       continue;
     }
     if (asset.kind !== 'video') continue;
@@ -356,6 +347,21 @@ function syncMedia(t, activeMedia) {
   for (const asset of assets.values())
     if (asset.kind === 'video' && asset.ready && !used.has(asset.id) && !asset.el.paused)
       asset.el.pause();
+}
+
+/* A GIF is a pre-decoded frame strip, not a <video>: pick the loop frame
+ * for the clip's local time, upload only when it changes. */
+function syncGifFrame(asset, clip, t) {
+  const src = clip.in + (t - clip.start);
+  const len = asset.duration || 1;
+  const local = ((src % len) + len) % len;
+  let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
+  if (idx < 0) idx = asset.frames.length - 1;
+  if (idx !== asset._frameIdx) {
+    asset._frameIdx = idx;
+    fx.device.queue.copyExternalImageToTexture(
+      { source: asset.frames[idx].bitmap }, { texture: asset.texture }, [asset.w, asset.h]);
+  }
 }
 
 /* Firefox's WebGPU rejects HTMLVideoElement as a copyExternalImageToTexture
@@ -3026,21 +3032,33 @@ function renderMaskSection(clip) {
 
 /* =====================================================================
  * Export — current frame PNG, or render the whole comp to WebM.
+ *
+ * Two WebM modes, both kept on purpose:
+ *   Record — plays the comp once in real time via MediaRecorder,
+ *            capturing the live audio mix (good for perf-y captures).
+ *   Render — offline loop: seeks every source frame-exactly, renders as
+ *            fast as the GPU/encoder allow via WebCodecs, so it can beat
+ *            real time and never drops or stutters. Video only.
  * =================================================================== */
 
-$('btn-export-png').addEventListener('click', async () => {
-  if (!fx?.inputTexture) return;
-  const blob = await fx.exportPNG();
+function saveBlob(blob, name) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'slangfx-frame.png';
+  a.download = name;
   a.click();
+}
+
+$('btn-export-png').addEventListener('click', async () => {
+  if (!fx?.inputTexture || offlineJob) return;
+  const blob = await fx.exportPNG();
+  saveBlob(blob, 'slangfx-frame.png');
   setStatus('frame exported');
 });
 
 const exportBtn = $('btn-export-webm');
 
 exportBtn.addEventListener('click', () => {
+  if (offlineJob) return;
   if (recorder) { finishExport(); pause(); return; }
   if (!fx?.inputTexture) return;
   ensureAudio();
@@ -3056,12 +3074,8 @@ exportBtn.addEventListener('click', () => {
   const chunks = [];
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   recorder.onstop = () => {
-    const blob = new Blob(chunks, { type: 'video/webm' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'slangfx-comp.webm';
-    a.click();
-    setStatus('render saved');
+    saveBlob(new Blob(chunks, { type: 'video/webm' }), 'slangfx-comp.webm');
+    setStatus('recording saved');
   };
   exportMode = true;
   pause();
@@ -3070,7 +3084,7 @@ exportBtn.addEventListener('click', () => {
   play();
   exportBtn.textContent = '■ Stop';
   exportBtn.classList.add('recording');
-  setStatus('rendering comp to WebM…');
+  setStatus('recording comp to WebM…');
 });
 
 function finishExport() {
@@ -3079,8 +3093,166 @@ function finishExport() {
     recorder.stop();
     recorder = null;
   }
-  exportBtn.textContent = 'Render WebM';
+  exportBtn.textContent = 'Record';
   exportBtn.classList.remove('recording');
+}
+
+/* ---- offline (faster-than-real-time) render ------------------------- */
+
+const fastBtn = $('btn-export-webm-fast');
+let offlineJob = null;   // { cancel, error } while an offline render runs
+
+fastBtn.addEventListener('click', () => {
+  if (offlineJob) { offlineJob.cancel = true; return; }
+  if (!fx?.inputTexture || recorder) return;
+  if (typeof VideoEncoder === 'undefined') {
+    setStatus('offline render needs WebCodecs (Chrome/Edge) — use Record instead');
+    return;
+  }
+  runOfflineRender();
+});
+
+async function runOfflineRender() {
+  pause();
+  const job = (offlineJob = { cancel: false, error: null });
+  const tRestore = tCur;
+  fastBtn.textContent = '■ Cancel';
+  fastBtn.classList.add('recording');
+  const started = performance.now();
+  try {
+    const blob = await renderCompOffline(job);
+    if (blob) {
+      saveBlob(blob, 'slangfx-comp.webm');
+      const secs = ((performance.now() - started) / 1000).toFixed(1);
+      setStatus(`render saved — ${comp.dur}s comp in ${secs}s (video only; use Record for audio)`);
+    } else {
+      setStatus('render cancelled');
+    }
+  } catch (e) {
+    console.error('slangfx: offline render failed:', e);
+    setStatus(`render failed: ${e.message ?? e}`);
+  } finally {
+    offlineJob = null;
+    fastBtn.textContent = 'Render';
+    fastBtn.classList.remove('recording');
+    setTime(tRestore);
+  }
+}
+
+/* Throttling-proof macrotask yield (setTimeout is clamped to ~1s in
+ * occluded windows; MessageChannel messages are not). */
+function nextTask() {
+  return new Promise((resolve) => {
+    const ch = new MessageChannel();
+    ch.port1.onmessage = () => { ch.port1.close(); resolve(); };
+    ch.port2.postMessage(0);
+  });
+}
+
+/* Pause every active video and seek it frame-exactly to the comp time,
+ * resolving when the browser has the frame ready (the preview clock's
+ * drift-tolerant sync in syncMedia is what causes recording stutter). */
+function seekMediaExact(t, activeMedia) {
+  const waits = [];
+  for (const { clip } of activeMedia) {
+    const asset = assets.get(clip.assetId);
+    if (!asset?.ready || asset.kind !== 'video') continue;
+    const el = asset.el;
+    if (!el.paused) el.pause();
+    const src = clip.in + (t - clip.start);
+    const len = asset.duration ?? 0;
+    const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+    if (Math.abs(el.currentTime - desired) < 1e-4) continue;
+    waits.push(new Promise((resolve) => {
+      // Stuck-seek guard so one bad source can't stall the whole render.
+      const timer = setTimeout(done, 1000);
+      function done() {
+        clearTimeout(timer);
+        el.removeEventListener('seeked', done);
+        resolve();
+      }
+      el.addEventListener('seeked', done);
+      el.currentTime = desired;
+    }));
+  }
+  return Promise.all(waits);
+}
+
+function uploadMediaFrames(t, activeMedia) {
+  for (const { clip } of activeMedia) {
+    const asset = assets.get(clip.assetId);
+    if (!asset?.ready) continue;
+    if (asset.kind === 'gif') syncGifFrame(asset, clip, t);
+    else if (asset.kind === 'video' && asset.el.readyState >= 2) uploadVideoFrame(asset);
+  }
+}
+
+/* syncFxChain returns early while a rebuild is in flight, which can mask a
+ * rebuild this frame needs — re-run until the chain matches the frame. */
+async function syncFxChainSettled(t) {
+  for (let i = 0; i < 10; i++) {
+    await syncFxChain(t);
+    const key = activeFxEntries(t).map((e) => e.clip.id).join('|');
+    if (!chainBuilding && !chainDirty && key === chainKey) return;
+  }
+}
+
+async function renderCompOffline(job) {
+  const { width, height, fps } = comp;
+  const totalFrames = Math.max(1, Math.round(comp.dur * fps));
+  const frameUs = 1e6 / fps;
+
+  let codec = 'vp09.00.10.08';   // VP9 profile 0 level 1.0 8-bit
+  const config = { width, height, bitrate: 12_000_000, framerate: fps };
+  if (!(await VideoEncoder.isConfigSupported({ codec, ...config })).supported)
+    codec = 'vp8';
+  const muxer = new WebMMuxer({
+    target: new ArrayBufferTarget(),
+    video: { codec: codec === 'vp8' ? 'V_VP8' : 'V_VP9', width, height, frameRate: fps },
+  });
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => { job.error = e; job.cancel = true; },
+  });
+  encoder.configure({ codec, ...config });
+
+  for (let f = 0; f < totalFrames && !job.cancel; f++) {
+    const t = f / fps;
+    tCur = t;
+    const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
+    await seekMediaExact(t, activeMedia);
+    uploadMediaFrames(t, activeMedia);
+    compositeFrame(t);
+    await syncFxChainSettled(t);
+    applyParams(t);
+    fx.render(null, t);
+    // Snapshot synchronously after render() — the WebGPU canvas only holds
+    // this frame until the current task yields.
+    const frame = new VideoFrame(canvas, {
+      timestamp: Math.round(f * frameUs),
+      duration: Math.round(frameUs),
+    });
+    encoder.encode(frame, { keyFrame: f % (2 * fps) === 0 });
+    frame.close();
+    // No setTimeout anywhere in this loop: Chrome throttles timers to ~1/s
+    // in occluded/background windows, which turns a 4s render into minutes.
+    // Event- and message-based waits are exempt, so an offline render keeps
+    // full speed even with the tab in the background.
+    while (encoder.encodeQueueSize > 8)
+      await new Promise((r) => encoder.addEventListener('dequeue', r, { once: true }));
+    if (f % 8 === 0) {
+      setStatus(`rendering frame ${f + 1}/${totalFrames}…`);
+      timeline.updatePlayhead();
+      await nextTask();   // let the UI paint
+    }
+  }
+
+  if (job.error) { try { encoder.close(); } catch {} throw job.error; }
+  if (job.cancel) { try { encoder.close(); } catch {} return null; }
+  await encoder.flush();
+  encoder.close();
+  muxer.finalize();
+  return new Blob([muxer.target.buffer], { type: 'video/webm' });
 }
 
 boot();
