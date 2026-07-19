@@ -3741,7 +3741,8 @@ async function runOfflineRender() {
     if (blob) {
       saveBlob(blob, 'slangfx-comp.webm');
       const secs = ((performance.now() - started) / 1000).toFixed(1);
-      setStatus(`render saved — ${comp.dur}s comp in ${secs}s (video only; use Record for audio)`);
+      setStatus(`render saved — ${comp.dur}s comp in ${secs}s`
+        + (job.hasAudio ? '' : ' (comp has no audio)'));
     } else {
       setStatus('render cancelled');
     }
@@ -3814,10 +3815,121 @@ async function syncFxChainSettled(t) {
   }
 }
 
+const AUDIO_SR = 48000;   // Opus native rate
+
+/* Mix the comp's audio offline: every audible video clip becomes a buffer
+ * source in an OfflineAudioContext, with clip trim/looping matching
+ * syncMedia and the clip's Volume keyframes baked into gain automation.
+ * Preview-only master volume/mute is deliberately NOT baked — a muted
+ * preview should not produce a silent export. Returns null when the comp
+ * has no decodable audio. */
+async function renderCompAudio() {
+  const entries = [];
+  for (const track of comp.tracks) {
+    if (track.hidden || track.muted) continue;
+    for (const clip of track.clips) {
+      if (clip.kind !== 'media' || clip.start >= comp.dur) continue;
+      const asset = assets.get(clip.assetId);
+      if (asset?.kind === 'video' && asset.ready) entries.push({ clip, asset });
+    }
+  }
+  if (!entries.length) return null;
+
+  // decodeAudioData demuxes the audio stream straight out of the video
+  // container; a video with no audio track simply rejects.
+  const buffers = new Map();
+  for (const { asset } of entries) {
+    if (buffers.has(asset.id)) continue;
+    try {
+      const file = await idbGet(`asset:${asset.id}`);
+      const decodeCtx = new OfflineAudioContext(2, 1, AUDIO_SR);
+      buffers.set(asset.id, await decodeCtx.decodeAudioData(await file.arrayBuffer()));
+    } catch (e) {
+      console.warn(`slangfx: no audio for '${asset.name}':`, e);
+      buffers.set(asset.id, null);
+    }
+  }
+  if (![...buffers.values()].some(Boolean)) return null;
+
+  const ctx = new OfflineAudioContext(2, Math.ceil(comp.dur * AUDIO_SR), AUDIO_SR);
+  for (const { clip, asset } of entries) {
+    const buf = buffers.get(asset.id);
+    if (!buf) continue;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;   // clips longer than their source wrap, like syncMedia
+    const gain = ctx.createGain();
+    src.connect(gain).connect(ctx.destination);
+    const start = clip.start;
+    const len = Math.min(clipEnd(clip), comp.dur) - start;
+    if (len <= 0) continue;
+    const vol = (tc) => (clip.props.volume
+      ? clamp(evalProp(clip.props.volume, tc) / 100, 0, 1) : 1);
+    gain.gain.setValueAtTime(vol(0), start);
+    if (clip.props.volume?.anim && clip.props.volume.keys.length) {
+      // Bake the eased keyframe curve as per-frame linear ramps.
+      const step = 1 / comp.fps;
+      for (let tc = step; tc <= len + 1e-9; tc += step)
+        gain.gain.linearRampToValueAtTime(vol(tc), start + tc);
+    }
+    const offset = buf.duration > 0.02
+      ? ((clip.in % buf.duration) + buf.duration) % buf.duration : 0;
+    src.start(start, offset);
+    src.stop(start + len);
+  }
+  return ctx.startRendering();
+}
+
+/** Encode a rendered AudioBuffer to Opus chunks straight into the muxer. */
+async function encodeAudioTrack(muxer, buf, job) {
+  const enc = new AudioEncoder({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: (e) => { job.error = e; job.cancel = true; },
+  });
+  enc.configure({
+    codec: 'opus',
+    sampleRate: buf.sampleRate,
+    numberOfChannels: buf.numberOfChannels,
+    bitrate: 128_000,
+  });
+  const CH = buf.numberOfChannels;
+  const CHUNK = 9600;   // 200ms at 48k
+  for (let off = 0; off < buf.length && !job.cancel; off += CHUNK) {
+    const n = Math.min(CHUNK, buf.length - off);
+    const data = new Float32Array(n * CH);
+    for (let c = 0; c < CH; c++)
+      data.set(buf.getChannelData(c).subarray(off, off + n), c * n);
+    const ad = new AudioData({
+      format: 'f32-planar',
+      sampleRate: buf.sampleRate,
+      numberOfFrames: n,
+      numberOfChannels: CH,
+      timestamp: Math.round(off / buf.sampleRate * 1e6),
+      data,
+    });
+    enc.encode(ad);
+    ad.close();
+    while (enc.encodeQueueSize > 16)
+      await new Promise((r) => enc.addEventListener('dequeue', r, { once: true }));
+  }
+  await enc.flush();
+  enc.close();
+}
+
 async function renderCompOffline(job) {
   const { width, height, fps } = comp;
   const totalFrames = Math.max(1, Math.round(comp.dur * fps));
   const frameUs = 1e6 / fps;
+
+  setStatus('rendering audio…');
+  let audioBuf = null;
+  if (typeof AudioEncoder !== 'undefined') {
+    try {
+      audioBuf = await renderCompAudio();
+    } catch (e) {
+      console.warn('slangfx: offline audio mix failed, rendering video only:', e);
+    }
+  }
 
   let codec = 'vp09.00.10.08';   // VP9 profile 0 level 1.0 8-bit
   const config = { width, height, bitrate: 12_000_000, framerate: fps };
@@ -3826,12 +3938,20 @@ async function renderCompOffline(job) {
   const muxer = new WebMMuxer({
     target: new ArrayBufferTarget(),
     video: { codec: codec === 'vp8' ? 'V_VP8' : 'V_VP9', width, height, frameRate: fps },
+    ...(audioBuf ? {
+      audio: { codec: 'A_OPUS', numberOfChannels: audioBuf.numberOfChannels, sampleRate: audioBuf.sampleRate },
+    } : {}),
   });
+  if (audioBuf) {
+    await encodeAudioTrack(muxer, audioBuf, job);
+    if (job.error) throw job.error;
+  }
   const encoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => { job.error = e; job.cancel = true; },
   });
   encoder.configure({ codec, ...config });
+  job.hasAudio = !!audioBuf;
 
   for (let f = 0; f < totalFrames && !job.cancel; f++) {
     const t = f / fps;
