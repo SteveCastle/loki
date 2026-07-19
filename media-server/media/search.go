@@ -336,9 +336,10 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 		}
 		return "m.transcript " + op + " ?", []interface{}{val}
 	case "filetype":
-		// filetype:video / filetype:image — classify by path extension so batch
-		// jobs (e.g. transcription) can target only the media kind they can
-		// process. Extension lists mirror tasks' isMediaFile / transcript sets.
+		// filetype:video / filetype:audio / filetype:image — classify by path
+		// extension so batch jobs (e.g. transcription) can target only the media
+		// kinds they can process. Extension lists mirror tasks' isMediaFile /
+		// transcript sets.
 		exts := extensionsForFiletype(val)
 		if len(exts) == 0 {
 			return "1=0", nil
@@ -547,12 +548,15 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 }
 
 // extensionsForFiletype maps a filetype: query value to the path extensions it
-// covers. The video set mirrors what the transcript task can process; the image
-// set mirrors tasks' isMediaFile. Unknown values return nil (matches nothing).
+// covers. The video and audio sets mirror what the transcript task can process;
+// the image set mirrors tasks' isMediaFile. Unknown values return nil (matches
+// nothing).
 func extensionsForFiletype(val string) []string {
 	switch strings.ToLower(val) {
 	case "video":
 		return []string{".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv"}
+	case "audio":
+		return []string{".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus", ".wma", ".aiff", ".ape"}
 	case "image":
 		return []string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff"}
 	default:

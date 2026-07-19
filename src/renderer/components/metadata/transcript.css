@@ -82,6 +82,30 @@
   cursor: default;
 }
 
+/* Locate button — jumps to the cue at the current playback time. Blue on
+   hover to echo the active cue's accent; a left divider separates it from
+   the search prev/next pair. */
+.transcript-locate-btn {
+  margin-left: 0.35rem;
+  position: relative;
+  font-size: 0.75rem;
+}
+
+.transcript-locate-btn::before {
+  content: '';
+  position: absolute;
+  left: -0.4rem;
+  top: 3px;
+  bottom: 3px;
+  width: 1px;
+  background: #21262d;
+}
+
+.transcript-locate-btn:hover {
+  color: #79b8ff;
+  border-color: rgba(88, 166, 255, 0.45);
+}
+
 /* Per-substring highlight inside cue text. */
 .transcript-match {
   background: rgba(255, 215, 0, 0.28);

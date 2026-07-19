@@ -103,6 +103,12 @@ type Config struct {
 	// Download path for media files
 	DownloadPath string `json:"downloadPath"`
 
+	// Path to the user-supplied native-extractor definitions file (JSON DSL
+	// consumed by the ingest task's extractor registry). Empty means
+	// "extractors.json" relative to the server's working directory.
+	// Overridable via the LOWKEY_EXTRACTORS env var.
+	ExtractorsPath string `json:"extractorsPath,omitempty"`
+
 	// Active vision-inference backend. One of: "off", "ollama", "runpod".
 	// Drives the routing in tasks.callVisionLLM — provider-specific fields
 	// below (OllamaBaseURL/Model, RunPodEndpoint/APIKey) are only consulted
@@ -814,6 +820,9 @@ func applyEnvOverrides(c *Config) {
 	}
 	if v := os.Getenv("LOWKEY_DOWNLOAD_PATH"); v != "" {
 		c.DownloadPath = v
+	}
+	if v := os.Getenv("LOWKEY_EXTRACTORS"); v != "" {
+		c.ExtractorsPath = v
 	}
 	if v := os.Getenv("LOWKEY_OLLAMA_BASE_URL"); v != "" {
 		c.OllamaBaseURL = v

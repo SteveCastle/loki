@@ -51,11 +51,13 @@ func newStatsTestDeps(t *testing.T) *Dependencies {
 			t.Fatal(err)
 		}
 	}
-	// Two images (one described) and one video without a transcript.
+	// Two images (one described), one video and one audio file, both without
+	// a transcript.
 	if _, err := db.Exec(`INSERT INTO media (path, description) VALUES
 		('/lib/a.jpg', 'a photo'),
 		('/lib/b.jpg', NULL),
-		('/lib/c.mp4', NULL)`); err != nil {
+		('/lib/c.mp4', NULL),
+		('/lib/d.m4a', NULL)`); err != nil {
 		t.Fatal(err)
 	}
 	return &Dependencies{DB: db}
@@ -201,8 +203,8 @@ func TestStatsAPI_DeltaClampedToTotals(t *testing.T) {
 
 	applyStatsDelta(tasks.ProgressTranscript, 999)
 	out = getStats(t, deps)
-	videos := int(out["totalVideos"].(float64))
-	if got := int(out["videosWithTranscript"].(float64)); got != videos {
-		t.Fatalf("clamped videosWithTranscript = %d, want totalVideos (%d)", got, videos)
+	transcribable := int(out["totalTranscribable"].(float64))
+	if got := int(out["withTranscript"].(float64)); got != transcribable {
+		t.Fatalf("clamped withTranscript = %d, want totalTranscribable (%d)", got, transcribable)
 	}
 }

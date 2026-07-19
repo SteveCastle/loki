@@ -1809,7 +1809,9 @@
           statusEl: 'transcriptStatus',
           input: () =>
             'transcribe --query64=' +
-            b64('filetype:video AND (transcript:null OR transcript:"")'),
+            b64(
+              '(filetype:video OR filetype:audio) AND (transcript:null OR transcript:"")'
+            ),
         },
         autotag: {
           label: 'Auto-tagging',
@@ -2583,7 +2585,7 @@
         document.getElementById('heroVideos').textContent = fmt(s.totalVideos);
 
         setProgress('description', s.withDescription, s.totalMedia);
-        setProgress('transcript', s.videosWithTranscript, s.totalVideos);
+        setProgress('transcript', s.withTranscript, s.totalTranscribable);
         setProgress('autotag', s.withTags, s.totalMedia);
         setProgress('embed', s.withEmbedding, s.totalMedia);
         setProgress('faces', s.withFaceScan || 0, s.totalMedia);
@@ -2609,14 +2611,14 @@
           }
         }
 
-        // Transcript card: no videos → nothing to start
+        // Transcript card: no videos or audio → nothing to start
         const transcriptBtn = document.querySelector(
           '.btn-run[data-card="transcript"]'
         );
         if (transcriptBtn && !transcriptBtn.classList.contains('btn-pause')) {
-          transcriptBtn.disabled = s.totalVideos === 0;
-          if (s.totalVideos === 0)
-            transcriptBtn.title = 'No videos in the library yet';
+          transcriptBtn.disabled = s.totalTranscribable === 0;
+          if (s.totalTranscribable === 0)
+            transcriptBtn.title = 'No videos or audio in the library yet';
         }
 
         // Model chips
@@ -2643,8 +2645,8 @@
           ratios.push(s.withHash / s.totalMedia);
           ratios.push(s.withDimensions / s.totalMedia);
         }
-        if (s.totalVideos > 0) {
-          ratios.push(s.videosWithTranscript / s.totalVideos);
+        if (s.totalTranscribable > 0) {
+          ratios.push(s.withTranscript / s.totalTranscribable);
         }
         if (ratios.length > 0) {
           const overall =

@@ -322,7 +322,7 @@ func gapsRemain(stats *statsAPIResponse, ops []string) bool {
 				return true
 			}
 		case "transcribe":
-			if stats.VideosWithTranscript < stats.TotalVideos {
+			if stats.WithTranscript < stats.TotalTranscribable {
 				return true
 			}
 		case "autotag":

@@ -16,6 +16,9 @@ import (
 var (
 	imageExts = []string{".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".heic"}
 	videoExts = []string{".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv"}
+	// audioExts mirrors isMediaFile's audio set (queries.go) — everything
+	// faster-whisper can decode through ffmpeg, so all of it is transcribable.
+	audioExts = []string{".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus", ".wma", ".aiff", ".ape"}
 )
 
 // registerBuiltinItemOps installs the built-in per-item operations. Called at
@@ -35,7 +38,7 @@ func registerBuiltinItemOps() {
 	RegisterItemOp(ItemOp{
 		ID:      "transcribe",
 		Name:    "Transcript",
-		Applies: extAppliesFn(videoExts...),
+		Applies: extAppliesFn(append(append([]string{}, videoExts...), audioExts...)...),
 		Prepare: prepareTranscribeOp,
 	})
 

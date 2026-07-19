@@ -71,9 +71,9 @@ func TestWantRun(t *testing.T) {
 
 func TestGapsRemain(t *testing.T) {
 	full := &statsAPIResponse{
-		TotalMedia: 10, TotalVideos: 2,
+		TotalMedia: 10, TotalVideos: 2, TotalAudio: 1, TotalTranscribable: 3,
 		WithHash: 10, WithSize: 10, WithDimensions: 10, WithDescription: 10,
-		WithTags: 10, WithEmbedding: 10, WithFaceScan: 10, VideosWithTranscript: 2,
+		WithTags: 10, WithEmbedding: 10, WithFaceScan: 10, WithTranscript: 3,
 	}
 	if gapsRemain(full, autoOpsDefault) {
 		t.Error("fully covered library must report no gaps")

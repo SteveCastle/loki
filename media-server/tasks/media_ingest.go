@@ -145,6 +145,8 @@ func queueFollowUpTasks(q *jobqueue.Queue, jobID string, files []string, opts In
 // It routes to the appropriate handler based on input type:
 // - Local file paths: scans directories for media files
 // - YouTube URLs: uses yt-dlp to download
+// - URLs matching a registered native extractor: downloaded in Go with no
+//   external dependency (see ingest_media.go)
 // - Other HTTP URLs: uses gallery-dl to download
 //
 // Supported arguments:
@@ -170,6 +172,9 @@ func ingestTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		if isDiscordURL(input) {
 			return ingestDiscordTaskWithOptions(j, q, mu, opts)
+		}
+		if ext := findMediaExtractor(input); ext != nil {
+			return ingestMediaTaskWithOptions(j, q, mu, opts, ext)
 		}
 		return ingestGalleryTaskWithOptions(j, q, mu, opts)
 	default:

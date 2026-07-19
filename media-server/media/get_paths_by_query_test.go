@@ -123,8 +123,9 @@ func TestGetPathsByQuery_WildcardPathIsRecursive(t *testing.T) {
 	}
 }
 
-// seedMixedMedia inserts videos and images in various transcript states so the
-// filetype/transcript predicates the home page emits can be pinned.
+// seedMixedMedia inserts videos, audio, and images in various transcript
+// states so the filetype/transcript predicates the home page emits can be
+// pinned.
 func seedMixedMedia(t *testing.T, db *sql.DB) {
 	t.Helper()
 	rows := []struct {
@@ -134,6 +135,7 @@ func seedMixedMedia(t *testing.T, db *sql.DB) {
 		{"/lib/talk.MP4", nil},          // video, no transcript (uppercase ext)
 		{"/lib/clip.webm", ""},          // video, empty transcript
 		{"/lib/done.mkv", "WEBVTT ..."}, // video, transcribed
+		{"/lib/voice.m4a", nil},         // audio, no transcript
 		{"/lib/photo.jpg", nil},         // image — never a transcript target
 	}
 	for _, r := range rows {
@@ -160,26 +162,42 @@ func TestGetPathsByQuery_FiletypeVideo(t *testing.T) {
 		t.Fatalf("filetype:video matched %d paths, want 3 (%v)", len(paths), paths)
 	}
 	for _, p := range paths {
-		if p == "/lib/photo.jpg" {
-			t.Fatalf("filetype:video matched an image: %v", paths)
+		if p == "/lib/photo.jpg" || p == "/lib/voice.m4a" {
+			t.Fatalf("filetype:video matched a non-video: %v", paths)
 		}
 	}
 }
 
+// TestGetPathsByQuery_FiletypeAudio pins the filetype:audio predicate the
+// transcript card relies on now that the transcribe op covers audio.
+func TestGetPathsByQuery_FiletypeAudio(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	seedMixedMedia(t, db)
+
+	paths, err := GetPathsByQuery(db, "filetype:audio")
+	if err != nil {
+		t.Fatalf("GetPathsByQuery() error = %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "/lib/voice.m4a" {
+		t.Fatalf("filetype:audio matched %v, want only /lib/voice.m4a", paths)
+	}
+}
+
 // TestGetPathsByQuery_TranscriptTargeting pins the exact query the home page's
-// Transcripts card emits: videos that still need a transcript — NULL or empty
-// column — and nothing else. Before the transcript/filetype predicates existed,
-// unknown keys compiled to 1=1 and this selected the entire library.
+// Transcripts card emits: videos and audio that still need a transcript — NULL
+// or empty column — and nothing else. Before the transcript/filetype predicates
+// existed, unknown keys compiled to 1=1 and this selected the entire library.
 func TestGetPathsByQuery_TranscriptTargeting(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	seedMixedMedia(t, db)
 
-	paths, err := GetPathsByQuery(db, `filetype:video AND (transcript:null OR transcript:"")`)
+	paths, err := GetPathsByQuery(db, `(filetype:video OR filetype:audio) AND (transcript:null OR transcript:"")`)
 	if err != nil {
 		t.Fatalf("GetPathsByQuery() error = %v", err)
 	}
-	want := map[string]bool{"/lib/talk.MP4": true, "/lib/clip.webm": true}
+	want := map[string]bool{"/lib/talk.MP4": true, "/lib/clip.webm": true, "/lib/voice.m4a": true}
 	if len(paths) != len(want) {
 		t.Fatalf("transcript targeting matched %d paths, want %d (%v)", len(paths), len(want), paths)
 	}
@@ -272,12 +290,12 @@ func TestGetPathsByQuery_FiletypeUnknownMatchesNothing(t *testing.T) {
 	defer db.Close()
 	seedMixedMedia(t, db)
 
-	paths, err := GetPathsByQuery(db, "filetype:audio")
+	paths, err := GetPathsByQuery(db, "filetype:document")
 	if err != nil {
 		t.Fatalf("GetPathsByQuery() error = %v", err)
 	}
 	if len(paths) != 0 {
-		t.Fatalf("filetype:audio matched %d paths, want 0 (%v)", len(paths), paths)
+		t.Fatalf("filetype:document matched %d paths, want 0 (%v)", len(paths), paths)
 	}
 }
 

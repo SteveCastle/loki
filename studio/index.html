@@ -32,7 +32,45 @@
       <img src="./studio-icon.png" alt="Studio">
       <span>Studio</span>
     </a>
+    <div class="site-badges">
+      <a href="https://github.com/SteveCastle/loki" target="_blank" rel="noopener"
+         class="site-badge" title="Star Lowkey on GitHub">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+        </svg>
+        <span id="gh-stars">GitHub</span>
+      </a>
+      <a href="https://www.patreon.com/c/lowkeyviewer" target="_blank" rel="noopener"
+         class="site-badge patreon" title="Support Lowkey on Patreon">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <rect x="2" y="3" width="4.5" height="18" rx="0.5"/>
+          <circle cx="15.5" cy="10.5" r="7.5"/>
+        </svg>
+        <span>Patreon</span>
+      </a>
+    </div>
   </nav>
+  <script>
+    // GitHub star badge — live count, cached an hour to stay clear of the
+    // anonymous API rate limit. Falls back to the plain "GitHub" label.
+    (async () => {
+      const el = document.getElementById('gh-stars');
+      const KEY = 'lowkey-studio.gh-stars';
+      const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, '') + 'k' : String(n);
+      let cached = null;
+      try { cached = JSON.parse(localStorage.getItem(KEY)); } catch {}
+      if (cached) el.textContent = '★ ' + fmt(cached.stars);
+      if (cached && Date.now() - cached.at < 36e5) return;
+      try {
+        const res = await fetch('https://api.github.com/repos/SteveCastle/loki');
+        if (!res.ok) return;
+        const stars = (await res.json()).stargazers_count;
+        if (typeof stars !== 'number') return;
+        localStorage.setItem(KEY, JSON.stringify({ stars, at: Date.now() }));
+        el.textContent = '★ ' + fmt(stars);
+      } catch { /* offline — keep whatever's shown */ }
+    })();
+  </script>
   <header>
     <h1><img src="./studio-icon.png" class="app-icon" alt="">Lowkey <span class="accent">Studio</span> <span class="tag">shader compositor / WebGPU</span></h1>
     <div class="toolbar">

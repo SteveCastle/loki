@@ -60,7 +60,7 @@ function highlightMatches(
   return <>{parts}</>;
 }
 
-function convertVTTTimestampToSeconds(timestamp: string) {
+export function convertVTTTimestampToSeconds(timestamp: string) {
   const [minutes, seconds] = timestamp.split(':');
   return parseInt(minutes) * 60 + parseFloat(seconds);
 }

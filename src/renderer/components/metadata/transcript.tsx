@@ -6,7 +6,7 @@ import { transcript as transcriptApi } from '../../platform';
 import { GlobalStateContext } from '../../state';
 import filter from '../../filter';
 import { VttCue } from 'main/parse-vtt';
-import { Cue } from './cue';
+import { Cue, convertVTTTimestampToSeconds } from './cue';
 import GenerateTranscript from './generate-transcript';
 import './transcript.css';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
@@ -102,6 +102,17 @@ export default function Transcript() {
 
   const currentMatchCueIndex = matches[matchIndex];
 
+  // Scroll a cue element into the middle of the panel's viewport.
+  const centerCueElement = (el: HTMLElement) => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const target =
+      container.scrollTop + (elRect.top - containerRect.top) - container.clientHeight / 2 + el.clientHeight / 2;
+    container.scrollTo({ top: target, behavior: 'smooth' });
+  };
+
   // Scroll the current match cue into the middle of the viewport. Uses a
   // data attribute lookup rather than per-cue refs so we don't have to
   // thread a ref array through the Cue component.
@@ -112,18 +123,40 @@ export default function Transcript() {
   // as more characters are added.
   useEffect(() => {
     if (!searchQuery || currentMatchCueIndex == null) return;
-    const container = scrollRef.current;
-    if (!container) return;
-    const el = container.querySelector(
+    const el = scrollRef.current?.querySelector(
       `[data-cue-index="${currentMatchCueIndex}"]`
     ) as HTMLElement | null;
-    if (!el) return;
-    const containerRect = container.getBoundingClientRect();
-    const elRect = el.getBoundingClientRect();
-    const target =
-      container.scrollTop + (elRect.top - containerRect.top) - container.clientHeight / 2 + el.clientHeight / 2;
-    container.scrollTo({ top: target, behavior: 'smooth' });
+    if (el) centerCueElement(el);
   }, [currentMatchCueIndex, searchQuery]);
+
+  // Jump back to the cue at the current playback time. The active cue
+  // already carries the .active class (the Cue computes it), so target
+  // that; when playback sits between cues, fall back to the last cue
+  // starting at or before the current time.
+  const scrollToActiveCue = () => {
+    const container = scrollRef.current;
+    if (!container || !transcript?.length) return;
+    let el = container.querySelector(
+      'li.cue-container.active'
+    ) as HTMLElement | null;
+    if (!el) {
+      let index = 0;
+      for (let i = 0; i < transcript.length; i++) {
+        if (
+          convertVTTTimestampToSeconds(transcript[i].startTime) <=
+          actualVideoTime
+        ) {
+          index = i;
+        } else {
+          break;
+        }
+      }
+      el = container.querySelector(
+        `[data-cue-index="${index}"]`
+      ) as HTMLElement | null;
+    }
+    if (el) centerCueElement(el);
+  };
 
   const goNext = () => {
     if (matches.length === 0) return;
@@ -239,6 +272,15 @@ export default function Transcript() {
           title="Next match (Enter)"
         >
           ▼
+        </button>
+        <button
+          type="button"
+          className="transcript-search-nav transcript-locate-btn"
+          onClick={scrollToActiveCue}
+          aria-label="Scroll to current time"
+          title="Scroll to the cue at the current playback time"
+        >
+          ◉
         </button>
       </div>
       {/* Top action bar with regenerate + insert buttons when transcript exists */}

@@ -18,8 +18,9 @@ import (
 //   GET /api/stats — media totals plus per-metadata-type completion counts.
 //
 // Powers the home page's metadata-coverage cards. Transcript coverage is
-// counted against videos only (the transcript task skips everything else), and
-// embedding coverage is counted against the active embedding model.
+// counted against videos and audio files only (the transcript task skips
+// everything else), and embedding coverage is counted against the active
+// embedding model.
 //
 // On multi-million-item libraries a full recount takes tens of seconds (the
 // tag-coverage count alone walks a media_tag_by_category index with 10M+
@@ -37,12 +38,17 @@ import (
 // re-runs, items deleted mid-job) and resets them.
 // -----------------------------------------------------------------------------
 
-// videoExtCase is a SQL boolean expression matching media rows whose path has
-// a video extension the transcript task can process (see
-// tasks/metadata_ops.go). SUBSTR comparison is used instead of LIKE — it is
-// several times cheaper per row, which matters when the expression runs
+// videoExtCase / audioExtCase are SQL boolean expressions matching media rows
+// whose path has a video or audio extension the transcript task can process
+// (see tasks/ops_metadata.go). SUBSTR comparison is used instead of LIKE — it
+// is several times cheaper per row, which matters when the expression runs
 // against every row of a large media table.
-const videoExtCase = `(LOWER(SUBSTR(path, -4)) IN ('.mp4', '.mov', '.avi', '.mkv', '.wmv') OR LOWER(SUBSTR(path, -5)) = '.webm')`
+const (
+	videoExtCase = `(LOWER(SUBSTR(path, -4)) IN ('.mp4', '.mov', '.avi', '.mkv', '.wmv') OR LOWER(SUBSTR(path, -5)) = '.webm')`
+	audioExtCase = `(LOWER(SUBSTR(path, -4)) IN ('.mp3', '.wav', '.aac', '.ogg', '.m4a', '.wma', '.ape') OR LOWER(SUBSTR(path, -5)) IN ('.flac', '.opus', '.aiff'))`
+	// transcribableExtCase is the transcript task's full eligibility set.
+	transcribableExtCase = `(` + videoExtCase + ` OR ` + audioExtCase + `)`
+)
 
 // statsBroadcastInterval coalesces per-item progress notifications into at
 // most one SSE "stats" event per tick — tasks can complete hundreds of items
@@ -60,16 +66,19 @@ type statsAPIResponse struct {
 
 	TotalMedia  int `json:"totalMedia"`
 	TotalVideos int `json:"totalVideos"`
+	TotalAudio  int `json:"totalAudio"`
 	TotalImages int `json:"totalImages"`
+	// TotalTranscribable is the transcript card's denominator: videos + audio.
+	TotalTranscribable int `json:"totalTranscribable"`
 
-	WithDescription      int `json:"withDescription"`
-	WithHash             int `json:"withHash"`
-	WithSize             int `json:"withSize"`
-	WithTags             int `json:"withTags"`
-	WithDimensions       int `json:"withDimensions"`
-	VideosWithTranscript int `json:"videosWithTranscript"`
-	WithEmbedding        int `json:"withEmbedding"`
-	WithFaceScan         int `json:"withFaceScan"`
+	WithDescription int `json:"withDescription"`
+	WithHash        int `json:"withHash"`
+	WithSize        int `json:"withSize"`
+	WithTags        int `json:"withTags"`
+	WithDimensions  int `json:"withDimensions"`
+	WithTranscript  int `json:"withTranscript"`
+	WithEmbedding   int `json:"withEmbedding"`
+	WithFaceScan    int `json:"withFaceScan"`
 
 	AutotagModel statsModelInfo `json:"autotagModel"`
 	EmbedModel   statsModelInfo `json:"embedModel"`
@@ -83,7 +92,7 @@ func (s *statsAPIResponse) addProgress(kind string, n int) {
 	case tasks.ProgressDescription:
 		s.WithDescription += n
 	case tasks.ProgressTranscript:
-		s.VideosWithTranscript += n
+		s.WithTranscript += n
 	case tasks.ProgressHash:
 		s.WithHash += n
 	case tasks.ProgressSize:
@@ -115,7 +124,7 @@ func (s *statsAPIResponse) clamp() {
 	capTo(&s.WithDimensions, s.TotalMedia)
 	capTo(&s.WithEmbedding, s.TotalMedia)
 	capTo(&s.WithFaceScan, s.TotalMedia)
-	capTo(&s.VideosWithTranscript, s.TotalVideos)
+	capTo(&s.WithTranscript, s.TotalTranscribable)
 }
 
 var libStats struct {
@@ -261,20 +270,22 @@ func computeLibraryStats(deps *Dependencies) {
         SELECT
             COUNT(*),
             COALESCE(SUM(CASE WHEN `+videoExtCase+` THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN `+audioExtCase+` THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN description IS NOT NULL AND TRIM(description) <> '' THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN hash IS NOT NULL AND TRIM(hash) <> '' THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN size IS NOT NULL THEN 1 ELSE 0 END), 0),
             COALESCE(SUM(CASE WHEN width IS NOT NULL AND height IS NOT NULL THEN 1 ELSE 0 END), 0),
-            COALESCE(SUM(CASE WHEN `+videoExtCase+` AND transcript IS NOT NULL AND TRIM(transcript) <> '' THEN 1 ELSE 0 END), 0)
+            COALESCE(SUM(CASE WHEN `+transcribableExtCase+` AND transcript IS NOT NULL AND TRIM(transcript) <> '' THEN 1 ELSE 0 END), 0)
         FROM media
     `).Scan(
 		&data.TotalMedia,
 		&data.TotalVideos,
+		&data.TotalAudio,
 		&data.WithDescription,
 		&data.WithHash,
 		&data.WithSize,
 		&data.WithDimensions,
-		&data.VideosWithTranscript,
+		&data.WithTranscript,
 	)
 	if err != nil {
 		log.Printf("stats: media scan failed: %v", err)
@@ -320,7 +331,8 @@ func computeLibraryStats(deps *Dependencies) {
 	}
 
 	faceModel := tasks.ActiveFaceModel()
-	data.TotalImages = data.TotalMedia - data.TotalVideos
+	data.TotalImages = data.TotalMedia - data.TotalVideos - data.TotalAudio
+	data.TotalTranscribable = data.TotalVideos + data.TotalAudio
 	data.AutotagModel = statsModelInfo{ID: taggerModel.ID, Name: taggerModel.DisplayName}
 	data.EmbedModel = statsModelInfo{ID: embedModel.ID, Name: embedModel.DisplayName}
 	data.FaceModel = statsModelInfo{ID: faceModel.ID, Name: faceModel.DisplayName}
