@@ -248,11 +248,16 @@ function refreshDropHint() {
  * Playback clock + per-frame render
  * =================================================================== */
 
+let scrubUntil = 0;   // paused setTime marks a short scrub window
+
 function setTime(t) {
   tCur = clamp(quantize(t, comp.fps), 0, comp.dur);
   if (playing) clock = { perf: performance.now(), t: tCur };
+  else scrubUntil = performance.now() + 150;
   timeline?.updatePlayhead();
 }
+
+const isScrubbing = () => !playing && performance.now() < scrubUntil;
 
 function togglePlay() { playing ? pause() : play(); }
 
@@ -328,6 +333,7 @@ function syncMedia(t, activeMedia) {
     const src = clip.in + (t - clip.start);
     const len = asset.duration ?? 0;
     const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+    let proxyScrub = false;
     if (playing) {
       if (el.paused) {
         el.currentTime = desired;
@@ -340,10 +346,36 @@ function syncMedia(t, activeMedia) {
       }
     } else {
       if (!el.paused) el.pause();
-      if (!el.seeking && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
-        el.currentTime = desired;
+      if (!asset._seekedHook) {
+        asset._seekedHook = true;
+        // Upload the moment a seek lands (the per-tick poll below can be a
+        // frame late) and clear the latest-wins target.
+        el.addEventListener('seeked', () => {
+          asset._seekTarget = null;
+          if (asset.ready && el.readyState >= 2) uploadVideoFrame(asset);
+        });
+      }
+      const scrubbing = isScrubbing();
+      const proxyOk = scrubbing && proxiesEnabled;
+      if (proxyOk) ensureScrubProxy(asset);
+      if (proxyOk && asset.proxyEl?.readyState >= 2) {
+        // Scrub against the all-intra proxy — its seeks land in
+        // milliseconds. The full-res element stays put; once the scrub
+        // settles the branch below re-seeks it and its 'seeked' upload
+        // sharpens the frame.
+        proxyScrub = true;
+        scrubProxyTo(asset, desired);
+      } else if (Math.abs(el.currentTime - desired) > 0.5 / comp.fps) {
+        // Latest-wins: while scrubbing, retargeting mid-seek cancels the
+        // stale seek instead of queueing behind it.
+        const tgt = asset._seekTarget;
+        if ((scrubbing || !el.seeking) && (tgt == null || Math.abs(tgt - desired) > 0.5 / comp.fps)) {
+          asset._seekTarget = desired;
+          el.currentTime = desired;
+        }
+      }
     }
-    if (el.readyState >= 2) uploadVideoFrame(asset);
+    if (!proxyScrub && el.readyState >= 2) uploadVideoFrame(asset);
   }
   for (const asset of assets.values())
     if (asset.kind === 'video' && asset.ready && !used.has(asset.id) && !asset.el.paused)
@@ -370,24 +402,159 @@ function syncGifFrame(asset, clip, t) {
  * rejection all video uploads reroute through a 2D scratch canvas. */
 let videoNeedsCanvasHop = false;
 
-function uploadVideoFrame(asset) {
-  if (!videoNeedsCanvasHop) {
+function uploadVideoFrame(asset, sourceEl = asset.el, scale = false) {
+  if (!videoNeedsCanvasHop && !scale) {
     try {
       fx.device.queue.copyExternalImageToTexture(
-        { source: asset.el }, { texture: asset.texture }, [asset.w, asset.h]);
+        { source: sourceEl }, { texture: asset.texture }, [asset.w, asset.h]);
       return;
     } catch (e) {
       if (!(e instanceof TypeError)) return;   // frame not ready
       videoNeedsCanvasHop = true;
     }
   }
+  // Canvas hop: Firefox video uploads, and proxy frames that need scaling
+  // up to the asset's full-res texture.
   const c = (asset.scratch ??= new OffscreenCanvas(asset.w, asset.h));
   const ctx2d = (asset.scratchCtx ??= c.getContext('2d'));
-  ctx2d.drawImage(asset.el, 0, 0, asset.w, asset.h);
+  ctx2d.drawImage(sourceEl, 0, 0, asset.w, asset.h);
   try {
     fx.device.queue.copyExternalImageToTexture(
       { source: c }, { texture: asset.texture }, [asset.w, asset.h]);
   } catch { /* frame not ready */ }
+}
+
+/* ---- scrub proxies ---------------------------------------------------
+ * Seeking long-GOP video decodes forward from the previous keyframe —
+ * often dozens of frames — so full-res scrubbing lags. Each video gets a
+ * low-res ALL-INTRA VP8 proxy (every frame a keyframe → seeks land in
+ * milliseconds), built once with WebCodecs at ~3x real time and cached in
+ * IndexedDB. While the playhead scrubs, the proxy feeds the asset texture;
+ * when it settles, the full-res seek sharpens the frame. */
+
+const PROXY_H = 720;
+const proxyKey = (asset) => `proxy:${PROXY_H}:${asset.id}`;   // height-versioned
+const PROXIES_KEY = 'lowkey-studio.scrub-proxies';
+let proxiesEnabled = localStorage.getItem(PROXIES_KEY) !== '0';
+let proxyQueue = Promise.resolve();   // builds run one at a time
+
+function setProxiesEnabled(on) {
+  proxiesEnabled = on;
+  try { localStorage.setItem(PROXIES_KEY, on ? '1' : '0'); } catch {}
+  setStatus(on
+    ? 'scrub proxies on — fast scrubbing, full-res sharpens on release'
+    : 'scrub proxies off — scrubbing shows full-res frames directly');
+}
+
+function ensureScrubProxy(asset) {
+  if (asset.kind !== 'video' || !asset.ready || asset.proxyState) return;
+  if ((asset.duration ?? 0) < 1) { asset.proxyState = 'unavailable'; return; }
+  if (typeof VideoEncoder === 'undefined'
+      || !('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+    asset.proxyState = 'unavailable';
+    return;
+  }
+  if (document.hidden) return;   // rVFC stalls hidden — retry on a later scrub
+  asset.proxyState = 'building';
+  proxyQueue = proxyQueue.then(async () => {
+    try {
+      let blob = await idbGet(proxyKey(asset)).catch(() => null);
+      if (!blob) {
+        blob = await transcodeScrubProxy(asset);
+        idbSet(proxyKey(asset), blob).catch(() => {});
+      }
+      attachScrubProxy(asset, blob);
+    } catch (e) {
+      console.warn(`slangfx: scrub proxy failed for '${asset.name}':`, e);
+      asset.proxyState = 'unavailable';
+    }
+  });
+}
+
+function attachScrubProxy(asset, blob) {
+  const el = document.createElement('video');
+  el.muted = true;
+  el.preload = 'auto';
+  el.src = URL.createObjectURL(blob);
+  el.addEventListener('seeked', () => {
+    if (asset.ready && el.readyState >= 2 && isScrubbing())
+      uploadVideoFrame(asset, el, true);
+  });
+  $('media-pool').appendChild(el);
+  asset.proxyEl = el;
+  asset.proxyState = 'ready';
+}
+
+function scrubProxyTo(asset, desired) {
+  const p = asset.proxyEl;
+  const d = Math.min(desired, Number.isFinite(p.duration) ? p.duration : desired);
+  if (asset._proxyTarget != null && Math.abs(asset._proxyTarget - d) < 1e-3) return;
+  asset._proxyTarget = d;
+  p.currentTime = d;   // all-intra: retargeting mid-seek is nearly free
+}
+
+async function transcodeScrubProxy(asset) {
+  const src = document.createElement('video');
+  src.muted = true;
+  src.preload = 'auto';
+  src.src = asset.url;
+  await new Promise((res, rej) => {
+    const timer = setTimeout(() => rej(new Error('metadata timeout')), 12_000);
+    src.onloadedmetadata = () => { clearTimeout(timer); res(); };
+    src.onerror = () => { clearTimeout(timer); rej(new Error('open failed')); };
+  });
+  const scale = Math.min(1, PROXY_H / src.videoHeight);
+  const w = Math.max(2, Math.round((src.videoWidth * scale) / 2) * 2);
+  const h = Math.max(2, Math.round((src.videoHeight * scale) / 2) * 2);
+  const muxer = new WebMMuxer({
+    target: new ArrayBufferTarget(),
+    video: { codec: 'V_VP8', width: w, height: h },
+  });
+  let encError = null;
+  const enc = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => { encError = e; },
+  });
+  enc.configure({ codec: 'vp8', width: w, height: h, bitrate: 8_000_000, latencyMode: 'realtime' });
+  const cnv = new OffscreenCanvas(w, h);
+  const c2 = cnv.getContext('2d');
+  let last = -1;
+  await new Promise((res, rej) => {
+    // Watchdog so a wedged decode (or a window hidden mid-build, which
+    // stops rVFC) can't hang the proxy queue forever.
+    let watchdog = setTimeout(() => rej(new Error('transcode stalled')), 20_000);
+    const kick = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => rej(new Error('transcode stalled')), 20_000);
+    };
+    const pump = (_now, meta) => {
+      if (encError) return rej(encError);
+      kick();
+      if (meta.mediaTime > last + 1e-4 && enc.encodeQueueSize < 12) {
+        last = meta.mediaTime;
+        c2.drawImage(src, 0, 0, w, h);
+        const frame = new VideoFrame(cnv, { timestamp: Math.round(meta.mediaTime * 1e6) });
+        enc.encode(frame, { keyFrame: true });   // all-intra
+        frame.close();
+      }
+      if (!src.ended) src.requestVideoFrameCallback(pump);
+    };
+    src.onended = () => { clearTimeout(watchdog); res(); };
+    src.onerror = () => { clearTimeout(watchdog); rej(new Error('decode error')); };
+    src.requestVideoFrameCallback(pump);
+    src.playbackRate = 3;   // dropped frames just thin the proxy slightly
+    src.play().catch(rej);
+  }).finally(() => {
+    src.pause();
+    src.removeAttribute('src');
+    src.load();
+    src.remove();
+  });
+  if (encError) throw encError;
+  await enc.flush();
+  enc.close();
+  muxer.finalize();
+  return new Blob([muxer.target.buffer], { type: 'video/webm' });
 }
 
 function drawForClip(clip, t) {
@@ -924,6 +1091,7 @@ async function importFiles(files, { t = null, trackIdx = null } = {}) {
       continue;
     }
     idbSet(`asset:${asset.id}`, file).catch(() => {});
+    if (asset.kind === 'video') ensureScrubProxy(asset);   // background build
 
     // The very first media item defines the comp size; anything after that
     // is scaled to fit inside the existing frame.
@@ -1504,6 +1672,11 @@ function saveProject() {
 function unloadAssets() {
   for (const a of assets.values()) {
     if (a.el) { a.el.pause(); a.el.remove(); }
+    if (a.proxyEl) {
+      a.proxyEl.pause();
+      try { URL.revokeObjectURL(a.proxyEl.src); } catch {}
+      a.proxyEl.remove();
+    }
     for (const f of a.frames ?? []) f.bitmap.close();
     a.texture?.destroy();
     try { URL.revokeObjectURL(a.url); } catch {}
@@ -1834,6 +2007,12 @@ $('btn-project').addEventListener('click', (e) => {
     { label: '✚ New project', action: () => newProject() },
     { label: projectName ? `Save '${projectName}'` : 'Save…', action: () => saveFlow(false) },
     { label: 'Save as…', action: () => saveFlow(true) },
+    '-',
+    {
+      label: '⚡ Scrub proxies',
+      checked: proxiesEnabled,
+      action: () => setProxiesEnabled(!proxiesEnabled),
+    },
   ];
   const idx = projectIndex();
   if (idx.length) {
