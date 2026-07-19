@@ -38,7 +38,8 @@ const inspectorEl = $('inspector');
 const addLayerSearch = $('add-layer-search');
 const addLayerList = $('add-layer-list');
 
-const VIDEO_EXTS = /\.(mp4|mov|mkv|webm|avi|m4v|gif)$/i;
+const VIDEO_EXTS = /\.(mp4|mov|mkv|webm|avi|m4v)$/i;
+const GIF_EXT = /\.gif$/i;
 const PROJECT_KEY = 'lowkey-studio.project.v2';
 const DEFAULT_VIDEO_DUR = 4;   // fallback when a video reports no duration
 
@@ -309,6 +310,21 @@ function syncMedia(t, activeMedia) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready) continue;
     used.add(asset.id);
+    if (asset.kind === 'gif') {
+      // A GIF is a pre-decoded frame strip, not a <video>: pick the loop
+      // frame for the clip's local time, upload only when it changes.
+      const src = clip.in + (t - clip.start);
+      const len = asset.duration || 1;
+      const local = ((src % len) + len) % len;
+      let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
+      if (idx < 0) idx = asset.frames.length - 1;
+      if (idx !== asset._frameIdx) {
+        asset._frameIdx = idx;
+        fx.device.queue.copyExternalImageToTexture(
+          { source: asset.frames[idx].bitmap }, { texture: asset.texture }, [asset.w, asset.h]);
+      }
+      continue;
+    }
     if (asset.kind !== 'video') continue;
     const el = asset.el;
     // Audio: master prefs × track mute × the clip's animated Volume.
@@ -728,11 +744,33 @@ const timelineHost = {
  * Media import + assets
  * =================================================================== */
 
+/** Decode every frame of an animated GIF up front (WebCodecs
+ * ImageDecoder — Chromium-only, which WebGPU already requires).
+ * Returns { frames: [{bitmap, start, dur}], dur } in seconds. */
+async function decodeGifFrames(file) {
+  const dec = new ImageDecoder({ data: await file.arrayBuffer(), type: 'image/gif' });
+  await dec.tracks.ready;
+  const count = dec.tracks.selectedTrack.frameCount;
+  const frames = [];
+  let t = 0;
+  for (let i = 0; i < count; i++) {
+    const { image } = await dec.decode({ frameIndex: i });
+    // VideoFrame.duration is µs; renderers clamp near-zero GIF delays.
+    const dur = Math.max((image.duration || 100_000) / 1e6, 0.02);
+    frames.push({ bitmap: await createImageBitmap(image), start: t, dur });
+    image.close();
+    t += dur;
+  }
+  dec.close();
+  return { frames, dur: t };
+}
+
 async function createAsset(file, id = null) {
-  const isVideo = file.type.startsWith('video/') || VIDEO_EXTS.test(file.name);
+  const isGif = file.type === 'image/gif' || GIF_EXT.test(file.name);
+  const isVideo = !isGif && (file.type.startsWith('video/') || VIDEO_EXTS.test(file.name));
   const asset = {
     id: id ?? uid('asset'),
-    kind: isVideo ? 'video' : 'image',
+    kind: isVideo ? 'video' : isGif ? 'gif' : 'image',
     name: file.name,
     file,
     url: URL.createObjectURL(file),
@@ -770,7 +808,29 @@ async function createAsset(file, id = null) {
     asset.duration = Number.isFinite(el.duration) ? el.duration : null;
     applyAudioPrefsTo(el);
     attachAudio(asset);
+  } else if (asset.kind === 'gif' && typeof ImageDecoder !== 'undefined') {
+    let decoded;
+    try {
+      decoded = await decodeGifFrames(file);
+    } catch (e) {
+      assets.delete(asset.id);
+      throw new Error(`could not decode ${file.name}`);
+    }
+    if (decoded.frames.length > 1) {
+      asset.frames = decoded.frames;
+      asset.duration = decoded.dur;
+      asset._frameIdx = 0;
+    } else {
+      asset.kind = 'image';               // single-frame GIF is just a still
+      asset.bitmap = decoded.frames[0].bitmap;
+    }
+    const first = decoded.frames[0].bitmap;
+    asset.w = first.width;
+    asset.h = first.height;
   } else {
+    // Plain images — and GIFs on the off chance ImageDecoder is missing,
+    // where createImageBitmap still yields the first frame as a still.
+    if (asset.kind === 'gif') asset.kind = 'image';
     const bitmap = await createImageBitmap(file);
     asset.w = bitmap.width;
     asset.h = bitmap.height;
@@ -784,14 +844,15 @@ async function createAsset(file, id = null) {
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
   });
   asset.view = asset.texture.createView();
-  if (asset.bitmap)
-    fx.device.queue.copyExternalImageToTexture({ source: asset.bitmap }, { texture: asset.texture }, [asset.w, asset.h]);
+  const firstFrame = asset.bitmap ?? asset.frames?.[0].bitmap;
+  if (firstFrame)
+    fx.device.queue.copyExternalImageToTexture({ source: firstFrame }, { texture: asset.texture }, [asset.w, asset.h]);
   asset.ready = true;
   return asset;
 }
 
 async function importFiles(files, { t = null, trackIdx = null } = {}) {
-  const media = [...files].filter((f) => f.type.startsWith('video/') || f.type.startsWith('image/') || VIDEO_EXTS.test(f.name));
+  const media = [...files].filter((f) => f.type.startsWith('video/') || f.type.startsWith('image/') || VIDEO_EXTS.test(f.name) || GIF_EXT.test(f.name));
   if (!media.length) return;
   let at = t ?? tCur;
   history.begin(comp);
@@ -1295,6 +1356,7 @@ function saveProject() {
 function unloadAssets() {
   for (const a of assets.values()) {
     if (a.el) { a.el.pause(); a.el.remove(); }
+    for (const f of a.frames ?? []) f.bitmap.close();
     a.texture?.destroy();
     try { URL.revokeObjectURL(a.url); } catch {}
   }
@@ -2443,7 +2505,7 @@ function renderInspector() {
   const kind = document.createElement('span');
   kind.className = 'insp-kind ' + clip.kind;
   kind.textContent = clip.kind === 'media'
-    ? (assets.get(clip.assetId)?.kind === 'video' ? '🎞' : '🖼')
+    ? (assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
     : (clip.fxKind === 'custom' ? '✎' : 'ƒx');
   const name = document.createElement('input');
   name.className = 'insp-name';
