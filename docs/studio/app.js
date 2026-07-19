@@ -1717,16 +1717,28 @@ function confirmDialog({ title = 'Are you sure?', message = '', confirmLabel = '
 }
 
 async function deleteProject(name) {
+  const isOpen = name === projectName;
   const ok = await confirmDialog({
     title: `Delete project '${name}'?`,
-    message: 'The saved comp (clips, keyframes, masks, custom shaders) is removed from this browser permanently. Imported media files stay cached for other projects. If the project is open right now it stays open, just unsaved.',
+    message: 'The saved comp (clips, keyframes, masks, custom shaders) is removed from this browser permanently. Imported media files stay cached for other projects.'
+      + (isOpen ? ' This project is open right now — deleting it starts a fresh empty project.' : ''),
     confirmLabel: 'Delete project',
   });
   if (!ok) return;
   try { await idbDelete(`project:${name}`); } catch {}
   const idx = projectIndex().filter((p) => p.name !== name);
   try { localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx)); } catch {}
-  setStatus(`deleted project '${name}'`);
+  if (isOpen) {
+    // Reset without newProject(): its stashCurrent() would re-save the
+    // project we just deleted.
+    const fresh = newComp({ width: 1280, height: 720, fps: 30, dur: 12 });
+    fresh._autoSize = true;
+    await applyProjectData({ comp: fresh, assets: [], t: 0, name: null });
+    scheduleSave();
+    setStatus(`deleted project '${name}' — new empty project`);
+  } else {
+    setStatus(`deleted project '${name}'`);
+  }
 }
 
 async function saveFlow(alwaysAsk) {
@@ -1735,6 +1747,11 @@ async function saveFlow(alwaysAsk) {
   if (!name) return;
   await saveNamedProject(name);
 }
+
+/* Simple filled folder — crisp and parseable at menu size, unlike emoji. */
+const FOLDER_ICON =
+  '<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">'
+  + '<path d="M1.5 3A1.5 1.5 0 0 1 3 1.5h3l1.5 2H13A1.5 1.5 0 0 1 14.5 5v7a1.5 1.5 0 0 1-1.5 1.5H3A1.5 1.5 0 0 1 1.5 12V3z"/></svg>';
 
 $('btn-project').addEventListener('click', (e) => {
   const r = e.currentTarget.getBoundingClientRect();
@@ -1748,10 +1765,11 @@ $('btn-project').addEventListener('click', (e) => {
     items.push('-');
     for (const p of idx.slice(0, 8))
       items.push({
-        label: `🗂 ${p.name} · ${relTimeLabel(p.savedAt)}`,
+        label: `${p.name} · ${relTimeLabel(p.savedAt)}`,
+        icon: FOLDER_ICON,
         checked: p.name === projectName,
         action: () => openProject(p.name),
-        trailing: { label: '🗑', title: 'delete project', danger: true, action: () => deleteProject(p.name) },
+        trailing: { label: '✕', title: 'delete project', danger: true, action: () => deleteProject(p.name) },
       });
   }
   showMenu(r.left, r.bottom + 4, items);

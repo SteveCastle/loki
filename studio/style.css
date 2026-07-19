@@ -1175,25 +1175,39 @@ body.mask-editing #mask-overlay {
   content: '✓';
   position: absolute;
   left: 7px;
+  top: 50%;
+  transform: translateY(-50%);
   color: var(--accent);
 }
 .ctx-item.danger { color: #e58784; }
 .ctx-item.has-trail {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 .ctx-item.has-trail .ctx-label { flex: 1; }
+.ctx-ico {
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+  opacity: 0.75;
+}
+.ctx-ico svg { display: block; }
 .ctx-trail {
   border: 0;
   background: none;
   padding: 0 2px;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
+  color: inherit;
   opacity: 0.55;
+  display: flex;
+  align-items: center;
 }
-.ctx-item:hover .ctx-trail { opacity: 0.8; }
+.ctx-trail.danger { color: #e58784; }
+.ctx-item:hover .ctx-trail { opacity: 0.85; }
 .ctx-trail:hover { opacity: 1; }
 .ctx-sep { height: 1px; background: var(--border); margin: 4px 2px; }
 
