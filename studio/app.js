@@ -1817,7 +1817,10 @@ async function collectLaunchImports() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       files.push(new File([blob], entry.name, { type: entry.type || blob.type }));
-      if (entry.saveUrl && !saveBack) saveBack = { url: entry.saveUrl, name: entry.name };
+      // saveName covers targets that differ from the import (an image saves
+      // as a video alongside the original: photo.jpg → photo.mp4).
+      if (entry.saveUrl && !saveBack)
+        saveBack = { url: entry.saveUrl, name: entry.saveName ?? entry.name };
     } catch (e) {
       console.warn('slangfx: launch import failed:', entry.url, e);
     }
@@ -1945,7 +1948,7 @@ function updateSaveBackButton() {
   const target = comp._saveBack;
   btn.hidden = !target;
   if (target)
-    btn.title = `Render the comp and overwrite the original file (${target.name})`;
+    btn.title = `Render the comp and save it to ${target.name}, replacing that file if it exists`;
 }
 
 function relTimeLabel(ts) {
@@ -4038,12 +4041,12 @@ async function runOfflineRender({ saveBack = null } = {}) {
     if (!blob) {
       setStatus('render cancelled');
     } else if (saveBack) {
-      setStatus(`saving over ${saveBack.name}…`);
+      setStatus(`saving to ${saveBack.name}…`);
       const res = await fetch(saveBack.url, { method: 'PUT', body: blob });
       const out = await res.json().catch(() => ({}));
       if (!res.ok || !out.ok) throw new Error(out.error ?? `HTTP ${res.status}`);
       const secs = ((performance.now() - started) / 1000).toFixed(1);
-      setStatus(`saved over ${saveBack.name} — ${comp.dur}s comp in ${secs}s`
+      setStatus(`saved to ${saveBack.name} — ${comp.dur}s comp in ${secs}s`
         + (job.hasAudio ? '' : ' (comp has no audio)'));
     } else {
       saveBlob(blob, 'slangfx-comp.webm');

@@ -65,9 +65,13 @@ const mediaMimeTypes: Record<string, string> = {
   '.bmp': 'image/bmp',
 };
 
-// Video extensions the studio can meaningfully edit-and-save. Images are
-// launched view-only for now (the studio's offline render is video-only).
+// Video extensions the studio can meaningfully edit-and-save in place.
 const SAVABLE_VIDEO_RE = /\.(mp4|webm|mov|mkv|avi|m4v|flv)$/i;
+
+// Images can't be saved in place — the studio's render is video — so they
+// save alongside the original: same basename, .mp4 extension. Repeat saves
+// keep overwriting that derived file, so iteration doesn't pile up copies.
+const SAVABLE_IMAGE_RE = /\.(jpe?g|jfif|png|webp|avif|bmp|gif)$/i;
 
 // Save-back allowlist: only files that were actually launched into the studio
 // window may be overwritten through /save-media.
@@ -211,19 +215,32 @@ async function handleSaveMedia(
       });
     }
 
-    await fs.promises.rename(target, backupPath);
+    // Image launches save to a derived .mp4 that may not exist yet — only an
+    // existing target gets the backup-swap treatment.
+    const existed = await fs.promises
+      .stat(target)
+      .then(() => true)
+      .catch(() => false);
+    if (existed) await fs.promises.rename(target, backupPath);
     try {
       await fs.promises.copyFile(finalPath, target);
     } catch (err) {
-      await fs.promises.rename(backupPath, target).catch(() => undefined);
+      if (existed) {
+        await fs.promises.rename(backupPath, target).catch(() => undefined);
+      } else {
+        await fs.promises.unlink(target).catch(() => undefined);
+      }
       throw err;
     }
-    await fs.promises.unlink(backupPath).catch(() => undefined);
+    if (existed) await fs.promises.unlink(backupPath).catch(() => undefined);
 
-    // Tell the viewer window(s) the file changed on disk so they bust caches
-    // and reload the media element (handled in toast-system.tsx).
+    // Tell the viewer window(s) what happened on disk (handled in
+    // toast-system.tsx): an overwrite busts caches and reloads the media
+    // element; a brand-new file refreshes the library and navigates to it.
     for (const w of BrowserWindow.getAllWindows()) {
-      if (w !== studioWindow) w.webContents.send('studio-media-saved', [target]);
+      if (w !== studioWindow) {
+        w.webContents.send('studio-media-saved', [target], !existed);
+      }
     }
     return jsonResponse(200, { ok: true });
   } catch (error) {
@@ -291,15 +308,20 @@ let studioWindow: BrowserWindow | null = null;
 // through its normal File pipeline (see collectLaunchImports in studio/app.js).
 export function openStudioWindow(mediaPaths: string[]) {
   const entries = mediaPaths.filter(Boolean).map((p) => {
-    const entry: { url: string; name: string; saveUrl?: string } = {
+    const entry: { url: string; name: string; saveUrl?: string; saveName?: string } = {
       url: `/launch-media?path=${encodeURIComponent(p)}`,
       name: path.basename(p),
     };
-    // Videos get an edit-and-save target: the studio renders offline and PUTs
-    // the result back over the original file.
+    // Edit-and-save target: videos save back over the original; images save a
+    // video next to the original (same basename, .mp4).
     if (SAVABLE_VIDEO_RE.test(p)) {
       entry.saveUrl = `/save-media?path=${encodeURIComponent(p)}`;
       savablePaths.add(path.normalize(p));
+    } else if (SAVABLE_IMAGE_RE.test(p)) {
+      const derived = p.replace(/\.[^.\\/]+$/, '.mp4');
+      entry.saveUrl = `/save-media?path=${encodeURIComponent(derived)}`;
+      entry.saveName = path.basename(derived);
+      savablePaths.add(path.normalize(derived));
     }
     return entry;
   });

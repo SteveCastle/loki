@@ -629,14 +629,31 @@ export function ToastSystem() {
   }, [queryClient]);
 
   // Studio edit-and-save (Electron): the main process reports files it just
-  // overwrote on disk. Same handling as the server's media-updated SSE event —
-  // drop cached previews and tell the detail view to bust its media URLs so
-  // the reloaded file (not the browser cache) is what plays.
+  // wrote to disk. Overwrites get the same handling as the server's
+  // media-updated SSE event — drop cached previews and tell the detail view
+  // to bust its media URLs so the reloaded file (not the browser cache) is
+  // what plays. Brand-new files (an image saved as a video alongside the
+  // original) follow the media-created flow instead: refresh the library and
+  // navigate to the new file once the reload lands.
   useEffect(() => {
     if (!isElectron) return undefined;
     return on('studio-media-saved', (...args: unknown[]) => {
       const paths = (args[0] as string[]) || [];
+      const created = args[1] === true;
       if (paths.length === 0) return;
+      if (created) {
+        const snapshot = libraryService.getSnapshot();
+        pendingNavigateRef.current = {
+          path: paths[0],
+          sinceLoadId: snapshot.context.libraryLoadId,
+        };
+        if (snapshot.matches({ library: 'loadedFromDB' })) {
+          libraryService.send({ type: 'SORTED_WEIGHTS' });
+        } else if (snapshot.matches({ library: 'loadedFromFS' })) {
+          libraryService.send('REFRESH_LIBRARY');
+        }
+        return;
+      }
       for (const p of paths) {
         queryClient.invalidateQueries(['media', 'preview', p]);
       }
@@ -645,7 +662,7 @@ export function ToastSystem() {
         new CustomEvent('loki-media-updated', { detail: { paths } })
       );
     });
-  }, [queryClient]);
+  }, [queryClient, libraryService]);
 
   // Clearing a toast is view-only: hide the notification, leave the job alone
   // (pause/resume has its own button; the job detail page can cancel). We also
