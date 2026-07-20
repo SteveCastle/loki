@@ -2595,6 +2595,8 @@ func main() {
 	mux.HandleFunc("/auth/status", renderer.ApplyMiddlewares(authStatusHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/users", renderer.ApplyMiddlewares(userManagementHandler(deps), renderer.RolePublic))
 	mux.HandleFunc("/auth/keys", renderer.ApplyMiddlewares(apiKeysHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/auth/cli/authorize", renderer.ApplyMiddlewares(cliAuthAuthorizeHandler(deps), renderer.RolePublic))
+	mux.HandleFunc("/auth/cli/token", renderer.ApplyMiddlewares(cliAuthTokenHandler(deps), renderer.RolePublic))
 
 	// ---- Loki Web Client API ----
 	mux.HandleFunc("/api/media", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {

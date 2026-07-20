@@ -65,7 +65,7 @@ func (c *Client) newRequest(method, path, contentType string, body io.Reader) (*
 func hintForStatus(status int) string {
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return "run: lokictl login --password <password>"
+		return "run: lokictl login (or lokictl login --password <password> on a headless machine)"
 	case http.StatusNotFound:
 		return "endpoint or resource not found — the server may be older than this CLI"
 	}

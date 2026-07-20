@@ -34,17 +34,25 @@ The default is `http://localhost:<port>` where the port comes from the
 
 ```sh
 lokictl health                            # no auth needed
-lokictl login --password <pw>             # default --username admin
-# token is stored at <UserConfigDir>/lokictl/config.json (0600)
+lokictl login                             # opens the browser to authorize (recommended)
+lokictl login --no-browser                # prints the authorization URL instead
+lokictl login --password <pw>             # headless / scripted (default --username admin)
+# credential is stored at <UserConfigDir>/lokictl/config.json (0600)
 ```
 
-For automation, prefer a long-lived **API key** over the login JWT. Keys are
-`lk_`-prefixed, tied to a user, revocable, and accepted anywhere a token is
-(`--token`, `LOKICTL_TOKEN`, config file, `Authorization: Bearer`, or an
-`X-API-Key` header). Create one in the web UI (Config → API Keys) or:
+The browser flow is the RFC 8252 loopback pattern used by modern CLIs: the
+CLI listens on an ephemeral `127.0.0.1` port, the browser authorizes it on an
+approve page (logging you in first if needed), and the CLI receives a
+one-time code it exchanges (PKCE) for a freshly minted `lk_` API key — a
+long-lived, revocable credential, unlike the 24-hour JWT the password flow
+returns. It requires the browser to run on the same machine as the CLI; over
+SSH, use `--password`.
+
+API keys remain fully supported everywhere a token is accepted (`--token`,
+`LOKICTL_TOKEN`, config file, `Authorization: Bearer`, or an `X-API-Key`
+header). Manage them in the web UI (Config → API Keys) or:
 
 ```sh
-lokictl login --password <pw>             # bootstrap once
 lokictl key create --name ci --save       # mint a key and store it as the CLI token
 lokictl key list                          # id, owner, prefix, created, last used
 lokictl key revoke --id 3
