@@ -73,7 +73,8 @@ export type Channels =
   | 'consolidate-tag-files'
   | 'consolidate-category-files'
   | 'log-event'
-  | 'find-subtitle';
+  | 'find-subtitle'
+  | 'open-studio';
 
 // Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
 // <userData>/app-log.jsonl alongside main-process errors.

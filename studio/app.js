@@ -217,7 +217,17 @@ async function boot() {
   }
 
   timeline = new Timeline($('timeline'), timelineHost);
-  await restoreProject();
+  const launchFiles = await collectLaunchImports();
+  if (launchFiles.length) {
+    // Launched by a host app (e.g. the Lowkey viewer) with media to edit:
+    // preserve the previous session, then import into a fresh comp. The
+    // param is stripped so a reload doesn't import a second copy.
+    await stashAutosavedProject();
+    await importFiles(launchFiles, { t: 0 });
+    window.history.replaceState(null, '', location.pathname);
+  } else {
+    await restoreProject();
+  }
   await applyCompSize();
   document.body.classList.add('has-media');
   refreshDropHint();
@@ -1753,6 +1763,55 @@ async function restoreProject() {
     await loadDemoProject();
   }
   if (comp._demo) showDemoCard();
+}
+
+/* =====================================================================
+ * External launch — a host app can open the studio with media already
+ * imported via ?import=<JSON [{url, name, type?}]>; each url is fetched
+ * against this origin and fed through the normal import pipeline. (The
+ * Electron viewer uses this: it serves the studio over studio:// and
+ * points each entry at a local-file route on the same origin.)
+ * =================================================================== */
+
+async function collectLaunchImports() {
+  let entries = null;
+  try { entries = JSON.parse(new URLSearchParams(location.search).get('import')); } catch {}
+  if (!Array.isArray(entries)) return [];
+  const files = [];
+  for (const entry of entries) {
+    if (!entry?.url || !entry?.name) continue;
+    try {
+      setStatus(`fetching ${entry.name}…`);
+      const res = await fetch(entry.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      files.push(new File([blob], entry.name, { type: entry.type || blob.type }));
+    } catch (e) {
+      console.warn('slangfx: launch import failed:', entry.url, e);
+    }
+  }
+  return files;
+}
+
+/** Boot-time counterpart of stashCurrent(): a launch import is about to
+ * replace the autosave slot, but the previous session only exists in
+ * storage (nothing is loaded yet), so stash the raw payload straight into
+ * the named-project store. Media blobs already live in IndexedDB keyed by
+ * asset id, shared across projects — only the JSON needs copying. */
+async function stashAutosavedProject() {
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(PROJECT_KEY)); } catch {}
+  if (!data?.comp || data.comp._demo) return;
+  if (!data.comp.tracks?.some((t) => t.clips?.length)) return;
+  const name = data.name ?? `Untitled ${new Date().toLocaleString()}`;
+  try {
+    await idbSet(`project:${name}`, JSON.stringify(data));
+    const idx = projectIndex().filter((p) => p.name !== name);
+    idx.unshift({ name, savedAt: Date.now() });
+    localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx.slice(0, 20)));
+  } catch (e) {
+    console.warn('slangfx: could not stash previous session:', e);
+  }
 }
 
 /* =====================================================================

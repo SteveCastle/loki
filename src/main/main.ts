@@ -25,6 +25,7 @@ import { cleanupArchives } from './archives';
 import { registerSubtitleHandlers } from './subtitles';
 import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
+import { registerStudioProtocol, openStudioWindow } from './studio-window';
 
 import type { Database } from './database';
 
@@ -32,10 +33,22 @@ import type { Database } from './database';
 // them to <userData>/app-log.jsonl so field hangs/crashes can be diagnosed.
 installGlobalErrorHandlers();
 
-// Register custom protocol scheme as privileged (must be done before app ready)
+// Register custom protocol schemes as privileged (must be done before app ready)
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'gsm',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+  {
+    // Serves the bundled Lowkey Studio app (see studio-window.ts). `secure`
+    // matters: the studio needs a secure context for WebGPU + ES modules.
+    scheme: 'studio',
     privileges: {
       standard: true,
       secure: true,
@@ -150,6 +163,11 @@ ipcMain.on('open-external', async (event, args) => {
 ipcMain.on('show-item-in-folder', async (event, args) => {
   const filePath = args[0];
   if (filePath) shell.showItemInFolder(filePath);
+});
+
+// Launch Lowkey Studio in its own window with the given media auto-imported.
+ipcMain.on('open-studio', async (_event, args) => {
+  openStudioWindow(Array.isArray(args) ? args.filter((p) => typeof p === 'string') : []);
 });
 
 ipcMain.on('toggle-fullscreen', async () => {
@@ -750,6 +768,7 @@ const gsmMimeTypes: Record<string, string> = {
 };
 
 app.on('ready', async () => {
+  registerStudioProtocol();
   protocol.handle('gsm', async (request) => {
     try {
       // Parse URL to file path

@@ -10,7 +10,7 @@ import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
-import { capabilities, mediaServerBase } from '../../platform';
+import { capabilities, mediaServerBase, isElectron, send } from '../../platform';
 import { subscribeStream, streamConnected } from '../../stream-bus';
 import { displayTagLabel } from '../../tag-display';
 import type { Predicate } from '../../query/types';
@@ -38,6 +38,12 @@ import {
   fmtSize,
 } from '../../onboarding/requirements';
 import './context-palette.css';
+
+// Media types Lowkey Studio can actually import (mirrors the importFiles
+// filter in studio/app.js — video, image, gif). Gates the "Open in Studio"
+// action so it never launches on e.g. an audio file it would silently drop.
+const STUDIO_MEDIA_RE =
+  /\.(mp4|webm|mov|mkv|avi|m4v|flv|gif|jpe?g|jfif|png|webp|avif|bmp)$/i;
 
 // Generation mode for the metadata chips. `missing` only fills gaps; `all`
 // replaces existing metadata (passes `--overwrite`). The mode is chosen once
@@ -784,6 +790,13 @@ export default function ContextPalette() {
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
+  // Electron-only: hand the right-clicked file to Lowkey Studio. The main
+  // process opens (or reuses) the studio window with the file auto-imported.
+  const handleOpenInStudio = () => {
+    send('open-studio', [similarTargetPath]);
+    libraryService.send('HIDE_CONTEXT_PALETTE');
+  };
+
   // Person context: when the right-clicked tag is a person (its name exists
   // in /api/people — i.e. a People-category tag), the palette offers person
   // actions (rename) that keep the person table and its taxonomy tag in sync.
@@ -1013,6 +1026,34 @@ export default function ContextPalette() {
           {target.type === 'file' && (
             <span className="context-count">1 file</span>
           )}
+          {isElectron &&
+            similarTargetPath &&
+            STUDIO_MEDIA_RE.test(similarTargetPath) && (
+              <button
+                className="find-similar-btn"
+                onClick={handleOpenInStudio}
+                title="Open in Studio"
+                aria-label="Open in Studio"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="3" y="9" width="18" height="11" rx="2" />
+                  <path d="M3 9l1.8-4.6 16.2 1.7-1 2.9" />
+                  <path d="M8.5 4.9L7 9" />
+                  <path d="M13.7 5.4L12.2 9" />
+                  <path d="M18.8 6L17.4 9" />
+                </svg>
+              </button>
+            )}
           {(capabilities.visualSearch ||
             (serverAvailable && authToken)) &&
             similarTargetPath && (
