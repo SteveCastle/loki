@@ -15,6 +15,7 @@ import { subscribeStream, streamConnected } from '../../stream-bus';
 import { displayTagLabel } from '../../tag-display';
 import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import { absorbNextClick } from '../../absorb-next-click';
 import filter from '../../filter';
 import LoginWidget from './login-widget';
 import {
@@ -664,9 +665,28 @@ export default function ContextPalette() {
     }
   }, [display]);
 
-  // Close on click outside
-  useOnClickOutside(paletteRef, () => {
-    if (display) libraryService.send('HIDE_CONTEXT_PALETTE');
+  // Close on click outside.
+  //
+  // In trackpad/touchpad mode the detail view binds its own onClick (cursor
+  // advance/decrement). Without intervention the click that dismisses the
+  // palette also lands on the detail handler and jumps to a different media
+  // item — absorb the trailing `click` in the capture phase so closing never
+  // doubles as navigation. (Same treatment as the command palette.)
+  useOnClickOutside(paletteRef, (event) => {
+    if (!display) return;
+    // Defensive: walk up from the click target like the command palette does
+    // — its ref-based containment check has been observed to misfire on
+    // clicks inside the palette (pill × buttons re-render under the pointer).
+    const target = event.target as HTMLElement | null;
+    if (
+      target &&
+      typeof target.closest === 'function' &&
+      target.closest('.ContextPalette')
+    ) {
+      return;
+    }
+    absorbNextClick();
+    libraryService.send('HIDE_CONTEXT_PALETTE');
   });
 
   // Close on Escape

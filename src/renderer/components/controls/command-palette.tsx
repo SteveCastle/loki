@@ -13,6 +13,7 @@ import useComponentSize from '@rehooks/component-size';
 // State & Hooks
 import { GlobalStateContext } from '../../state';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import { absorbNextClick } from '../../absorb-next-click';
 import filter from '../../filter';
 
 // Child Components
@@ -822,24 +823,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
       }
     }
 
-    const absorbClick = (clickEvent: Event) => {
-      clickEvent.stopPropagation();
-      clickEvent.preventDefault();
-    };
-    window.addEventListener('click', absorbClick, {
-      capture: true,
-      once: true,
-    });
-    // Safety net — if no click follows the mousedown (e.g. the user
-    // releases off-window), drop the listener so it can't swallow a
-    // future legitimate click.
-    setTimeout(
-      () =>
-        window.removeEventListener('click', absorbClick, {
-          capture: true,
-        } as EventListenerOptions),
-      300
-    );
+    absorbNextClick();
 
     libraryService.send('HIDE_COMMAND_PALETTE');
   });

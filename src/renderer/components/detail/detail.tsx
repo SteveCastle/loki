@@ -224,13 +224,40 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     // (e.g. toggling controlMode) happened to re-run it.
   }, [item?.path, settings.controlMode]);
 
+  // Touchpad mode: clicks advance the cursor, so the native onDoubleClick
+  // the mouse mode uses for the list/detail toggle can't be bound (it would
+  // fire after two advances). Instead a very fast second click IS the
+  // toggle: each advance is deferred by a tight window, and a second click
+  // inside it cancels the advance and toggles the view. The window is
+  // deliberately short — rapid click-click-click browsing sits well above
+  // it; only a deliberate double-click lands under it.
+  const TOGGLE_DOUBLE_CLICK_MS = 200;
+  const pendingAdvanceRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (pendingAdvanceRef.current !== null) {
+        window.clearTimeout(pendingAdvanceRef.current);
+      }
+    },
+    []
+  );
+
   function handleClick(e: React.MouseEvent<HTMLDivElement, MouseEvent>) {
-    const rect = containerRef.current!.getBoundingClientRect();
-    if (e.clientX - rect.left < rect.width / 2) {
-      libraryService.send('DECREMENT_CURSOR');
-    } else {
-      libraryService.send('INCREMENT_CURSOR');
+    if (pendingAdvanceRef.current !== null) {
+      // Second click within the window — this is a toggle, not two steps.
+      window.clearTimeout(pendingAdvanceRef.current);
+      pendingAdvanceRef.current = null;
+      // The panel refs live in Layout; same custom-event channel as
+      // 'loki-media-updated'.
+      window.dispatchEvent(new Event('loki-toggle-list-detail'));
+      return;
     }
+    const rect = containerRef.current!.getBoundingClientRect();
+    const decrement = e.clientX - rect.left < rect.width / 2;
+    pendingAdvanceRef.current = window.setTimeout(() => {
+      pendingAdvanceRef.current = null;
+      libraryService.send(decrement ? 'DECREMENT_CURSOR' : 'INCREMENT_CURSOR');
+    }, TOGGLE_DOUBLE_CLICK_MS);
   }
 
   const { orientation } = useMediaDimensions(

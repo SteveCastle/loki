@@ -31,6 +31,8 @@ import {
 } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
 import { displayTagLabel } from '../../tag-display';
+import { useDepRequirement } from '../../onboarding/useDepRequirement';
+import { fmtSize } from '../../onboarding/requirements';
 import './new-modal.css';
 import './people-grid.css';
 
@@ -1921,6 +1923,11 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   // Empty-state CTA: kick off a whole-library face scan right here. People
   // then appear in this grid live (the scan clusters incrementally and
   // broadcasts people-updated), so the empty state resolves itself.
+  // Gated on the SFace recognizer like the context palette's Faces chip —
+  // without the model the scan would only fail later inside its job log.
+  // When the deps API is unreachable `dep` stays null and the scan stays
+  // ungated (the job reports the missing model politely itself).
+  const faceModel = useDepRequirement('sface');
   const [scanStarted, setScanStarted] = useState(false);
   const handleScanLibrary = async () => {
     const query64 = btoa(unescape(encodeURIComponent('path:*')));
@@ -2274,7 +2281,22 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
             while the scan runs — name them, merge duplicates, and filter your
             library by who’s in the picture.
           </p>
-          {canWrite && (
+          {canWrite && faceModel.needsDownload && (
+          <button
+            type="button"
+            className="people-empty-cta"
+            onClick={() => faceModel.download().catch(() => undefined)}
+            title="One-time model download; face scanning runs locally"
+          >
+            Get face model ({fmtSize(faceModel.dep?.size_bytes)})
+          </button>
+          )}
+          {canWrite && faceModel.downloading && (
+          <button type="button" className="people-empty-cta" disabled>
+            Downloading face model… {faceModel.pct}%
+          </button>
+          )}
+          {canWrite && !faceModel.needsDownload && !faceModel.downloading && (
           <button
             type="button"
             className="people-empty-cta"
