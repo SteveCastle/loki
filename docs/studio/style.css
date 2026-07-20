@@ -27,7 +27,11 @@ body {
   overflow: hidden;
 }
 
-/* Site-wide tab bar (matches the docs pages). */
+/* Site-wide tab bar (matches the docs pages). Marketing chrome — hidden when
+ * the studio runs embedded in a host app (?app=1 sets .app-host on body). */
+.app-host .site-tabs {
+  display: none;
+}
 .site-tabs {
   position: relative;
   display: flex;

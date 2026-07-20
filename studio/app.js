@@ -44,6 +44,12 @@ const GIF_EXT = /\.gif$/i;
 const PROJECT_KEY = 'lowkey-studio.project.v2';
 const DEFAULT_VIDEO_DUR = 4;   // fallback when a video reports no duration
 
+// ?app=1 — running embedded in a host app (the Electron viewer). Hides the
+// marketing site chrome; the flag is preserved across the post-import URL
+// cleanup so it survives reloads.
+const APP_HOST = new URLSearchParams(location.search).get('app') === '1';
+if (APP_HOST) document.body.classList.add('app-host');
+
 function setStatus(msg) { statusEl.textContent = msg; }
 
 /* =====================================================================
@@ -217,17 +223,27 @@ async function boot() {
   }
 
   timeline = new Timeline($('timeline'), timelineHost);
-  const launchFiles = await collectLaunchImports();
-  if (launchFiles.length) {
+  const launch = await collectLaunchImports();
+  if (launch.files.length) {
     // Launched by a host app (e.g. the Lowkey viewer) with media to edit:
     // preserve the previous session, then import into a fresh comp. The
-    // param is stripped so a reload doesn't import a second copy.
+    // import param is stripped (other params survive) so a reload doesn't
+    // import a second copy.
     await stashAutosavedProject();
-    await importFiles(launchFiles, { t: 0 });
-    window.history.replaceState(null, '', location.pathname);
+    await importFiles(launch.files, { t: 0 });
+    fitDurToContent();
+    if (launch.saveBack) {
+      comp._saveBack = launch.saveBack;   // persists via the autosave payload
+      scheduleSave();
+    }
+    const params = new URLSearchParams(location.search);
+    params.delete('import');
+    const qs = params.toString();
+    window.history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
   } else {
     await restoreProject();
   }
+  updateSaveBackButton();
   await applyCompSize();
   document.body.classList.add('has-media');
   refreshDropHint();
@@ -1767,17 +1783,32 @@ async function restoreProject() {
 
 /* =====================================================================
  * External launch — a host app can open the studio with media already
- * imported via ?import=<JSON [{url, name, type?}]>; each url is fetched
- * against this origin and fed through the normal import pipeline. (The
- * Electron viewer uses this: it serves the studio over studio:// and
- * points each entry at a local-file route on the same origin.)
+ * imported via ?import=<JSON [{url, name, type?, saveUrl?}]>; each url is
+ * fetched against this origin and fed through the normal import pipeline.
+ * An entry with saveUrl enables edit-and-save: the offline render is PUT
+ * back to that url, overwriting the original file. (The Electron viewer
+ * uses this: it serves the studio over studio:// and points entries at
+ * local-file routes on the same origin.)
  * =================================================================== */
+
+/** Fit an auto-sized comp's duration to its content (never below one frame).
+ * Used by the edit-and-save flow so a 2s source doesn't render as the 12s
+ * default comp with trailing black — and so trimming a clip shorter also
+ * shortens the saved file. A manually-set duration (⚙ Comp) is respected. */
+function fitDurToContent() {
+  if (!comp._autoSize) return;
+  let end = 0;
+  for (const track of comp.tracks)
+    for (const clip of track.clips) end = Math.max(end, clipEnd(clip));
+  if (end > 0) comp.dur = Math.max(1 / comp.fps, Math.round(end * comp.fps) / comp.fps);
+}
 
 async function collectLaunchImports() {
   let entries = null;
   try { entries = JSON.parse(new URLSearchParams(location.search).get('import')); } catch {}
-  if (!Array.isArray(entries)) return [];
+  if (!Array.isArray(entries)) return { files: [], saveBack: null };
   const files = [];
+  let saveBack = null;
   for (const entry of entries) {
     if (!entry?.url || !entry?.name) continue;
     try {
@@ -1786,11 +1817,12 @@ async function collectLaunchImports() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       files.push(new File([blob], entry.name, { type: entry.type || blob.type }));
+      if (entry.saveUrl && !saveBack) saveBack = { url: entry.saveUrl, name: entry.name };
     } catch (e) {
       console.warn('slangfx: launch import failed:', entry.url, e);
     }
   }
-  return files;
+  return { files, saveBack };
 }
 
 /** Boot-time counterpart of stashCurrent(): a launch import is about to
@@ -1903,6 +1935,17 @@ function projectIndex() {
 function updateProjectButton() {
   $('btn-project').textContent = `☰ ${projectName ?? 'untitled'}`;
   document.title = `${projectName ?? 'untitled'} — Lowkey Studio`;
+  updateSaveBackButton();
+}
+
+/** Edit-and-save: visible only when the current comp was launched by a host
+ * app with a writable original (comp._saveBack rides in the project data). */
+function updateSaveBackButton() {
+  const btn = $('btn-save-back');
+  const target = comp._saveBack;
+  btn.hidden = !target;
+  if (target)
+    btn.title = `Render the comp and overwrite the original file (${target.name})`;
 }
 
 function relTimeLabel(ts) {
@@ -3967,30 +4010,56 @@ fastBtn.addEventListener('click', () => {
   runOfflineRender();
 });
 
-async function runOfflineRender() {
+/* Edit-and-save: offline render, then PUT the result back to the host's
+ * save url (which overwrites the original file, transcoding as needed). */
+const saveBackBtn = $('btn-save-back');
+saveBackBtn.addEventListener('click', () => {
+  if (offlineJob) { offlineJob.cancel = true; return; }
+  if (!comp._saveBack || !fx?.inputTexture || recorder) return;
+  if (typeof VideoEncoder === 'undefined') {
+    setStatus('save needs WebCodecs (Chrome/Edge)');
+    return;
+  }
+  fitDurToContent();
+  timeline.render();
+  runOfflineRender({ saveBack: comp._saveBack });
+});
+
+async function runOfflineRender({ saveBack = null } = {}) {
   pause();
   const job = (offlineJob = { cancel: false, error: null });
   const tRestore = tCur;
-  fastBtn.textContent = '■ Cancel';
-  fastBtn.classList.add('recording');
+  const btn = saveBack ? saveBackBtn : fastBtn;
+  btn.textContent = '■ Cancel';
+  btn.classList.add('recording');
   const started = performance.now();
   try {
     const blob = await renderCompOffline(job);
-    if (blob) {
+    if (!blob) {
+      setStatus('render cancelled');
+    } else if (saveBack) {
+      setStatus(`saving over ${saveBack.name}…`);
+      const res = await fetch(saveBack.url, { method: 'PUT', body: blob });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || !out.ok) throw new Error(out.error ?? `HTTP ${res.status}`);
+      const secs = ((performance.now() - started) / 1000).toFixed(1);
+      setStatus(`saved over ${saveBack.name} — ${comp.dur}s comp in ${secs}s`
+        + (job.hasAudio ? '' : ' (comp has no audio)'));
+    } else {
       saveBlob(blob, 'slangfx-comp.webm');
       const secs = ((performance.now() - started) / 1000).toFixed(1);
       setStatus(`render saved — ${comp.dur}s comp in ${secs}s`
         + (job.hasAudio ? '' : ' (comp has no audio)'));
-    } else {
-      setStatus('render cancelled');
     }
   } catch (e) {
     console.error('slangfx: offline render failed:', e);
-    setStatus(`render failed: ${e.message ?? e}`);
+    setStatus(`${saveBack ? 'save' : 'render'} failed: ${e.message ?? e}`);
   } finally {
     offlineJob = null;
     fastBtn.textContent = 'Render';
     fastBtn.classList.remove('recording');
+    saveBackBtn.textContent = '💾 Save';
+    saveBackBtn.classList.remove('recording');
     setTime(tRestore);
   }
 }

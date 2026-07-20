@@ -1,17 +1,28 @@
-import path from 'path';
+﻿import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { app, BrowserWindow, protocol, shell } from 'electron';
+
+const execFileP = promisify(execFile);
 
 // Lowkey Studio (the WebGPU compositor under /studio) is a plain static
 // ES-module web app. Module scripts, fetch, and WebGPU all require a real
 // secure origin — file:// doesn't qualify — so the studio is served through
 // a privileged custom scheme instead of pointing a window at the filesystem.
 //
-// One origin (`studio://app`), two routes:
+// One origin (`studio://app`), three routes:
 //   studio://app/<file>              → static file from the studio directory
 //   studio://app/launch-media?path=… → streams a local media file; same origin,
 //                                      so the studio's boot importer can fetch()
 //                                      it without CORS.
+//   PUT studio://app/save-media?path=… → "edit and save": accepts the studio's
+//                                      offline WebM render and writes it back
+//                                      over the original file (transcoding via
+//                                      the bundled ffmpeg when the original
+//                                      isn't .webm). Restricted to paths that
+//                                      were launched into the studio.
 
 const studioRoot = () =>
   app.isPackaged
@@ -54,6 +65,31 @@ const mediaMimeTypes: Record<string, string> = {
   '.bmp': 'image/bmp',
 };
 
+// Video extensions the studio can meaningfully edit-and-save. Images are
+// launched view-only for now (the studio's offline render is video-only).
+const SAVABLE_VIDEO_RE = /\.(mp4|webm|mov|mkv|avi|m4v|flv)$/i;
+
+// Save-back allowlist: only files that were actually launched into the studio
+// window may be overwritten through /save-media.
+const savablePaths = new Set<string>();
+
+// Mirrors metadata.ts's getBinaryPath: dev runs main.ts from src/main so
+// resources/bin sits next to it; packaged builds ship the binaries to
+// resources/bin via extraResources.
+function getBinaryPath(binaryName: string): string {
+  let platformDir = 'linux';
+  let binaryFile = binaryName;
+  if (process.platform === 'darwin') {
+    platformDir = 'darwin';
+  } else if (process.platform === 'win32') {
+    platformDir = 'win32';
+    binaryFile = `${binaryName}.exe`;
+  }
+  return app.isPackaged
+    ? path.join(__dirname, '../../../bin', binaryFile)
+    : path.join(__dirname, 'resources/bin', platformDir, binaryFile);
+}
+
 function streamFile(filePath: string, size: number, contentType: string) {
   const stream = fs.createReadStream(filePath);
   return new Response(
@@ -93,6 +129,114 @@ async function serveLaunchMedia(mediaPath: string | null): Promise<Response> {
   return streamFile(filePath, stats.size, contentType);
 }
 
+const jsonResponse = (status: number, body: object) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+// Write the request body (the studio's offline WebM render) over the original
+// file. Non-webm targets are transcoded with the bundled ffmpeg so the
+// container still matches the file's extension. The original is renamed to a
+// backup for the duration of the swap, so a failed write can't destroy it.
+async function handleSaveMedia(
+  request: Request,
+  targetPath: string | null
+): Promise<Response> {
+  if (!targetPath) return jsonResponse(400, { ok: false, error: 'missing path' });
+  const target = path.normalize(targetPath);
+  if (!savablePaths.has(target)) {
+    return jsonResponse(403, {
+      ok: false,
+      error: 'path was not opened by the studio',
+    });
+  }
+  if (!request.body) {
+    return jsonResponse(400, { ok: false, error: 'empty body' });
+  }
+
+  const tmpDir = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), 'studio-save-')
+  );
+  const uploadPath = path.join(tmpDir, 'render.webm');
+  const targetExt = path.extname(target).toLowerCase();
+  const backupPath = `${target}.studio-bak`;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const out = fs.createWriteStream(uploadPath);
+      out.on('finish', resolve);
+      out.on('error', reject);
+      const reader = (request.body as ReadableStream<Uint8Array>).getReader();
+      const pump = () => {
+        reader
+          .read()
+          .then(({ done, value }) => {
+            if (done) {
+              out.end();
+              return;
+            }
+            out.write(Buffer.from(value), (err) => (err ? reject(err) : pump()));
+          })
+          .catch(reject);
+      };
+      pump();
+    });
+
+    let finalPath = uploadPath;
+    if (targetExt !== '.webm') {
+      finalPath = path.join(tmpDir, `out${targetExt}`);
+      const args = [
+        '-y',
+        '-i',
+        uploadPath,
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-crf',
+        '18',
+        '-preset',
+        'veryfast',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+      ];
+      if (['.mp4', '.m4v', '.mov'].includes(targetExt)) {
+        args.push('-movflags', '+faststart');
+      }
+      args.push(finalPath);
+      await execFileP(getBinaryPath('ffmpeg'), args, {
+        maxBuffer: 32 * 1024 * 1024,
+      });
+    }
+
+    await fs.promises.rename(target, backupPath);
+    try {
+      await fs.promises.copyFile(finalPath, target);
+    } catch (err) {
+      await fs.promises.rename(backupPath, target).catch(() => undefined);
+      throw err;
+    }
+    await fs.promises.unlink(backupPath).catch(() => undefined);
+
+    // Tell the viewer window(s) the file changed on disk so they bust caches
+    // and reload the media element (handled in toast-system.tsx).
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w !== studioWindow) w.webContents.send('studio-media-saved', [target]);
+    }
+    return jsonResponse(200, { ok: true });
+  } catch (error) {
+    console.error('studio save-media error:', error);
+    return jsonResponse(500, {
+      ok: false,
+      error: String((error as Error)?.message ?? error),
+    });
+  } finally {
+    fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 // Called from main.ts inside app.on('ready') — protocol.handle is only
 // available once the app is ready (the scheme itself is registered as
 // privileged before ready, alongside gsm).
@@ -104,6 +248,13 @@ export function registerStudioProtocol() {
 
       if (url.pathname === '/launch-media') {
         return await serveLaunchMedia(url.searchParams.get('path'));
+      }
+
+      if (url.pathname === '/save-media') {
+        if (request.method !== 'PUT') {
+          return new Response('Method Not Allowed', { status: 405 });
+        }
+        return await handleSaveMedia(request, url.searchParams.get('path'));
       }
 
       const root = studioRoot();
@@ -139,14 +290,25 @@ let studioWindow: BrowserWindow | null = null;
 // /launch-media route, so the studio fetches the bytes and imports them
 // through its normal File pipeline (see collectLaunchImports in studio/app.js).
 export function openStudioWindow(mediaPaths: string[]) {
-  const entries = mediaPaths.filter(Boolean).map((p) => ({
-    url: `/launch-media?path=${encodeURIComponent(p)}`,
-    name: path.basename(p),
-  }));
-  const query = entries.length
-    ? `?import=${encodeURIComponent(JSON.stringify(entries))}`
-    : '';
-  const target = `studio://app/index.html${query}`;
+  const entries = mediaPaths.filter(Boolean).map((p) => {
+    const entry: { url: string; name: string; saveUrl?: string } = {
+      url: `/launch-media?path=${encodeURIComponent(p)}`,
+      name: path.basename(p),
+    };
+    // Videos get an edit-and-save target: the studio renders offline and PUTs
+    // the result back over the original file.
+    if (SAVABLE_VIDEO_RE.test(p)) {
+      entry.saveUrl = `/save-media?path=${encodeURIComponent(p)}`;
+      savablePaths.add(path.normalize(p));
+    }
+    return entry;
+  });
+  // app=1 hides the marketing chrome (site nav) — it only makes sense on the
+  // statically published docs site. The studio preserves the flag across its
+  // own URL cleanup, so it survives reloads.
+  const params = new URLSearchParams({ app: '1' });
+  if (entries.length) params.set('import', JSON.stringify(entries));
+  const target = `studio://app/index.html?${params.toString()}`;
 
   if (studioWindow && !studioWindow.isDestroyed()) {
     studioWindow.loadURL(target);

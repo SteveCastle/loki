@@ -2,7 +2,7 @@ import React, { useContext, useEffect, useRef, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
-import { send, mediaServerBase } from '../../platform';
+import { send, mediaServerBase, isElectron, on } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
 import './toast-system.css';
 
@@ -625,6 +625,25 @@ export function ToastSystem() {
         default:
           break;
       }
+    });
+  }, [queryClient]);
+
+  // Studio edit-and-save (Electron): the main process reports files it just
+  // overwrote on disk. Same handling as the server's media-updated SSE event —
+  // drop cached previews and tell the detail view to bust its media URLs so
+  // the reloaded file (not the browser cache) is what plays.
+  useEffect(() => {
+    if (!isElectron) return undefined;
+    return on('studio-media-saved', (...args: unknown[]) => {
+      const paths = (args[0] as string[]) || [];
+      if (paths.length === 0) return;
+      for (const p of paths) {
+        queryClient.invalidateQueries(['media', 'preview', p]);
+      }
+      queryClient.invalidateQueries(['media']);
+      window.dispatchEvent(
+        new CustomEvent('loki-media-updated', { detail: { paths } })
+      );
     });
   }, [queryClient]);
 
