@@ -792,7 +792,12 @@ export default function ContextPalette() {
 
   // Electron-only: hand the right-clicked file to Lowkey Studio. The main
   // process opens (or reuses) the studio window with the file auto-imported.
+  // Playback pauses first — the viewer keeps running behind the studio
+  // window, and its audio bleeding into an editing session is never wanted.
   const handleOpenInStudio = () => {
+    if (libraryService.getSnapshot().context.videoPlayer.playing) {
+      libraryService.send('TOGGLE_PLAY_PAUSE');
+    }
     send('open-studio', [similarTargetPath]);
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
