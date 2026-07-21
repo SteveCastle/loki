@@ -9,13 +9,25 @@ import './embeddings.css';
 
 // The visual-embedding card in the metadata tab: shows which embedding models
 // have a stored vector for this file, and lets the user generate (or delete +
-// regenerate) the vector for any supported model. Talks to the media server:
+// regenerate) the vector for any supported model. Face embeddings are managed
+// here too, as one more row. Talks to the media server:
 //   GET    /api/index/models       — supported model registry
 //   GET    /api/embeddings?path=   — stored rows for this file
 //   DELETE /api/embeddings?path=&model=
-//   POST   /create                 — `embed --model=<id> "<path>"` job
+//   GET    /api/faces?path=        — face-scan state for this file
+//   POST   /create                 — `embed --model=<id> "<path>"` /
+//                                    `faces [--overwrite] "<path>"` job
 
 type EmbeddingRow = { model: string; dim: number; created_at: number };
+// Face-scan state for one file: the routed recognizer, whether it ran, when
+// (scanned stays true across an overwrite rescan; scannedAt moves), and the
+// stored faces.
+type FacesInfo = {
+  model: string;
+  scanned: boolean;
+  scannedAt: number;
+  faces: { id: number }[];
+};
 type EmbedModelInfo = {
   id: string;
   display_name: string;
@@ -115,6 +127,91 @@ function ModelRow({
   );
 }
 
+function FacesRow({
+  info,
+  pending,
+  canRun,
+  onScan,
+}: {
+  info: FacesInfo;
+  pending: boolean;
+  canRun: boolean;
+  onScan: (rescan: boolean) => void;
+}) {
+  // Face scanning also needs the (tiny) YuNet detector; SFace is the big
+  // download, so it's the one gated here — same choice as the context
+  // palette's Faces chip and the People panel.
+  const dep = useDepRequirement('sface');
+
+  let action = null;
+  if (pending) {
+    action = (
+      <button className="embed-action" disabled>
+        <span className="embed-spinner" />
+        <span>Scanning…</span>
+      </button>
+    );
+  } else if (dep.needsDownload) {
+    action = (
+      <button
+        className="embed-action"
+        onClick={() => {
+          dep.download().catch((err) => console.error('model download:', err));
+        }}
+        title={`One-time model download (${fmtSize(dep.dep?.size_bytes)}); face scanning runs locally`}
+      >
+        <SparkleIcon />
+        <span>Get model ({fmtSize(dep.dep?.size_bytes)})</span>
+      </button>
+    );
+  } else if (dep.downloading) {
+    action = (
+      <button className="embed-action" disabled>
+        <span className="embed-spinner" />
+        <span>Downloading… {dep.pct}%</span>
+      </button>
+    );
+  } else if (canRun) {
+    action = (
+      <button
+        className="embed-action"
+        onClick={() => onScan(info.scanned)}
+        title={
+          info.scanned
+            ? 'Rescan this file for faces (replaces the stored faces)'
+            : 'Detect faces in this file and store their identity embeddings'
+        }
+      >
+        <SparkleIcon />
+        <span>{info.scanned ? 'Regenerate' : 'Generate'}</span>
+      </button>
+    );
+  }
+
+  let status = 'not scanned';
+  if (info.scanned) {
+    status =
+      info.faces.length === 0
+        ? 'scanned — no faces found'
+        : `${info.faces.length} face embedding${info.faces.length === 1 ? '' : 's'} stored`;
+  }
+
+  return (
+    <div className="embed-row">
+      <div className="embed-info">
+        <span className="embed-name">
+          Faces
+          <span className="embed-badge">{info.model}</span>
+        </span>
+        <span className={`embed-status ${info.scanned ? 'stored' : ''}`}>
+          {status}
+        </span>
+      </div>
+      {action}
+    </div>
+  );
+}
+
 export default function Embeddings({ path }: { path: string }) {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(
@@ -130,6 +227,13 @@ export default function Embeddings({ path }: { path: string }) {
   const queryClient = useQueryClient();
   // model id -> Date.now() when its embed job was created
   const [pending, setPending] = useState<Record<string, number>>({});
+  // In-flight face scan: when it started, and the scannedAt it must move past
+  // (overwrite rescans keep scanned=true throughout, so only the timestamp
+  // advancing signals completion).
+  const [facePending, setFacePending] = useState<{
+    startedAt: number;
+    prevScannedAt: number;
+  } | null>(null);
 
   // enabled: canWrite — the card renders null for view-only visitors, but
   // hooks still run, and these endpoints are admin-only; don't spray
@@ -151,6 +255,20 @@ export default function Embeddings({ path }: { path: string }) {
     {
       retry: false,
       refetchInterval: pendingCount > 0 ? 3000 : false,
+      enabled: canWrite,
+    }
+  );
+
+  const facesQuery = useQuery<FacesInfo, Error>(
+    ['face-scan', path],
+    () =>
+      getJSON(
+        `${depsApiBase}/api/faces?path=${encodeURIComponent(path)}`,
+        authToken
+      ),
+    {
+      retry: false,
+      refetchInterval: facePending ? 3000 : false,
       enabled: canWrite,
     }
   );
@@ -177,8 +295,26 @@ export default function Embeddings({ path }: { path: string }) {
     // derived inside and adding them would re-run the effect on its own set.
   }, [embedsQuery.data]);
 
+  // The face scan is done once scannedAt moves past the value captured at
+  // submit (a first scan flips it from 0 too). Stale pendings unlock after
+  // the same timeout as embed jobs; the 3s refetch while pending keeps this
+  // effect re-running so the timeout is actually observed.
+  useEffect(() => {
+    if (!facePending) return;
+    const info = facesQuery.data;
+    const done =
+      (info?.scanned && info.scannedAt !== facePending.prevScannedAt) ||
+      Date.now() - facePending.startedAt > PENDING_TIMEOUT_MS;
+    if (done) setFacePending(null);
+    // Intentionally keyed on the fetched data only, mirroring the embed
+    // effect above.
+  }, [facesQuery.data]);
+
   // Reset in-flight state when the user moves to a different file.
-  useEffect(() => setPending({}), [path]);
+  useEffect(() => {
+    setPending({});
+    setFacePending(null);
+  }, [path]);
 
   const handleGenerate = async (modelId: string, regenerate: boolean) => {
     try {
@@ -212,6 +348,34 @@ export default function Embeddings({ path }: { path: string }) {
     }
   };
 
+  const handleFaceScan = async (rescan: boolean) => {
+    try {
+      // The faces item-op skips already-scanned paths; --overwrite makes it
+      // replace the stored faces instead (no delete round-trip needed).
+      const input = rescan ? `faces --overwrite "${path}"` : `faces "${path}"`;
+      const res = await fetch(`${depsApiBase}/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(authToken) },
+        body: JSON.stringify({ input }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setFacePending({
+        startedAt: Date.now(),
+        prevScannedAt: facesQuery.data?.scannedAt ?? 0,
+      });
+    } catch (error) {
+      console.error('Failed to create faces job:', error);
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Create Job',
+          message: 'Could not communicate with job service',
+        },
+      });
+    }
+  };
+
   // If the media server (or its embeddings API) is unreachable — e.g. the
   // Electron app running without the local server — render no card at all
   // rather than one that can't work. The component owns its whole section so
@@ -224,7 +388,11 @@ export default function Embeddings({ path }: { path: string }) {
   // are still shown so it's clear they exist; they just can't be regenerated.
   const legacy = rows.filter((r) => !models.find((m) => m.id === r.model));
 
-  if (models.length === 0 && legacy.length === 0) return null;
+  // The faces API failing (older server) only hides the faces row, not the
+  // whole card.
+  const facesInfo = facesQuery.isError ? undefined : facesQuery.data;
+
+  if (models.length === 0 && legacy.length === 0 && !facesInfo) return null;
 
   return (
     <div className="section">
@@ -253,6 +421,14 @@ export default function Embeddings({ path }: { path: string }) {
             </div>
           </div>
         ))}
+        {facesInfo && (
+          <FacesRow
+            info={facesInfo}
+            pending={facePending !== null}
+            canRun={!facesQuery.isLoading}
+            onScan={handleFaceScan}
+          />
+        )}
       </div>
     </div>
   );

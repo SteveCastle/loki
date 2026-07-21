@@ -79,15 +79,19 @@ func TestFacesForPathHandler(t *testing.T) {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		Model   string           `json:"model"`
-		Scanned bool             `json:"scanned"`
-		Faces   []map[string]any `json:"faces"`
+		Model     string           `json:"model"`
+		Scanned   bool             `json:"scanned"`
+		ScannedAt int64            `json:"scannedAt"`
+		Faces     []map[string]any `json:"faces"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Model != model.ID || !resp.Scanned || len(resp.Faces) != 1 {
 		t.Fatalf("resp = %+v", resp)
+	}
+	if resp.ScannedAt != 1 {
+		t.Fatalf("scannedAt = %d, want 1 (the ReplaceFaces timestamp)", resp.ScannedAt)
 	}
 
 	// Unscanned path: scanned=false, empty faces.
@@ -96,7 +100,7 @@ func TestFacesForPathHandler(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Scanned || len(resp.Faces) != 0 {
+	if resp.Scanned || resp.ScannedAt != 0 || len(resp.Faces) != 0 {
 		t.Fatalf("unscanned resp = %+v", resp)
 	}
 

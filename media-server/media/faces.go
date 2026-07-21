@@ -233,6 +233,25 @@ func HasFaceScan(db *sql.DB, path, model string) (bool, error) {
 	return true, nil
 }
 
+// FaceScanInfo reports whether path was scanned under model and when
+// (unix seconds; 0 for legacy rows without a timestamp). The timestamp is
+// what lets clients see an overwrite rescan complete — the scanned flag
+// stays true across it, but scanned_at moves forward.
+func FaceScanInfo(db *sql.DB, path, model string) (bool, int64, error) {
+	var at int64
+	err := db.QueryRow(
+		`SELECT COALESCE(scanned_at, 0) FROM face_scan WHERE media_path=? AND model=? LIMIT 1`,
+		path, model,
+	).Scan(&at)
+	if err == sql.ErrNoRows {
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, err
+	}
+	return true, at, nil
+}
+
 // GetFaces returns all stored faces for (path, model), detection-score
 // descending.
 func GetFaces(db *sql.DB, path, model string) ([]Face, error) {

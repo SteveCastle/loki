@@ -149,7 +149,7 @@ func facesForPathHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		scanned, err := media.HasFaceScan(deps.DB, path, model.ID)
+		scanned, scannedAt, err := media.FaceScanInfo(deps.DB, path, model.ID)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -166,9 +166,10 @@ func facesForPathHandler(deps *Dependencies) http.HandlerFunc {
 			})
 		}
 		writeJSON(w, map[string]any{
-			"model":   model.ID,
-			"scanned": scanned,
-			"faces":   out,
+			"model":     model.ID,
+			"scanned":   scanned,
+			"scannedAt": scannedAt,
+			"faces":     out,
 		})
 	}
 }
