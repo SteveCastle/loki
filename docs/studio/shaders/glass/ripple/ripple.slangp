@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = ripple.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;reeds;refract_;angle;sheen"
+amount   = 1.0
+reeds    = 28.0
+refract_ = 0.7
+angle    = 0.0
+sheen    = 0.4

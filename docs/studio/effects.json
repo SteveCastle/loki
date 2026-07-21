@@ -39,6 +39,14 @@
     {
       "id": "overlay",
       "label": "Overlay"
+    },
+    {
+      "id": "atmosphere",
+      "label": "Atmosphere"
+    },
+    {
+      "id": "glass",
+      "label": "Glass"
     }
   ],
   "effects": [
@@ -391,6 +399,36 @@
       "name": "thermal",
       "path": "shaders/stylize/thermal/thermal.slangp",
       "category": "stylize"
+    },
+    {
+      "name": "fog",
+      "path": "shaders/atmosphere/fog/fog.slangp",
+      "category": "atmosphere"
+    },
+    {
+      "name": "smoke",
+      "path": "shaders/atmosphere/smoke/smoke.slangp",
+      "category": "atmosphere"
+    },
+    {
+      "name": "underwater",
+      "path": "shaders/atmosphere/underwater/underwater.slangp",
+      "category": "atmosphere"
+    },
+    {
+      "name": "frosted",
+      "path": "shaders/glass/frosted/frosted.slangp",
+      "category": "glass"
+    },
+    {
+      "name": "ripple",
+      "path": "shaders/glass/ripple/ripple.slangp",
+      "category": "glass"
+    },
+    {
+      "name": "shatter",
+      "path": "shaders/glass/shatter/shatter.slangp",
+      "category": "glass"
     }
   ]
 }

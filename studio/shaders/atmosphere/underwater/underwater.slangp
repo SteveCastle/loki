@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = underwater.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;wobble;speed;tint;caustics;depth"
+amount   = 1.0
+wobble   = 0.6
+speed    = 1.0
+tint     = 0.6
+caustics = 0.5
+depth    = 0.45
