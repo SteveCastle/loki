@@ -25,9 +25,9 @@ import { renameReserved } from './engine/preprocess.js';
 import {
   newComp, newTrack, newMediaClip, newFxClip, clipEnd, evalProp, upsertKey,
   keyNear, activeClips, findClip, ensureDur, removeEmptyTracks, quantize,
-  clamp, History, uid, newProp, migrateComp, trackOf,
+  clamp, History, uid, newProp, migrateComp, trackOf, MEDIA_PROPS,
 } from './comp.js';
-import { Compositor } from './compositor.js';
+import { Compositor, BLEND_MODES } from './compositor.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Timeline, fmtTimecode, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
@@ -601,6 +601,7 @@ function drawForClip(clip, t) {
     scaleY: evalProp(clip.props.scaleY, tc) / 100,
     rot: evalProp(clip.props.rot, tc),
     opacity: clamp(evalProp(clip.props.opacity, tc) / 100, 0, 1),
+    blend: clip.blend ?? 'normal',
     maskView: masked ? mm.view : null,
     maskOpacity: masked ? mm.maskState.opacity ?? 1 : 0,
     maskInvert: masked ? !!mm.maskState.invert : false,
@@ -709,7 +710,11 @@ async function restoreSpecExtras(clip, spec) {
     // canvas added over black composes to the identical result).
     const nodes = await loadMaskNodes(clip.mask);
     if (nodes.length) {
-      spec.maskState = { opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert, nodes };
+      spec.maskState = {
+        opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert,
+        expand: clip.mask.expand ?? 0, feather: clip.mask.feather ?? 0,
+        nodes,
+      };
       dirty = true;
     }
   }
@@ -906,6 +911,7 @@ function onModelChange({ structural = false, transient = false } = {}) {
   chainDirty = true;
   if (transient) return;
   removeEmptyTracks(comp);   // e.g. the last clip was dragged off a track
+  reconcileShapeAssets();    // duplicated/split shape clips get their own asset
   refreshDropHint();
   timeline.render();
   renderInspector();
@@ -927,6 +933,7 @@ function appRedo() {
 function afterModelReplace(what) {
   stopMaskEdit();
   syncCustomSources();
+  reconcileShapeAssets();   // undo/redo may restore stale shape settings
   chainKey = '';
   chainDirty = true;
   tCur = clamp(tCur, 0, comp.dur);
@@ -1620,6 +1627,8 @@ function serializeMaskState(m) {
   return {
     opacity: m.opacity ?? 1,
     invert: !!m.invert,
+    expand: m.expand ?? 0,
+    feather: m.feather ?? 0,
     nodes: m.nodes.map((n) => {
       const out = {
         id: n.id, kind: n.kind, enabled: n.enabled !== false,
@@ -1736,11 +1745,18 @@ async function applyProjectData(data) {
       const nodes = await loadMaskNodes(clip.mask);
       if (!nodes.length) continue;
       mediaMasks.set(clip.id, {
-        maskState: { opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert, nodes },
+        maskState: {
+          opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert,
+          expand: clip.mask.expand ?? 0, feather: clip.mask.feather ?? 0,
+          nodes,
+        },
         tex: null, view: null, w: 0, h: 0,
       });
       buildMediaMaskGpu(clip.id);
     }
+
+  // Shape clips regenerate their textures from the model — no stored blobs.
+  reconcileShapeAssets();
 
   const ids = new Set();
   for (const track of comp.tracks)
@@ -1749,7 +1765,7 @@ async function applyProjectData(data) {
   // Restore assets in parallel; a missing or unloadable one must not block
   // the app — its clips simply render as offline until re-imported.
   await Promise.allSettled((data.assets ?? [])
-    .filter((meta) => ids.has(meta.id))
+    .filter((meta) => ids.has(meta.id) && meta.kind !== 'shape')
     .map(async (meta) => {
       const file = await idbGet(`asset:${meta.id}`);
       if (!file) throw new Error(`missing media blob for ${meta.name}`);
@@ -2259,6 +2275,7 @@ function destroyMediaMaskEntry(clipId) {
   const entry = mediaMasks.get(clipId);
   if (!entry) return;
   for (const node of entry.maskState.nodes) destroyMaskNodeGpu(node);
+  fx?.maskComposer?.destroyPost(entry.maskState);
   entry.tex?.destroy();
   mediaMasks.delete(clipId);
 }
@@ -2311,9 +2328,10 @@ function prepareNodeSources(nodes, t, getEncoder) {
     node.active = true;
     const tgt = ensureMatteTarget(node);
     // ':matte' keys a separate compositor item so the raw matte draw does
-    // not fight the clip's on-screen draw over one uniform buffer.
+    // not fight the clip's on-screen draw over one uniform buffer. Mattes
+    // are raw content — the clip's blend mode does not apply.
     compositor.composite(getEncoder(), tgt.view, comp.width, comp.height,
-      [{ ...d, clipId: d.clipId + ':matte', maskView: null }], { transparent: true });
+      [{ ...d, clipId: d.clipId + ':matte', maskView: null, blend: 'normal' }], { transparent: true });
   }
 }
 
@@ -2334,7 +2352,8 @@ function prepareMasks(t) {
     if (!hit || t < hit.clip.start || t >= clipEnd(hit.clip)) continue;
     prepareNodeSources(nodes, t, getEncoder);
     ensureMediaMaskTex(entry);
-    fx.maskComposer.encode(getEncoder(), { maskState: entry.maskState, maskView: entry.view });
+    fx.maskComposer.encode(getEncoder(),
+      { maskState: entry.maskState, maskView: entry.view, maskW: entry.w, maskH: entry.h });
   }
   if (encoder) fx.device.queue.submit([encoder.finish()]);
 }
@@ -2518,6 +2537,38 @@ function overlayToMedia(e) {
   ];
 }
 
+/* Brush-size cursor: while the brush tool paints, the native cursor is
+ * replaced by a circle matching the brush's on-screen diameter, so the
+ * stroke footprint is visible before committing it. Gradient tools keep
+ * the crosshair. */
+const brushCursor = document.createElement('div');
+brushCursor.id = 'brush-cursor';
+brushCursor.hidden = true;
+$('canvas-inner').appendChild(brushCursor);
+let brushCursorPos = null;   // last pointer [clientX, clientY] over the overlay
+
+function updateBrushCursor() {
+  const active = maskEdit && brush.tool === 'brush';
+  maskOverlay.style.cursor = active ? 'none' : '';
+  if (!active || !brushCursorPos) {
+    brushCursor.hidden = true;
+    return;
+  }
+  const rect = maskOverlay.getBoundingClientRect();
+  const innerR = $('canvas-inner').getBoundingClientRect();
+  const d = brush.size * (rect.width / comp.width);   // comp px → screen px
+  brushCursor.style.width = `${d}px`;
+  brushCursor.style.height = `${d}px`;
+  brushCursor.style.left = `${brushCursorPos[0] - innerR.left - d / 2}px`;
+  brushCursor.style.top = `${brushCursorPos[1] - innerR.top - d / 2}px`;
+  brushCursor.hidden = false;
+}
+
+maskOverlay.addEventListener('pointerleave', () => {
+  brushCursorPos = null;
+  updateBrushCursor();
+});
+
 let painting = false;
 let lastPt = null;
 
@@ -2534,6 +2585,8 @@ maskOverlay.addEventListener('pointerdown', (e) => {
 });
 maskOverlay.addEventListener('pointermove', (e) => {
   if (!maskEdit) return;
+  brushCursorPos = [e.clientX, e.clientY];
+  updateBrushCursor();
   if (gradState) {
     applyGradient(gradState.from, overlayToMedia(e));
     return;
@@ -2567,6 +2620,7 @@ async function startMaskEdit(clip, nodeId) {
   maskEdit = { clipId: clip.id, nodeId };
   rebuildRuby(node.source);
   document.body.classList.add('mask-editing');
+  updateBrushCursor();
   setStatus(clip.kind === 'media'
     ? 'painting mask — red = clip hidden'
     : 'painting mask — red = effect hidden');
@@ -2577,6 +2631,7 @@ function stopMaskEdit() {
   maskEdit = null;
   painting = false;
   document.body.classList.remove('mask-editing');
+  updateBrushCursor();
   renderInspector();
 }
 
@@ -2926,6 +2981,322 @@ gizmo.addEventListener('contextmenu', (e) => {
 });
 
 /* =====================================================================
+ * Shape layers — media clips whose texture is a canvas-drawn vector
+ * shape (preset + fill color), redrawn whenever the settings change.
+ * Picked from the Add menu, then drawn onto the viewport as a new layer.
+ * They stay kind:'media' so transforms, masks, mattes, the gizmo, and
+ * the exporter all treat them like any other still.
+ * =================================================================== */
+
+const SHAPE_TEX_SIZE = 1024;
+let lastShapeColor = '#4da3ff';
+
+/* Each preset appends its outline to the current path inside (x,y,w,h). */
+const SHAPE_PRESETS = {
+  rect: { label: 'Rectangle', icon: '▮', path: (c, x, y, w, h) => c.rect(x, y, w, h) },
+  rounded: {
+    label: 'Rounded rectangle', icon: '▢',
+    path: (c, x, y, w, h) => c.roundRect(x, y, w, h, Math.min(w, h) * 0.14),
+  },
+  ellipse: {
+    label: 'Ellipse', icon: '⬤',
+    path: (c, x, y, w, h) => c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2),
+  },
+  triangle: {
+    label: 'Triangle', icon: '▲',
+    path: (c, x, y, w, h) => {
+      c.moveTo(x + w / 2, y);
+      c.lineTo(x + w, y + h);
+      c.lineTo(x, y + h);
+      c.closePath();
+    },
+  },
+  diamond: {
+    label: 'Diamond', icon: '◆',
+    path: (c, x, y, w, h) => {
+      c.moveTo(x + w / 2, y);
+      c.lineTo(x + w, y + h / 2);
+      c.lineTo(x + w / 2, y + h);
+      c.lineTo(x, y + h / 2);
+      c.closePath();
+    },
+  },
+  star: {
+    label: 'Star', icon: '★',
+    path: (c, x, y, w, h) => {
+      const cx = x + w / 2, cy = y + h / 2;
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? 1 : 0.42;
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const px = cx + Math.cos(a) * r * (w / 2);
+        const py = cy + Math.sin(a) * r * (h / 2);
+        if (i === 0) c.moveTo(px, py);
+        else c.lineTo(px, py);
+      }
+      c.closePath();
+    },
+  },
+  heart: {
+    label: 'Heart', icon: '♥',
+    path: (c, x, y, w, h) => {
+      const cx = x + w / 2;
+      const top = h * 0.3;
+      c.moveTo(cx, y + top);
+      c.bezierCurveTo(cx, y, x, y, x, y + top);
+      c.bezierCurveTo(x, y + (h + top) / 2, cx, y + (h + top) / 2, cx, y + h);
+      c.bezierCurveTo(cx, y + (h + top) / 2, x + w, y + (h + top) / 2, x + w, y + top);
+      c.bezierCurveTo(x + w, y, cx, y, cx, y + top);
+    },
+  },
+  arrow: {
+    label: 'Arrow', icon: '➜',
+    path: (c, x, y, w, h) => {
+      c.moveTo(x, y + h * 0.3);
+      c.lineTo(x + w * 0.55, y + h * 0.3);
+      c.lineTo(x + w * 0.55, y);
+      c.lineTo(x + w, y + h * 0.5);
+      c.lineTo(x + w * 0.55, y + h);
+      c.lineTo(x + w * 0.55, y + h * 0.7);
+      c.lineTo(x, y + h * 0.7);
+      c.closePath();
+    },
+  },
+};
+
+function drawShapeCanvas(shape) {
+  const s = SHAPE_TEX_SIZE;
+  const c = document.createElement('canvas');
+  c.width = c.height = s;
+  const ctx2d = c.getContext('2d');
+  // Tiny inset so the anti-aliased edge isn't clipped by the texture border.
+  const inset = s * 0.01;
+  ctx2d.fillStyle = shape.color;
+  ctx2d.beginPath();
+  (SHAPE_PRESETS[shape.preset] ?? SHAPE_PRESETS.rect)
+    .path(ctx2d, inset, inset, s - 2 * inset, s - 2 * inset);
+  ctx2d.fill();
+  return c;
+}
+
+/** Give `clip` its own shape asset (keyed by clip id) and redraw the
+ * texture when the preset/color no longer matches what's uploaded. */
+function ensureShapeAsset(clip) {
+  const id = `shape:${clip.id}`;
+  clip.assetId = id;
+  let asset = assets.get(id);
+  if (!asset) {
+    const texture = fx.device.createTexture({
+      label: `shape ${clip.shape.preset}`,
+      size: [SHAPE_TEX_SIZE, SHAPE_TEX_SIZE],
+      format: 'rgba8unorm',
+      // RENDER_ATTACHMENT: required by copyExternalImageToTexture's
+      // GPU-canvas blit path.
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    asset = {
+      id, kind: 'shape', name: '', ready: false,
+      w: SHAPE_TEX_SIZE, h: SHAPE_TEX_SIZE, duration: null,
+      el: null, texture, view: texture.createView(),
+    };
+    assets.set(id, asset);
+  }
+  const key = `${clip.shape.preset}|${clip.shape.color}`;
+  if (asset._shapeKey !== key) {
+    asset._shapeKey = key;
+    asset.name = SHAPE_PRESETS[clip.shape.preset]?.label ?? 'Shape';
+    fx.device.queue.copyExternalImageToTexture(
+      { source: drawShapeCanvas(clip.shape) },
+      { texture: asset.texture }, [SHAPE_TEX_SIZE, SHAPE_TEX_SIZE]);
+  }
+  asset.ready = true;
+  return asset;
+}
+
+/* Duplicated / split / undo-restored shape clips can reference another
+ * clip's asset (structuredClone copies assetId) or carry settings that no
+ * longer match the uploaded texture — re-key every shape clip to its own
+ * asset and redraw stale ones. Cheap: one string compare per shape clip. */
+function reconcileShapeAssets() {
+  if (!fx?.device) return;
+  for (const track of comp.tracks)
+    for (const clip of track.clips)
+      if (clip.kind === 'media' && clip.shape) ensureShapeAsset(clip);
+}
+
+/* -- draw-to-create interaction --------------------------------------- */
+
+let shapeDraw = null;   // { preset, label } armed; + { start, d } dragging
+const shapeRect = document.createElement('div');
+shapeRect.id = 'shape-draw-rect';
+shapeRect.hidden = true;
+$('canvas-inner').appendChild(shapeRect);
+
+function armShapeDraw(presetId) {
+  stopMaskEdit();
+  const label = SHAPE_PRESETS[presetId]?.label ?? 'shape';
+  shapeDraw = { preset: presetId, label };
+  viewer.classList.add('shape-drawing');
+  timeline.selectClip(null);
+  updateGizmo();
+  setStatus(`drag on the preview to draw a ${label.toLowerCase()} (Shift = square, click = default size) — Esc cancels`);
+}
+
+function cancelShapeDraw() {
+  if (!shapeDraw) return;
+  shapeDraw = null;
+  shapeRect.hidden = true;
+  viewer.classList.remove('shape-drawing');
+  window.removeEventListener('pointermove', shapeDrawMove);
+}
+
+function shapeDragRect(e) {
+  let [sx, sy] = shapeDraw.start;
+  let ex = e.clientX, ey = e.clientY;
+  if (e.shiftKey) {
+    const dx = ex - sx, dy = ey - sy;
+    const m = Math.max(Math.abs(dx), Math.abs(dy));
+    ex = sx + Math.sign(dx || 1) * m;
+    ey = sy + Math.sign(dy || 1) * m;
+  }
+  return { left: Math.min(sx, ex), top: Math.min(sy, ey), w: Math.abs(ex - sx), h: Math.abs(ey - sy) };
+}
+
+// Capture phase so an armed draw wins over viewport selection/deselection.
+viewer.addEventListener('pointerdown', (e) => {
+  if (!shapeDraw || maskEdit || e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  shapeDraw.start = [e.clientX, e.clientY];
+  shapeDraw.d = canvasDisplayRect();
+  window.addEventListener('pointermove', shapeDrawMove);
+  window.addEventListener('pointerup', shapeDrawUp, { once: true });
+}, { capture: true });
+
+function shapeDrawMove(e) {
+  if (!shapeDraw?.start) return;
+  const r = shapeDragRect(e);
+  const innerR = $('canvas-inner').getBoundingClientRect();
+  shapeRect.style.left = `${r.left - innerR.left}px`;
+  shapeRect.style.top = `${r.top - innerR.top}px`;
+  shapeRect.style.width = `${r.w}px`;
+  shapeRect.style.height = `${r.h}px`;
+  shapeRect.hidden = false;
+}
+
+function shapeDrawUp(e) {
+  const g = shapeDraw;
+  if (!g?.start) { cancelShapeDraw(); return; }
+  const r = shapeDragRect(e);
+  const d = g.d;
+  let w = r.w / d.s, h = r.h / d.s;
+  let cx = (r.left + r.w / 2 - d.left) / d.s;
+  let cy = (r.top + r.h / 2 - d.top) / d.s;
+  if (w < 4 || h < 4) {
+    // A plain click drops a default-sized shape at the point.
+    w = h = Math.min(comp.width, comp.height) * 0.35;
+    cx = (e.clientX - d.left) / d.s;
+    cy = (e.clientY - d.top) / d.s;
+  }
+  const preset = g.preset;
+  cancelShapeDraw();
+  createShapeClip(preset, cx, cy, w, h);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && shapeDraw) {
+    cancelShapeDraw();
+    setStatus('shape cancelled');
+  }
+});
+
+/** New shape clip on a new top track, sized/positioned from the drawn
+ * rect (comp px). Spans the whole timeline like an imported image. */
+function createShapeClip(presetId, cx, cy, w, h) {
+  const props = {};
+  for (const [key, , def] of MEDIA_PROPS) props[key] = newProp(def(comp));
+  const clip = {
+    id: uid('clip'),
+    kind: 'media',
+    name: SHAPE_PRESETS[presetId]?.label ?? 'Shape',
+    assetId: null,
+    start: 0,
+    dur: Math.max(1 / comp.fps, comp.dur),
+    in: 0,
+    shape: { preset: presetId, color: lastShapeColor },
+    props,
+  };
+  clip.props.x.v = Math.round(cx);
+  clip.props.y.v = Math.round(cy);
+  clip.props.scaleX.v = Math.round((w / SHAPE_TEX_SIZE) * 10000) / 100;
+  clip.props.scaleY.v = Math.round((h / SHAPE_TEX_SIZE) * 10000) / 100;
+  ensureShapeAsset(clip);
+  history.record(comp, () => {
+    const track = newTrack(clip.name);
+    track.clips.push(clip);
+    comp.tracks.unshift(track);
+    ensureDur(comp);
+  });
+  timeline.selectClip(clip.id);
+  onModelChange({ structural: true });
+  setStatus(`added ${clip.name.toLowerCase()} — color & preset are in the inspector`);
+}
+
+/* -- inspector section ------------------------------------------------- */
+
+function renderShapeSection(clip) {
+  const box = document.createElement('div');
+  box.className = 'shape-controls';
+  const h = document.createElement('h3');
+  h.textContent = 'Shape';
+  box.appendChild(h);
+  const row = document.createElement('div');
+  row.className = 'shape-row';
+
+  const sel = document.createElement('select');
+  sel.title = 'shape preset';
+  for (const [pid, p] of Object.entries(SHAPE_PRESETS)) {
+    const o = document.createElement('option');
+    o.value = pid;
+    o.textContent = `${p.icon} ${p.label}`;
+    sel.appendChild(o);
+  }
+  sel.value = clip.shape.preset;
+  sel.onchange = () => {
+    history.record(comp, () => {
+      const old = SHAPE_PRESETS[clip.shape.preset]?.label;
+      clip.shape.preset = sel.value;
+      // Auto-rename only when the user hasn't renamed the clip.
+      if (clip.name === old) clip.name = SHAPE_PRESETS[sel.value]?.label ?? clip.name;
+    });
+    ensureShapeAsset(clip);
+    onModelChange({ structural: false });
+  };
+
+  const colLabel = document.createElement('label');
+  colLabel.className = 'shape-color';
+  const col = document.createElement('input');
+  col.type = 'color';
+  col.value = clip.shape.color;
+  col.title = 'fill color';
+  let editing = false;   // one undo step per picker session
+  col.oninput = () => {
+    if (!editing) { history.begin(comp); editing = true; }
+    clip.shape.color = col.value;
+    lastShapeColor = col.value;
+    ensureShapeAsset(clip);
+  };
+  col.onchange = () => {
+    if (editing) { history.commit(comp); editing = false; }
+    scheduleSave();
+  };
+  colLabel.append(col, 'fill');
+
+  row.append(sel, colLabel);
+  box.appendChild(row);
+  inspectorEl.appendChild(box);
+}
+
+/* =====================================================================
  * Overlay textures (stamp images + rendered titles)
  * =================================================================== */
 
@@ -3054,6 +3425,9 @@ function rebuildAddMenu() {
       addItem('✎ custom shader', '__custom__');
     if ('text title caption overlay'.includes(q))
       addItem('T text / title', '__title__');
+    for (const [pid, p] of Object.entries(SHAPE_PRESETS))
+      if (`shape ${p.label}`.toLowerCase().includes(q))
+        addItem(`${p.icon} ${p.label}`, `__shape__:${pid}`, 'shape');
     for (const name of savedList)
       if (name.toLowerCase().includes(q))
         addItem(`🗎 ${name}`, `__saved__:${name}`, 'saved');
@@ -3094,6 +3468,9 @@ function rebuildAddMenu() {
     if (open) for (const c of children) addItem(c.label, c.choice, c.note);
   };
 
+  folder('shapes', 'Shapes (draw on the canvas)',
+    Object.entries(SHAPE_PRESETS).map(([pid, p]) =>
+      ({ label: `${p.icon} ${p.label}`, choice: `__shape__:${pid}` })));
   folder('saved', 'Saved shaders',
     savedList.map((name) => ({ label: `🗎 ${name}`, choice: `__saved__:${name}` })));
   for (const cat of manifest.categories ?? [])
@@ -3106,6 +3483,12 @@ function rebuildAddMenu() {
 /** Create an fx clip at the playhead on a new top track. */
 async function addChoice(choice) {
   if (!choice || !fx) return;
+  if (choice.startsWith('__shape__:')) {
+    // Shapes don't create a clip yet — they arm draw-to-create on the
+    // viewport; the clip lands where the user drags it.
+    armShapeDraw(choice.slice('__shape__:'.length));
+    return;
+  }
   let spec;
   let overlayTitle = false;
   if (choice === '__custom__') {
@@ -3223,7 +3606,8 @@ function renderInspector() {
   const kind = document.createElement('span');
   kind.className = 'insp-kind ' + clip.kind;
   kind.textContent = clip.kind === 'media'
-    ? (assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
+    ? (clip.shape ? (SHAPE_PRESETS[clip.shape.preset]?.icon ?? '◆')
+      : assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
     : (clip.fxKind === 'custom' ? '✎' : 'ƒx');
   const name = document.createElement('input');
   name.className = 'insp-name';
@@ -3296,6 +3680,26 @@ function renderInspector() {
       ? `${asset.name} — ${asset.w}×${asset.h}${asset.duration ? ` · ${asset.duration.toFixed(2)}s` : ''}${asset.ready ? '' : ' (loading…)'}`
       : 'media offline — re-import the file';
     inspectorEl.appendChild(info);
+
+    /* -- blend mode (how the layer composites onto what's below it) -- */
+    const blendRow = document.createElement('label');
+    blendRow.className = 'insp-blend';
+    blendRow.textContent = 'blend';
+    const blendSel = document.createElement('select');
+    blendSel.title = 'how this layer combines with the layers below it';
+    for (const [id, label] of BLEND_MODES) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = label;
+      blendSel.appendChild(o);
+    }
+    blendSel.value = clip.blend ?? 'normal';
+    blendSel.onchange = () => {
+      history.record(comp, () => { clip.blend = blendSel.value; });
+      onModelChange({ structural: false });
+    };
+    blendRow.appendChild(blendSel);
+    inspectorEl.appendChild(blendRow);
   }
 
   /* -- error surface -- */
@@ -3307,6 +3711,9 @@ function renderInspector() {
     e.textContent = err;
     inspectorEl.appendChild(e);
   }
+
+  /* -- shape settings (preset + fill color) -- */
+  if (clip.kind === 'media' && clip.shape) renderShapeSection(clip);
 
   /* -- custom shader editor -- */
   if (clip.kind === 'fx' && clip.fxKind === 'custom') renderCustomEditor(clip);
@@ -3635,6 +4042,7 @@ function maskContextFor(clip) {
       structure() { chainDirty = true; },
       clear() {
         for (const n of spec.maskState?.nodes ?? []) destroyMaskNodeGpu(n);
+        fx.maskComposer.destroyPost(spec.maskState);
         spec.maskState = null;
         clip.mask = null;
         chainDirty = true;
@@ -3713,6 +4121,22 @@ function renderMaskSection(clip) {
     mc.appendChild(maskNodeRow(clip, ctx, node));
 
   if (state?.nodes?.length) {
+    // Edge post passes — composed on the GPU each frame, so the sliders
+    // just write the live maskState (no rebuild needed).
+    const edge = document.createElement('div');
+    edge.className = 'mask-foot';
+    edge.append(
+      maskRange('expand', -64, 64, 1, () => state.expand ?? 0, (v) => {
+        state.expand = v;
+        scheduleSave();
+      }),
+      // 250 must match MASK_FEATHER_MAX in engine/blit.js.
+      maskRange('feather', 0, 250, 1, () => state.feather ?? 0, (v) => {
+        state.feather = v;
+        scheduleSave();
+      }));
+    mc.appendChild(edge);
+
     const foot = document.createElement('div');
     foot.className = 'mask-foot';
     const rng = maskRange('opacity', 0, 1, 0.01, () => state.opacity ?? 1, (v) => {
@@ -3835,7 +4259,7 @@ function maskNodeRow(clip, ctx, node) {
         b.className = 'btn' + (brush.tool === tool ? ' active' : '');
         b.textContent = icon;
         b.title = tip;
-        b.onclick = () => { brush.tool = tool; renderInspector(); };
+        b.onclick = () => { brush.tool = tool; updateBrushCursor(); renderInspector(); };
         return b;
       };
       const modeBtn = (mode, label) => {
@@ -3851,7 +4275,7 @@ function maskNodeRow(clip, ctx, node) {
         toolBtn('linear', '▤', 'linear gradient — drag across the preview'),
         toolBtn('radial', '◎', 'radial gradient — drag outward from the center'),
         modeBtn('hide', 'Hide'), modeBtn('show', 'Show'),
-        maskRange('size', 8, 300, 1, () => brush.size, (v) => { brush.size = v; }, !isBrush),
+        maskRange('size', 8, 300, 1, () => brush.size, (v) => { brush.size = v; updateBrushCursor(); }, !isBrush),
         maskRange('soft', 0, 0.9, 0.05, () => brush.soft, (v) => { brush.soft = v; }, !isBrush),
       );
     }

@@ -440,6 +440,11 @@ body.has-media #canvas-stack { display: block; }
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
   cursor: move;
   touch-action: none;
+  /* !important: the Dark Reader extension's fallback sheet paints bare divs
+   * opaque #181a1b (`body :not(iframe) { background !important }`), turning
+   * the selection box into a solid slab over the clip. Author !important at
+   * higher specificity wins the cascade. */
+  background: transparent !important;
 }
 #gizmo[hidden] { display: none; }
 body.mask-editing #gizmo { display: none; }
@@ -1415,3 +1420,79 @@ body.mask-editing #mask-overlay {
 }
 .btn-danger { border-color: #c0504d; color: #e58784; }
 .btn-danger:hover { background: #90312f; border-color: #c0504d; color: #fff; }
+
+/* ---- shape layers ---------------------------------------------------- */
+
+/* Draw-to-create mode: crosshair over the whole preview pane + the live
+ * rubber-band rect while dragging. */
+#viewer.shape-drawing, #viewer.shape-drawing canvas { cursor: crosshair; }
+#shape-draw-rect {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+  z-index: 6;
+}
+
+.shape-controls { padding: 6px 0 8px; font-size: 11px; color: var(--dim); }
+.shape-controls h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.shape-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shape-row select {
+  flex: 1;
+  min-width: 110px;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 11px;
+}
+.shape-row label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.shape-row input[type=color] {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg3);
+}
+
+/* Brush-size cursor while painting a mask: a circle matching the brush's
+ * on-screen diameter (dual outline so it reads on any background). */
+#brush-cursor {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 7;
+  /* Same Dark Reader defense as #gizmo — must stay a hollow ring. */
+  background: transparent !important;
+}
+#brush-cursor[hidden] { display: none; }
+
+/* Blend-mode row in the media inspector. */
+.insp-blend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.insp-blend select {
+  flex: 1;
+  max-width: 160px;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 11px;
+}

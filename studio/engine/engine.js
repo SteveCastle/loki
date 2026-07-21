@@ -741,6 +741,7 @@ export class SlangFx {
     layer.maskOptsBuf?.destroy();
     layer.maskTex = layer.maskView = layer.blendTex = layer.blendView = null;
     layer.blendBindGroup = layer.maskOptsBuf = null;
+    this.maskComposer.destroyPost(layer.maskState);
     for (const node of layer.maskState?.nodes ?? []) {
       node._optsBuf?.destroy();
       node._tex?.destroy();
