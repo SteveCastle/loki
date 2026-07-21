@@ -28,6 +28,11 @@ import {
   clamp, History, uid, newProp, migrateComp, trackOf, MEDIA_PROPS,
 } from './comp.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
+import {
+  DRIVER_WAVES, DRIVER_BANDS, DRIVER_FOLLOWS, DRIVER_MODES,
+  newDriver, applyDriver,
+} from './driver.js';
+import { analyzeMix, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Timeline, fmtTimecode, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
@@ -336,6 +341,109 @@ function tick() {
   updateGizmo();
 }
 
+/* ---- property drivers ------------------------------------------------
+ * Oscillator + audio-reactive modulation of any keyframable property
+ * (model + math in driver.js). Audio drivers read per-frame band
+ * envelopes precomputed by audio-analysis.js from an offline mixdown of
+ * EVERY video clip's audio — including muted/hidden tracks, so a muted
+ * "beat track" can drive visuals without being audible. The analysis is
+ * keyed on the clips' audio arrangement and recomputed in the background
+ * when it drifts; until it lands, audio drivers read 0. */
+
+const DRIVE_SR = 22050;   // analysis-only sample rate (bands top out ~11 kHz)
+
+const audioDrive = {
+  key: '',           // arrangement fingerprint the current data was built for
+  data: null,        // { fps, frames, bands } from analyzeMix
+  beats: new Map(),  // `${band}|${sensitivity}` -> ascending beat times
+};
+let audioDriveJob = null;
+
+/** Video clips whose audio participates in the mix. Drivers analyze all
+ * of them; the audible export path excludes muted/hidden tracks. */
+function audioEntries(includeMutedHidden) {
+  const out = [];
+  for (const track of comp.tracks) {
+    if (!includeMutedHidden && (track.hidden || track.muted)) continue;
+    for (const clip of track.clips) {
+      if (clip.kind !== 'media' || clip.start >= comp.dur) continue;
+      const asset = assets.get(clip.assetId);
+      if (asset?.kind === 'video' && asset.ready) out.push({ clip, asset });
+    }
+  }
+  return out;
+}
+
+function audioDriveKey() {
+  const parts = [comp.dur, comp.fps];
+  for (const { clip, asset } of audioEntries(true)) {
+    const vol = clip.props.volume;
+    parts.push(asset.id, clip.start, clip.dur, clip.in,
+      vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '');
+  }
+  return parts.join('|');
+}
+
+function compHasAudioDrivers() {
+  for (const track of comp.tracks)
+    for (const clip of track.clips) {
+      const bag = clip.kind === 'media' ? clip.props : clip.params;
+      for (const p of Object.values(bag ?? {}))
+        if (p?.driver?.enabled && p.driver.source === 'audio') return true;
+    }
+  return false;
+}
+
+/** (Re)build the band envelopes when any audio driver needs them and the
+ * comp's audio arrangement changed. Fire-and-forget from edits; awaited
+ * by the offline renderer so exports never race the analysis. */
+function syncAudioDrive() {
+  if (!compHasAudioDrivers()) return audioDriveJob;
+  const key = audioDriveKey();
+  if (key === audioDrive.key) return audioDriveJob;
+  audioDrive.key = key;   // claim first so concurrent calls dedupe
+  setStatus('analyzing audio for drivers…');
+  audioDriveJob = (async () => {
+    // Analysis mixes with BASE volumes (evalProp, not drivenEval): a
+    // driver on Volume must not feed back into its own input signal.
+    const mix = await mixCompAudio(DRIVE_SR, audioEntries(true), 1, (clip, tc) =>
+      clip.props.volume ? evalProp(clip.props.volume, tc) : 100);
+    if (audioDrive.key !== key) return;   // superseded by a newer edit
+    audioDrive.data = mix ? analyzeMix(mix.getChannelData(0), DRIVE_SR, comp.fps) : null;
+    audioDrive.beats.clear();
+    setStatus(mix ? 'audio analysis ready — drivers are live'
+      : 'no audio in the comp — audio drivers read 0');
+  })().catch((e) => console.warn('slangfx: audio analysis failed:', e));
+  return audioDriveJob;
+}
+
+/** Resolve an audio driver to 0..1 at COMP time t. */
+function audioSignal(d, t) {
+  const data = audioDrive.data;
+  if (!data) return 0;
+  const env = data.bands[d.band] ?? data.bands.level;
+  if (d.follow === 'beat') {
+    const sens = +d.sensitivity || 1.5;
+    const key = `${d.band}|${sens.toFixed(2)}`;
+    let beats = audioDrive.beats.get(key);
+    if (!beats) {
+      beats = detectBeats(env, data.fps, sens);
+      audioDrive.beats.set(key, beats);
+    }
+    return samplePulse(beats, t, +d.decay || 0.35);
+  }
+  return sampleLevel(env, data.fps, t, d.release == null ? 0.25 : +d.release || 0);
+}
+
+/** evalProp + the prop's driver (if enabled). tc is clip-relative (the
+ * oscillator time base), tComp absolute (the audio timeline). */
+function drivenEval(prop, tc, tComp) {
+  const base = evalProp(prop, tc);
+  const d = prop?.driver;
+  if (!d?.enabled) return base;
+  return applyDriver(base, d, tc, (drv) => audioSignal(drv, tComp));
+}
+
 /* ---- media sync ---------------------------------------------------- */
 
 function syncMedia(t, activeMedia) {
@@ -353,7 +461,7 @@ function syncMedia(t, activeMedia) {
     // Audio: master prefs × track mute × the clip's animated Volume.
     el.muted = !!audioState.muted || !!track.muted;
     const clipVol = clip.props.volume
-      ? clamp(evalProp(clip.props.volume, t - clip.start) / 100, 0, 1) : 1;
+      ? clamp(drivenEval(clip.props.volume, t - clip.start, t) / 100, 0, 1) : 1;
     el.volume = clamp((audioState.volume ?? 1) * clipVol, 0, 1);
     // Source time, wrapped so clips longer than their source loop.
     const src = clip.in + (t - clip.start);
@@ -594,13 +702,13 @@ function drawForClip(clip, t) {
     view: asset.view,
     w: asset.w,
     h: asset.h,
-    x: evalProp(clip.props.x, tc),
-    y: evalProp(clip.props.y, tc),
+    x: drivenEval(clip.props.x, tc, t),
+    y: drivenEval(clip.props.y, tc, t),
     // Negative scale mirrors the media on that axis.
-    scaleX: evalProp(clip.props.scaleX, tc) / 100,
-    scaleY: evalProp(clip.props.scaleY, tc) / 100,
-    rot: evalProp(clip.props.rot, tc),
-    opacity: clamp(evalProp(clip.props.opacity, tc) / 100, 0, 1),
+    scaleX: drivenEval(clip.props.scaleX, tc, t) / 100,
+    scaleY: drivenEval(clip.props.scaleY, tc, t) / 100,
+    rot: drivenEval(clip.props.rot, tc, t),
+    opacity: clamp(drivenEval(clip.props.opacity, tc, t) / 100, 0, 1),
     blend: clip.blend ?? 'normal',
     maskView: masked ? mm.view : null,
     maskOpacity: masked ? mm.maskState.opacity ?? 1 : 0,
@@ -750,7 +858,7 @@ function applyParams(t) {
     const tc = t - hit.clip.start;
     for (const meta of rt.paramMeta) {
       const prop = hit.clip.params[meta.name];
-      let v = prop ? evalProp(prop, tc) : meta.default;
+      let v = prop ? drivenEval(prop, tc, t) : meta.default;
       if (meta.max > meta.min) v = clamp(v, meta.min, meta.max);
       rt.paramValues.set(meta.name, v);
     }
@@ -912,6 +1020,7 @@ function onModelChange({ structural = false, transient = false } = {}) {
   if (transient) return;
   removeEmptyTracks(comp);   // e.g. the last clip was dragged off a track
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
+  syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   refreshDropHint();
   timeline.render();
   renderInspector();
@@ -1778,6 +1887,7 @@ async function applyProjectData(data) {
 
   await applyCompSize();
   setTime(tCur);
+  syncAudioDrive();   // restored projects may carry audio drivers
   refreshDropHint();
   updateProjectButton();
   timeline?.zoomFit();
@@ -3743,7 +3853,11 @@ function renderInspector() {
     hint.textContent = '⏱ = animate';
     h.appendChild(hint);
     box.appendChild(h);
-    for (const def of defs) box.appendChild(paramRow(clip, def));
+    for (const def of defs) {
+      box.appendChild(paramRow(clip, def));
+      const dp = driverPanel(clip, def);
+      if (dp) box.appendChild(dp);
+    }
     inspectorEl.appendChild(box);
   }
 }
@@ -3817,8 +3931,166 @@ function paramRow(clip, def) {
   keyBtn.title = 'add / remove keyframe at playhead';
   keyBtn.addEventListener('click', () => toggleKey(clip, def.key));
 
-  row.append(sw, label, slider, num, keyBtn);
+  const drv = document.createElement('button');
+  drv.className = 'tl-mini drv-toggle' + (prop?.driver?.enabled ? ' on' : '');
+  drv.textContent = '∿';
+  drv.title = prop?.driver
+    ? 'driver settings'
+    : 'drive this value with an oscillator or audio (beats, levels)';
+  drv.addEventListener('click', () => toggleDriver(clip, def));
+
+  row.append(sw, label, slider, num, keyBtn, drv);
   return row;
+}
+
+/* ---- driver editor --------------------------------------------------- */
+
+const openDrivers = new Set();   // `${clipId}:${propKey}` panels twirled open
+
+function toggleDriver(clip, def) {
+  const id = `${clip.id}:${def.key}`;
+  const prop = getOrCreateProp(clip, def.key);
+  if (!prop.driver) {
+    history.record(comp, () => { prop.driver = newDriver(def); });
+    openDrivers.add(id);
+    scheduleSave();
+  } else if (openDrivers.has(id)) {
+    openDrivers.delete(id);
+  } else {
+    openDrivers.add(id);
+  }
+  renderInspector();
+}
+
+/** The twirled-open editor under a driven property's row. */
+function driverPanel(clip, def) {
+  const id = `${clip.id}:${def.key}`;
+  if (!openDrivers.has(id)) return null;
+  const prop = getProp(clip, def.key);
+  const d = prop?.driver;
+  if (!d) return null;
+
+  const panel = document.createElement('div');
+  panel.className = 'driver-panel';
+
+  // One labeled control. `set` mutates the driver inside one undo step;
+  // pass rerender for edits that change which fields are visible.
+  const field = (labelText, input) => {
+    const l = document.createElement('label');
+    l.append(labelText, input);
+    return l;
+  };
+  const numF = (labelText, key, step, title = '') => {
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = String(step);
+    inp.value = fmtVal(d[key] ?? 0);
+    inp.title = title;
+    inp.addEventListener('keydown', (e) => e.stopPropagation());
+    inp.addEventListener('change', () => {
+      const v = parseFloat(inp.value);
+      if (Number.isNaN(v)) return;
+      history.record(comp, () => { d[key] = v; });
+      scheduleSave();
+    });
+    return field(labelText, inp);
+  };
+  const selF = (labelText, key, options, { rerender = false, title = '' } = {}) => {
+    const sel = document.createElement('select');
+    for (const [val, lab] of options) {
+      const o = document.createElement('option');
+      o.value = val;
+      o.textContent = lab;
+      sel.appendChild(o);
+    }
+    sel.value = d[key];
+    sel.title = title;
+    sel.addEventListener('change', () => {
+      history.record(comp, () => { d[key] = sel.value; });
+      scheduleSave();
+      syncAudioDrive();
+      if (rerender) renderInspector();
+    });
+    return field(labelText, sel);
+  };
+
+  /* row 1: enable / source / combine mode / remove */
+  const top = document.createElement('div');
+  top.className = 'drv-row';
+  const en = document.createElement('input');
+  en.type = 'checkbox';
+  en.checked = d.enabled !== false;
+  en.addEventListener('change', () => {
+    history.record(comp, () => { d.enabled = en.checked; });
+    scheduleSave();
+    syncAudioDrive();
+    renderInspector();
+  });
+  top.appendChild(field(en, ' on'));
+  top.appendChild(selF('src', 'source',
+    [['osc', 'Oscillator'], ['audio', 'Audio']], { rerender: true }));
+  top.appendChild(selF('mode', 'mode', DRIVER_MODES,
+    { title: 'add: base + delta (property units)\nmultiply: base × (1 + delta %)\nreplace: ignore keyframes' }));
+  const del = document.createElement('button');
+  del.className = 'mn-del';
+  del.textContent = '✕';
+  del.title = 'remove this driver';
+  del.addEventListener('click', () => {
+    history.record(comp, () => { delete prop.driver; });
+    openDrivers.delete(id);
+    scheduleSave();
+    renderInspector();
+  });
+  top.appendChild(del);
+  panel.appendChild(top);
+
+  /* row 2: the source's own params */
+  const srcRow = document.createElement('div');
+  srcRow.className = 'drv-row';
+  if (d.source === 'audio') {
+    srcRow.appendChild(selF('band', 'band', DRIVER_BANDS));
+    srcRow.appendChild(selF('follow', 'follow', DRIVER_FOLLOWS, {
+      rerender: true,
+      title: 'level: track the band’s loudness\nbeat: pulse on detected onsets',
+    }));
+    if (d.follow === 'beat') {
+      srcRow.appendChild(numF('sense', 'sensitivity', 0.1,
+        'onset threshold vs. the running average — higher = fewer, stronger beats'));
+      srcRow.appendChild(numF('decay', 'decay', 0.05, 'pulse fade-out (seconds)'));
+    } else {
+      srcRow.appendChild(numF('release', 'release', 0.05,
+        'how long the value hangs after a loud moment (seconds)'));
+    }
+  } else {
+    srcRow.appendChild(selF('wave', 'wave', DRIVER_WAVES, { rerender: true }));
+    srcRow.appendChild(numF('freq', 'freq', 0.1, 'cycles per second'));
+    srcRow.appendChild(numF('phase', 'phase', 0.05, 'cycle offset (1 = one full cycle)'));
+    if (d.wave === 'square' || d.wave === 'pulse')
+      srcRow.appendChild(numF('width', 'width', 0.05, 'duty cycle 0..1'));
+  }
+  panel.appendChild(srcRow);
+
+  /* row 3: mapping */
+  const mapRow = document.createElement('div');
+  mapRow.className = 'drv-row';
+  mapRow.appendChild(numF('amount', 'amount', def.step || 1,
+    d.mode === 'multiply' ? 'signal swing in percent of the base value'
+      : `signal swing in ${def.unit || 'property units'}`));
+  mapRow.appendChild(numF('offset', 'offset', def.step || 1, 'constant added to the swing'));
+  panel.appendChild(mapRow);
+
+  if (d.source === 'audio') {
+    const hint = document.createElement('div');
+    hint.className = 'drv-hint';
+    hint.textContent = audioDrive.data
+      ? 'audio drivers hear every video track — muted “beat tracks” too'
+      : (compHasAudioDrivers() && audioEntries(true).length
+        ? 'analyzing audio…'
+        : 'no video clips with audio in the comp — this driver reads 0');
+    panel.appendChild(hint);
+  }
+
+  return panel;
 }
 
 function renderCustomEditor(clip) {
@@ -4454,6 +4726,9 @@ saveBackBtn.addEventListener('click', () => {
 
 async function runOfflineRender({ saveBack = null } = {}) {
   pause();
+  // Audio drivers must have their envelopes before frames render — the
+  // export samples the same precomputed data as the preview.
+  await syncAudioDrive();
   const job = (offlineJob = { cancel: false, error: null });
   const tRestore = tCur;
   const btn = saveBack ? saveBackBtn : fastBtn;
@@ -4551,43 +4826,36 @@ async function syncFxChainSettled(t) {
 
 const AUDIO_SR = 48000;   // Opus native rate
 
-/* Mix the comp's audio offline: every audible video clip becomes a buffer
- * source in an OfflineAudioContext, with clip trim/looping matching
- * syncMedia and the clip's Volume keyframes baked into gain automation.
- * Preview-only master volume/mute is deliberately NOT baked — a muted
- * preview should not produce a silent export. Returns null when the comp
- * has no decodable audio. */
-async function renderCompAudio() {
-  const entries = [];
-  for (const track of comp.tracks) {
-    if (track.hidden || track.muted) continue;
-    for (const clip of track.clips) {
-      if (clip.kind !== 'media' || clip.start >= comp.dur) continue;
-      const asset = assets.get(clip.assetId);
-      if (asset?.kind === 'video' && asset.ready) entries.push({ clip, asset });
-    }
+/** Decode an asset's audio once and cache it on the asset (null = no
+ * decodable audio stream). decodeAudioData demuxes the audio straight out
+ * of the video container; a video with no audio track simply rejects. */
+async function decodeAssetAudio(asset) {
+  if (asset._audioBuf !== undefined) return asset._audioBuf;
+  try {
+    const file = asset.file ?? await idbGet(`asset:${asset.id}`);
+    const decodeCtx = new OfflineAudioContext(2, 1, AUDIO_SR);
+    asset._audioBuf = await decodeCtx.decodeAudioData(await file.arrayBuffer());
+  } catch (e) {
+    console.warn(`slangfx: no audio for '${asset.name}':`, e);
+    asset._audioBuf = null;
   }
+  return asset._audioBuf;
+}
+
+/* Mix clip audio offline: each entry becomes a buffer source in an
+ * OfflineAudioContext, with clip trim/looping matching syncMedia and the
+ * clip's volume curve (via volumeAt, in percent) baked as per-frame gain
+ * ramps. Shared by the export path (audible clips, driven volume) and the
+ * driver analysis (every clip, base volume). Returns null when no entry
+ * has decodable audio. */
+async function mixCompAudio(sampleRate, entries, channels, volumeAt) {
   if (!entries.length) return null;
+  for (const { asset } of entries) await decodeAssetAudio(asset);
+  if (!entries.some(({ asset }) => asset._audioBuf)) return null;
 
-  // decodeAudioData demuxes the audio stream straight out of the video
-  // container; a video with no audio track simply rejects.
-  const buffers = new Map();
-  for (const { asset } of entries) {
-    if (buffers.has(asset.id)) continue;
-    try {
-      const file = await idbGet(`asset:${asset.id}`);
-      const decodeCtx = new OfflineAudioContext(2, 1, AUDIO_SR);
-      buffers.set(asset.id, await decodeCtx.decodeAudioData(await file.arrayBuffer()));
-    } catch (e) {
-      console.warn(`slangfx: no audio for '${asset.name}':`, e);
-      buffers.set(asset.id, null);
-    }
-  }
-  if (![...buffers.values()].some(Boolean)) return null;
-
-  const ctx = new OfflineAudioContext(2, Math.ceil(comp.dur * AUDIO_SR), AUDIO_SR);
+  const ctx = new OfflineAudioContext(channels, Math.max(1, Math.ceil(comp.dur * sampleRate)), sampleRate);
   for (const { clip, asset } of entries) {
-    const buf = buffers.get(asset.id);
+    const buf = asset._audioBuf;
     if (!buf) continue;
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -4597,11 +4865,11 @@ async function renderCompAudio() {
     const start = clip.start;
     const len = Math.min(clipEnd(clip), comp.dur) - start;
     if (len <= 0) continue;
-    const vol = (tc) => (clip.props.volume
-      ? clamp(evalProp(clip.props.volume, tc) / 100, 0, 1) : 1);
+    const vol = (tc) => clamp(volumeAt(clip, tc) / 100, 0, 1);
     gain.gain.setValueAtTime(vol(0), start);
-    if (clip.props.volume?.anim && clip.props.volume.keys.length) {
-      // Bake the eased keyframe curve as per-frame linear ramps.
+    const animated = clip.props.volume?.anim && clip.props.volume.keys.length;
+    if (animated || clip.props.volume?.driver?.enabled) {
+      // Bake the eased/driven curve as per-frame linear ramps.
       const step = 1 / comp.fps;
       for (let tc = step; tc <= len + 1e-9; tc += step)
         gain.gain.linearRampToValueAtTime(vol(tc), start + tc);
@@ -4612,6 +4880,14 @@ async function renderCompAudio() {
     src.stop(start + len);
   }
   return ctx.startRendering();
+}
+
+/* The export mix: audible clips only, driven volume included. Preview-only
+ * master volume/mute is deliberately NOT baked — a muted preview should
+ * not produce a silent export. */
+async function renderCompAudio() {
+  return mixCompAudio(AUDIO_SR, audioEntries(false), 2, (clip, tc) =>
+    clip.props.volume ? drivenEval(clip.props.volume, tc, clip.start + tc) : 100);
 }
 
 /** Encode a rendered AudioBuffer to Opus chunks straight into the muxer. */

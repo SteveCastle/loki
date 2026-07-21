@@ -583,7 +583,7 @@ body.mask-editing #mask-overlay {
 .layer-error { color: #e58784; font-size: 11px; padding: 4px 0 6px; word-break: break-word; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
 
 .param-row { display: grid; grid-template-columns: 1fr 86px 54px; gap: 8px; align-items: center; margin-top: 4px; }
-.param-row.kf { grid-template-columns: 20px 1fr 80px 52px 18px; gap: 6px; }
+.param-row.kf { grid-template-columns: 20px 1fr 80px 52px 18px 18px; gap: 6px; }
 .param-row label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .param-row input[type=range] { width: 100%; accent-color: var(--accent); min-width: 0; }
 
@@ -1496,3 +1496,50 @@ body.mask-editing #mask-overlay {
   padding: 3px 4px;
   font-size: 11px;
 }
+
+/* ---- property drivers ------------------------------------------------ */
+
+.drv-toggle { color: var(--dim); font-size: 13px; }
+.drv-toggle.on { color: var(--accent); }
+
+.driver-panel {
+  margin: 2px 0 6px 20px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.driver-panel .drv-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.driver-panel label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.driver-panel select {
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  max-width: 110px;
+}
+.driver-panel input[type=number] {
+  width: 56px;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+.driver-panel input:focus, .driver-panel select:focus { outline: none; border-color: var(--accent); }
+.driver-panel .mn-del { margin-left: auto; }
+.driver-panel .drv-hint { font-size: 10px; color: var(--dim); opacity: 0.8; }

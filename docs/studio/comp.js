@@ -210,12 +210,18 @@ export function splitClip(clip, t) {
   right.dur = clip.dur - offset;
   clip.dur = offset;
   if (clip.kind === 'media') right.in = clip.in + offset;
-  // Re-anchor the right half's keys to its new start.
+  // Re-anchor the right half's keys to its new start, and advance any
+  // oscillator driver's phase so the waveform is continuous across the cut
+  // (audio drivers sample comp time and need no adjustment).
   const eachProp = (c, fn) => {
     const bag = c.kind === 'media' ? c.props : c.params;
     for (const p of Object.values(bag)) fn(p);
   };
-  eachProp(right, (p) => { for (const k of p.keys) k.t -= offset; });
+  eachProp(right, (p) => {
+    for (const k of p.keys) k.t -= offset;
+    if (p.driver && p.driver.source !== 'audio')
+      p.driver.phase = (p.driver.phase ?? 0) + offset * (p.driver.freq ?? 0);
+  });
   return right;
 }
 
