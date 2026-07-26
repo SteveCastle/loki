@@ -1441,7 +1441,7 @@ const timelineHost = {
   toggleAnim,
   toggleKey,
   onModelChange,
-  onSelect: () => { gizmoOff = false; renderInspector(); },
+  onSelect: () => { focusIsFallback = false; renderInspector(); },
   addMediaAt: (files, t, trackIdx) => importFiles(files, { t, trackIdx }),
   setTrimPreview: (t) => {
     trimPreviewT = t;
@@ -3125,15 +3125,15 @@ for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
 }
 $('canvas-inner').appendChild(gizmo);
 
-/* A layer can be selected without being armed for transform. Clicking the
- * canvas away from it puts down the handles but leaves it selected, so the
- * inspector and timeline still target it — click it again to pick them
- * back up. Reset whenever the selection itself changes. */
-let gizmoOff = false;
+/* The inspector always keeps a layer in focus so the effect panel has a
+ * target (see ensureFocusedLayer), which means "nothing selected" quietly
+ * becomes "topmost layer selected". Handles must not follow that: a fallback
+ * focus is not something the user pointed at, so it gets no gizmo. */
+let focusIsFallback = false;
 
 function gizmoTarget() {
   const clip = timeline?.selectedClip;
-  if (gizmoOff) return null;
+  if (focusIsFallback) return null;
   if (!clip || clip.kind !== 'media' || maskEdit) return null;
   // While a shape draw is armed the pointer belongs to the draw, not to the
   // selected layer's handles.
@@ -3367,26 +3367,27 @@ function clipAtViewportPoint(clientX, clientY) {
 
 canvas.addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || maskEdit || crop) return;
+  // The canvas element is bigger than the comp frame — object-fit letterboxes
+  // the frame inside it — so a click here can still be "out in the workspace".
+  // Anywhere outside the frame drops the selection; inside it, one click
+  // switches to whatever layer is under the pointer.
+  const d = canvasDisplayRect();
+  const inFrame = e.clientX >= d.left && e.clientX <= d.left + comp.width * d.s
+    && e.clientY >= d.top && e.clientY <= d.top + comp.height * d.s;
+  if (!inFrame) { timeline.selectClip(null); updateGizmo(); return; }
   const hit = clipAtViewportPoint(e.clientX, e.clientY);
-  const sel = timeline?.selectedClip;
-  // Clicking off an armed layer disarms it first and keeps it selected —
-  // otherwise, with a full-frame layer underneath, there is nowhere to
-  // click that isn't "select that other layer" and the handles can never
-  // be put down. A second click then selects normally.
-  if (sel && !gizmoOff && (!hit || hit.id !== sel.id)) {
-    gizmoOff = true;
-    updateGizmo();
-    return;
-  }
   timeline.selectClip(hit ? hit.id : null);
-  gizmoOff = false;
+  focusIsFallback = !hit;
   updateGizmo();
 });
 
-// Clicking the letterbox / empty pane around the canvas also deselects.
+// The workspace around the frame deselects. Anything in the viewer that
+// isn't the frame itself counts — viewer, canvas-stack and canvas-inner all
+// show through around the comp depending on the view mode, so match by
+// exclusion rather than naming the two that used to be reachable.
 viewer.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || maskEdit) return;
-  if (e.target !== viewer && e.target !== canvasStack) return;
+  if (e.button !== 0 || maskEdit || crop) return;
+  if (e.target === canvas || e.target.closest('#gizmo, .btn, #mask-overlay')) return;
   timeline.selectClip(null);
   updateGizmo();
 });
@@ -4803,11 +4804,12 @@ function ensureFocusedLayer() {
       fallback ??= clip;
       if (tCur >= clip.start && tCur < clipEnd(clip)) {
         timeline.selectClip(clip.id, { quiet: true });
+        focusIsFallback = true;
         return clip;
       }
     }
   }
-  if (fallback) timeline.selectClip(fallback.id, { quiet: true });
+  if (fallback) { timeline.selectClip(fallback.id, { quiet: true }); focusIsFallback = true; }
   return fallback;
 }
 
