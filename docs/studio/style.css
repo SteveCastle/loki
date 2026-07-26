@@ -703,16 +703,6 @@ body.mask-editing #mask-overlay {
 .fx-entry-body .insp-params { margin-bottom: 0; }
 .fx-entry .layer-error { padding: 0 8px 6px; }
 
-.fx-spill {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--dim);
-  font-size: 11px;
-  padding: 2px 2px 0;
-}
-.fx-spill input { accent-color: var(--accent); }
-
 .param-row { display: grid; grid-template-columns: 1fr 86px 54px; gap: 8px; align-items: center; margin-top: 4px; }
 .param-row.kf { grid-template-columns: 20px 1fr 80px 52px 18px 18px; gap: 6px; }
 .param-row label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

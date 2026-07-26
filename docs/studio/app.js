@@ -762,7 +762,11 @@ function compositeDrawForClip(clip, t) {
     ...d,
     clipId: `${clip.id}:fxout`,
     view: processed.view,
-    gateView: processed.gateView,
+    covView: processed.covView,
+    // The isolate composited the clip over transparent black, so the
+    // chain's colour is premultiplied; the compositor undoes that against
+    // the matte's coverage rather than multiplying by it a second time.
+    premultiplied: true,
     w: comp.width, h: comp.height,
     x: comp.width / 2, y: comp.height / 2,
     scaleX: 1, scaleY: 1, rot: 0,
@@ -938,25 +942,40 @@ function markChainDirty(clipId = null) {
 /** The chain for a media clip's own effects, created on first use. Returns
  * null until the (async) engine is ready, so callers fall back to the raw
  * clip for that frame. */
+function newChain() {
+  return SlangFx.create({
+    device: fx.device,
+    toolchain: fx.toolchain,
+    readFile: fx.readFile,
+    readImage: fx.readImage,
+    moduleCache: fx.moduleCache,   // compile each shader once per device
+  }).then(async (chain) => {
+    await chain.setSourceSize(comp.width, comp.height);
+    return chain;
+  });
+}
+
+/** The chains for a media clip's own effects, created on first use. Returns
+ * null until the (async) engine is ready, so callers fall back to the raw
+ * clip for that frame.
+ *
+ * Two chains, same preset stack: `fx` carries the colour, `matte` carries
+ * the coverage. They're separate engines rather than two passes through one
+ * because a preset's feedback/history buffers must not interleave colour
+ * and matte frames. See prepareMediaFx for why the matte exists at all. */
 function mediaChainFor(clip) {
   let entry = mediaChains.get(clip.id);
   if (!entry) {
-    entry = { fx: null, key: '', dirty: true, building: true, promise: null };
+    entry = { fx: null, matte: null, key: '', dirty: true, building: true, promise: null };
     mediaChains.set(clip.id, entry);
-    entry.promise = SlangFx.create({
-      device: fx.device,
-      toolchain: fx.toolchain,
-      readFile: fx.readFile,
-      readImage: fx.readImage,
-      moduleCache: fx.moduleCache,   // compile each shader once per device
-    }).then(async (chain) => {
-      await chain.setSourceSize(comp.width, comp.height);
-      entry.fx = chain;
+    entry.promise = Promise.all([newChain(), newChain()]).then(([colour, matte]) => {
+      entry.fx = colour;
+      entry.matte = matte;
     }).catch((e) => {
       console.error('slangfx: media chain create failed:', e);
     }).finally(() => { entry.building = false; });
   }
-  return entry.fx ? entry : null;
+  return entry.fx && entry.matte ? entry : null;
 }
 
 function destroyMediaChain(clipId) {
@@ -969,7 +988,9 @@ function destroyMediaChain(clipId) {
     // that outlives the chain can't hand out a destroyed runtime.
     for (const layer of entry.fx?.layers ?? []) layer.runtime = null;
     entry.fx?.destroy();
+    entry.matte?.destroy();
     compositor.release(`${clipId}:iso`);
+    compositor.release(`${clipId}:matte`);
     compositor.release(`${clipId}:fxout`);
   });
 }
@@ -981,7 +1002,10 @@ function resizeMediaChains() {
     if (!entry.fx) continue;
     entry.key = '';
     entry.building = true;
-    entry.promise = entry.fx.setSourceSize(comp.width, comp.height)
+    entry.promise = Promise.all([
+      entry.fx.setSourceSize(comp.width, comp.height),
+      entry.matte?.setSourceSize(comp.width, comp.height),
+    ])
       .catch((e) => console.error('slangfx: media chain resize failed:', e))
       .finally(() => { entry.building = false; });
   }
@@ -1026,12 +1050,19 @@ function syncMediaChain(clip, entry) {
   entry.building = true;
   // No group mask here: a media clip's mask cuts its alpha at composite
   // time (green screen), which already covers the effected result.
-  entry.fx.layers = liveEffects(clip).map((effect) => {
+  const effects = liveEffects(clip);
+  entry.fx.layers = effects.map((effect) => {
     const spec = specFor(clip, effect);
     spec.maskState = null;
     return spec;
   });
-  entry.promise = entry.fx.rebuild()
+  // The matte chain runs the same presets over its own runtimes. Distinct
+  // spec objects: the engine writes layer.runtime into them, and the two
+  // chains must not fight over that pointer.
+  entry.matte.layers = effects.map((effect) => ({
+    ...specFor(clip, effect), maskState: null, runtime: null,
+  }));
+  entry.promise = Promise.all([entry.fx.rebuild(), entry.matte.rebuild()])
     .catch((e) => console.error('slangfx: media chain rebuild failed:', e))
     .finally(() => { entry.building = false; });
   return entry.promise;
@@ -1042,8 +1073,22 @@ function syncMediaChain(clip, entry) {
  * clip alone (its transform, full opacity, no mask, transparent
  * background) into its chain's input, run the stack, and remember the
  * processed view for compositeFrame.
+ *
+ * Coverage is the subtle part. A slang preset is written for an opaque
+ * framebuffer and signs off with `FragColor = vec4(rgb, 1.0)`, so the
+ * alpha coming out of a chain says nothing about where the effect
+ * actually landed. Guessing costs us either way: assume the clip's
+ * original silhouette and an effect can never grow (a blur has nothing
+ * to soften into); trust the shader's alpha and every effect covers the
+ * whole comp.
+ *
+ * So we don't guess. The same stack runs a second time over a white
+ * silhouette, and whatever it does to those pixels is what it did to the
+ * coverage — a blur blurs it, a warp warps it, a colour grade leaves it
+ * alone. That output is the matte, and it costs one extra chain run per
+ * effected media clip.
  */
-const mediaFxViews = new Map();   // clipId -> {view, gateView}
+const mediaFxViews = new Map();   // clipId -> {view, covView}
 
 function prepareMediaFx(t, activeMedia) {
   mediaFxViews.clear();
@@ -1055,25 +1100,32 @@ function prepareMediaFx(t, activeMedia) {
     if (!d) continue;
     syncMediaChain(clip, entry);
     const chain = entry.fx;
-    if (!chain.inputView) continue;
+    const matte = entry.matte;
+    if (!chain.inputView || !matte.inputView) continue;
+
     const encoder = fx.device.createCommandEncoder();
-    // ':iso' keys its own compositor item so the isolate draw doesn't
-    // fight the clip's on-screen draw over one uniform buffer.
-    compositor.composite(encoder, chain.inputView, comp.width, comp.height, [{
-      ...d, clipId: `${clip.id}:iso`, opacity: 1, blend: 'normal',
-      maskView: null, gateView: null,
-    }], { transparent: true });
+    // ':iso' / ':matte' key their own compositor items so these draws
+    // don't fight the clip's on-screen draw over one uniform buffer.
+    const iso = {
+      ...d, opacity: 1, blend: 'normal',
+      maskView: null, covView: null,
+    };
+    compositor.composite(encoder, chain.inputView, comp.width, comp.height,
+      [{ ...iso, clipId: `${clip.id}:iso` }], { transparent: true });
+    compositor.composite(encoder, matte.inputView, comp.width, comp.height,
+      [{ ...iso, clipId: `${clip.id}:matte`, matte: true }], { transparent: true });
     fx.device.queue.submit([encoder.finish()]);
+
     applyParamsFor(chain, t);
     chain.render(null, t);
+    applyParamsFor(matte, t);
+    matte.render(null, t);
+
     const view = chain.finalView;
     if (view === chain.inputView) continue;   // nothing built yet
     mediaFxViews.set(clip.id, {
       view,
-      // Shaders overwhelmingly write alpha = 1 across the frame, which
-      // would smear the effect over the whole comp; gate the result back
-      // to the clip's own coverage unless the user wants the spill.
-      gateView: clip.fxSpill ? null : chain.inputView,
+      covView: matte.finalView,   // where the effect actually reached
     });
   }
 }
@@ -4592,25 +4644,10 @@ function renderEffectStack(clip) {
   }
   for (const effect of effects) box.appendChild(effectRow(clip, effect));
 
-  // Media stacks composite their processed result back over the frame;
-  // most shaders write alpha = 1 everywhere, so the result is clipped to
-  // the clip's own coverage unless the user wants the spill.
-  if (clip.kind === 'media' && effects.length) {
-    const spill = document.createElement('label');
-    spill.className = 'fx-spill';
-    spill.title = 'Composite the effect’s own alpha instead of clipping to the '
-      + 'media. Lets a glow or blur spread past the edges — but a shader that '
-      + 'writes alpha = 1 (most presets do) will then cover the whole frame.';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.checked = !!clip.fxSpill;
-    cb.onchange = () => {
-      history.record(comp, () => { clip.fxSpill = cb.checked; });
-      onModelChange({ structural: false });
-    };
-    spill.append(cb, 'let effects spill outside the media');
-    box.appendChild(spill);
-  }
+  // No spill toggle any more: a media stack's coverage is measured by the
+  // matte pass (see prepareMediaFx), so a blur spreads past the edges on
+  // its own and no preset can smear itself over the whole frame. Clip an
+  // effect deliberately with a mask, which is the tool for it.
 
   inspectorEl.appendChild(box);
 }

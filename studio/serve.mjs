@@ -34,7 +34,13 @@ createServer(async (req, res) => {
     const file = path.join(root, urlPath.replaceAll('/', path.sep));
     if (!file.startsWith(root)) throw new Error('forbidden');
     const data = await readFile(file);
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream' });
+    res.writeHead(200, {
+      'Content-Type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
+      // Without this the responses carry no freshness information at all, so
+      // Chrome heuristically caches them and a reload after publish.mjs can
+      // quietly run the previous build. Never what you want from a dev server.
+      'Cache-Control': 'no-store, must-revalidate',
+    });
     res.end(data);
   } catch {
     res.writeHead(404);

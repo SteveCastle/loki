@@ -84,7 +84,8 @@ struct Xform {
   // misc: opacity 0..1, rotation (rad), mask opacity, mask invert (0/1)
   misc  : vec4<f32>,
   // misc2: output shaping (0 straight / 1 premult / 2 fade-to-white),
-  //        gate enabled (0/1), unused x2
+  //        coverage mode (0 = source alpha, 1 = matte texture),
+  //        source is premultiplied (0/1), matte draw (0/1)
   misc2 : vec4<f32>,
 };
 
@@ -93,10 +94,11 @@ struct Xform {
 @group(0) @binding(2) var smp : sampler;
 // Comp-space mask multiplied into the clip's alpha (1x1 white = no mask).
 @group(0) @binding(3) var maskTex : texture_2d<f32>;
-// Comp-space coverage gate: the ALPHA of a clip's pre-effect isolate, used
-// to keep a media clip's effect output inside the media it came from
-// (shaders routinely write alpha = 1 across the whole frame).
-@group(0) @binding(4) var gateTex : texture_2d<f32>;
+// Comp-space coverage for an effected media clip: the effect chain's MATTE
+// output, greyscale in .r. Premultiplied white run through the same preset,
+// so whatever the shader does to pixels it did to the coverage. 1x1 black
+// when unused.
+@group(0) @binding(4) var covTex : texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -128,21 +130,43 @@ fn vs(@builtin(vertex_index) i : u32) -> VSOut {
 
 @fragment
 fn fs(in : VSOut) -> @location(0) vec4<f32> {
-  let color = textureSample(tex, smp, in.uv);
+  var color = textureSample(tex, smp, in.uv);
+  // Matte draw: keep the silhouette, throw away the colour. Blending this
+  // over transparent black premultiplies it, so the chain input carries
+  // coverage in rgb — which is what makes the matte pass work.
+  if (xf.misc2.w > 0.5) { color = vec4<f32>(1.0, 1.0, 1.0, color.a); }
+
   let compUV = in.pos.xy / xf.sizes.xy;
   var m = textureSample(maskTex, smp, compUV).r;
   if (xf.misc.w > 0.5) { m = 1.0 - m; }
+
   var cov = color.a;
-  if (xf.misc2.y > 0.5) { cov = textureSample(gateTex, smp, compUV).a; }
+  if (xf.misc2.y > 0.5) {
+    // The matte IS the coverage — including where it falls below the
+    // original silhouette, which is what lets a blur soften an edge
+    // instead of leaving a hard ghost of it. The cost is that a preset
+    // which darkens rather than spreads (scanlines, a heavy grade) reads
+    // its own dimming as transparency; clamp that back with a mask, which
+    // is the tool for saying "this effect stays inside here".
+    cov = clamp(textureSample(covTex, smp, compUV).r, 0.0, 1.0);
+  }
+
+  // A chain's colour output is premultiplied: the isolate composited the
+  // clip over transparent black, so rgb is already scaled by the coverage
+  // it had *going in*. Recover straight colour against the coverage it has
+  // coming out, and the straight-alpha blending below re-applies it.
+  var rgb = color.rgb;
+  if (xf.misc2.z > 0.5) { rgb = min(rgb / max(cov, 1.0 / 255.0), vec3<f32>(1.0)); }
+
   let a = cov * xf.misc.x * mix(1.0, m, xf.misc.z);
   let shape = xf.misc2.x;
   if (shape < 0.5) {          // normal: straight alpha, factors do the mixing
-    return vec4<f32>(color.rgb, a);
+    return vec4<f32>(rgb, a);
   } else if (shape < 1.5) {   // add-class: fade toward 0 (additive identity)
-    return vec4<f32>(color.rgb * a, a);
+    return vec4<f32>(rgb * a, a);
   }
   // multiply-class: fade toward 1 (multiplicative identity)
-  return vec4<f32>(mix(vec3<f32>(1.0), color.rgb, a), a);
+  return vec4<f32>(mix(vec3<f32>(1.0), rgb, a), a);
 }
 `;
 
@@ -159,12 +183,18 @@ export class Compositor {
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
-    const white = device.createTexture({
-      size: [1, 1], format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-    device.queue.writeTexture({ texture: white }, new Uint8Array([255, 255, 255, 255]), {}, [1, 1]);
-    this.whiteView = white.createView();
+    const px = (rgba) => {
+      const tex = device.createTexture({
+        size: [1, 1], format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+      });
+      device.queue.writeTexture({ texture: tex }, new Uint8Array(rgba), {}, [1, 1]);
+      return tex.createView();
+    };
+    // White = "no mask". Black = "contributes no coverage", so an unused
+    // silhouette/matte binding drops out of the max() in the shader.
+    this.whiteView = px([255, 255, 255, 255]);
+    this.blackView = px([0, 0, 0, 0]);
     const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [this.layout] });
     this.pipelines = {};   // blend mode id -> GPURenderPipeline
     for (const [mode, def] of Object.entries(BLEND_DEFS)) {
@@ -184,11 +214,11 @@ export class Compositor {
     this.items = new Map(); // clipId -> {ubo, bindGroup, view}
   }
 
-  _item(clipId, view, maskView, gateView) {
+  _item(clipId, view, maskView, covView) {
     const mask = maskView ?? this.whiteView;
-    const gate = gateView ?? this.whiteView;
+    const cov = covView ?? this.blackView;
     let item = this.items.get(clipId);
-    if (!item || item.view !== view || item.maskView !== mask || item.gateView !== gate) {
+    if (!item || item.view !== view || item.maskView !== mask || item.covView !== cov) {
       const ubo = item?.ubo ?? this.device.createBuffer({
         size: 64,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -197,7 +227,7 @@ export class Compositor {
         ubo,
         view,
         maskView: mask,
-        gateView: gate,
+        covView: cov,
         bindGroup: this.device.createBindGroup({
           layout: this.layout,
           entries: [
@@ -205,7 +235,7 @@ export class Compositor {
             { binding: 1, resource: view },
             { binding: 2, resource: this.sampler },
             { binding: 3, resource: mask },
-            { binding: 4, resource: gate },
+            { binding: 4, resource: cov },
           ],
         }),
       };
@@ -223,19 +253,19 @@ export class Compositor {
    * Composite `draws` into `targetView`. By default the target is cleared
    * to opaque black first; pass `over: true` to draw on top of existing
    * contents (used to layer media above an effect's output).
-   * @param {Array<{clipId, view, w, h, x, y, scaleX, scaleY, rot, opacity, blend?, gateView?}>}
+   * @param {Array<{clipId, view, w, h, x, y, scaleX, scaleY, rot, opacity, blend?, covView?, premultiplied?, matte?}>}
    *        draws bottom-most first; scale 1 = 100%, rot degrees, opacity 0..1
    */
   composite(encoder, targetView, compW, compH, draws, { over = false, transparent = false } = {}) {
     for (const d of draws) {
-      const item = this._item(d.clipId, d.view, d.maskView, d.gateView);
+      const item = this._item(d.clipId, d.view, d.maskView, d.covView);
       const def = BLEND_DEFS[d.blend] ?? BLEND_DEFS.normal;
       this.device.queue.writeBuffer(item.ubo, 0, new Float32Array([
         compW, compH, d.w, d.h,
         d.x, d.y, d.scaleX, d.scaleY,
         d.opacity, d.rot * Math.PI / 180,
         d.maskView ? (d.maskOpacity ?? 1) : 0, d.maskInvert ? 1 : 0,
-        def.out, d.gateView ? 1 : 0, 0, 0,
+        def.out, d.covView ? 1 : 0, d.premultiplied ? 1 : 0, d.matte ? 1 : 0,
       ]));
     }
     const pass = encoder.beginRenderPass({
