@@ -2,7 +2,7 @@
 
 Lowkey Media Server is the back-end companion to the Lowkey Media Viewer. It manages a SQLite media library, runs long-lived jobs (auto-tagging, transcription, ingestion, ffmpeg pipelines, HLS transcodes), serves files over HTTP with optional S3 storage, streams video as HLS, and embeds the same React UI the Electron app uses so the whole interface works in a browser.
 
-> **⚠️ Beta software.** Authentication is now enabled by default — the server creates a temporary `admin` / `admin` user on first launch and forces you through a setup wizard to replace it. All `/api/*`, `/media/*`, and admin pages require a valid session. There is currently no per-route authorization beyond "is logged in," so every authenticated user has admin-level access. JWTs are signed with `LOWKEY_JWT_SECRET` (auto-generated and persisted on first run if not provided) and stored as HttpOnly cookies. Don't expose the server to the open internet without a reverse proxy and TLS.
+> **⚠️ Before you expose this.** Authentication is enabled by default: the server creates a temporary `admin` / `admin` user on first launch and walks you through a setup wizard to replace it. All `/api/*`, `/media/*`, and admin pages require a valid session. There is no per-route authorization beyond "is logged in," so every authenticated user has admin-level access. JWTs are signed with `LOWKEY_JWT_SECRET` (auto-generated and persisted on first run if not provided) and stored as HttpOnly cookies. Don't put the server on the open internet without a reverse proxy and TLS.
 
 <img width="1628" height="494" alt="Screenshot 2025-09-20 083904" src="https://github.com/user-attachments/assets/e814d2a5-7088-46b2-9a8c-d537b989b018" />
 

@@ -18,14 +18,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="Description"
-      content="Lowkey Media Viewer is a fast, minimalist viewer for the images, videos, audio, and comics on your hard drive. Free and open source for Windows, macOS, and Linux. Built for big personal libraries — local-first, no account, no cloud, no upsell."
+      content="Lowkey Media Viewer is a fast, minimal viewer for the images, videos, audio, and comics on your hard drive. Free and open source for Windows, macOS, and Linux. Built for big personal libraries: local-first, no account, no cloud, no upsell."
     />
     <meta property="og:url" content="https://lowkeyviewer.com" />
     <meta property="og:type" content="product" />
     <meta property="og:title" content="Lowkey Media Viewer" />
     <meta
       property="og:description"
-      content="A fast, minimalist viewer for the images, videos, audio, and comics on your hard drive. Free, open source, and local-first. Windows, macOS, Linux."
+      content="A fast, minimal viewer for the images, videos, audio, and comics on your hard drive. Free, open source, and local-first. Windows, macOS, Linux."
     />
     <meta
       property="og:image"
@@ -79,10 +79,10 @@
         <img src="logo.png" class="logo" alt="Lowkey Media Viewer Logo" />
         <h1>Lowkey Media Viewer</h1>
         <p class="subTitle">
-          A fast, minimalist viewer for the images, videos, audio, and
-          comics on your hard drive. Free and open source. Built for
-          people who care about their personal media library and want
-          to actually look at it instead of fighting their software.
+          A fast, minimal viewer for the images, videos, audio, and
+          comics already on your hard drive. Free and open source.
+          Built for people who have a real media library and would
+          rather look at it than fight their software.
         </p>
         <p class="info">
           Works on <span class="os">Windows</span>,
@@ -264,21 +264,21 @@
           <section id="viewer-overview">
             <h2>Overview</h2>
             <p>
-              Most media apps want to take over your files — importing
-              them into a private library, re-encoding them, asking you to
-              sign in. Lowkey Media Viewer doesn't. Point it at a directory
-              and it just opens. Files stay where you put them, in the
-              formats you already have. Tags live in a local SQLite
-              database you own and can back up. No account, no cloud sync,
-              no telemetry.
+              Most media apps want to take over your files: import them
+              into a private library, re-encode them, ask you to sign in.
+              Lowkey Media Viewer doesn't. Point it at a directory and it
+              opens. Your files stay where they are, in the formats you
+              already have, and tags go into a local SQLite database you
+              can copy and back up like any other file. There's no account
+              and nothing phones home.
             </p>
             <p>
-              It's built for the kind of library that's hard to handle with
-              existing tools: tens of thousands of images and videos
-              accumulated over years, mixed formats, comic archives, audio
-              files, screenshots, weird old <kbd>.webm</kbd>s. If you want
-              to view those files, tag them, find them again later, and
-              never lose them to a service shutting down — this is for you.
+              It's aimed at the kind of library other tools choke on: tens
+              of thousands of images and videos piled up over years, mixed
+              formats, comic archives, audio, screenshots, weird old
+              <kbd>.webm</kbd>s. If you want to view that stuff, tag it,
+              find it again later, and not lose it when some service shuts
+              down, this is for you.
             </p>
 
             <h3>Why use it</h3>
@@ -291,14 +291,15 @@
               <li>
                 <strong>Local-first.</strong> Your media stays where you
                 put it. Tags live in a SQLite database in your home
-                directory that you own and can back up. No sync, no
-                cloud, no account.
+                directory that you own and can back up. Nothing syncs
+                anywhere, and there's no account.
               </li>
               <li>
-                <strong>Free and open source.</strong> MIT licensed. No
-                paywalled features. Support the project on
+                <strong>Free and open source.</strong> MIT licensed, no
+                paywalled features. There's a
                 <a href="https://www.patreon.com/c/lowkeyviewer" target="_blank" rel="noopener">Patreon</a>
-                if you want, but you never have to.
+                if you want to support the project, but nothing is behind
+                it.
               </li>
               <li>
                 <strong>Stays out of the way.</strong> Dark UI by default.
@@ -322,7 +323,7 @@
             <h3>What's inside</h3>
             <ul>
               <li>
-                <strong>Viewing</strong> — images (JPG, PNG, GIF, WebP,
+                <strong>Viewing</strong>: images (JPG, PNG, GIF, WebP,
                 BMP, SVG, JFIF), video (MP4, MOV, MKV, WebM, FLV, M4V)
                 with subtitle pickup and audio-track selection on
                 multi-track files, audio (MP3, M4A, AAC, OGG, WAV) with a
@@ -330,28 +331,28 @@
                 (<kbd>.cbz</kbd>, <kbd>.cbr</kbd>) opened like directories
               </li>
               <li>
-                <strong>Organizing</strong> — drag-to-tag, bulk apply,
+                <strong>Organizing</strong>: drag-to-tag, bulk apply,
                 stored category slots (1–9), command palette, context
                 palette, Battle Mode ELO rating, duplicate detection,
                 custom tag previews
               </li>
               <li>
-                <strong>Finding things</strong> — fuzzy tag search across
+                <strong>Finding things</strong>: fuzzy tag search across
                 every category, filename search, description search,
                 transcript-driven video navigation, OR/AND/Exclusive tag
                 filtering
               </li>
               <li>
-                <strong>Metadata &amp; transcripts</strong> — markdown
+                <strong>Metadata &amp; transcripts</strong>: markdown
                 notes on tags and categories, in-place transcript editing
                 (Enter saves, Shift+Enter for newline), per-cue delete,
                 substring search through transcripts, automatic SRT/VTT
                 sidecar pickup
               </li>
               <li>
-                <strong>Built for big libraries</strong> — virtualized
+                <strong>Built for big libraries</strong>: virtualized
                 scrolling for 50,000+ tags or items, thumbnails generated
-                on-demand and cached, library and query state persisted
+                on demand and cached, library and query state persisted
                 across launches
               </li>
             </ul>
@@ -362,8 +363,7 @@
               companion that adds a job queue, auto-tagging via ONNX or
               Ollama vision models, video transcription via Faster
               Whisper, HLS streaming, and a workflow editor. The viewer
-              detects it automatically once both are running. The viewer
-              is stable; the server is in beta. See the
+              detects it automatically once both are running. See the
               <a href="./server/">Media Server docs</a>.
             </p>
           </section>
@@ -372,9 +372,9 @@
             <h2>Getting Started</h2>
             <p>
               Download the installer for your platform from the button at the
-              top of this page — a native installer for Windows, a signed and
+              top of this page: a native installer for Windows, a signed and
               notarized DMG for macOS (Apple Silicon and Intel), or an
-              AppImage for Linux. Launch it and point it at a folder: there is
+              AppImage for Linux. Launch it and point it at a folder. There's
               no import step, no account, and nothing to configure first.
             </p>
 
@@ -399,10 +399,10 @@
             </h3>
             <p>
               By default, opening a file loads only the media sitting directly
-              in that file's folder. Toggle <strong>Recursive</strong> mode —
+              in that file's folder. Toggle <strong>Recursive</strong> mode with
               the
               <img class="inline-icon" src="./icons/recursive.svg" alt="recursive" />
-              button in the command palette — to pull in everything from nested
+              button in the command palette to pull in everything from nested
               subfolders as well, so an entire directory tree loads into a single
               list view. The button highlights while recursive mode is active,
               and switching it reloads the current library. Sorting and shuffle
@@ -419,7 +419,7 @@
               Comic book archives (<kbd>.cbz</kbd>, <kbd>.cbr</kbd>, and
               <kbd>.zip</kbd>) open just like directories. Pick one from the
               file dialog, drag it onto the window, or double-click it in
-              Explorer / Finder — the viewer extracts the contents and loads
+              Explorer or Finder. The viewer extracts the contents and loads
               every page into the list view automatically. RAR-based comic
               archives (<kbd>.cbr</kbd>) are extracted with a bundled UnRAR
               binary, so no external dependency is required. Reopening the
@@ -432,11 +432,11 @@
               Comic View Mode
             </h3>
             <p>
-              <strong>Comic Mode</strong> displays two pages at once in the
-              detail view — the active page on the left and the page that
-              follows it on the right — instead of a single item, so reading
+              <strong>Comic Mode</strong> shows two pages at once in the
+              detail view instead of a single item: the active page on the
+              left and the page after it on the right. Reading
               <kbd>.cbz</kbd> / <kbd>.cbr</kbd> archives (or any folder of
-              sequential images) feels like an open book. The detail panel
+              sequential images) then feels like an open book. The detail panel
               splits in half to fit the pair, and moving to the next item slides
               the spread forward. Turn it on from the image settings in the
               command palette.
@@ -489,39 +489,38 @@
               <a class="requires-server" href="./server/">Requires Media Server</a>
             </h3>
             <p>
-              <kbd>Shift</kbd> + right-click to open the context palette —
-              the launcher for AI and batch actions. Where the command
-              palette holds the viewer's own settings, the context palette
-              is <em>context-aware</em>: it acts on exactly what you
-              clicked.
+              <kbd>Shift</kbd> + right-click to open the context palette,
+              the launcher for AI and batch actions. The command palette
+              holds the viewer's own settings; the context palette acts on
+              exactly what you clicked.
             </p>
             <ul>
               <li>
-                <strong>The selected media item or detail view</strong> —
+                <strong>The selected media item or detail view</strong>:
                 actions target that single file.
               </li>
               <li>
-                <strong>Any other item or empty panel space</strong> —
-                actions target your whole current list (with filters
-                applied).
+                <strong>Any other item or empty panel space</strong>:
+                actions target your whole current list, with filters
+                applied.
               </li>
               <li>
-                <strong>A tag or category</strong> — actions target every
+                <strong>A tag or category</strong>: actions target every
                 item carrying that tag or category.
               </li>
             </ul>
             <p>
               The header shows what you're acting on and how many items
-              that is. For a single file it also offers two quick searches:
+              that is. For a single file it also offers two quick searches,
               <strong>Find visually similar</strong> and
-              <strong>Find this person</strong> (face match) — see
+              <strong>Find this person</strong> (face match). See
               <a href="#viewer-visual-search">Visual Search</a> and
               <a href="#viewer-faces">Faces &amp; People</a>.
             </p>
             <p>The palette is organized into three blocks:</p>
             <ul>
               <li>
-                <strong>Generate</strong> — pick one or more operations
+                <strong>Generate</strong>: pick one or more operations
                 (<strong>Tags</strong>, <strong>Descriptions</strong>,
                 <strong>Transcripts</strong>, <strong>File info</strong>,
                 <strong>Embeddings</strong>, <strong>Faces</strong>) and
@@ -533,13 +532,13 @@
                 with a one-click download right in the palette.
               </li>
               <li>
-                <strong>Workflows</strong> — every workflow saved on the
+                <strong>Workflows</strong>: every workflow saved on the
                 server, with a filter box and arrow-key navigation. Click
                 one (or press <kbd>Enter</kbd>) to run it against the
                 current context.
               </li>
               <li>
-                <strong>Active Jobs</strong> — a footer listing the jobs
+                <strong>Active Jobs</strong>: a footer listing the jobs
                 currently running or queued, each with a live status and a
                 cancel button, so you can keep working while batches run.
               </li>
@@ -714,10 +713,10 @@
 
             <h3 id="viewer-descriptions">Tag &amp; Category Descriptions</h3>
             <p>
-              Tags and categories now support descriptions. Add notes about
-              what a tag is for, what to include, or anything else worth
-              remembering — descriptions appear inline in the tagging panel
-              and can be edited from the redesigned tag and category modals.
+              Tags and categories support descriptions. Add notes about what
+              a tag is for, what to include, or anything else worth
+              remembering. Descriptions appear inline in the tagging panel
+              and can be edited from the tag and category modals.
             </p>
 
             <h3 id="viewer-battle">Battle Mode (ELO Rating)</h3>
@@ -732,17 +731,17 @@
           <section id="viewer-visual-search">
             <h2>Search &amp; Filtering</h2>
             <p>
-              Find things the way you think about them: filter by tags,
-              search filenames and descriptions, find images that look like
-              another image, describe what you want in plain words, or draw
-              a box around anything on screen and find more like it.
+              There are several ways to narrow a library down: filter by
+              tags, search filenames and descriptions, find images that look
+              like another image, describe what you want in plain words, or
+              draw a box around anything on screen and find more like it.
             </p>
             <p>
               Tag and text filtering work out of the box. The visual and
-              semantic searches are powered by on-device AI image embeddings
+              semantic searches run on on-device image embeddings
               (SigLIP 2) through the optional
-              <a class="requires-server" href="./server/">Media Server</a>
-              — nothing leaves your machine. See
+              <a class="requires-server" href="./server/">Media Server</a>,
+              so nothing leaves your machine. See
               <a href="#viewer-visual-setup">Setup Requirements</a>.
             </p>
 
@@ -795,7 +794,7 @@
               Click a chip to exclude it (NOT), and click the join between
               chips to switch each one between AND and OR. Visual searches
               below appear as chips too, so you can combine "looks like this"
-              with regular tag and text filters — remove the chip to get your
+              with regular tag and text filters. Remove the chip to get your
               previous view back.
             </p>
 
@@ -811,8 +810,8 @@
             <h3 id="viewer-search-meaning">Search by Meaning</h3>
             <p>
               Toggle the ✨ button in the search input and describe what
-              you're looking for — "a red car at night", "handwritten notes",
-              "two people on a beach" — then press Enter. Text is matched
+              you're looking for ("a red car at night", "handwritten notes",
+              "two people on a beach"), then press Enter. Text is matched
               against the images themselves, not tags or filenames, so it
               finds things you never got around to tagging. The toggle stays
               on until you turn it off.
@@ -821,8 +820,8 @@
             <h3 id="viewer-clip-search">Screen Clip Search</h3>
             <p>
               Hold <strong>Alt</strong> and drag a box around anything on
-              screen — part of an image, a frame of a paused video, even a
-              detail inside a larger picture — and the viewer searches your
+              screen (part of an image, a frame of a paused video, a detail
+              inside a larger picture) and the viewer searches your
               library for visually similar media. The clip appears as a chip
               in the search input with its own thumbnail, and composes with
               your other filters like any other search. Screen clip capture
@@ -834,9 +833,9 @@
             <p>
               Any visual search can be steered with words. Hover a
               similar-image, screen-clip, or text chip and a small blend
-              editor pops up. Type into the
-              <strong>"Add concept…"</strong> box — say
-              <em>"at night"</em> or <em>"close up"</em> — and press
+              editor pops up. Type something like <em>"at night"</em> or
+              <em>"close up"</em> into the
+              <strong>"Add concept…"</strong> box and press
               <kbd>Enter</kbd> to fold that concept into the search. A
               slider sets how strongly it pulls (it starts at 50%), so you
               can nudge "images like this one" toward "images like this
@@ -847,7 +846,7 @@
 
             <h3 id="viewer-composite">Composite Queries</h3>
             <p>
-              Blends aren't limited to one image and one phrase — a single
+              Blends aren't limited to one image and one phrase. A single
               visual chip can hold a whole recipe of
               <strong>nodes</strong>: images, screen clips, and text
               concepts, each with its own weight. While your filter mode is
@@ -860,31 +859,30 @@
             <p>Hover the chip to open the node editor, where you can:</p>
             <ul>
               <li>
-                <strong>Adjust weights</strong> — each node has a slider
+                <strong>Adjust weights</strong>: each node has a slider
                 (5–100%) controlling its share of the search.
               </li>
               <li>
-                <strong>Steer away</strong> — the <strong>−</strong> toggle
+                <strong>Steer away</strong>: the <strong>−</strong> toggle
                 turns a node negative, pushing results <em>away</em> from
                 that image or concept ("like these two photos, but
                 <em>not</em> blurry").
               </li>
               <li>
-                <strong>Remove nodes</strong> — the × on each row drops it
-                from the blend; the first (base) node anchors the search
+                <strong>Remove nodes</strong>: the × on each row drops it
+                from the blend. The first (base) node anchors the search
                 and always stays.
               </li>
               <li>
-                <strong>Add concepts</strong> — the same "Add concept…"
+                <strong>Add concepts</strong>: the same "Add concept…"
                 box adds more text nodes.
               </li>
             </ul>
             <p>
               Everything in the chip is combined into a single query on the
-              server — one weighted direction in the same visual space —
-              rather than several separate searches mashed together, so
-              results genuinely reflect the whole recipe. Results are
-              ranked with a match-score badge on every item.
+              server, one weighted direction in the same visual space,
+              rather than several separate searches mashed together.
+              Results are ranked with a match-score badge on every item.
             </p>
             <video src="./static/composite-query-vector-editor.mp4" muted loop playsinline controls preload="metadata"></video>
 
@@ -902,10 +900,10 @@
                 server's Dependencies page.
               </li>
               <li>
-                Generate embeddings for your library — one click from the
-                Context Palette (<strong>Generate embeddings</strong>) or a
-                batch job on the server. New media can be embedded as it's
-                ingested.
+                Generate embeddings for your library, either with one click
+                from the Context Palette (<strong>Generate embeddings</strong>)
+                or as a batch job on the server. New media can be embedded as
+                it's ingested.
               </li>
             </ul>
           </section>
@@ -918,11 +916,11 @@
             <p>
               The viewer can find the faces in your library, group them
               into people, and let you name, curate, and search by them.
-              It works on photographs <em>and</em> drawn or anime-style
-              characters — each image is automatically routed to the right
-              recognition model. Like visual search, everything runs on
-              your own machine through the Media Server; no faces ever
-              leave your computer.
+              It works on photographs as well as drawn or anime-style
+              characters, routing each image to the right recognition
+              model automatically. Like visual search, it all runs on your
+              own machine through the Media Server, and no faces leave
+              your computer.
             </p>
 
             <h3 id="viewer-faces-scan">Scanning for Faces</h3>
@@ -933,7 +931,7 @@
               <kbd>Shift</kbd> + right-click anything and pick the
               <strong>Faces</strong> chip in the Context Palette's
               Generate block. The scan detects faces, computes a compact
-              signature for each one, and groups them as it goes — new
+              signature for each one, and groups them as it goes, so new
               people start appearing in the People view while the scan is
               still running. Videos are scanned on a representative frame.
             </p>
@@ -953,7 +951,7 @@
             <ul>
               <li>
                 <strong>Click a card</strong> to filter the library to
-                that person — person names behave exactly like tags, so
+                that person. Person names behave exactly like tags, so
                 they combine with all your other filters.
               </li>
               <li>
@@ -968,7 +966,7 @@
                 <strong>Group new faces</strong> (toolbar) folds newly
                 scanned faces into your existing people;
                 <strong>Rebuild groups</strong> dissolves the automatic
-                "Unknown" groups and regroups from scratch — named people
+                "Unknown" groups and regroups from scratch. Named people
                 and faces you've confirmed are never touched.
               </li>
             </ul>
@@ -985,26 +983,26 @@
               faces stay and can be regrouped later) and remembers not to
               re-form that same group on its own, while
               <strong>Delete person and faces</strong> also discards the
-              face data so a bad group can't come back — your media files
-              are never affected.
+              face data so a bad group can't come back. Your media files
+              are never touched either way.
             </p>
 
             <h3 id="viewer-face-review">Reviewing a Person's Faces</h3>
             <p>
               Automatic grouping is good but not perfect, so every card
               has a review button that opens all of that person's faces in
-              a grid, sorted <strong>suspects first</strong> — the faces
+              a grid, sorted <strong>suspects first</strong>: the faces
               least like the rest of the group float to the top, which is
-              where the mistakes live. On each face:
+              where the mistakes usually are. On each face:
             </p>
             <ul>
               <li>
-                <strong>✓ It's them</strong> — confirms (locks) the face.
+                <strong>✓ It's them</strong> confirms (locks) the face.
                 Locked faces are treated as ground truth: they anchor who
                 the person "is" and survive every regroup.
               </li>
               <li>
-                <strong>✕ Not them</strong> — removes the face and
+                <strong>✕ Not them</strong> removes the face and
                 permanently bars it from this person, even if the group is
                 later dissolved and rebuilt.
               </li>
@@ -1022,8 +1020,8 @@
               Faces that haven't matched anyone yet collect behind a
               <strong>Not grouped yet</strong> card at the end of the
               People view. Click it to filter the library with the
-              <code>faces:ungrouped</code> predicate — media that has
-              faces, none of them grouped — or open its review grid to
+              <code>faces:ungrouped</code> predicate (media that has
+              faces, none of them grouped), or open its review grid to
               deal with the faces directly: pick a person from the
               <strong>Assign clicked faces to…</strong> dropdown and click
               faces to file them, or hit <strong>＋</strong> on a face to
@@ -1034,8 +1032,8 @@
             <p>
               <kbd>Shift</kbd> + right-click any image and choose
               <strong>Find this person</strong> in the Context Palette to
-              search your whole library for the person in that photo — no
-              naming or grouping required. In the desktop app you can also
+              search your whole library for the person in that photo, with
+              no naming or grouping required. In the desktop app you can also
               hold <kbd>Shift</kbd> + <kbd>Alt</kbd> and drag a box around
               a face anywhere on screen to search from just that region.
               The search lands in the input as a face chip and composes
@@ -1051,24 +1049,24 @@
             </p>
             <ul>
               <li>
-                <strong>Match strictness</strong> — looser makes bigger
-                groups that may mix people; stricter makes purer, smaller
-                groups.
+                <strong>Match strictness</strong>: looser makes bigger
+                groups that may mix people, stricter makes purer, smaller
+                ones.
               </li>
               <li>
-                <strong>Minimum group size</strong> — how many matching
+                <strong>Minimum group size</strong>: how many matching
                 faces it takes before a new "Unknown" person is created.
               </li>
               <li>
-                <strong>Face quality floor</strong> — ignore blurry or
+                <strong>Face quality floor</strong>: ignore blurry or
                 tiny detections when forming new groups.
               </li>
             </ul>
             <p>
               <strong>Regroup with these settings</strong> rebuilds every
               automatic group under the new values. Faces you've confirmed
-              and rejections you've made always survive — your curation is
-              never thrown away.
+              and rejections you've made always survive, so your curation
+              is never thrown away.
             </p>
 
             <h3 id="viewer-faces-setup">Setup Requirements</h3>
@@ -1124,8 +1122,8 @@
             <h3 id="viewer-edit-transcript">Editing Transcripts</h3>
             <p>
               Transcripts are editable in place. Click any cue's text to edit
-              it — <kbd>Enter</kbd> saves the change back to the
-              <kbd>.vtt</kbd> file, <kbd>Shift + Enter</kbd> inserts a line
+              it. <kbd>Enter</kbd> saves the change back to the
+              <kbd>.vtt</kbd> file; <kbd>Shift + Enter</kbd> inserts a line
               break inside the cue. The Insert button at the top of the
               transcript panel adds a new cue for the current playhead
               position, and a small <strong>×</strong> on each cue (visible
@@ -1152,11 +1150,11 @@
           <section id="viewer-file-management">
             <h2>File Management</h2>
             <p>
-              Beyond viewing and tagging, Lowkey Media Viewer can act on the
-              underlying files themselves — copy them out to another folder or
-              remove them from disk — without ever leaving the keyboard. These
-              actions work on the <strong>active file</strong> (the item
-              currently in the detail view) or on your whole filtered list.
+              Lowkey Media Viewer can also act on the underlying files: copy
+              them out to another folder, or remove them from disk, without
+              leaving the keyboard. These actions work on the
+              <strong>active file</strong> (the item currently in the detail
+              view) or on your whole filtered list.
             </p>
 
             <h3 id="viewer-copy-file">
@@ -1167,8 +1165,8 @@
               Press <kbd>Ctrl</kbd> + <kbd>C</kbd> to copy the active file to
               the system clipboard as a real file reference. Switch to Explorer,
               Finder, or your Linux file manager and paste
-              (<kbd>Ctrl</kbd> + <kbd>V</kbd>) to drop a copy wherever you like
-              — exactly as if you'd copied the file from the file manager
+              (<kbd>Ctrl</kbd> + <kbd>V</kbd>) to drop a copy wherever you
+              like, exactly as if you'd copied the file from the file manager
               itself.
             </p>
 
@@ -1181,7 +1179,7 @@
               <em>every</em> item in your current list view at once. Whatever
               your active filter, search, or tag selection has narrowed the list
               down to is placed on the clipboard together, so you can paste the
-              entire set into another folder in a single step — handy for
+              entire set into another folder in a single step. Handy for
               pulling a whole tag or search result out to disk.
             </p>
 
@@ -1195,7 +1193,7 @@
               erased outright, its entry is removed from the library, and the
               viewer advances to the next item so you can keep moving. If the
               file can't be moved to the trash for some reason, it's deleted
-              directly — so treat <kbd>Delete</kbd> as a destructive action.
+              directly, so treat <kbd>Delete</kbd> as a destructive action.
             </p>
             <p>
               All three shortcuts appear in the

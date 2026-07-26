@@ -79,11 +79,10 @@
       <p class="info">
         Works on <span class="os">Windows</span> and <span class="os">Linux</span>
       </p>
-      <p class="info status-alpha">Alpha Release</p>
       <p class="buttonArea">
         <a id="serverDownloadButton" class="buyButton" href="#">Download | Free</a>
       </p>
-      <p class="version">Version 1.0.0</p>
+      <p class="version">Version 2.19.5</p>
       <div class="header-links">
         <a href="https://github.com/SteveCastle/loki/blob/master/LICENSE" class="license-link">
           <img src="../mit.svg" alt="MIT License" />
@@ -206,17 +205,18 @@
       <section id="concepts">
         <h2>Core Concepts</h2>
         <p>
-          Three ideas carry the whole server: a <strong>library database</strong> that catalogs
-          your media without moving it, <strong>storage roots</strong> that define where that
-          media lives, and a <strong>job queue</strong> that does every piece of heavy work
-          asynchronously. Everything else in these docs builds on them.
+          Three things carry the whole server: a <strong>library database</strong> that catalogs
+          your media without moving it, <strong>storage roots</strong> that say where that
+          media lives, and a <strong>job queue</strong> that does the heavy work in the
+          background. Everything else in these docs builds on those.
         </p>
 
         <h3 id="concept-library">The Library</h3>
         <p>
           The library is a single SQLite database. Every media item is one row keyed by its
-          path &mdash; the server never moves, renames, or re-encodes your files to manage them.
-          Adding media to the library means recording where it is, not copying it somewhere.
+          path. The server never moves, renames, or re-encodes your files to manage them, so
+          adding media to the library means recording where it is rather than copying it
+          somewhere.
         </p>
         <p>
           Everything the server knows about an item hangs off that row: tags and categories,
@@ -227,7 +227,7 @@
         </p>
         <p>
           The desktop viewer and the server share this same database, so tagging in one is
-          instantly visible in the other &mdash; they are two views of one library.
+          instantly visible in the other. They are two views of one library.
         </p>
 
         <h3 id="storage-roots">Storage Roots</h3>
@@ -235,8 +235,8 @@
           A storage root is a place the server is allowed to read and write media: a local
           directory, or a bucket (optionally scoped to a key prefix) on any S3-compatible
           object store. A library can span several roots of either kind, and every feature
-          &mdash; browsing, ingest, thumbnails, AI processing, the web viewer &mdash; works the
-          same over both.
+          (browsing, ingest, thumbnails, AI processing, the web viewer) works the same over
+          both.
         </p>
         <p>
           Roots are also the server's security boundary. The file browser, library scans, and
@@ -245,7 +245,7 @@
         </p>
         <h4>The default root</h4>
         <p>
-          One root is the <strong>default</strong> &mdash; the destination for anything the
+          One root is the <strong>default</strong>, the destination for anything the
           server creates: uploads from the web UI land under <code>uploads/</code>, and media
           ingested from YouTube, Discord, or gallery URLs lands under <code>downloads/</code>.
           Mark a root as default explicitly (the wizard and Config page have a toggle;
@@ -259,26 +259,26 @@
           <tr><th></th><th>Local root</th><th>S3-compatible root</th></tr>
           <tr><td>Path stored in the library</td><td>Absolute filesystem path</td><td><code>s3://bucket/key</code></td></tr>
           <tr><td>Browsing &amp; scanning</td><td>Reads the filesystem directly</td><td>Lists objects via the S3 API</td></tr>
-          <tr><td>Serving media</td><td>Streamed by the server (<code>/media/file</code>)</td><td>Presigned URL &mdash; the browser fetches straight from the object store (1-hour expiry)</td></tr>
+          <tr><td>Serving media</td><td>Streamed by the server (<code>/media/file</code>)</td><td>Presigned URL; the browser fetches straight from the object store (1-hour expiry)</td></tr>
           <tr><td>Processing tasks (hash, embed, describe, faces, &hellip;)</td><td>Read the file in place</td><td>The object is downloaded to a temporary local copy for the task, then cleaned up</td></tr>
           <tr><td>New files (uploads, URL ingests)</td><td>Written directly into the folder</td><td>Staged locally, then uploaded to the bucket</td></tr>
           <tr><td>Thumbnails</td><td>Generated into a local cache directory</td><td>Stored in the bucket under <code>thumbnailPrefix</code> (default <code>_thumbnails</code>, hidden from browsing)</td></tr>
         </table>
         <p>
-          The practical takeaway: S3 roots make the library location-independent and shareable,
-          but every per-item processing task pays a download first &mdash; big batch jobs
-          (embedding or transcribing an entire bucket) move a lot of bytes. Local roots are the
-          fast path for processing; a common pattern is a local working root plus an S3 archive
-          root in the same library.
+          In practice: S3 roots make the library location-independent and shareable, but every
+          per-item processing task pays for a download first, so big batch jobs (embedding or
+          transcribing an entire bucket) move a lot of bytes. Local roots are the fast path for
+          processing. A common setup is a local working root plus an S3 archive root in the
+          same library.
         </p>
         <h4>Configuring roots</h4>
         <p>
           Three ways, in increasing order of precedence:
         </p>
         <ul>
-          <li><strong>Setup wizard</strong> &mdash; the first-run <code>/setup</code> flow registers local and S3 roots, with a connection test for S3.</li>
-          <li><strong>Config page</strong> (<code>/config</code>) or <code>config.json</code> &mdash; the <code>roots</code> key. Saving applies immediately; no restart needed.</li>
-          <li><strong>Environment variables</strong> &mdash; <code>LOWKEY_ROOT_&lt;N&gt;</code> for local paths, or <code>LOWKEY_ROOTS</code> as a JSON array for anything (see <a href="#docker-env">Environment Variables</a>). Env-supplied roots fully replace the config file's roots for that run and are never written back to the file &mdash; this is what the <a href="#docker">Docker</a> examples use.</li>
+          <li><strong>Setup wizard</strong>: the first-run <code>/setup</code> flow registers local and S3 roots, with a connection test for S3.</li>
+          <li><strong>Config page</strong> (<code>/config</code>) or <code>config.json</code>: the <code>roots</code> key. Saving applies immediately, no restart needed.</li>
+          <li><strong>Environment variables</strong>: <code>LOWKEY_ROOT_&lt;N&gt;</code> for local paths, or <code>LOWKEY_ROOTS</code> as a JSON array for anything (see <a href="#docker-env">Environment Variables</a>). Env-supplied roots fully replace the config file's roots for that run and are never written back to the file. This is what the <a href="#docker">Docker</a> examples use.</li>
         </ul>
         <h4>S3 root fields</h4>
         <p>
@@ -310,8 +310,8 @@
 
         <h3 id="concept-jobs">Jobs, Tasks &amp; Workflows</h3>
         <p>
-          Every operation the server performs &mdash; an ingest, a batch of descriptions, an
-          ffmpeg conversion &mdash; runs as a <strong>job</strong> in a persistent queue. Jobs
+          Every operation the server performs (an ingest, a batch of descriptions, an
+          ffmpeg conversion) runs as a <strong>job</strong> in a persistent queue. Jobs
           survive restarts, stream their output live, and can be cancelled, copied, and
           monitored from the home page (see <a href="#job-queue">Job Queue</a>).
         </p>
@@ -325,7 +325,7 @@
         </p>
         <p>
           A <strong>workflow</strong> is a saved, named graph of tasks with dependencies
-          between steps &mdash; ingest, then hash, then embed and describe in parallel, for
+          between steps: ingest, then hash, then embed and describe in parallel, for
           example. If a step fails, its pending dependents are cancelled rather than run
           against missing input. Workflows are created and run from the
           <code>/workflows</code> pages, and can also be launched from the viewer's Context
@@ -350,8 +350,8 @@
           <code>admin</code> / <code>admin</code> user that is deleted as
           soon as your account exists), choosing or reusing a SQLite
           database file, registering <a href="#storage-roots">storage
-          roots</a> &mdash; local directories and/or S3-compatible
-          buckets, with a <em>Test connection</em> check for S3 &mdash; and downloading
+          roots</a> (local directories and S3-compatible buckets, with a
+          <em>Test connection</em> check for S3), and downloading
           the optional AI models. Finishing the wizard sets
           <code>setupComplete</code> in the config file; after that the
           setup pages require an admin login.
@@ -370,9 +370,9 @@
           The Media Server uses external tools and AI models for media processing. They come in three flavors:
         </p>
         <ul>
-          <li><strong>Bundled binaries</strong> &mdash; <code>ffmpeg</code>, <code>ffprobe</code>, <code>exiftool</code>, the ONNX worker binaries, and the ONNX Runtime library ship in the <code>bin/</code> folder next to the server executable. Nothing to install.</li>
-          <li><strong>Optional tools</strong> &mdash; <code>yt-dlp</code>, <code>gallery-dl</code>, <code>ollama</code>, and DiscordChatExporter are detected on the system <code>PATH</code>. Install them with your package manager to unlock the corresponding tasks; the Dependencies page shows what each one enables.</li>
-          <li><strong>Downloadable models</strong> &mdash; the AI models are downloaded on demand from the setup wizard or the <strong>Dependencies</strong> page (<code>/settings/dependencies</code>). Downloads are resumable and verified against pinned SHA-256 checksums before use.</li>
+          <li><strong>Bundled binaries</strong>: <code>ffmpeg</code>, <code>ffprobe</code>, <code>exiftool</code>, the ONNX worker binaries, and the ONNX Runtime library ship in the <code>bin/</code> folder next to the server executable. Nothing to install.</li>
+          <li><strong>Optional tools</strong>: <code>yt-dlp</code>, <code>gallery-dl</code>, <code>ollama</code>, and DiscordChatExporter are detected on the system <code>PATH</code>. Install them with your package manager to turn on the corresponding tasks; the Dependencies page shows what each one enables.</li>
+          <li><strong>Downloadable models</strong>: the AI models are downloaded on demand from the setup wizard or the <strong>Dependencies</strong> page (<code>/settings/dependencies</code>). Downloads are resumable and verified against pinned SHA-256 checksums before use.</li>
         </ul>
         <p>Downloaded models are stored under the server's data directory:</p>
         <div class="code-block">
@@ -462,13 +462,13 @@
         <h3 id="docker-s3-storage">S3-Compatible Storage</h3>
         <p>
           Lowkey Media Server can browse and process media stored in any S3-compatible object storage
-          service &mdash; AWS S3, MinIO, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, and others.
+          service: AWS S3, MinIO, Backblaze B2, Cloudflare R2, DigitalOcean Spaces, and others.
         </p>
         <p>
           Use the <code>LOWKEY_ROOTS</code> environment variable with a JSON array to configure S3 backends.
           You can mix local and S3 roots in the same configuration. Mark one root with
-          <code>"default": true</code> to designate it as the upload and download destination &mdash;
-          uploaded files and ingested media will be stored there. If no root is marked default,
+          <code>"default": true</code> to make it the upload and download destination, where
+          uploaded files and ingested media are stored. If no root is marked default,
           the first root is used.
         </p>
         <h4>S3 Only</h4>
@@ -520,7 +520,7 @@
 
         <h3 id="docker-env-image">Environment Variables</h3>
         <p>
-          Every server setting can be set with an environment variable &mdash; the full table lives in
+          Every server setting can be set with an environment variable; the full table lives in
           <a href="#docker-env">Configuration</a>. The image itself presets
           <code>LOWKEY_DB_PATH=/data/db/media.db</code>,
           <code>LOWKEY_DOWNLOAD_PATH=/data/downloads</code>,
@@ -543,11 +543,11 @@
         </p>
         <div class="code-block">
           <code>/data/</code><br>
-          <code>  db/media.db                      &mdash; SQLite database</code><br>
-          <code>  downloads/                       &mdash; Downloaded media (when no default storage root is set)</code><br>
-          <code>  lowkey-media-viewer/config.json  &mdash; Auto-generated configuration</code><br>
-          <code>  lowkey-media-viewer/models/      &mdash; Downloaded AI models</code><br>
-          <code>  cache/                           &mdash; Runtime caches</code>
+          <code>  db/media.db                      # SQLite database</code><br>
+          <code>  downloads/                       # Downloaded media (when no default storage root is set)</code><br>
+          <code>  lowkey-media-viewer/config.json  # Auto-generated configuration</code><br>
+          <code>  lowkey-media-viewer/models/      # Downloaded AI models</code><br>
+          <code>  cache/                           # Runtime caches</code>
         </div>
         <p>
           To back up your data, use <code>docker cp</code> or mount a host directory instead
@@ -656,7 +656,7 @@
 
         <h3 id="users-setup">First-Run Setup</h3>
         <p>
-          On the very first launch — before any users exist — the server
+          On the very first launch, before any users exist, the server
           creates a temporary administrator account:
         </p>
         <div class="code-block">
@@ -667,7 +667,7 @@
           Visit <code>http://localhost:10111</code> and you'll be
           redirected to the setup wizard at <code>/setup</code>, which has
           you register a real account. The default admin is deleted as
-          soon as your new user is created — there is no way to skip this
+          soon as your new user is created, and there's no way to skip that
           step while the default admin is still present. Headless installs
           can pre-provision the account with <code>LOWKEY_ADMIN_USER</code>
           / <code>LOWKEY_ADMIN_PASSWORD</code>.
@@ -685,8 +685,8 @@
           registered account and lets you:
         </p>
         <ul>
-          <li><strong>Add a user</strong> — type a username and password and click <em>Create</em>.</li>
-          <li><strong>Delete a user</strong> — click <em>Delete</em> next to the user you want to remove. The server refuses to delete the last remaining user so you can never lock yourself out.</li>
+          <li><strong>Add a user</strong>: type a username and password and click <em>Create</em>.</li>
+          <li><strong>Delete a user</strong>: click <em>Delete</em> next to the user you want to remove. The server refuses to delete the last remaining user so you can never lock yourself out.</li>
         </ul>
         <p>
           The same operations are available over the JSON API for
@@ -710,14 +710,14 @@
           an <code>auth_token</code> HttpOnly cookie
           (<code>SameSite=Lax</code>) for browser use. Subsequent
           requests are accepted with either the cookie <em>or</em> an
-          <code>Authorization: Bearer &lt;token&gt;</code> header — the
+          <code>Authorization: Bearer &lt;token&gt;</code> header. The
           browser extensions and the Electron app use the header; the web
           UI uses the cookie.
         </p>
         <ul>
           <li><strong>Cookie lifetime:</strong> 24 hours from issue.</li>
           <li><strong>JWT lifetime:</strong> 1 year (Bearer-token clients stay logged in until they explicitly log out).</li>
-          <li><strong>Logout:</strong> <code>POST /auth/logout</code> clears the cookie. Bearer tokens remain valid until expiry — there is no server-side token revocation list, so rotate the JWT secret if you need to invalidate everyone.</li>
+          <li><strong>Logout:</strong> <code>POST /auth/logout</code> clears the cookie. Bearer tokens remain valid until expiry. There is no server-side token revocation list, so rotate the JWT secret if you need to invalidate everyone.</li>
           <li><strong>Signing secret:</strong> set <code>LOWKEY_JWT_SECRET</code> to a long random string in production. If unset, one is auto-generated and persisted into the config file on first run.</li>
         </ul>
 
@@ -725,7 +725,7 @@
         <p>
           Right now there is exactly one role: <strong>admin</strong>.
           Every authenticated user is treated as an admin and can do
-          everything — manage other users, edit configuration, run any
+          everything: manage other users, edit configuration, run any
           task, browse and modify all media. Per-route role separation
           (<code>RolePublic</code> vs. <code>RoleAdmin</code>) exists in
           the middleware so a more granular system can be added later
@@ -734,7 +734,7 @@
         <ul>
           <li>Only create accounts for people you would trust with the box itself.</li>
           <li>Don't expose the server to the open internet without putting it behind a reverse proxy with TLS and additional restrictions (e.g. IP allow-list or an OAuth front-door).</li>
-          <li>There is no rate limit on <code>/auth/login</code> yet — make sure passwords are strong, especially if the server is publicly reachable.</li>
+          <li>There is no rate limit on <code>/auth/login</code> yet, so make sure passwords are strong, especially if the server is publicly reachable.</li>
         </ul>
         <p>
           A future release will add proper role separation (read-only
@@ -754,7 +754,7 @@
         <p>
           Restart the server. The default <code>admin</code> / <code>admin</code>
           account is recreated and you'll be sent through the setup wizard
-          again. Your media, tags, jobs, and workflows are untouched —
+          again. Your media, tags, jobs, and workflows are untouched;
           only the user list is reset.
         </p>
       </section>
@@ -853,7 +853,7 @@
       <section id="ai-features">
         <h2>AI & ML Features</h2>
         <p>
-          Every AI feature below runs as a metadata task over the whole library —
+          Every AI feature below runs as a metadata task over the whole library,
           including items you opened in the viewer or ingested earlier. Each one
           tracks its own coverage and skips what's already done, so you can stop
           and restart at any time without losing work or repeating it.
@@ -864,7 +864,7 @@
           width="1600"
           height="986"
           loading="lazy"
-          alt="Metadata generation cards for descriptions, transcripts, auto-tagging, visual embeddings, faces and people, and file info — each showing coverage over the library"
+          alt="Metadata generation cards for descriptions, transcripts, auto-tagging, visual embeddings, faces and people, and file info, each showing coverage over the library"
         />
 
         <h3 id="autotag">Auto-Tagging (ONNX)</h3>
@@ -904,14 +904,14 @@
         <h4>Tasks</h4>
         <ul>
           <li>
-            <strong><code>faces</code> — Detect Faces (ONNX)</strong> - Scans media,
+            <strong><code>faces</code> (Detect Faces, ONNX)</strong> scans media,
             detects faces, stores an embedding per face, and clusters incrementally
             as it goes, so people appear while a large scan is still running. Videos
             are scanned on a representative frame.
           </li>
           <li>
-            <strong><code>faces-cluster</code> — Cluster Faces into People</strong> -
-            Groups stored faces into people. Supports flags for the match threshold,
+            <strong><code>faces-cluster</code> (Cluster Faces into People)</strong>
+            groups stored faces into people. Supports flags for the match threshold,
             minimum cluster size, quality floor, and two reset levels:
             <code>--reset</code> rebuilds only the anonymous "Unknown" groups, while
             <code>--reset-all</code> rebuilds everything except user-confirmed labels.
@@ -928,7 +928,7 @@
         </ul>
         <p>
           With routing set to <code>auto</code> (the default), each item is classified
-          photo-vs-anime using a SigLIP 2 text probe and sent to the right pipeline —
+          photo-vs-anime using a SigLIP 2 text probe and sent to the right pipeline, so
           one <code>faces</code> job covers a mixed library. Advanced users can also
           point the config at their own ArcFace-family ONNX recognizer. Face inference
           supports GPU acceleration via DirectML on Windows, configurable per-task from
@@ -965,7 +965,7 @@
         <p>
           Similarity predicates compose with tags, paths, and other filters in one query, and
           results are ranked by match score. Two embedding models are available from the
-          Dependencies page and can coexist — vectors are stored per model:
+          Dependencies page and can coexist, since vectors are stored per model:
         </p>
         <ul>
           <li>
@@ -980,8 +980,8 @@
         <p>
           Embedding runs on persistent worker processes (the model loads once per job,
           not once per file) at below-normal OS priority, with optional DirectML GPU
-          acceleration on Windows. Search is an exact, parallelized cosine scan — no
-          approximate index, so the top match is always the true top match — and stays
+          acceleration on Windows. Search is an exact, parallelized cosine scan with no
+          approximate index, so the top match is always the true top match, and it stays
           at a few milliseconds even at tens of thousands of items. New media is added
           to the in-memory index the moment it's embedded, so fresh imports are
           searchable immediately.
@@ -991,11 +991,11 @@
         <h3 id="composite-search">Composite &amp; Blended Queries</h3>
         <p>
           Similarity predicates aren't limited to a single reference. A query can carry a
-          <strong>blend</strong> of nodes — library images, uploaded clips, and text
+          <strong>blend</strong> of nodes: library images, uploaded clips, and text
           concepts, each with a signed weight. The server normalizes every component,
           combines them into <em>one</em> weighted query vector in a shared embedding
-          space, and runs a single ranked scan. That means "like this image, plus
-          <em>'at night'</em> at 50%, minus <em>'blurry'</em>" is one coherent search,
+          space, and runs a single ranked scan. So "like this image, plus
+          <em>'at night'</em> at 50%, minus <em>'blurry'</em>" is one search,
           not several searches intersected after the fact.
         </p>
         <ul>
@@ -1014,8 +1014,8 @@
         <h3 id="embeddings-viz">3D Embedding Visualization</h3>
         <p>
           Explore your whole library as a 3D point cloud of its embedding space at
-          <code>/viz/embeddings</code>. Hover any point to preview the image or play the video —
-          visually similar media clusters together.
+          <code>/viz/embeddings</code>. Hover any point to preview the image or play the video.
+          Visually similar media clusters together.
         </p>
       </section>
 
@@ -1024,10 +1024,10 @@
         <p>
           The full Lowkey Media Viewer runs inside any browser as a web
           app, served by the media server at
-          <code>http://[server-ip]:10111/app/</code>. It is the same React
-          interface as the Electron desktop app — same layout, same
-          tagging panel, same hotkeys — but routed over HTTP instead of
-          Electron IPC so you can reach your library from any computer
+          <code>http://[server-ip]:10111/app/</code>. It's the same React
+          interface as the Electron desktop app (same layout, same
+          tagging panel, same hotkeys) routed over HTTP instead of
+          Electron IPC, so you can reach your library from any computer
           on your network.
         </p>
         <p>
@@ -1037,24 +1037,24 @@
         </p>
         <ul>
           <li>
-            <strong>Same UI, anywhere</strong> — the renderer is shared
+            <strong>Same UI, anywhere</strong>: the renderer is shared
             between the desktop app and the web app. Anything you can do
             in the Electron viewer (tagging, Battle Mode, transcripts,
             comic archives, search) works in the browser.
           </li>
           <li>
-            <strong>Remote-friendly</strong> — point a laptop, tablet, or
+            <strong>Remote-friendly</strong>: point a laptop, tablet, or
             second PC at your home server's IP and you have your entire
             library. Pair it with a reverse proxy and TLS for
             access from outside your network.
           </li>
           <li>
-            <strong>HLS playback for big videos</strong> — videos stream
+            <strong>HLS playback for big videos</strong>: videos stream
             as adaptive HLS so large files start instantly and scrub
             cleanly even over a slow connection.
           </li>
           <li>
-            <strong>Authenticated</strong> — gated by the same login
+            <strong>Authenticated</strong>: gated by the same login
             system as the rest of the server. See
             <a href="#users">Users &amp; Permissions</a>.
           </li>
@@ -1186,7 +1186,7 @@
         <p>
           Prefer a terminal? The <code>lokictl</code> CLI (in
           <code>media-server/cmd/lokictl</code>) wraps the whole API: query and search media,
-          run jobs and workflows, manage tags, deps, and config — designed for scripting and
+          run jobs and workflows, manage tags, deps, and config. It's built for scripting and
           AI-agent use.
         </p>
       </section>
@@ -1195,7 +1195,7 @@
         <div class="divider"></div>
         <h2>Contact & Support</h2>
         <p>
-          The Media Server is in alpha. Report issues and request features on GitHub or via email.
+          Report issues and request features on GitHub or via email.
         </p>
         <ul>
           <li><a href="mailto:help@lowkeyviewer.com">Help Requests: help@lowkeyviewer.com</a></li>
@@ -1210,7 +1210,7 @@
       // Point the download button at the right media-server package for the
       // visitor's OS. The server ships from the same GitHub release as the
       // viewer; asset names come from the Release workflow's Go build jobs.
-      // Unlike the viewer's, these names carry no version — only the tag in
+      // Unlike the viewer's, these names carry no version; only the tag in
       // RELEASE_BASE changes between releases.
       (function () {
         const el = document.getElementById('serverDownloadButton');
@@ -1229,7 +1229,7 @@
           href = RELEASE_BASE + 'lowkey-media-server-setup-windows-amd64.exe';
           label = 'Download | Free for Windows';
         } else if (/Mac/i.test(platform) || /Mac OS/i.test(ua)) {
-          // The DMG holds the menu-bar agent .app. Default to Apple Silicon —
+          // The DMG holds the menu-bar agent .app. Default to Apple Silicon:
           // navigator.platform reports "MacIntel" on both architectures, so
           // Intel users take darwin-amd64 from the releases page.
           href = RELEASE_BASE + 'lowkey-media-server-darwin-arm64.dmg';
@@ -1268,7 +1268,7 @@
           table.querySelectorAll('tr').forEach((row) => {
             Array.from(row.children).forEach((cell, i) => {
               // An empty header (the comparison table's corner cell) leaves
-              // its column unlabelled on purpose — that cell is the row's
+              // its column unlabelled on purpose: that cell is the row's
               // name, and reads as the card title.
               if (cell.tagName === 'TD' && labels[i]) {
                 cell.setAttribute('data-label', labels[i]);
