@@ -75,7 +75,7 @@ Open in Chrome/Edge 113+ (WebGPU required).
 ## Upstream
 
 The shader **engine, compiler toolchain glue, presets, and CLI** live in
-the [slangfx](../../beat-cut/slangfx) repo — that's where core library
+the [slangfx](https://github.com/SteveCastle/slangfx) repo — that's where core library
 changes happen. `engine/`, `vendor/`, and `shaders/` here are vendored
 snapshots; re-copy from slangfx (`web/src`, `web/vendor`, `shaders/`) to
 pick up upstream changes, then re-run `publish.mjs`.
