@@ -775,26 +775,63 @@ function compositeDrawForClip(clip, t) {
 
 /* Axis-aligned bounding box of every visible media clip's transformed
  * quad at comp time t, or null when nothing is on screen. */
+/** AABB of one clip's transformed quad at comp time t, or null. */
+function clipBounds(clip, t) {
+  const d = drawForClip(clip, t);
+  if (!d) return null;
+  const hw = (d.w * Math.abs(d.scaleX)) / 2;
+  const hh = (d.h * Math.abs(d.scaleY)) / 2;
+  const r = (d.rot * Math.PI) / 180;
+  const c = Math.cos(r), s = Math.sin(r);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [px, py] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]) {
+    const x = d.x + px * c - py * s;
+    const y = d.y + px * s + py * c;
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 function contentBounds(t) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const { track, clip } of activeClips(comp, t, 'media')) {
     if (track.hidden) continue;
-    const d = drawForClip(clip, t);
-    if (!d) continue;
-    const hw = (d.w * Math.abs(d.scaleX)) / 2;
-    const hh = (d.h * Math.abs(d.scaleY)) / 2;
-    const r = (d.rot * Math.PI) / 180;
-    const c = Math.cos(r), s = Math.sin(r);
-    for (const [px, py] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]) {
-      const x = d.x + px * c - py * s;
-      const y = d.y + px * s + py * c;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
+    const b = clipBounds(clip, t);
+    if (!b) continue;
+    minX = Math.min(minX, b.minX); maxX = Math.max(maxX, b.maxX);
+    minY = Math.min(minY, b.minY); maxY = Math.max(maxY, b.maxY);
   }
   return minX === Infinity ? null : { minX, minY, maxX, maxY };
+}
+
+/** Resize the comp to a bounding box and slide every clip so the box
+ * lands centred in the new frame. The inverse of "fit in frame": instead
+ * of moving the layer to suit the comp, the comp is cut to suit it. */
+async function fitCompToBounds(b, label) {
+  const bw = Math.max(1, b.maxX - b.minX);
+  const bh = Math.max(1, b.maxY - b.minY);
+  const W = clamp(2 * Math.round(bw / 2), 16, 7680);
+  const H = clamp(2 * Math.round(bh / 2), 16, 4320);
+  const dx = (W - bw) / 2 - b.minX;
+  const dy = (H - bh) / 2 - b.minY;
+  history.record(comp, () => {
+    for (const track of comp.tracks)
+      for (const c of track.clips) {
+        if (c.kind !== 'media') continue;
+        addToProp(c.props.x, dx);
+        addToProp(c.props.y, dy);
+      }
+    comp.width = W;
+    comp.height = H;
+    comp._autoSize = false;
+  });
+  await applyCompSize();
+  setTime(tCur);
+  onModelChange({ structural: true });
+  setStatus(`comp fit to ${label}: ${W}×${H}`);
 }
 
 /* Layer-true rendering: walking the stack bottom → top, media below the
@@ -1946,33 +1983,8 @@ $('btn-settings').addEventListener('click', () => {
   fitBtn.addEventListener('click', async () => {
     const b = contentBounds(tCur);
     if (!b) return;
-    const bw = b.maxX - b.minX;
-    const bh = b.maxY - b.minY;
-    const w = clamp(2 * Math.round(bw / 2), 16, 7680);
-    const h = clamp(2 * Math.round(bh / 2), 16, 4320);
-    const dx = (w - bw) / 2 - b.minX;
-    const dy = (h - bh) / 2 - b.minY;
-    const shift = (prop, d) => {
-      if (!prop || !d) return;
-      prop.v += d;
-      for (const k of prop.keys) k.v += d;
-    };
     wrap.remove();
-    history.record(comp, () => {
-      for (const tr of comp.tracks)
-        for (const c of tr.clips) {
-          if (c.kind !== 'media') continue;
-          shift(c.props.x, dx);
-          shift(c.props.y, dy);
-        }
-      comp.width = w;
-      comp.height = h;
-      comp._autoSize = false;
-    });
-    await applyCompSize();
-    setTime(tCur);
-    onModelChange({ structural: true });
-    setStatus(`comp fit to contents: ${w}×${h}`);
+    await fitCompToBounds(b, 'contents');
   });
   wrap.querySelector('#cs-apply').addEventListener('click', async () => {
     const w = clamp(parseInt(wrap.querySelector('#cs-w').value, 10) || comp.width, 16, 7680);
@@ -3420,6 +3432,11 @@ function rot2(x, y, deg) {
 /** Screen placement of the comp frame, measured with the crop rotation
  * temporarily off: getBoundingClientRect on a rotated element returns the
  * bounding box of the rotation, which is not what we want to map through. */
+// Crop mode pulls the comp in a little so the box has somewhere to grow
+// into; without the margin the frame fills the pane and "expand" has no
+// reachable target.
+const CROP_VIEW = 0.74;
+
 function cropMeasure() {
   const inner = $('canvas-inner');
   const prev = inner.style.transform;
@@ -3428,38 +3445,63 @@ function cropMeasure() {
   const wrapR = $('preview-wrap').getBoundingClientRect();
   inner.style.transform = prev;
   cropBase = {
-    s: d.s,
+    s: d.s * CROP_VIEW,
     ccx: d.left + comp.width * d.s / 2 - wrapR.left,
     ccy: d.top + comp.height * d.s / 2 - wrapR.top,
   };
 }
 
-/** Largest axis-aligned box (in rotated space) that stays inside the
- * rotated comp — the crop can't include area the comp never had. */
-function cropMaxBox(angle) {
+const CROP_MAX_W = 7680, CROP_MAX_H = 4320;   // same ceiling as comp settings
+
+/** Largest box (in rotated space) with NO blank corners — it stays inside
+ * the rotated comp. Offered as "Fit inside" rather than enforced, because
+ * the crop is also allowed to grow the frame past what the comp had. */
+function cropInsetBox(angle) {
   const W = comp.width, H = comp.height;
-  const corners = [[-W / 2, -H / 2], [W / 2, -H / 2], [W / 2, H / 2], [-W / 2, H / 2]]
-    .map(([x, y]) => rot2(x, y, angle));
   const a = Math.abs(angle % 180) * Math.PI / 180;
   const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
-  // Inscribed rectangle of the same aspect as the comp, standard result.
   const denom = c * c - s * s;
-  if (Math.abs(denom) < 1e-6) return { w: Math.min(W, H), h: Math.min(W, H) };
+  // Near 45° the inscribed rect degenerates; fall back to a square.
+  if (Math.abs(denom) < 1e-6) {
+    const side = Math.min(W, H) / Math.SQRT2;
+    return { w: side, h: side };
+  }
   const w = (W * c - H * s) / denom;
   const h = (H * c - W * s) / denom;
-  const bx = Math.max(...corners.map((p) => Math.abs(p[0]))) * 2;
-  const by = Math.max(...corners.map((p) => Math.abs(p[1]))) * 2;
+  if (w <= 16 || h <= 16) {
+    const side = Math.min(W, H) / Math.SQRT2;
+    return { w: side, h: side };
+  }
+  return { w, h };
+}
+
+/** Smallest box (in rotated space) containing the whole rotated comp — so
+ * nothing is lost. What a quarter turn and Reset snap to. */
+function cropCoverBox(angle) {
+  const W = comp.width, H = comp.height;
+  const pts = [[-W / 2, -H / 2], [W / 2, -H / 2], [W / 2, H / 2], [-W / 2, H / 2]]
+    .map(([x, y]) => rot2(x, y, angle));
   return {
-    w: clamp(w > 0 ? w : Math.min(W, H), 16, bx),
-    h: clamp(h > 0 ? h : Math.min(W, H), 16, by),
+    w: Math.max(...pts.map((p) => Math.abs(p[0]))) * 2,
+    h: Math.max(...pts.map((p) => Math.abs(p[1]))) * 2,
   };
+}
+
+function setCropBox(w, h, cx = crop.cx, cy = crop.cy) {
+  crop.w = clamp(w, 16, CROP_MAX_W);
+  crop.h = clamp(h, 16, CROP_MAX_H);
+  // Position is free — the box may sit anywhere, including entirely off the
+  // old frame — but keep it findable rather than lost in deep space.
+  const reach = Math.max(comp.width, comp.height) * 4;
+  crop.cx = clamp(cx, -reach, reach);
+  crop.cy = clamp(cy, -reach, reach);
 }
 
 function cropRender() {
   if (!crop) return;
   if (!cropBase) cropMeasure();
   const { s, ccx, ccy } = cropBase;
-  $('canvas-inner').style.transform = `rotate(${crop.angle}deg)`;
+  $('canvas-inner').style.transform = `rotate(${crop.angle}deg) scale(${CROP_VIEW})`;
   cropBox.style.left = `${ccx + (crop.cx - crop.w / 2) * s}px`;
   cropBox.style.top = `${ccy + (crop.cy - crop.h / 2) * s}px`;
   cropBox.style.width = `${crop.w * s}px`;
@@ -3586,16 +3628,24 @@ $('cr-reset').addEventListener('click', () => {
   crop = { cx: 0, cy: 0, w: comp.width, h: comp.height, angle: 0 };
   cropRender();
 });
+$('cr-inset').addEventListener('click', () => {
+  if (!crop) return;
+  const b = cropInsetBox(crop.angle);
+  setCropBox(b.w, b.h, 0, 0);
+  cropRender();
+});
+$('cr-cover').addEventListener('click', () => {
+  if (!crop) return;
+  const b = cropCoverBox(crop.angle);
+  setCropBox(b.w, b.h, 0, 0);
+  cropRender();
+});
 
 function setCropAngle(deg) {
   if (!crop) return;
   crop.angle = deg;
-  // Keep the box inside the rotated frame so you can't crop in blank space.
-  const max = cropMaxBox(deg);
-  crop.w = Math.min(crop.w, max.w);
-  crop.h = Math.min(crop.h, max.h);
-  crop.cx = clamp(crop.cx, -(max.w - crop.w) / 2, (max.w - crop.w) / 2);
-  crop.cy = clamp(crop.cy, -(max.h - crop.h) / 2, (max.h - crop.h) / 2);
+  // The box is deliberately left alone: straightening may now expose blank
+  // corners, which is allowed. "Fit inside" trims them in one click.
   cropRender();
 }
 
@@ -3612,11 +3662,12 @@ $('cr-num').addEventListener('keydown', (e) => e.stopPropagation());
 $('cr-ccw').addEventListener('click', () => { if (crop) quarterTurn(-90); });
 $('cr-cw').addEventListener('click', () => { if (crop) quarterTurn(90); });
 
-/** A quarter turn swaps which way the frame is long, so refit the box. */
+/** A quarter turn swaps which way the frame is long. Snap to the cover
+ * box so a 90° turn is lossless — nothing falls outside the new frame. */
 function quarterTurn(d) {
   const angle = crop.angle + d;
-  const max = cropMaxBox(angle);
-  crop = { cx: 0, cy: 0, w: max.w, h: max.h, angle };
+  const box = cropCoverBox(angle);
+  crop = { cx: 0, cy: 0, w: box.w, h: box.h, angle };
   cropRender();
 }
 
@@ -3652,9 +3703,7 @@ cropOverlay.addEventListener('pointermove', (e) => {
     return;
   }
   if (cropDrag.mode === 'move') {
-    const max = cropMaxBox(crop.angle);
-    crop.cx = clamp(st.cx + dx, -(max.w - crop.w) / 2, (max.w - crop.w) / 2);
-    crop.cy = clamp(st.cy + dy, -(max.h - crop.h) / 2, (max.h - crop.h) / 2);
+    setCropBox(crop.w, crop.h, st.cx + dx, st.cy + dy);
     cropRender();
     return;
   }
@@ -3666,13 +3715,8 @@ cropOverlay.addEventListener('pointermove', (e) => {
   if (h.includes('e')) r = Math.max(r + dx, l + 16);
   if (h.includes('n')) t = Math.min(t + dy, b - 16);
   if (h.includes('s')) b = Math.max(b + dy, t + 16);
-  const max = cropMaxBox(crop.angle);
-  l = Math.max(l, -max.w / 2); r = Math.min(r, max.w / 2);
-  t = Math.max(t, -max.h / 2); b = Math.min(b, max.h / 2);
-  crop.w = Math.max(16, r - l);
-  crop.h = Math.max(16, b - t);
-  crop.cx = (l + r) / 2;
-  crop.cy = (t + b) / 2;
+  // No frame constraint: dragging a handle outward grows the comp.
+  setCropBox(r - l, b - t, (l + r) / 2, (t + b) / 2);
   cropRender();
 });
 
@@ -3707,6 +3751,16 @@ gizmo.addEventListener('contextmenu', (e) => {
     { label: 'Fill frame (crop)', action: () => applyTransformValues(clip, { ...center, scaleX: fill, scaleY: fill }, `${clip.name} fills the frame`) },
     { label: 'Stretch to frame', action: () => applyTransformValues(clip, { ...center, scaleX: asset.w ? r2(W / asset.w * 100) : 100, scaleY: asset.h ? r2(H / asset.h * 100) : 100 }, `${clip.name} stretched to the frame`) },
     { label: 'Center in frame', action: () => applyTransformValues(clip, center) },
+    '-',
+    {
+      // The other way round: leave the layer where it is and cut the comp
+      // down (or out) to exactly its bounds.
+      label: 'Fit frame to this layer',
+      action: () => {
+        const b = clipBounds(clip, tCur);
+        if (b) fitCompToBounds(b, clip.name);
+      },
+    },
     '-',
     { label: 'Mirror horizontal', action: () => applyTransformValues(clip, { scaleX: r2(-valueAt(clip, 'scaleX')) }) },
     { label: 'Mirror vertical', action: () => applyTransformValues(clip, { scaleY: r2(-valueAt(clip, 'scaleY')) }) },
