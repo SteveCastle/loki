@@ -388,6 +388,15 @@ export function quantize(t, fps) {
   return Math.round(t * fps) / fps;
 }
 
+/** The last renderable instant. A comp of N frames covers 0 … N-1, and a
+ * clip spanning the whole comp is active over [start, end) — so t = dur is
+ * one frame PAST the end, where nothing is active and the frame renders
+ * black. Scrubbing and playback both stop here instead, which is also
+ * exactly where the exporter's final frame lands. */
+export function lastFrame(comp) {
+  return Math.max(0, quantize(comp.dur - 1 / comp.fps, comp.fps));
+}
+
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /* ---- undo history ---------------------------------------------------- */

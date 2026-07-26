@@ -30,7 +30,7 @@ import { SlangFx, loadToolchain, parsePreset, dirnameOf } from './engine/index.j
 import { renameReserved } from './engine/preprocess.js';
 import {
   newComp, newTrack, newMediaClip, newFxClip, clipEnd, evalProp, upsertKey,
-  keyNear, activeClips, findClip, ensureDur, removeEmptyTracks, quantize,
+  keyNear, activeClips, findClip, ensureDur, removeEmptyTracks, quantize, lastFrame,
   clamp, History, uid, newProp, migrateComp, trackOf, MEDIA_PROPS,
   allClipsBottomUp,
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
@@ -310,7 +310,7 @@ function refreshDropHint() {
 let scrubUntil = 0;   // paused setTime marks a short scrub window
 
 function setTime(t) {
-  tCur = clamp(quantize(t, comp.fps), 0, comp.dur);
+  tCur = clamp(quantize(t, comp.fps), 0, lastFrame(comp));
   if (playing) clock = { perf: performance.now(), t: tCur };
   else scrubUntil = performance.now() + 150;
   timeline?.updatePlayhead();
@@ -322,14 +322,14 @@ function togglePlay() { playing ? pause() : play(); }
 
 function play() {
   ensureAudio();
-  if (tCur >= comp.dur - 1e-6) tCur = 0;
+  if (tCur >= lastFrame(comp) - 1e-6) tCur = 0;
   playing = true;
   clock = { perf: performance.now(), t: tCur };
 }
 
 function pause() {
   playing = false;
-  tCur = quantize(tCur, comp.fps);
+  tCur = clamp(quantize(tCur, comp.fps), 0, lastFrame(comp));
 }
 
 function tick() {
@@ -342,13 +342,13 @@ function tick() {
     if (tCur >= comp.dur) {
       if (exportMode) {
         finishExport();
-        tCur = comp.dur;
+        tCur = lastFrame(comp);
         pause();
       } else if (looping) {
         tCur = 0;
         clock = { perf: performance.now(), t: 0 };
       } else {
-        tCur = comp.dur;
+        tCur = lastFrame(comp);
         pause();
       }
     }
@@ -1353,7 +1353,7 @@ function afterModelReplace(what) {
   gcMediaChains();
   chainKey = '';
   markChainDirty();
-  tCur = clamp(tCur, 0, comp.dur);
+  tCur = clamp(tCur, 0, lastFrame(comp));
   // The restored state may carry a different comp size than the canvas.
   if (canvas.width !== comp.width || canvas.height !== comp.height)
     applyCompSize();
@@ -2174,7 +2174,7 @@ async function applyProjectData(data) {
   comp = migrateComp(data.comp);
   removeEmptyTracks(comp);
   projectName = data.name ?? null;
-  tCur = clamp(data.t ?? 0, 0, comp.dur);
+  tCur = clamp(data.t ?? 0, 0, lastFrame(comp));
   history.reset();
   chainKey = '';
   chainDirty = true;
