@@ -555,6 +555,33 @@ tr:hover td {
   color: #4ade80;
 }
 
+/* Responsive tables.
+   The server docs carry wide reference tables (env vars, API endpoints, the
+   storage-root comparison) that overflowed a phone viewport and dragged the
+   whole PAGE into horizontal scrolling. Each table is wrapped in
+   .table-scroll at runtime and its cells labelled from the header row — see
+   the inline script on the server page. Two behaviours fall out:
+
+     tablet  the table keeps its columns but scrolls inside its own box, so
+             the page itself never moves sideways
+     phone   rows restack as labelled cards (below)
+
+   Everything is scoped to .table-scroll, so a page that doesn't run that
+   script keeps plain tables and is unaffected. */
+.table-scroll {
+  margin: 1.25rem 0 1.75rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll > table {
+  margin: 0;
+  /* Narrower than this and the three-column tables are unreadable, so scroll
+     the box instead of crushing the columns. */
+  min-width: 34rem;
+}
+
 /* Code */
 code {
   font-family: 'JetBrains Mono', Consolas, monospace;
@@ -563,6 +590,11 @@ code {
   color: #f472b6;
   padding: 0.2rem 0.5rem;
   border-radius: 4px;
+  /* Env vars and URLs quoted in running text have no break opportunities, so
+     a long one (LOWKEY_OLLAMA_BASE_URL=http://host.docker.internal:11434)
+     pushed the page sideways on a phone. Only bites when a line would
+     otherwise overflow. Code blocks opt back out — they scroll instead. */
+  overflow-wrap: anywhere;
 }
 
 .code-block {
@@ -580,6 +612,9 @@ code {
   color: #94a3b8;
   font-size: 0.85rem;
   line-height: 1.7;
+  /* Shell commands stay on one line and scroll with their block — wrapping
+     them mid-flag would be worse than a swipe. */
+  overflow-wrap: normal;
 }
 
 /* Status badges */
@@ -782,6 +817,82 @@ h3 .requires-server {
 
   th, td {
     padding: 0.625rem 0.75rem;
+  }
+
+  /* Phone: restack each row as a labelled card. Sideways scrolling a
+     three-column reference table on a 375px screen is miserable, so the
+     columns become stacked label/value pairs instead. */
+  .table-scroll {
+    overflow-x: visible;
+  }
+
+  .table-scroll > table {
+    min-width: 0;
+    border: none;
+    border-radius: 0;
+    font-size: 0.85rem;
+  }
+
+  .table-scroll table,
+  .table-scroll tbody,
+  .table-scroll tr,
+  .table-scroll td {
+    display: block;
+    width: 100%;
+  }
+
+  /* The header row's text now lives in each cell's ::before. */
+  .table-scroll thead,
+  .table-scroll tr:first-child {
+    display: none;
+  }
+
+  .table-scroll tr {
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.875rem 0.65rem;
+    border: 1px solid rgba(148, 163, 184, 0.1);
+    border-radius: 8px;
+    background-color: rgba(22, 26, 32, 0.5);
+  }
+
+  .table-scroll tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .table-scroll td,
+  .table-scroll tr:hover td {
+    padding: 0.45rem 0;
+    border: none;
+    background: none;
+  }
+
+  .table-scroll td + td {
+    border-top: 1px solid rgba(148, 163, 184, 0.07);
+  }
+
+  .table-scroll td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.2rem;
+    color: #64748b;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* A leading cell with no header of its own (the storage-root comparison
+     table) reads as the card's title. */
+  .table-scroll td:first-child:not([data-label]) {
+    color: #e2e8f0;
+    font-weight: 600;
+  }
+
+  /* Fixed column widths only make sense in a real table. */
+  .table-scroll .api-table td:first-child,
+  .table-scroll .hotkey-table td:first-child,
+  .table-scroll .hotkey-table td:last-child {
+    width: auto;
   }
 
   .placeholder-video {

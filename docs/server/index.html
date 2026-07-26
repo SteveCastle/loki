@@ -1244,6 +1244,47 @@
         el.innerHTML = label;
       })();
 
+      // Responsive tables. These reference tables (env vars, API endpoints,
+      // the storage-root comparison) are wider than a phone viewport, and a
+      // table that won't fit drags the whole page into horizontal scrolling.
+      //
+      // Two things happen here, both consumed by .table-scroll in index.css:
+      //   1. each table gets a scroll box of its own, so an over-wide table
+      //      scrolls itself instead of the page
+      //   2. each cell gets a data-label copied from its column header, which
+      //      the phone breakpoint renders above the value once rows restack
+      //      as cards
+      //
+      // Doing it here rather than in the markup keeps the labels correct as
+      // rows are edited, and leaves pages without this script untouched.
+      (function () {
+        document.querySelectorAll('main table').forEach((table) => {
+          const headerRow = table.querySelector('tr');
+          if (!headerRow) return;
+          const labels = Array.from(headerRow.children).map((cell) =>
+            cell.textContent.trim()
+          );
+
+          table.querySelectorAll('tr').forEach((row) => {
+            Array.from(row.children).forEach((cell, i) => {
+              // An empty header (the comparison table's corner cell) leaves
+              // its column unlabelled on purpose — that cell is the row's
+              // name, and reads as the card title.
+              if (cell.tagName === 'TD' && labels[i]) {
+                cell.setAttribute('data-label', labels[i]);
+              }
+            });
+          });
+
+          if (!table.parentElement.classList.contains('table-scroll')) {
+            const wrap = document.createElement('div');
+            wrap.className = 'table-scroll';
+            table.parentNode.insertBefore(wrap, table);
+            wrap.appendChild(table);
+          }
+        });
+      })();
+
       // Smooth scroll for TOC links
       document.querySelectorAll('.toc a').forEach(link => {
         link.addEventListener('click', (e) => {
