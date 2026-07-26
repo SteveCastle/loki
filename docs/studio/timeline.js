@@ -2,7 +2,7 @@
  * slangfx studio — timeline panel.
  *
  * After-Effects-style editing surface: a zoomable time ruler (down to
- * individual frames), stacked tracks holding media / fx clips, and
+ * individual frames), stacked tracks holding media / audio / fx clips, and
  * twirl-down property lanes with draggable keyframe diamonds.
  *
  * The timeline owns presentation + interaction state (zoom, scroll,
@@ -30,7 +30,7 @@
 import {
   clipEnd, splitClip, uid, ensureDur, removeEmptyTracks,
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
-  eachClipProp, effectsOf, reidEffects,
+  eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
 } from './comp.js';
 
 const TRACK_H = 36;
@@ -176,6 +176,17 @@ export class Timeline {
             <div class="tl-playhead"><div class="tl-ph-cap"></div></div>
           </div>
         </div>
+      </div>
+      <div class="tl-nav">
+        <div class="tl-nav-pad"></div>
+        <div class="tl-nav-track" title="visible range — drag to pan, drag an edge to zoom, double-click to fit">
+          <canvas class="tl-nav-map"></canvas>
+          <div class="tl-nav-ph"></div>
+          <div class="tl-nav-win">
+            <span class="tl-nav-grip l"></span>
+            <span class="tl-nav-grip r"></span>
+          </div>
+        </div>
       </div>`;
     this.root = root;
     this.$ = (sel) => root.querySelector(sel);
@@ -192,6 +203,10 @@ export class Timeline {
     this.ruler = this.$('.tl-ruler');
     this.rowsEl = this.$('.tl-rows');
     this.playheadEl = this.$('.tl-playhead');
+    this.navEl = this.$('.tl-nav-track');
+    this.navMap = this.$('.tl-nav-map');
+    this.navWin = this.$('.tl-nav-win');
+    this.navPh = this.$('.tl-nav-ph');
 
     this.toolbar.addEventListener('click', (e) => {
       const act = e.target.closest('[data-act]')?.dataset.act;
@@ -226,16 +241,36 @@ export class Timeline {
     this.scrollEl.addEventListener('scroll', () => {
       this.headRows.style.transform = `translateY(${-this.scrollEl.scrollTop}px)`;
       this._drawRuler();
+      this._syncNav();
     });
-    new ResizeObserver(() => { this._drawRuler(); this._syncZoomSlider(); }).observe(this.scrollEl);
+    new ResizeObserver(() => {
+      this._drawRuler();
+      this._syncZoomSlider();
+      this._drawNavMap();
+    }).observe(this.scrollEl);
 
-    // Ctrl+wheel zoom anchored under the cursor.
+    /* Wheel over the lanes zooms around the cursor — the timeline's own
+     * axis is time, so that's what the wheel should move through. The
+     * horizontal scrollbar is gone (the nav bar below replaces it), so
+     * trackpad deltaX pans instead, and Shift/Alt keeps the wheel on the
+     * track list for comps too tall to fit. */
     this.scrollEl.addEventListener('wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
+      if (e.shiftKey || e.altKey) return;                  // vertical scroll
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        e.preventDefault();
+        this.scrollEl.scrollLeft += e.deltaX;
+        return;
+      }
+      if (!e.deltaY) return;
       e.preventDefault();
       const t = this._timeAtClientX(e.clientX);
-      this._setZoom(this.pps * (e.deltaY < 0 ? 1.25 : 0.8), t, e.clientX);
+      // Trackpads send many small deltas; scale the step by how big the
+      // notch was so a mouse wheel still moves in confident jumps.
+      const k = Math.min(Math.abs(e.deltaY) / 100, 1.5);
+      this._setZoom(this.pps * (e.deltaY < 0 ? 1 + 0.25 * k : 1 / (1 + 0.25 * k)), t, e.clientX);
     }, { passive: false });
+
+    this._bindNav();
 
     // Ruler scrubbing.
     this.ruler.addEventListener('pointerdown', (e) => {
@@ -381,6 +416,7 @@ export class Timeline {
     if (anchorTime != null)
       this.scrollEl.scrollLeft = Math.max(0, this._timeToX(anchorTime) - anchorPx);
     this._drawRuler();
+    this._syncNav();
   }
 
   _syncZoomSlider() {
@@ -397,6 +433,164 @@ export class Timeline {
     this.render();
     this.scrollEl.scrollLeft = 0;
     this._drawRuler();
+    this._syncNav();
+  }
+
+  /* ---- navigator -------------------------------------------------------
+   * A minimap under the lanes, standing in for the horizontal scrollbar it
+   * replaces: the whole comp is the bar, the lit window is what you can
+   * currently see. Drag the window to pan, drag either end to widen or
+   * narrow the view (that IS the zoom), click anywhere to jump there.
+   *
+   * The window is derived state — scrollLeft and pps are still the truth —
+   * so anything that scrolls or zooms lands here through _syncNav(). */
+
+  /** Seconds spanned by the nav bar: the whole comp, always. It must NOT
+   * depend on zoom — the lanes' trailing END_PAD is a pixel amount, so
+   * folding it in here would rescale the map every time you zoomed and the
+   * clips would visibly slide. Full width = comp duration, full stop; the
+   * window is what moves. */
+  _navSpan() {
+    return Math.max(this.host.comp().dur, 1e-3);
+  }
+
+  _syncNav() {
+    if (!this.navEl) return;
+    const w = this.navEl.clientWidth;
+    if (!w) return;
+    this._navW = w;
+    const span = this._navSpan();
+    const view = this.scrollEl.clientWidth / this.pps;
+    const t0 = this.scrollEl.scrollLeft / this.pps;
+    const left = clamp((t0 / span) * w, 0, w);
+    const width = clamp((view / span) * w, 8, w - left);
+    this.navWin.style.left = `${left}px`;
+    this.navWin.style.width = `${width}px`;
+    this.navWin.classList.toggle('full', width >= w - 1);
+    this._syncNavPlayhead();
+  }
+
+  /* Called every frame with the playhead, so it touches nothing but one
+   * style property (the bar's width is cached by _syncNav). */
+  _syncNavPlayhead() {
+    if (!this.navPh || !this._navW) return;
+    const w = this._navW;
+    this.navPh.style.left = `${clamp((this.host.time() / this._navSpan()) * w, 0, w)}px`;
+  }
+
+  /** The clip overview. Cheap enough to redraw with every render(): it's a
+   * handful of rounded rects at bar resolution. */
+  _drawNavMap() {
+    if (!this.navMap) return;
+    const w = this.navEl.clientWidth;
+    const h = this.navEl.clientHeight;
+    if (!w || !h) return;
+    const dpr = devicePixelRatio || 1;
+    if (this.navMap.width !== Math.round(w * dpr) || this.navMap.height !== Math.round(h * dpr)) {
+      this.navMap.width = Math.round(w * dpr);
+      this.navMap.height = Math.round(h * dpr);
+      this.navMap.style.width = `${w}px`;
+      this.navMap.style.height = `${h}px`;
+    }
+    const ctx = this.navMap.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const comp = this.host.comp();
+    const span = this._navSpan();
+    const tracks = comp.tracks.filter((t) => t.clips.length);
+    if (!tracks.length) return;
+    const pad = 2;
+    const rowH = Math.max(1, (h - pad * 2) / tracks.length);
+    const barH = Math.max(1, Math.min(rowH - 1, 4));
+    const COLORS = { media: '#3d6a9c', fx: '#7a5cb0', audio: '#3e9484' };
+    tracks.forEach((track, i) => {
+      const y = pad + i * rowH + (rowH - barH) / 2;
+      for (const clip of track.clips) {
+        const x = (clip.start / span) * w;
+        const cw = Math.max(1.5, (clip.dur / span) * w);
+        ctx.fillStyle = COLORS[clip.kind] ?? '#3d6a9c';
+        ctx.globalAlpha = track.hidden ? 0.35 : 0.9;
+        ctx.fillRect(x, y, cw, barH);
+      }
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  _bindNav() {
+    const track = this.navEl;
+    if (!track) return;
+    new ResizeObserver(() => { this._drawNavMap(); this._syncNav(); }).observe(track);
+
+    const timeAt = (clientX) => {
+      const r = track.getBoundingClientRect();
+      return clamp((clientX - r.left) / Math.max(r.width, 1), 0, 1) * this._navSpan();
+    };
+    /** Show [t0, t0 + view] — zoom follows from how wide the window is. */
+    const showRange = (t0, view) => {
+      const [lo, hi] = this._zoomRange();
+      const pps = clamp(this.scrollEl.clientWidth / Math.max(view, 1e-3), lo, hi);
+      if (pps !== this.pps) {
+        this.pps = pps;
+        this.render();
+      }
+      this.scrollEl.scrollLeft = Math.max(0, t0 * this.pps);
+      this._drawRuler();
+      this._syncNav();
+    };
+
+    track.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const view = this.scrollEl.clientWidth / this.pps;
+      const t0 = this.scrollEl.scrollLeft / this.pps;
+      const grip = e.target.closest('.tl-nav-grip');
+      const mode = grip ? (grip.classList.contains('l') ? 'l' : 'r')
+        : e.target.closest('.tl-nav-win') ? 'pan' : 'jump';
+      let start = { t: timeAt(e.clientX), t0, t1: t0 + view };
+      if (mode === 'jump') {
+        // Clicking bare bar centres the view there, then keeps panning.
+        const nt0 = Math.max(0, start.t - view / 2);
+        showRange(nt0, view);
+        start = { t: start.t, t0: nt0, t1: nt0 + view };
+      }
+      try { track.setPointerCapture(e.pointerId); } catch {}
+      track.classList.add('dragging');
+      const move = (ev) => {
+        const t = timeAt(ev.clientX);
+        const d = t - start.t;
+        const minView = this.scrollEl.clientWidth / this._zoomRange()[1];
+        if (mode === 'l') {
+          const nt0 = clamp(start.t0 + d, 0, start.t1 - minView);
+          showRange(nt0, start.t1 - nt0);
+        } else if (mode === 'r') {
+          const nt1 = Math.max(start.t0 + minView, start.t1 + d);
+          showRange(start.t0, nt1 - start.t0);
+        } else {
+          showRange(Math.max(0, start.t0 + d), start.t1 - start.t0);
+        }
+      };
+      // Window-level, not capture-based: a drag that leaves the bar (or
+      // the window) must still steer it.
+      const up = () => {
+        track.classList.remove('dragging');
+        removeEventListener('pointermove', move);
+        removeEventListener('pointerup', up);
+        removeEventListener('pointercancel', up);
+      };
+      addEventListener('pointermove', move);
+      addEventListener('pointerup', up);
+      addEventListener('pointercancel', up);
+      e.preventDefault();
+    });
+
+    track.addEventListener('dblclick', () => this.zoomFit());
+
+    // Wheel on the bar zooms too, about the middle of the visible window.
+    track.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const mid = (this.scrollEl.scrollLeft + this.scrollEl.clientWidth / 2) / this.pps;
+      const k = Math.min(Math.abs(e.deltaY) / 100, 1.5);
+      this._setZoom(this.pps * (e.deltaY < 0 ? 1 + 0.25 * k : 1 / (1 + 0.25 * k)), mid);
+    }, { passive: false });
   }
 
   /* ---- ruler ----------------------------------------------------------- */
@@ -504,6 +698,8 @@ export class Timeline {
     for (const k of [...this.selKeys]) if (!this.keyOwners.has(k)) this.selKeys.delete(k);
 
     this._drawRuler();
+    this._drawNavMap();
+    this._syncNav();
     this.updatePlayhead(true);
   }
 
@@ -702,10 +898,11 @@ export class Timeline {
         ? ' custom' : '') +
       (this.selClips.has(clip.id) ? ' sel' : '') +
       (clip.kind === 'fx' && !clip.enabled ? ' off' : '') +
-      (clip.kind === 'media' && effects.length ? ' fxd' : '');
+      (clip.kind === 'media' && effects.some((e) => !isAudioEffect(e)) ? ' fxd' : '');
     el.style.left = `${this._timeToX(clip.start)}px`;
     el.style.width = `${Math.max(this._timeToX(clip.dur), 4)}px`;
     el.dataset.clipId = clip.id;
+    if (clip.kind === 'audio') this._paintWaveform(el, clip);
 
     const twirl = document.createElement('span');
     twirl.className = 'tl-twirl';
@@ -721,9 +918,15 @@ export class Timeline {
 
     const label = document.createElement('span');
     label.className = 'tl-clip-name';
-    const badge = clip.kind === 'fx' ? 'ƒx ' : (effects.length ? 'ƒ ' : '');
+    const visualFx = effects.filter((e) => !isAudioEffect(e)).length;
+    const audioFx = effects.length - visualFx;
+    const badge = clip.kind === 'fx' ? 'ƒx '
+      : clip.kind === 'audio' ? '♪ '
+        : (visualFx ? 'ƒ ' : '');
+    // A video clip carrying only audio effects still says so.
+    const tail = clip.kind !== 'audio' && audioFx ? ' ♪' : '';
     label.textContent = badge + clip.name +
-      (effects.length > 1 ? ` (${effects.length})` : '');
+      (effects.length > 1 ? ` (${effects.length})` : '') + tail;
 
     const kfCount = this._keyframeCount(clip);
     if (kfCount) {
@@ -754,6 +957,24 @@ export class Timeline {
       this.render();
     });
     row.appendChild(el);
+  }
+
+  /* The asset's peaks image covers its whole source, so the clip just
+   * windows it: background-size stretches the image to the source length
+   * in clip pixels, background-position slides the trim offset off the
+   * left edge, and it repeats because a clip longer than its source loops.
+   * Zoom and trim therefore cost nothing — no sample data is touched. */
+  _paintWaveform(el, clip) {
+    const asset = this.host.assetOf(clip.assetId);
+    if (!asset?.waveform || !(asset.duration > 0)) return;
+    const perSec = this._timeToX(1);
+    const w = asset.duration * perSec;
+    if (!(w > 0.5)) return;
+    el.style.backgroundImage = `url(${asset.waveform})`;
+    el.style.backgroundSize = `${w}px 100%`;
+    const trim = ((clip.in % asset.duration) + asset.duration) % asset.duration;
+    el.style.backgroundPosition = `${-trim * perSec}px center`;
+    el.style.backgroundRepeat = 'repeat-x';
   }
 
   _keyframeCount(clip) {
@@ -828,7 +1049,7 @@ export class Timeline {
           });
           this.host.onModelChange({ structural: true });
           this.host.status(`${clip.name} spans the whole timeline` +
-            (clip.kind === 'media' ? ' (video loops past its source length)' : ''));
+            (hasSource(clip) ? ' (loops past its source length)' : ''));
         },
       },
     ];
@@ -944,7 +1165,7 @@ export class Timeline {
         const d = ns - orig.start;
         clip.start = ns;
         clip.dur = orig.dur - d;
-        if (clip.kind === 'media') clip.in = orig.in + d;
+        if (hasSource(clip)) clip.in = orig.in + d;
         // Keys stay put in comp time: shift clip-relative times by -d.
         this._shiftKeys(clip, -d, orig);
       } else {
@@ -1263,6 +1484,8 @@ export class Timeline {
       if (x < viewL || x > viewL + viewW - 40)
         this.scrollEl.scrollLeft = Math.max(0, x - viewW * 0.15);
     }
+
+    this._syncNavPlayhead();
 
     // Live value readouts for animated properties.
     for (const { clip, key, input } of this.animInputs)

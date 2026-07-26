@@ -16,6 +16,27 @@
 
 * { box-sizing: border-box; }
 
+/* ---- scrollbars ------------------------------------------------------
+   Slim, unpainted until you're near them: a scrollbar is a status
+   indicator here, not a control (everything scrollable also responds to
+   wheel and drag). Firefox gets the same treatment via the two standard
+   properties; WebKit gets the detailed one. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.13);
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.26); background-clip: content-box; }
+*::-webkit-scrollbar-thumb:active { background: color-mix(in srgb, var(--accent) 60%, transparent); background-clip: content-box; }
+*::-webkit-scrollbar-corner { background: transparent; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -222,10 +243,48 @@ h1 .tag { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 6px
   background: rgba(79, 195, 247, 0.10);
   border-left-color: var(--accent);
 }
-.menu-item .note { color: var(--dim); font-size: 10px; white-space: nowrap; }
-.menu-item span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The name owns the row; the note is an annotation and yields to it. Both
+   shrink, but the note gives up its space first and is capped so it can
+   never squeeze a name into an ellipsis. */
+.menu-item .note {
+  color: var(--dim);
+  font-size: 10px;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.menu-item span:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .menu-empty { color: var(--dim); padding: 10px; font-size: 12px; text-align: center; }
+
+/* Banner separating the visual and audio halves of a picker list. */
+.menu-group {
+  margin: 8px 0 3px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #cbb8ff;
+  background: rgba(122, 92, 176, 0.16);
+  border-left: 2px solid #7a5cb0;
+}
+.menu-group:first-child { margin-top: 2px; }
+.menu-group.audio {
+  color: #9fe3d4;
+  background: rgba(62, 148, 132, 0.16);
+  border-left-color: #3e9484;
+}
 
 /* Which layer a pick from this list will land on. */
 .menu-target {
@@ -627,16 +686,35 @@ body.mask-editing #mask-overlay {
   width: 360px;
   background: var(--bg2);
   border-left: 1px solid var(--border);
-  padding: 10px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   min-height: 0;
 }
 #panel:has(.layer-editor) { width: 480px; }
 
-#panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); margin: 2px 0 8px; }
+/* Quieter than a section title on purpose: the layer's name below is the
+   panel's real heading, and two competing labels read as noise. */
+#panel h2 {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--dim);
+  opacity: 0.6;
+  margin: 2px 0 6px;
+}
 
-#inspector { flex: 1; overflow-y: auto; min-height: 0; scrollbar-width: thin; }
+/* Room on the right so section rules and controls don't collide with the
+   scrollbar; the last section gets breathing room at the bottom. */
+#inspector {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  padding-right: 8px;
+  padding-bottom: 12px;
+}
 
 .insp-empty p { margin: 6px 0; }
 .insp-empty .hint { color: var(--dim); font-size: 12px; line-height: 1.7; }
@@ -644,19 +722,23 @@ body.mask-editing #mask-overlay {
 .insp-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-height: 28px;
 }
 .insp-kind {
   flex: none;
   font-size: 13px;
+  line-height: 20px;
+  width: 26px;
+  text-align: center;
   background: var(--bg3);
   border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 7px;
+  border-radius: 5px;
 }
 .insp-kind.fx { color: #c0a6ff; }
 .insp-kind.media { color: var(--accent); }
+.insp-kind.audio { color: #6fd3bd; }
 .insp-name {
   flex: 1;
   min-width: 0;
@@ -673,78 +755,118 @@ body.mask-editing #mask-overlay {
 .insp-enable { display: flex; align-items: center; gap: 4px; color: var(--dim); font-size: 11px; }
 .insp-del { font-size: 13px; }
 
-.insp-src { color: var(--dim); font-size: 11px; margin-bottom: 8px; word-break: break-word; }
-
-.insp-params {
-  background: var(--bg3);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px 8px;
-  margin-bottom: 8px;
-}
-.insp-params h3 {
-  margin: 0 0 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+/* Source line under the title: what this layer is made of. */
+.insp-src {
   color: var(--dim);
-  display: flex;
-  justify-content: space-between;
+  font-size: 11px;
+  margin: -2px 0 10px;
+  padding-left: 2px;
+  word-break: break-word;
+  line-height: 1.5;
 }
-.insp-params h3 .hint { font-weight: 400; text-transform: none; letter-spacing: 0; }
 
-.layer-error { color: #e58784; font-size: 11px; padding: 4px 0 6px; word-break: break-word; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
+/* An aside inside a section: empty states, effect blurbs, load notices. */
+.insp-note { color: var(--dim); font-size: 11px; padding: 2px 0 4px; line-height: 1.5; }
 
-/* ---- effect stack (inspector) --------------------------------------- */
+/* ---- inspector sections ---------------------------------------------
+   One shape for every block in the panel: rule, header, body. */
 
-.fx-stack { margin-bottom: 8px; }
-.fx-stack-head {
+.insp-sec {
+  border-top: 1px solid var(--border);
+  padding: 7px 0 9px;
+}
+.insp-sec-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 2px 0 6px;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  min-height: 22px;
 }
-.fx-stack-head h3 {
+.insp-sec-head h3 {
+  margin: 0;
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.insp-sec-head:hover h3,
+.insp-sec-head:hover .insp-sec-tw { color: var(--fg); }
+.insp-sec-tw {
+  flex: none;
+  width: 11px;
+  font-size: 9px;
+  color: var(--dim);
+  text-align: center;
+}
+.insp-count {
+  flex: none;
+  font-size: 10px;
+  color: var(--dim);
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 15px;
+}
+/* Takes the slack so buttons sit hard right, and truncates before they do. */
+.insp-sec-hint {
   flex: 1;
   min-width: 0;
-  margin: 0;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--dim);
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-}
-.fx-stack-head h3 .hint {
-  font-weight: 400;
-  text-transform: none;
-  letter-spacing: 0;
+  opacity: 0.7;
+  font-size: 10.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.insp-sec-btn { padding: 2px 7px; font-size: 11px; flex: none; }
+.insp-sec-body { padding-top: 5px; }
+.insp-sec.collapsed { padding-bottom: 7px; }
+.insp-sec.collapsed .insp-sec-body { display: none; }
+/* Sound is the one section with its own accent — it's the odd one out in
+   a panel about pixels, and that's exactly why it needs to be findable. */
+.insp-sec.audio .insp-sec-head h3 { color: #7fd8c4; }
 
+.insp-params { display: flex; flex-direction: column; }
+
+.layer-error { color: #e58784; font-size: 11px; padding: 4px 0 6px; word-break: break-word; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
+
+/* ---- effect cards (inside a section) -------------------------------- */
+
+/* An effect is a card, not a section: same rounded surface as its
+   siblings, a coloured spine saying which chain it belongs to, and a
+   title row you can twirl open. Cards indent slightly from the section
+   edge so the stack reads as contents *of* the section. */
 .fx-entry {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg3);
-  margin-bottom: 6px;
   border-left: 2px solid #7a5cb0;
+  overflow: hidden;
 }
-.fx-entry.off { opacity: 0.5; }
+.fx-entry + .fx-entry { margin-top: 5px; }
+.fx-entry.audio { border-left-color: #3e9484; }
+.fx-entry.off { opacity: 0.45; }
 .fx-entry.err { border-left-color: #e58784; }
-.fx-entry.open { background: var(--bg); }
+.fx-entry.open { background: var(--bg); border-color: color-mix(in srgb, var(--fg) 12%, var(--border)); }
 
 .fx-entry-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
+  gap: 5px;
+  padding: 4px 6px 4px 4px;
+  min-height: 28px;
 }
-.fx-twirl { width: 16px; }
-.fx-on { accent-color: var(--accent); flex: none; }
-.fx-badge { flex: none; font-size: 11px; color: #c0a6ff; }
+.fx-entry.open .fx-entry-head { border-bottom: 1px solid var(--border); }
+.fx-twirl, .fx-sec-twirl { width: 16px; }
+.fx-sec-twirl { flex: none; }
+.fx-on { accent-color: var(--accent); flex: none; margin: 0 1px; }
+.fx-badge { flex: none; font-size: 11px; color: #c0a6ff; width: 12px; text-align: center; }
+.fx-entry.audio .fx-badge { color: #6fd3bd; }
 .fx-entry.off .fx-name { text-decoration: line-through; }
 .fx-name {
   flex: 1;
@@ -758,16 +880,86 @@ body.mask-editing #mask-overlay {
 }
 .fx-name:hover { border-color: var(--border); background: var(--bg); }
 .fx-name:focus { outline: none; border-color: var(--accent); background: var(--bg); }
-.fx-entry-head .tl-mini[disabled] { opacity: 0.25; cursor: default; }
+/* Reorder / remove are secondary: they surface on hover, so a stack of
+   cards reads as names first. */
+.fx-entry-head .tl-mini { opacity: 0.4; transition: opacity 0.12s; }
+.fx-entry:hover .fx-entry-head .tl-mini,
+.fx-entry.open .fx-entry-head .tl-mini { opacity: 0.85; }
+.fx-entry-head .tl-mini:hover { opacity: 1; }
+.fx-entry-head .fx-twirl { opacity: 0.85; }
+.fx-entry-head .tl-mini[disabled] { opacity: 0.18; cursor: default; }
 
-.fx-entry-body { padding: 0 6px 6px; }
-.fx-entry-body .insp-params { margin-bottom: 0; }
-.fx-entry .layer-error { padding: 0 8px 6px; }
+/* Frequency-response plot: the filter's own shape, dragged directly.
+   Sized generously — this is the primary control, the sliders under it
+   are the fine adjustment. */
+.fx-curve {
+  position: relative;
+  height: 96px;
+  margin: 2px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.1));
+  overflow: hidden;
+}
+.fx-curve canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+.fx-curve-read {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 10px;
+  color: var(--fg);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
 
-.param-row { display: grid; grid-template-columns: 1fr 86px 54px; gap: 8px; align-items: center; margin-top: 4px; }
-.param-row.kf { grid-template-columns: 20px 1fr 80px 52px 18px 18px; gap: 6px; }
-.param-row label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.param-row input[type=range] { width: 100%; accent-color: var(--accent); min-width: 0; }
+.fx-entry-body { padding: 6px 8px 8px; }
+.fx-entry .layer-error { padding: 6px 8px; }
+
+/* Property row. Every variant keeps the same column rhythm so labels,
+   sliders and values line up down the whole panel — the animation
+   controls occupy fixed gutters on both ends whether or not they're
+   there (a static param leaves them empty rather than reflowing). */
+.param-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 84px 48px 16px 16px;
+  gap: 6px;
+  align-items: center;
+  min-height: 24px;
+}
+.param-row.sel > label { grid-column: 2; }
+.param-row.sel > select { grid-column: 3 / span 2; }
+.param-row:not(.kf) > label { grid-column: 2; }
+.param-row:not(.kf) > input[type=range] { grid-column: 3; }
+.param-row:not(.kf) > .val { grid-column: 4; }
+.param-row label {
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.param-row input[type=range] { width: 100%; accent-color: var(--accent); min-width: 0; height: 16px; }
+.param-row select {
+  width: 100%;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+.param-row select:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+.param-row select:focus { outline: none; border-color: var(--accent); }
 
 .param-row .val {
   width: 100%;
@@ -787,35 +979,22 @@ body.mask-editing #mask-overlay {
 .param-row .val:hover { border-color: var(--border); background: var(--bg); }
 .param-row .val:focus { outline: none; border-color: var(--accent); background: var(--bg); }
 
-.mask-controls {
+.insp-sec.mask .insp-sec-body {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  padding: 6px 0 8px;
+  flex-direction: column;
+  gap: 5px;
   font-size: 11px;
   color: var(--dim);
 }
-.mask-controls label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-.mask-controls input[type=range] { width: 64px; accent-color: var(--accent); }
-.mask-controls .btn.active { border-color: var(--accent); color: var(--accent); }
-.mask-controls { flex-direction: column; align-items: stretch; }
-.mask-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.mask-title {
-  flex: 1;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  font-size: 10px;
-}
+.insp-sec.mask label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.insp-sec.mask input[type=range] { width: 64px; accent-color: var(--accent); }
+.insp-sec.mask .btn.active { border-color: var(--accent); color: var(--accent); }
 .mask-node {
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 5px 6px;
+  border-left: 2px solid #5b7fb0;
+  border-radius: 6px;
+  background: var(--bg3);
+  padding: 6px 7px;
   display: flex;
   flex-direction: column;
   gap: 5px;
@@ -866,9 +1045,11 @@ body.mask-editing #mask-overlay {
 .mask-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+  padding-top: 1px;
 }
+.mask-foot .btn { margin-left: auto; }
 
 .overlay-controls {
   display: flex;
@@ -1275,7 +1456,10 @@ body.mask-editing #mask-overlay {
 
 .tl-scroll {
   flex: 1;
-  overflow: auto;
+  /* No horizontal scrollbar: the nav bar below IS the horizontal scroll
+     (and it still scrolls programmatically). Vertical stays native. */
+  overflow-x: hidden;
+  overflow-y: auto;
   position: relative;
   scrollbar-width: thin;
   background:
@@ -1284,6 +1468,71 @@ body.mask-editing #mask-overlay {
 }
 
 .tl-content { position: relative; min-height: 100%; }
+
+/* ---- navigator (minimap + range) ---- */
+
+.tl-nav {
+  flex: none;
+  display: flex;
+  height: 22px;
+  border-top: 1px solid var(--border);
+  background: var(--bg2);
+}
+.tl-nav-pad {
+  flex: none;
+  width: 252px;              /* matches .tl-heads so the bar lines up */
+  border-right: 1px solid var(--border);
+}
+.tl-nav-track {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg);
+}
+.tl-nav-map { position: absolute; inset: 0; display: block; pointer-events: none; }
+.tl-nav-ph {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  opacity: 0.85;
+  pointer-events: none;
+}
+.tl-nav-win {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  border: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: 4px;
+  background: rgba(79, 195, 247, 0.13);
+  cursor: grab;
+  box-sizing: border-box;
+}
+.tl-nav-track.dragging .tl-nav-win { cursor: grabbing; }
+.tl-nav-win.full { background: rgba(79, 195, 247, 0.06); }
+.tl-nav-grip {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 9px;
+  cursor: ew-resize;
+}
+.tl-nav-grip::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.75;
+}
+.tl-nav-grip.l { left: -1px; }
+.tl-nav-grip.r { right: -1px; }
+.tl-nav-track:hover .tl-nav-grip::after { opacity: 1; }
 
 .tl-ruler {
   position: sticky;
@@ -1331,6 +1580,13 @@ body.mask-editing #mask-overlay {
   background: linear-gradient(180deg, #2e6b52, #23503d);
   border-color: #43a047;
   color: #dff2e8;
+}
+/* Audio: flat fill so the waveform image (set inline, which would knock
+   out a gradient) still has something to sit on. */
+.tl-clip.audio {
+  background: #24544c;
+  border-color: #3e9484;
+  color: #d9f2ec;
 }
 /* Media clip carrying its own effect stack. */
 .tl-clip.media.fxd { border-color: #7a5cb0; }
@@ -1644,24 +1900,8 @@ body.mask-editing #mask-overlay {
   z-index: 6;
 }
 
-.shape-controls { padding: 6px 0 8px; font-size: 11px; color: var(--dim); }
-.shape-controls h3 {
-  margin: 0 0 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--dim);
-}
-.shape-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 4px;
-}
-.shape-head h3 { margin: 0; }
-.shape-head .btn { padding: 2px 8px; font-size: 11px; }
-.shape-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.insp-sec.shape .insp-sec-body { font-size: 11px; color: var(--dim); }
+.shape-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 26px; }
 .shape-row + .shape-row { margin-top: 4px; }
 /* Preset list shared by + Shape (inspector) and + Layer (panel). */
 .shape-picker { width: 240px; }
@@ -1699,25 +1939,6 @@ body.mask-editing #mask-overlay {
 }
 #brush-cursor[hidden] { display: none; }
 
-/* Blend-mode row in the media inspector. */
-.insp-blend {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 0 6px;
-  font-size: 11px;
-  color: var(--dim);
-}
-.insp-blend select {
-  flex: 1;
-  max-width: 160px;
-  background: var(--bg3);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 3px 4px;
-  font-size: 11px;
-}
 
 /* ---- property drivers ------------------------------------------------ */
 

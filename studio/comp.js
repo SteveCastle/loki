@@ -2,19 +2,23 @@
  * slangfx studio — composition data model.
  *
  * A Comp is plain JSON: tracks (top-to-bottom, like After Effects) holding
- * clips positioned on a shared timebase. Two clip kinds:
+ * clips positioned on a shared timebase. Three clip kinds:
  *
  *   media  a video or image asset with a keyframable 2D transform
  *          (position / scale / rotation / opacity) composited into the frame
+ *   audio  a sound file: no picture, just a level and an effect chain
  *   fx     an adjustment layer: no content of its own, just an effect stack
  *          applied to everything composited below it
  *
- * BOTH kinds carry an ordered `effects` array (a stack of shader presets or
- * hand-written shaders, every parameter keyframable). Where the stack runs
- * is what distinguishes the two:
+ * ALL kinds carry an ordered `effects` array. An entry is either a VISUAL
+ * effect (a shader preset or hand-written slang) or an AUDIO effect (a Web
+ * Audio graph named by `audioId`, see audio-fx.js); the two are independent
+ * chains that happen to share one list, one namespace and one UI. Where a
+ * stack runs is what distinguishes the clip kinds:
  *
  *   effects on a MEDIA clip     process that clip alone, before it
  *                               composites — nothing else is touched
+ *   effects on an AUDIO clip    process that clip's sound only
  *   effects on an FX clip       process the accumulated frame, i.e. every
  *                               layer below the adjustment layer
  *
@@ -137,7 +141,8 @@ export function keyNear(prop, t, eps = 1e-4) {
 /**
  * One entry in a clip's effect stack. Effects are pure processing — they
  * have no timing of their own and animate on their owning clip's timebase.
- * @param {object} spec {fxKind:'preset'|'custom', path?, source?, savedName?, label}
+ * @param {object} spec {fxKind:'preset'|'custom'|'audio', path?, source?,
+ *                       audioId?, savedName?, label}
  */
 export function newEffect(spec) {
   return {
@@ -146,6 +151,7 @@ export function newEffect(spec) {
     fxKind: spec.fxKind,
     path: spec.path ?? null,      // preset path (fxKind 'preset')
     source: spec.source ?? null,  // slang source (fxKind 'custom')
+    audioId: spec.audioId ?? null,// audio-fx catalogue id (fxKind 'audio')
     savedName: spec.savedName ?? null,
     enabled: true,
     params: {},                   // paramName -> PropTrack (created on touch)
@@ -154,6 +160,19 @@ export function newEffect(spec) {
 }
 
 export function effectsOf(clip) { return clip?.effects ?? []; }
+
+/** The two independent chains inside one stack. Visual effects compile to
+ * GPU layers; audio effects wire Web Audio nodes. Nothing else in the app
+ * should test `fxKind === 'audio'` directly. */
+export const isAudioEffect = (effect) => effect?.fxKind === 'audio';
+
+export function visualEffectsOf(clip) {
+  return effectsOf(clip).filter((e) => !isAudioEffect(e));
+}
+
+export function audioEffectsOf(clip) {
+  return effectsOf(clip).filter(isAudioEffect);
+}
 
 export function findEffect(clip, effectId) {
   return effectsOf(clip).find((e) => e.id === effectId) ?? null;
@@ -185,8 +204,7 @@ export function parsePropKey(key) {
 /** Visit every PropTrack a clip owns — transform props plus every effect's
  * parameters. The one place that knows where animation can hide. */
 export function eachClipProp(clip, fn) {
-  if (clip.kind === 'media')
-    for (const p of Object.values(clip.props ?? {})) fn(p);
+  for (const p of Object.values(clip.props ?? {})) fn(p);
   for (const eff of effectsOf(clip))
     for (const p of Object.values(eff.params ?? {})) fn(p);
 }
@@ -203,6 +221,18 @@ export const MEDIA_PROPS = [
   ['opacity', 'Opacity', () => 100, '%'],
   ['volume', 'Volume', () => 100, '%'],   // audible for video assets only
 ];
+
+/** An audio clip has no picture, so its only intrinsic property is level.
+ * Everything else it can do (pan, EQ, reverb…) is an audio effect. */
+export const AUDIO_PROPS = [
+  ['volume', 'Volume', () => 100, '%'],
+];
+
+/** Clips that own a source file on the timeline (and therefore a trim
+ * offset), as opposed to adjustment layers. */
+export const hasSource = (clip) => clip.kind === 'media' || clip.kind === 'audio';
+
+export const propsForKind = (kind) => (kind === 'audio' ? AUDIO_PROPS : MEDIA_PROPS);
 
 /** Upgrade older projects in place (e.g. uniform `scale` → scaleX/scaleY). */
 export function migrateComp(comp) {
@@ -240,6 +270,11 @@ export function migrateComp(comp) {
         }];
         delete clip.shape;
       }
+      if (clip.kind === 'audio') {
+        clip.props ??= {};
+        for (const [key, , def] of AUDIO_PROPS) clip.props[key] ??= newProp(def(comp));
+        continue;
+      }
       if (clip.kind !== 'media' || !clip.props) continue;
       if (clip.props.scale && !clip.props.scaleX) {
         clip.props.scaleX = clip.props.scale;
@@ -265,6 +300,25 @@ export function newMediaClip(comp, asset, start, dur) {
     props,
     effects: [],                 // processed before this clip composites
     mask: null,
+  };
+}
+
+/** A sound-only clip. Same timing model as a media clip (start / dur /
+ * trim-in, looping past the source length), no picture and no transform. */
+export function newAudioClip(asset, start, dur) {
+  const props = {};
+  for (const [key, , def] of AUDIO_PROPS) props[key] = newProp(def());
+  return {
+    id: uid('clip'),
+    kind: 'audio',
+    name: asset.name.replace(/\.[^.]+$/, ''),
+    assetId: asset.id,
+    start,
+    dur,
+    in: 0,
+    props,
+    effects: [],                 // audio effects process this clip's sound
+    mask: null,                  // unused; keeps the clip shape uniform
   };
 }
 
@@ -314,7 +368,7 @@ export function splitClip(clip, t) {
   right.start = t;
   right.dur = clip.dur - offset;
   clip.dur = offset;
-  if (clip.kind === 'media') right.in = clip.in + offset;
+  if (hasSource(clip)) right.in = clip.in + offset;
   reidEffects(right);   // the halves' effects are independent from here on
   // Re-anchor the right half's keys to its new start, and advance any
   // oscillator driver's phase so the waveform is continuous across the cut

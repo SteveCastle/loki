@@ -6,6 +6,7 @@
  *   comp.js        composition model — tracks, clips, keyframes, undo
  *   compositor.js  WebGPU compositing of media clips into the frame
  *   timeline.js    the zoomable timeline / keyframe panel
+ *   audio-fx.js    the Web Audio effect catalogue (reverb, EQ, filters…)
  *   app.js (this)  playback clock + multi-video sync, audio mixing, fx
  *                  chain management, inspector panel, import/export,
  *                  project persistence
@@ -24,16 +25,24 @@
  *      active set changes; every shader param is driven from its keyframe
  *      track each frame
  *   5. fx.render() runs the chain and presents to the canvas
+ *
+ * Sound runs on its own path: every clip with audio (a video, or an audio
+ * clip) gets a Web Audio chain — source → its audio effects → its volume
+ * fader → the master gain — rebuilt when its stack changes and re-driven
+ * from the same keyframe/driver machinery every frame. The offline
+ * exporter rebuilds the identical graph in an OfflineAudioContext with
+ * those curves baked as scheduled ramps.
  */
 
 import { SlangFx, loadToolchain, parsePreset, dirnameOf } from './engine/index.js';
 import { renameReserved } from './engine/preprocess.js';
 import {
-  newComp, newTrack, newMediaClip, newFxClip, clipEnd, evalProp, upsertKey,
+  newComp, newTrack, newMediaClip, newAudioClip, newFxClip, clipEnd, evalProp, upsertKey,
   keyNear, activeClips, findClip, ensureDur, removeEmptyTracks, quantize, lastFrame,
-  clamp, History, uid, newProp, migrateComp, trackOf, MEDIA_PROPS,
+  clamp, History, uid, newProp, migrateComp, trackOf, MEDIA_PROPS, hasSource,
   allClipsBottomUp,
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
+  isAudioEffect, visualEffectsOf, audioEffectsOf,
 } from './comp.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
 import {
@@ -41,6 +50,8 @@ import {
   newDriver, applyDriver,
 } from './driver.js';
 import { analyzeMix, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
+import { AUDIO_EFFECTS, audioEffectDef, controlTargets } from './audio-fx.js';
+import { responseWidget } from './audio-widgets.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Timeline, fmtTimecode, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
@@ -53,6 +64,7 @@ const addLayerSearch = $('add-layer-search');
 const addLayerList = $('add-layer-list');
 
 const VIDEO_EXTS = /\.(mp4|mov|mkv|webm|avi|m4v)$/i;
+const AUDIO_EXTS = /\.(mp3|wav|m4a|aac|ogg|oga|opus|flac|weba|wma|aif|aiff)$/i;
 const GIF_EXT = /\.gif$/i;
 const PROJECT_KEY = 'lowkey-studio.project.v2';
 const DEFAULT_VIDEO_DUR = 4;   // fallback when a video reports no duration
@@ -286,6 +298,12 @@ async function boot() {
   setStatus('ready — import media or add an effect');
   window.fx = fx;                 // console/debug access
   window.comp = () => comp;
+  // Console/test handle. Sound especially needs one: a mixdown has no
+  // picture to eyeball, so renderCompAudio is the only way to see it.
+  window.studio = {
+    timeline, assets, onModelChange,
+    renderCompAudio, mixCompAudio, audioEntries, audioChains,
+  };
   requestAnimationFrame(tick);
 }
 
@@ -358,7 +376,8 @@ function tick() {
   // point instead of the playhead (the playhead UI itself stays put).
   const t = trimPreviewT ?? tCur;
   const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
-  syncMedia(t, activeMedia);
+  const activeAudio = activeClips(comp, t, 'audio').filter(({ track }) => !track.hidden);
+  syncMedia(t, activeMedia, activeAudio);
   prepareMasks(t);       // media masks must compose before compositeFrame samples them
   prepareMediaFx(t, activeMedia);   // per-clip effect stacks render in isolation
   compositeFrame(t);
@@ -388,16 +407,18 @@ const audioDrive = {
 };
 let audioDriveJob = null;
 
-/** Video clips whose audio participates in the mix. Drivers analyze all
- * of them; the audible export path excludes muted/hidden tracks. */
+/** Clips whose audio participates in the mix — video clips and audio
+ * clips alike. Drivers analyze all of them; the audible export path
+ * excludes muted/hidden tracks. */
 function audioEntries(includeMutedHidden) {
   const out = [];
   for (const track of comp.tracks) {
     if (!includeMutedHidden && (track.hidden || track.muted)) continue;
     for (const clip of track.clips) {
-      if (clip.kind !== 'media' || clip.start >= comp.dur) continue;
+      if (!hasSource(clip) || clip.start >= comp.dur) continue;
       const asset = assets.get(clip.assetId);
-      if (asset?.kind === 'video' && asset.ready) out.push({ clip, asset });
+      if (asset?.ready && (asset.kind === 'video' || asset.kind === 'audio'))
+        out.push({ clip, asset });
     }
   }
   return out;
@@ -408,7 +429,11 @@ function audioDriveKey() {
   for (const { clip, asset } of audioEntries(true)) {
     const vol = clip.props.volume;
     parts.push(asset.id, clip.start, clip.dur, clip.in,
-      vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '');
+      vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '',
+      // Effects colour the mix the analysis hears, so they belong in its
+      // fingerprint: adding a reverb has to re-derive the envelopes.
+      JSON.stringify(audioEffectsOf(clip).map((e) =>
+        [e.audioId, e.enabled !== false, e.params])));
   }
   return parts.join('|');
 }
@@ -433,10 +458,10 @@ function syncAudioDrive() {
   audioDrive.key = key;   // claim first so concurrent calls dedupe
   setStatus('analyzing audio for drivers…');
   audioDriveJob = (async () => {
-    // Analysis mixes with BASE volumes (evalProp, not drivenEval): a
-    // driver on Volume must not feed back into its own input signal.
-    const mix = await mixCompAudio(DRIVE_SR, audioEntries(true), 1, (clip, tc) =>
-      clip.props.volume ? evalProp(clip.props.volume, tc) : 100);
+    // Analysis mixes with BASE values (evalProp, not drivenEval): a driver
+    // on Volume — or on a filter cutoff — must not feed back into its own
+    // input signal.
+    const mix = await mixCompAudio(DRIVE_SR, audioEntries(true), 1, { driven: false });
     if (audioDrive.key !== key) return;   // superseded by a newer edit
     audioDrive.data = mix ? analyzeMix(mix.getChannelData(0), DRIVE_SR, comp.fps) : null;
     audioDrive.beats.clear();
@@ -475,9 +500,9 @@ function drivenEval(prop, tc, tComp) {
 
 /* ---- media sync ---------------------------------------------------- */
 
-function syncMedia(t, activeMedia) {
+function syncMedia(t, activeMedia, activeAudio = []) {
   const used = new Set();
-  for (const { track, clip } of activeMedia) {
+  for (const { track, clip } of [...activeMedia, ...activeAudio]) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready) continue;
     used.add(asset.id);
@@ -485,13 +510,27 @@ function syncMedia(t, activeMedia) {
       syncGifFrame(asset, clip, t);
       continue;
     }
-    if (asset.kind !== 'video') continue;
+    if (asset.kind !== 'video' && asset.kind !== 'audio') continue;
     const el = asset.el;
-    // Audio: master prefs × track mute × the clip's animated Volume.
+    // A timed asset always builds its element before it reports ready, but
+    // this runs every frame: one missing element must not become a storm
+    // of exceptions that takes the whole render loop down.
+    if (!el) continue;
+    // Audio: master prefs × track mute × the clip's animated Volume. With
+    // the Web Audio mixer up, level and effects live in the clip's chain
+    // and the element runs wide open; without it, fall back to the
+    // element's own volume (no effects, but still audible).
     el.muted = !!audioState.muted || !!track.muted;
     const clipVol = clip.props.volume
       ? clamp(drivenEval(clip.props.volume, t - clip.start, t) / 100, 0, 1) : 1;
-    el.volume = clamp((audioState.volume ?? 1) * clipVol, 0, 1);
+    const chain = asset.audioNode ? audioChainFor(clip) : null;
+    if (chain) {
+      el.volume = 1;
+      routeAssetToChain(asset, chain);
+      applyAudioChain(chain, clip, t, clipVol);
+    } else {
+      el.volume = clamp((audioState.volume ?? 1) * clipVol, 0, 1);
+    }
     // Source time, wrapped so clips longer than their source loop.
     const src = clip.in + (t - clip.start);
     const len = asset.duration ?? 0;
@@ -507,6 +546,11 @@ function syncMedia(t, activeMedia) {
         if (len > 0.02) drift = Math.min(drift, len - drift);
         if (drift > 0.15) el.currentTime = desired;
       }
+    } else if (asset.kind === 'audio') {
+      // Nothing to show for sound: park the element on the scrub position
+      // so hitting play starts from the right sample.
+      if (!el.paused) el.pause();
+      if (Math.abs(el.currentTime - desired) > 0.5 / comp.fps) el.currentTime = desired;
     } else {
       if (!el.paused) el.pause();
       if (!asset._seekedHook) {
@@ -538,10 +582,11 @@ function syncMedia(t, activeMedia) {
         }
       }
     }
-    if (!proxyScrub && el.readyState >= 2) uploadVideoFrame(asset);
+    if (asset.kind === 'video' && !proxyScrub && el.readyState >= 2) uploadVideoFrame(asset);
   }
   for (const asset of assets.values())
-    if (asset.kind === 'video' && asset.ready && !used.has(asset.id) && !asset.el.paused)
+    if ((asset.kind === 'video' || asset.kind === 'audio')
+      && asset.ready && !used.has(asset.id) && asset.el && !asset.el.paused)
       asset.el.pause();
 }
 
@@ -846,7 +891,7 @@ function compositeFrame(t) {
   fxOverlays = new Map();
   let curFx = null;           // nearest effect below the media being placed
   for (const { track, clip } of activeClips(comp, t)) {
-    if (track.hidden) continue;
+    if (track.hidden || clip.kind === 'audio') continue;
     if (clip.kind === 'fx') {
       // Broken / still-compiling effects are skipped by the engine, so
       // media above them merges down to the previous working adjustment
@@ -918,9 +963,16 @@ async function restoreSpecExtras(clip, effect, spec) {
   if (dirty) markChainDirty(clip.id);
 }
 
-/** Enabled effects of a clip, in application order. */
+/** Enabled VISUAL effects of a clip, in application order — i.e. the ones
+ * that become engine layers. Audio effects share the same stack but never
+ * reach the GPU (see audioChainFor). */
 function liveEffects(clip) {
-  return effectsOf(clip).filter((e) => e.enabled !== false);
+  return visualEffectsOf(clip).filter((e) => e.enabled !== false);
+}
+
+/** Enabled audio effects of a clip, in signal-chain order. */
+function liveAudioEffects(clip) {
+  return audioEffectsOf(clip).filter((e) => e.enabled !== false);
 }
 
 /** Layer specs for one clip's stack. The FIRST spec carries the clip's mask
@@ -1244,9 +1296,34 @@ function mediaPropDefs() {
   ];
 }
 
+/** An audio clip's only intrinsic property (everything else it can do is
+ * an audio effect). */
+function audioClipPropDefs() {
+  return [{ key: 'volume', label: 'Volume', min: 0, max: 100, step: 0.1, unit: '%', def: 100 }];
+}
+
 /** Parameter defs for one effect, keyed in the clip-wide namespace. Returns
  * [] (and kicks off the compile) while the metadata is still loading. */
 function effectPropDefs(clip, effect) {
+  // Audio effects declare their parameters up front — nothing to compile,
+  // so they're never in the "loading" state a shader can be.
+  if (isAudioEffect(effect)) {
+    const def = audioEffectDef(effect.audioId);
+    return (def?.params ?? []).map((p) => ({
+      key: effectPropKey(effect.id, p.name),
+      effectId: effect.id,
+      effectName: effect.name,
+      label: p.label,
+      min: p.min,
+      max: p.max,
+      step: p.step,
+      unit: p.unit,
+      def: p.def,
+      // Frequencies and times get a logarithmic slider; the value itself
+      // is unchanged, only the travel that reaches it.
+      scale: p.scale ?? null,
+    }));
+  }
   const metas = paramMetaCache.get(effect.id);
   if (!metas || metas === 'loading') {
     if (!metas) ensureParamMeta(clip, effect).catch(() => {});
@@ -1273,6 +1350,8 @@ function propDefs(clip) {
     // Volume only makes sense (and sound) for video assets.
     const video = assets.get(clip.assetId)?.kind === 'video';
     for (const d of mediaPropDefs()) if (video || d.key !== 'volume') defs.push(d);
+  } else if (clip.kind === 'audio') {
+    defs.push(...audioClipPropDefs());
   }
   for (const effect of effectsOf(clip)) defs.push(...effectPropDefs(clip, effect));
   return defs;
@@ -1362,6 +1441,7 @@ function onModelChange({ structural = false, transient = false } = {}) {
   removeEmptyTracks(comp);   // e.g. the last clip was dragged off a track
   gcEffectState();           // deleted effects release their compiled state
   gcMediaChains();           // clips that lost their effects release theirs
+  gcAudioChains();           // …and their audio graphs
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
   syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   refreshDropHint();
@@ -1388,6 +1468,7 @@ function afterModelReplace(what) {
   reconcileShapeAssets();   // undo/redo may restore stale shape settings
   gcEffectState();
   gcMediaChains();
+  gcAudioChains();
   chainKey = '';
   markChainDirty();
   tCur = clamp(tCur, 0, lastFrame(comp));
@@ -1481,10 +1562,12 @@ async function decodeGifFrames(file) {
 
 async function createAsset(file, id = null) {
   const isGif = file.type === 'image/gif' || GIF_EXT.test(file.name);
-  const isVideo = !isGif && (file.type.startsWith('video/') || VIDEO_EXTS.test(file.name));
+  const isAudio = !isGif && (file.type.startsWith('audio/') || AUDIO_EXTS.test(file.name));
+  const isVideo = !isGif && !isAudio
+    && (file.type.startsWith('video/') || VIDEO_EXTS.test(file.name));
   const asset = {
     id: id ?? uid('asset'),
-    kind: isVideo ? 'video' : isGif ? 'gif' : 'image',
+    kind: isVideo ? 'video' : isAudio ? 'audio' : isGif ? 'gif' : 'image',
     name: file.name,
     file,
     url: URL.createObjectURL(file),
@@ -1497,8 +1580,10 @@ async function createAsset(file, id = null) {
   };
   assets.set(asset.id, asset);
 
-  if (isVideo) {
-    const el = document.createElement('video');
+  if (isVideo || isAudio) {
+    // Sound files ride the same <video>-shaped path as video (play, seek,
+    // loop, drift correction) — only with an <audio> element and no frames.
+    const el = document.createElement(isAudio ? 'audio' : 'video');
     el.playsInline = true;
     el.preload = 'auto';
     el.loop = true;                 // clips longer than their source loop
@@ -1517,11 +1602,18 @@ async function createAsset(file, id = null) {
       el.remove();
       throw e;
     });
-    asset.w = el.videoWidth;
-    asset.h = el.videoHeight;
+    asset.w = el.videoWidth ?? 0;
+    asset.h = el.videoHeight ?? 0;
     asset.duration = Number.isFinite(el.duration) ? el.duration : null;
     applyAudioPrefsTo(el);
     attachAudio(asset);
+    if (isAudio) {
+      // No texture, no frames — just peaks for the timeline, in the
+      // background so a long track doesn't stall the import.
+      asset.ready = true;
+      buildWaveform(asset).catch(() => {});
+      return asset;
+    }
   } else if (asset.kind === 'gif' && typeof ImageDecoder !== 'undefined') {
     let decoded;
     try {
@@ -1566,7 +1658,9 @@ async function createAsset(file, id = null) {
 }
 
 async function importFiles(files, { t = null, trackIdx = null } = {}) {
-  const media = [...files].filter((f) => f.type.startsWith('video/') || f.type.startsWith('image/') || VIDEO_EXTS.test(f.name) || GIF_EXT.test(f.name));
+  const media = [...files].filter((f) =>
+    f.type.startsWith('video/') || f.type.startsWith('image/') || f.type.startsWith('audio/')
+    || VIDEO_EXTS.test(f.name) || GIF_EXT.test(f.name) || AUDIO_EXTS.test(f.name));
   if (!media.length) return;
   let at = t ?? tCur;
   history.begin(comp);
@@ -1591,16 +1685,19 @@ async function importFiles(files, { t = null, trackIdx = null } = {}) {
       await applyCompSize();
     }
 
-    // Videos land at the playhead with their source length; images fill
-    // the whole timeline by default (trim down as needed).
+    // Videos and audio land at the playhead with their source length;
+    // images fill the whole timeline by default (trim down as needed).
     let clip;
-    if (asset.kind === 'video') {
+    if (asset.kind === 'audio') {
+      const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
+      clip = newAudioClip(asset, quantize(at, comp.fps), dur);
+    } else if (asset.kind === 'video') {
       const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
       clip = newMediaClip(comp, asset, quantize(at, comp.fps), dur);
     } else {
       clip = newMediaClip(comp, asset, 0, Math.max(1 / comp.fps, comp.dur));
     }
-    if (asset.w && (asset.w !== comp.width || asset.h !== comp.height)) {
+    if (clip.kind === 'media' && asset.w && (asset.w !== comp.width || asset.h !== comp.height)) {
       const fit = Math.round(Math.min(comp.width / asset.w, comp.height / asset.h) * 10000) / 100;
       clip.props.scaleX.v = fit;
       clip.props.scaleY.v = fit;
@@ -1609,12 +1706,15 @@ async function importFiles(files, { t = null, trackIdx = null } = {}) {
     let track = trackIdx != null ? comp.tracks[trackIdx] : null;
     if (!track) {
       track = newTrack(clip.name);
-      comp.tracks.unshift(track);
+      // Audio has no place in the visual stacking order, so its tracks
+      // gather at the bottom (DAW-style) instead of covering the picture.
+      if (clip.kind === 'audio') comp.tracks.push(track);
+      else comp.tracks.unshift(track);
     }
     track.clips.push(clip);
     if (comp._autoSize) comp.dur = Math.max(comp.dur, clipEnd(clip));
-    // Only videos advance the drop cursor (images span the full comp).
-    if (asset.kind === 'video') at = clipEnd(clip);
+    // Only timed sources advance the drop cursor (images span the full comp).
+    if (asset.kind === 'video' || asset.kind === 'audio') at = clipEnd(clip);
     timeline.selectClip(clip.id);
   }
   ensureDur(comp);
@@ -1661,6 +1761,12 @@ function applyAudioPrefsTo(el) {
   el.muted = audioState.muted;
 }
 
+/** Master level rides the mixer's output gain when the graph is up; when
+ * it isn't, syncMedia folds it into each element's own volume. */
+function applyMasterVolume() {
+  if (masterGain) masterGain.gain.value = audioState.volume ?? 1;
+}
+
 function updateAudioUI() {
   muteBtn.textContent = (audioState.muted || audioState.volume === 0) ? '🔇' : '🔊';
   volumeSlider.value = String(audioState.volume);
@@ -1669,6 +1775,7 @@ function updateAudioUI() {
 function setAudioPrefs({ muted, volume }) {
   if (muted != null) audioState.muted = muted;
   if (volume != null) audioState.volume = volume;
+  applyMasterVolume();
   try { localStorage.setItem(AUDIO_KEY, JSON.stringify(audioState)); } catch {}
   updateAudioUI();
 }
@@ -1678,6 +1785,7 @@ function ensureAudio() {
     try {
       audioCtx = new AudioContext();
       masterGain = audioCtx.createGain();
+      masterGain.gain.value = audioState.volume ?? 1;
       masterGain.connect(audioCtx.destination);
       recordDest = audioCtx.createMediaStreamDestination();
       masterGain.connect(recordDest);
@@ -1690,13 +1798,162 @@ function ensureAudio() {
 }
 
 function attachAudio(asset) {
-  if (!audioCtx || asset.kind !== 'video' || asset.audioNode) return;
+  if (!audioCtx || asset.audioNode) return;
+  if (asset.kind !== 'video' && asset.kind !== 'audio') return;
   try {
     asset.audioNode = audioCtx.createMediaElementSource(asset.el);
-    asset.audioNode.connect(masterGain);
+    // Left unconnected on purpose: syncMedia routes it into the chain of
+    // whichever clip is playing it (routeAssetToChain).
   } catch (e) {
     console.warn('slangfx: could not attach audio for', asset.name, e);
   }
+}
+
+/* ---- per-clip audio chains -------------------------------------------
+ * source → [audio effects, in stack order] → volume fader → master.
+ *
+ * The chain belongs to the CLIP but the source belongs to the ASSET (one
+ * media element per file, so two clips of the same file can never play at
+ * once anyway) — hence the routing step: whichever clip is live re-points
+ * the asset's source node at its own chain input.
+ *
+ * Rebuilds are keyed on the stack, so dragging a parameter never touches
+ * the graph — only the AudioParams it drives. */
+
+const audioChains = new Map();   // clipId -> chain entry
+
+function audioStackKey(clip) {
+  return liveAudioEffects(clip).map((e) => `${e.id}:${e.audioId}`).join(',');
+}
+
+/** Build (or reuse) the graph for one clip. Returns null when the mixer
+ * never came up. */
+function audioChainFor(clip) {
+  if (!audioCtx) return null;
+  const key = audioStackKey(clip);
+  const existing = audioChains.get(clip.id);
+  if (existing && existing.key === key) return existing;
+  if (existing) destroyAudioChain(clip.id);
+
+  const input = audioCtx.createGain();
+  const gain = audioCtx.createGain();     // the clip's Volume, post-effects
+  const units = [];
+  let cur = input;
+  for (const effect of liveAudioEffects(clip)) {
+    const def = audioEffectDef(effect.audioId);
+    if (!def) continue;
+    let unit;
+    try {
+      unit = def.build(audioCtx);
+    } catch (e) {
+      console.warn(`slangfx: audio effect '${effect.audioId}' failed to build:`, e);
+      continue;
+    }
+    cur.connect(unit.input);
+    cur = unit.output;
+    units.push({ effect, def, unit });
+  }
+  cur.connect(gain);
+  gain.connect(masterGain);
+  const entry = { clipId: clip.id, key, input, gain, units };
+  audioChains.set(clip.id, entry);
+  return entry;
+}
+
+function destroyAudioChain(clipId) {
+  const entry = audioChains.get(clipId);
+  if (!entry) return;
+  audioChains.delete(clipId);
+  // Disconnect from the input side out; anything still routed into it (a
+  // paused element) lands on a dead-end gain rather than the speakers.
+  entry.input.disconnect();
+  for (const { unit } of entry.units) {
+    try { unit.output.disconnect(); } catch {}
+    try { unit.input.disconnect(); } catch {}
+  }
+  entry.gain.disconnect();
+  for (const asset of assets.values())
+    if (asset._routedTo === clipId) asset._routedTo = null;
+}
+
+/** Drop chains whose clip is gone (or lost its audio). */
+function gcAudioChains() {
+  for (const clipId of [...audioChains.keys()]) {
+    const clip = findClip(comp, clipId)?.clip;
+    if (!clip || !hasSource(clip)) destroyAudioChain(clipId);
+  }
+}
+
+function routeAssetToChain(asset, entry) {
+  if (asset._routedTo === entry.clipId && asset._routedKey === entry.key) return;
+  try {
+    asset.audioNode.disconnect();
+    asset.audioNode.connect(entry.input);
+    asset._routedTo = entry.clipId;
+    asset._routedKey = entry.key;
+  } catch (e) {
+    console.warn('slangfx: audio routing failed for', asset.name, e);
+  }
+}
+
+/** Push this frame's parameter values into a live chain. Every audio
+ * parameter is an AudioParam by design (see audio-fx.js), so they all
+ * glide the same way — setTargetAtTime, which keeps a dragged slider or a
+ * keyframe ramp from clicking. */
+function applyAudioChain(entry, clip, t, clipVol) {
+  const now = audioCtx.currentTime;
+  const tc = t - clip.start;
+  for (const { effect, def, unit } of entry.units) {
+    for (const p of def.params) {
+      const prop = effect.params?.[p.name];
+      const v = prop ? drivenEval(prop, tc, t) : p.def;
+      for (const c of controlTargets(unit, p.name))
+        c.param.setTargetAtTime(c.map ? c.map(v) : v, now, 0.01);
+    }
+  }
+  entry.gain.gain.setTargetAtTime(clipVol, now, 0.01);
+}
+
+/* ---- waveform thumbnails ---------------------------------------------
+ * One peaks image per audio asset, rendered once at a fixed width and used
+ * as a CSS background by the timeline. The clip stretches and offsets that
+ * one image, so zooming and trimming cost nothing and a re-render never
+ * touches sample data. */
+
+const WAVE_W = 1600;
+const WAVE_H = 64;
+
+async function buildWaveform(asset) {
+  if (asset.waveform) return asset.waveform;
+  asset._waveJob ??= (async () => {
+    const buf = await decodeAssetAudio(asset);
+    if (!buf) return null;
+    const cv = document.createElement('canvas');
+    cv.width = WAVE_W;
+    cv.height = WAVE_H;
+    const c2d = cv.getContext('2d');
+    const data = buf.getChannelData(0);
+    const step = data.length / WAVE_W;
+    c2d.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    for (let x = 0; x < WAVE_W; x++) {
+      const lo = Math.floor(x * step);
+      const hi = Math.min(data.length, Math.floor((x + 1) * step));
+      let peak = 0;
+      for (let i = lo; i < hi; i++) {
+        const v = Math.abs(data[i]);
+        if (v > peak) peak = v;
+      }
+      const h = Math.max(1, peak * WAVE_H);
+      c2d.fillRect(x, (WAVE_H - h) / 2, 1, h);
+    }
+    asset.waveform = cv.toDataURL('image/png');
+    timeline?.render();
+    return asset.waveform;
+  })().catch((e) => {
+    console.warn(`slangfx: waveform failed for '${asset.name}':`, e);
+    return null;
+  });
+  return asset._waveJob;
 }
 
 muteBtn.addEventListener('click', () => {
@@ -2178,6 +2435,7 @@ async function applyProjectData(data) {
   document.getElementById('demo-card')?.remove();
   unloadAssets();
   for (const clipId of [...mediaChains.keys()]) destroyMediaChain(clipId);
+  for (const clipId of [...audioChains.keys()]) destroyAudioChain(clipId);
   fxSpecs.clear();
   paramMetaCache.clear();
   masksLoaded = false;
@@ -2200,7 +2458,7 @@ async function applyProjectData(data) {
   const ids = new Set();
   for (const track of comp.tracks)
     for (const clip of track.clips)
-      if (clip.kind === 'media') ids.add(clip.assetId);
+      if (hasSource(clip)) ids.add(clip.assetId);
   // Restore assets in parallel; a missing or unloadable one must not block
   // the app — its clips simply render as offline until re-imported.
   await Promise.allSettled((data.assets ?? [])
@@ -4223,20 +4481,16 @@ function createShapeClip(presetId, cx, cy, w, h) {
  * + Shape button that arms a draw onto THIS layer. */
 
 function renderShapeSection(clip) {
-  const box = document.createElement('div');
-  box.className = 'shape-controls';
-
-  const head = document.createElement('div');
-  head.className = 'shape-head';
-  const h = document.createElement('h3');
-  h.textContent = clip.shapes.length > 1 ? `Shapes (${clip.shapes.length})` : 'Shape';
-  const add = document.createElement('button');
-  add.className = 'btn';
-  add.textContent = '+ Shape';
-  add.title = 'draw another shape into this layer';
-  add.onclick = () => openShapePicker(add, (pid) => armShapeDraw(pid, clip.id));
-  head.append(h, add);
-  box.appendChild(head);
+  const add = secBtn('＋ Shape', 'draw another shape into this layer', () => {
+    collapsedSections.delete('shape');
+    openShapePicker(add, (pid) => armShapeDraw(pid, clip.id));
+  });
+  const { sec, body, collapsed } = inspSection('shape', 'Shapes', {
+    count: clip.shapes.length,
+    actions: [add],
+  });
+  if (collapsed) { inspectorEl.appendChild(sec); return; }
+  const box = body;
 
   clip.shapes.forEach((shape, i) => {
     const row = document.createElement('div');
@@ -4320,7 +4574,7 @@ function renderShapeSection(clip) {
     box.appendChild(row);
   });
 
-  inspectorEl.appendChild(box);
+  inspectorEl.appendChild(sec);
 }
 
 /** Where to hang a popover: an element's box, or a bare {x, y} click point
@@ -4470,13 +4724,21 @@ function categoryLabel(id) {
  * clip's stack; only the target differs (the focused layer vs. the row's own
  * clip). Layers themselves are made with + Layer, so nothing here creates
  * one.
- * @param {object} opts {query, onPick, folders:Set, rerender, shapes:boolean,
- *                       header:string}
+ *
+ * Visual and audio effects live in one list but never blur together: each
+ * kind sits under its own banner, and a clip that can only take one of them
+ * is never offered the other.
+ *
+ * @param {object} opts {query, onPick, folders:Set, rerender, header:string,
+ *                       visual:boolean, audio:boolean}
  */
-function renderChoiceList(list, { query, onPick, folders, rerender, header = null }) {
+function renderChoiceList(list, {
+  query, onPick, folders, rerender, header = null, visual = true, audio = false,
+}) {
   const q = query.trim().toLowerCase();
   list.replaceChildren();
   const savedList = Object.keys(loadSaved()).sort();
+  const both = visual && audio;
 
   if (header) {
     const h = document.createElement('div');
@@ -4484,6 +4746,15 @@ function renderChoiceList(list, { query, onPick, folders, rerender, header = nul
     h.textContent = header;
     list.appendChild(h);
   }
+
+  /* Only worth banners when the list actually holds both kinds. */
+  const group = (label, kind) => {
+    if (!both) return;
+    const g = document.createElement('div');
+    g.className = `menu-group ${kind}`;
+    g.textContent = label;
+    list.appendChild(g);
+  };
 
   const addItem = (label, choice, note = null) => {
     const it = document.createElement('div');
@@ -4501,20 +4772,36 @@ function renderChoiceList(list, { query, onPick, folders, rerender, header = nul
     list.appendChild(it);
   };
 
+  // The note is a short group word, never the effect's full hint: a long
+  // note is nowrap and would eat the name it's supposed to annotate.
+  const addAudioItem = (def) =>
+    addItem(`♪ ${def.label}`, `__audio__:${def.id}`, def.group);
+
   if (q) {
-    if ('custom shader write your own'.includes(q))
-      addItem('✎ custom shader', '__custom__');
-    if ('text title caption overlay'.includes(q))
-      addItem('T text / title', '__title__');
-    for (const name of savedList)
-      if (name.toLowerCase().includes(q))
-        addItem(`🗎 ${name}`, `__saved__:${name}`, 'saved');
-    for (const eff of manifest.effects) {
-      const cat = categoryLabel(eff.category);
-      if (eff.name.toLowerCase().includes(q) || cat.toLowerCase().includes(q))
-        addItem(eff.name, eff.path, cat);
+    if (visual) {
+      group('Visual effects', 'visual');
+      if ('custom shader write your own'.includes(q))
+        addItem('✎ custom shader', '__custom__');
+      if ('text title caption overlay'.includes(q))
+        addItem('T text / title', '__title__');
+      for (const name of savedList)
+        if (name.toLowerCase().includes(q))
+          addItem(`🗎 ${name}`, `__saved__:${name}`, 'saved');
+      for (const eff of manifest.effects) {
+        const cat = categoryLabel(eff.category);
+        if (eff.name.toLowerCase().includes(q) || cat.toLowerCase().includes(q))
+          addItem(eff.name, eff.path, cat);
+      }
+    }
+    if (audio) {
+      group('Audio effects', 'audio');
+      for (const def of AUDIO_EFFECTS)
+        if (def.label.toLowerCase().includes(q) || def.id.includes(q)
+          || def.hint.toLowerCase().includes(q) || 'audio sound'.includes(q))
+          addAudioItem(def);
     }
     if (!list.querySelector('.menu-item')) {
+      list.replaceChildren();
       const none = document.createElement('div');
       none.className = 'menu-empty';
       none.textContent = 'no matches';
@@ -4523,6 +4810,12 @@ function renderChoiceList(list, { query, onPick, folders, rerender, header = nul
     return;
   }
 
+  if (audio && !visual) {
+    for (const def of AUDIO_EFFECTS) addAudioItem(def);
+    return;
+  }
+
+  group('Visual effects', 'visual');
   addItem('✎ custom shader (write your own)', '__custom__');
   addItem('T text / title', '__title__');
 
@@ -4553,6 +4846,29 @@ function renderChoiceList(list, { query, onPick, folders, rerender, header = nul
       manifest.effects
         .filter((e) => e.category === cat.id)
         .map((e) => ({ label: e.name, choice: e.path })));
+
+  if (!audio) return;
+  // Flat, not foldered: there are a handful of these and they're the ones
+  // you reach for by name.
+  group('Audio effects', 'audio');
+  for (const def of AUDIO_EFFECTS) addAudioItem(def);
+}
+
+/* What a clip's stack can hold. An adjustment layer processes the picture
+ * below it and has no sound of its own; an audio clip is the mirror image;
+ * a video clip is the only thing that takes both. */
+function clipTakesVisualFx(clip) {
+  return clip?.kind === 'fx' || clip?.kind === 'media';
+}
+
+function clipTakesAudioFx(clip) {
+  if (clip?.kind === 'audio') return true;
+  if (clip?.kind !== 'media' || isShapeClip(clip)) return false;
+  const asset = assets.get(clip.assetId);
+  // Only a still is definitely silent. An asset that's missing or still
+  // loading counts as "might have sound" — hiding the section there would
+  // leave a video clip with no way to reach its own audio.
+  return !asset || asset.kind === 'video' || asset.kind === 'audio';
 }
 
 /* The panel adds to the layer the inspector is focused on. Shapes are not
@@ -4564,6 +4880,8 @@ function rebuildAddMenu() {
     query: addLayerSearch.value,
     folders: openFolders,
     rerender: rebuildAddMenu,
+    visual: !target || clipTakesVisualFx(target),
+    audio: !!target && clipTakesAudioFx(target),
     header: target
       ? `adding to ${target.name}`
       : 'no layer yet — this will create an adjustment layer',
@@ -4629,13 +4947,15 @@ $('preview-wrap').addEventListener('contextmenu', (e) => {
 
 const pickerFolders = new Set();
 
-function openEffectPicker(clip, anchor) {
+function openEffectPicker(clip, anchor, { visual = null, audio = null } = {}) {
+  const wantVisual = visual ?? clipTakesVisualFx(clip);
+  const wantAudio = audio ?? clipTakesAudioFx(clip);
   document.querySelector('.fx-picker')?.remove();
   const pop = document.createElement('div');
   pop.className = 'fx-picker menu-pop';
   const search = document.createElement('input');
   search.type = 'search';
-  search.placeholder = 'search effects…';
+  search.placeholder = wantAudio && !wantVisual ? 'search audio effects…' : 'search effects…';
   search.className = 'fx-picker-search';
   const list = document.createElement('div');
   list.className = 'add-layer-list open';
@@ -4646,6 +4966,8 @@ function openEffectPicker(clip, anchor) {
     query: search.value,
     folders: pickerFolders,
     rerender: draw,
+    visual: wantVisual,
+    audio: wantAudio,
     onPick: (choice) => { close(); addEffectToClip(clip, choice); },
   });
   search.addEventListener('input', draw);
@@ -4667,6 +4989,10 @@ function openEffectPicker(clip, anchor) {
 
 /** Resolve a menu choice to an effect spec (null for non-effect choices). */
 function effectSpecForChoice(choice) {
+  if (choice.startsWith('__audio__:')) {
+    const def = audioEffectDef(choice.slice('__audio__:'.length));
+    return def ? { spec: { fxKind: 'audio', audioId: def.id, label: def.label } } : null;
+  }
   if (choice === '__custom__')
     return { spec: { fxKind: 'custom', source: CUSTOM_BOILERPLATE, label: 'custom shader' } };
   if (choice === '__title__')
@@ -4689,6 +5015,12 @@ async function addEffectToClip(clip, choice) {
   history.record(comp, () => { (clip.effects ??= []).push(effect); });
   openEffects.add(effect.id);
   onModelChange({ structural: true });
+  if (isAudioEffect(effect)) {
+    // Nothing to compile — the graph rebuilds on the next frame that
+    // plays this clip.
+    setStatus(`added ${effect.name} to ${clip.name}`);
+    return;
+  }
   setStatus(`added ${effect.name} to ${clip.name} — compiling…`);
   try {
     await ensureParamMeta(clip, effect);
@@ -4704,6 +5036,11 @@ async function addFxLayer(choice) {
   if (!fx) return;
   const resolved = choice ? effectSpecForChoice(choice) : null;
   if (choice && !resolved) return;
+  if (resolved?.spec.fxKind === 'audio') {
+    // An adjustment layer has no sound to process.
+    setStatus('audio effects go on a clip that has audio — select one first');
+    return;
+  }
 
   // New adjustment layers cover the whole timeline; trim them when needed.
   const clip = newFxClip(resolved?.spec ?? null, 0, Math.max(1 / comp.fps, comp.dur));
@@ -4768,15 +5105,24 @@ async function compileCustomEffect(clip, effect, source) {
  * Inspector — the right panel for the selected clip.
  * =================================================================== */
 
-const inspLive = [];   // [{clip, key, slider, num}] animated bindings
+const inspLive = [];      // [{clip, key, slider, num, scale}] animated bindings
+const inspWidgets = [];   // [{redraw, live}] curve widgets on this render
 
 function updateInspectorLive() {
   for (const b of inspLive) {
     if (document.activeElement === b.num || b.dragging) continue;
     const v = valueAt(b.clip, b.key);
-    b.slider.value = String(v);
+    b.slider.value = String(b.scale ? b.scale.toPos(v) : v);
     b.num.value = fmtVal(v);
   }
+  // A response curve tracks its parameters, so an animated filter sweep
+  // draws itself moving. Static ones are left alone.
+  for (const w of inspWidgets) if (w.live) w.redraw();
+}
+
+/** Redraw every curve widget now (a slider moved under one). */
+function refreshInspWidgets() {
+  for (const w of inspWidgets) w.redraw();
 }
 
 const fmtVal = (v) => (+v).toFixed(3).replace(/\.?0+$/, '') || '0';
@@ -4816,6 +5162,8 @@ function ensureFocusedLayer() {
 function renderInspector() {
   if (!timeline) return;
   inspLive.length = 0;
+  inspWidgets.length = 0;
+  inspRows.clear();
   const clip = ensureFocusedLayer();
   syncAddPlaceholder();
   inspectorEl.replaceChildren();
@@ -4842,16 +5190,20 @@ function renderInspector() {
 
   const hit = findClip(comp, clip.id);
   const track = hit?.track;
+  const asset = hasSource(clip) ? assets.get(clip.assetId) : null;
 
-  /* -- header: name + kind + enable -- */
+  /* -- identity: what this layer is, what it's made of, and the two
+   *    destructive-ish controls (bypass, delete). Everything below is a
+   *    section; this block is the panel's title. -- */
   const head = document.createElement('div');
   head.className = 'insp-head';
   const kind = document.createElement('span');
   kind.className = 'insp-kind ' + clip.kind;
-  kind.textContent = clip.kind === 'media'
-    ? (isShapeClip(clip) ? (SHAPE_PRESETS[clip.shapes[0].preset]?.icon ?? '◆')
-      : assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
-    : 'ƒx';
+  kind.textContent = clip.kind === 'audio' ? '♪'
+    : clip.kind === 'media'
+      ? (isShapeClip(clip) ? (SHAPE_PRESETS[clip.shapes[0].preset]?.icon ?? '◆')
+        : assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
+      : 'ƒx';
   const name = document.createElement('input');
   name.className = 'insp-name';
   name.value = clip.name;
@@ -4887,134 +5239,234 @@ function renderInspector() {
   head.appendChild(del);
   inspectorEl.appendChild(head);
 
+  /* Source line: the file behind the layer, or why there isn't one. Shape
+   * layers draw themselves, so they say what they are instead. */
+  const meta = document.createElement('div');
+  meta.className = 'insp-src';
+  if (isShapeClip(clip)) {
+    meta.textContent = `shape layer · ${clip.shapes.length} shape${clip.shapes.length > 1 ? 's' : ''}`;
+  } else if (hasSource(clip)) {
+    meta.textContent = asset
+      ? [asset.name,
+        asset.w ? `${asset.w}×${asset.h}` : null,
+        asset.duration ? `${asset.duration.toFixed(2)}s` : null,
+      ].filter(Boolean).join(' · ') + (asset.ready ? '' : ' (loading…)')
+      : `${clip.kind === 'audio' ? 'audio' : 'media'} offline — re-import the file`;
+  } else {
+    meta.textContent = 'adjustment layer · effects apply to everything below';
+  }
+  inspectorEl.appendChild(meta);
+
   /* Timing is not in here: start / length / trim-in are all easier to
    * judge against the ruler, so the timeline owns them (drag the clip,
    * drag its edges, split at the playhead). */
 
-  /* -- media source info -- */
-  if (clip.kind === 'media') {
-    const asset = assets.get(clip.assetId);
-    const info = document.createElement('div');
-    info.className = 'insp-src';
-    info.textContent = asset
-      ? `${asset.name} — ${asset.w}×${asset.h}${asset.duration ? ` · ${asset.duration.toFixed(2)}s` : ''}${asset.ready ? '' : ' (loading…)'}`
-      : 'media offline — re-import the file';
-    inspectorEl.appendChild(info);
-
-    /* -- blend mode (how the layer composites onto what's below it) -- */
-    const blendRow = document.createElement('label');
-    blendRow.className = 'insp-blend';
-    blendRow.textContent = 'blend';
-    const blendSel = document.createElement('select');
-    blendSel.title = 'how this layer combines with the layers below it';
-    for (const [id, label] of BLEND_MODES) {
-      const o = document.createElement('option');
-      o.value = id;
-      o.textContent = label;
-      blendSel.appendChild(o);
-    }
-    blendSel.value = clip.blend ?? 'normal';
-    blendSel.onchange = () => {
-      history.record(comp, () => { clip.blend = blendSel.value; });
-      onModelChange({ structural: false });
-    };
-    blendRow.appendChild(blendSel);
-    inspectorEl.appendChild(blendRow);
-  }
-
   /* -- shape settings (preset + fill color) -- */
   if (isShapeClip(clip)) renderShapeSection(clip);
 
-  /* -- mask (fx: gates the whole stack; media: cuts the clip's alpha) -- */
-  renderMaskSection(clip);
-
-  /* -- transform -- */
+  /* -- transform: where the layer sits and how it merges down -- */
   if (clip.kind === 'media') {
-    const video = assets.get(clip.assetId)?.kind === 'video';
-    const defs = mediaPropDefs().filter((d) => video || d.key !== 'volume');
-    inspectorEl.appendChild(paramBox(clip, defs, 'Transform'));
+    const { sec, body } = inspSection('transform', 'Transform', { hint: '⏱ animates' });
+    // Volume lives under Sound, not here — it's not a transform.
+    for (const def of mediaPropDefs().filter((d) => d.key !== 'volume'))
+      addParamRow(body, clip, def);
+    body.appendChild(blendRow(clip));
+    inspectorEl.appendChild(sec);
   }
 
-  /* -- effect stack -- */
+  /* -- mask (fx: gates the whole stack; media: cuts the clip's alpha) -- */
+  if (clip.kind !== 'audio') renderMaskSection(clip);
+
+  /* -- the two effect chains -- */
   renderEffectStack(clip);
+
+  // Curve widgets can only measure themselves once they're in the document
+  // — and rAF can't be trusted to get there (it doesn't run at all while
+  // the window is occluded), so paint them synchronously now.
+  refreshInspWidgets();
 }
 
-/** A titled block of animatable property rows (+ their driver panels). */
-function paramBox(clip, defs, title) {
-  const box = document.createElement('div');
-  box.className = 'insp-params';
-  if (title) {
-    const h = document.createElement('h3');
-    h.textContent = title;
-    const hint = document.createElement('span');
-    hint.className = 'hint';
-    hint.textContent = '⏱ = animate';
-    h.appendChild(hint);
-    box.appendChild(h);
+/* ---- inspector sections ----------------------------------------------
+ * Every block below the header is one of these: a micro-caps title, an
+ * optional count, an optional hint, right-aligned actions, and a body that
+ * folds away. One shape for all of them is what keeps a panel this dense
+ * readable — the eye finds the boundaries without reading a word. */
+
+const INSP_SECTIONS_KEY = 'lowkey-studio.insp-sections';
+
+const collapsedSections = new Set((() => {
+  try { return JSON.parse(localStorage.getItem(INSP_SECTIONS_KEY)) ?? []; }
+  catch { return []; }
+})());
+
+function toggleSection(key) {
+  if (collapsedSections.has(key)) collapsedSections.delete(key);
+  else collapsedSections.add(key);
+  try { localStorage.setItem(INSP_SECTIONS_KEY, JSON.stringify([...collapsedSections])); } catch {}
+  renderInspector();
+}
+
+/**
+ * @returns {{sec: HTMLElement, body: HTMLElement, collapsed: boolean}}
+ */
+function inspSection(key, title, { count = null, hint = null, actions = [] } = {}) {
+  const collapsed = collapsedSections.has(key);
+  const sec = document.createElement('section');
+  sec.className = `insp-sec ${key}` + (collapsed ? ' collapsed' : '');
+
+  const head = document.createElement('div');
+  head.className = 'insp-sec-head';
+  head.addEventListener('click', (e) => {
+    if (e.target.closest('button, select, input, label')) return;
+    toggleSection(key);
+  });
+
+  const tw = document.createElement('span');
+  tw.className = 'insp-sec-tw';
+  tw.textContent = collapsed ? '▸' : '▾';
+
+  const h = document.createElement('h3');
+  h.textContent = title;
+
+  head.append(tw, h);
+  if (count) {
+    const c = document.createElement('span');
+    c.className = 'insp-count';
+    c.textContent = String(count);
+    head.appendChild(c);
   }
-  for (const def of defs) {
-    box.appendChild(paramRow(clip, def));
-    const dp = driverPanel(clip, def);
-    if (dp) box.appendChild(dp);
+  const hintEl = document.createElement('span');
+  hintEl.className = 'insp-sec-hint';
+  hintEl.textContent = hint ?? '';
+  head.appendChild(hintEl);          // flexes, so actions stay right-aligned
+  for (const a of actions) head.appendChild(a);
+
+  const body = document.createElement('div');
+  body.className = 'insp-sec-body';
+  sec.append(head, body);
+  return { sec, body, collapsed };
+}
+
+/** A small header button — the section's own action (+ Effect, +Paint…). */
+function secBtn(label, title, onClick) {
+  const b = document.createElement('button');
+  b.className = 'btn insp-sec-btn';
+  b.textContent = label;
+  b.title = title;
+  b.onclick = (e) => { e.stopPropagation(); onClick(e); };
+  return b;
+}
+
+/** A property row plus its driver panel, appended together (they belong to
+ * the same control and must never be separated). */
+function addParamRow(parent, clip, def) {
+  parent.appendChild(paramRow(clip, def));
+  const dp = driverPanel(clip, def);
+  if (dp) parent.appendChild(dp);
+}
+
+/** Blend mode, shaped like a param row so it lines up with Opacity above
+ * it — the two answer the same question (how this layer merges down). */
+function blendRow(clip) {
+  const row = document.createElement('div');
+  row.className = 'param-row sel';
+  const label = document.createElement('label');
+  label.textContent = 'Blend';
+  label.title = 'how this layer combines with the layers below it';
+  const sel = document.createElement('select');
+  for (const [id, label2] of BLEND_MODES) {
+    const o = document.createElement('option');
+    o.value = id;
+    o.textContent = label2;
+    sel.appendChild(o);
   }
-  return box;
+  sel.value = clip.blend ?? 'normal';
+  sel.onchange = () => {
+    history.record(comp, () => { clip.blend = sel.value; });
+    onModelChange({ structural: false });
+  };
+  row.append(label, sel);
+  return row;
 }
 
 /* ---- effect stack UI -------------------------------------------------
  * The heart of the adjustment-layer model: any clip owns an ordered stack.
  * On an fx clip the stack processes everything below it; on a media clip
  * it processes only that clip. Rows twirl open to reveal parameters, the
- * custom-shader editor and overlay textures for that one effect. */
+ * custom-shader editor and overlay textures for that one effect.
+ *
+ * Visual and audio effects live in the same stack and the same UI, but in
+ * separate collapsible sections: they are independent chains (pixels vs.
+ * samples), and a video clip carrying both would otherwise read as one
+ * confusing pile. Each section keeps its own order — moving an effect
+ * up/down steps past its own kind. */
 
 const openEffects = new Set();   // effect ids twirled open in the inspector
 
+/** The picture chain and the sound chain, each its own section. Sound
+ * leads with the clip's Volume: level and effects are one mental group,
+ * and it's where you'd look for either. */
 function renderEffectStack(clip) {
-  const box = document.createElement('div');
-  box.className = 'fx-stack';
-
-  const head = document.createElement('div');
-  head.className = 'fx-stack-head';
-  const title = document.createElement('h3');
-  title.textContent = 'Effects';
-  const hint = document.createElement('span');
-  hint.className = 'hint';
-  hint.textContent = clip.kind === 'fx'
-    ? 'applied to every layer below'
-    : 'applied to this clip only';
-  title.appendChild(hint);
-  const add = document.createElement('button');
-  add.className = 'btn';
-  add.textContent = '+ Effect';
-  add.title = 'add an effect to this clip’s stack';
-  add.onclick = () => openEffectPicker(clip, add);
-  head.append(title, add);
-  box.appendChild(head);
-
-  const effects = effectsOf(clip);
-  if (!effects.length) {
-    const empty = document.createElement('div');
-    empty.className = 'insp-src';
-    empty.textContent = clip.kind === 'fx'
-      ? 'empty adjustment layer — add an effect to make it do something'
-      : 'no effects on this clip';
-    box.appendChild(empty);
-  }
-  for (const effect of effects) box.appendChild(effectRow(clip, effect));
+  if (clipTakesVisualFx(clip)) inspectorEl.appendChild(fxSection(clip, 'visual'));
+  if (clipTakesAudioFx(clip)) inspectorEl.appendChild(fxSection(clip, 'audio'));
 
   // No spill toggle any more: a media stack's coverage is measured by the
   // matte pass (see prepareMediaFx), so a blur spreads past the edges on
   // its own and no preset can smear itself over the whole frame. Clip an
   // effect deliberately with a mask, which is the tool for it.
+}
 
-  inspectorEl.appendChild(box);
+function fxSection(clip, kind) {
+  const audio = kind === 'audio';
+  const effects = audio ? audioEffectsOf(clip) : visualEffectsOf(clip);
+  const add = secBtn('+ Effect',
+    audio ? 'add an audio effect to this clip’s chain'
+      : 'add a visual effect to this clip’s stack',
+    () => {
+      collapsedSections.delete(kind);   // a pick that lands out of sight is a bug report
+      openEffectPicker(clip, add, { visual: !audio, audio });
+    });
+
+  const { sec, body, collapsed } = inspSection(kind, audio ? 'Sound' : 'Effects', {
+    count: effects.length,
+    hint: audio
+      ? 'level + effects on this clip'
+      : (clip.kind === 'fx' ? 'applied to every layer below' : 'this clip only'),
+    actions: [add],
+  });
+  if (collapsed) return sec;
+
+  if (audio) {
+    // A clip's own level, ahead of the chain it feeds.
+    const volDef = clip.kind === 'audio'
+      ? audioClipPropDefs()[0]
+      : mediaPropDefs().find((d) => d.key === 'volume');
+    if (volDef && clip.props?.volume) addParamRow(body, clip, volDef);
+  }
+
+  if (!effects.length) {
+    const empty = document.createElement('div');
+    empty.className = 'insp-note';
+    empty.textContent = audio
+      ? 'no audio effects yet — reverb, EQ, filters, compression…'
+      : (clip.kind === 'fx'
+        ? 'empty adjustment layer — add an effect to make it do something'
+        : 'no effects on this clip');
+    body.appendChild(empty);
+  }
+  for (const effect of effects) body.appendChild(effectRow(clip, effect));
+  return sec;
 }
 
 function effectRow(clip, effect) {
-  const spec = fxSpecs.get(effect.id);
-  const err = spec?.error || spec?.lastCompileError;
+  const audio = isAudioEffect(effect);
+  const spec = audio ? null : fxSpecs.get(effect.id);
+  const err = audio
+    ? (audioEffectDef(effect.audioId) ? null : `unknown audio effect '${effect.audioId}'`)
+    : (spec?.error || spec?.lastCompileError);
   const open = openEffects.has(effect.id);
   const wrap = document.createElement('div');
-  wrap.className = 'fx-entry' + (open ? ' open' : '') +
+  wrap.className = 'fx-entry' + (audio ? ' audio' : '') + (open ? ' open' : '') +
     (effect.enabled === false ? ' off' : '') + (err ? ' err' : '');
 
   const row = document.createElement('div');
@@ -5042,7 +5494,7 @@ function effectRow(clip, effect) {
 
   const badge = document.createElement('span');
   badge.className = 'fx-badge';
-  badge.textContent = effect.fxKind === 'custom' ? '✎' : 'ƒx';
+  badge.textContent = audio ? '♪' : effect.fxKind === 'custom' ? '✎' : 'ƒx';
 
   const name = document.createElement('input');
   name.className = 'fx-name';
@@ -5059,13 +5511,17 @@ function effectRow(clip, effect) {
     b.className = 'tl-mini';
     b.textContent = dir < 0 ? '▲' : '▼';
     b.title = dir < 0 ? 'apply earlier' : 'apply later';
-    const list = effectsOf(clip);
+    // Order matters within a chain, not across them: an audio effect steps
+    // past its audio neighbours and leaves the shaders where they are.
+    const list = audio ? audioEffectsOf(clip) : visualEffectsOf(clip);
     const i = list.indexOf(effect);
     b.disabled = i + dir < 0 || i + dir >= list.length;
     b.onclick = () => {
       history.record(comp, () => {
         const arr = clip.effects;
-        [arr[i], arr[i + dir]] = [arr[i + dir], arr[i]];
+        const a = arr.indexOf(effect);
+        const c = arr.indexOf(list[i + dir]);
+        [arr[a], arr[c]] = [arr[c], arr[a]];
       });
       onModelChange({ structural: true });
     };
@@ -5094,17 +5550,65 @@ function effectRow(clip, effect) {
   if (effect.fxKind === 'custom') renderCustomEditor(clip, effect, body);
   if (spec?.runtime?.preset?.textures?.length)
     renderOverlayControls(clip, effect, spec, body);
+  if (audio) {
+    const adef = audioEffectDef(effect.audioId);
+    if (adef?.widget) body.appendChild(audioCurveWidget(clip, effect, adef));
+  }
 
   const defs = effectPropDefs(clip, effect);
-  if (defs.length) body.appendChild(paramBox(clip, defs, null));
-  else if (!err) {
+  if (defs.length) {
+    const params = document.createElement('div');
+    params.className = 'insp-params';
+    for (const def of defs) addParamRow(params, clip, def);
+    body.appendChild(params);
+  } else if (!err && !audio) {
     const ld = document.createElement('div');
-    ld.className = 'insp-src';
+    ld.className = 'insp-note';
     ld.textContent = 'loading parameters…';
     body.appendChild(ld);
   }
   wrap.appendChild(body);
   return wrap;
+}
+
+/**
+ * The draggable frequency-response plot for a filter or EQ. It reads and
+ * writes the very same PropTracks the sliders below it do — so a handle
+ * drag lands on a keyframe when the parameter is animated, respects the
+ * driver, and undoes as one step.
+ */
+function audioCurveWidget(clip, effect, adef) {
+  const keyOf = (name) => effectPropKey(effect.id, name);
+  const metaOf = (name) => adef.params.find((p) => p.name === name) ?? { min: 0, max: 1, step: 0.001 };
+  let tFrozen = null;
+  const io = {
+    get: (name) => valueAt(clip, keyOf(name)),
+    meta: metaOf,
+    // One undo step per drag, and — like a slider drag — keyframes land at
+    // the time the drag started rather than smearing across a moving
+    // playhead.
+    begin: () => { tFrozen = relTime(clip); history.begin(comp); },
+    set: (name, v) => {
+      const key = keyOf(name);
+      setPropValueLive(clip, key, v, tFrozen);
+      syncInspRow(key, v);
+    },
+    commit: () => {
+      tFrozen = null;
+      history.commit(comp);
+      onModelChange({ structural: false });
+    },
+  };
+  const w = responseWidget(adef.widget, io);
+  // Animated or driven parameters make the curve move on its own.
+  const live = adef.widget.bands.some((b) => [b.freq, b.q, b.gain]
+    .filter(Boolean)
+    .some((n) => {
+      const p = getProp(clip, keyOf(n));
+      return p?.anim || p?.driver?.enabled;
+    }));
+  inspWidgets.push({ redraw: w.redraw, live });
+  return w.el;
 }
 
 function removeEffect(clip, effect) {
@@ -5115,27 +5619,58 @@ function removeEffect(clip, effect) {
   setStatus(`removed ${effect.name}`);
 }
 
+/* A log slider's travel is the exponent, not the value: 20 Hz–20 kHz on a
+ * linear track spends nine tenths of its length above 2 kHz. `toPos` /
+ * `fromPos` convert, and everything else (keyframes, the number box, the
+ * model) keeps working in real units. */
+function sliderScale(def) {
+  const lin = { toPos: (v) => v, fromPos: (p) => p, log: false };
+  if (def.scale !== 'log' || !(def.min > 0) || !(def.max > def.min)) return lin;
+  const k = Math.log(def.max / def.min);
+  return {
+    log: true,
+    toPos: (v) => Math.log(clamp(v, def.min, def.max) / def.min) / k,
+    fromPos: (p) => {
+      const v = def.min * Math.exp(clamp(p, 0, 1) * k);
+      const step = def.step || 0.001;
+      return clamp(Math.round(v / step) * step, def.min, def.max);
+    },
+  };
+}
+
+/* Live handles on the rows of the current render, so a widget dragging a
+ * value can move the matching slider without a full re-render. */
+const inspRows = new Map();   // propKey -> {slider, num, scale}
+
+function syncInspRow(key, v) {
+  const r = inspRows.get(key);
+  if (!r) return;
+  r.slider.value = String(r.scale.toPos(v));
+  if (document.activeElement !== r.num) r.num.value = fmtVal(v);
+}
+
 function paramRow(clip, def) {
   const prop = getProp(clip, def.key);
   const anim = !!prop?.anim;
   const row = document.createElement('div');
   row.className = 'param-row kf';
 
-  const sw = document.createElement('button');
-  sw.className = 'tl-stopwatch' + (anim ? ' on' : '');
-  sw.textContent = '⏱';
-  sw.title = anim ? 'animating — click to freeze' : 'animate this property';
-  sw.addEventListener('click', () => toggleAnim(clip, def.key));
-
   const label = document.createElement('label');
   label.textContent = def.label;
   label.title = `${def.key}${def.unit ? ` (${def.unit})` : ''}`;
 
+  const scale = sliderScale(def);
   const slider = document.createElement('input');
   slider.type = 'range';
-  slider.min = String(def.min);
-  slider.max = String(def.max);
-  slider.step = String(def.step || 0.001);
+  if (scale.log) {
+    slider.min = '0';
+    slider.max = '1';
+    slider.step = '0.0005';
+  } else {
+    slider.min = String(def.min);
+    slider.max = String(def.max);
+    slider.step = String(def.step || 0.001);
+  }
 
   const num = document.createElement('input');
   num.type = 'number';
@@ -5143,10 +5678,11 @@ function paramRow(clip, def) {
   num.step = String(def.step || 0.001);
 
   const v0 = valueAt(clip, def.key);
-  slider.value = String(v0);
+  slider.value = String(scale.toPos(v0));
   num.value = fmtVal(v0);
+  inspRows.set(def.key, { slider, num, scale });
 
-  const binding = { clip, key: def.key, slider, num, dragging: false };
+  const binding = { clip, key: def.key, slider, num, scale, dragging: false };
   if (anim) inspLive.push(binding);
 
   slider.addEventListener('pointerdown', () => {
@@ -5156,9 +5692,10 @@ function paramRow(clip, def) {
   });
   slider.addEventListener('input', () => {
     // Param-only change — applied every frame by applyParams, no rebuild.
-    const v = parseFloat(slider.value);
+    const v = scale.fromPos(parseFloat(slider.value));
     setPropValueLive(clip, def.key, v, binding.dragging ? binding.tFrozen : null);
     num.value = fmtVal(v);
+    refreshInspWidgets();
   });
   const commitSlider = () => {
     if (!binding.dragging) return;
@@ -5175,6 +5712,12 @@ function paramRow(clip, def) {
     if (Number.isNaN(v)) return;
     setPropValue(clip, def.key, v);
   });
+
+  const sw = document.createElement('button');
+  sw.className = 'tl-stopwatch' + (anim ? ' on' : '');
+  sw.textContent = '⏱';
+  sw.title = anim ? 'animating — click to freeze' : 'animate this property';
+  sw.addEventListener('click', () => toggleAnim(clip, def.key));
 
   const keyBtn = document.createElement('button');
   keyBtn.className = 'tl-mini tl-kf-toggle';
@@ -5607,40 +6150,42 @@ function maskSourceOptions(selfId) {
 function renderMaskSection(clip) {
   const ctx = maskContextFor(clip);
   const state = ctx.state();
-  const mc = document.createElement('div');
-  mc.className = 'mask-controls';
+  const addNode = (kind, label, tip) => secBtn(label, tip, () => {
+    collapsedSections.delete('mask');
+    const st = ctx.ensure();
+    const node = newMaskNode(kind);
+    if (kind === 'key') node.sourceClipId = ctx.keySelfDefault;
+    prepareMaskNode(node);
+    st.nodes.push(node);
+    ctx.structure();
+    scheduleSave();
+    renderInspector();
+    if (kind === 'paint') startMaskEdit(clip, node.id);
+  });
 
-  const head = document.createElement('div');
-  head.className = 'mask-head';
-  const title = document.createElement('span');
-  title.className = 'mask-title';
-  title.textContent = 'Mask';
-  const addNode = (kind, label, tip) => {
-    const b = document.createElement('button');
-    b.className = 'btn';
-    b.textContent = label;
-    b.title = tip;
-    b.onclick = () => {
-      const st = ctx.ensure();
-      const node = newMaskNode(kind);
-      if (kind === 'key') node.sourceClipId = ctx.keySelfDefault;
-      prepareMaskNode(node);
-      st.nodes.push(node);
-      ctx.structure();
-      scheduleSave();
-      renderInspector();
-      if (kind === 'paint') startMaskEdit(clip, node.id);
-    };
-    return b;
-  };
-  head.append(title,
-    addNode('paint', '+Paint', 'paint a mask by hand'),
-    addNode('key', '+Key', clip.kind === 'media'
-      ? 'green screen — key a color out of this clip'
-      : 'chroma key — build the mask from a color'),
-    addNode('layer', '+Matte', "use another layer's alpha or luma as the mask"));
-  mc.appendChild(head);
+  // No hint in the header: three buttons already crowd it, and the
+  // explanation reads better as a line in the empty body.
+  const { sec, body, collapsed } = inspSection('mask', 'Mask', {
+    count: state?.nodes?.length ?? 0,
+    actions: [
+      addNode('paint', '＋Paint', 'paint a mask by hand'),
+      addNode('key', '＋Key', clip.kind === 'media'
+        ? 'green screen — key a color out of this clip'
+        : 'chroma key — build the mask from a color'),
+      addNode('layer', '＋Matte', "use another layer's alpha or luma as the mask"),
+    ],
+  });
+  if (collapsed) { inspectorEl.appendChild(sec); return; }
 
+  const mc = body;
+  if (!state?.nodes?.length) {
+    const note = document.createElement('div');
+    note.className = 'insp-note';
+    note.textContent = clip.kind === 'fx'
+      ? 'no mask — these effects cover the whole frame'
+      : 'no mask — paint, key a colour, or use another layer';
+    mc.appendChild(note);
+  }
   for (const node of state?.nodes ?? [])
     mc.appendChild(maskNodeRow(clip, ctx, node));
 
@@ -5690,7 +6235,7 @@ function renderMaskSection(clip) {
     foot.append(rng, invLabel, removeAll);
     mc.appendChild(foot);
   }
-  inspectorEl.appendChild(mc);
+  inspectorEl.appendChild(sec);
 }
 
 function maskRange(label, min, max, step, get, set, disabled = false) {
@@ -6157,17 +6702,21 @@ async function decodeAssetAudio(asset) {
 }
 
 /* Mix clip audio offline: each entry becomes a buffer source in an
- * OfflineAudioContext, with clip trim/looping matching syncMedia and the
- * clip's volume curve (via volumeAt, in percent) baked as per-frame gain
- * ramps. Shared by the export path (audible clips, driven volume) and the
- * driver analysis (every clip, base volume). Returns null when no entry
- * has decodable audio. */
-async function mixCompAudio(sampleRate, entries, channels, volumeAt) {
+ * OfflineAudioContext, with clip trim/looping matching syncMedia, the
+ * clip's audio effect chain rebuilt node-for-node from the same catalogue
+ * the preview uses, and every animated value baked as per-frame ramps.
+ * Shared by the export path (audible clips, driven values) and the driver
+ * analysis (every clip, BASE values — a driver must never feed back into
+ * the signal it listens to). Returns null when no entry has decodable
+ * audio. */
+async function mixCompAudio(sampleRate, entries, channels, { driven = true } = {}) {
   if (!entries.length) return null;
   for (const { asset } of entries) await decodeAssetAudio(asset);
   if (!entries.some(({ asset }) => asset._audioBuf)) return null;
 
   const ctx = new OfflineAudioContext(channels, Math.max(1, Math.ceil(comp.dur * sampleRate)), sampleRate);
+  const step = 1 / comp.fps;
+
   for (const { clip, asset } of entries) {
     const buf = asset._audioBuf;
     if (!buf) continue;
@@ -6175,22 +6724,55 @@ async function mixCompAudio(sampleRate, entries, channels, volumeAt) {
     src.buffer = buf;
     src.loop = true;   // clips longer than their source wrap, like syncMedia
     const gain = ctx.createGain();
-    src.connect(gain).connect(ctx.destination);
     const start = clip.start;
     const len = Math.min(clipEnd(clip), comp.dur) - start;
     if (len <= 0) continue;
-    const vol = (tc) => clamp(volumeAt(clip, tc) / 100, 0, 1);
-    gain.gain.setValueAtTime(vol(0), start);
-    const animated = clip.props.volume?.anim && clip.props.volume.keys.length;
-    if (animated || clip.props.volume?.driver?.enabled) {
-      // Bake the eased/driven curve as per-frame linear ramps.
-      const step = 1 / comp.fps;
+
+    /** A property's value at clip-relative tc, drivers included or not. */
+    const at = (prop, tc, fallback) => {
+      if (!prop) return fallback;
+      return driven ? drivenEval(prop, tc, start + tc) : evalProp(prop, tc);
+    };
+    /** Schedule one AudioParam over the clip: a value at the start, plus
+     * per-frame ramps when the property actually moves. */
+    const bake = (param, prop, fallback, map) => {
+      const val = (tc) => {
+        const v = at(prop, tc, fallback);
+        return map ? map(v) : v;
+      };
+      param.setValueAtTime(val(0), start);
+      if (!(prop?.anim && prop.keys.length) && !prop?.driver?.enabled) return;
       for (let tc = step; tc <= len + 1e-9; tc += step)
-        gain.gain.linearRampToValueAtTime(vol(tc), start + tc);
+        param.linearRampToValueAtTime(val(tc), start + tc);
+    };
+
+    // source → effects → volume fader → out, exactly as syncMedia wires it.
+    let cur = src;
+    for (const effect of liveAudioEffects(clip)) {
+      const def = audioEffectDef(effect.audioId);
+      if (!def) continue;
+      let unit;
+      try {
+        unit = def.build(ctx);
+      } catch (e) {
+        console.warn(`slangfx: offline audio effect '${effect.audioId}' failed:`, e);
+        continue;
+      }
+      for (const p of def.params) {
+        const prop = effect.params?.[p.name];
+        for (const c of controlTargets(unit, p.name)) bake(c.param, prop, p.def, c.map);
+      }
+      cur.connect(unit.input);
+      cur = unit.output;
     }
+    cur.connect(gain).connect(ctx.destination);
+    bake(gain.gain, clip.props.volume, 100, (v) => clamp(v / 100, 0, 1));
+
     const offset = buf.duration > 0.02
       ? ((clip.in % buf.duration) + buf.duration) % buf.duration : 0;
     src.start(start, offset);
+    // Reverb and delay tails are part of the clip's sound: the source
+    // stops, the graph keeps ringing until the render ends.
     src.stop(start + len);
   }
   return ctx.startRendering();
@@ -6200,8 +6782,7 @@ async function mixCompAudio(sampleRate, entries, channels, volumeAt) {
  * master volume/mute is deliberately NOT baked — a muted preview should
  * not produce a silent export. */
 async function renderCompAudio() {
-  return mixCompAudio(AUDIO_SR, audioEntries(false), 2, (clip, tc) =>
-    clip.props.volume ? drivenEval(clip.props.volume, tc, clip.start + tc) : 100);
+  return mixCompAudio(AUDIO_SR, audioEntries(false), 2, { driven: true });
 }
 
 /** Encode a rendered AudioBuffer to Opus chunks straight into the muxer. */
