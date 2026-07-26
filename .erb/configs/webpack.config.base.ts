@@ -6,6 +6,7 @@ import webpack from 'webpack';
 import TsconfigPathsPlugins from 'tsconfig-paths-webpack-plugin';
 import webpackPaths from './webpack.paths';
 import { dependencies as externals } from '../../release/app/package.json';
+import { version as appVersion } from '../../package.json';
 
 const configuration: webpack.Configuration = {
   externals: [...Object.keys(externals || {})],
@@ -52,6 +53,10 @@ const configuration: webpack.Configuration = {
   plugins: [
     new webpack.EnvironmentPlugin({
       NODE_ENV: 'production',
+      // Baked from package.json so anything that shows the app version
+      // (the command palette's badge) can't drift out of date the way a
+      // hand-maintained constant does.
+      PACKAGE_VERSION: appVersion,
     }),
   ],
 };

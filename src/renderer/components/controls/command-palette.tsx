@@ -460,7 +460,11 @@ const VersionInfo: React.FC = React.memo(() => {
     }
   }, []);
 
-  const currentVersion = result?.currentVersion || '2.10.0';
+  // Before the update check runs (and in web mode, where there's no main
+  // process to ask) fall back to the version webpack baked in from
+  // package.json — a hand-typed constant here goes stale every release.
+  const currentVersion =
+    result?.currentVersion || process.env.PACKAGE_VERSION || '2.23.0';
 
   return (
     <div className="versionContainer">
