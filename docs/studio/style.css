@@ -130,7 +130,6 @@ h1 .tag { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 6px
 
 .add-row { display: flex; align-items: center; gap: 6px; }
 .add-row .search-wrap { flex: 1; min-width: 0; }
-#btn-add-layer { flex: none; padding: 7px 10px; border-radius: 8px; white-space: nowrap; }
 
 .search-wrap { position: relative; display: flex; align-items: center; }
 .search-wrap .search-icon {
@@ -1087,7 +1086,31 @@ body.mask-editing #mask-overlay {
   display: flex;
   flex-direction: column;
 }
-.tl-corner { height: 28px; flex: none; border-bottom: 1px solid var(--border); }
+/* Header of the layer-name column. Height is locked to RULER_H so the
+   head rows stay aligned with their clip rows. */
+.tl-corner {
+  height: 28px;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: stretch;
+  padding: 3px 6px;
+}
+.tl-add-layer {
+  flex: 1;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.tl-add-layer:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
 .tl-head-rows { will-change: transform; }
 
 .tl-head-row {

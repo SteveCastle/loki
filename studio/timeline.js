@@ -164,7 +164,9 @@ export class Timeline {
       </div>
       <div class="tl-main">
         <div class="tl-heads">
-          <div class="tl-corner"></div>
+          <div class="tl-corner">
+            <button class="btn tl-add-layer" title="new layer — an adjustment layer for effects, a shape you draw on the preview, or a text title">＋ Layer</button>
+          </div>
           <div class="tl-head-rows"></div>
         </div>
         <div class="tl-scroll">
@@ -194,6 +196,18 @@ export class Timeline {
     this.toolbar.addEventListener('click', (e) => {
       const act = e.target.closest('[data-act]')?.dataset.act;
       if (act) this._toolbarAction(act);
+    });
+    // "+ Layer" heads the layer-name column, so it sits in the corner cell
+    // above the rows it creates. The host owns what a layer actually is.
+    this.$('.tl-add-layer').addEventListener('click', (e) => {
+      this.host.addLayerMenu?.(e.currentTarget);
+    });
+    // Right-clicking empty timeline space offers the same menu. Clips and
+    // keyframes have their own, and the toolbar/corner are already buttons.
+    this.root.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('.tl-clip, .tl-kf, .tl-kf-nav, .tl-toolbar, .tl-corner')) return;
+      e.preventDefault();
+      this.host.addLayerMenu?.({ x: e.clientX, y: e.clientY });
     });
     this.zoomSlider.addEventListener('input', () => {
       const [lo, hi] = this._zoomRange();

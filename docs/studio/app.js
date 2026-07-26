@@ -1362,6 +1362,7 @@ const timelineHost = {
   status: setStatus,
   undo: appUndo,
   redo: appRedo,
+  addLayerMenu: (anchor) => showAddLayerMenu(anchor),
 };
 
 /* =====================================================================
@@ -3378,7 +3379,19 @@ gizmo.addEventListener('contextmenu', (e) => {
  * =================================================================== */
 
 const SHAPE_TEX_SIZE = 1024;
-let lastShapeColor = '#4da3ff';
+
+// New shapes reuse whatever fill you picked last, across sessions — drawing
+// six shapes in one colour shouldn't mean setting it six times. Black until
+// you've picked anything.
+const SHAPE_COLOR_KEY = 'lowkey-studio.shape-color';
+let lastShapeColor = /^#[0-9a-f]{6}$/i.test(localStorage.getItem(SHAPE_COLOR_KEY) ?? '')
+  ? localStorage.getItem(SHAPE_COLOR_KEY)
+  : '#000000';
+
+function setLastShapeColor(hex) {
+  lastShapeColor = hex;
+  try { localStorage.setItem(SHAPE_COLOR_KEY, hex); } catch {}
+}
 
 /* Each preset appends its outline to the current path inside (x,y,w,h). */
 const SHAPE_PRESETS = {
@@ -3829,11 +3842,12 @@ function renderShapeSection(clip) {
     col.oninput = () => {
       if (!editing) { history.begin(comp); editing = true; }
       shape.color = col.value;
-      lastShapeColor = col.value;
+      lastShapeColor = col.value;   // live; persisted once the picker commits
       ensureShapeAsset(clip);
     };
     col.onchange = () => {
       if (editing) { history.commit(comp); editing = false; }
+      setLastShapeColor(col.value);
       scheduleSave();
     };
     colLabel.append(col, 'fill');
@@ -3878,6 +3892,14 @@ function renderShapeSection(clip) {
   inspectorEl.appendChild(box);
 }
 
+/** Where to hang a popover: an element's box, or a bare {x, y} click point
+ * when the menu came from a right-click and there's nothing to anchor to. */
+function anchorRect(anchor) {
+  return anchor instanceof Element
+    ? anchor.getBoundingClientRect()
+    : { left: anchor.x, bottom: anchor.y };
+}
+
 /** Small popover listing the shape presets. Used by + Shape (adds to a
  * layer) and by + Layer (starts a new one). */
 function openShapePicker(anchor, onPick) {
@@ -3901,7 +3923,7 @@ function openShapePicker(anchor, onPick) {
   const onDown = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
   document.addEventListener('pointerdown', onDown, true);
 
-  const r = anchor.getBoundingClientRect();
+  const r = anchorRect(anchor);
   pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - 260))}px`;
   pop.style.top = `${r.bottom + 4}px`;
   document.body.appendChild(pop);
@@ -4137,9 +4159,13 @@ function syncAddPlaceholder() {
 
 /* ---- + Layer -------------------------------------------------------- */
 
-$('btn-add-layer').addEventListener('click', (e) => {
-  const anchor = e.currentTarget;
-  showMenu(anchor.getBoundingClientRect().left, anchor.getBoundingClientRect().bottom + 4, [
+/** The new-layer menu. Opened by the timeline's ＋ Layer button and by
+ * right-clicking empty timeline or preview space, so `anchor` is either
+ * that button or a bare {x, y} pointer position. It lives here rather
+ * than in the timeline because only the app knows what a layer can be. */
+function showAddLayerMenu(anchor) {
+  const r = anchorRect(anchor);
+  showMenu(r.left, r.bottom + 4, [
     {
       label: 'ƒx  Adjustment layer',
       action: () => addFxLayer(null),
@@ -4152,7 +4178,20 @@ $('btn-add-layer').addEventListener('click', (e) => {
       label: 'T  Text / title layer',
       action: () => addFxLayer('__title__'),
     },
+    '-',
+    {
+      label: '⬒  Import media…',
+      action: () => $('file-input').click(),
+    },
   ]);
+}
+
+// Right-clicking the preview outside any layer adds one too. The gizmo
+// stops propagation for its own menu, so this only sees empty space.
+$('preview-wrap').addEventListener('contextmenu', (e) => {
+  if (e.target.closest('#view-controls')) return;
+  e.preventDefault();
+  showAddLayerMenu({ x: e.clientX, y: e.clientY });
 });
 
 /* ---- + Effect picker (append to the selected clip's stack) ---------- */
@@ -4354,8 +4393,9 @@ function renderInspector() {
     div.className = 'insp-empty';
     div.innerHTML = `
       <p>Nothing to edit yet — add a layer.</p>
-      <p class="hint">· <b>+ Layer</b> above makes an adjustment layer for effects,
-      or a shape you draw straight onto the preview<br>
+      <p class="hint">· <b>＋ Layer</b> at the top of the timeline makes an adjustment
+      layer for effects, a shape you draw straight onto the preview, or a title<br>
+      · right-click empty timeline or preview space for the same menu<br>
       · <b>Import media…</b> or drop files to create media clips<br>
       · the <b>＋ search box</b> adds effects to the layer in focus<br>
       · ▸ on a clip twirls out its keyframable properties<br>
