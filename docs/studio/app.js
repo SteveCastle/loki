@@ -3765,6 +3765,61 @@ function cropCoverBox(angle) {
   };
 }
 
+/* ---- crop snapping ---------------------------------------------------
+ * The same magnetism a layer gets in the viewport, on the crop box's own
+ * edges. In crop space the origin is the frame centre, so the magnets are
+ * the lines that mean something there: the frame itself, and — once the
+ * image is straightened — the largest crop with no blank corners and the
+ * smallest that loses nothing. At 0° those two are the frame, which is
+ * why the common case simply snaps to the edges. */
+
+const cropGuideV = document.createElement('div');
+cropGuideV.className = 'gz-guide v cr-guide';
+const cropGuideH = document.createElement('div');
+cropGuideH.className = 'gz-guide h cr-guide';
+cropGuideV.hidden = cropGuideH.hidden = true;
+cropOverlay.append(cropGuideV, cropGuideH);
+
+const hideCropGuides = () => { cropGuideV.hidden = cropGuideH.hidden = true; };
+
+function cropSnapLines() {
+  const ins = cropInsetBox(crop.angle);
+  const cov = cropCoverBox(crop.angle);
+  const half = (n) => [n / 2, -n / 2];
+  return {
+    x: [...new Set([...half(ins.w), ...half(cov.w), 0])],
+    y: [...new Set([...half(ins.h), ...half(cov.h), 0])],
+  };
+}
+
+/** Nearest magnet within `thresh`, or null. */
+function nearestLine(v, lines, thresh) {
+  let best = null;
+  let bestD = thresh;
+  for (const t of lines) {
+    const d = Math.abs(v - t);
+    if (d < bestD) { best = t; bestD = d; }
+  }
+  return best;
+}
+
+/** Draw (or hide) a guide at crop-space coordinate `v`. */
+function showCropGuide(axis, v) {
+  const el = axis === 'x' ? cropGuideV : cropGuideH;
+  if (v == null) { el.hidden = true; return; }
+  const { s, ccx, ccy } = cropBase;
+  if (axis === 'x') {
+    el.style.left = `${ccx + v * s}px`;
+    el.style.top = '0';
+    el.style.height = '100%';
+  } else {
+    el.style.top = `${ccy + v * s}px`;
+    el.style.left = '0';
+    el.style.width = '100%';
+  }
+  el.hidden = false;
+}
+
 function setCropBox(w, h, cx = crop.cx, cy = crop.cy) {
   crop.w = clamp(w, 16, CROP_MAX_W);
   crop.h = clamp(h, 16, CROP_MAX_H);
@@ -3811,6 +3866,7 @@ function exitCrop(commit) {
   const state = crop;
   crop = null;
   cropDrag = null;
+  hideCropGuides();
   cropOverlay.hidden = true;
   cropBar.hidden = true;
   $('btn-crop').classList.remove('active');
@@ -3980,8 +4036,38 @@ cropOverlay.addEventListener('pointermove', (e) => {
     setCropAngle(clamp(st.angle + (a - cropDrag.a0), -180, 180));
     return;
   }
+  // Magnetism follows the timeline's 🧲 toggle, and Ctrl suspends it —
+  // the same contract as dragging a layer in the viewport.
+  const snapOn = timeline?.snap && !e.ctrlKey && !e.metaKey;
+  const thresh = 8 / s;
+  const lines = snapOn ? cropSnapLines() : null;
+
   if (cropDrag.mode === 'move') {
-    setCropBox(crop.w, crop.h, st.cx + dx, st.cy + dy);
+    let nx = st.cx + dx;
+    let ny = st.cy + dy;
+    if (snapOn) {
+      // Whichever of the two edges (or the centre) is closest to a magnet
+      // pulls the whole box — you aim with the edge you're watching.
+      const pull = (c, half, ls) => {
+        let best = null;
+        for (const [probe, ref] of [[c - half, -half], [c + half, half], [c, 0]]) {
+          const m = nearestLine(probe, ls, thresh);
+          if (m == null) continue;
+          const d = m - probe;
+          if (!best || Math.abs(d) < Math.abs(best.d)) best = { d, line: m, ref };
+        }
+        return best;
+      };
+      const bx = pull(nx, crop.w / 2, lines.x);
+      const by = pull(ny, crop.h / 2, lines.y);
+      if (bx) nx += bx.d;
+      if (by) ny += by.d;
+      showCropGuide('x', bx?.line ?? null);
+      showCropGuide('y', by?.line ?? null);
+    } else {
+      hideCropGuides();
+    }
+    setCropBox(crop.w, crop.h, nx, ny);
     cropRender();
     return;
   }
@@ -3993,12 +4079,30 @@ cropOverlay.addEventListener('pointermove', (e) => {
   if (h.includes('e')) r = Math.max(r + dx, l + 16);
   if (h.includes('n')) t = Math.min(t + dy, b - 16);
   if (h.includes('s')) b = Math.max(b + dy, t + 16);
+  if (snapOn) {
+    // Only the dragged edges are magnetic — the opposite edge stays put.
+    const snapEdge = (edge, ls, axis, set) => {
+      const m = nearestLine(edge, ls, thresh);
+      if (m != null) set(m);
+      return m;
+    };
+    let gx = null;
+    let gy = null;
+    if (h.includes('w')) gx = snapEdge(l, lines.x, 'x', (m) => { l = Math.min(m, r - 16); });
+    if (h.includes('e')) gx = snapEdge(r, lines.x, 'x', (m) => { r = Math.max(m, l + 16); }) ?? gx;
+    if (h.includes('n')) gy = snapEdge(t, lines.y, 'y', (m) => { t = Math.min(m, b - 16); });
+    if (h.includes('s')) gy = snapEdge(b, lines.y, 'y', (m) => { b = Math.max(m, t + 16); }) ?? gy;
+    showCropGuide('x', gx);
+    showCropGuide('y', gy);
+  } else {
+    hideCropGuides();
+  }
   // No frame constraint: dragging a handle outward grows the comp.
   setCropBox(r - l, b - t, (l + r) / 2, (t + b) / 2);
   cropRender();
 });
 
-const endCropDrag = () => { cropDrag = null; };
+const endCropDrag = () => { cropDrag = null; hideCropGuides(); };
 cropOverlay.addEventListener('pointerup', endCropDrag);
 cropOverlay.addEventListener('pointercancel', endCropDrag);
 

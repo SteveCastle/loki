@@ -633,6 +633,8 @@ body.has-media #canvas-stack { display: block; }
 .gz-guide.v { width: 0; border-left: 1px dashed #ff5ad2; }
 .gz-guide.h { height: 0; border-top: 1px dashed #ff5ad2; }
 .gz-guide[hidden] { display: none; }
+/* Crop guides live in the crop overlay, above its dimming. */
+.cr-guide { z-index: 31; }
 
 #gizmo {
   position: absolute;
