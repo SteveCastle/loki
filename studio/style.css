@@ -939,7 +939,9 @@ body.mask-editing #mask-overlay {
    there (a static param leaves them empty rather than reflowing). */
 .param-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) 84px 48px 16px 16px;
+  /* The name gets the slack: a slider only has to be draggable, but a
+     label you can't read is useless. */
+  grid-template-columns: 18px minmax(0, 1fr) 72px 44px 16px 16px;
   gap: 6px;
   align-items: center;
   min-height: 24px;
@@ -949,12 +951,17 @@ body.mask-editing #mask-overlay {
 .param-row:not(.kf) > label { grid-column: 2; }
 .param-row:not(.kf) > input[type=range] { grid-column: 3; }
 .param-row:not(.kf) > .val { grid-column: 4; }
+/* Wraps to a second line rather than ellipsizing — a name cut to
+   "Weight toward sha…" is worse than a slightly taller row. */
 .param-row label {
   color: var(--dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-size: 11.5px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 .param-row input[type=range] { width: 100%; accent-color: var(--accent); min-width: 0; height: 16px; }
 .param-row select {

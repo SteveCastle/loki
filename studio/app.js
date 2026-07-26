@@ -1303,6 +1303,32 @@ function audioClipPropDefs() {
   return [{ key: 'volume', label: 'Volume', min: 0, max: 100, step: 0.1, unit: '%', def: 100 }];
 }
 
+/**
+ * Shader authors prefix parameter descriptions with the preset's own name
+ * ("Exposure: mix", "MotionTrails: response curve") because in RetroArch
+ * every parameter of every pass lands in one flat list. Here they're
+ * already inside that effect's card, so the prefix is dead weight — and
+ * it's the part that pushes the actual name out of a narrow panel.
+ *
+ * Only strips when something readable is left: "Saturation" on the
+ * saturation effect keeps its name, and "Exposure (stops)" keeps its,
+ * since "(stops)" alone says nothing.
+ */
+function trimParamLabel(label, effectName) {
+  const words = String(effectName || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  let rest = String(label).trim();
+  for (const w of words) {
+    const m = rest.match(new RegExp(`^${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s:_-]*`, 'i'));
+    if (!m) break;
+    const next = rest.slice(m[0].length);
+    // Keep going only while the remainder still reads as a name.
+    if (!/^[a-z0-9]/i.test(next)) break;
+    rest = next;
+  }
+  if (rest === String(label).trim()) return label;
+  return rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
 /** Parameter defs for one effect, keyed in the clip-wide namespace. Returns
  * [] (and kicks off the compile) while the metadata is still loading. */
 function effectPropDefs(clip, effect) {
@@ -1330,17 +1356,21 @@ function effectPropDefs(clip, effect) {
     if (!metas) ensureParamMeta(clip, effect).catch(() => {});
     return [];
   }
-  return metas.map((m) => ({
-    key: effectPropKey(effect.id, m.name),
-    effectId: effect.id,
-    effectName: effect.name,
-    label: m.desc || m.name,
-    min: m.min,
-    max: m.max,
-    step: m.step || 0.001,
-    unit: '',
-    def: m.default,
-  }));
+  return metas.map((m) => {
+    const full = m.desc || m.name;
+    return {
+      key: effectPropKey(effect.id, m.name),
+      effectId: effect.id,
+      effectName: effect.name,
+      label: trimParamLabel(full, effect.name),
+      fullLabel: full,
+      min: m.min,
+      max: m.max,
+      step: m.step || 0.001,
+      unit: '',
+      def: m.default,
+    };
+  });
 }
 
 /** Every editable property of a clip: its transform (media) followed by the
@@ -5787,7 +5817,9 @@ function paramRow(clip, def) {
 
   const label = document.createElement('label');
   label.textContent = def.label;
-  label.title = `${def.key}${def.unit ? ` (${def.unit})` : ''}`;
+  // The tooltip carries what the shader author actually wrote, prefix and
+  // all, for the rare case the trimmed name is ambiguous.
+  label.title = `${def.fullLabel ?? def.label}${def.unit ? ` (${def.unit})` : ''}`;
 
   const scale = sliderScale(def);
   const slider = document.createElement('input');
