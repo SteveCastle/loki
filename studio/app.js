@@ -52,6 +52,7 @@ import {
 import { analyzeMix, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
 import { AUDIO_EFFECTS, audioEffectDef, controlTargets } from './audio-fx.js';
 import { responseWidget } from './audio-widgets.js';
+import { LAYER_ICONS, clipIcon, shapeIconCanvas } from './icons.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Timeline, fmtTimecode, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
@@ -4580,14 +4581,34 @@ function renderShapeSection(clip) {
 /** Where to hang a popover: an element's box, or a bare {x, y} click point
  * when the menu came from a right-click and there's nothing to anchor to. */
 function anchorRect(anchor) {
-  return anchor instanceof Element
-    ? anchor.getBoundingClientRect()
-    : { left: anchor.x, bottom: anchor.y };
+  if (anchor instanceof Element) return anchor.getBoundingClientRect();
+  return { left: anchor.x, right: anchor.x, top: anchor.y, bottom: anchor.y, width: 0, height: 0 };
+}
+
+/**
+ * Position an already-attached popup against its anchor and keep it on
+ * screen. `prefer: 'above'` for anything hung off the ＋ Layer button —
+ * it sits at the bottom of the window, so a list opening downwards runs
+ * straight off the edge with its tail unreachable.
+ */
+function placePopup(el, anchor, { prefer = 'below', gap = 4 } = {}) {
+  const r = anchorRect(anchor);
+  const box = el.getBoundingClientRect();
+  const below = r.bottom + gap;
+  const above = r.top - box.height - gap;
+  const fitsBelow = below + box.height <= innerHeight - 6;
+  const fitsAbove = above >= 6;
+  let top = prefer === 'above'
+    ? (fitsAbove || !fitsBelow ? above : below)
+    : (fitsBelow || !fitsAbove ? below : above);
+  top = clamp(top, 6, Math.max(6, innerHeight - box.height - 6));
+  el.style.top = `${top}px`;
+  el.style.left = `${clamp(r.left, 6, Math.max(6, innerWidth - box.width - 6))}px`;
 }
 
 /** Small popover listing the shape presets. Used by + Shape (adds to a
  * layer) and by + Layer (starts a new one). */
-function openShapePicker(anchor, onPick) {
+function openShapePicker(anchor, onPick, { prefer = 'below' } = {}) {
   document.querySelector('.shape-picker')?.remove();
   const pop = document.createElement('div');
   pop.className = 'shape-picker menu-pop';
@@ -4598,9 +4619,12 @@ function openShapePicker(anchor, onPick) {
   const close = () => { pop.remove(); document.removeEventListener('pointerdown', onDown, true); };
   for (const [pid, p] of Object.entries(SHAPE_PRESETS)) {
     const it = document.createElement('div');
-    it.className = 'menu-item';
+    it.className = 'menu-item shape-item';
+    // The icon is the preset's own geometry, drawn by the same path
+    // function that builds the layer — no glyph can misrepresent it.
+    it.appendChild(shapeIconCanvas(p.path));
     const span = document.createElement('span');
-    span.textContent = `${p.icon} ${p.label}`;
+    span.textContent = p.label;
     it.appendChild(span);
     it.onclick = () => { close(); onPick(pid); };
     list.appendChild(it);
@@ -4608,10 +4632,8 @@ function openShapePicker(anchor, onPick) {
   const onDown = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
   document.addEventListener('pointerdown', onDown, true);
 
-  const r = anchorRect(anchor);
-  pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - 260))}px`;
-  pop.style.top = `${r.bottom + 4}px`;
-  document.body.appendChild(pop);
+  document.body.appendChild(pop);   // attach first: placement needs a size
+  placePopup(pop, anchor, { prefer });
 }
 
 /* =====================================================================
@@ -4914,25 +4936,34 @@ function syncAddPlaceholder() {
  * than in the timeline because only the app knows what a layer can be. */
 function showAddLayerMenu(anchor) {
   const r = anchorRect(anchor);
-  showMenu(r.left, r.bottom + 4, [
+  // Opened from the ＋ Layer button, both this menu and the shape list it
+  // leads to open UPWARDS: the button sits on the bottom edge of the
+  // window, so a downward list has its tail off screen.
+  const fromButton = anchor instanceof Element;
+  showMenu(r.left, fromButton ? r.top - 4 : r.bottom + 4, [
     {
-      label: 'ƒx  Adjustment layer',
+      icon: LAYER_ICONS.fx,
+      label: 'Adjustment layer',
       action: () => addFxLayer(null),
     },
     {
-      label: '◆  Shape layer…',
-      action: () => openShapePicker(anchor, (pid) => armShapeDraw(pid)),
+      icon: LAYER_ICONS.shape,
+      label: 'Shape layer…',
+      action: () => openShapePicker(anchor, (pid) => armShapeDraw(pid),
+        { prefer: fromButton ? 'above' : 'below' }),
     },
     {
-      label: 'T  Text / title layer',
+      icon: LAYER_ICONS.text,
+      label: 'Text / title layer',
       action: () => addFxLayer('__title__'),
     },
     '-',
     {
-      label: '⬒  Import media…',
+      icon: LAYER_ICONS.import,
+      label: 'Import media…',
       action: () => $('file-input').click(),
     },
-  ]);
+  ], { above: fromButton });
 }
 
 // Right-clicking the preview outside any layer adds one too. The gizmo
@@ -4979,11 +5010,10 @@ function openEffectPicker(clip, anchor, { visual = null, audio = null } = {}) {
   const onDown = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
   document.addEventListener('pointerdown', onDown, true);
 
-  const r = anchor.getBoundingClientRect();
-  pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - 320))}px`;
-  pop.style.top = `${r.bottom + 4}px`;
   document.body.appendChild(pop);
   draw();
+  // Draw first — the list's height decides whether it fits below.
+  placePopup(pop, anchor);
   search.focus();
 }
 
@@ -5199,11 +5229,7 @@ function renderInspector() {
   head.className = 'insp-head';
   const kind = document.createElement('span');
   kind.className = 'insp-kind ' + clip.kind;
-  kind.textContent = clip.kind === 'audio' ? '♪'
-    : clip.kind === 'media'
-      ? (isShapeClip(clip) ? (SHAPE_PRESETS[clip.shapes[0].preset]?.icon ?? '◆')
-        : assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
-      : 'ƒx';
+  kind.innerHTML = clipIcon(clip, asset);
   const name = document.createElement('input');
   name.className = 'insp-name';
   name.value = clip.name;

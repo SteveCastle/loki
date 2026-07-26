@@ -32,6 +32,7 @@ import {
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
   eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
 } from './comp.js';
+import { clipIcon } from './icons.js';
 
 const TRACK_H = 36;
 const PROP_H = 24;
@@ -69,7 +70,12 @@ function parseTimecode(text, fps) {
 /* One shared floating context menu (also used by the viewport gizmo). */
 let menuEl = null;
 function closeMenu() { menuEl?.remove(); menuEl = null; }
-export function showMenu(x, y, items) {
+/**
+ * @param {number} y   top edge for the menu — or, with `above`, the bottom
+ *                     edge it should sit on (so it grows upwards).
+ * @param {object} [opts] {above:boolean}
+ */
+export function showMenu(x, y, items, { above = false } = {}) {
   closeMenu();
   menuEl = document.createElement('div');
   menuEl.className = 'ctx-menu';
@@ -117,8 +123,13 @@ export function showMenu(x, y, items) {
   }
   document.body.appendChild(menuEl);
   const r = menuEl.getBoundingClientRect();
-  menuEl.style.left = `${Math.min(x, innerWidth - r.width - 6)}px`;
-  menuEl.style.top = `${Math.min(y, innerHeight - r.height - 6)}px`;
+  // Grow upwards from `y` when asked (the ＋ Layer button lives at the
+  // bottom of the window, where down is always the wrong way), and flip up
+  // anyway if opening downwards would run off the bottom edge.
+  let top = above ? y - r.height : y;
+  if (!above && top + r.height > innerHeight - 6) top = y - r.height;
+  menuEl.style.left = `${Math.max(6, Math.min(x, innerWidth - r.width - 6))}px`;
+  menuEl.style.top = `${Math.max(6, Math.min(top, innerHeight - r.height - 6))}px`;
 }
 document.addEventListener('pointerdown', (e) => {
   if (menuEl && !menuEl.contains(e.target)) closeMenu();
@@ -916,17 +927,22 @@ export class Timeline {
       this.render();
     });
 
+    // What kind of layer this is, as a mark rather than a letter — the
+    // same icon the ＋ Layer menu and the inspector use.
+    const ico = document.createElement('span');
+    ico.className = 'tl-clip-ico';
+    ico.innerHTML = clipIcon(clip, this.host.assetOf(clip.assetId));
+
     const label = document.createElement('span');
     label.className = 'tl-clip-name';
     const visualFx = effects.filter((e) => !isAudioEffect(e)).length;
     const audioFx = effects.length - visualFx;
-    const badge = clip.kind === 'fx' ? 'ƒx '
-      : clip.kind === 'audio' ? '♪ '
-        : (visualFx ? 'ƒ ' : '');
-    // A video clip carrying only audio effects still says so.
-    const tail = clip.kind !== 'audio' && audioFx ? ' ♪' : '';
-    label.textContent = badge + clip.name +
-      (effects.length > 1 ? ` (${effects.length})` : '') + tail;
+    label.textContent = clip.name + (effects.length ? ` · ${effects.length} fx` : '');
+    label.title = [
+      clip.name,
+      visualFx ? `${visualFx} visual effect${visualFx > 1 ? 's' : ''}` : null,
+      audioFx ? `${audioFx} audio effect${audioFx > 1 ? 's' : ''}` : null,
+    ].filter(Boolean).join(' · ');
 
     const kfCount = this._keyframeCount(clip);
     if (kfCount) {
@@ -934,9 +950,9 @@ export class Timeline {
       dot.className = 'tl-clip-kf';
       dot.textContent = `◆${kfCount}`;
       dot.title = `${kfCount} keyframe${kfCount > 1 ? 's' : ''}`;
-      el.append(twirl, label, dot);
+      el.append(twirl, ico, label, dot);
     } else {
-      el.append(twirl, label);
+      el.append(twirl, ico, label);
     }
 
     const hl = document.createElement('div');

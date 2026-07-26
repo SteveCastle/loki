@@ -256,13 +256,17 @@ h1 .tag { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 6px
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.menu-item span:first-child {
+.menu-item > span:not(.note) {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Shape presets draw their own thumbnail ahead of the name. */
+.shape-item { gap: 9px; padding-left: 10px; }
+.shape-ico { flex: none; display: block; opacity: 0.85; }
+.shape-item:hover .shape-ico { opacity: 1; }
 
 .menu-empty { color: var(--dim); padding: 10px; font-size: 12px; text-align: center; }
 
@@ -728,14 +732,16 @@ body.mask-editing #mask-overlay {
 }
 .insp-kind {
   flex: none;
-  font-size: 13px;
-  line-height: 20px;
   width: 26px;
-  text-align: center;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: var(--bg3);
   border: 1px solid var(--border);
   border-radius: 5px;
 }
+.insp-kind svg { width: 15px; height: 15px; display: block; }
 .insp-kind.fx { color: #c0a6ff; }
 .insp-kind.media { color: var(--accent); }
 .insp-kind.audio { color: #6fd3bd; }
@@ -1607,8 +1613,19 @@ body.mask-editing #mask-overlay {
 }
 .tl-twirl:hover { color: #fff; }
 
+.tl-clip-ico {
+  flex: none;
+  display: flex;
+  align-items: center;
+  opacity: 0.75;
+  pointer-events: none;
+}
+.tl-clip-ico svg { width: 11px; height: 11px; display: block; }
+.tl-clip.sel .tl-clip-ico { opacity: 1; }
+
 .tl-clip-name {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1736,8 +1753,12 @@ body.mask-editing #mask-overlay {
   align-items: center;
   color: var(--accent);
   opacity: 0.75;
+  flex: none;
 }
-.ctx-ico svg { display: block; }
+.ctx-ico svg { display: block; width: 15px; height: 15px; }
+/* An icon replaces the check-mark gutter rather than sitting after it. */
+.ctx-item.has-trail { padding-left: 10px; }
+.ctx-item:hover .ctx-ico { opacity: 1; }
 .ctx-trail {
   border: 0;
   background: none;
