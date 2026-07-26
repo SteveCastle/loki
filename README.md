@@ -23,9 +23,9 @@ This repository is also home to two companion products: **Lowkey Media Server** 
 - **Handles awkward stuff.** Comic archives (`.cbz`, `.cbr`) open like directories. Video subtitles get picked up automatically. Audio gets a WebGPU visualizer. Transcripts are editable in place.
 - **Cross-platform.** Native installer for Windows, signed/notarized DMG for macOS (Apple Silicon + Intel), AppImage for Linux.
 
-![The Lowkey Media Viewer, showing a tagged photo library with the tag panel and context palette open](docs/static/screenshots/viewer-library.webp)
+![The Lowkey Media Viewer, showing a tagged photo library with the tag panel and the floating command palette open](docs/static/screenshots/viewer-library.webp)
 
-*Tag categories down the left, tags with their own cover previews beside them, and the context palette (Shift + right-click) over the image. Everything is one keystroke or one drag away; nothing is buried in a menu.*
+*Tag categories down the left, tags with their own cover previews beside them, and the floating command palette over the image — the same search-and-filter box the sidebar uses, plus scale mode, sort order, media-type and comic-mode switches. Everything is one keystroke or one drag away; nothing is buried in a menu.*
 
 ---
 
