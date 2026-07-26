@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "_comment": "URLs must be immutable (dated release tags, versioned files) so the sha256 pins stay valid. Never point at 'latest' rolling URLs — the hash breaks on the next upstream push. exiftool is pinned via SourceForge because exiftool.org deletes old versions. To bump a dependency: update url+version, run fetch-bundled-deps with -Mode update to print the new hashes, paste them in, re-run with verify.",
+  "_comment": "URLs must be immutable (dated release tags, versioned files) so the sha256 pins stay valid. Never point at 'latest' rolling URLs — the hash breaks on the next upstream push. exiftool is pinned via SourceForge because exiftool.org deletes old versions. ffmpeg MUST use a MONTH-END BtbN autobuild tag (autobuild-YYYY-MM-<last day of month>-HH-MM): BtbN keeps daily autobuilds for only ~2 weeks but retains the month-end build for 2+ years, so a mid-month pin 404s the release build a fortnight later (it did, on 2026-07-25). Note the archives are not byte-reproducible — the same filename and git rev rebuilt on another day hashes differently, so re-pin url AND sha256 together. To bump a dependency: update url+version, run fetch-bundled-deps with -Mode update to print the new hashes, paste them in, re-run with verify.",
   "binaries": {
     "ffmpeg": {
       "windows-amd64": {
         "version": "n7.1.5",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-06-14-19/ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip",
-        "sha256": "2a97a15e8428267eb823e8554bfe19a7d63e1b342991ceaf33984097d2b41aec",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n7.1.5-1-g7d0e842004-win64-gpl-7.1.zip",
+        "sha256": "405b190f746db40539eb453967f72c0e69d8bf260b10ceff36e0c2149a9ad22f",
         "archive": "zip",
         "extract": [
           {"from": "*/bin/ffmpeg.exe",  "to": "ffmpeg.exe"},
@@ -16,8 +16,8 @@
       },
       "linux-amd64": {
         "version": "n7.1.5",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-06-14-19/ffmpeg-n7.1.5-1-g7d0e842004-linux64-gpl-7.1.tar.xz",
-        "sha256": "fb22900f3b8d475ddd65d688b86771370b37d998e3d9e854c5e42c459ba5b986",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-06-30-13-34/ffmpeg-n7.1.5-1-g7d0e842004-linux64-gpl-7.1.tar.xz",
+        "sha256": "f0c580f5f12af54e8c9c649c70b2d25f264edb35393203d34b20cf4f9c126288",
         "archive": "tar.xz",
         "extract": [
           {"from": "*/bin/ffmpeg",  "to": "ffmpeg"},
