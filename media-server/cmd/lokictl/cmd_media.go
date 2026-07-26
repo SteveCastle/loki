@@ -55,6 +55,12 @@ func init() {
 		summary: `AI metadata generation — runs the "metadata" job (type: description, transcript, hash, ...)`, run: cmdMediaGenerate})
 	register(command{group: "media", name: "delete", args: "<path> --yes",
 		summary: "Delete a media item (POST /api/media/delete)", run: cmdMediaDelete})
+	register(command{group: "media", name: "move", args: "<from> <to> [--prefix] [--dry-run]",
+		summary: "Re-point every DB reference after moving a file or folder on disk (POST /api/media/move)",
+		run:     cmdMediaMove})
+	register(command{group: "media", name: "forget", args: "<path> --yes",
+		summary: "Erase every DB reference to a path, keeping the file (POST /api/media/forget)",
+		run:     cmdMediaForget})
 }
 
 // buildPredicates converts the query flags into the predicate array.
@@ -363,6 +369,64 @@ func cmdMediaGenerate(a *App, args []string) int {
 	}
 	jobArgs = append([]string{"metadata", path, "--field", "type=" + genType}, jobArgs...)
 	return cmdJobRun(a, jobArgs)
+}
+
+// cmdMediaMove is the bookkeeping half of moving a file on disk: it re-points
+// every database reference (media row, tags, embedding, faces, scan markers,
+// battle log) from one path to another. The file itself is never touched —
+// move it first, then run this.
+//
+//	lokictl media move /old/a.jpg /new/a.jpg
+//	lokictl media move /photos/2023 /archive/2023 --prefix --dry-run
+//
+// --prefix moves a whole folder, keeping each item's sub-path. --dry-run
+// performs the move and rolls it back, so the printed counts are exactly what
+// a real run would change.
+func cmdMediaMove(a *App, args []string) int {
+	fs := flag.NewFlagSet("media move", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	prefix := fs.Bool("prefix", false, "treat <from> and <to> as folders; move everything underneath")
+	dryRun := fs.Bool("dry-run", false, "report what would change without writing")
+	// The two paths come first so they can look like anything (a Windows path
+	// starting with a drive letter, a name with spaces) without flag parsing
+	// getting in the way.
+	if len(args) < 2 || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
+		return a.Usage(fs, "usage: lokictl media move <from> <to> [--prefix] [--dry-run]")
+	}
+	from, to := args[0], args[1]
+	if err := fs.Parse(args[2:]); err != nil {
+		return a.Usage(fs, err.Error())
+	}
+	body := map[string]any{"from": from, "to": to, "prefix": *prefix, "dryRun": *dryRun}
+	var out any
+	if err := a.Client.DoJSON("POST", "/api/media/move", body, &out); err != nil {
+		return a.Fail(err)
+	}
+	return a.PrintJSON(out)
+}
+
+// cmdMediaForget erases every database reference to a path while leaving the
+// file alone — the cleanup for media whose rows outlived it (or that you want
+// out of the library without deleting the original).
+func cmdMediaForget(a *App, args []string) int {
+	var path string
+	for _, arg := range args {
+		if arg != "--yes" && arg != "-y" {
+			path = arg
+		}
+	}
+	if path == "" {
+		return a.Usage(nil, "usage: lokictl media forget <path> --yes")
+	}
+	if !hasYesFlag(args) {
+		return a.Usage(nil, fmt.Sprintf(
+			"this erases every database reference to %q (tags, embeddings, faces, ratings) — the file is kept; re-run with --yes to confirm", path))
+	}
+	var out any
+	if err := a.Client.DoJSON("POST", "/api/media/forget", map[string]string{"path": path}, &out); err != nil {
+		return a.Fail(err)
+	}
+	return a.PrintJSON(out)
 }
 
 func cmdMediaDelete(a *App, args []string) int {

@@ -27,7 +27,11 @@ body {
   overflow: hidden;
 }
 
-/* Site-wide tab bar (matches the docs pages). */
+/* Site-wide tab bar (matches the docs pages). Marketing chrome — hidden when
+ * the studio runs embedded in a host app (?app=1 sets .app-host on body). */
+.app-host .site-tabs {
+  display: none;
+}
 .site-tabs {
   position: relative;
   display: flex;
@@ -124,6 +128,10 @@ h1 .tag { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 6px
 
 #add-section { margin-bottom: 10px; }
 
+.add-row { display: flex; align-items: center; gap: 6px; }
+.add-row .search-wrap { flex: 1; min-width: 0; }
+#btn-add-layer { flex: none; padding: 7px 10px; border-radius: 8px; white-space: nowrap; }
+
 .search-wrap { position: relative; display: flex; align-items: center; }
 .search-wrap .search-icon {
   position: absolute;
@@ -219,6 +227,55 @@ h1 .tag { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 6px
 .menu-item span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .menu-empty { color: var(--dim); padding: 10px; font-size: 12px; text-align: center; }
+
+/* Which layer a pick from this list will land on. */
+.menu-target {
+  padding: 4px 8px 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Floating clone of the add menu, anchored to the inspector's + Effect. */
+.fx-picker,
+.shape-picker {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+.fx-picker-search {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.fx-picker-search:focus { outline: none; border-color: var(--accent); }
+.fx-picker .add-layer-list,
+.shape-picker .add-layer-list {
+  max-height: min(320px, 44vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-top: 6px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  scrollbar-width: thin;
+}
 
 /* ---- main / preview ------------------------------------------------ */
 
@@ -436,6 +493,11 @@ body.has-media #canvas-stack { display: block; }
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
   cursor: move;
   touch-action: none;
+  /* !important: the Dark Reader extension's fallback sheet paints bare divs
+   * opaque #181a1b (`body :not(iframe) { background !important }`), turning
+   * the selection box into a solid slab over the clip. Author !important at
+   * higher specificity wins the cascade. */
+  background: transparent !important;
 }
 #gizmo[hidden] { display: none; }
 body.mask-editing #gizmo { display: none; }
@@ -573,8 +635,87 @@ body.mask-editing #mask-overlay {
 
 .layer-error { color: #e58784; font-size: 11px; padding: 4px 0 6px; word-break: break-word; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
 
+/* ---- effect stack (inspector) --------------------------------------- */
+
+.fx-stack { margin-bottom: 8px; }
+.fx-stack-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+}
+.fx-stack-head h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.fx-stack-head h3 .hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fx-entry {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg3);
+  margin-bottom: 6px;
+  border-left: 2px solid #7a5cb0;
+}
+.fx-entry.off { opacity: 0.5; }
+.fx-entry.err { border-left-color: #e58784; }
+.fx-entry.open { background: var(--bg); }
+
+.fx-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+}
+.fx-twirl { width: 16px; }
+.fx-on { accent-color: var(--accent); flex: none; }
+.fx-badge { flex: none; font-size: 11px; color: #c0a6ff; }
+.fx-entry.off .fx-name { text-decoration: line-through; }
+.fx-name {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+.fx-name:hover { border-color: var(--border); background: var(--bg); }
+.fx-name:focus { outline: none; border-color: var(--accent); background: var(--bg); }
+.fx-entry-head .tl-mini[disabled] { opacity: 0.25; cursor: default; }
+
+.fx-entry-body { padding: 0 6px 6px; }
+.fx-entry-body .insp-params { margin-bottom: 0; }
+.fx-entry .layer-error { padding: 0 8px 6px; }
+
+.fx-spill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dim);
+  font-size: 11px;
+  padding: 2px 2px 0;
+}
+.fx-spill input { accent-color: var(--accent); }
+
 .param-row { display: grid; grid-template-columns: 1fr 86px 54px; gap: 8px; align-items: center; margin-top: 4px; }
-.param-row.kf { grid-template-columns: 20px 1fr 80px 52px 18px; gap: 6px; }
+.param-row.kf { grid-template-columns: 20px 1fr 80px 52px 18px 18px; gap: 6px; }
 .param-row label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .param-row input[type=range] { width: 100%; accent-color: var(--accent); min-width: 0; }
 
@@ -1030,6 +1171,8 @@ body.mask-editing #mask-overlay {
   color: var(--dim);
   font-size: 11px;
 }
+/* Which effect in the stack a parameter row belongs to. */
+.tl-prop-owner { color: #c0a6ff; }
 .tl-prop-val {
   width: 58px;
   text-align: right;
@@ -1115,6 +1258,8 @@ body.mask-editing #mask-overlay {
   border-color: #43a047;
   color: #dff2e8;
 }
+/* Media clip carrying its own effect stack. */
+.tl-clip.media.fxd { border-color: #7a5cb0; }
 .tl-clip.off { opacity: 0.45; }
 .tl-clip.off .tl-clip-name { text-decoration: line-through; }
 .tl-clip.sel {
@@ -1411,3 +1556,138 @@ body.mask-editing #mask-overlay {
 }
 .btn-danger { border-color: #c0504d; color: #e58784; }
 .btn-danger:hover { background: #90312f; border-color: #c0504d; color: #fff; }
+
+/* ---- shape layers ---------------------------------------------------- */
+
+/* Draw-to-create mode: crosshair over the whole preview pane + the live
+ * rubber-band rect while dragging. */
+#viewer.shape-drawing, #viewer.shape-drawing canvas { cursor: crosshair; }
+#shape-draw-rect {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  pointer-events: none;
+  z-index: 6;
+}
+
+.shape-controls { padding: 6px 0 8px; font-size: 11px; color: var(--dim); }
+.shape-controls h3 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+.shape-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.shape-head h3 { margin: 0; }
+.shape-head .btn { padding: 2px 8px; font-size: 11px; }
+.shape-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shape-row + .shape-row { margin-top: 4px; }
+/* Preset list shared by + Shape (inspector) and + Layer (panel). */
+.shape-picker { width: 240px; }
+.shape-row select {
+  flex: 1;
+  min-width: 110px;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 11px;
+}
+.shape-row label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.shape-row input[type=color] {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg3);
+}
+
+/* Brush-size cursor while painting a mask: a circle matching the brush's
+ * on-screen diameter (dual outline so it reads on any background). */
+#brush-cursor {
+  position: absolute;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  z-index: 7;
+  /* Same Dark Reader defense as #gizmo — must stay a hollow ring. */
+  background: transparent !important;
+}
+#brush-cursor[hidden] { display: none; }
+
+/* Blend-mode row in the media inspector. */
+.insp-blend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0 6px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.insp-blend select {
+  flex: 1;
+  max-width: 160px;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 4px;
+  font-size: 11px;
+}
+
+/* ---- property drivers ------------------------------------------------ */
+
+.drv-toggle { color: var(--dim); font-size: 13px; }
+.drv-toggle.on { color: var(--accent); }
+
+.driver-panel {
+  margin: 2px 0 6px 20px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: 5px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.driver-panel .drv-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.driver-panel label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.driver-panel select {
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  max-width: 110px;
+}
+.driver-panel input[type=number] {
+  width: 56px;
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+.driver-panel input:focus, .driver-panel select:focus { outline: none; border-color: var(--accent); }
+.driver-panel .mn-del { margin-left: auto; }
+.driver-panel .drv-hint { font-size: 10px; color: var(--dim); opacity: 0.8; }

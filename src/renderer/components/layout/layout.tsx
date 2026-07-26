@@ -199,6 +199,17 @@ const Layout = () => {
     }
   }
 
+  // Touchpad mode's list/detail toggle: the detail view can't bind
+  // onDoubleClick (single clicks advance the cursor there), so it detects a
+  // fast double-click itself and asks for the toggle via this event.
+  useEffect(() => {
+    const handler = () => handleDetailClick();
+    window.addEventListener('loki-toggle-list-detail', handler);
+    return () => window.removeEventListener('loki-toggle-list-detail', handler);
+    // handleDetailClick only touches stable refs/setters, so the first
+    // render's closure stays valid.
+  }, []);
+
   useEffect(() => {
     if (library.length === 1) {
       // Collapse the list to focus the single file. Only the list collapses;

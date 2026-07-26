@@ -36,6 +36,7 @@ export type Channels =
   | 'load-categories'
   | 'load-category-tags'
   | 'load-all-tags'
+  | 'get-tag'
   | 'get-tag-count'
   | 'get-category-count'
   | 'load-file-metadata'
@@ -64,6 +65,8 @@ export type Channels =
   | 'generate-transcript'
   | 'modify-transcript'
   | 'delete-file'
+  | 'forget-media'
+  | 'move-media'
   | 'import-files'
   | 'minimize'
   | 'load-duplicates-by-path'
@@ -73,7 +76,9 @@ export type Channels =
   | 'consolidate-tag-files'
   | 'consolidate-category-files'
   | 'log-event'
-  | 'find-subtitle';
+  | 'find-subtitle'
+  | 'open-studio'
+  | 'studio-media-saved';
 
 // Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
 // <userData>/app-log.jsonl alongside main-process errors.

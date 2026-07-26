@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"math/rand"
 	"testing"
 
@@ -50,17 +51,29 @@ func TestPrescreenJoinableMatchesBruteForce(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 	faces := randFaces(900, rng) // several row tiles' worth
 	const threshold = 0.6
-	got := prescreenJoinable(faces, threshold)
+	got := prescreenCandidates(context.Background(), faces, threshold, nil)
 	for i := range faces {
-		want := false
+		var want []int32
 		for j := 0; j < i; j++ {
 			if dotf(faces[i].Vec, faces[j].Vec) >= threshold {
-				want = true
-				break
+				want = append(want, int32(j))
 			}
 		}
-		if got[i] != want {
-			t.Fatalf("face %d: prescreen = %v, brute force = %v", i, got[i], want)
+		if got.overflow[i] {
+			if len(want) < maxFormCandidates {
+				t.Fatalf("face %d: overflowed with only %d neighbours", i, len(want))
+			}
+			continue
+		}
+		if len(got.near[i]) != len(want) {
+			t.Fatalf("face %d: prescreen found %d neighbours, brute force %d",
+				i, len(got.near[i]), len(want))
+		}
+		for k := range want {
+			if got.near[i][k] != want[k] {
+				t.Fatalf("face %d neighbour %d: prescreen = %d, brute force = %d (lists must be ascending)",
+					i, k, got.near[i][k], want[k])
+			}
 		}
 	}
 }

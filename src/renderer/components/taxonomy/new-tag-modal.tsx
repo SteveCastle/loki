@@ -1,5 +1,5 @@
-import { useContext, useRef, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useContext, useEffect, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import cancel from '../../../../assets/cancel.svg';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { invoke } from '../../platform';
@@ -38,6 +38,36 @@ export default function NewTagModal({
   const { libraryService } = useContext(GlobalStateContext);
   const isEditing = Boolean(currentValue);
 
+  // The all-tags list is deliberately thin (label/category/weight only — see
+  // loadAllTags in src/main/taxonomy.ts), so descriptions are fetched one tag
+  // at a time. Without this, opening Edit on a tag that HAS a description shows
+  // an empty box — the existing note is invisible and uneditable. That was
+  // already the case in web mode, where the server's tags endpoint never
+  // returned the field; both platforms now fetch it the same way.
+  const { data: tagDetail } = useQuery<{ description?: string } | null, Error>(
+    ['taxonomy', 'tag-detail', currentValue],
+    async () =>
+      (await invoke('get-tag', [currentValue])) as {
+        description?: string;
+      } | null,
+    { enabled: isEditing, staleTime: Infinity }
+  );
+
+  // The description currently stored for this tag: the baseline the save
+  // compares against, so an untouched box never issues a write. Seeded with
+  // whatever the caller already knew, then replaced by the fetched value.
+  const [savedDescription, setSavedDescription] =
+    useState<string>(currentDescription);
+  const descriptionTouched = useRef(false);
+
+  useEffect(() => {
+    const fetched = tagDetail?.description;
+    if (typeof fetched !== 'string') return;
+    setSavedDescription(fetched);
+    // Don't clobber edits the user made while the fetch was in flight.
+    if (!descriptionTouched.current) setDescription(fetched);
+  }, [tagDetail]);
+
   function handleSubmit() {
     async function submit() {
       if (isEditing) {
@@ -45,7 +75,7 @@ export default function NewTagModal({
           if (newLabel !== currentValue) {
             await invoke('rename-tag', [currentValue, newLabel]);
           }
-          if (description !== currentDescription) {
+          if (description !== savedDescription) {
             await invoke('update-tag-description', [newLabel, description]);
           }
           setNewLabel('');
@@ -102,7 +132,9 @@ export default function NewTagModal({
         { queryKey: ['taxonomy', 'all-tags'] },
         (old) => {
           if (!old) return old;
-          return [...old, buildNewTag(old)];
+          // Thin shape — this cache entry never carries description/thumbnail.
+          const { label, category, weight } = buildNewTag(old);
+          return [...old, { label, category, weight }];
         }
       );
 
@@ -235,6 +267,7 @@ export default function NewTagModal({
             value={description}
             onChange={(e) => {
               e.stopPropagation();
+              descriptionTouched.current = true;
               setDescription(e.currentTarget.value);
             }}
             onKeyDown={(e) => {

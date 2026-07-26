@@ -279,6 +279,51 @@ func LockPersonFaces(db *sql.DB, personID int64) (int, error) {
 	return int(n), err
 }
 
+// namedPersonWhere selects the people a human has actually vouched for: every
+// person except the anonymous "Unknown #N" clusters clustering mints on its
+// own.
+const namedPersonWhere = `name NOT LIKE 'Unknown #%'`
+
+// LockAllNamedPersonFaces is LockPersonFaces across the whole library: every
+// auto-assigned face of every NAMED person becomes a user assignment in one
+// pass. Anonymous "Unknown #N" clusters are deliberately skipped — they are
+// exactly the groups nobody has vouched for, and locking them would make each
+// automatic mistake permanent (locked faces survive --reset-all and seed later
+// clustering with extra weight). Returns the number of faces promoted and how
+// many people they belonged to.
+func LockAllNamedPersonFaces(db *sql.DB) (faces int, people int, err error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback()
+	// Counted before the update, inside the same transaction — afterwards
+	// there are no 'auto' rows left to count.
+	if err := tx.QueryRow(
+		`SELECT COUNT(DISTINCT f.person_id) FROM face f
+		   JOIN person p ON p.id = f.person_id
+		  WHERE f.assigned_by = 'auto' AND p.` + namedPersonWhere,
+	).Scan(&people); err != nil {
+		return 0, 0, err
+	}
+	res, err := tx.Exec(
+		`UPDATE face SET assigned_by = 'user'
+		  WHERE assigned_by = 'auto'
+		    AND person_id IN (SELECT id FROM person WHERE ` + namedPersonWhere + `)`,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+	return int(n), people, nil
+}
+
 // clearConstraintsForFacesTx drops vetoes, cannot-links, and group-ban
 // memberships whose face rows are being deleted, selected by the given
 // face-id subquery (with args). Called inside the transaction that deletes

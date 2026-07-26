@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = frosted.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;frost;blur;detail;chill"
+amount = 1.0
+frost  = 0.6
+blur   = 0.5
+detail = 60.0
+chill  = 0.35

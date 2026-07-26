@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = smoke.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;density;swirl;sscale;speed;shade"
+amount  = 1.0
+density = 0.65
+swirl   = 0.5
+sscale  = 2.5
+speed   = 1.0
+shade   = 0.35

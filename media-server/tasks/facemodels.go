@@ -152,8 +152,17 @@ var builtinFaceModels = map[string]FaceModel{
 		Mean:        [3]float32{123.675, 116.28, 103.53}, // ImageNet, 0..255 scale
 		Std:         [3]float32{58.395, 57.12, 57.375},
 		ColorOrder:  "RGB",
-		// Midpoint of the measured same/different gap, rounded conservative.
-		MatchThreshold: 0.50,
+		// Floor of the measured same-character band (0.63–0.78), minus a
+		// hair. The original 0.50 (midpoint of the portrait-calibration gap:
+		// same 0.63–0.78, different ≤ 0.33) collapsed a 109k-face live
+		// library into ~221 mega-blob "characters": on real library content
+		// (explicit scenes, western cartoon, furry — far from CCIP's
+		// training distribution) cross-character similarity has a fat tail
+		// (p75 ≈ 0.37, pairs up to 0.65), so a dense region of the space
+		// percolates at join 0.50/form 0.55 — measured blob internal mean
+		// 0.61. 0.60 sits above that density while staying under the
+		// same-character floor.
+		MatchThreshold: 0.60,
 		Domain:         "anime",
 		DetectorDepID:  "anime-head",
 		DetectorFile:   "model.onnx",

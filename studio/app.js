@@ -12,12 +12,18 @@
  *
  * Render path per frame:
  *   1. active media clips → sync video elements to the comp clock,
- *      upload current frames, composite into the engine input texture
- *      with each clip's animated transform
- *   2. active fx clips → the engine layer chain (rebuilt only when the
- *      active set changes); every shader param is driven from its
- *      keyframe track each frame
- *   3. fx.render() runs the shader chain and presents to the canvas
+ *      upload current frames
+ *   2. a media clip carrying its OWN effect stack renders in isolation
+ *      first: the clip alone into a private chain's input texture, its
+ *      effects run there, and the processed result is what composites —
+ *      so those effects touch nothing but that clip (see mediaChains)
+ *   3. every media clip composites into the engine input texture with its
+ *      animated transform
+ *   4. active fx clips (adjustment layers) → the engine layer chain, one
+ *      engine layer per effect in each clip's stack, rebuilt only when the
+ *      active set changes; every shader param is driven from its keyframe
+ *      track each frame
+ *   5. fx.render() runs the chain and presents to the canvas
  */
 
 import { SlangFx, loadToolchain, parsePreset, dirnameOf } from './engine/index.js';
@@ -25,9 +31,16 @@ import { renameReserved } from './engine/preprocess.js';
 import {
   newComp, newTrack, newMediaClip, newFxClip, clipEnd, evalProp, upsertKey,
   keyNear, activeClips, findClip, ensureDur, removeEmptyTracks, quantize,
-  clamp, History, uid, newProp, migrateComp, trackOf,
+  clamp, History, uid, newProp, migrateComp, trackOf, MEDIA_PROPS,
+  allClipsBottomUp,
+  newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
 } from './comp.js';
-import { Compositor } from './compositor.js';
+import { Compositor, BLEND_MODES } from './compositor.js';
+import {
+  DRIVER_WAVES, DRIVER_BANDS, DRIVER_FOLLOWS, DRIVER_MODES,
+  newDriver, applyDriver,
+} from './driver.js';
+import { analyzeMix, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Timeline, fmtTimecode, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
@@ -43,6 +56,12 @@ const VIDEO_EXTS = /\.(mp4|mov|mkv|webm|avi|m4v)$/i;
 const GIF_EXT = /\.gif$/i;
 const PROJECT_KEY = 'lowkey-studio.project.v2';
 const DEFAULT_VIDEO_DUR = 4;   // fallback when a video reports no duration
+
+// ?app=1 — running embedded in a host app (the Electron viewer). Hides the
+// marketing site chrome; the flag is preserved across the post-import URL
+// cleanup so it survives reloads.
+const APP_HOST = new URLSearchParams(location.search).get('app') === '1';
+if (APP_HOST) document.body.classList.add('app-host');
 
 function setStatus(msg) { statusEl.textContent = msg; }
 
@@ -146,8 +165,17 @@ let projectName = null;
 const history = new History();
 
 const assets = new Map();        // assetId -> asset record
-const fxSpecs = new Map();       // clipId -> engine layer spec (persistent)
-const paramMetaCache = new Map();// clipId -> [{name, desc, min, max, step, default}]
+// One engine layer spec per EFFECT (an effect is a clip's stack entry), so
+// compiled runtimes and their saved params survive chain rebuilds.
+const fxSpecs = new Map();       // effectId -> engine layer spec (persistent)
+const paramMetaCache = new Map();// effectId -> [{name, desc, min, max, step, default}]
+// Live mask stacks, one per clip, for both kinds: on an fx clip the mask
+// gates the clip's whole effect group; on a media clip it cuts the clip's
+// alpha. Serialized back onto clip.mask when the project saves.
+const clipMasks = new Map();     // clipId -> maskState {opacity, invert, nodes, ...}
+// False until loadClipMasks has hydrated the current project, so a save
+// racing the restore can't blank out masks it hasn't read yet.
+let masksLoaded = false;
 
 let tCur = 0;
 let playing = false;
@@ -161,6 +189,13 @@ let chainKey = '';
 let chainDirty = false;
 let chainBuilding = false;
 let chainPromise = Promise.resolve();
+
+/* Per-media-clip effect chains. A media clip's own effects must not touch
+ * anything else, so they can't live in the shared adjustment chain: each
+ * such clip gets a private headless SlangFx over the same device (compiled
+ * modules are shared through fx.moduleCache), fed a transparent frame
+ * holding that clip alone. */
+const mediaChains = new Map();   // clipId -> {fx, key, dirty, building, promise}
 
 let recorder = null;
 let exportMode = false;
@@ -200,9 +235,12 @@ async function boot() {
     throw e;
   }
   compositor = new Compositor(fx.device);
-  // Media stacked above an effect is layered onto that effect's output so
-  // only effects higher in the stack process it (see compositeFrame).
+  // Media stacked above an adjustment layer is layered onto that layer's
+  // output so only effects higher in the stack process it (see
+  // compositeFrame). One clip contributes several engine layers, so this
+  // fires once, after the last effect in the clip's group.
   fx.onAfterLayer = (encoder, layer) => {
+    if (layer.maskGroup && layer.maskGroup.tail !== layer) return;
     const draws = fxOverlays.get(layer.clipId);
     if (!draws?.length) return;
     const view = layer.blendView ?? layer.runtime.finalPass.fboView;
@@ -217,7 +255,28 @@ async function boot() {
   }
 
   timeline = new Timeline($('timeline'), timelineHost);
-  await restoreProject();
+  const launch = await collectLaunchImports();
+  if (launch.files.length) {
+    // Launched by a host app (e.g. the Lowkey viewer) with media to edit:
+    // preserve the previous session, then import into a fresh comp. The
+    // import param is stripped (other params survive) so a reload doesn't
+    // import a second copy.
+    await stashAutosavedProject();
+    masksLoaded = true;   // fresh comp — nothing to hydrate
+    await importFiles(launch.files, { t: 0 });
+    fitDurToContent();
+    if (launch.saveBack) {
+      comp._saveBack = launch.saveBack;   // persists via the autosave payload
+      scheduleSave();
+    }
+    const params = new URLSearchParams(location.search);
+    params.delete('import');
+    const qs = params.toString();
+    window.history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
+  } else {
+    await restoreProject();
+  }
+  updateSaveBackButton();
   await applyCompSize();
   document.body.classList.add('has-media');
   refreshDropHint();
@@ -300,7 +359,8 @@ function tick() {
   const t = trimPreviewT ?? tCur;
   const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
   syncMedia(t, activeMedia);
-  prepareMasks(t);   // media masks must compose before compositeFrame samples them
+  prepareMasks(t);       // media masks must compose before compositeFrame samples them
+  prepareMediaFx(t, activeMedia);   // per-clip effect stacks render in isolation
   compositeFrame(t);
   syncFxChain(t);
   applyParams(t);
@@ -308,6 +368,109 @@ function tick() {
   timeline.updatePlayhead();
   updateInspectorLive();
   updateGizmo();
+}
+
+/* ---- property drivers ------------------------------------------------
+ * Oscillator + audio-reactive modulation of any keyframable property
+ * (model + math in driver.js). Audio drivers read per-frame band
+ * envelopes precomputed by audio-analysis.js from an offline mixdown of
+ * EVERY video clip's audio — including muted/hidden tracks, so a muted
+ * "beat track" can drive visuals without being audible. The analysis is
+ * keyed on the clips' audio arrangement and recomputed in the background
+ * when it drifts; until it lands, audio drivers read 0. */
+
+const DRIVE_SR = 22050;   // analysis-only sample rate (bands top out ~11 kHz)
+
+const audioDrive = {
+  key: '',           // arrangement fingerprint the current data was built for
+  data: null,        // { fps, frames, bands } from analyzeMix
+  beats: new Map(),  // `${band}|${sensitivity}` -> ascending beat times
+};
+let audioDriveJob = null;
+
+/** Video clips whose audio participates in the mix. Drivers analyze all
+ * of them; the audible export path excludes muted/hidden tracks. */
+function audioEntries(includeMutedHidden) {
+  const out = [];
+  for (const track of comp.tracks) {
+    if (!includeMutedHidden && (track.hidden || track.muted)) continue;
+    for (const clip of track.clips) {
+      if (clip.kind !== 'media' || clip.start >= comp.dur) continue;
+      const asset = assets.get(clip.assetId);
+      if (asset?.kind === 'video' && asset.ready) out.push({ clip, asset });
+    }
+  }
+  return out;
+}
+
+function audioDriveKey() {
+  const parts = [comp.dur, comp.fps];
+  for (const { clip, asset } of audioEntries(true)) {
+    const vol = clip.props.volume;
+    parts.push(asset.id, clip.start, clip.dur, clip.in,
+      vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '');
+  }
+  return parts.join('|');
+}
+
+function compHasAudioDrivers() {
+  let found = false;
+  for (const track of comp.tracks)
+    for (const clip of track.clips)
+      eachClipProp(clip, (p) => {
+        if (p?.driver?.enabled && p.driver.source === 'audio') found = true;
+      });
+  return found;
+}
+
+/** (Re)build the band envelopes when any audio driver needs them and the
+ * comp's audio arrangement changed. Fire-and-forget from edits; awaited
+ * by the offline renderer so exports never race the analysis. */
+function syncAudioDrive() {
+  if (!compHasAudioDrivers()) return audioDriveJob;
+  const key = audioDriveKey();
+  if (key === audioDrive.key) return audioDriveJob;
+  audioDrive.key = key;   // claim first so concurrent calls dedupe
+  setStatus('analyzing audio for drivers…');
+  audioDriveJob = (async () => {
+    // Analysis mixes with BASE volumes (evalProp, not drivenEval): a
+    // driver on Volume must not feed back into its own input signal.
+    const mix = await mixCompAudio(DRIVE_SR, audioEntries(true), 1, (clip, tc) =>
+      clip.props.volume ? evalProp(clip.props.volume, tc) : 100);
+    if (audioDrive.key !== key) return;   // superseded by a newer edit
+    audioDrive.data = mix ? analyzeMix(mix.getChannelData(0), DRIVE_SR, comp.fps) : null;
+    audioDrive.beats.clear();
+    setStatus(mix ? 'audio analysis ready — drivers are live'
+      : 'no audio in the comp — audio drivers read 0');
+  })().catch((e) => console.warn('slangfx: audio analysis failed:', e));
+  return audioDriveJob;
+}
+
+/** Resolve an audio driver to 0..1 at COMP time t. */
+function audioSignal(d, t) {
+  const data = audioDrive.data;
+  if (!data) return 0;
+  const env = data.bands[d.band] ?? data.bands.level;
+  if (d.follow === 'beat') {
+    const sens = +d.sensitivity || 1.5;
+    const key = `${d.band}|${sens.toFixed(2)}`;
+    let beats = audioDrive.beats.get(key);
+    if (!beats) {
+      beats = detectBeats(env, data.fps, sens);
+      audioDrive.beats.set(key, beats);
+    }
+    return samplePulse(beats, t, +d.decay || 0.35);
+  }
+  return sampleLevel(env, data.fps, t, d.release == null ? 0.25 : +d.release || 0);
+}
+
+/** evalProp + the prop's driver (if enabled). tc is clip-relative (the
+ * oscillator time base), tComp absolute (the audio timeline). */
+function drivenEval(prop, tc, tComp) {
+  const base = evalProp(prop, tc);
+  const d = prop?.driver;
+  if (!d?.enabled) return base;
+  return applyDriver(base, d, tc, (drv) => audioSignal(drv, tComp));
 }
 
 /* ---- media sync ---------------------------------------------------- */
@@ -327,7 +490,7 @@ function syncMedia(t, activeMedia) {
     // Audio: master prefs × track mute × the clip's animated Volume.
     el.muted = !!audioState.muted || !!track.muted;
     const clipVol = clip.props.volume
-      ? clamp(evalProp(clip.props.volume, t - clip.start) / 100, 0, 1) : 1;
+      ? clamp(drivenEval(clip.props.volume, t - clip.start, t) / 100, 0, 1) : 1;
     el.volume = clamp((audioState.volume ?? 1) * clipVol, 0, 1);
     // Source time, wrapped so clips longer than their source loop.
     const src = clip.in + (t - clip.start);
@@ -557,27 +720,52 @@ async function transcodeScrubProxy(asset) {
   return new Blob([muxer.target.buffer], { type: 'video/webm' });
 }
 
+/** The clip's raw draw: its source texture under its animated transform.
+ * This is the geometric truth (gizmo, bounds, matte sources, and the
+ * isolate pass that feeds the clip's own effects all want it). */
 function drawForClip(clip, t) {
   const asset = assets.get(clip.assetId);
   if (!asset?.ready) return null;
   const tc = t - clip.start;
-  const mm = mediaMasks.get(clip.id);
-  const masked = mm?.view && mm.maskState?.nodes?.length;
+  const mm = mediaMaskTargets.get(clip.id);
+  const maskState = clipMasks.get(clip.id);
+  const masked = mm?.view && maskState?.nodes?.length;
   return {
     clipId: clip.id,
     view: asset.view,
     w: asset.w,
     h: asset.h,
-    x: evalProp(clip.props.x, tc),
-    y: evalProp(clip.props.y, tc),
+    x: drivenEval(clip.props.x, tc, t),
+    y: drivenEval(clip.props.y, tc, t),
     // Negative scale mirrors the media on that axis.
-    scaleX: evalProp(clip.props.scaleX, tc) / 100,
-    scaleY: evalProp(clip.props.scaleY, tc) / 100,
-    rot: evalProp(clip.props.rot, tc),
-    opacity: clamp(evalProp(clip.props.opacity, tc) / 100, 0, 1),
+    scaleX: drivenEval(clip.props.scaleX, tc, t) / 100,
+    scaleY: drivenEval(clip.props.scaleY, tc, t) / 100,
+    rot: drivenEval(clip.props.rot, tc, t),
+    opacity: clamp(drivenEval(clip.props.opacity, tc, t) / 100, 0, 1),
+    blend: clip.blend ?? 'normal',
     maskView: masked ? mm.view : null,
-    maskOpacity: masked ? mm.maskState.opacity ?? 1 : 0,
-    maskInvert: masked ? !!mm.maskState.invert : false,
+    maskOpacity: masked ? maskState.opacity ?? 1 : 0,
+    maskInvert: masked ? !!maskState.invert : false,
+  };
+}
+
+/** What actually composites for a media clip: the raw draw, or — when the
+ * clip carries its own effect stack — the stack's output as a full-frame
+ * quad (the transform already happened in the isolate pass), still wearing
+ * the clip's opacity, blend mode and mask. */
+function compositeDrawForClip(clip, t) {
+  const d = drawForClip(clip, t);
+  if (!d) return null;
+  const processed = mediaFxViews.get(clip.id);
+  if (!processed) return d;
+  return {
+    ...d,
+    clipId: `${clip.id}:fxout`,
+    view: processed.view,
+    gateView: processed.gateView,
+    w: comp.width, h: comp.height,
+    x: comp.width / 2, y: comp.height / 2,
+    scaleX: 1, scaleY: 1, rot: 0,
   };
 }
 
@@ -620,11 +808,12 @@ function compositeFrame(t) {
     if (track.hidden) continue;
     if (clip.kind === 'fx') {
       // Broken / still-compiling effects are skipped by the engine, so
-      // media above them merges down to the previous working effect.
-      if (clip.enabled !== false && fxSpecs.get(clip.id)?.runtime) curFx = clip.id;
+      // media above them merges down to the previous working adjustment
+      // layer. An empty (or wholly failed) stack is not a barrier.
+      if (clip.enabled !== false && clipHasLiveLayers(clip.id)) curFx = clip.id;
       continue;
     }
-    const d = drawForClip(clip, t);
+    const d = compositeDrawForClip(clip, t);
     if (!d) continue;
     if (curFx) {
       if (!fxOverlays.has(curFx)) fxOverlays.set(curFx, []);
@@ -638,56 +827,71 @@ function compositeFrame(t) {
   fx.device.queue.submit([encoder.finish()]);
 }
 
-/* ---- fx chain ------------------------------------------------------- */
+/* ---- fx chain -------------------------------------------------------
+ * An engine layer is one EFFECT. The layers a clip contributes carry that
+ * clip's id as their engine `groupId`, which is what makes the engine treat
+ * the stack as a single masked group (see SlangFx.rebuild). */
 
-function specFor(clip) {
-  let spec = fxSpecs.get(clip.id);
+function specFor(clip, effect) {
+  let spec = fxSpecs.get(effect.id);
   if (!spec) {
-    spec = { clipId: clip.id, enabled: true, runtime: null, error: null, savedParams: null, label: clip.name };
-    if (clip.fxKind === 'custom') {
+    spec = {
+      clipId: clip.id, effectId: effect.id, groupId: clip.id,
+      enabled: true, runtime: null, error: null, savedParams: null, label: effect.name,
+    };
+    if (effect.fxKind === 'custom') {
       const dir = `${CUSTOM_PREFIX}${customCounter++}/`;
       virtualFiles.set(dir + 'custom.slangp', CUSTOM_PRESET);
-      virtualFiles.set(dir + 'custom.slang', clip.source ?? CUSTOM_BOILERPLATE);
+      virtualFiles.set(dir + 'custom.slang', effect.source ?? CUSTOM_BOILERPLATE);
       spec.dir = dir;
       spec.path = dir + 'custom.slangp';
     } else {
-      spec.path = clip.path;
+      spec.path = effect.path;
     }
-    fxSpecs.set(clip.id, spec);
-    restoreSpecExtras(clip, spec);
+    fxSpecs.set(effect.id, spec);
+    restoreSpecExtras(clip, effect, spec);
   }
-  spec.label = clip.name;
+  spec.clipId = clip.id;      // a split/duplicate re-homes an effect
+  spec.groupId = clip.id;
+  spec.label = effect.name;
   return spec;
 }
 
-/** Rehydrate persisted mask / overlay textures onto a fresh spec. */
-async function restoreSpecExtras(clip, spec) {
+/** Rehydrate an effect's persisted overlay textures onto a fresh spec.
+ * (Masks belong to the clip and load in loadClipMasks.) */
+async function restoreSpecExtras(clip, effect, spec) {
   let dirty = false;
-  if (clip.overlay) {
-    for (const [name, o] of Object.entries(clip.overlay)) {
-      if (o.kind === 'text' && o.state?.text) {
-        (spec.textureOverrides ??= {})[name] = renderTitleCanvas(o.state);
+  for (const [name, o] of Object.entries(effect.overlay ?? {})) {
+    if (o.kind === 'text' && o.state?.text) {
+      (spec.textureOverrides ??= {})[name] = renderTitleCanvas(o.state);
+      dirty = true;
+    } else if (o.kind === 'image' && o.dataURL) {
+      const img = new Image();
+      await new Promise((res) => { img.onload = res; img.onerror = res; img.src = o.dataURL; });
+      if (img.width) {
+        (spec.textureOverrides ??= {})[name] = await createImageBitmap(img);
         dirty = true;
-      } else if (o.kind === 'image' && o.dataURL) {
-        const img = new Image();
-        await new Promise((res) => { img.onload = res; img.onerror = res; img.src = o.dataURL; });
-        if (img.width) {
-          (spec.textureOverrides ??= {})[name] = await createImageBitmap(img);
-          dirty = true;
-        }
       }
     }
   }
-  if (clip.mask) {
-    // Legacy single painted mask → a one-node stack (white base + painted
-    // canvas added over black composes to the identical result).
-    const nodes = await loadMaskNodes(clip.mask);
-    if (nodes.length) {
-      spec.maskState = { opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert, nodes };
-      dirty = true;
-    }
-  }
-  if (dirty) chainDirty = true;
+  if (dirty) markChainDirty(clip.id);
+}
+
+/** Enabled effects of a clip, in application order. */
+function liveEffects(clip) {
+  return effectsOf(clip).filter((e) => e.enabled !== false);
+}
+
+/** Layer specs for one clip's stack. The FIRST spec carries the clip's mask
+ * — the engine builds the group mask on the head and blends at the tail. */
+function specsForStack(clip) {
+  const effects = liveEffects(clip);
+  const mask = clipMasks.get(clip.id) ?? null;
+  return effects.map((effect, i) => {
+    const spec = specFor(clip, effect);
+    spec.maskState = i === 0 ? mask : null;
+    return spec;
+  });
 }
 
 function activeFxEntries(t) {
@@ -695,50 +899,219 @@ function activeFxEntries(t) {
     .filter(({ track, clip }) => !track.hidden && clip.enabled !== false);
 }
 
+/** Identity of the built chain: which effects, in which order, under which
+ * clip. Changing any of it forces a rebuild. */
+function stackKey(clip) {
+  return `${clip.id}[${liveEffects(clip).map((e) => e.id).join(',')}]`;
+}
+
 function syncFxChain(t) {
   if (chainBuilding) return chainPromise;
   const entries = activeFxEntries(t);
-  const key = entries.map((e) => e.clip.id).join('|');
+  const key = entries.map((e) => stackKey(e.clip)).join('|');
   if (key === chainKey && !chainDirty) return chainPromise;
   chainKey = key;
   chainDirty = false;
   chainBuilding = true;
-  fx.layers = entries.map(({ clip }) => specFor(clip));
+  fx.layers = entries.flatMap(({ clip }) => specsForStack(clip));
   chainPromise = fx.rebuild()
     .catch((e) => console.error('slangfx: chain rebuild failed:', e))
     .finally(() => { chainBuilding = false; });
   return chainPromise;
 }
 
-function applyParams(t) {
-  for (const layer of fx.layers) {
+/** Mark the chain that owns `clipId` for rebuild (the shared adjustment
+ * chain, or that media clip's private one). Omit the id to dirty all. */
+function markChainDirty(clipId = null) {
+  if (clipId == null) {
+    chainDirty = true;
+    for (const entry of mediaChains.values()) entry.dirty = true;
+    return;
+  }
+  const entry = mediaChains.get(clipId);
+  if (entry) entry.dirty = true;
+  else chainDirty = true;
+}
+
+/* ---- per-media effect chains ---------------------------------------- */
+
+/** The chain for a media clip's own effects, created on first use. Returns
+ * null until the (async) engine is ready, so callers fall back to the raw
+ * clip for that frame. */
+function mediaChainFor(clip) {
+  let entry = mediaChains.get(clip.id);
+  if (!entry) {
+    entry = { fx: null, key: '', dirty: true, building: true, promise: null };
+    mediaChains.set(clip.id, entry);
+    entry.promise = SlangFx.create({
+      device: fx.device,
+      toolchain: fx.toolchain,
+      readFile: fx.readFile,
+      readImage: fx.readImage,
+      moduleCache: fx.moduleCache,   // compile each shader once per device
+    }).then(async (chain) => {
+      await chain.setSourceSize(comp.width, comp.height);
+      entry.fx = chain;
+    }).catch((e) => {
+      console.error('slangfx: media chain create failed:', e);
+    }).finally(() => { entry.building = false; });
+  }
+  return entry.fx ? entry : null;
+}
+
+function destroyMediaChain(clipId) {
+  const entry = mediaChains.get(clipId);
+  if (!entry) return;
+  mediaChains.delete(clipId);
+  mediaFxViews.delete(clipId);
+  Promise.resolve(entry.promise).finally(() => {
+    // The engine owns these runtimes; null the specs' pointers so a spec
+    // that outlives the chain can't hand out a destroyed runtime.
+    for (const layer of entry.fx?.layers ?? []) layer.runtime = null;
+    entry.fx?.destroy();
+    compositor.release(`${clipId}:iso`);
+    compositor.release(`${clipId}:fxout`);
+  });
+}
+
+/** Resize every private chain with the comp (see applyCompSize). Forcing
+ * `key` empty makes the next sync re-lay the stack over the new textures. */
+function resizeMediaChains() {
+  for (const entry of mediaChains.values()) {
+    if (!entry.fx) continue;
+    entry.key = '';
+    entry.building = true;
+    entry.promise = entry.fx.setSourceSize(comp.width, comp.height)
+      .catch((e) => console.error('slangfx: media chain resize failed:', e))
+      .finally(() => { entry.building = false; });
+  }
+}
+
+/** Drop chains for clips that were deleted or lost their effects. */
+function gcMediaChains() {
+  for (const clipId of [...mediaChains.keys()]) {
+    const clip = findClip(comp, clipId)?.clip;
+    if (!clip || clip.kind !== 'media' || !liveEffects(clip).length)
+      destroyMediaChain(clipId);
+  }
+}
+
+/** Release per-effect runtime state (compiled layer, param metadata,
+ * editor draft) for effects that no longer exist in the comp. Nulling
+ * `runtime` is what makes this safe mid-frame: the engine skips layers
+ * without one, so a stale chain built before the edit renders nothing for
+ * the removed effect instead of sampling freed textures. */
+function gcEffectState() {
+  const live = new Set();
+  for (const track of comp.tracks)
+    for (const clip of track.clips)
+      for (const effect of effectsOf(clip)) live.add(effect.id);
+  for (const [id, spec] of fxSpecs) {
+    if (live.has(id)) continue;
+    spec.runtime?.destroy();
+    spec.runtime = null;
+    fxSpecs.delete(id);
+  }
+  for (const id of [...paramMetaCache.keys()]) if (!live.has(id)) paramMetaCache.delete(id);
+  for (const id of [...editorDrafts.keys()]) if (!live.has(id)) editorDrafts.delete(id);
+  for (const id of [...openEffects]) if (!live.has(id)) openEffects.delete(id);
+}
+
+function syncMediaChain(clip, entry) {
+  if (entry.building) return entry.promise;
+  const key = stackKey(clip);
+  if (key === entry.key && !entry.dirty) return entry.promise;
+  entry.key = key;
+  entry.dirty = false;
+  entry.building = true;
+  // No group mask here: a media clip's mask cuts its alpha at composite
+  // time (green screen), which already covers the effected result.
+  entry.fx.layers = liveEffects(clip).map((effect) => {
+    const spec = specFor(clip, effect);
+    spec.maskState = null;
+    return spec;
+  });
+  entry.promise = entry.fx.rebuild()
+    .catch((e) => console.error('slangfx: media chain rebuild failed:', e))
+    .finally(() => { entry.building = false; });
+  return entry.promise;
+}
+
+/**
+ * Render every effected media clip in isolation. For each: composite the
+ * clip alone (its transform, full opacity, no mask, transparent
+ * background) into its chain's input, run the stack, and remember the
+ * processed view for compositeFrame.
+ */
+const mediaFxViews = new Map();   // clipId -> {view, gateView}
+
+function prepareMediaFx(t, activeMedia) {
+  mediaFxViews.clear();
+  for (const { clip } of activeMedia) {
+    if (!liveEffects(clip).length) continue;
+    const entry = mediaChainFor(clip);
+    if (!entry) continue;
+    const d = drawForClip(clip, t);
+    if (!d) continue;
+    syncMediaChain(clip, entry);
+    const chain = entry.fx;
+    if (!chain.inputView) continue;
+    const encoder = fx.device.createCommandEncoder();
+    // ':iso' keys its own compositor item so the isolate draw doesn't
+    // fight the clip's on-screen draw over one uniform buffer.
+    compositor.composite(encoder, chain.inputView, comp.width, comp.height, [{
+      ...d, clipId: `${clip.id}:iso`, opacity: 1, blend: 'normal',
+      maskView: null, gateView: null,
+    }], { transparent: true });
+    fx.device.queue.submit([encoder.finish()]);
+    applyParamsFor(chain, t);
+    chain.render(null, t);
+    const view = chain.finalView;
+    if (view === chain.inputView) continue;   // nothing built yet
+    mediaFxViews.set(clip.id, {
+      view,
+      // Shaders overwhelmingly write alpha = 1 across the frame, which
+      // would smear the effect over the whole comp; gate the result back
+      // to the clip's own coverage unless the user wants the spill.
+      gateView: clip.fxSpill ? null : chain.inputView,
+    });
+  }
+}
+
+function applyParamsFor(engine, t) {
+  for (const layer of engine.layers) {
     const rt = layer.runtime;
     if (!rt) continue;
     const hit = findClip(comp, layer.clipId);
-    if (!hit) continue;
+    const effect = hit && findEffect(hit.clip, layer.effectId);
+    if (!effect) continue;
     const tc = t - hit.clip.start;
     for (const meta of rt.paramMeta) {
-      const prop = hit.clip.params[meta.name];
-      let v = prop ? evalProp(prop, tc) : meta.default;
+      const prop = effect.params?.[meta.name];
+      let v = prop ? drivenEval(prop, tc, t) : meta.default;
       if (meta.max > meta.min) v = clamp(v, meta.min, meta.max);
       rt.paramValues.set(meta.name, v);
     }
   }
 }
 
-function activeIndexOfClip(clipId) {
-  return fx.layers.findIndex((l) => l.clipId === clipId && l.runtime);
+function applyParams(t) {
+  applyParamsFor(fx, t);
 }
 
-/** Shader parameter metadata for a clip without needing an active chain —
- * parses the preset and compiles its modules (cached), so custom-shader
- * compile errors also surface here. */
-async function ensureParamMeta(clip) {
-  if (clip.kind !== 'fx') return null;
-  const cached = paramMetaCache.get(clip.id);
+/** True when a clip currently contributes at least one working layer. */
+function clipHasLiveLayers(clipId) {
+  return fx.layers.some((l) => l.clipId === clipId && l.runtime);
+}
+
+/** Shader parameter metadata for one effect without needing an active
+ * chain — parses the preset and compiles its modules (cached), so
+ * custom-shader compile errors also surface here. */
+async function ensureParamMeta(clip, effect) {
+  const cached = paramMetaCache.get(effect.id);
   if (cached) return cached === 'loading' ? null : cached;
-  paramMetaCache.set(clip.id, 'loading');
-  const spec = specFor(clip);
+  paramMetaCache.set(effect.id, 'loading');
+  const spec = specFor(clip, effect);
   try {
     const text = await fx.readFile(spec.path);
     const preset = parsePreset(text, dirnameOf(spec.path));
@@ -752,13 +1125,13 @@ async function ensureParamMeta(clip) {
       if (m) m.default = ov.value;
     }
     const metas = [...seen.values()];
-    paramMetaCache.set(clip.id, metas);
+    paramMetaCache.set(effect.id, metas);
     spec.lastCompileError = null;
     timeline.render();
     renderInspector();
     return metas;
   } catch (e) {
-    paramMetaCache.delete(clip.id);
+    paramMetaCache.delete(effect.id);
     spec.lastCompileError = String(e.message ?? e);
     renderInspector();
     throw e;
@@ -782,21 +1155,18 @@ function mediaPropDefs() {
   ];
 }
 
-function propDefs(clip) {
-  if (clip.kind === 'media') {
-    const defs = mediaPropDefs();
-    // Volume only makes sense (and sound) for video assets.
-    return assets.get(clip.assetId)?.kind === 'video'
-      ? defs
-      : defs.filter((d) => d.key !== 'volume');
-  }
-  const metas = paramMetaCache.get(clip.id);
+/** Parameter defs for one effect, keyed in the clip-wide namespace. Returns
+ * [] (and kicks off the compile) while the metadata is still loading. */
+function effectPropDefs(clip, effect) {
+  const metas = paramMetaCache.get(effect.id);
   if (!metas || metas === 'loading') {
-    ensureParamMeta(clip).catch(() => {});
+    if (!metas) ensureParamMeta(clip, effect).catch(() => {});
     return [];
   }
   return metas.map((m) => ({
-    key: m.name,
+    key: effectPropKey(effect.id, m.name),
+    effectId: effect.id,
+    effectName: effect.name,
     label: m.desc || m.name,
     min: m.min,
     max: m.max,
@@ -806,17 +1176,35 @@ function propDefs(clip) {
   }));
 }
 
+/** Every editable property of a clip: its transform (media) followed by the
+ * parameters of each effect in its stack, in stack order. */
+function propDefs(clip) {
+  const defs = [];
+  if (clip.kind === 'media') {
+    // Volume only makes sense (and sound) for video assets.
+    const video = assets.get(clip.assetId)?.kind === 'video';
+    for (const d of mediaPropDefs()) if (video || d.key !== 'volume') defs.push(d);
+  }
+  for (const effect of effectsOf(clip)) defs.push(...effectPropDefs(clip, effect));
+  return defs;
+}
+
 function defFor(clip, key) {
   return propDefs(clip).find((d) => d.key === key) ?? { def: 0, min: 0, max: 0, step: 0.001 };
 }
 
 function getProp(clip, key) {
-  return clip.kind === 'media' ? clip.props[key] : clip.params[key] ?? null;
+  const { effectId, name } = parsePropKey(key);
+  if (!effectId) return clip.props?.[name] ?? null;
+  return findEffect(clip, effectId)?.params?.[name] ?? null;
 }
 
 function getOrCreateProp(clip, key) {
-  if (clip.kind === 'media') return clip.props[key];
-  return (clip.params[key] ??= newProp(defFor(clip, key).def));
+  const { effectId, name } = parsePropKey(key);
+  if (!effectId) return clip.props[name];
+  const effect = findEffect(clip, effectId);
+  if (!effect) return null;
+  return ((effect.params ??= {})[name] ??= newProp(defFor(clip, key).def));
 }
 
 function relTime(clip) {
@@ -834,6 +1222,7 @@ function valueAt(clip, key) {
  * playhead doesn't spray a key per input event. */
 function setPropValueLive(clip, key, v, tRel = null) {
   const prop = getOrCreateProp(clip, key);
+  if (!prop) return;
   if (prop.anim) upsertKey(prop, tRel ?? relTime(clip), v);
   else prop.v = v;
 }
@@ -846,6 +1235,7 @@ function setPropValue(clip, key, v) {
 function toggleAnim(clip, key) {
   history.record(comp, () => {
     const prop = getOrCreateProp(clip, key);
+    if (!prop) return;
     if (prop.anim) {
       prop.v = evalProp(prop, tCur - clip.start);   // freeze at current value
       prop.keys = [];
@@ -860,6 +1250,7 @@ function toggleAnim(clip, key) {
 function toggleKey(clip, key) {
   history.record(comp, () => {
     const prop = getOrCreateProp(clip, key);
+    if (!prop) return;
     const t = relTime(clip);
     const eps = 0.5 / comp.fps;
     const existing = keyNear(prop, t, eps);
@@ -877,9 +1268,13 @@ function toggleKey(clip, key) {
 
 function onModelChange({ structural = false, transient = false } = {}) {
   ensureDur(comp);
-  chainDirty = true;
+  markChainDirty();
   if (transient) return;
   removeEmptyTracks(comp);   // e.g. the last clip was dragged off a track
+  gcEffectState();           // deleted effects release their compiled state
+  gcMediaChains();           // clips that lost their effects release theirs
+  reconcileShapeAssets();    // duplicated/split shape clips get their own asset
+  syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   refreshDropHint();
   timeline.render();
   renderInspector();
@@ -901,8 +1296,11 @@ function appRedo() {
 function afterModelReplace(what) {
   stopMaskEdit();
   syncCustomSources();
+  reconcileShapeAssets();   // undo/redo may restore stale shape settings
+  gcEffectState();
+  gcMediaChains();
   chainKey = '';
-  chainDirty = true;
+  markChainDirty();
   tCur = clamp(tCur, 0, comp.dur);
   // The restored state may carry a different comp size than the canvas.
   if (canvas.width !== comp.width || canvas.height !== comp.height)
@@ -918,18 +1316,19 @@ function afterModelReplace(what) {
  * file that the engine compiles — resync + invalidate. */
 function syncCustomSources() {
   for (const track of comp.tracks)
-    for (const clip of track.clips) {
-      if (clip.kind !== 'fx' || clip.fxKind !== 'custom') continue;
-      const spec = fxSpecs.get(clip.id);
-      if (!spec) continue;
-      const cur = virtualFiles.get(spec.dir + 'custom.slang');
-      if (cur !== clip.source) {
-        virtualFiles.set(spec.dir + 'custom.slang', clip.source);
-        fx.invalidateModules(spec.dir);
-        paramMetaCache.delete(clip.id);
-        chainDirty = true;
+    for (const clip of track.clips)
+      for (const effect of effectsOf(clip)) {
+        if (effect.fxKind !== 'custom') continue;
+        const spec = fxSpecs.get(effect.id);
+        if (!spec) continue;
+        const cur = virtualFiles.get(spec.dir + 'custom.slang');
+        if (cur !== effect.source) {
+          virtualFiles.set(spec.dir + 'custom.slang', effect.source);
+          fx.invalidateModules(spec.dir);
+          paramMetaCache.delete(effect.id);
+          markChainDirty(clip.id);
+        }
       }
-    }
 }
 
 /* =====================================================================
@@ -1594,6 +1993,8 @@ function serializeMaskState(m) {
   return {
     opacity: m.opacity ?? 1,
     invert: !!m.invert,
+    expand: m.expand ?? 0,
+    feather: m.feather ?? 0,
     nodes: m.nodes.map((n) => {
       const out = {
         id: n.id, kind: n.kind, enabled: n.enabled !== false,
@@ -1645,16 +2046,38 @@ async function loadMaskNodes(maskModel) {
   return nodes;
 }
 
-function projectPayload() {
-  // Sync live mask state (painted canvases + node params) into the model
-  // before serializing.
+/** Hydrate every clip's persisted mask into the live clipMasks registry.
+ * Both kinds load up front: an fx clip's group mask must exist before the
+ * chain builds, or the engine would compile the stack without it. */
+async function loadClipMasks() {
   for (const track of comp.tracks)
     for (const clip of track.clips) {
-      const m = clip.kind === 'fx'
-        ? (fxSpecs.has(clip.id) ? fxSpecs.get(clip.id).maskState : undefined)
-        : clip.kind === 'media' ? mediaMasks.get(clip.id)?.maskState ?? (clip.mask ? undefined : null)
-        : undefined;
-      if (m !== undefined) clip.mask = serializeMaskState(m);
+      if (!clip.mask) continue;
+      // Legacy single painted mask → a one-node stack (white base + painted
+      // canvas added over black composes to the identical result).
+      const nodes = await loadMaskNodes(clip.mask);
+      if (!nodes.length) continue;
+      clipMasks.set(clip.id, {
+        opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert,
+        expand: clip.mask.expand ?? 0, feather: clip.mask.feather ?? 0,
+        nodes,
+      });
+      if (clip.kind === 'media') buildMediaMaskGpu(clip.id);
+    }
+  masksLoaded = true;
+  chainDirty = true;
+}
+
+function projectPayload() {
+  // Sync live mask state (painted canvases + node params) into the model
+  // before serializing. clipMasks is authoritative for every clip that has
+  // been touched this session; a clip missing from it kept whatever it
+  // loaded with.
+  for (const track of comp.tracks)
+    for (const clip of track.clips) {
+      const m = clipMasks.get(clip.id);
+      if (m) clip.mask = serializeMaskState(m);
+      else if (masksLoaded) clip.mask = null;
     }
   const assetMeta = [...assets.values()].map((a) => ({ id: a.id, name: a.name, kind: a.kind }));
   return { comp, assets: assetMeta, t: tCur, name: projectName };
@@ -1689,9 +2112,11 @@ async function applyProjectData(data) {
   stopMaskEdit();
   document.getElementById('demo-card')?.remove();
   unloadAssets();
+  for (const clipId of [...mediaChains.keys()]) destroyMediaChain(clipId);
   fxSpecs.clear();
   paramMetaCache.clear();
-  for (const clipId of [...mediaMasks.keys()]) destroyMediaMaskEntry(clipId);
+  masksLoaded = false;
+  for (const clipId of [...clipMasks.keys()]) destroyClipMask(clipId);
   for (const [id, t] of matteTargets) { t.tex.destroy(); matteTargets.delete(id); }
   comp = migrateComp(data.comp);
   removeEmptyTracks(comp);
@@ -1702,19 +2127,10 @@ async function applyProjectData(data) {
   chainDirty = true;
   fx.layers = [];
 
-  // Media clip masks live outside fxSpecs — rebuild their runtime state
-  // (fx clip masks rebuild lazily via specFor/restoreSpecExtras).
-  for (const track of comp.tracks)
-    for (const clip of track.clips) {
-      if (clip.kind !== 'media' || !clip.mask) continue;
-      const nodes = await loadMaskNodes(clip.mask);
-      if (!nodes.length) continue;
-      mediaMasks.set(clip.id, {
-        maskState: { opacity: clip.mask.opacity ?? 1, invert: !!clip.mask.invert, nodes },
-        tex: null, view: null, w: 0, h: 0,
-      });
-      buildMediaMaskGpu(clip.id);
-    }
+  await loadClipMasks();
+
+  // Shape clips regenerate their textures from the model — no stored blobs.
+  reconcileShapeAssets();
 
   const ids = new Set();
   for (const track of comp.tracks)
@@ -1723,7 +2139,7 @@ async function applyProjectData(data) {
   // Restore assets in parallel; a missing or unloadable one must not block
   // the app — its clips simply render as offline until re-imported.
   await Promise.allSettled((data.assets ?? [])
-    .filter((meta) => ids.has(meta.id))
+    .filter((meta) => ids.has(meta.id) && meta.kind !== 'shape')
     .map(async (meta) => {
       const file = await idbGet(`asset:${meta.id}`);
       if (!file) throw new Error(`missing media blob for ${meta.name}`);
@@ -1736,6 +2152,7 @@ async function applyProjectData(data) {
 
   await applyCompSize();
   setTime(tCur);
+  syncAudioDrive();   // restored projects may carry audio drivers
   refreshDropHint();
   updateProjectButton();
   timeline?.zoomFit();
@@ -1751,8 +2168,77 @@ async function restoreProject() {
     await applyProjectData(data);
   } else {
     await loadDemoProject();
+    masksLoaded = true;   // built in memory, nothing persisted to hydrate
   }
   if (comp._demo) showDemoCard();
+}
+
+/* =====================================================================
+ * External launch — a host app can open the studio with media already
+ * imported via ?import=<JSON [{url, name, type?, saveUrl?}]>; each url is
+ * fetched against this origin and fed through the normal import pipeline.
+ * An entry with saveUrl enables edit-and-save: the offline render is PUT
+ * back to that url, overwriting the original file. (The Electron viewer
+ * uses this: it serves the studio over studio:// and points entries at
+ * local-file routes on the same origin.)
+ * =================================================================== */
+
+/** Fit an auto-sized comp's duration to its content (never below one frame).
+ * Used by the edit-and-save flow so a 2s source doesn't render as the 12s
+ * default comp with trailing black — and so trimming a clip shorter also
+ * shortens the saved file. A manually-set duration (⚙ Comp) is respected. */
+function fitDurToContent() {
+  if (!comp._autoSize) return;
+  let end = 0;
+  for (const track of comp.tracks)
+    for (const clip of track.clips) end = Math.max(end, clipEnd(clip));
+  if (end > 0) comp.dur = Math.max(1 / comp.fps, Math.round(end * comp.fps) / comp.fps);
+}
+
+async function collectLaunchImports() {
+  let entries = null;
+  try { entries = JSON.parse(new URLSearchParams(location.search).get('import')); } catch {}
+  if (!Array.isArray(entries)) return { files: [], saveBack: null };
+  const files = [];
+  let saveBack = null;
+  for (const entry of entries) {
+    if (!entry?.url || !entry?.name) continue;
+    try {
+      setStatus(`fetching ${entry.name}…`);
+      const res = await fetch(entry.url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      files.push(new File([blob], entry.name, { type: entry.type || blob.type }));
+      // saveName covers targets that differ from the import (an image saves
+      // as a video alongside the original: photo.jpg → photo.mp4).
+      if (entry.saveUrl && !saveBack)
+        saveBack = { url: entry.saveUrl, name: entry.saveName ?? entry.name };
+    } catch (e) {
+      console.warn('slangfx: launch import failed:', entry.url, e);
+    }
+  }
+  return { files, saveBack };
+}
+
+/** Boot-time counterpart of stashCurrent(): a launch import is about to
+ * replace the autosave slot, but the previous session only exists in
+ * storage (nothing is loaded yet), so stash the raw payload straight into
+ * the named-project store. Media blobs already live in IndexedDB keyed by
+ * asset id, shared across projects — only the JSON needs copying. */
+async function stashAutosavedProject() {
+  let data = null;
+  try { data = JSON.parse(localStorage.getItem(PROJECT_KEY)); } catch {}
+  if (!data?.comp || data.comp._demo) return;
+  if (!data.comp.tracks?.some((t) => t.clips?.length)) return;
+  const name = data.name ?? `Untitled ${new Date().toLocaleString()}`;
+  try {
+    await idbSet(`project:${name}`, JSON.stringify(data));
+    const idx = projectIndex().filter((p) => p.name !== name);
+    idx.unshift({ name, savedAt: Date.now() });
+    localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx.slice(0, 20)));
+  } catch (e) {
+    console.warn('slangfx: could not stash previous session:', e);
+  }
 }
 
 /* =====================================================================
@@ -1844,6 +2330,17 @@ function projectIndex() {
 function updateProjectButton() {
   $('btn-project').textContent = `☰ ${projectName ?? 'untitled'}`;
   document.title = `${projectName ?? 'untitled'} — Lowkey Studio`;
+  updateSaveBackButton();
+}
+
+/** Edit-and-save: visible only when the current comp was launched by a host
+ * app with a writable original (comp._saveBack rides in the project data). */
+function updateSaveBackButton() {
+  const btn = $('btn-save-back');
+  const target = comp._saveBack;
+  btn.hidden = !target;
+  if (target)
+    btn.title = `Render the comp and save it to ${target.name}, replacing that file if it exists`;
 }
 
 function relTimeLabel(ts) {
@@ -2089,12 +2586,23 @@ function prepareMaskNode(node) {
 }
 
 /* ---- media clip masks ------------------------------------------------
- * Media clips share the same node stack model as fx layers, but the result
- * multiplies the clip's ALPHA when it composites (true green-screen: keyed
- * pixels go transparent and lower tracks show through). The engine owns fx
- * mask GPU state; media mask GPU state is owned here. */
+ * Media clips share the same node stack model (clipMasks) as fx clips, but
+ * the result multiplies the clip's ALPHA when it composites (true
+ * green-screen: keyed pixels go transparent and lower tracks show
+ * through). The engine owns the GPU state for an fx clip's group mask;
+ * media mask GPU state is owned here. */
 
-const mediaMasks = new Map();   // media clipId -> { maskState, tex, view, w, h }
+const mediaMaskTargets = new Map();   // media clipId -> { tex, view, w, h }
+
+function ensureMediaMaskTarget(clipId) {
+  let entry = mediaMaskTargets.get(clipId);
+  if (!entry) {
+    entry = { tex: null, view: null, w: 0, h: 0 };
+    mediaMaskTargets.set(clipId, entry);
+  }
+  ensureMediaMaskTex(entry);
+  return entry;
+}
 
 function ensureMediaMaskTex(entry) {
   if (!entry.tex || entry.w !== comp.width || entry.h !== comp.height) {
@@ -2114,10 +2622,10 @@ function ensureMediaMaskTex(entry) {
 /** (Re)create GPU state for a media clip's mask nodes — the app-side twin
  * of the engine's _buildLayerMask. */
 function buildMediaMaskGpu(clipId) {
-  const entry = mediaMasks.get(clipId);
-  if (!entry || !fx?.device) return;
-  ensureMediaMaskTex(entry);
-  for (const node of entry.maskState.nodes) {
+  const maskState = clipMasks.get(clipId);
+  if (!maskState || !fx?.device) return;
+  ensureMediaMaskTarget(clipId);
+  for (const node of maskState.nodes) {
     node._optsBuf?.destroy();
     node._tex?.destroy();
     node._optsBuf = fx.device.createBuffer({
@@ -2150,27 +2658,27 @@ function destroyMaskNodeGpu(node) {
   if (t) { t.tex.destroy(); matteTargets.delete(node.id); }
 }
 
-function destroyMediaMaskEntry(clipId) {
-  const entry = mediaMasks.get(clipId);
-  if (!entry) return;
-  for (const node of entry.maskState.nodes) destroyMaskNodeGpu(node);
-  entry.tex?.destroy();
-  mediaMasks.delete(clipId);
+/** Drop a clip's mask entirely: node GPU state (whoever owns it), the
+ * media compose target, and the live stack. */
+function destroyClipMask(clipId) {
+  const maskState = clipMasks.get(clipId);
+  for (const node of maskState?.nodes ?? []) destroyMaskNodeGpu(node);
+  if (maskState) fx?.maskComposer?.destroyPost(maskState);
+  clipMasks.delete(clipId);
+  const target = mediaMaskTargets.get(clipId);
+  if (target) { target.tex?.destroy(); mediaMaskTargets.delete(clipId); }
 }
 
 /** Clip entries for every layer-sourced mask node active at t (fed to the
  * offline exporter's exact seek alongside the visible media). */
 function matteSourceClips(t) {
   const out = [];
-  const collect = (nodes) => {
-    for (const node of nodes ?? []) {
+  for (const maskState of clipMasks.values())
+    for (const node of maskState?.nodes ?? []) {
       if (!node.sourceClipId || node.enabled === false) continue;
       const hit = findClip(comp, node.sourceClipId);
       if (hit && t >= hit.clip.start && t < clipEnd(hit.clip)) out.push({ clip: hit.clip });
     }
-  };
-  for (const layer of fx.layers) collect(layer.maskState?.nodes);
-  for (const entry of mediaMasks.values()) collect(entry.maskState?.nodes);
   return out;
 }
 
@@ -2206,30 +2714,29 @@ function prepareNodeSources(nodes, t, getEncoder) {
     node.active = true;
     const tgt = ensureMatteTarget(node);
     // ':matte' keys a separate compositor item so the raw matte draw does
-    // not fight the clip's on-screen draw over one uniform buffer.
+    // not fight the clip's on-screen draw over one uniform buffer. Mattes
+    // are raw content — the clip's blend mode does not apply.
     compositor.composite(getEncoder(), tgt.view, comp.width, comp.height,
-      [{ ...d, clipId: d.clipId + ':matte', maskView: null }], { transparent: true });
+      [{ ...d, clipId: d.clipId + ':matte', maskView: null, blend: 'normal' }], { transparent: true });
   }
 }
 
-/** Per-frame mask prep for both fx layers and media clips. Media stacks
- * compose here (before compositeFrame samples them); fx stacks compose
- * inside fx.render(). */
+/** Per-frame mask prep for every clip carrying a mask. Media stacks
+ * compose here (before compositeFrame samples them); an fx clip's group
+ * mask composes inside fx.render(), so it only needs its node sources. */
 function prepareMasks(t) {
   let encoder = null;
   const getEncoder = () => (encoder ??= fx.device.createCommandEncoder());
-  for (const layer of fx.layers) {
-    const nodes = layer.maskState?.nodes;
-    if (nodes?.length) prepareNodeSources(nodes, t, getEncoder);
-  }
-  for (const [clipId, entry] of mediaMasks) {
-    const nodes = entry.maskState?.nodes;
+  for (const [clipId, maskState] of clipMasks) {
+    const nodes = maskState?.nodes;
     if (!nodes?.length) continue;
-    const hit = findClip(comp, clipId);
-    if (!hit || t < hit.clip.start || t >= clipEnd(hit.clip)) continue;
+    const clip = findClip(comp, clipId)?.clip;
+    if (!clip || t < clip.start || t >= clipEnd(clip)) continue;
     prepareNodeSources(nodes, t, getEncoder);
-    ensureMediaMaskTex(entry);
-    fx.maskComposer.encode(getEncoder(), { maskState: entry.maskState, maskView: entry.view });
+    if (clip.kind !== 'media') continue;
+    const entry = ensureMediaMaskTarget(clipId);
+    fx.maskComposer.encode(getEncoder(),
+      { maskState, maskView: entry.view, maskW: entry.w, maskH: entry.h });
   }
   if (encoder) fx.device.queue.submit([encoder.finish()]);
 }
@@ -2323,7 +2830,7 @@ function stampBrush(ctx, x, y, erase) {
 }
 
 function maskStateFor(clipId) {
-  return fxSpecs.get(clipId)?.maskState ?? mediaMasks.get(clipId)?.maskState ?? null;
+  return clipMasks.get(clipId) ?? null;
 }
 
 function maskEditNode() {
@@ -2333,14 +2840,13 @@ function maskEditNode() {
 
 /** Push a paint node's canvas to the GPU after a stroke or clear. */
 function uploadPaintNode(clipId, node) {
-  if (mediaMasks.has(clipId)) {
+  if (mediaMaskTargets.has(clipId)) {
     if (node?._tex && node.source)
       fx.device.queue.copyExternalImageToTexture(
         { source: node.source }, { texture: node._tex }, [comp.width, comp.height]);
     return;
   }
-  const idx = activeIndexOfClip(clipId);
-  if (idx >= 0) fx.updateLayerMask(idx);
+  fx.updateGroupMask(clipId);   // fx clip: the engine owns the group's mask
 }
 
 function pushMaskToGpu() {
@@ -2413,6 +2919,38 @@ function overlayToMedia(e) {
   ];
 }
 
+/* Brush-size cursor: while the brush tool paints, the native cursor is
+ * replaced by a circle matching the brush's on-screen diameter, so the
+ * stroke footprint is visible before committing it. Gradient tools keep
+ * the crosshair. */
+const brushCursor = document.createElement('div');
+brushCursor.id = 'brush-cursor';
+brushCursor.hidden = true;
+$('canvas-inner').appendChild(brushCursor);
+let brushCursorPos = null;   // last pointer [clientX, clientY] over the overlay
+
+function updateBrushCursor() {
+  const active = maskEdit && brush.tool === 'brush';
+  maskOverlay.style.cursor = active ? 'none' : '';
+  if (!active || !brushCursorPos) {
+    brushCursor.hidden = true;
+    return;
+  }
+  const rect = maskOverlay.getBoundingClientRect();
+  const innerR = $('canvas-inner').getBoundingClientRect();
+  const d = brush.size * (rect.width / comp.width);   // comp px → screen px
+  brushCursor.style.width = `${d}px`;
+  brushCursor.style.height = `${d}px`;
+  brushCursor.style.left = `${brushCursorPos[0] - innerR.left - d / 2}px`;
+  brushCursor.style.top = `${brushCursorPos[1] - innerR.top - d / 2}px`;
+  brushCursor.hidden = false;
+}
+
+maskOverlay.addEventListener('pointerleave', () => {
+  brushCursorPos = null;
+  updateBrushCursor();
+});
+
 let painting = false;
 let lastPt = null;
 
@@ -2429,6 +2967,8 @@ maskOverlay.addEventListener('pointerdown', (e) => {
 });
 maskOverlay.addEventListener('pointermove', (e) => {
   if (!maskEdit) return;
+  brushCursorPos = [e.clientX, e.clientY];
+  updateBrushCursor();
   if (gradState) {
     applyGradient(gradState.from, overlayToMedia(e));
     return;
@@ -2451,17 +2991,20 @@ maskOverlay.addEventListener('pointerup', (e) => {
 });
 
 async function startMaskEdit(clip, nodeId) {
-  if (clip.kind === 'fx' && activeIndexOfClip(clip.id) < 0) {
+  // The brush paints in comp space, so the clip has to be the thing on
+  // screen. (An empty or still-compiling stack is fine — the canvas is
+  // app-side and the GPU picks it up on the next rebuild.)
+  if (tCur < clip.start || tCur >= clipEnd(clip)) {
     setStatus('move the playhead over this clip to edit its mask');
     return;
   }
   if (viewer.classList.contains('size-cover')) setViewMode('fit');
-  if (clip.kind === 'fx') specFor(clip);
   const node = maskStateFor(clip.id)?.nodes.find((n) => n.id === nodeId);
   if (!node?.source) return;
   maskEdit = { clipId: clip.id, nodeId };
   rebuildRuby(node.source);
   document.body.classList.add('mask-editing');
+  updateBrushCursor();
   setStatus(clip.kind === 'media'
     ? 'painting mask — red = clip hidden'
     : 'painting mask — red = effect hidden');
@@ -2472,6 +3015,7 @@ function stopMaskEdit() {
   maskEdit = null;
   painting = false;
   document.body.classList.remove('mask-editing');
+  updateBrushCursor();
   renderInspector();
 }
 
@@ -2489,11 +3033,13 @@ function rescaleMasks() {
       if (node.sourceClipId && fx?.device) ensureMatteTarget(node);
     }
   };
-  for (const spec of fxSpecs.values()) rescaleNodes(spec.maskState?.nodes);
-  for (const [clipId, entry] of mediaMasks) {
-    rescaleNodes(entry.maskState?.nodes);
-    buildMediaMaskGpu(clipId);   // node textures + mask target track comp size
+  for (const [clipId, maskState] of clipMasks) {
+    rescaleNodes(maskState?.nodes);
+    // Media mask node textures + compose target track the comp size; fx
+    // clip masks are rebuilt by the engine on the next chain rebuild.
+    if (findClip(comp, clipId)?.clip.kind === 'media') buildMediaMaskGpu(clipId);
   }
+  resizeMediaChains();   // private chains render at comp resolution too
 }
 
 /* =====================================================================
@@ -2517,6 +3063,9 @@ $('canvas-inner').appendChild(gizmo);
 function gizmoTarget() {
   const clip = timeline?.selectedClip;
   if (!clip || clip.kind !== 'media' || maskEdit) return null;
+  // While a shape draw is armed the pointer belongs to the draw, not to the
+  // selected layer's handles.
+  if (shapeDraw) return null;
   if (trackOf(comp, clip)?.hidden) return null;
   const asset = assets.get(clip.assetId);
   if (!asset?.ready) return null;
@@ -2821,6 +3370,544 @@ gizmo.addEventListener('contextmenu', (e) => {
 });
 
 /* =====================================================================
+ * Shape layers — media clips whose texture is a canvas-drawn vector
+ * shape (preset + fill color), redrawn whenever the settings change.
+ * Picked from the Add menu, then drawn onto the viewport as a new layer.
+ * They stay kind:'media' so transforms, masks, mattes, the gizmo, and
+ * the exporter all treat them like any other still.
+ * =================================================================== */
+
+const SHAPE_TEX_SIZE = 1024;
+let lastShapeColor = '#4da3ff';
+
+/* Each preset appends its outline to the current path inside (x,y,w,h). */
+const SHAPE_PRESETS = {
+  rect: { label: 'Rectangle', icon: '▮', path: (c, x, y, w, h) => c.rect(x, y, w, h) },
+  rounded: {
+    label: 'Rounded rectangle', icon: '▢',
+    path: (c, x, y, w, h) => c.roundRect(x, y, w, h, Math.min(w, h) * 0.14),
+  },
+  ellipse: {
+    label: 'Ellipse', icon: '⬤',
+    path: (c, x, y, w, h) => c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, Math.PI * 2),
+  },
+  triangle: {
+    label: 'Triangle', icon: '▲',
+    path: (c, x, y, w, h) => {
+      c.moveTo(x + w / 2, y);
+      c.lineTo(x + w, y + h);
+      c.lineTo(x, y + h);
+      c.closePath();
+    },
+  },
+  diamond: {
+    label: 'Diamond', icon: '◆',
+    path: (c, x, y, w, h) => {
+      c.moveTo(x + w / 2, y);
+      c.lineTo(x + w, y + h / 2);
+      c.lineTo(x + w / 2, y + h);
+      c.lineTo(x, y + h / 2);
+      c.closePath();
+    },
+  },
+  star: {
+    label: 'Star', icon: '★',
+    path: (c, x, y, w, h) => {
+      const cx = x + w / 2, cy = y + h / 2;
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 === 0 ? 1 : 0.42;
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const px = cx + Math.cos(a) * r * (w / 2);
+        const py = cy + Math.sin(a) * r * (h / 2);
+        if (i === 0) c.moveTo(px, py);
+        else c.lineTo(px, py);
+      }
+      c.closePath();
+    },
+  },
+  heart: {
+    label: 'Heart', icon: '♥',
+    path: (c, x, y, w, h) => {
+      const cx = x + w / 2;
+      const top = h * 0.3;
+      c.moveTo(cx, y + top);
+      c.bezierCurveTo(cx, y, x, y, x, y + top);
+      c.bezierCurveTo(x, y + (h + top) / 2, cx, y + (h + top) / 2, cx, y + h);
+      c.bezierCurveTo(cx, y + (h + top) / 2, x + w, y + (h + top) / 2, x + w, y + top);
+      c.bezierCurveTo(x + w, y, cx, y, cx, y + top);
+    },
+  },
+  arrow: {
+    label: 'Arrow', icon: '➜',
+    path: (c, x, y, w, h) => {
+      c.moveTo(x, y + h * 0.3);
+      c.lineTo(x + w * 0.55, y + h * 0.3);
+      c.lineTo(x + w * 0.55, y);
+      c.lineTo(x + w, y + h * 0.5);
+      c.lineTo(x + w * 0.55, y + h);
+      c.lineTo(x + w * 0.55, y + h * 0.7);
+      c.lineTo(x, y + h * 0.7);
+      c.closePath();
+    },
+  },
+};
+
+/** A shape entry: a preset + fill drawn into `rect` of the layer's texture,
+ * in UNIT space (0..1, y down) so it survives the layer being rescaled. */
+function newShape(presetId, color, rect = { x: 0, y: 0, w: 1, h: 1 }) {
+  return { id: uid('shp'), preset: presetId, color, ...rect };
+}
+
+/** True for a shape layer — a media clip whose texture we draw ourselves. */
+function isShapeClip(clip) {
+  return clip?.kind === 'media' && Array.isArray(clip.shapes) && clip.shapes.length > 0;
+}
+
+/** Render every shape of a layer into one texture-sized canvas. Later
+ * entries paint over earlier ones, so array order IS z-order. */
+function drawShapeCanvas(shapes) {
+  const s = SHAPE_TEX_SIZE;
+  const c = document.createElement('canvas');
+  c.width = c.height = s;
+  const ctx2d = c.getContext('2d');
+  // Tiny inset so the anti-aliased edge isn't clipped by the texture border.
+  // Applied per shape (rather than to the texture) now that a shape can sit
+  // anywhere in the square — only ones touching the border need it, and 0.4%
+  // is imperceptible on the ones that don't.
+  const inset = s * 0.004;
+  for (const shape of shapes) {
+    const x = shape.x * s + inset;
+    const y = shape.y * s + inset;
+    const w = Math.max(1, shape.w * s - 2 * inset);
+    const h = Math.max(1, shape.h * s - 2 * inset);
+    ctx2d.fillStyle = shape.color;
+    ctx2d.beginPath();
+    (SHAPE_PRESETS[shape.preset] ?? SHAPE_PRESETS.rect).path(ctx2d, x, y, w, h);
+    ctx2d.fill();
+  }
+  return c;
+}
+
+/** Give `clip` its own shape asset (keyed by clip id) and redraw the
+ * texture when the shapes no longer match what's uploaded. */
+function ensureShapeAsset(clip) {
+  const id = `shape:${clip.id}`;
+  clip.assetId = id;
+  let asset = assets.get(id);
+  if (!asset) {
+    const texture = fx.device.createTexture({
+      label: `shape layer ${clip.id}`,
+      size: [SHAPE_TEX_SIZE, SHAPE_TEX_SIZE],
+      format: 'rgba8unorm',
+      // RENDER_ATTACHMENT: required by copyExternalImageToTexture's
+      // GPU-canvas blit path.
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    asset = {
+      id, kind: 'shape', name: '', ready: false,
+      w: SHAPE_TEX_SIZE, h: SHAPE_TEX_SIZE, duration: null,
+      el: null, texture, view: texture.createView(),
+    };
+    assets.set(id, asset);
+  }
+  const key = clip.shapes
+    .map((s) => `${s.preset}|${s.color}|${s.x},${s.y},${s.w},${s.h}`).join(';');
+  if (asset._shapeKey !== key) {
+    asset._shapeKey = key;
+    asset.name = clip.shapes.length === 1
+      ? (SHAPE_PRESETS[clip.shapes[0].preset]?.label ?? 'Shape')
+      : `${clip.shapes.length} shapes`;
+    fx.device.queue.copyExternalImageToTexture(
+      { source: drawShapeCanvas(clip.shapes) },
+      { texture: asset.texture }, [SHAPE_TEX_SIZE, SHAPE_TEX_SIZE]);
+  }
+  asset.ready = true;
+  return asset;
+}
+
+/* Duplicated / split / undo-restored shape clips can reference another
+ * clip's asset (structuredClone copies assetId) or carry settings that no
+ * longer match the uploaded texture — re-key every shape clip to its own
+ * asset and redraw stale ones. Cheap: one string compare per shape clip. */
+function reconcileShapeAssets() {
+  if (!fx?.device) return;
+  for (const track of comp.tracks)
+    for (const clip of track.clips)
+      if (isShapeClip(clip)) ensureShapeAsset(clip);
+}
+
+/* -- layer footprint ---------------------------------------------------
+ *
+ * A shape layer's texture square IS its footprint: the box the gizmo draws
+ * and the transform scales. Shape rects are stored in that square's unit
+ * space, so after adding or removing a shape the box no longer hugs the
+ * content — and a shape drawn outside it would be clipped away entirely.
+ *
+ * refitShapeLayer shrink-wraps the square onto the union of the shapes and
+ * applies the inverse change to the clip transform, which leaves every shape
+ * exactly where it was on screen. Both halves of the compensation are affine
+ * (one scale, one offset), so they apply cleanly to keyframe values as well
+ * as to the static value.
+ */
+
+/** Add `d` to a property's value and to every keyframe on it. */
+function offsetProp(prop, d) {
+  if (!prop || !d) return;
+  prop.v += d;
+  for (const k of prop.keys ?? []) k.v += d;
+}
+
+/** Multiply a property's value and every keyframe on it by `k`. */
+function scaleProp(prop, k) {
+  if (!prop || k === 1) return;
+  prop.v *= k;
+  for (const key of prop.keys ?? []) key.v *= k;
+}
+
+function refitShapeLayer(clip) {
+  const shapes = clip.shapes;
+  if (!shapes?.length) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const s of shapes) {
+    x0 = Math.min(x0, s.x); y0 = Math.min(y0, s.y);
+    x1 = Math.max(x1, s.x + s.w); y1 = Math.max(y1, s.y + s.h);
+  }
+  const uw = x1 - x0, uh = y1 - y0;
+  if (!(uw > 1e-6 && uh > 1e-6)) return;
+  // Already shrink-wrapped (the common single-shape case) — don't churn the
+  // transform, and don't drift it by floating-point dust.
+  const EPS = 1e-6;
+  if (Math.abs(x0) < EPS && Math.abs(y0) < EPS &&
+      Math.abs(uw - 1) < EPS && Math.abs(uh - 1) < EPS) return;
+
+  for (const s of shapes) {
+    s.x = (s.x - x0) / uw;
+    s.w /= uw;
+    s.y = (s.y - y0) / uh;
+    s.h /= uh;
+  }
+
+  // The footprint grows by (uw, uh) about its own centre, which also moves;
+  // undo both on the transform. Scale is read at the current time, so with an
+  // ANIMATED scale the offset is only exact at the playhead — an acceptable
+  // corner (the alternative is refusing to refit animated layers at all).
+  const t = tCur - clip.start;
+  const sx = evalProp(clip.props.scaleX, t) / 100;
+  const sy = evalProp(clip.props.scaleY, t) / 100;
+  const rot = evalProp(clip.props.rot, t) * Math.PI / 180;
+  const dxLocal = ((x0 + x1) / 2 - 0.5) * SHAPE_TEX_SIZE * sx;
+  const dyLocal = ((y0 + y1) / 2 - 0.5) * SHAPE_TEX_SIZE * sy;
+  offsetProp(clip.props.x, dxLocal * Math.cos(rot) - dyLocal * Math.sin(rot));
+  offsetProp(clip.props.y, dxLocal * Math.sin(rot) + dyLocal * Math.cos(rot));
+  scaleProp(clip.props.scaleX, uw);
+  scaleProp(clip.props.scaleY, uh);
+}
+
+/** Where a shape layer's texture square lands in comp pixels, right now.
+ * Signed width/height so a mirrored layer (negative scale) inverts too. */
+function shapeLayerFrame(clip) {
+  const t = tCur - clip.start;
+  return {
+    cx: evalProp(clip.props.x, t),
+    cy: evalProp(clip.props.y, t),
+    w: SHAPE_TEX_SIZE * (evalProp(clip.props.scaleX, t) / 100),
+    h: SHAPE_TEX_SIZE * (evalProp(clip.props.scaleY, t) / 100),
+    rot: evalProp(clip.props.rot, t) * Math.PI / 180,
+  };
+}
+
+/** Add a shape to an EXISTING layer from a rect drawn in comp pixels. The
+ * rect is pulled back through the layer's transform into unit space, then
+ * the footprint is refit so a shape dropped outside the layer's current box
+ * grows the box instead of falling off the edge of the texture. */
+function addShapeToLayer(clip, presetId, { cx, cy, w, h }) {
+  const f = shapeLayerFrame(clip);
+  if (!f.w || !f.h) { setStatus('layer is scaled to zero — can’t place a shape'); return; }
+  const ddx = cx - f.cx, ddy = cy - f.cy;
+  const lx = ddx * Math.cos(-f.rot) - ddy * Math.sin(-f.rot);
+  const ly = ddx * Math.sin(-f.rot) + ddy * Math.cos(-f.rot);
+  const uw = w / Math.abs(f.w), uh = h / Math.abs(f.h);
+  const shape = newShape(presetId, lastShapeColor, {
+    x: lx / f.w + 0.5 - uw / 2,
+    y: ly / f.h + 0.5 - uh / 2,
+    w: uw,
+    h: uh,
+  });
+  history.record(comp, () => {
+    clip.shapes.push(shape);
+    refitShapeLayer(clip);
+  });
+  ensureShapeAsset(clip);
+  timeline.selectClip(clip.id);
+  onModelChange({ structural: false });
+  setStatus(`added a ${(SHAPE_PRESETS[presetId]?.label ?? 'shape').toLowerCase()} to ${clip.name}`);
+}
+
+/* -- draw-to-create interaction --------------------------------------- */
+
+// { preset, label, targetId } armed; + { start, d } once dragging.
+// targetId names an existing shape layer to append to; null = new layer.
+let shapeDraw = null;
+const shapeRect = document.createElement('div');
+shapeRect.id = 'shape-draw-rect';
+shapeRect.hidden = true;
+$('canvas-inner').appendChild(shapeRect);
+
+function armShapeDraw(presetId, targetId = null) {
+  stopMaskEdit();
+  const label = SHAPE_PRESETS[presetId]?.label ?? 'shape';
+  shapeDraw = { preset: presetId, label, targetId };
+  viewer.classList.add('shape-drawing');
+  // The gizmo would sit under the pointer while drawing; gizmoTarget() bows
+  // out for as long as a draw is armed, so just refresh it.
+  updateGizmo();
+  const where = targetId
+    ? `onto ${findClip(comp, targetId)?.clip.name ?? 'the layer'}`
+    : 'as a new layer';
+  setStatus(`drag on the preview to draw a ${label.toLowerCase()} ${where} (Shift = square, click = default size) — Esc cancels`);
+}
+
+function cancelShapeDraw() {
+  if (!shapeDraw) return;
+  shapeDraw = null;
+  shapeRect.hidden = true;
+  viewer.classList.remove('shape-drawing');
+  window.removeEventListener('pointermove', shapeDrawMove);
+  updateGizmo();   // the selected layer gets its handles back
+}
+
+function shapeDragRect(e) {
+  let [sx, sy] = shapeDraw.start;
+  let ex = e.clientX, ey = e.clientY;
+  if (e.shiftKey) {
+    const dx = ex - sx, dy = ey - sy;
+    const m = Math.max(Math.abs(dx), Math.abs(dy));
+    ex = sx + Math.sign(dx || 1) * m;
+    ey = sy + Math.sign(dy || 1) * m;
+  }
+  return { left: Math.min(sx, ex), top: Math.min(sy, ey), w: Math.abs(ex - sx), h: Math.abs(ey - sy) };
+}
+
+// Capture phase so an armed draw wins over viewport selection/deselection.
+viewer.addEventListener('pointerdown', (e) => {
+  if (!shapeDraw || maskEdit || e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+  shapeDraw.start = [e.clientX, e.clientY];
+  shapeDraw.d = canvasDisplayRect();
+  window.addEventListener('pointermove', shapeDrawMove);
+  window.addEventListener('pointerup', shapeDrawUp, { once: true });
+}, { capture: true });
+
+function shapeDrawMove(e) {
+  if (!shapeDraw?.start) return;
+  const r = shapeDragRect(e);
+  const innerR = $('canvas-inner').getBoundingClientRect();
+  shapeRect.style.left = `${r.left - innerR.left}px`;
+  shapeRect.style.top = `${r.top - innerR.top}px`;
+  shapeRect.style.width = `${r.w}px`;
+  shapeRect.style.height = `${r.h}px`;
+  shapeRect.hidden = false;
+}
+
+function shapeDrawUp(e) {
+  const g = shapeDraw;
+  if (!g?.start) { cancelShapeDraw(); return; }
+  const r = shapeDragRect(e);
+  const d = g.d;
+  let w = r.w / d.s, h = r.h / d.s;
+  let cx = (r.left + r.w / 2 - d.left) / d.s;
+  let cy = (r.top + r.h / 2 - d.top) / d.s;
+  if (w < 4 || h < 4) {
+    // A plain click drops a default-sized shape at the point.
+    w = h = Math.min(comp.width, comp.height) * 0.35;
+    cx = (e.clientX - d.left) / d.s;
+    cy = (e.clientY - d.top) / d.s;
+  }
+  const preset = g.preset;
+  const target = g.targetId ? findClip(comp, g.targetId)?.clip : null;
+  cancelShapeDraw();
+  if (target && isShapeClip(target)) addShapeToLayer(target, preset, { cx, cy, w, h });
+  else createShapeClip(preset, cx, cy, w, h);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && shapeDraw) {
+    cancelShapeDraw();
+    setStatus('shape cancelled');
+  }
+});
+
+/** New shape clip on a new top track, sized/positioned from the drawn
+ * rect (comp px). Spans the whole timeline like an imported image. */
+function createShapeClip(presetId, cx, cy, w, h) {
+  const props = {};
+  for (const [key, , def] of MEDIA_PROPS) props[key] = newProp(def(comp));
+  const clip = {
+    id: uid('clip'),
+    kind: 'media',
+    name: SHAPE_PRESETS[presetId]?.label ?? 'Shape',
+    assetId: null,
+    start: 0,
+    dur: Math.max(1 / comp.fps, comp.dur),
+    in: 0,
+    // One shape filling the layer's texture square; more can be drawn into
+    // the same layer later, each with its own rect (see addShapeToLayer).
+    shapes: [newShape(presetId, lastShapeColor)],
+    props,
+    effects: [],
+    mask: null,
+  };
+  clip.props.x.v = Math.round(cx);
+  clip.props.y.v = Math.round(cy);
+  clip.props.scaleX.v = Math.round((w / SHAPE_TEX_SIZE) * 10000) / 100;
+  clip.props.scaleY.v = Math.round((h / SHAPE_TEX_SIZE) * 10000) / 100;
+  ensureShapeAsset(clip);
+  history.record(comp, () => {
+    const track = newTrack(clip.name);
+    track.clips.push(clip);
+    comp.tracks.unshift(track);
+    ensureDur(comp);
+  });
+  timeline.selectClip(clip.id);
+  onModelChange({ structural: true });
+  setStatus(`added ${clip.name.toLowerCase()} — + Shape in the inspector adds more to this layer`);
+}
+
+/* -- inspector section -------------------------------------------------
+ * One row per shape (they stack in array order, last on top) plus the
+ * + Shape button that arms a draw onto THIS layer. */
+
+function renderShapeSection(clip) {
+  const box = document.createElement('div');
+  box.className = 'shape-controls';
+
+  const head = document.createElement('div');
+  head.className = 'shape-head';
+  const h = document.createElement('h3');
+  h.textContent = clip.shapes.length > 1 ? `Shapes (${clip.shapes.length})` : 'Shape';
+  const add = document.createElement('button');
+  add.className = 'btn';
+  add.textContent = '+ Shape';
+  add.title = 'draw another shape into this layer';
+  add.onclick = () => openShapePicker(add, (pid) => armShapeDraw(pid, clip.id));
+  head.append(h, add);
+  box.appendChild(head);
+
+  clip.shapes.forEach((shape, i) => {
+    const row = document.createElement('div');
+    row.className = 'shape-row';
+
+    const sel = document.createElement('select');
+    sel.title = 'shape preset';
+    for (const [pid, p] of Object.entries(SHAPE_PRESETS)) {
+      const o = document.createElement('option');
+      o.value = pid;
+      o.textContent = `${p.icon} ${p.label}`;
+      sel.appendChild(o);
+    }
+    sel.value = shape.preset;
+    sel.onchange = () => {
+      history.record(comp, () => {
+        const old = SHAPE_PRESETS[shape.preset]?.label;
+        shape.preset = sel.value;
+        // Auto-rename a single-shape layer, and only if the user hasn't.
+        if (clip.shapes.length === 1 && clip.name === old)
+          clip.name = SHAPE_PRESETS[sel.value]?.label ?? clip.name;
+      });
+      ensureShapeAsset(clip);
+      onModelChange({ structural: false });
+    };
+
+    const colLabel = document.createElement('label');
+    colLabel.className = 'shape-color';
+    const col = document.createElement('input');
+    col.type = 'color';
+    col.value = shape.color;
+    col.title = 'fill color';
+    let editing = false;   // one undo step per picker session
+    col.oninput = () => {
+      if (!editing) { history.begin(comp); editing = true; }
+      shape.color = col.value;
+      lastShapeColor = col.value;
+      ensureShapeAsset(clip);
+    };
+    col.onchange = () => {
+      if (editing) { history.commit(comp); editing = false; }
+      scheduleSave();
+    };
+    colLabel.append(col, 'fill');
+    row.append(sel, colLabel);
+
+    // Draw order only matters once shapes can overlap.
+    if (clip.shapes.length > 1) {
+      const move = (dir) => {
+        const b = document.createElement('button');
+        b.className = 'tl-mini';
+        b.textContent = dir < 0 ? '▲' : '▼';
+        b.title = dir < 0 ? 'move down the stack' : 'move up the stack';
+        b.disabled = i + dir < 0 || i + dir >= clip.shapes.length;
+        b.onclick = () => {
+          history.record(comp, () => {
+            const [s] = clip.shapes.splice(i, 1);
+            clip.shapes.splice(i + dir, 0, s);
+          });
+          ensureShapeAsset(clip);
+          onModelChange({ structural: false });
+        };
+        return b;
+      };
+      const del = document.createElement('button');
+      del.className = 'tl-mini';
+      del.textContent = '✕';
+      del.title = 'remove this shape';
+      del.onclick = () => {
+        history.record(comp, () => {
+          clip.shapes.splice(i, 1);
+          refitShapeLayer(clip);
+        });
+        ensureShapeAsset(clip);
+        onModelChange({ structural: false });
+      };
+      row.append(move(-1), move(1), del);
+    }
+
+    box.appendChild(row);
+  });
+
+  inspectorEl.appendChild(box);
+}
+
+/** Small popover listing the shape presets. Used by + Shape (adds to a
+ * layer) and by + Layer (starts a new one). */
+function openShapePicker(anchor, onPick) {
+  document.querySelector('.shape-picker')?.remove();
+  const pop = document.createElement('div');
+  pop.className = 'shape-picker menu-pop';
+  const list = document.createElement('div');
+  list.className = 'add-layer-list open';
+  pop.appendChild(list);
+
+  const close = () => { pop.remove(); document.removeEventListener('pointerdown', onDown, true); };
+  for (const [pid, p] of Object.entries(SHAPE_PRESETS)) {
+    const it = document.createElement('div');
+    it.className = 'menu-item';
+    const span = document.createElement('span');
+    span.textContent = `${p.icon} ${p.label}`;
+    it.appendChild(span);
+    it.onclick = () => { close(); onPick(pid); };
+    list.appendChild(it);
+  }
+  const onDown = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
+  document.addEventListener('pointerdown', onDown, true);
+
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - 260))}px`;
+  pop.style.top = `${r.bottom + 4}px`;
+  document.body.appendChild(pop);
+}
+
+/* =====================================================================
  * Overlay textures (stamp images + rendered titles)
  * =================================================================== */
 
@@ -2850,16 +3937,16 @@ function renderTitleCanvas({ text, font, sizePx, color, outline }) {
   return c;
 }
 
-function applyOverlaySource(clip, texName, source, descriptor) {
-  const spec = specFor(clip);
+function applyOverlaySource(clip, effect, texName, source, descriptor) {
+  const spec = specFor(clip, effect);
   (spec.textureOverrides ??= {})[texName] = source;
-  (clip.overlay ??= {})[texName] = descriptor;
-  chainDirty = true;
+  (effect.overlay ??= {})[texName] = descriptor;
+  markChainDirty(clip.id);
   scheduleSave();
 }
 
 const stampFileInput = $('stamp-file-input');
-let stampPickTarget = null;   // { clipId, texName }
+let stampPickTarget = null;   // { clipId, effectId, texName }
 
 stampFileInput.addEventListener('change', async () => {
   const f = stampFileInput.files[0];
@@ -2868,14 +3955,15 @@ stampFileInput.addEventListener('change', async () => {
   stampPickTarget = null;
   if (!f || !target) return;
   const hit = findClip(comp, target.clipId);
-  if (!hit) return;
+  const effect = hit && findEffect(hit.clip, target.effectId);
+  if (!effect) return;
   const bmp = await createImageBitmap(f);
   const c = document.createElement('canvas');
   c.width = bmp.width;
   c.height = bmp.height;
   c.getContext('2d').drawImage(bmp, 0, 0);
   const dataURL = c.toDataURL('image/png');
-  applyOverlaySource(hit.clip, target.texName, bmp,
+  applyOverlaySource(hit.clip, effect, target.texName, bmp,
     { kind: 'image', dataURL: dataURL.length > 2_000_000 ? null : dataURL });
   renderInspector();
   setStatus(`${target.texName} texture replaced with ${f.name}`);
@@ -2923,12 +4011,28 @@ function categoryLabel(id) {
   return (manifest.categories ?? []).find((c) => c.id === id)?.label ?? id;
 }
 
-function rebuildAddMenu() {
-  const q = addLayerSearch.value.trim().toLowerCase();
-  addLayerList.replaceChildren();
+/**
+ * Fill `list` with the searchable effect catalogue. Shared by the toolbar's
+ * ＋ box and the inspector's + Effect picker — both of which append to a
+ * clip's stack; only the target differs (the focused layer vs. the row's own
+ * clip). Layers themselves are made with + Layer, so nothing here creates
+ * one.
+ * @param {object} opts {query, onPick, folders:Set, rerender, shapes:boolean,
+ *                       header:string}
+ */
+function renderChoiceList(list, { query, onPick, folders, rerender, header = null }) {
+  const q = query.trim().toLowerCase();
+  list.replaceChildren();
   const savedList = Object.keys(loadSaved()).sort();
 
-  const addItem = (label, onPick, note = null) => {
+  if (header) {
+    const h = document.createElement('div');
+    h.className = 'menu-target';
+    h.textContent = header;
+    list.appendChild(h);
+  }
+
+  const addItem = (label, choice, note = null) => {
     const it = document.createElement('div');
     it.className = 'menu-item';
     const span = document.createElement('span');
@@ -2940,8 +4044,8 @@ function rebuildAddMenu() {
       n.textContent = note;
       it.appendChild(n);
     }
-    it.addEventListener('click', () => { closeAddMenu(); addChoice(onPick); });
-    addLayerList.appendChild(it);
+    it.addEventListener('click', () => onPick(choice));
+    list.appendChild(it);
   };
 
   if (q) {
@@ -2957,11 +4061,11 @@ function rebuildAddMenu() {
       if (eff.name.toLowerCase().includes(q) || cat.toLowerCase().includes(q))
         addItem(eff.name, eff.path, cat);
     }
-    if (!addLayerList.children.length) {
+    if (!list.querySelector('.menu-item')) {
       const none = document.createElement('div');
       none.className = 'menu-empty';
       none.textContent = 'no matches';
-      addLayerList.appendChild(none);
+      list.appendChild(none);
     }
     return;
   }
@@ -2971,7 +4075,7 @@ function rebuildAddMenu() {
 
   const folder = (id, label, children) => {
     if (!children.length) return;
-    const open = openFolders.has(id);
+    const open = folders.has(id);
     const head = document.createElement('div');
     head.className = 'menu-folder';
     const title = document.createElement('span');
@@ -2981,11 +4085,11 @@ function rebuildAddMenu() {
     count.textContent = String(children.length);
     head.append(title, count);
     head.addEventListener('click', () => {
-      if (open) openFolders.delete(id);
-      else openFolders.add(id);
-      rebuildAddMenu();
+      if (open) folders.delete(id);
+      else folders.add(id);
+      rerender();
     });
-    addLayerList.appendChild(head);
+    list.appendChild(head);
     if (open) for (const c of children) addItem(c.label, c.choice, c.note);
   };
 
@@ -2998,28 +4102,143 @@ function rebuildAddMenu() {
         .map((e) => ({ label: e.name, choice: e.path })));
 }
 
-/** Create an fx clip at the playhead on a new top track. */
-async function addChoice(choice) {
-  if (!choice || !fx) return;
-  let spec;
-  let overlayTitle = false;
-  if (choice === '__custom__') {
-    spec = { fxKind: 'custom', source: CUSTOM_BOILERPLATE, label: 'custom shader' };
-  } else if (choice === '__title__') {
-    spec = { fxKind: 'preset', path: STAMP_PRESET_PATH, label: 'title' };
-    overlayTitle = true;
-  } else if (choice.startsWith('__saved__:')) {
-    const name = choice.slice('__saved__:'.length);
-    const saves = loadSaved();
-    if (!saves[name]) return;
-    spec = { fxKind: 'custom', source: saves[name].source, label: name, savedName: name };
-  } else {
-    spec = { fxKind: 'preset', path: choice, label: choice.split('/').pop().replace(/\.slangp$/, '') };
-  }
+/* The panel adds to the layer the inspector is focused on. Shapes are not
+ * in this list — they are layers, not effects, and live on + Layer (new
+ * layer) and the inspector's + Shape (another shape on this one). */
+function rebuildAddMenu() {
+  const target = timeline?.selectedClip ?? null;
+  renderChoiceList(addLayerList, {
+    query: addLayerSearch.value,
+    folders: openFolders,
+    rerender: rebuildAddMenu,
+    header: target
+      ? `adding to ${target.name}`
+      : 'no layer yet — this will create an adjustment layer',
+    onPick: (choice) => { closeAddMenu(); addEffectToFocusedLayer(choice); },
+  });
+}
 
-  // New effects cover the whole timeline; trim them down when needed.
-  const clip = newFxClip(spec, 0, Math.max(1 / comp.fps, comp.dur));
-  if (overlayTitle) clip.overlay = { Stamp: { kind: 'text', state: { ...DEFAULT_TITLE } } };
+/** Append the chosen effect to the focused layer. With nothing to add to
+ * (an empty comp) fall back to the old behaviour and make the layer. */
+function addEffectToFocusedLayer(choice) {
+  const clip = ensureFocusedLayer();
+  if (clip) addEffectToClip(clip, choice);
+  else addFxLayer(choice);
+}
+
+/** Keep the effect box's placeholder honest about where a pick will land. */
+function syncAddPlaceholder() {
+  if (!addLayerSearch) return;
+  const target = timeline?.selectedClip;
+  addLayerSearch.placeholder = target
+    ? `Add an effect to ${target.name}`
+    : 'Add an effect — search or browse';
+}
+
+/* ---- + Layer -------------------------------------------------------- */
+
+$('btn-add-layer').addEventListener('click', (e) => {
+  const anchor = e.currentTarget;
+  showMenu(anchor.getBoundingClientRect().left, anchor.getBoundingClientRect().bottom + 4, [
+    {
+      label: 'ƒx  Adjustment layer',
+      action: () => addFxLayer(null),
+    },
+    {
+      label: '◆  Shape layer…',
+      action: () => openShapePicker(anchor, (pid) => armShapeDraw(pid)),
+    },
+    {
+      label: 'T  Text / title layer',
+      action: () => addFxLayer('__title__'),
+    },
+  ]);
+});
+
+/* ---- + Effect picker (append to the selected clip's stack) ---------- */
+
+const pickerFolders = new Set();
+
+function openEffectPicker(clip, anchor) {
+  document.querySelector('.fx-picker')?.remove();
+  const pop = document.createElement('div');
+  pop.className = 'fx-picker menu-pop';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = 'search effects…';
+  search.className = 'fx-picker-search';
+  const list = document.createElement('div');
+  list.className = 'add-layer-list open';
+  pop.append(search, list);
+
+  const close = () => { pop.remove(); document.removeEventListener('pointerdown', onDown, true); };
+  const draw = () => renderChoiceList(list, {
+    query: search.value,
+    folders: pickerFolders,
+    rerender: draw,
+    onPick: (choice) => { close(); addEffectToClip(clip, choice); },
+  });
+  search.addEventListener('input', draw);
+  search.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') close();
+    else if (e.key === 'Enter') list.querySelector('.menu-item')?.click();
+  });
+  const onDown = (e) => { if (!pop.contains(e.target) && e.target !== anchor) close(); };
+  document.addEventListener('pointerdown', onDown, true);
+
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(r.left, innerWidth - 320))}px`;
+  pop.style.top = `${r.bottom + 4}px`;
+  document.body.appendChild(pop);
+  draw();
+  search.focus();
+}
+
+/** Resolve a menu choice to an effect spec (null for non-effect choices). */
+function effectSpecForChoice(choice) {
+  if (choice === '__custom__')
+    return { spec: { fxKind: 'custom', source: CUSTOM_BOILERPLATE, label: 'custom shader' } };
+  if (choice === '__title__')
+    return { spec: { fxKind: 'preset', path: STAMP_PRESET_PATH, label: 'title' }, title: true };
+  if (choice.startsWith('__saved__:')) {
+    const name = choice.slice('__saved__:'.length);
+    const saved = loadSaved()[name];
+    if (!saved) return null;
+    return { spec: { fxKind: 'custom', source: saved.source, label: name, savedName: name } };
+  }
+  return { spec: { fxKind: 'preset', path: choice, label: choice.split('/').pop().replace(/\.slangp$/, '') } };
+}
+
+/** Append an effect to an existing clip's stack. */
+async function addEffectToClip(clip, choice) {
+  const resolved = choice && fx && effectSpecForChoice(choice);
+  if (!resolved) return;
+  const effect = newEffect(resolved.spec);
+  if (resolved.title) effect.overlay = { Stamp: { kind: 'text', state: { ...DEFAULT_TITLE } } };
+  history.record(comp, () => { (clip.effects ??= []).push(effect); });
+  openEffects.add(effect.id);
+  onModelChange({ structural: true });
+  setStatus(`added ${effect.name} to ${clip.name} — compiling…`);
+  try {
+    await ensureParamMeta(clip, effect);
+    setStatus(`${effect.name} ready`);
+  } catch {
+    setStatus(`${effect.name} failed to compile — see inspector`);
+  }
+}
+
+/** New adjustment layer on a new top track. With `choice` it starts with
+ * that effect; without one it's an empty layer ready for the effect panel. */
+async function addFxLayer(choice) {
+  if (!fx) return;
+  const resolved = choice ? effectSpecForChoice(choice) : null;
+  if (choice && !resolved) return;
+
+  // New adjustment layers cover the whole timeline; trim them when needed.
+  const clip = newFxClip(resolved?.spec ?? null, 0, Math.max(1 / comp.fps, comp.dur));
+  const effect = clip.effects[0] ?? null;
+  if (resolved?.title) effect.overlay = { Stamp: { kind: 'text', state: { ...DEFAULT_TITLE } } };
 
   history.record(comp, () => {
     const track = newTrack(clip.name);
@@ -3030,10 +4249,16 @@ async function addChoice(choice) {
   timeline.selectClip(clip.id);
   timeline.expanded.add(clip.id);
   onModelChange({ structural: true });
+  if (!effect) {
+    setStatus(`added ${clip.name} — pick an effect above to fill it`);
+    addLayerSearch.focus();
+    return;
+  }
+  openEffects.add(effect.id);
   setStatus(`added ${clip.name} — compiling…`);
   const t0 = performance.now();
   try {
-    await ensureParamMeta(clip);
+    await ensureParamMeta(clip, effect);
     setStatus(`${clip.name} ready in ${Math.round(performance.now() - t0)} ms`);
   } catch (e) {
     setStatus(`${clip.name} failed to compile — see inspector`);
@@ -3044,21 +4269,21 @@ async function addChoice(choice) {
  * Custom shader compile
  * =================================================================== */
 
-const editorDrafts = new Map();   // clipId -> unsaved editor text
+const editorDrafts = new Map();   // effectId -> unsaved editor text
 
-async function compileCustomClip(clip, source) {
-  history.record(comp, () => { clip.source = source; });
-  const spec = specFor(clip);
+async function compileCustomEffect(clip, effect, source) {
+  history.record(comp, () => { effect.source = source; });
+  const spec = specFor(clip, effect);
   virtualFiles.set(spec.dir + 'custom.slang', source);
   fx.invalidateModules(spec.dir);
-  paramMetaCache.delete(clip.id);
-  chainDirty = true;
+  paramMetaCache.delete(effect.id);
+  markChainDirty(clip.id);
   setStatus('compiling custom shader…');
   const t0 = performance.now();
   try {
-    await ensureParamMeta(clip);
+    await ensureParamMeta(clip, effect);
     await syncFxChain(tCur);
-    const err = fxSpecs.get(clip.id)?.error;
+    const err = fxSpecs.get(effect.id)?.error;
     setStatus(err ? 'custom shader failed — see inspector'
                   : `custom shader compiled in ${Math.round(performance.now() - t0)} ms`);
   } catch {
@@ -3086,19 +4311,53 @@ function updateInspectorLive() {
 
 const fmtVal = (v) => (+v).toFixed(3).replace(/\.?0+$/, '') || '0';
 
+/* The inspector always has a layer in focus: it's the target for the effect
+ * panel, so "nothing selected" would leave picks with nowhere to go. When a
+ * selection would be empty we fall back to the topmost layer that's live at
+ * the playhead (else simply the topmost), which is what the eye is on.
+ *
+ * Modal viewport interactions are the exception — a shape draw deliberately
+ * hands the pointer to the canvas, and re-selecting under it would put the
+ * gizmo back in the way.
+ *
+ * @returns {object|null} the focused clip, or null when the comp is empty.
+ */
+function ensureFocusedLayer() {
+  if (!timeline) return null;
+  const current = timeline.selectedClip;
+  if (current || shapeDraw || maskEdit) return current;
+
+  let fallback = null;
+  for (const track of comp.tracks) {
+    if (track.hidden) continue;
+    for (const clip of track.clips) {
+      fallback ??= clip;
+      if (tCur >= clip.start && tCur < clipEnd(clip)) {
+        timeline.selectClip(clip.id, { quiet: true });
+        return clip;
+      }
+    }
+  }
+  if (fallback) timeline.selectClip(fallback.id, { quiet: true });
+  return fallback;
+}
+
 function renderInspector() {
   if (!timeline) return;
   inspLive.length = 0;
-  const clip = timeline.selectedClip;
+  const clip = ensureFocusedLayer();
+  syncAddPlaceholder();
   inspectorEl.replaceChildren();
 
   if (!clip) {
     const div = document.createElement('div');
     div.className = 'insp-empty';
     div.innerHTML = `
-      <p>Select a clip on the timeline to edit it.</p>
-      <p class="hint">· <b>Import media…</b> or drop files to create media clips<br>
-      · the <b>＋ search box</b> above adds effect clips<br>
+      <p>Nothing to edit yet — add a layer.</p>
+      <p class="hint">· <b>+ Layer</b> above makes an adjustment layer for effects,
+      or a shape you draw straight onto the preview<br>
+      · <b>Import media…</b> or drop files to create media clips<br>
+      · the <b>＋ search box</b> adds effects to the layer in focus<br>
       · ▸ on a clip twirls out its keyframable properties<br>
       · <b>⏱</b> starts animating a property; change its value at another
       time to add keyframes; right-click a ◆ for easing<br>
@@ -3118,8 +4377,9 @@ function renderInspector() {
   const kind = document.createElement('span');
   kind.className = 'insp-kind ' + clip.kind;
   kind.textContent = clip.kind === 'media'
-    ? (assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
-    : (clip.fxKind === 'custom' ? '✎' : 'ƒx');
+    ? (isShapeClip(clip) ? (SHAPE_PRESETS[clip.shapes[0].preset]?.icon ?? '◆')
+      : assets.get(clip.assetId)?.kind === 'image' ? '🖼' : '🎞')
+    : 'ƒx';
   const name = document.createElement('input');
   name.className = 'insp-name';
   name.value = clip.name;
@@ -3191,49 +4451,234 @@ function renderInspector() {
       ? `${asset.name} — ${asset.w}×${asset.h}${asset.duration ? ` · ${asset.duration.toFixed(2)}s` : ''}${asset.ready ? '' : ' (loading…)'}`
       : 'media offline — re-import the file';
     inspectorEl.appendChild(info);
+
+    /* -- blend mode (how the layer composites onto what's below it) -- */
+    const blendRow = document.createElement('label');
+    blendRow.className = 'insp-blend';
+    blendRow.textContent = 'blend';
+    const blendSel = document.createElement('select');
+    blendSel.title = 'how this layer combines with the layers below it';
+    for (const [id, label] of BLEND_MODES) {
+      const o = document.createElement('option');
+      o.value = id;
+      o.textContent = label;
+      blendSel.appendChild(o);
+    }
+    blendSel.value = clip.blend ?? 'normal';
+    blendSel.onchange = () => {
+      history.record(comp, () => { clip.blend = blendSel.value; });
+      onModelChange({ structural: false });
+    };
+    blendRow.appendChild(blendSel);
+    inspectorEl.appendChild(blendRow);
   }
 
-  /* -- error surface -- */
-  const spec = clip.kind === 'fx' ? fxSpecs.get(clip.id) : null;
-  const err = spec?.error || spec?.lastCompileError;
-  if (err) {
-    const e = document.createElement('div');
-    e.className = 'layer-error';
-    e.textContent = err;
-    inspectorEl.appendChild(e);
+  /* -- shape settings (preset + fill color) -- */
+  if (isShapeClip(clip)) renderShapeSection(clip);
+
+  /* -- mask (fx: gates the whole stack; media: cuts the clip's alpha) -- */
+  renderMaskSection(clip);
+
+  /* -- transform -- */
+  if (clip.kind === 'media') {
+    const video = assets.get(clip.assetId)?.kind === 'video';
+    const defs = mediaPropDefs().filter((d) => video || d.key !== 'volume');
+    inspectorEl.appendChild(paramBox(clip, defs, 'Transform'));
   }
 
-  /* -- custom shader editor -- */
-  if (clip.kind === 'fx' && clip.fxKind === 'custom') renderCustomEditor(clip);
+  /* -- effect stack -- */
+  renderEffectStack(clip);
+}
 
-  /* -- overlay texture controls (stamp/title presets) -- */
-  if (clip.kind === 'fx' && spec?.runtime?.preset?.textures?.length)
-    renderOverlayControls(clip, spec);
-
-  /* -- mask (fx: gates the effect; media: cuts the clip's alpha) -- */
-  if (clip.kind === 'fx' || clip.kind === 'media') renderMaskSection(clip);
-
-  /* -- properties -- */
-  const defs = propDefs(clip);
-  if (clip.kind === 'fx' && !defs.length && !err) {
-    const ld = document.createElement('div');
-    ld.className = 'insp-src';
-    ld.textContent = 'loading parameters…';
-    inspectorEl.appendChild(ld);
-  }
-  if (defs.length) {
-    const box = document.createElement('div');
-    box.className = 'insp-params';
+/** A titled block of animatable property rows (+ their driver panels). */
+function paramBox(clip, defs, title) {
+  const box = document.createElement('div');
+  box.className = 'insp-params';
+  if (title) {
     const h = document.createElement('h3');
-    h.textContent = clip.kind === 'media' ? 'Transform' : 'Parameters';
+    h.textContent = title;
     const hint = document.createElement('span');
     hint.className = 'hint';
     hint.textContent = '⏱ = animate';
     h.appendChild(hint);
     box.appendChild(h);
-    for (const def of defs) box.appendChild(paramRow(clip, def));
-    inspectorEl.appendChild(box);
   }
+  for (const def of defs) {
+    box.appendChild(paramRow(clip, def));
+    const dp = driverPanel(clip, def);
+    if (dp) box.appendChild(dp);
+  }
+  return box;
+}
+
+/* ---- effect stack UI -------------------------------------------------
+ * The heart of the adjustment-layer model: any clip owns an ordered stack.
+ * On an fx clip the stack processes everything below it; on a media clip
+ * it processes only that clip. Rows twirl open to reveal parameters, the
+ * custom-shader editor and overlay textures for that one effect. */
+
+const openEffects = new Set();   // effect ids twirled open in the inspector
+
+function renderEffectStack(clip) {
+  const box = document.createElement('div');
+  box.className = 'fx-stack';
+
+  const head = document.createElement('div');
+  head.className = 'fx-stack-head';
+  const title = document.createElement('h3');
+  title.textContent = 'Effects';
+  const hint = document.createElement('span');
+  hint.className = 'hint';
+  hint.textContent = clip.kind === 'fx'
+    ? 'applied to every layer below'
+    : 'applied to this clip only';
+  title.appendChild(hint);
+  const add = document.createElement('button');
+  add.className = 'btn';
+  add.textContent = '+ Effect';
+  add.title = 'add an effect to this clip’s stack';
+  add.onclick = () => openEffectPicker(clip, add);
+  head.append(title, add);
+  box.appendChild(head);
+
+  const effects = effectsOf(clip);
+  if (!effects.length) {
+    const empty = document.createElement('div');
+    empty.className = 'insp-src';
+    empty.textContent = clip.kind === 'fx'
+      ? 'empty adjustment layer — add an effect to make it do something'
+      : 'no effects on this clip';
+    box.appendChild(empty);
+  }
+  for (const effect of effects) box.appendChild(effectRow(clip, effect));
+
+  // Media stacks composite their processed result back over the frame;
+  // most shaders write alpha = 1 everywhere, so the result is clipped to
+  // the clip's own coverage unless the user wants the spill.
+  if (clip.kind === 'media' && effects.length) {
+    const spill = document.createElement('label');
+    spill.className = 'fx-spill';
+    spill.title = 'Composite the effect’s own alpha instead of clipping to the '
+      + 'media. Lets a glow or blur spread past the edges — but a shader that '
+      + 'writes alpha = 1 (most presets do) will then cover the whole frame.';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!clip.fxSpill;
+    cb.onchange = () => {
+      history.record(comp, () => { clip.fxSpill = cb.checked; });
+      onModelChange({ structural: false });
+    };
+    spill.append(cb, 'let effects spill outside the media');
+    box.appendChild(spill);
+  }
+
+  inspectorEl.appendChild(box);
+}
+
+function effectRow(clip, effect) {
+  const spec = fxSpecs.get(effect.id);
+  const err = spec?.error || spec?.lastCompileError;
+  const open = openEffects.has(effect.id);
+  const wrap = document.createElement('div');
+  wrap.className = 'fx-entry' + (open ? ' open' : '') +
+    (effect.enabled === false ? ' off' : '') + (err ? ' err' : '');
+
+  const row = document.createElement('div');
+  row.className = 'fx-entry-head';
+
+  const twirl = document.createElement('button');
+  twirl.className = 'tl-mini fx-twirl';
+  twirl.textContent = open ? '▾' : '▸';
+  twirl.title = 'show this effect’s parameters';
+  twirl.onclick = () => {
+    if (open) openEffects.delete(effect.id);
+    else openEffects.add(effect.id);
+    renderInspector();
+  };
+
+  const on = document.createElement('input');
+  on.type = 'checkbox';
+  on.className = 'fx-on';
+  on.checked = effect.enabled !== false;
+  on.title = 'bypass this effect';
+  on.onchange = () => {
+    history.record(comp, () => { effect.enabled = on.checked; });
+    onModelChange({ structural: true });
+  };
+
+  const badge = document.createElement('span');
+  badge.className = 'fx-badge';
+  badge.textContent = effect.fxKind === 'custom' ? '✎' : 'ƒx';
+
+  const name = document.createElement('input');
+  name.className = 'fx-name';
+  name.value = effect.name;
+  name.title = 'effect name';
+  name.addEventListener('keydown', (e) => e.stopPropagation());
+  name.addEventListener('change', () => {
+    history.record(comp, () => { effect.name = name.value.trim() || effect.name; });
+    onModelChange({ structural: false });
+  });
+
+  const move = (dir) => {
+    const b = document.createElement('button');
+    b.className = 'tl-mini';
+    b.textContent = dir < 0 ? '▲' : '▼';
+    b.title = dir < 0 ? 'apply earlier' : 'apply later';
+    const list = effectsOf(clip);
+    const i = list.indexOf(effect);
+    b.disabled = i + dir < 0 || i + dir >= list.length;
+    b.onclick = () => {
+      history.record(comp, () => {
+        const arr = clip.effects;
+        [arr[i], arr[i + dir]] = [arr[i + dir], arr[i]];
+      });
+      onModelChange({ structural: true });
+    };
+    return b;
+  };
+
+  const del = document.createElement('button');
+  del.className = 'tl-mini insp-del';
+  del.textContent = '✕';
+  del.title = 'remove this effect';
+  del.onclick = () => removeEffect(clip, effect);
+
+  row.append(twirl, on, badge, name, move(-1), move(1), del);
+  wrap.appendChild(row);
+
+  if (!open) return wrap;
+
+  if (err) {
+    const e = document.createElement('div');
+    e.className = 'layer-error';
+    e.textContent = err;
+    wrap.appendChild(e);
+  }
+  const body = document.createElement('div');
+  body.className = 'fx-entry-body';
+  if (effect.fxKind === 'custom') renderCustomEditor(clip, effect, body);
+  if (spec?.runtime?.preset?.textures?.length)
+    renderOverlayControls(clip, effect, spec, body);
+
+  const defs = effectPropDefs(clip, effect);
+  if (defs.length) body.appendChild(paramBox(clip, defs, null));
+  else if (!err) {
+    const ld = document.createElement('div');
+    ld.className = 'insp-src';
+    ld.textContent = 'loading parameters…';
+    body.appendChild(ld);
+  }
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function removeEffect(clip, effect) {
+  history.record(comp, () => {
+    clip.effects = effectsOf(clip).filter((e) => e !== effect);
+  });
+  onModelChange({ structural: true });   // gcEffectState frees the runtime
+  setStatus(`removed ${effect.name}`);
 }
 
 function paramRow(clip, def) {
@@ -3305,17 +4750,176 @@ function paramRow(clip, def) {
   keyBtn.title = 'add / remove keyframe at playhead';
   keyBtn.addEventListener('click', () => toggleKey(clip, def.key));
 
-  row.append(sw, label, slider, num, keyBtn);
+  const drv = document.createElement('button');
+  drv.className = 'tl-mini drv-toggle' + (prop?.driver?.enabled ? ' on' : '');
+  drv.textContent = '∿';
+  drv.title = prop?.driver
+    ? 'driver settings'
+    : 'drive this value with an oscillator or audio (beats, levels)';
+  drv.addEventListener('click', () => toggleDriver(clip, def));
+
+  row.append(sw, label, slider, num, keyBtn, drv);
   return row;
 }
 
-function renderCustomEditor(clip) {
+/* ---- driver editor --------------------------------------------------- */
+
+const openDrivers = new Set();   // `${clipId}:${propKey}` panels twirled open
+
+function toggleDriver(clip, def) {
+  const id = `${clip.id}:${def.key}`;
+  const prop = getOrCreateProp(clip, def.key);
+  if (!prop) return;
+  if (!prop.driver) {
+    history.record(comp, () => { prop.driver = newDriver(def); });
+    openDrivers.add(id);
+    scheduleSave();
+  } else if (openDrivers.has(id)) {
+    openDrivers.delete(id);
+  } else {
+    openDrivers.add(id);
+  }
+  renderInspector();
+}
+
+/** The twirled-open editor under a driven property's row. */
+function driverPanel(clip, def) {
+  const id = `${clip.id}:${def.key}`;
+  if (!openDrivers.has(id)) return null;
+  const prop = getProp(clip, def.key);
+  const d = prop?.driver;
+  if (!d) return null;
+
+  const panel = document.createElement('div');
+  panel.className = 'driver-panel';
+
+  // One labeled control. `set` mutates the driver inside one undo step;
+  // pass rerender for edits that change which fields are visible.
+  const field = (labelText, input) => {
+    const l = document.createElement('label');
+    l.append(labelText, input);
+    return l;
+  };
+  const numF = (labelText, key, step, title = '') => {
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = String(step);
+    inp.value = fmtVal(d[key] ?? 0);
+    inp.title = title;
+    inp.addEventListener('keydown', (e) => e.stopPropagation());
+    inp.addEventListener('change', () => {
+      const v = parseFloat(inp.value);
+      if (Number.isNaN(v)) return;
+      history.record(comp, () => { d[key] = v; });
+      scheduleSave();
+    });
+    return field(labelText, inp);
+  };
+  const selF = (labelText, key, options, { rerender = false, title = '' } = {}) => {
+    const sel = document.createElement('select');
+    for (const [val, lab] of options) {
+      const o = document.createElement('option');
+      o.value = val;
+      o.textContent = lab;
+      sel.appendChild(o);
+    }
+    sel.value = d[key];
+    sel.title = title;
+    sel.addEventListener('change', () => {
+      history.record(comp, () => { d[key] = sel.value; });
+      scheduleSave();
+      syncAudioDrive();
+      if (rerender) renderInspector();
+    });
+    return field(labelText, sel);
+  };
+
+  /* row 1: enable / source / combine mode / remove */
+  const top = document.createElement('div');
+  top.className = 'drv-row';
+  const en = document.createElement('input');
+  en.type = 'checkbox';
+  en.checked = d.enabled !== false;
+  en.addEventListener('change', () => {
+    history.record(comp, () => { d.enabled = en.checked; });
+    scheduleSave();
+    syncAudioDrive();
+    renderInspector();
+  });
+  top.appendChild(field(en, ' on'));
+  top.appendChild(selF('src', 'source',
+    [['osc', 'Oscillator'], ['audio', 'Audio']], { rerender: true }));
+  top.appendChild(selF('mode', 'mode', DRIVER_MODES,
+    { title: 'add: base + delta (property units)\nmultiply: base × (1 + delta %)\nreplace: ignore keyframes' }));
+  const del = document.createElement('button');
+  del.className = 'mn-del';
+  del.textContent = '✕';
+  del.title = 'remove this driver';
+  del.addEventListener('click', () => {
+    history.record(comp, () => { delete prop.driver; });
+    openDrivers.delete(id);
+    scheduleSave();
+    renderInspector();
+  });
+  top.appendChild(del);
+  panel.appendChild(top);
+
+  /* row 2: the source's own params */
+  const srcRow = document.createElement('div');
+  srcRow.className = 'drv-row';
+  if (d.source === 'audio') {
+    srcRow.appendChild(selF('band', 'band', DRIVER_BANDS));
+    srcRow.appendChild(selF('follow', 'follow', DRIVER_FOLLOWS, {
+      rerender: true,
+      title: 'level: track the band’s loudness\nbeat: pulse on detected onsets',
+    }));
+    if (d.follow === 'beat') {
+      srcRow.appendChild(numF('sense', 'sensitivity', 0.1,
+        'onset threshold vs. the running average — higher = fewer, stronger beats'));
+      srcRow.appendChild(numF('decay', 'decay', 0.05, 'pulse fade-out (seconds)'));
+    } else {
+      srcRow.appendChild(numF('release', 'release', 0.05,
+        'how long the value hangs after a loud moment (seconds)'));
+    }
+  } else {
+    srcRow.appendChild(selF('wave', 'wave', DRIVER_WAVES, { rerender: true }));
+    srcRow.appendChild(numF('freq', 'freq', 0.1, 'cycles per second'));
+    srcRow.appendChild(numF('phase', 'phase', 0.05, 'cycle offset (1 = one full cycle)'));
+    if (d.wave === 'square' || d.wave === 'pulse')
+      srcRow.appendChild(numF('width', 'width', 0.05, 'duty cycle 0..1'));
+  }
+  panel.appendChild(srcRow);
+
+  /* row 3: mapping */
+  const mapRow = document.createElement('div');
+  mapRow.className = 'drv-row';
+  mapRow.appendChild(numF('amount', 'amount', def.step || 1,
+    d.mode === 'multiply' ? 'signal swing in percent of the base value'
+      : `signal swing in ${def.unit || 'property units'}`));
+  mapRow.appendChild(numF('offset', 'offset', def.step || 1, 'constant added to the swing'));
+  panel.appendChild(mapRow);
+
+  if (d.source === 'audio') {
+    const hint = document.createElement('div');
+    hint.className = 'drv-hint';
+    hint.textContent = audioDrive.data
+      ? 'audio drivers hear every video track — muted “beat tracks” too'
+      : (compHasAudioDrivers() && audioEntries(true).length
+        ? 'analyzing audio…'
+        : 'no video clips with audio in the comp — this driver reads 0');
+    panel.appendChild(hint);
+  }
+
+  return panel;
+}
+
+function renderCustomEditor(clip, effect, parent) {
   const editor = document.createElement('div');
   editor.className = 'layer-editor';
 
   const sed = makeShaderEditor({
-    value: editorDrafts.get(clip.id) ?? clip.source ?? '',
-    onInput: (text) => editorDrafts.set(clip.id, text),
+    value: editorDrafts.get(effect.id) ?? effect.source ?? '',
+    onInput: (text) => editorDrafts.set(effect.id, text),
   });
   sed.el.classList.add('sed-inspector');
 
@@ -3324,26 +4928,29 @@ function renderCustomEditor(clip) {
   const compile = document.createElement('button');
   compile.className = 'btn';
   compile.textContent = 'Compile';
-  compile.onclick = () => { editorDrafts.delete(clip.id); compileCustomClip(clip, sed.getValue()); };
+  compile.onclick = () => {
+    editorDrafts.delete(effect.id);
+    compileCustomEffect(clip, effect, sed.getValue());
+  };
   const revert = document.createElement('button');
   revert.className = 'btn';
   revert.textContent = 'Revert';
   revert.title = 'discard edits since last compile';
   revert.onclick = () => {
-    editorDrafts.delete(clip.id);
-    sed.setValue(clip.source ?? '');
+    editorDrafts.delete(effect.id);
+    sed.setValue(effect.source ?? '');
   };
   const expand = document.createElement('button');
   expand.className = 'btn';
   expand.textContent = '⛶';
   expand.title = 'open the full-screen editor (with cheat sheet)';
-  expand.onclick = () => openShaderModal(clip);
+  expand.onclick = () => openShaderModal(clip, effect);
 
   const nameInput = document.createElement('input');
   nameInput.type = 'text';
   nameInput.className = 'save-name';
   nameInput.placeholder = 'name…';
-  nameInput.value = clip.savedName ?? '';
+  nameInput.value = effect.savedName ?? '';
   nameInput.addEventListener('keydown', (e) => e.stopPropagation());
 
   const save = document.createElement('button');
@@ -3356,7 +4963,7 @@ function renderCustomEditor(clip) {
     const saves = loadSaved();
     saves[name] = { source: sed.getValue(), savedAt: new Date().toISOString() };
     storeSaved(saves);
-    clip.savedName = name;
+    effect.savedName = name;
     scheduleSave();
     setStatus(`saved '${name}' to this browser`);
   };
@@ -3364,31 +4971,31 @@ function renderCustomEditor(clip) {
   const forget = document.createElement('button');
   forget.className = 'btn';
   forget.textContent = 'Forget';
-  forget.title = 'delete this saved shader from localStorage (the clip keeps running)';
-  forget.hidden = !clip.savedName;
+  forget.title = 'delete this saved shader from localStorage (the effect keeps running)';
+  forget.hidden = !effect.savedName;
   forget.onclick = async () => {
-    if (!clip.savedName) return;
+    if (!effect.savedName) return;
     const ok = await confirmDialog({
-      title: `Delete saved shader '${clip.savedName}'?`,
+      title: `Delete saved shader '${effect.savedName}'?`,
       message: 'It disappears from the add-effect menu in this browser. Clips already using it keep their own copy of the code.',
       confirmLabel: 'Delete shader',
     });
     if (!ok) return;
     const saves = loadSaved();
-    delete saves[clip.savedName];
+    delete saves[effect.savedName];
     storeSaved(saves);
-    setStatus(`forgot saved shader '${clip.savedName}'`);
-    clip.savedName = null;
+    setStatus(`forgot saved shader '${effect.savedName}'`);
+    effect.savedName = null;
     renderInspector();
   };
 
   row.append(compile, revert, expand, nameInput, save, forget);
   editor.append(sed.el, row);
-  inspectorEl.appendChild(editor);
+  (parent ?? inspectorEl).appendChild(editor);
 }
 
 /** Full-screen shader editor modal with the slang cheat sheet. */
-function openShaderModal(clip) {
+function openShaderModal(clip, effect) {
   document.querySelector('.sed-modal')?.remove();
   const wrap = document.createElement('div');
   wrap.className = 'modal-wrap sed-modal';
@@ -3407,10 +5014,10 @@ function openShaderModal(clip) {
       </div>
     </div>`;
   const statusEl2 = wrap.querySelector('.sed-status');
-  wrap.querySelector('.sed-title').textContent = `✎ ${clip.name}`;
+  wrap.querySelector('.sed-title').textContent = `✎ ${clip.name} › ${effect.name}`;
   const sed = makeShaderEditor({
-    value: editorDrafts.get(clip.id) ?? clip.source ?? '',
-    onInput: (text) => editorDrafts.set(clip.id, text),
+    value: editorDrafts.get(effect.id) ?? effect.source ?? '',
+    onInput: (text) => editorDrafts.set(effect.id, text),
   });
   sed.el.classList.add('sed-full');
   wrap.querySelector('.sed-slot').appendChild(sed.el);
@@ -3429,9 +5036,10 @@ function openShaderModal(clip) {
   });
   wrap.querySelector('[data-a=compile]').addEventListener('click', async () => {
     statusEl2.textContent = 'compiling…';
-    editorDrafts.delete(clip.id);
-    await compileCustomClip(clip, sed.getValue());
-    const err = fxSpecs.get(clip.id)?.error || fxSpecs.get(clip.id)?.lastCompileError;
+    editorDrafts.delete(effect.id);
+    await compileCustomEffect(clip, effect, sed.getValue());
+    const spec = fxSpecs.get(effect.id);
+    const err = spec?.error || spec?.lastCompileError;
     statusEl2.textContent = err ? `✗ ${err.split('\n')[0].slice(0, 120)}` : '✓ compiled';
     statusEl2.classList.toggle('err', !!err);
   });
@@ -3439,13 +5047,13 @@ function openShaderModal(clip) {
   sed.textarea.focus();
 }
 
-function renderOverlayControls(clip, spec) {
+function renderOverlayControls(clip, effect, spec, parent) {
   for (const tex of spec.runtime.preset.textures) {
     const texName = tex.name;
     const oc = document.createElement('div');
     oc.className = 'overlay-controls';
-    const state = clip.overlay?.[texName]?.kind === 'text'
-      ? clip.overlay[texName].state
+    const state = effect.overlay?.[texName]?.kind === 'text'
+      ? effect.overlay[texName].state
       : { ...DEFAULT_TITLE, text: '' };
 
     const imgBtn = document.createElement('button');
@@ -3453,7 +5061,7 @@ function renderOverlayControls(clip, spec) {
     imgBtn.textContent = 'Image…';
     imgBtn.title = `use an image as the ${texName} texture`;
     imgBtn.onclick = () => {
-      stampPickTarget = { clipId: clip.id, texName };
+      stampPickTarget = { clipId: clip.id, effectId: effect.id, texName };
       stampFileInput.click();
     };
 
@@ -3500,7 +5108,7 @@ function renderOverlayControls(clip, spec) {
         outline: outline.checked,
       };
       if (!s.text.trim()) return;
-      applyOverlaySource(clip, texName, renderTitleCanvas(s), { kind: 'text', state: s });
+      applyOverlaySource(clip, effect, texName, renderTitleCanvas(s), { kind: 'text', state: s });
     };
     textInput.addEventListener('change', applyText);
     sizeInput.addEventListener('change', applyText);
@@ -3509,50 +5117,45 @@ function renderOverlayControls(clip, spec) {
     outline.addEventListener('change', applyText);
 
     oc.append(imgBtn, textInput, sizeInput, colorInput, fontSel, outlineLabel);
-    inspectorEl.appendChild(oc);
+    (parent ?? inspectorEl).appendChild(oc);
   }
 }
 
 const MASK_BLEND_MODES = ['add', 'subtract', 'multiply', 'max', 'min'];
 const MASK_KIND_LABEL = { paint: 'Paint', key: 'Color key', layer: 'Layer matte' };
 
-/** Uniform access to a clip's mask stack — fx masks live on the engine
- * layer spec, media masks in the app-owned mediaMasks registry. */
+/** Uniform access to a clip's mask stack. Both kinds keep the live stack in
+ * clipMasks; what differs is who owns the GPU state and what the mask
+ * means — an fx clip's mask gates its whole effect group (engine-owned,
+ * built on the group head), a media clip's cuts its alpha (app-owned). */
 function maskContextFor(clip) {
+  const common = {
+    state: () => clipMasks.get(clip.id) ?? null,
+    ensure() {
+      let st = clipMasks.get(clip.id);
+      if (!st) {
+        st = { opacity: 1, invert: false, nodes: [] };
+        clipMasks.set(clip.id, st);
+      }
+      return st;
+    },
+    clear() {
+      destroyClipMask(clip.id);
+      clip.mask = null;
+      markChainDirty(clip.id);
+    },
+  };
   if (clip.kind === 'fx') {
-    const spec = specFor(clip);
     return {
-      state: () => spec.maskState,
-      ensure() {
-        spec.maskState ??= { opacity: 1, invert: false, nodes: [] };
-        return spec.maskState;
-      },
+      ...common,
       structure() { chainDirty = true; },
-      clear() {
-        for (const n of spec.maskState?.nodes ?? []) destroyMaskNodeGpu(n);
-        spec.maskState = null;
-        clip.mask = null;
-        chainDirty = true;
-      },
-      setOpts(o) {
-        const idx = activeIndexOfClip(clip.id);
-        if (idx >= 0) fx.setLayerMaskOptions(idx, o);
-      },
-      keySelfDefault: null,      // key nodes sample the layer's input
+      setOpts(o) { fx.setGroupMaskOptions(clip.id, o); },
+      keySelfDefault: null,      // key nodes sample the group's input
     };
   }
   return {
-    state: () => mediaMasks.get(clip.id)?.maskState,
-    ensure() {
-      let e = mediaMasks.get(clip.id);
-      if (!e) {
-        e = { maskState: { opacity: 1, invert: false, nodes: [] }, tex: null, view: null, w: 0, h: 0 };
-        mediaMasks.set(clip.id, e);
-      }
-      return e.maskState;
-    },
+    ...common,
     structure() { buildMediaMaskGpu(clip.id); },
-    clear() { destroyMediaMaskEntry(clip.id); clip.mask = null; },
     setOpts() {},                // compositor reads the live maskState each frame
     keySelfDefault: clip.id,     // key nodes key the clip's own pixels
   };
@@ -3608,6 +5211,22 @@ function renderMaskSection(clip) {
     mc.appendChild(maskNodeRow(clip, ctx, node));
 
   if (state?.nodes?.length) {
+    // Edge post passes — composed on the GPU each frame, so the sliders
+    // just write the live maskState (no rebuild needed).
+    const edge = document.createElement('div');
+    edge.className = 'mask-foot';
+    edge.append(
+      maskRange('expand', -64, 64, 1, () => state.expand ?? 0, (v) => {
+        state.expand = v;
+        scheduleSave();
+      }),
+      // 250 must match MASK_FEATHER_MAX in engine/blit.js.
+      maskRange('feather', 0, 250, 1, () => state.feather ?? 0, (v) => {
+        state.feather = v;
+        scheduleSave();
+      }));
+    mc.appendChild(edge);
+
     const foot = document.createElement('div');
     foot.className = 'mask-foot';
     const rng = maskRange('opacity', 0, 1, 0.01, () => state.opacity ?? 1, (v) => {
@@ -3730,7 +5349,7 @@ function maskNodeRow(clip, ctx, node) {
         b.className = 'btn' + (brush.tool === tool ? ' active' : '');
         b.textContent = icon;
         b.title = tip;
-        b.onclick = () => { brush.tool = tool; renderInspector(); };
+        b.onclick = () => { brush.tool = tool; updateBrushCursor(); renderInspector(); };
         return b;
       };
       const modeBtn = (mode, label) => {
@@ -3746,7 +5365,7 @@ function maskNodeRow(clip, ctx, node) {
         toolBtn('linear', '▤', 'linear gradient — drag across the preview'),
         toolBtn('radial', '◎', 'radial gradient — drag outward from the center'),
         modeBtn('hide', 'Hide'), modeBtn('show', 'Show'),
-        maskRange('size', 8, 300, 1, () => brush.size, (v) => { brush.size = v; }, !isBrush),
+        maskRange('size', 8, 300, 1, () => brush.size, (v) => { brush.size = v; updateBrushCursor(); }, !isBrush),
         maskRange('soft', 0, 0.9, 0.05, () => brush.soft, (v) => { brush.soft = v; }, !isBrush),
       );
     }
@@ -3844,10 +5463,57 @@ function saveBlob(blob, name) {
   a.click();
 }
 
+/* ---- export file names ----------------------------------------------
+ * Exports are named after the comp's bottom-most media layer (the shot
+ * you are working on), falling back to the project name and finally to a
+ * random human-readable slug — anything but one fixed name every time. */
+
+const SLUG_ADJ = [
+  'amber', 'bold', 'brisk', 'calm', 'chrome', 'crisp', 'dusky', 'eager',
+  'electric', 'fuzzy', 'gentle', 'glassy', 'golden', 'hazy', 'ivory', 'lucid',
+  'mellow', 'neon', 'nimble', 'plush', 'quiet', 'rapid', 'rusty', 'silent',
+  'silver', 'solar', 'stark', 'sunlit', 'velvet', 'wild',
+];
+const SLUG_NOUN = [
+  'anchor', 'atlas', 'beacon', 'cascade', 'cinder', 'comet', 'delta', 'drift',
+  'ember', 'falcon', 'harbor', 'lantern', 'meadow', 'mirage', 'monsoon',
+  'orbit', 'otter', 'prism', 'quartz', 'ripple', 'shutter', 'signal', 'summit',
+  'tempest', 'thicket', 'tundra', 'vertex', 'willow', 'zenith', 'zephyr',
+];
+
+/** e.g. "neon-otter-4f2" — readable, and unique enough to not collide. */
+function humanSlug() {
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  const tail = Math.floor(Math.random() * 4096).toString(16).padStart(3, '0');
+  return `${pick(SLUG_ADJ)}-${pick(SLUG_NOUN)}-${tail}`;
+}
+
+/** Strip the bits a download name can't (or shouldn't) carry. */
+function safeFileBase(s) {
+  return (s ?? '')
+    .replace(/\.[^.\\/]+$/, '')            // drop the extension
+    .replace(/[\\/:*?"<>|]+/g, '_')        // path / reserved characters
+    .replace(/\s+/g, '_')
+    .replace(/^[._]+|[._]+$/g, '')
+    .slice(0, 72);
+}
+
+function exportBaseName() {
+  for (const clip of allClipsBottomUp(comp, 'media')) {
+    const asset = assets.get(clip.assetId);
+    // Shape layers carry a synthetic asset with no real filename.
+    if (!asset || asset.kind === 'shape') continue;
+    const base = safeFileBase(asset.name);
+    if (base) return base;
+  }
+  return safeFileBase(projectName) || humanSlug();
+}
+
 $('btn-export-png').addEventListener('click', async () => {
   if (!fx?.inputTexture || offlineJob) return;
   const blob = await fx.exportPNG();
-  saveBlob(blob, 'slangfx-frame.png');
+  const frame = String(Math.round(tCur * comp.fps)).padStart(5, '0');
+  saveBlob(blob, `${exportBaseName()}-${frame}.png`);
   setStatus('frame exported');
 });
 
@@ -3868,10 +5534,12 @@ exportBtn.addEventListener('click', () => {
     : 'video/webm;codecs=vp9';
   recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
   const chunks = [];
+  // Named from the comp as it stands now, not as it stands when you stop.
+  const outName = `${exportBaseName()}.webm`;
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   recorder.onstop = () => {
-    saveBlob(new Blob(chunks, { type: 'video/webm' }), 'slangfx-comp.webm');
-    setStatus('recording saved');
+    saveBlob(new Blob(chunks, { type: 'video/webm' }), outName);
+    setStatus(`recording saved as ${outName}`);
   };
   exportMode = true;
   pause();
@@ -3908,30 +5576,60 @@ fastBtn.addEventListener('click', () => {
   runOfflineRender();
 });
 
-async function runOfflineRender() {
+/* Edit-and-save: offline render, then PUT the result back to the host's
+ * save url (which overwrites the original file, transcoding as needed). */
+const saveBackBtn = $('btn-save-back');
+saveBackBtn.addEventListener('click', () => {
+  if (offlineJob) { offlineJob.cancel = true; return; }
+  if (!comp._saveBack || !fx?.inputTexture || recorder) return;
+  if (typeof VideoEncoder === 'undefined') {
+    setStatus('save needs WebCodecs (Chrome/Edge)');
+    return;
+  }
+  fitDurToContent();
+  timeline.render();
+  runOfflineRender({ saveBack: comp._saveBack });
+});
+
+async function runOfflineRender({ saveBack = null } = {}) {
   pause();
+  // Audio drivers must have their envelopes before frames render — the
+  // export samples the same precomputed data as the preview.
+  await syncAudioDrive();
   const job = (offlineJob = { cancel: false, error: null });
   const tRestore = tCur;
-  fastBtn.textContent = '■ Cancel';
-  fastBtn.classList.add('recording');
+  const btn = saveBack ? saveBackBtn : fastBtn;
+  btn.textContent = '■ Cancel';
+  btn.classList.add('recording');
   const started = performance.now();
   try {
     const blob = await renderCompOffline(job);
-    if (blob) {
-      saveBlob(blob, 'slangfx-comp.webm');
+    if (!blob) {
+      setStatus('render cancelled');
+    } else if (saveBack) {
+      setStatus(`saving to ${saveBack.name}…`);
+      const res = await fetch(saveBack.url, { method: 'PUT', body: blob });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok || !out.ok) throw new Error(out.error ?? `HTTP ${res.status}`);
       const secs = ((performance.now() - started) / 1000).toFixed(1);
-      setStatus(`render saved — ${comp.dur}s comp in ${secs}s`
+      setStatus(`saved to ${saveBack.name} — ${comp.dur}s comp in ${secs}s`
         + (job.hasAudio ? '' : ' (comp has no audio)'));
     } else {
-      setStatus('render cancelled');
+      const outName = `${exportBaseName()}.webm`;
+      saveBlob(blob, outName);
+      const secs = ((performance.now() - started) / 1000).toFixed(1);
+      setStatus(`saved ${outName} — ${comp.dur}s comp in ${secs}s`
+        + (job.hasAudio ? '' : ' (comp has no audio)'));
     }
   } catch (e) {
     console.error('slangfx: offline render failed:', e);
-    setStatus(`render failed: ${e.message ?? e}`);
+    setStatus(`${saveBack ? 'save' : 'render'} failed: ${e.message ?? e}`);
   } finally {
     offlineJob = null;
     fastBtn.textContent = 'Render';
     fastBtn.classList.remove('recording');
+    saveBackBtn.textContent = '💾 Save';
+    saveBackBtn.classList.remove('recording');
     setTime(tRestore);
   }
 }
@@ -3989,50 +5687,55 @@ function uploadMediaFrames(t, activeMedia) {
 async function syncFxChainSettled(t) {
   for (let i = 0; i < 10; i++) {
     await syncFxChain(t);
-    const key = activeFxEntries(t).map((e) => e.clip.id).join('|');
+    const key = activeFxEntries(t).map((e) => stackKey(e.clip)).join('|');
     if (!chainBuilding && !chainDirty && key === chainKey) return;
+  }
+}
+
+/* Same for the per-clip chains: prepareMediaFx kicks off creation and
+ * rebuilds asynchronously, so the exporter waits for them and re-runs the
+ * isolate pass once every stack is live. */
+async function prepareMediaFxSettled(t, activeMedia) {
+  for (let i = 0; i < 10; i++) {
+    prepareMediaFx(t, activeMedia);
+    const pending = [...mediaChains.values()].filter((e) => e.building || e.dirty);
+    if (!pending.length) return;
+    await Promise.allSettled(pending.map((e) => e.promise));
   }
 }
 
 const AUDIO_SR = 48000;   // Opus native rate
 
-/* Mix the comp's audio offline: every audible video clip becomes a buffer
- * source in an OfflineAudioContext, with clip trim/looping matching
- * syncMedia and the clip's Volume keyframes baked into gain automation.
- * Preview-only master volume/mute is deliberately NOT baked — a muted
- * preview should not produce a silent export. Returns null when the comp
- * has no decodable audio. */
-async function renderCompAudio() {
-  const entries = [];
-  for (const track of comp.tracks) {
-    if (track.hidden || track.muted) continue;
-    for (const clip of track.clips) {
-      if (clip.kind !== 'media' || clip.start >= comp.dur) continue;
-      const asset = assets.get(clip.assetId);
-      if (asset?.kind === 'video' && asset.ready) entries.push({ clip, asset });
-    }
+/** Decode an asset's audio once and cache it on the asset (null = no
+ * decodable audio stream). decodeAudioData demuxes the audio straight out
+ * of the video container; a video with no audio track simply rejects. */
+async function decodeAssetAudio(asset) {
+  if (asset._audioBuf !== undefined) return asset._audioBuf;
+  try {
+    const file = asset.file ?? await idbGet(`asset:${asset.id}`);
+    const decodeCtx = new OfflineAudioContext(2, 1, AUDIO_SR);
+    asset._audioBuf = await decodeCtx.decodeAudioData(await file.arrayBuffer());
+  } catch (e) {
+    console.warn(`slangfx: no audio for '${asset.name}':`, e);
+    asset._audioBuf = null;
   }
+  return asset._audioBuf;
+}
+
+/* Mix clip audio offline: each entry becomes a buffer source in an
+ * OfflineAudioContext, with clip trim/looping matching syncMedia and the
+ * clip's volume curve (via volumeAt, in percent) baked as per-frame gain
+ * ramps. Shared by the export path (audible clips, driven volume) and the
+ * driver analysis (every clip, base volume). Returns null when no entry
+ * has decodable audio. */
+async function mixCompAudio(sampleRate, entries, channels, volumeAt) {
   if (!entries.length) return null;
+  for (const { asset } of entries) await decodeAssetAudio(asset);
+  if (!entries.some(({ asset }) => asset._audioBuf)) return null;
 
-  // decodeAudioData demuxes the audio stream straight out of the video
-  // container; a video with no audio track simply rejects.
-  const buffers = new Map();
-  for (const { asset } of entries) {
-    if (buffers.has(asset.id)) continue;
-    try {
-      const file = await idbGet(`asset:${asset.id}`);
-      const decodeCtx = new OfflineAudioContext(2, 1, AUDIO_SR);
-      buffers.set(asset.id, await decodeCtx.decodeAudioData(await file.arrayBuffer()));
-    } catch (e) {
-      console.warn(`slangfx: no audio for '${asset.name}':`, e);
-      buffers.set(asset.id, null);
-    }
-  }
-  if (![...buffers.values()].some(Boolean)) return null;
-
-  const ctx = new OfflineAudioContext(2, Math.ceil(comp.dur * AUDIO_SR), AUDIO_SR);
+  const ctx = new OfflineAudioContext(channels, Math.max(1, Math.ceil(comp.dur * sampleRate)), sampleRate);
   for (const { clip, asset } of entries) {
-    const buf = buffers.get(asset.id);
+    const buf = asset._audioBuf;
     if (!buf) continue;
     const src = ctx.createBufferSource();
     src.buffer = buf;
@@ -4042,11 +5745,11 @@ async function renderCompAudio() {
     const start = clip.start;
     const len = Math.min(clipEnd(clip), comp.dur) - start;
     if (len <= 0) continue;
-    const vol = (tc) => (clip.props.volume
-      ? clamp(evalProp(clip.props.volume, tc) / 100, 0, 1) : 1);
+    const vol = (tc) => clamp(volumeAt(clip, tc) / 100, 0, 1);
     gain.gain.setValueAtTime(vol(0), start);
-    if (clip.props.volume?.anim && clip.props.volume.keys.length) {
-      // Bake the eased keyframe curve as per-frame linear ramps.
+    const animated = clip.props.volume?.anim && clip.props.volume.keys.length;
+    if (animated || clip.props.volume?.driver?.enabled) {
+      // Bake the eased/driven curve as per-frame linear ramps.
       const step = 1 / comp.fps;
       for (let tc = step; tc <= len + 1e-9; tc += step)
         gain.gain.linearRampToValueAtTime(vol(tc), start + tc);
@@ -4057,6 +5760,14 @@ async function renderCompAudio() {
     src.stop(start + len);
   }
   return ctx.startRendering();
+}
+
+/* The export mix: audible clips only, driven volume included. Preview-only
+ * master volume/mute is deliberately NOT baked — a muted preview should
+ * not produce a silent export. */
+async function renderCompAudio() {
+  return mixCompAudio(AUDIO_SR, audioEntries(false), 2, (clip, tc) =>
+    clip.props.volume ? drivenEval(clip.props.volume, tc, clip.start + tc) : 100);
 }
 
 /** Encode a rendered AudioBuffer to Opus chunks straight into the muxer. */
@@ -4139,6 +5850,7 @@ async function renderCompOffline(job) {
     await seekMediaExact(t, [...activeMedia, ...matteSourceClips(t)]);
     uploadMediaFrames(t, activeMedia);
     prepareMasks(t);   // media masks must compose before compositeFrame samples them
+    await prepareMediaFxSettled(t, activeMedia);
     compositeFrame(t);
     await syncFxChainSettled(t);
     applyParams(t);

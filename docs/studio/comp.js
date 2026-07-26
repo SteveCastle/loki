@@ -6,8 +6,20 @@
  *
  *   media  a video or image asset with a keyframable 2D transform
  *          (position / scale / rotation / opacity) composited into the frame
- *   fx     a shader preset (bundled or hand-written) applied to everything
- *          composited below it, with every shader parameter keyframable
+ *   fx     an adjustment layer: no content of its own, just an effect stack
+ *          applied to everything composited below it
+ *
+ * BOTH kinds carry an ordered `effects` array (a stack of shader presets or
+ * hand-written shaders, every parameter keyframable). Where the stack runs
+ * is what distinguishes the two:
+ *
+ *   effects on a MEDIA clip     process that clip alone, before it
+ *                               composites — nothing else is touched
+ *   effects on an FX clip       process the accumulated frame, i.e. every
+ *                               layer below the adjustment layer
+ *
+ * A clip's mask gates its whole effect stack as one group (fx clips) or cuts
+ * the clip's alpha (media clips).
  *
  * Every animatable property is a PropTrack: either a static value or a list
  * of keyframes `{t, v, e}` where `t` is CLIP-RELATIVE seconds (moving a clip
@@ -120,6 +132,65 @@ export function keyNear(prop, t, eps = 1e-4) {
   return prop.keys.find((k) => Math.abs(k.t - t) < eps) ?? null;
 }
 
+/* ---- effects -------------------------------------------------------- */
+
+/**
+ * One entry in a clip's effect stack. Effects are pure processing — they
+ * have no timing of their own and animate on their owning clip's timebase.
+ * @param {object} spec {fxKind:'preset'|'custom', path?, source?, savedName?, label}
+ */
+export function newEffect(spec) {
+  return {
+    id: uid('fx'),
+    name: spec.label,
+    fxKind: spec.fxKind,
+    path: spec.path ?? null,      // preset path (fxKind 'preset')
+    source: spec.source ?? null,  // slang source (fxKind 'custom')
+    savedName: spec.savedName ?? null,
+    enabled: true,
+    params: {},                   // paramName -> PropTrack (created on touch)
+    overlay: null,                // texName -> overlay source descriptor
+  };
+}
+
+export function effectsOf(clip) { return clip?.effects ?? []; }
+
+export function findEffect(clip, effectId) {
+  return effectsOf(clip).find((e) => e.id === effectId) ?? null;
+}
+
+/** Give a copied clip's effects fresh ids. Effect ids key runtime state
+ * (compiled layer specs, param metadata, editor drafts), so a duplicated
+ * or split clip must not share them with the original. */
+export function reidEffects(clip) {
+  for (const eff of effectsOf(clip)) eff.id = uid('fx');
+  return clip;
+}
+
+/* Property keys. Media transform props and per-effect shader params share
+ * one flat string namespace so the timeline and inspector can address
+ * either with a single key: an effect param is `<effectId>#<paramName>`
+ * (effect ids and slang identifiers never contain '#'). */
+const PROP_KEY_SEP = '#';
+
+export const effectPropKey = (effectId, name) => `${effectId}${PROP_KEY_SEP}${name}`;
+
+export function parsePropKey(key) {
+  const i = String(key).indexOf(PROP_KEY_SEP);
+  return i < 0
+    ? { effectId: null, name: key }
+    : { effectId: key.slice(0, i), name: key.slice(i + 1) };
+}
+
+/** Visit every PropTrack a clip owns — transform props plus every effect's
+ * parameters. The one place that knows where animation can hide. */
+export function eachClipProp(clip, fn) {
+  if (clip.kind === 'media')
+    for (const p of Object.values(clip.props ?? {})) fn(p);
+  for (const eff of effectsOf(clip))
+    for (const p of Object.values(eff.params ?? {})) fn(p);
+}
+
 /* ---- clips ---------------------------------------------------------- */
 
 /** Media transform properties: [key, label, defaultFor(comp), unit]. */
@@ -137,6 +208,38 @@ export const MEDIA_PROPS = [
 export function migrateComp(comp) {
   for (const track of comp.tracks ?? [])
     for (const clip of track.clips) {
+      // Effect stacks: an fx clip used to BE a single effect, with the
+      // shader's fields inline. Fold those into a one-entry stack — the
+      // clip keeps its name, timing, enable flag and mask.
+      if (clip.kind === 'fx' && !Array.isArray(clip.effects)) {
+        clip.effects = [{
+          id: uid('fx'),
+          name: clip.name,
+          fxKind: clip.fxKind ?? 'preset',
+          path: clip.path ?? null,
+          source: clip.source ?? null,
+          savedName: clip.savedName ?? null,
+          enabled: true,
+          params: clip.params ?? {},
+          overlay: clip.overlay ?? null,
+        }];
+        for (const k of ['fxKind', 'path', 'source', 'savedName', 'params', 'overlay'])
+          delete clip[k];
+      }
+      if (!Array.isArray(clip.effects)) clip.effects = [];
+      // Shape layers used to hold exactly ONE shape, filling the whole
+      // texture (`clip.shape`). They now hold a list, each shape carrying its
+      // own rect in unit texture space — and the old single shape IS the full
+      // unit square, so this migration renders pixel-identically.
+      if (clip.shape && !Array.isArray(clip.shapes)) {
+        clip.shapes = [{
+          id: uid('shp'),
+          preset: clip.shape.preset,
+          color: clip.shape.color,
+          x: 0, y: 0, w: 1, h: 1,
+        }];
+        delete clip.shape;
+      }
       if (clip.kind !== 'media' || !clip.props) continue;
       if (clip.props.scale && !clip.props.scaleX) {
         clip.props.scaleX = clip.props.scale;
@@ -160,41 +263,43 @@ export function newMediaClip(comp, asset, start, dur) {
     dur,
     in: 0,                       // trim offset into the source (seconds)
     props,
+    effects: [],                 // processed before this clip composites
+    mask: null,
   };
 }
 
-/**
- * @param {object} spec  {fxKind:'preset'|'custom', path?, source?, label}
+/** An adjustment layer: an effect stack over everything below it.
+ * @param {object} [spec] seed effect {fxKind, path?, source?, label};
+ *                        omit for an empty adjustment layer
  */
 export function newFxClip(spec, start, dur) {
   return {
     id: uid('clip'),
     kind: 'fx',
-    name: spec.label,
-    fxKind: spec.fxKind,
-    path: spec.path ?? null,      // preset path (fxKind 'preset')
-    source: spec.source ?? null,  // slang source (fxKind 'custom')
-    savedName: spec.savedName ?? null,
+    name: spec?.label ?? 'adjustment',
     enabled: true,
     start,
     dur,
-    params: {},                   // paramName -> PropTrack (created on touch)
-    mask: null,                   // {dataURL, opacity, invert}
-    overlay: null,                // texName -> overlay source descriptor
+    effects: spec ? [newEffect(spec)] : [],
+    mask: null,                   // gates the whole stack
   };
 }
 
 export function clipEnd(clip) { return clip.start + clip.dur; }
 
-/** The PropTrack for a named property, creating it (fx params) on demand. */
-export function clipProp(clip, name, defaultValue = 0) {
-  if (clip.kind === 'media') return clip.props[name];
-  return (clip.params[name] ??= newProp(defaultValue));
+/** The PropTrack for a property key, creating effect params on demand. */
+export function clipProp(clip, key, defaultValue = 0) {
+  const { effectId, name } = parsePropKey(key);
+  if (!effectId) return clip.props?.[name] ?? null;
+  const eff = findEffect(clip, effectId);
+  if (!eff) return null;
+  return ((eff.params ??= {})[name] ??= newProp(defaultValue));
 }
 
 /** Evaluate a clip property at COMP time t. */
-export function clipPropAt(clip, name, tComp, defaultValue = 0) {
-  const prop = clip.kind === 'media' ? clip.props[name] : clip.params[name];
+export function clipPropAt(clip, key, tComp, defaultValue = 0) {
+  const { effectId, name } = parsePropKey(key);
+  const prop = effectId ? findEffect(clip, effectId)?.params?.[name] : clip.props?.[name];
   if (!prop) return defaultValue;
   return evalProp(prop, tComp - clip.start);
 }
@@ -210,12 +315,15 @@ export function splitClip(clip, t) {
   right.dur = clip.dur - offset;
   clip.dur = offset;
   if (clip.kind === 'media') right.in = clip.in + offset;
-  // Re-anchor the right half's keys to its new start.
-  const eachProp = (c, fn) => {
-    const bag = c.kind === 'media' ? c.props : c.params;
-    for (const p of Object.values(bag)) fn(p);
-  };
-  eachProp(right, (p) => { for (const k of p.keys) k.t -= offset; });
+  reidEffects(right);   // the halves' effects are independent from here on
+  // Re-anchor the right half's keys to its new start, and advance any
+  // oscillator driver's phase so the waveform is continuous across the cut
+  // (audio drivers sample comp time and need no adjustment).
+  eachClipProp(right, (p) => {
+    for (const k of p.keys) k.t -= offset;
+    if (p.driver && p.driver.source !== 'audio')
+      p.driver.phase = (p.driver.phase ?? 0) + offset * (p.driver.freq ?? 0);
+  });
   return right;
 }
 

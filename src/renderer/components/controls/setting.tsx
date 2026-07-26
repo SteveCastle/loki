@@ -1,7 +1,7 @@
 import React, { useContext } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext, Item } from '../../state';
-import { SETTINGS, SettingKey } from 'settings';
+import { SETTINGS, SettingKey, getSteppedSettingValue } from 'settings';
 import './setting.css';
 
 type Props = {
@@ -49,15 +49,13 @@ function Setting({
                   className={'incrementButton'}
                   onClick={(e) => {
                     e.stopPropagation();
-                    // If current value is less than 5 increment is 1, otherwise increment is option value to give more fine grained control at small numbers.
-                    const increment =
-                      currentValue <= 5 ? 1 : option.increment ?? 1;
+                    const newValue = getSteppedSettingValue(
+                      option,
+                      currentValue,
+                      -1
+                    );
 
-                    const newValue =
-                      (currentValue as number) - (increment ?? 1);
-                    const minValue = (option as any).min ?? 0;
-
-                    if (newValue < minValue) return;
+                    if (newValue === null) return;
 
                     libraryService.send('CHANGE_SETTING', {
                       data: {
@@ -73,15 +71,13 @@ function Setting({
                   className={'incrementButton'}
                   onClick={(e) => {
                     e.stopPropagation();
-                    const increment =
-                      currentValue < 5 ? 1 : option.increment ?? 1;
+                    const newValue = getSteppedSettingValue(
+                      option,
+                      currentValue,
+                      1
+                    );
 
-                    const newValue =
-                      (currentValue as number) + (increment ?? 1);
-                    const maxValue = (option as any).max;
-
-                    // Check if max value is defined and new value would exceed it
-                    if (maxValue !== undefined && newValue > maxValue) return;
+                    if (newValue === null) return;
 
                     libraryService.send('CHANGE_SETTING', {
                       data: {

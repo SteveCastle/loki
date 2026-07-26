@@ -161,9 +161,12 @@ func prepareEmbedOp(run *ItemRun) (*ItemProcessor, error) {
 			if aerr != nil {
 				return nil, aerr
 			}
-			vec, err, timedOut := runWithTimeout(ctx, timeout, func() ([]float32, error) { return w.embed(imagePath) })
-			if timedOut {
-				pool.discard(w)
+			vec, err, abandoned := runWithTimeout(ctx, timeout, func() ([]float32, error) { return w.embed(imagePath) })
+			if abandoned {
+				pool.discard(w) // request still in flight — the worker is unusable
+				if err != nil {
+					return nil, err // cancelled mid-compute
+				}
 				return nil, fmt.Errorf("timed out after %s", timeout)
 			}
 			pool.release(w)
@@ -283,9 +286,12 @@ func prepareAutotagOp(run *ItemRun) (*ItemProcessor, error) {
 			if aerr != nil {
 				return nil, aerr
 			}
-			tagStrings, err, timedOut := runWithTimeout(ctx, timeout, func() ([]string, error) { return classifyViaWorker(w, imagePath) })
-			if timedOut {
-				pool.discard(w)
+			tagStrings, err, abandoned := runWithTimeout(ctx, timeout, func() ([]string, error) { return classifyViaWorker(w, imagePath) })
+			if abandoned {
+				pool.discard(w) // request still in flight — the worker is unusable
+				if err != nil {
+					return nil, err // cancelled mid-compute
+				}
 				return nil, fmt.Errorf("timed out after %s", timeout)
 			}
 			pool.release(w)

@@ -58,12 +58,27 @@ const loadCategoryTags =
     }
   };
 
-// Returns every tag across every category as a flat list. Used by the
-// fuzzy search box, loaded lazily the first time the user types a query.
+// Returns every tag across every category as a flat list. Backs the shared
+// fuzzy-search index (warmed at startup) and the sidebar's search results.
+//
+// DELIBERATELY THIN: label + category + weight, nothing else.
+//
+// This is the whole tag table — ~190K rows on a large library — and it crosses
+// the IPC boundary and then the tag-search worker's postMessage boundary, both
+// of which serialize every property NAME once per row. Carrying `description`
+// and `thumbnail_path_600` (empty/null on all but a few hundred rows) cost
+// ~29 bytes of key text per row per hop for data no consumer of this list
+// reads: the search index matches on label + category, the sidebar's tag cards
+// take label/category/weight, and per-tag thumbnails come from
+// `load-category-tags` / `fetch-tag-preview` instead. The one consumer that
+// needs a description — the edit-tag modal — fetches that single row via
+// `get-tag`. Keep this SELECT in sync with the server's
+// /api/taxonomy/tags handler (media-server/loki_api.go), which returns the
+// same three fields.
 const loadAllTags = (db: Database) => async () => {
   try {
     const rows = await db.all(
-      `SELECT label, category_label, weight, description, thumbnail_path_600
+      `SELECT label, category_label, weight
          FROM tag
          ORDER BY category_label, weight`
     );
@@ -71,14 +86,43 @@ const loadAllTags = (db: Database) => async () => {
       label: row.label,
       category: row.category_label,
       weight: row.weight,
-      description: row.description || '',
-      thumbnail_path_600: row.thumbnail_path_600 || null,
     }));
   } catch (e) {
     console.log(e);
     return [];
   }
 };
+
+type GetTagInput = [string];
+
+// Full detail for a SINGLE tag. The counterpart to loadAllTags staying thin:
+// surfaces that need a tag's description (the edit-tag modal) ask for just the
+// row they are editing.
+const getTag =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args: GetTagInput) => {
+    try {
+      const [tagLabel] = args;
+      if (!tagLabel) return null;
+      const row = await db.get(
+        `SELECT label, category_label, weight, description, thumbnail_path_600
+           FROM tag
+          WHERE label = $1`,
+        [tagLabel]
+      );
+      if (!row) return null;
+      return {
+        label: row.label,
+        category: row.category_label,
+        weight: row.weight,
+        description: row.description || '',
+        thumbnail_path_600: row.thumbnail_path_600 || null,
+      };
+    } catch (e) {
+      console.log(e);
+      return null;
+    }
+  };
 
 type TagCountInput = [string];
 
@@ -410,9 +454,15 @@ const loadTagsByMediaPath =
     }
   };
 
+// selectNewPath ONLY picks the file — "where did this media move to?". The
+// database side is the move-media handler (src/main/media.ts), which re-points
+// every table the way POST /api/media/move does. This used to update
+// media_tag_by_category here and nothing else, so a relocated file kept its
+// tags but left its media row, ratings, embedding, and faces pointing at a
+// path that no longer existed.
 type SelectNewPathInput = [string, boolean];
 const selectNewPath =
-  (db: Database, mainWindow: Electron.BrowserWindow | null) =>
+  (mainWindow: Electron.BrowserWindow | null) =>
   async (_: IpcMainInvokeEvent, args: SelectNewPathInput) => {
     if (!mainWindow) {
       return null;
@@ -465,35 +515,12 @@ const selectNewPath =
       ],
     });
 
-    if (!result.canceled) {
-      // Update the media_tag_by_category table with the new path.
-      const newPath = result.filePaths[0];
-      const pathWithoutFile = path.dirname(targetPath);
-      const newPathWithoutFile = path.dirname(newPath);
-
-      // If not updating all, only update the media_path, if updating all, update all media_paths that start with the pathWithoutFile
-      if (!updateAll) {
-        await db.run(
-          `UPDATE media_tag_by_category SET media_path = $1 WHERE media_path = $2`,
-          [newPath, targetPath]
-        );
-      } else {
-        console.log(
-          'Updating all media paths that start with',
-          pathWithoutFile
-        );
-        await db.run(
-          `UPDATE media_tag_by_category
-          SET media_path = REPLACE(media_path, $1, $2)
-          WHERE media_path LIKE $3;`,
-          [pathWithoutFile, newPathWithoutFile, pathWithoutFile + '%']
-        );
-      }
-
-      return { newPath, path: targetPath, updateAll };
-    } else {
+    if (result.canceled || !result.filePaths[0]) {
       return null;
     }
+    // The caller (the machine's selectingFilePath state) turns this into the
+    // actual move — including widening to the parent folders when updateAll.
+    return { newPath: result.filePaths[0], path: targetPath, updateAll };
   };
 
 type OrderTagInput = [string];
@@ -780,6 +807,7 @@ export {
   loadCategories,
   loadCategoryTags,
   loadAllTags,
+  getTag,
   getTagCount,
   getCategoryCount,
   createTag,

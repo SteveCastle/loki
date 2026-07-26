@@ -1,0 +1,15 @@
+shaders = 1
+
+shader0        = shatter.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;shards;refract_;cracks;width;seed"
+amount   = 1.0
+shards   = 7.0
+refract_ = 0.6
+cracks   = 0.7
+width    = 0.035
+seed     = 0.0

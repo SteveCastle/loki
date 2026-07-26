@@ -200,8 +200,78 @@ fn fs(in : VSOut) -> @location(0) vec4<f32> {
 }
 `;
 
+/* Separable post-pass over the composed mask: grow/shrink (square-kernel
+ * dilate/erode) and feather (gaussian blur). One pipeline, op selected per
+ * pass; each effect runs as a horizontal then a vertical pass. */
+const MASK_POST_WGSL = /* wgsl */ `
+struct VSOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) i : u32) -> VSOut {
+  var p = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>( 3.0,  1.0),
+    vec2<f32>(-1.0,  1.0),
+  );
+  var out : VSOut;
+  out.pos = vec4<f32>(p[i], 0.0, 1.0);
+  out.uv = vec2<f32>((p[i].x + 1.0) * 0.5, (1.0 - p[i].y) * 0.5);
+  return out;
+}
+
+@group(0) @binding(0) var src : texture_2d<f32>;
+@group(0) @binding(1) var smp : sampler;
+// x: radius (px), y: op (0 dilate / 1 erode / 2 blur), zw: uv step per px
+@group(0) @binding(2) var<uniform> u : vec4<f32>;
+
+@fragment
+fn fs(in : VSOut) -> @location(0) vec4<f32> {
+  let radius = i32(u.x + 0.5);
+  var v = textureSample(src, smp, in.uv).r;
+  if (u.y > 1.5) {
+    // Gaussian blur, sigma = radius/2 so the visible falloff spans ~radius.
+    // Tap count is capped; beyond it the taps stride outward at fractional
+    // offsets (the linear sampler interpolates), so large feathers cost the
+    // same as radius-64 and stay smooth on already-soft mask edges.
+    let taps = min(radius, 64);
+    let stepPx = u.x / f32(taps);
+    let sigma = max(u.x * 0.5, 0.5);
+    var sum = v;
+    var wsum = 1.0;
+    for (var i = 1; i <= taps; i++) {
+      let d = f32(i) * stepPx;
+      let w = exp(-(d * d) / (2.0 * sigma * sigma));
+      let o = u.zw * d;
+      sum += (textureSample(src, smp, in.uv + o).r + textureSample(src, smp, in.uv - o).r) * w;
+      wsum += 2.0 * w;
+    }
+    v = sum / wsum;
+  } else if (u.y > 0.5) {
+    for (var i = 1; i <= radius; i++) {
+      let o = u.zw * f32(i);
+      v = min(v, min(textureSample(src, smp, in.uv + o).r, textureSample(src, smp, in.uv - o).r));
+    }
+  } else {
+    for (var i = 1; i <= radius; i++) {
+      let o = u.zw * f32(i);
+      v = max(v, max(textureSample(src, smp, in.uv + o).r, textureSample(src, smp, in.uv - o).r));
+    }
+  }
+  return vec4<f32>(v, v, v, 1.0);
+}
+`;
+
 /* value an inactive/zero-strength node contributes per blend mode */
 export const MASK_BLEND_IDENTITY = { add: 0, subtract: 0, multiply: 1, max: 0, min: 1 };
+
+/* Post-pass radius caps. Expand is exact (one tap per pixel — striding a
+ * min/max would skip thin features), so it stays at the loop bound. Feather
+ * strides its taps beyond the loop bound, so it can range much further. */
+export const MASK_POST_MAX = 64;
+export const MASK_FEATHER_MAX = 250;
 
 const MASK_BLEND_STATES = {
   add:      { color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' } },
@@ -251,6 +321,69 @@ export class MaskComposer {
         primitive: { topology: 'triangle-list' },
       });
     }
+
+    // Expand / feather post passes over the composed stack.
+    const postModule = device.createShaderModule({ label: 'slangfx mask post', code: MASK_POST_WGSL });
+    this.postLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.postPipeline = device.createRenderPipeline({
+      label: 'slangfx mask post',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.postLayout] }),
+      vertex: { module: postModule, entryPoint: 'vs' },
+      fragment: { module: postModule, entryPoint: 'fs', targets: [{ format: 'rgba8unorm' }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    // clamp-to-edge (WebGPU default) so grown masks don't wrap.
+    this.postSampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
+  }
+
+  /* Ping-pong textures + per-pass uniforms for one maskState's expand /
+   * feather chain, (re)created when the mask dims change. Up to 4 passes:
+   * morph H, morph V, blur H, blur V — even passes always read texA, odd
+   * passes read texB, so bind groups are fixed per slot. */
+  _ensurePost(maskState, w, h) {
+    let p = maskState._post;
+    if (p && (p.w !== w || p.h !== h)) { this.destroyPost(maskState); p = null; }
+    if (!p) {
+      const mk = () => this.device.createTexture({
+        label: 'slangfx mask post',
+        size: [w, h],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      const texA = mk(), texB = mk();
+      const viewA = texA.createView(), viewB = texB.createView();
+      const ubos = [0, 1, 2, 3].map(() => this.device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      }));
+      const bgs = ubos.map((ubo, i) => this.device.createBindGroup({
+        layout: this.postLayout,
+        entries: [
+          { binding: 0, resource: i % 2 === 0 ? viewA : viewB },
+          { binding: 1, resource: this.postSampler },
+          { binding: 2, resource: { buffer: ubo } },
+        ],
+      }));
+      p = { w, h, texA, texB, viewA, viewB, ubos, bgs };
+      maskState._post = p;
+    }
+    return p;
+  }
+
+  /** Release a maskState's post-pass GPU state (no-op when absent). */
+  destroyPost(maskState) {
+    const p = maskState?._post;
+    if (!p) return;
+    p.texA.destroy();
+    p.texB.destroy();
+    for (const b of p.ubos) b.destroy();
+    delete maskState._post;
   }
 
   bindGroup(srcView, sampler, optsBuf) {
@@ -276,14 +409,27 @@ export class MaskComposer {
   }
 
   /** Encode the full stack into layer.maskView. Nodes with enabled=false
-   * or active=false (source clip not under the playhead) are skipped. */
+   * or active=false (source clip not under the playhead) are skipped.
+   * maskState.expand (signed px) and .feather (px) run as separable post
+   * passes on the composed result; when both are 0 the stack renders
+   * straight into maskView with no extra cost. Dims come from
+   * layer.maskW/maskH (media masks) or layer.maskTex (fx layers). */
   encode(encoder, layer) {
-    const nodes = layer.maskState?.nodes ?? [];
+    const st = layer.maskState;
+    const nodes = st?.nodes ?? [];
     for (const n of nodes)
       if (n._optsBuf && n.enabled !== false && n.active !== false) this.writeNodeOpts(n);
+
+    const expand = Math.max(-MASK_POST_MAX, Math.min(MASK_POST_MAX, Math.round(st?.expand ?? 0)));
+    const feather = Math.max(0, Math.min(MASK_FEATHER_MAX, Math.round(st?.feather ?? 0)));
+    const w = layer.maskW ?? layer.maskTex?.width ?? 0;
+    const h = layer.maskH ?? layer.maskTex?.height ?? 0;
+    const post = (expand !== 0 || feather > 0) && w > 0 && h > 0
+      ? this._ensurePost(st, w, h) : null;
+
     const pass = encoder.beginRenderPass({
       colorAttachments: [{
-        view: layer.maskView,
+        view: post ? post.viewA : layer.maskView,
         loadOp: 'clear',
         storeOp: 'store',
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -296,6 +442,29 @@ export class MaskComposer {
       pass.draw(3);
     }
     pass.end();
+    if (!post) return;
+
+    const steps = [];
+    if (expand !== 0) {
+      const op = expand > 0 ? 0 : 1;   // dilate grows white, erode shrinks it
+      steps.push({ r: Math.abs(expand), op, dir: 'h' }, { r: Math.abs(expand), op, dir: 'v' });
+    }
+    if (feather > 0)
+      steps.push({ r: feather, op: 2, dir: 'h' }, { r: feather, op: 2, dir: 'v' });
+    steps.forEach((s, i) => {
+      this.device.queue.writeBuffer(post.ubos[i], 0, new Float32Array([
+        s.r, s.op, s.dir === 'h' ? 1 / w : 0, s.dir === 'h' ? 0 : 1 / h,
+      ]));
+      const last = i === steps.length - 1;
+      const target = last ? layer.maskView : (i % 2 === 0 ? post.viewB : post.viewA);
+      const p = encoder.beginRenderPass({
+        colorAttachments: [{ view: target, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+      });
+      p.setPipeline(this.postPipeline);
+      p.setBindGroup(0, post.bgs[i]);
+      p.draw(3);
+      p.end();
+    });
   }
 }
 

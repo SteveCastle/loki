@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"math/rand"
@@ -17,19 +18,36 @@ import (
 // toward n singletons. A slice of the backlog is pre-assigned to one person
 // so phase 1's seed scoring is exercised too. The run is idempotent (junk
 // never assigns), so every b.N iteration does identical work.
+//
+// The flush variants price the incremental-persistence contract: "batched" is
+// the shipped default (commit + report every defaultClusterFlushEvery
+// candidates), "single-commit" is the old write-once-at-the-end behavior. The
+// gap between them is what continuous progress costs.
 func BenchmarkClusterFacesJunkBacklog(b *testing.B) {
+	flushModes := []struct {
+		name  string
+		every int
+	}{
+		{"batched", 0}, // 0 → defaultClusterFlushEvery
+		{"single-commit", 1 << 30},
+	}
 	for _, n := range []int{5000, 20000} {
-		b.Run(fmt.Sprintf("faces=%d", n), func(b *testing.B) {
-			db := benchFaceDB(b, n)
-			model := FaceModel{ID: "bench", MatchThreshold: 0.42}
-			p := clusterParams{joinThreshold: 0.42, formThreshold: 0.47, minQuality: 0.5, minCluster: 3, passes: 2}
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if _, err := clusterFaces(db, model, p); err != nil {
-					b.Fatal(err)
+		for _, fm := range flushModes {
+			b.Run(fmt.Sprintf("faces=%d/%s", n, fm.name), func(b *testing.B) {
+				db := benchFaceDB(b, n)
+				model := FaceModel{ID: "bench", MatchThreshold: 0.42}
+				p := clusterParams{
+					joinThreshold: 0.42, formThreshold: 0.47, minQuality: 0.5,
+					minCluster: 3, passes: 2, flushEvery: fm.every,
 				}
-			}
-		})
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := clusterFaces(context.Background(), db, model, p); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
 	}
 }
 

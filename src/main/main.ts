@@ -25,6 +25,7 @@ import { cleanupArchives } from './archives';
 import { registerSubtitleHandlers } from './subtitles';
 import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
+import { registerStudioProtocol, openStudioWindow } from './studio-window';
 
 import type { Database } from './database';
 
@@ -32,10 +33,22 @@ import type { Database } from './database';
 // them to <userData>/app-log.jsonl so field hangs/crashes can be diagnosed.
 installGlobalErrorHandlers();
 
-// Register custom protocol scheme as privileged (must be done before app ready)
+// Register custom protocol schemes as privileged (must be done before app ready)
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'gsm',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: true,
+    },
+  },
+  {
+    // Serves the bundled Lowkey Studio app (see studio-window.ts). `secure`
+    // matters: the studio needs a secure context for WebGPU + ES modules.
+    scheme: 'studio',
     privileges: {
       standard: true,
       secure: true,
@@ -150,6 +163,11 @@ ipcMain.on('open-external', async (event, args) => {
 ipcMain.on('show-item-in-folder', async (event, args) => {
   const filePath = args[0];
   if (filePath) shell.showItemInFolder(filePath);
+});
+
+// Launch Lowkey Studio in its own window with the given media auto-imported.
+ipcMain.on('open-studio', async (_event, args) => {
+  openStudioWindow(Array.isArray(args) ? args.filter((p) => typeof p === 'string') : []);
 });
 
 ipcMain.on('toggle-fullscreen', async () => {
@@ -349,6 +367,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-categories');
   ipcMain.removeHandler('load-category-tags');
   ipcMain.removeHandler('load-all-tags');
+  ipcMain.removeHandler('get-tag');
   ipcMain.removeHandler('get-tag-count');
   ipcMain.removeHandler('get-category-count');
   ipcMain.removeHandler('create-tag');
@@ -377,6 +396,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('list-thumbnails');
   ipcMain.removeHandler('regenerate-thumbnail');
   ipcMain.removeHandler('delete-file');
+  ipcMain.removeHandler('forget-media');
+  ipcMain.removeHandler('move-media');
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
   ipcMain.removeHandler('load-gif-metadata');
@@ -414,6 +435,8 @@ ipcMain.handle('load-db', async (event, args) => {
     mediaModule.copyFileIntoClipboard()
   );
   ipcMain.handle('delete-file', mediaModule.deleteMedia(db));
+  ipcMain.handle('forget-media', mediaModule.forgetMedia(db));
+  ipcMain.handle('move-media', mediaModule.moveMedia(db));
   ipcMain.handle('import-files', mediaModule.importFiles(db));
   ipcMain.handle(
     'load-duplicates-by-path',
@@ -432,6 +455,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('load-categories', taxonomyModule.loadCategories(db));
   ipcMain.handle('load-category-tags', taxonomyModule.loadCategoryTags(db));
   ipcMain.handle('load-all-tags', taxonomyModule.loadAllTags(db));
+  ipcMain.handle('get-tag', taxonomyModule.getTag(db));
   ipcMain.handle('get-tag-count', taxonomyModule.getTagCount(db));
   ipcMain.handle('get-category-count', taxonomyModule.getCategoryCount(db));
   ipcMain.handle('create-tag', taxonomyModule.createTag(db));
@@ -463,7 +487,7 @@ ipcMain.handle('load-db', async (event, args) => {
 
   ipcMain.handle(
     'select-new-path',
-    taxonomyModule.selectNewPath(db, mainWindow)
+    taxonomyModule.selectNewPath(mainWindow)
   );
   ipcMain.handle('rename-category', taxonomyModule.renameCategory(db));
   ipcMain.handle('delete-category', taxonomyModule.deleteCategory(db));
@@ -750,6 +774,7 @@ const gsmMimeTypes: Record<string, string> = {
 };
 
 app.on('ready', async () => {
+  registerStudioProtocol();
   protocol.handle('gsm', async (request) => {
     try {
       // Parse URL to file path

@@ -30,6 +30,7 @@
 import {
   clipEnd, splitClip, uid, ensureDur, removeEmptyTracks,
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
+  eachClipProp, effectsOf, reidEffects,
 } from './comp.js';
 
 const TRACK_H = 36;
@@ -681,10 +682,13 @@ export class Timeline {
   _renderClip(row, track, clip, trackIdx) {
     const comp = this.host.comp();
     const el = document.createElement('div');
+    const effects = effectsOf(clip);
     el.className = `tl-clip ${clip.kind}` +
-      (clip.kind === 'fx' && clip.fxKind === 'custom' ? ' custom' : '') +
+      (clip.kind === 'fx' && effects.every((e) => e.fxKind === 'custom') && effects.length
+        ? ' custom' : '') +
       (this.selClips.has(clip.id) ? ' sel' : '') +
-      (clip.kind === 'fx' && !clip.enabled ? ' off' : '');
+      (clip.kind === 'fx' && !clip.enabled ? ' off' : '') +
+      (clip.kind === 'media' && effects.length ? ' fxd' : '');
     el.style.left = `${this._timeToX(clip.start)}px`;
     el.style.width = `${Math.max(this._timeToX(clip.dur), 4)}px`;
     el.dataset.clipId = clip.id;
@@ -703,8 +707,9 @@ export class Timeline {
 
     const label = document.createElement('span');
     label.className = 'tl-clip-name';
-    const badge = clip.kind === 'fx' ? (clip.fxKind === 'custom' ? '✎ ' : 'ƒx ') : '';
-    label.textContent = badge + clip.name;
+    const badge = clip.kind === 'fx' ? 'ƒx ' : (effects.length ? 'ƒ ' : '');
+    label.textContent = badge + clip.name +
+      (effects.length > 1 ? ` (${effects.length})` : '');
 
     const kfCount = this._keyframeCount(clip);
     if (kfCount) {
@@ -738,9 +743,8 @@ export class Timeline {
   }
 
   _keyframeCount(clip) {
-    const bag = clip.kind === 'media' ? clip.props : clip.params;
     let n = 0;
-    for (const p of Object.values(bag ?? {})) if (p.anim) n += p.keys.length;
+    eachClipProp(clip, (p) => { if (p.anim) n += p.keys.length; });
     return n;
   }
 
@@ -752,7 +756,9 @@ export class Timeline {
         label: 'Duplicate',
         action: () => {
           this.host.history.record(comp, () => {
-            const copy = structuredClone(clip);
+            // Fresh effect ids: they key compiled runtimes and editor state,
+            // so the copy must not share them with the original.
+            const copy = reidEffects(structuredClone(clip));
             copy.id = uid('clip');
             copy.start = clipEnd(clip);
             trackOf(comp, clip)?.clips.push(copy);
@@ -859,11 +865,14 @@ export class Timeline {
     return null;
   }
 
-  selectClip(clipId) {
+  /** @param {object} [opts] quiet: update the selection without calling back
+   * into the host — for a selection the host is making DURING its own
+   * onSelect/render pass, which would otherwise re-enter it. */
+  selectClip(clipId, { quiet = false } = {}) {
     this.selClips = clipId ? new Set([clipId]) : new Set();
     this.selKeys.clear();
     this._refreshSelectionStyles();
-    this.host.onSelect();
+    if (!quiet) this.host.onSelect();
   }
 
   /* Clip drag: move (body) or trim (edge handles). Live-updates the model
@@ -964,9 +973,8 @@ export class Timeline {
   _shiftKeys(clip, delta, orig) {
     if (!orig._keySnapshot) {
       orig._keySnapshot = [];
-      const bag = clip.kind === 'media' ? clip.props : clip.params;
-      for (const p of Object.values(bag ?? {}))
-        orig._keySnapshot.push({ p, times: p.keys.map((k) => k.t) });
+      eachClipProp(clip, (p) =>
+        orig._keySnapshot.push({ p, times: p.keys.map((k) => k.t) }));
     }
     for (const snap of orig._keySnapshot)
       snap.p.keys.forEach((k, i) => { k.t = snap.times[i] + delta; });
@@ -990,8 +998,18 @@ export class Timeline {
 
     const label = document.createElement('span');
     label.className = 'tl-prop-name';
-    label.textContent = def.label;
-    label.title = `${clip.name} · ${def.key}${def.unit ? ` (${def.unit})` : ''}`;
+    // Several effects on one clip can expose the same parameter name, so
+    // qualify effect params with the effect they belong to.
+    if (def.effectName) {
+      const owner = document.createElement('span');
+      owner.className = 'tl-prop-owner';
+      owner.textContent = `${def.effectName} · `;
+      label.append(owner, def.label);
+    } else {
+      label.textContent = def.label;
+    }
+    label.title = `${clip.name}${def.effectName ? ` › ${def.effectName}` : ''} · ` +
+      `${def.label}${def.unit ? ` (${def.unit})` : ''}`;
 
     const val = document.createElement('input');
     val.className = 'tl-prop-val';

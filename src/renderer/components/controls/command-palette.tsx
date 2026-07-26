@@ -13,6 +13,8 @@ import useComponentSize from '@rehooks/component-size';
 // State & Hooks
 import { GlobalStateContext } from '../../state';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
+import { useAfterPaint } from '../../hooks/useAfterPaint';
+import { absorbNextClick } from '../../absorb-next-click';
 import filter from '../../filter';
 
 // Child Components
@@ -667,6 +669,18 @@ const CommandPaletteTooltips: React.FC = React.memo(() => (
 ));
 CommandPaletteTooltips.displayName = 'CommandPaletteTooltips'; // Add display name
 
+// The tooltips are pure decoration on a 500ms delay, but react-tooltip mounts a
+// portal + positioning listener per instance — work the palette should not pay
+// for in the commit that makes it visible. Mounting them one task later is
+// invisible to the user and keeps the open path short. This wrapper exists so
+// the deferral restarts on every open (it mounts with the palette, whereas
+// CommandPalette itself stays mounted for the app's lifetime).
+const DeferredCommandPaletteTooltips: React.FC = () => {
+  const ready = useAfterPaint();
+  return ready ? <CommandPaletteTooltips /> : null;
+};
+DeferredCommandPaletteTooltips.displayName = 'DeferredCommandPaletteTooltips';
+
 // --- Main Component ---
 
 const CommandPalette: React.FC<CommandPaletteProps> = () => {
@@ -822,24 +836,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
       }
     }
 
-    const absorbClick = (clickEvent: Event) => {
-      clickEvent.stopPropagation();
-      clickEvent.preventDefault();
-    };
-    window.addEventListener('click', absorbClick, {
-      capture: true,
-      once: true,
-    });
-    // Safety net — if no click follows the mousedown (e.g. the user
-    // releases off-window), drop the listener so it can't swallow a
-    // future legitimate click.
-    setTimeout(
-      () =>
-        window.removeEventListener('click', absorbClick, {
-          capture: true,
-        } as EventListenerOptions),
-      300
-    );
+    absorbNextClick();
 
     libraryService.send('HIDE_COMMAND_PALETTE');
   });
@@ -925,7 +922,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
         <TabSelector activeTab={activeTab} onTabSelect={setActiveTab} />
       </div>
 
-      <CommandPaletteTooltips />
+      <DeferredCommandPaletteTooltips />
     </div>
   );
 };

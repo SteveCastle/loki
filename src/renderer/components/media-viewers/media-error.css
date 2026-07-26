@@ -17,3 +17,19 @@
   text-decoration: underline;
   color: rgb(136, 253, 204);
 }
+
+/* Armed state for the destructive cleanup — same red the People panel's
+   two-click confirmations use. */
+.MediaError button.danger {
+  color: rgb(255, 120, 160);
+}
+
+.MediaError button.danger:hover {
+  color: rgb(255, 160, 190);
+}
+
+.MediaError button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  text-decoration: none;
+}

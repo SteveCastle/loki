@@ -79,15 +79,19 @@ func TestFacesForPathHandler(t *testing.T) {
 		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
 	}
 	var resp struct {
-		Model   string           `json:"model"`
-		Scanned bool             `json:"scanned"`
-		Faces   []map[string]any `json:"faces"`
+		Model     string           `json:"model"`
+		Scanned   bool             `json:"scanned"`
+		ScannedAt int64            `json:"scannedAt"`
+		Faces     []map[string]any `json:"faces"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
 	if resp.Model != model.ID || !resp.Scanned || len(resp.Faces) != 1 {
 		t.Fatalf("resp = %+v", resp)
+	}
+	if resp.ScannedAt != 1 {
+		t.Fatalf("scannedAt = %d, want 1 (the ReplaceFaces timestamp)", resp.ScannedAt)
 	}
 
 	// Unscanned path: scanned=false, empty faces.
@@ -96,7 +100,7 @@ func TestFacesForPathHandler(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Scanned || len(resp.Faces) != 0 {
+	if resp.Scanned || resp.ScannedAt != 0 || len(resp.Faces) != 0 {
 		t.Fatalf("unscanned resp = %+v", resp)
 	}
 
@@ -105,6 +109,26 @@ func TestFacesForPathHandler(t *testing.T) {
 	facesForPathHandler(deps)(rec, httptest.NewRequest(http.MethodGet, "/api/faces", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("missing path status = %d", rec.Code)
+	}
+
+	// An item scanned under a DIFFERENT model than the active one reports the
+	// model that actually scanned it — the endpoint reads the stored scan
+	// state, it never re-runs routing for scanned items.
+	if model.ID == "anime-ccip" {
+		t.Fatalf("test assumes the active model is not anime-ccip")
+	}
+	if _, err := media.ReplaceFaces(db, "toon.png", "anime-ccip", []media.NewFace{
+		{X: 0.1, Y: 0.1, W: 0.2, H: 0.2, Score: 0.8, Vec: []float32{0, 1}},
+	}, 7); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	facesForPathHandler(deps)(rec, httptest.NewRequest(http.MethodGet, "/api/faces?path=toon.png", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Model != "anime-ccip" || !resp.Scanned || resp.ScannedAt != 7 || len(resp.Faces) != 1 {
+		t.Fatalf("cross-model resp = %+v, want anime-ccip scan state", resp)
 	}
 }
 

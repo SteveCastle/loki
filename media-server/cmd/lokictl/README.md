@@ -34,17 +34,25 @@ The default is `http://localhost:<port>` where the port comes from the
 
 ```sh
 lokictl health                            # no auth needed
-lokictl login --password <pw>             # default --username admin
-# token is stored at <UserConfigDir>/lokictl/config.json (0600)
+lokictl login                             # opens the browser to authorize (recommended)
+lokictl login --no-browser                # prints the authorization URL instead
+lokictl login --password <pw>             # headless / scripted (default --username admin)
+# credential is stored at <UserConfigDir>/lokictl/config.json (0600)
 ```
 
-For automation, prefer a long-lived **API key** over the login JWT. Keys are
-`lk_`-prefixed, tied to a user, revocable, and accepted anywhere a token is
-(`--token`, `LOKICTL_TOKEN`, config file, `Authorization: Bearer`, or an
-`X-API-Key` header). Create one in the web UI (Config → API Keys) or:
+The browser flow is the RFC 8252 loopback pattern used by modern CLIs: the
+CLI listens on an ephemeral `127.0.0.1` port, the browser authorizes it on an
+approve page (logging you in first if needed), and the CLI receives a
+one-time code it exchanges (PKCE) for a freshly minted `lk_` API key — a
+long-lived, revocable credential, unlike the 24-hour JWT the password flow
+returns. It requires the browser to run on the same machine as the CLI; over
+SSH, use `--password`.
+
+API keys remain fully supported everywhere a token is accepted (`--token`,
+`LOKICTL_TOKEN`, config file, `Authorization: Bearer`, or an `X-API-Key`
+header). Manage them in the web UI (Config → API Keys) or:
 
 ```sh
-lokictl login --password <pw>             # bootstrap once
 lokictl key create --name ci --save       # mint a key and store it as the CLI token
 lokictl key list                          # id, owner, prefix, created, last used
 lokictl key revoke --id 3
@@ -64,6 +72,7 @@ Run `lokictl help` for the always-current list. Highlights:
 | Workflows | `workflow list/get/create/update/delete/run`, `workflow run-adhoc --dag FILE\|-` |
 | Library queries | `media query [--tag ... --visual ... --similar ...]`, `media search/similar/visual/image-search/metadata/tags/delete` |
 | Media data | `media describe <path> (--text D\|--clear)`, `media transcript <path> [--text T\|--clear]`, `media rate <path> [--elo E --views N --wins N --losses N]`, `media thumbs <path> [--regenerate]`, `media generate <path> --type T [--wait]` |
+| Library bookkeeping | `media move <from> <to> [--prefix] [--dry-run]` (you moved the file; re-point the DB), `media forget <path> --yes` (drop every DB reference, keep the file) |
 | Embeddings index | `index status/models/rebuild`, `index missing [--model M]`, `index get <path> [--vector]`, `index delete <path> --yes`, `index prune --yes`, `index embed [args...] [--wait]` |
 | Raw SQL (read-only) | `db query "SELECT ..." [--arg V]`, `db tables`, `db schema [table]` |
 | Taxonomy | `taxonomy [--category C]`, `tag create/delete/rename/move/assign/unassign/assign-bulk/unassign-bulk`, `tag list/count/weight/has/timestamp/assignment-weight`, `category create/delete/rename/count` |
@@ -72,7 +81,7 @@ Run `lokictl help` for the always-current list. Highlights:
 | API keys | `key create --name N [--username U] [--save]`, `key list`, `key revoke --id N` |
 | Escape hatch | `api <METHOD> <path> [--body JSON\|@file\|-]` — any endpoint, auth attached |
 
-Destructive commands (`job clear`, `media delete`, `tag delete`,
+Destructive commands (`job clear`, `media delete`, `media forget`, `tag delete`,
 `tag unassign-bulk`, `category delete`, `workflow delete`, `deps delete`,
 `index delete`, `index prune`) refuse to run without `--yes` (exit 2).
 
@@ -138,6 +147,26 @@ lokictl media describe "C:/pics/x.jpg" --text "Two dogs on a beach"
 lokictl media transcript "C:/vids/talk.mp4"                  # read
 lokictl media generate "C:/vids/talk.mp4" --type transcript --wait
 lokictl media rate "C:/pics/x.jpg" --elo 1600
+```
+
+**You moved files on disk — make the library agree.** The move re-points every
+reference (media row, tags, embedding, faces, scan markers, battle log) in one
+transaction; nothing on disk is touched. `--dry-run` performs the move and
+rolls it back, so its counts are exactly what a real run would change:
+
+```sh
+lokictl media move "C:/pics/old.jpg" "D:/archive/old.jpg"      # one file
+lokictl media move "C:/pics/2023" "D:/archive/2023" --prefix --dry-run
+lokictl media move "C:/pics/2023" "D:/archive/2023" --prefix   # the folder
+```
+
+`--prefix` is segment-aligned: moving `2023` never drags `2023extra` along. A
+destination that already belongs to another item is a 409 with the offending
+paths — a move will not merge two items. To drop an item from the library
+while leaving the file where it is (or to clean up after a file that's gone):
+
+```sh
+lokictl media forget "C:/pics/gone.jpg" --yes
 ```
 
 **Run a saved workflow and wait for every job it spawns:**

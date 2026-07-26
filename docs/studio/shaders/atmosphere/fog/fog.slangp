@@ -1,0 +1,14 @@
+shaders = 1
+
+shader0        = fog.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;density;fscale;speed;height"
+amount  = 1.0
+density = 0.7
+fscale  = 3.0
+speed   = 1.0
+height  = 0.4

@@ -600,6 +600,330 @@ const deleteMedia =
     ]);
   };
 
+// moveMedia: the bookkeeping half of moving a file on disk — re-point every
+// database reference from one path to another. The filesystem is never
+// touched; the caller has already moved the file(s).
+//
+// This mirrors the media-server's media.MovePath (POST /api/media/move) so
+// both environments behave identically; the viewer can't call that endpoint
+// because it runs against its own SQLite connection with no server required.
+// Keep the two in step — the table list below is the whole contract.
+type MoveMediaInput = [string, string, boolean?, boolean?];
+export interface MoveMediaResult {
+  from: string;
+  to: string;
+  prefix: boolean;
+  dryRun: boolean;
+  /** Media rows whose path changed — "how many files moved". */
+  items: number;
+  /** Rows updated per "table.column"; a missing key means the table is absent. */
+  rows: Record<string, number>;
+  total: number;
+  conflicts?: string[];
+}
+
+// Every column in the schema that stores a media path. A missing entry here is
+// a silently orphaned reference — the exact bug this replaces (the old
+// "Find Media" rewrote media_tag_by_category and nothing else, so a found file
+// kept its tags but lost its media row, ratings, embedding, and faces).
+const MOVABLE_PATH_COLUMNS: Array<{ table: string; column: string }> = [
+  { table: 'media', column: 'path' },
+  { table: 'media_tag_by_category', column: 'media_path' },
+  { table: 'media_embedding', column: 'media_path' },
+  { table: 'face', column: 'media_path' },
+  { table: 'face_scan', column: 'media_path' },
+  { table: 'battle', column: 'winner_path' },
+  { table: 'battle', column: 'loser_path' },
+];
+
+/** Thrown when the destination already belongs to another media row. */
+export class MoveConflictError extends Error {
+  constructor(public conflicts: string[]) {
+    super(
+      conflicts.length === 1
+        ? `destination already exists in the library: ${conflicts[0]}`
+        : `${conflicts.length} destination paths already exist in the library (e.g. ${conflicts
+            .slice(0, 3)
+            .join(', ')})`
+    );
+    this.name = 'MoveConflictError';
+  }
+}
+
+// Sentinel that unwinds withTransaction so a dry run rolls back after doing
+// the real work — the reported counts are then exactly what a real run changes.
+class DryRunRollback extends Error {}
+
+/** Strip trailing separators so "/photos/" and "/photos" are one folder. */
+function trimTrailingSeparators(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, '');
+  return trimmed === '' || trimmed.endsWith(':') ? p : trimmed;
+}
+
+// Segment-aligned prefix match: "/a/foo" must not drag "/a/foobar" along, so a
+// prefix only matches when the next character is a separator. substr()
+// comparison rather than LIKE — SQLite's LIKE is case-insensitive for ASCII
+// and would need % and _ escaped.
+function matchClause(
+  col: string,
+  from: string,
+  prefix: boolean
+): { where: string; args: unknown[] } {
+  if (!prefix) return { where: `${col} = ?`, args: [from] };
+  const n = [...from].length + 1; // +1 for the separator character
+  return {
+    where: `(${col} = ? OR substr(${col}, 1, ?) = ? OR substr(${col}, 1, ?) = ?)`,
+    args: [from, n, `${from}/`, n, `${from}\\`],
+  };
+}
+
+// The new value. In prefix mode the tail (separator included, so the stored
+// separator style survives) is kept.
+function rewriteExpr(
+  col: string,
+  from: string,
+  to: string,
+  prefix: boolean
+): { expr: string; args: unknown[] } {
+  if (!prefix) return { expr: '?', args: [to] };
+  return { expr: `? || substr(${col}, ?)`, args: [to, [...from].length + 1] };
+}
+
+const moveMedia =
+  (db: Database) =>
+  async (
+    _: IpcMainInvokeEvent,
+    args: MoveMediaInput
+  ): Promise<MoveMediaResult> => {
+    const from = trimTrailingSeparators((args[0] ?? '').trim());
+    const to = trimTrailingSeparators((args[1] ?? '').trim());
+    const prefix = !!args[2];
+    const dryRun = !!args[3];
+
+    if (!from || !to) throw new Error('both from and to paths are required');
+    if (from === to) throw new Error('from and to are the same path');
+    if (prefix && (to.startsWith(`${from}/`) || to.startsWith(`${from}\\`))) {
+      // Moving /a into /a/b would rewrite the destination again on the same
+      // pass and produce nonsense like /a/b/b.
+      throw new Error(`destination "${to}" is inside the source "${from}"`);
+    }
+
+    const result: MoveMediaResult = {
+      from,
+      to,
+      prefix,
+      dryRun,
+      items: 0,
+      rows: {},
+      total: 0,
+    };
+
+    // Which media rows move, and what they become — the item count and the
+    // conflict check both read from this.
+    const match = matchClause('"path"', from, prefix);
+    const rewrite = rewriteExpr('"path"', from, to, prefix);
+    const pairs: Array<{ from: string; to: string }> = (
+      await db.all(
+        `SELECT "path" AS oldPath, ${rewrite.expr} AS newPath FROM media WHERE ${match.where} ORDER BY "path"`,
+        [...rewrite.args, ...match.args],
+        'moveMedia:pairs'
+      )
+    ).map((r) => ({ from: r.oldPath, to: r.newPath }));
+    result.items = pairs.length;
+
+    if (pairs.length > 0) {
+      const moving = new Set(pairs.map((p) => p.from));
+      const placeholders = pairs.map(() => '?').join(',');
+      const taken: Array<{ path: string }> = await db.all(
+        `SELECT "path" FROM media WHERE "path" IN (${placeholders})`,
+        pairs.map((p) => p.to),
+        'moveMedia:conflicts'
+      );
+      // A destination that is itself moving out of the way is not a conflict.
+      const conflicts = taken.map((r) => r.path).filter((p) => !moving.has(p));
+      if (conflicts.length > 0) throw new MoveConflictError(conflicts);
+    }
+
+    const present = new Map<string, boolean>();
+    for (const { table } of MOVABLE_PATH_COLUMNS) {
+      if (!present.has(table)) {
+        // eslint-disable-next-line no-await-in-loop
+        present.set(table, await tableExists(db, table));
+      }
+    }
+
+    try {
+      await db.withTransaction(async () => {
+        for (const { table, column } of MOVABLE_PATH_COLUMNS) {
+          // A viewer-only library has no face/embedding tables; skipping is
+          // correct, and the absent key tells the caller it was skipped.
+          if (!present.get(table)) continue;
+          const quoted = column === 'path' ? '"path"' : column;
+          const where = matchClause(quoted, from, prefix);
+          const set = rewriteExpr(quoted, from, to, prefix);
+          // eslint-disable-next-line no-await-in-loop
+          const res = await db.run(
+            `UPDATE ${table} SET ${quoted} = ${set.expr} WHERE ${where.where}`,
+            [...set.args, ...where.args],
+            `moveMedia:${table}.${column}`
+          );
+          result.rows[`${table}.${column}`] = res.changes;
+          result.total += res.changes;
+        }
+        if (dryRun) throw new DryRunRollback();
+      });
+    } catch (err) {
+      if (!(err instanceof DryRunRollback)) throw err;
+    }
+
+    return result;
+  };
+
+// forgetMedia: erase every database reference to a path WITHOUT touching the
+// file. This is the cleanup for media that is gone from disk (or permanently
+// unreachable) — deleteMedia can't do it, because trashItem/unlink throw on a
+// missing file and the DB deletes below never run.
+//
+// The face and embedding tables are created by the Go media-server, not by the
+// viewer's initDB, so a viewer-only library may not have them: each optional
+// table is checked against sqlite_master first rather than letting a "no such
+// table" error abort the whole cleanup.
+type ForgetMediaInput = [string];
+export interface ForgetMediaResult {
+  path: string;
+  tags: number;
+  media: number;
+  embeddings: number;
+  faces: number;
+  battles: number;
+}
+
+async function tableExists(db: Database, name: string): Promise<boolean> {
+  const row = await db.get(
+    `SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    [name],
+    'forgetMedia:tableExists'
+  );
+  return !!row;
+}
+
+const forgetMedia =
+  (db: Database) =>
+  async (
+    _: IpcMainInvokeEvent,
+    args: ForgetMediaInput
+  ): Promise<ForgetMediaResult> => {
+    const filePath = args[0];
+    const result: ForgetMediaResult = {
+      path: filePath,
+      tags: 0,
+      media: 0,
+      embeddings: 0,
+      faces: 0,
+      battles: 0,
+    };
+    const [hasEmbeddings, hasFaces, hasFaceScan, hasPerson] = await Promise.all(
+      ['media_embedding', 'face', 'face_scan', 'person'].map((t) =>
+        tableExists(db, t)
+      )
+    );
+
+    await db.withTransaction(async () => {
+      const tags = await db.run(
+        'DELETE FROM media_tag_by_category WHERE media_path = ?',
+        [filePath],
+        'forgetMedia:tags'
+      );
+      result.tags = tags.changes;
+
+      if (hasEmbeddings) {
+        const embeddings = await db.run(
+          'DELETE FROM media_embedding WHERE media_path = ?',
+          [filePath],
+          'forgetMedia:embeddings'
+        );
+        result.embeddings = embeddings.changes;
+      }
+
+      if (hasFaces) {
+        // Curation assertions and cover pointers reference face ids, so they
+        // have to go before the face rows they point at — otherwise the
+        // subqueries below match nothing and the rows are orphaned forever.
+        if (hasPerson) {
+          await db.run(
+            `UPDATE person SET cover_face_id = NULL
+             WHERE cover_face_id IN (SELECT id FROM face WHERE media_path = ?)`,
+            [filePath],
+            'forgetMedia:personCover'
+          );
+        }
+        const constraintDeletes: Array<{
+          table: string;
+          sql: string;
+          params: string[];
+        }> = [
+          {
+            table: 'face_veto',
+            sql: `DELETE FROM face_veto
+                  WHERE face_id IN (SELECT id FROM face WHERE media_path = ?)`,
+            params: [filePath],
+          },
+          {
+            table: 'face_cannot_link',
+            sql: `DELETE FROM face_cannot_link
+                  WHERE face_a IN (SELECT id FROM face WHERE media_path = ?)
+                     OR face_b IN (SELECT id FROM face WHERE media_path = ?)`,
+            params: [filePath, filePath],
+          },
+          {
+            table: 'face_group_ban_member',
+            sql: `DELETE FROM face_group_ban_member
+                  WHERE face_id IN (SELECT id FROM face WHERE media_path = ?)`,
+            params: [filePath],
+          },
+        ];
+        for (const del of constraintDeletes) {
+          // Each constraint table is itself optional on older libraries.
+          // eslint-disable-next-line no-await-in-loop
+          if (!(await tableExists(db, del.table))) continue;
+          // eslint-disable-next-line no-await-in-loop
+          await db.run(del.sql, del.params, `forgetMedia:${del.table}`);
+        }
+        const faces = await db.run(
+          'DELETE FROM face WHERE media_path = ?',
+          [filePath],
+          'forgetMedia:faces'
+        );
+        result.faces = faces.changes;
+      }
+      if (hasFaceScan) {
+        await db.run(
+          'DELETE FROM face_scan WHERE media_path = ?',
+          [filePath],
+          'forgetMedia:faceScan'
+        );
+      }
+
+      // Battle-log rows name the path directly; leaving them would keep a
+      // deleted item in the Elo history and in rematch suppression.
+      const battles = await db.run(
+        'DELETE FROM battle WHERE winner_path = ? OR loser_path = ?',
+        [filePath, filePath],
+        'forgetMedia:battles'
+      );
+      result.battles = battles.changes;
+
+      const media = await db.run(
+        'DELETE FROM media WHERE path = ?',
+        [filePath],
+        'forgetMedia:media'
+      );
+      result.media = media.changes;
+    });
+
+    return result;
+  };
+
 // Function to calculate file hash
 async function calculateFileHash(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -801,6 +1125,8 @@ export {
   fetchMediaPreview,
   copyFileIntoClipboard,
   deleteMedia,
+  forgetMedia,
+  moveMedia,
   recordBattle,
   updateDescription,
   loadDuplicatesByPath,

@@ -217,6 +217,25 @@ func FaceScansForPaths(db *sql.DB, models []string, paths []string) (map[string]
 	return out, nil
 }
 
+// LatestFaceScan returns the model that most recently scanned path and when
+// (unix seconds; 0 for legacy rows without a timestamp). ReplaceFaces keeps
+// one scan row per item, but legacy data may hold several — the newest wins.
+// ok is false when the path was never scanned under any model.
+func LatestFaceScan(db *sql.DB, path string) (model string, scannedAt int64, ok bool, err error) {
+	err = db.QueryRow(
+		`SELECT model, COALESCE(scanned_at, 0) FROM face_scan
+		 WHERE media_path=? ORDER BY COALESCE(scanned_at, 0) DESC LIMIT 1`,
+		path,
+	).Scan(&model, &scannedAt)
+	if err == sql.ErrNoRows {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, err
+	}
+	return model, scannedAt, true, nil
+}
+
 // HasFaceScan reports whether path was already scanned under model.
 func HasFaceScan(db *sql.DB, path, model string) (bool, error) {
 	var one int
@@ -231,6 +250,25 @@ func HasFaceScan(db *sql.DB, path, model string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// FaceScanInfo reports whether path was scanned under model and when
+// (unix seconds; 0 for legacy rows without a timestamp). The timestamp is
+// what lets clients see an overwrite rescan complete — the scanned flag
+// stays true across it, but scanned_at moves forward.
+func FaceScanInfo(db *sql.DB, path, model string) (bool, int64, error) {
+	var at int64
+	err := db.QueryRow(
+		`SELECT COALESCE(scanned_at, 0) FROM face_scan WHERE media_path=? AND model=? LIMIT 1`,
+		path, model,
+	).Scan(&at)
+	if err == sql.ErrNoRows {
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, err
+	}
+	return true, at, nil
 }
 
 // GetFaces returns all stored faces for (path, model), detection-score

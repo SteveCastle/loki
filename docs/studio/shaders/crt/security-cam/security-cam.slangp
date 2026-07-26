@@ -1,0 +1,42 @@
+# security-cam — surveillance camera on a back-office CRT: wide bulging
+# lens, coarse low-line sensor, wound-up gain, cold near-monochrome
+# picture, hum bar, sync slip and a burned-in CAM/clock/REC overlay.
+shaders = 2
+
+# Pass 0 — image lag. Self-feedback (PassFeedback0) holds the previous
+# frame; float framebuffer keeps long smears from banding.
+shader0            = seccam-trail.slang
+alias0             = CamTrail
+filter_linear0     = true
+scale_type0        = source
+scale0             = 1.0
+wrap_mode0         = clamp_to_edge
+float_framebuffer0 = true
+
+# Pass 1 — the monitor. Runs at viewport resolution so the OSD glyphs and
+# the scanline pitch are crisp whatever the comp size.
+shader1        = security-cam.slang
+filter_linear1 = true
+scale_type1    = viewport
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+# Tunable defaults (edit here; slangfx applies values from the preset).
+parameters = "persist;amount;lens;tube;cam_lines;gain;wash;cool;scan_cam;interlace;noise_cam;hum_cam;desync;vignette_cam;osd;cam_id;clock_start"
+persist      = 0.35
+amount       = 1.0
+lens         = 0.45
+tube         = 0.14
+cam_lines    = 360.0
+gain         = 0.55
+wash         = 0.85
+cool         = 0.60
+scan_cam     = 0.28
+interlace    = 0.35
+noise_cam    = 0.14
+hum_cam      = 0.10
+desync       = 0.60
+vignette_cam = 0.45
+osd          = 0.90
+cam_id       = 4.0
+clock_start  = 2.37

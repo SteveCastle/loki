@@ -177,3 +177,66 @@ describe('Detail scroll-wheel cursor control', () => {
     expect(mockSend).not.toHaveBeenCalledWith('INCREMENT_CURSOR');
   });
 });
+
+describe('Detail touchpad click cursor control', () => {
+  // Touchpad clicks advance the cursor only after a short window so that a
+  // very fast double-click can be told apart and toggle the list view
+  // instead of stepping twice (see handleClick in detail.tsx).
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  function renderTouchpadDetail() {
+    mockState = makeState('touchpad');
+    mockLibrary = [{ path: '/a.jpg', timeStamp: 0 }];
+    const { container } = render(<Detail />);
+    return container.querySelector('.Detail') as HTMLElement;
+  }
+
+  it('advances the cursor after the double-click window on a single click', () => {
+    const detail = renderTouchpadDetail();
+
+    // jsdom rects are all zeros, so any clientX lands on the right half.
+    fireEvent.click(detail, { clientX: 100 });
+    expect(mockSend).not.toHaveBeenCalledWith('INCREMENT_CURSOR');
+
+    jest.advanceTimersByTime(250);
+    expect(mockSend).toHaveBeenCalledWith('INCREMENT_CURSOR');
+  });
+
+  it('toggles the list view instead of stepping twice on a fast double-click', () => {
+    const detail = renderTouchpadDetail();
+    const toggled = jest.fn();
+    window.addEventListener('loki-toggle-list-detail', toggled);
+
+    fireEvent.click(detail, { clientX: 100 });
+    jest.advanceTimersByTime(50);
+    fireEvent.click(detail, { clientX: 100 });
+    jest.advanceTimersByTime(500);
+
+    expect(toggled).toHaveBeenCalledTimes(1);
+    expect(mockSend).not.toHaveBeenCalledWith('INCREMENT_CURSOR');
+    expect(mockSend).not.toHaveBeenCalledWith('DECREMENT_CURSOR');
+    window.removeEventListener('loki-toggle-list-detail', toggled);
+  });
+
+  it('treats two clicks slower than the window as two cursor steps', () => {
+    const detail = renderTouchpadDetail();
+    const toggled = jest.fn();
+    window.addEventListener('loki-toggle-list-detail', toggled);
+
+    fireEvent.click(detail, { clientX: 100 });
+    jest.advanceTimersByTime(300);
+    fireEvent.click(detail, { clientX: 100 });
+    jest.advanceTimersByTime(300);
+
+    expect(toggled).not.toHaveBeenCalled();
+    expect(
+      mockSend.mock.calls.filter(([type]) => type === 'INCREMENT_CURSOR')
+    ).toHaveLength(2);
+    window.removeEventListener('loki-toggle-list-detail', toggled);
+  });
+});

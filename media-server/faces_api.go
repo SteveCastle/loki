@@ -30,7 +30,10 @@ import (
 // main file right after the embedding index build.
 func buildFaceIndexAtStartup(db *sql.DB) {
 	log.Printf("Building face search index…")
-	if model, n, err := tasks.RebuildActiveFaceIndex(db, nil); err == nil {
+	// Same live bar the embedding index draws: a library with faces on six
+	// figures of media spends a real amount of startup here, and silence
+	// during it looks like a hang.
+	if model, n, err := tasks.RebuildActiveFaceIndex(db, indexProgressFn("face index")); err == nil {
 		log.Printf("face index loaded: %d faces (model %s)", n, model)
 	} else {
 		log.Printf("face index unavailable (model %s), using brute-force: %v", model, err)
@@ -142,17 +145,28 @@ func facesForPathHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "path query parameter required", http.StatusBadRequest)
 			return
 		}
-		// Show the faces of the model this item routes to (photo vs anime).
-		model := tasks.RoutedFaceModelForPath(r.Context(), deps.DB, path)
-		faces, err := media.GetFaces(deps.DB, path, model.ID)
+		// This is a status read on the metadata panel's hot path, so it must
+		// stay a pure DB round-trip — no ONNX work. An already-scanned item
+		// shows the model that ACTUALLY scanned it (one scan per item is the
+		// ReplaceFaces invariant), which also stays correct if the router
+		// would decide differently today. Only never-scanned items consult
+		// routing, and only from cache — the full router can spawn embed
+		// subprocesses (anchor encode + on-the-fly image embed) that made
+		// this endpoint take seconds and time out.
+		modelID, scannedAt, scanned, err := media.LatestFaceScan(deps.DB, path)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		scanned, err := media.HasFaceScan(deps.DB, path, model.ID)
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
+		var faces []media.Face
+		if scanned {
+			faces, err = media.GetFaces(deps.DB, path, modelID)
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			modelID = tasks.CachedRoutedFaceModelForPath(deps.DB, path).ID
 		}
 		out := make([]map[string]any, 0, len(faces))
 		for _, f := range faces {
@@ -166,9 +180,10 @@ func facesForPathHandler(deps *Dependencies) http.HandlerFunc {
 			})
 		}
 		writeJSON(w, map[string]any{
-			"model":   model.ID,
-			"scanned": scanned,
-			"faces":   out,
+			"model":     modelID,
+			"scanned":   scanned,
+			"scannedAt": scannedAt,
+			"faces":     out,
 		})
 	}
 }

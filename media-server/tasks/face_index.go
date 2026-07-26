@@ -148,6 +148,25 @@ func FaceIndexDeletePath(path string) {
 	delete(facePathKeys, path)
 }
 
+// FaceIndexRenamePath re-keys a media path in the live face index after its
+// database rows have been rewritten (see media.MovePath). The index itself is
+// keyed by face ID and those ids don't change on a move, so only the
+// path→keys side map needs updating — but it needs it, or the next eviction
+// for either path silently misses.
+func FaceIndexRenamePath(from, to string) {
+	faceIndexMu.Lock()
+	defer faceIndexMu.Unlock()
+	if faceIndex == nil || facePathKeys == nil {
+		return
+	}
+	keys := facePathKeys[from]
+	if len(keys) == 0 {
+		return
+	}
+	delete(facePathKeys, from)
+	facePathKeys[to] = append(facePathKeys[to], keys...)
+}
+
 // RebuildActiveFaceIndex builds the face index for the currently-configured
 // recognizer and installs it. Used at startup and after the active face model
 // changes. Returns the installed model ID and face count, or an error (in

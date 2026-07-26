@@ -417,7 +417,8 @@
       "output": "release/build"
     },
     "extraResources": [
-      "./assets/**"
+      "./assets/**",
+      "./studio/**"
     ],
     "publish": {
       "provider": "github",

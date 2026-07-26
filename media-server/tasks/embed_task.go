@@ -127,6 +127,27 @@ func IndexDelete(path string) {
 	}
 }
 
+// IndexRenamePath re-keys a path in the live vector index after its database
+// rows have been rewritten (see media.MovePath). Without it, similarity search
+// keeps returning the OLD path until the next index rebuild — a hit the media
+// handler then can't serve. The vector is re-read from the DB under the new
+// path rather than carried across, so this is also correct when the row was
+// re-embedded in between. No-op when nothing is indexed for the model.
+func IndexRenamePath(db *sql.DB, from, to string) {
+	IndexDelete(from)
+	model := IndexedModel()
+	if model == "" {
+		// Wildcard/no index installed: fall back to the configured model, the
+		// one a production index would have been built for.
+		model = ActiveEmbedModel().ID
+	}
+	vec, ok, err := media.GetEmbedding(db, to, model)
+	if err != nil || !ok {
+		return
+	}
+	indexAdd(model, to, vec)
+}
+
 // IndexProgress is called during a build with the number of vectors added so
 // far and the total, so callers can render progress. nil disables reporting.
 type IndexProgress func(done, total int)

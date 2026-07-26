@@ -38,6 +38,59 @@ func TestRunItemOpsCallsFinalizeOnCompletion(t *testing.T) {
 	}
 }
 
+// Finalize must run while the job is still IN PROGRESS — before CompleteJob.
+// Finalization can be minutes of every-core compute (the faces op's final full
+// clustering pass); marking the job complete first left the server pegged with
+// nothing visibly running, nothing holding the job's concurrency buckets, and
+// no way to cancel.
+func TestRunItemOpsFinalizeRunsBeforeComplete(t *testing.T) {
+	db := setupItemOpsDB(t)
+	paths := writeTempMedia(t, db, 1)
+
+	var q *jobqueue.Queue
+	var jobID string
+	stateAtFinalize := make(chan jobqueue.JobState, 1)
+	registerTestOp(t, "test-op-finalize-order", func(op *ItemOp) {
+		base := op.Prepare
+		op.Prepare = func(run *ItemRun) (*ItemProcessor, error) {
+			p, err := base(run)
+			if err != nil {
+				return nil, err
+			}
+			p.Finalize = func() error {
+				for _, j := range q.GetJobs() {
+					if j.ID == jobID {
+						stateAtFinalize <- j.State
+					}
+				}
+				return nil
+			}
+			return p, nil
+		}
+	})
+
+	q2, j := newItemOpsJob(t, db, "test-op-finalize-order", nil, strings.Join(paths, "\n"))
+	q = q2
+	jobID = j.ID
+	if err := runItemOps(j, q2, []string{"test-op-finalize-order"}, false); err != nil {
+		t.Fatalf("runItemOps: %v", err)
+	}
+	select {
+	case st := <-stateAtFinalize:
+		if st != jobqueue.StateInProgress {
+			t.Fatalf("job state at Finalize = %q, want in-progress (Finalize must precede CompleteJob)", st)
+		}
+	default:
+		t.Fatal("Finalize never observed the job")
+	}
+	// And the job still completes afterward.
+	for _, jj := range q2.GetJobs() {
+		if jj.ID == jobID && jj.State != jobqueue.StateCompleted {
+			t.Fatalf("final job state = %q, want completed", jj.State)
+		}
+	}
+}
+
 // Finalize must NOT run when the job pauses (or cancels/errors) — the run
 // isn't complete, so follow-up work would be premature. The eventual resumed
 // completion fires it.
