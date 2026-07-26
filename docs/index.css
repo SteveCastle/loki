@@ -815,7 +815,37 @@ h3 .requires-server {
 
 img.fullsize {
   width: 100%;
+  height: auto;
   border-radius: 12px;
+}
+
+/* Screenshots inside body copy get the same rhythm as the demo videos. */
+main img.fullsize {
+  display: block;
+  margin: 1.25rem 0;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+/* Hero screenshot — the server page's stand-in for the viewer's hero video.
+   Breaks out of the 720px hero column: a dashboard this dense needs the room. */
+img.hero-shot {
+  width: min(92vw, 1040px);
+  margin: 2.5rem auto 0;
+  position: relative;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+/* Portrait phone captures shouldn't stretch to the column width. */
+.phone-shot {
+  display: block;
+  width: 100%;
+  max-width: 300px;
+  height: auto;
+  margin: 1.25rem auto;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 /* Supported File Types grid */
