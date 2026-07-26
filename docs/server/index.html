@@ -1207,9 +1207,11 @@
     </div>
 
     <script>
-      // Point the download button at the media-server binary for the
+      // Point the download button at the right media-server package for the
       // visitor's OS. The server ships from the same GitHub release as the
       // viewer; asset names come from the Release workflow's Go build jobs.
+      // Unlike the viewer's, these names carry no version — only the tag in
+      // RELEASE_BASE changes between releases.
       (function () {
         const el = document.getElementById('serverDownloadButton');
         const RELEASE_BASE =
@@ -1223,14 +1225,18 @@
         let label = 'Download | Free';
 
         if (/Win/i.test(platform) || /Windows/i.test(ua)) {
-          href = RELEASE_BASE + 'media-server-windows-amd64.exe';
+          // Per-user Inno Setup installer (no UAC), not the raw .zip archive.
+          href = RELEASE_BASE + 'lowkey-media-server-setup-windows-amd64.exe';
           label = 'Download | Free for Windows';
         } else if (/Mac/i.test(platform) || /Mac OS/i.test(ua)) {
-          // Default to Apple Silicon; Intel Macs can grab darwin-amd64 from the releases page.
-          href = RELEASE_BASE + 'media-server-darwin-arm64';
+          // The DMG holds the menu-bar agent .app. Default to Apple Silicon —
+          // navigator.platform reports "MacIntel" on both architectures, so
+          // Intel users take darwin-amd64 from the releases page.
+          href = RELEASE_BASE + 'lowkey-media-server-darwin-arm64.dmg';
           label = 'Download | Free for Mac';
         } else if (/Linux/i.test(platform) || /Linux/i.test(ua)) {
-          href = RELEASE_BASE + 'media-server-linux-amd64';
+          // Bundled archive: server binary + bin/ deps + lokictl + systemd unit.
+          href = RELEASE_BASE + 'lowkey-media-server-linux-amd64.tar.gz';
           label = 'Download | Free for Linux';
         }
 
