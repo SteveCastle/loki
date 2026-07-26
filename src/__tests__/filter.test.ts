@@ -173,6 +173,60 @@ describe('filter', () => {
       expect(order1).not.toBe(order2);
     });
 
+    // Regression: the seed used to be folded into a djb2 hash as a string
+    // prefix, so counter-like seeds ("1", "2", "3", ...) produced orders that
+    // were near-rotations of each other — the reported "shuffle always gives
+    // the same shuffle". Consecutive seeds must now decorrelate.
+    it('should decorrelate consecutive counter-like seeds', () => {
+      const many: Item[] = Array.from({ length: 500 }, (_, i) =>
+        createItem(`/photos/IMG_${String(i).padStart(4, '0')}.jpg`, i)
+      );
+      const orders = ['1', '2', '3', '4', '5'].map((seed) =>
+        filter(seed, '', many, 'all', 'shuffle').map((i) => i.path)
+      );
+
+      // No two seeds may agree on more than a trivial number of positions,
+      // and neighbours must not be carried over wholesale between seeds.
+      for (let a = 0; a < orders.length; a++) {
+        for (let b = a + 1; b < orders.length; b++) {
+          const samePos = orders[a].filter((p, i) => orders[b][i] === p).length;
+          expect(samePos).toBeLessThan(10);
+
+          const posB = new Map(orders[b].map((p, i) => [p, i]));
+          let adjacentPreserved = 0;
+          for (let i = 0; i < orders[a].length - 1; i++) {
+            const d =
+              (posB.get(orders[a][i + 1]) as number) -
+              (posB.get(orders[a][i]) as number);
+            if (d === 1) adjacentPreserved++;
+          }
+          expect(adjacentPreserved).toBeLessThan(25); // 5% of 499 pairs
+        }
+      }
+    });
+
+    it('should not drop or duplicate items', () => {
+      const many: Item[] = Array.from({ length: 300 }, (_, i) =>
+        createItem(`/photos/IMG_${i}.jpg`, i, i % 3 === 0 ? { elo: 1500 } : {})
+      );
+      const result = filter('shuffle-integrity', '', many, 'all', 'shuffle');
+      expect(result).toHaveLength(many.length);
+      expect(new Set(result.map((i) => i.path)).size).toBe(many.length);
+    });
+
+    it('should spread each item across positions over many seeds', () => {
+      const five: Item[] = ['a', 'b', 'c', 'd', 'e'].map((n) =>
+        createItem(`/${n}.jpg`, 1000)
+      );
+      const positions = new Set<number>();
+      for (let s = 0; s < 200; s++) {
+        const result = filter(`spread-${s}`, '', five, 'all', 'shuffle');
+        positions.add(result.findIndex((i) => i.path === '/a.jpg'));
+      }
+      // A uniform shuffle reaches every slot; a degenerate one gets stuck.
+      expect(positions.size).toBe(5);
+    });
+
     it('should prioritize items without elo ratings in shuffle', () => {
       const mixedEloItems: Item[] = [
         createItem('/a.jpg', 1000, { elo: 1500 }),

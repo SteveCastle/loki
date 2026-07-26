@@ -72,6 +72,7 @@ Run `lokictl help` for the always-current list. Highlights:
 | Workflows | `workflow list/get/create/update/delete/run`, `workflow run-adhoc --dag FILE\|-` |
 | Library queries | `media query [--tag ... --visual ... --similar ...]`, `media search/similar/visual/image-search/metadata/tags/delete` |
 | Media data | `media describe <path> (--text D\|--clear)`, `media transcript <path> [--text T\|--clear]`, `media rate <path> [--elo E --views N --wins N --losses N]`, `media thumbs <path> [--regenerate]`, `media generate <path> --type T [--wait]` |
+| Library bookkeeping | `media move <from> <to> [--prefix] [--dry-run]` (you moved the file; re-point the DB), `media forget <path> --yes` (drop every DB reference, keep the file) |
 | Embeddings index | `index status/models/rebuild`, `index missing [--model M]`, `index get <path> [--vector]`, `index delete <path> --yes`, `index prune --yes`, `index embed [args...] [--wait]` |
 | Raw SQL (read-only) | `db query "SELECT ..." [--arg V]`, `db tables`, `db schema [table]` |
 | Taxonomy | `taxonomy [--category C]`, `tag create/delete/rename/move/assign/unassign/assign-bulk/unassign-bulk`, `tag list/count/weight/has/timestamp/assignment-weight`, `category create/delete/rename/count` |
@@ -80,7 +81,7 @@ Run `lokictl help` for the always-current list. Highlights:
 | API keys | `key create --name N [--username U] [--save]`, `key list`, `key revoke --id N` |
 | Escape hatch | `api <METHOD> <path> [--body JSON\|@file\|-]` — any endpoint, auth attached |
 
-Destructive commands (`job clear`, `media delete`, `tag delete`,
+Destructive commands (`job clear`, `media delete`, `media forget`, `tag delete`,
 `tag unassign-bulk`, `category delete`, `workflow delete`, `deps delete`,
 `index delete`, `index prune`) refuse to run without `--yes` (exit 2).
 
@@ -146,6 +147,26 @@ lokictl media describe "C:/pics/x.jpg" --text "Two dogs on a beach"
 lokictl media transcript "C:/vids/talk.mp4"                  # read
 lokictl media generate "C:/vids/talk.mp4" --type transcript --wait
 lokictl media rate "C:/pics/x.jpg" --elo 1600
+```
+
+**You moved files on disk — make the library agree.** The move re-points every
+reference (media row, tags, embedding, faces, scan markers, battle log) in one
+transaction; nothing on disk is touched. `--dry-run` performs the move and
+rolls it back, so its counts are exactly what a real run would change:
+
+```sh
+lokictl media move "C:/pics/old.jpg" "D:/archive/old.jpg"      # one file
+lokictl media move "C:/pics/2023" "D:/archive/2023" --prefix --dry-run
+lokictl media move "C:/pics/2023" "D:/archive/2023" --prefix   # the folder
+```
+
+`--prefix` is segment-aligned: moving `2023` never drags `2023extra` along. A
+destination that already belongs to another item is a 409 with the offending
+paths — a move will not merge two items. To drop an item from the library
+while leaving the file where it is (or to clean up after a file that's gone):
+
+```sh
+lokictl media forget "C:/pics/gone.jpg" --yes
 ```
 
 **Run a saved workflow and wait for every job it spawns:**

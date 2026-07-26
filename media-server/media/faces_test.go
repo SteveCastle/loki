@@ -147,6 +147,36 @@ func TestLoadAllFacesAndGetByID(t *testing.T) {
 	}
 }
 
+// LatestFaceScan powers the /api/faces status endpoint: it must answer from
+// the DB alone, picking the newest scan when legacy multi-model rows exist.
+func TestLatestFaceScan(t *testing.T) {
+	db := newFaceDB(t)
+	defer db.Close()
+
+	if _, _, ok, err := LatestFaceScan(db, "never.jpg"); err != nil || ok {
+		t.Fatalf("unscanned: ok=%v err=%v, want miss", ok, err)
+	}
+
+	if _, err := ReplaceFaces(db, "a.jpg", "photo-model", []NewFace{{Score: 0.9, Vec: []float32{1}}}, 3); err != nil {
+		t.Fatal(err)
+	}
+	model, at, ok, err := LatestFaceScan(db, "a.jpg")
+	if err != nil || !ok || model != "photo-model" || at != 3 {
+		t.Fatalf("got %q/%d/%v/%v, want photo-model/3", model, at, ok, err)
+	}
+
+	// Legacy data can hold scan rows under several models — the newest wins.
+	if _, err := db.Exec(
+		`INSERT INTO face_scan (media_path, model, face_count, scanned_at) VALUES ('a.jpg','anime-model',1,9)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	model, at, ok, err = LatestFaceScan(db, "a.jpg")
+	if err != nil || !ok || model != "anime-model" || at != 9 {
+		t.Fatalf("got %q/%d/%v/%v, want anime-model/9 (newest)", model, at, ok, err)
+	}
+}
+
 func TestDeleteFacesForMedia(t *testing.T) {
 	db := newFaceDB(t)
 	defer db.Close()

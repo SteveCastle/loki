@@ -367,6 +367,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('load-categories');
   ipcMain.removeHandler('load-category-tags');
   ipcMain.removeHandler('load-all-tags');
+  ipcMain.removeHandler('get-tag');
   ipcMain.removeHandler('get-tag-count');
   ipcMain.removeHandler('get-category-count');
   ipcMain.removeHandler('create-tag');
@@ -395,6 +396,8 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('list-thumbnails');
   ipcMain.removeHandler('regenerate-thumbnail');
   ipcMain.removeHandler('delete-file');
+  ipcMain.removeHandler('forget-media');
+  ipcMain.removeHandler('move-media');
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
   ipcMain.removeHandler('load-gif-metadata');
@@ -432,6 +435,8 @@ ipcMain.handle('load-db', async (event, args) => {
     mediaModule.copyFileIntoClipboard()
   );
   ipcMain.handle('delete-file', mediaModule.deleteMedia(db));
+  ipcMain.handle('forget-media', mediaModule.forgetMedia(db));
+  ipcMain.handle('move-media', mediaModule.moveMedia(db));
   ipcMain.handle('import-files', mediaModule.importFiles(db));
   ipcMain.handle(
     'load-duplicates-by-path',
@@ -450,6 +455,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.handle('load-categories', taxonomyModule.loadCategories(db));
   ipcMain.handle('load-category-tags', taxonomyModule.loadCategoryTags(db));
   ipcMain.handle('load-all-tags', taxonomyModule.loadAllTags(db));
+  ipcMain.handle('get-tag', taxonomyModule.getTag(db));
   ipcMain.handle('get-tag-count', taxonomyModule.getTagCount(db));
   ipcMain.handle('get-category-count', taxonomyModule.getCategoryCount(db));
   ipcMain.handle('create-tag', taxonomyModule.createTag(db));
@@ -481,7 +487,7 @@ ipcMain.handle('load-db', async (event, args) => {
 
   ipcMain.handle(
     'select-new-path',
-    taxonomyModule.selectNewPath(db, mainWindow)
+    taxonomyModule.selectNewPath(mainWindow)
   );
   ipcMain.handle('rename-category', taxonomyModule.renameCategory(db));
   ipcMain.handle('delete-category', taxonomyModule.deleteCategory(db));

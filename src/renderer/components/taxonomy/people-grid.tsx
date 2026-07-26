@@ -225,6 +225,27 @@ async function saveTuning(
   if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
 }
 
+// Bulk endorsement: promote every automatically-assigned face of every NAMED
+// person to a confirmed (user) assignment. The server skips the anonymous
+// "Unknown #N" clusters — endorsing groups nobody has vouched for would freeze
+// the clusterer's own mistakes in place. Returns what it actually changed.
+async function lockAllNamedPeople(
+  authToken: string | null
+): Promise<{ people: number; locked: number }> {
+  const res = await fetch(`${mediaServerBase}/api/people/lock-all`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(authToken),
+    },
+    credentials: 'include',
+    body: '{}',
+  });
+  if (!res.ok) throw new Error((await res.text()) || `HTTP ${res.status}`);
+  const data = (await res.json()) as { people?: number; locked?: number };
+  return { people: data.people ?? 0, locked: data.locked ?? 0 };
+}
+
 // One not-yet-grouped face from GET /api/faces/ungrouped?faces=1.
 type UngroupedFace = {
   id: number;
@@ -1477,7 +1498,9 @@ function NewGroupChip({ isDisabled }: { isDisabled: boolean }) {
         <path d="M4 19c0-3 2.7-4.8 6-4.8s6 1.8 6 4.8" />
         <path d="M18 5v6M15 8h6" />
       </svg>
-      <span className="people-btn-label">New group</span>
+      <span className="people-btn-label people-btn-label--late">
+        New group
+      </span>
     </div>
   );
 }
@@ -1628,6 +1651,28 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   const [reviewing, setReviewing] = useState<Person | null>(null);
   const [ungroupedOpen, setUngroupedOpen] = useState(false);
   const queryClient = useQueryClient();
+
+  // Card order, persisted per client. 'count' is the classic biggest-first
+  // view (the number shown on each card); 'name' is for finding someone
+  // you know by name without typing a search.
+  const SORT_KEY = 'lowkey:people-sort';
+  const [sortBy, setSortBy] = useState<'count' | 'name'>(() => {
+    try {
+      return window.localStorage.getItem(SORT_KEY) === 'name'
+        ? 'name'
+        : 'count';
+    } catch {
+      return 'count';
+    }
+  });
+  const changeSort = (mode: 'count' | 'name') => {
+    setSortBy(mode);
+    try {
+      window.localStorage.setItem(SORT_KEY, mode);
+    } catch {
+      /* private mode etc. — the toggle still works for this session */
+    }
+  };
 
   // Keep the list scrolling while a person card is dragged near the top or
   // bottom edge, so merges can target cards outside the visible window.
@@ -1920,6 +1965,60 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
     runClusterJob(flags.join(' '));
   };
 
+  // Confirm every named group in one click: each auto-assigned face inside a
+  // named person becomes a user assignment (what "Lock all" does per group,
+  // library-wide). Unnamed "Unknown #N" clusters are excluded server-side —
+  // they're the groups nobody has vouched for, and confirming them would make
+  // the clusterer's mistakes permanent. Two-click armed like the other bulk
+  // actions: confirmations survive every regroup, so this isn't cheap to undo.
+  const [lockAllArmed, setLockAllArmed] = useState(false);
+  const [lockAllBusy, setLockAllBusy] = useState(false);
+  useEffect(() => {
+    if (!lockAllArmed) return undefined;
+    const t = window.setTimeout(() => setLockAllArmed(false), 4000);
+    return () => window.clearTimeout(t);
+  }, [lockAllArmed]);
+  const handleLockAllNamed = async () => {
+    if (!lockAllArmed) {
+      setLockAllArmed(true);
+      return;
+    }
+    setLockAllArmed(false);
+    setLockAllBusy(true);
+    try {
+      const { people: n, locked } = await lockAllNamedPeople(authToken);
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'success',
+          title: locked > 0 ? 'Named groups confirmed' : 'Nothing to confirm',
+          message:
+            locked > 0
+              ? `${locked.toLocaleString()} face${
+                  locked === 1 ? '' : 's'
+                } confirmed across ${n.toLocaleString()} named ${
+                  n === 1 ? 'person' : 'people'
+                }`
+              : 'Every face in every named group was already confirmed',
+        },
+      });
+      // The server broadcasts people-updated too; invalidating here refreshes
+      // this window immediately instead of waiting on the stream round-trip.
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+    } catch (err) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to confirm named groups',
+          message: String(err),
+        },
+      });
+    } finally {
+      setLockAllBusy(false);
+    }
+  };
+
   // Empty-state CTA: kick off a whole-library face scan right here. People
   // then appear in this grid live (the scan clusters incrementally and
   // broadcasts people-updated), so the empty state resolves itself.
@@ -1938,13 +2037,43 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
   // Split + card renderer live in hooks (above the early returns) so their
   // identities survive re-renders — the virtualized grid and memoized cards
   // depend on that to avoid rebuilding every visible row on each broadcast.
+  // Sorting stays within each section (named / unnamed) — the split itself is
+  // load-bearing for the virtualized headings. 'count' orders by the media
+  // count the cards display (not the server's face-count order, which can
+  // disagree with the visible numbers); 'name' compares display labels,
+  // numeric-aware so "Unknown #9" sorts before "Unknown #10".
   const { named, unknown } = useMemo(() => {
     const all = people ?? [];
+    const byCount = (a: Person, b: Person) =>
+      b.mediaCount - a.mediaCount ||
+      b.faceCount - a.faceCount ||
+      a.id - b.id;
+    const byName = (a: Person, b: Person) =>
+      displayTagLabel(a.name).localeCompare(displayTagLabel(b.name), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
+    const cmp = sortBy === 'name' ? byName : byCount;
     return {
-      named: all.filter((p) => !p.name.startsWith('Unknown #')),
-      unknown: all.filter((p) => p.name.startsWith('Unknown #')),
+      named: all.filter((p) => !p.name.startsWith('Unknown #')).sort(cmp),
+      unknown: all.filter((p) => p.name.startsWith('Unknown #')).sort(cmp),
     };
-  }, [people]);
+  }, [people, sortBy]);
+
+  // What "Confirm all named groups" would promote: every not-yet-confirmed
+  // face inside a named person, and how many people those faces sit in. Zero
+  // faces means there's nothing to do (no named people, or all confirmed).
+  const pendingNamed = useMemo(() => {
+    let faces = 0;
+    let people = 0;
+    for (const p of named) {
+      const n = Math.max(0, p.faceCount - (p.lockedCount ?? 0));
+      if (n === 0) continue;
+      faces += n;
+      people += 1;
+    }
+    return { faces, people };
+  }, [named]);
 
   const renderCard = useCallback(
     (person: Person) => (
@@ -2111,8 +2240,10 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
 
   return (
     <div className="people-grid-wrap">
-      {list.length > 0 && canWrite && (
+      {list.length > 0 && (
         <div className="people-grid-toolbar">
+          {canWrite && (
+          <>
           <NewGroupChip isDisabled={isDisabled} />
           <button
             type="button"
@@ -2131,7 +2262,9 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
               <path d="M3 19c0-3 2.7-4.8 6-4.8s6 1.8 6 4.8" />
               <path d="M18 6v6M15 9h6" />
             </svg>
-            <span className="people-btn-label">Group new faces</span>
+            <span className="people-btn-label people-btn-label--mid">
+              Group new faces
+            </span>
             {!!ungroupedCount && (
               <span
                 className="people-btn-count"
@@ -2157,7 +2290,7 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
               <path d="M20 12a8 8 0 1 1-2.34-5.66" />
               <path d="M20 3v4h-4" />
             </svg>
-            <span className="people-btn-label">
+            <span className="people-btn-label people-btn-label--early">
               {rebuildArmed ? 'Confirm rebuild' : 'Rebuild groups'}
             </span>
           </button>
@@ -2172,8 +2305,34 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
               <circle cx="15.5" cy="8" r="2" />
               <circle cx="7.5" cy="16" r="2" />
             </svg>
-            <span className="people-btn-label">Tune</span>
+            <span className="people-btn-label people-btn-label--early">
+              Tune
+            </span>
           </button>
+          </>
+          )}
+          <div
+            className="people-sort-toggle"
+            role="group"
+            aria-label="Sort people"
+          >
+            <button
+              type="button"
+              className={sortBy === 'count' ? 'active' : ''}
+              onClick={() => changeSort('count')}
+              title="Biggest groups first (by media count)"
+            >
+              Count
+            </button>
+            <button
+              type="button"
+              className={sortBy === 'name' ? 'active' : ''}
+              onClick={() => changeSort('name')}
+              title="Alphabetical by name"
+            >
+              Name
+            </button>
+          </div>
         </div>
       )}
       {list.length > 0 && tuneOpen && canWrite && (
@@ -2263,6 +2422,48 @@ export default function PeopleGrid({ isDisabled }: { isDisabled: boolean }) {
               }
             >
               {regroupArmed ? 'Confirm full regroup' : 'Regroup with these settings'}
+            </button>
+          </div>
+          <div className="people-tune-bulk">
+            <div className="people-tune-bulk-copy">
+              <span className="people-tune-bulk-title">
+                Confirm all named groups
+              </span>
+              <span className="people-tune-bulk-note">
+                Endorses every face in every <strong>named</strong> person at
+                once, exactly like “Lock all” on a single group. Confirmed
+                faces survive every regroup and weigh extra when grouping.
+                Unnamed “Unknown #” groups are left untouched.
+              </span>
+            </div>
+            <button
+              type="button"
+              className={`people-cluster-btn${lockAllArmed ? ' danger' : ''}`}
+              onClick={handleLockAllNamed}
+              disabled={lockAllBusy || pendingNamed.faces === 0}
+              title={
+                pendingNamed.faces === 0
+                  ? named.length === 0
+                    ? 'No named people yet — name a group first (unnamed groups are never confirmed in bulk).'
+                    : 'Every face in every named group is already confirmed.'
+                  : lockAllArmed
+                  ? 'Click again to confirm. Confirmed faces survive every regroup.'
+                  : `Confirm ${pendingNamed.faces.toLocaleString()} face${
+                      pendingNamed.faces === 1 ? '' : 's'
+                    } across ${pendingNamed.people.toLocaleString()} named ${
+                      pendingNamed.people === 1 ? 'person' : 'people'
+                    }. Unnamed groups are skipped.`
+              }
+            >
+              {lockAllBusy
+                ? 'Confirming…'
+                : pendingNamed.faces === 0
+                ? 'All confirmed'
+                : lockAllArmed
+                ? `Confirm ${pendingNamed.faces.toLocaleString()} face${
+                    pendingNamed.faces === 1 ? '' : 's'
+                  }`
+                : 'Confirm all named groups'}
             </button>
           </div>
         </div>

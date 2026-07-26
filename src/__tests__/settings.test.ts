@@ -1,6 +1,8 @@
 import {
   getNextFilterMode,
   clampVolume,
+  getSteppedSettingValue,
+  AUTO_PLAY_TIME,
   SCALE_MODES,
   SORT_BY,
   FILTERS,
@@ -63,6 +65,47 @@ describe('settings', () => {
       expect(clampVolume(0.0)).toBe(0);
       expect(clampVolume(1.0)).toBe(1);
       expect(clampVolume(0.999999)).toBeCloseTo(0.999999);
+    });
+  });
+
+  describe('getSteppedSettingValue', () => {
+    const zoom = SCALE_MODES.options.overscan;
+    const time = AUTO_PLAY_TIME.options.time;
+
+    it('should step by 1 at small values', () => {
+      expect(getSteppedSettingValue(zoom, 4, 1)).toBe(5);
+      expect(getSteppedSettingValue(zoom, 4, -1)).toBe(3);
+    });
+
+    it('should step by the option increment above 5', () => {
+      expect(getSteppedSettingValue(zoom, 140, 1)).toBe(150);
+      expect(getSteppedSettingValue(zoom, 140, -1)).toBe(130);
+    });
+
+    it('should stop at the implicit minimum of 0', () => {
+      expect(getSteppedSettingValue(zoom, 0, -1)).toBeNull();
+    });
+
+    it('should halve autoplay time below one second', () => {
+      expect(getSteppedSettingValue(time, 1, -1)).toBe(0.5);
+      expect(getSteppedSettingValue(time, 0.5, -1)).toBe(0.25);
+      expect(getSteppedSettingValue(time, 0.25, -1)).toBe(0.125);
+    });
+
+    it('should stop at the smallest fractional step', () => {
+      expect(getSteppedSettingValue(time, 0.125, -1)).toBeNull();
+    });
+
+    it('should double autoplay time back up to whole seconds', () => {
+      expect(getSteppedSettingValue(time, 0.125, 1)).toBe(0.25);
+      expect(getSteppedSettingValue(time, 0.25, 1)).toBe(0.5);
+      expect(getSteppedSettingValue(time, 0.5, 1)).toBe(1);
+      expect(getSteppedSettingValue(time, 1, 1)).toBe(2);
+    });
+
+    it('should respect an explicit max', () => {
+      expect(getSteppedSettingValue({ max: 10 }, 10, 1)).toBeNull();
+      expect(getSteppedSettingValue({ max: 10 }, 9, 1)).toBe(10);
     });
   });
 

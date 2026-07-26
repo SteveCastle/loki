@@ -110,6 +110,44 @@ func TestPartitionPathsByModel(t *testing.T) {
 	}
 }
 
+// CachedRoutedFaceModelForPath is the status-endpoint router: it must route
+// from cache + stored vectors when it can, and degrade to the active model —
+// never spawn a subprocess — when it can't.
+func TestCachedRoutedFaceModelForPath(t *testing.T) {
+	db := newFaceIndexDB(t)
+	setFaceConfig(t, func(c *appconfig.Config) {
+		c.FaceModel = "sface"
+		c.FaceRouting = "auto"
+	})
+
+	// No cached anchors (and no text encoder in tests to build them): even an
+	// embedded anime item degrades to the active model rather than encoding.
+	embedModel := TextSearchModel().ID
+	if err := media.UpsertEmbedding(db, "a.jpg", embedModel, []float32{0.95, 0.05}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if m := CachedRoutedFaceModelForPath(db, "a.jpg"); m.ID != "sface" {
+		t.Fatalf("no anchors → %s, want active model", m.ID)
+	}
+
+	withAnchors(t, []float32{1, 0}, []float32{0, 1})
+	if m := CachedRoutedFaceModelForPath(db, "a.jpg"); m.ID != "anime-ccip" {
+		t.Fatalf("cached route → %s, want anime-ccip", m.ID)
+	}
+	// No stored embedding → active model (never embeds on the fly).
+	if m := CachedRoutedFaceModelForPath(db, "missing.jpg"); m.ID != "sface" {
+		t.Fatalf("no stored vector → %s, want active model", m.ID)
+	}
+
+	setFaceConfig(t, func(c *appconfig.Config) {
+		c.FaceModel = "sface"
+		c.FaceRouting = "single"
+	})
+	if m := CachedRoutedFaceModelForPath(db, "a.jpg"); m.ID != "sface" {
+		t.Fatalf("routing=single → %s, want active model", m.ID)
+	}
+}
+
 func TestGetEmbeddingsForPaths(t *testing.T) {
 	db := newFaceIndexDB(t)
 	if err := media.UpsertEmbedding(db, "x.jpg", "m", []float32{1, 2}, 0); err != nil {

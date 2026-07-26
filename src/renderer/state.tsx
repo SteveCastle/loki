@@ -30,6 +30,8 @@ import {
   tagsFromQuery,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
+import { cursorAfterRemoval, libraryWithout } from './library-cursor';
+import { movedPath, moveRange } from './media-path';
 import filter from './filter';
 import {
   initSessionStore,
@@ -225,6 +227,15 @@ const addQueryErrorToast = assign<LibraryState, AnyEventObject>({
   },
 });
 
+// libraryLoadId is not just a cache key — filter.ts uses it as the seed for
+// the shuffle and battle orderings. lodash's uniqueId() is a process-local
+// counter that restarts at 1 on every launch, so seeding from it alone made
+// each session replay the same short sequence of shuffles ("shuffle always
+// gives the same order"). Keep the counter for readable, collision-free ids
+// and add per-call entropy for the seed.
+const newLoadId = () =>
+  `${uniqueId()}-${Math.random().toString(36).slice(2, 10)}`;
+
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
     const library = event.data.library;
@@ -235,7 +246,7 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
     });
     return library;
   },
-  libraryLoadId: () => uniqueId(),
+  libraryLoadId: () => newLoadId(),
   cursor: (_, event) => event.data.cursor,
 });
 
@@ -350,7 +361,7 @@ const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
 
     return library;
   },
-  libraryLoadId: () => uniqueId(),
+  libraryLoadId: () => newLoadId(),
   cursor: (_, event) => event.data.cursor,
 });
 
@@ -427,19 +438,48 @@ const setPath = assign<LibraryState, AnyEventObject>({
     event.data ? '' : context.previousInitialFile,
 });
 
+// Mirror a completed move into the in-memory library so the found file starts
+// rendering immediately instead of after a reload. The database side already
+// happened (move-media); this only rewrites what's on screen, using the SAME
+// segment-aligned prefix rule so the two can't disagree about which items
+// moved. A null payload (cancelled picker) changes nothing.
 const updateFilePath = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
-    console.log('updateFilePath', event, context);
     const { data } = event;
     if (!data) {
       return context.library;
     }
-    const library = [...context.library];
-    const item = library.find((item) => item.path === data.path);
-    if (item) {
-      item.path = data.newPath;
+    if (!data.updateAll) {
+      const library = [...context.library];
+      const item = library.find((item) => item.path === data.path);
+      if (item) {
+        item.path = data.newPath;
+      }
+      return library;
     }
-    return library;
+    const { from, to } = moveRange(data.path, data.newPath, true);
+    return context.library.map((item) => {
+      const moved = movedPath(item.path, from, to);
+      return moved === item.path ? item : { ...item, path: moved };
+    });
+  },
+});
+
+const addMoveErrorToast = assign<LibraryState, AnyEventObject>({
+  toasts: (context, event) => {
+    const err = event.data;
+    const message =
+      err?.message ?? (typeof err === 'string' ? err : 'unknown error');
+    return [
+      ...context.toasts,
+      {
+        id: uniqueId(),
+        type: 'error' as const,
+        title: 'Could not update the file path',
+        message,
+        timestamp: Date.now(),
+      },
+    ];
   },
 });
 
@@ -1083,16 +1123,16 @@ export const libraryMachine = createMachine(
                 const nextSortBy = event?.data?.sortBy as
                   | Settings['sortBy']
                   | undefined;
-                if (
-                  nextSortBy === 'shuffle' &&
-                  context.settings.sortBy !== 'shuffle'
-                ) {
-                  return uniqueId();
+                // Picking "Shuffle" in the sort picker always re-seeds, even
+                // when shuffle is already active — choosing it again is a
+                // request for a new order, not a no-op.
+                if (nextSortBy === 'shuffle') {
+                  return newLoadId();
                 }
                 // Toggling battle mode reorders (new pair / back to
                 // shuffle), so it always needs a fresh seed.
                 if (event?.data?.battleMode !== undefined) {
-                  return uniqueId();
+                  return newLoadId();
                 }
                 return context.libraryLoadId;
               },
@@ -1770,7 +1810,7 @@ export const libraryMachine = createMachine(
           loadingFromFS: {
             entry: assign<LibraryState, AnyEventObject>({
               library: (context) => [{ path: context.initialFile, mtimeMs: 0 }],
-              libraryLoadId: () => uniqueId(),
+              libraryLoadId: () => newLoadId(),
               cursor: 0,
               dbQuery: () => ({ tags: [] }),
               query: () => ({ predicates: [] }),
@@ -1801,16 +1841,19 @@ export const libraryMachine = createMachine(
                   // Single atomic assign to prevent intermediate state observations
                   assign<LibraryState, AnyEventObject>((context, event) => {
                     const lib = (event.data?.library || []) as Item[];
-                    const newLibraryLoadId = uniqueId();
+                    const newLibraryLoadId = newLoadId();
                     const restoredSortBy = (context.savedSortByDuringStreaming ||
                       'name') as Settings['sortBy'];
 
                     // Calculate final cursor position using pinned path and restored sort
                     let finalCursor = event.data?.cursor ?? context.cursor;
                     if (Array.isArray(lib) && lib.length > 0) {
-                      const tempLibraryLoadId = 'final-' + uniqueId();
+                      // Seed with the id the view will actually render under:
+                      // for shuffle/battle the order depends on it, so a
+                      // throwaway id here would land the cursor on the wrong
+                      // item. It also warms filter's memo for the next render.
                       const sorted = filter(
-                        tempLibraryLoadId,
+                        newLibraryLoadId,
                         context.textFilter,
                         lib,
                         context.settings.filters,
@@ -1888,11 +1931,13 @@ export const libraryMachine = createMachine(
                     );
                     const updatedLibrary = context.library.concat(newItems);
 
+                    const nextLibraryLoadId = newLoadId();
                     let nextCursor = context.cursor;
                     if (previousSelectedPath) {
-                      const tempLibraryLoadId = 'batch-' + uniqueId();
+                      // Same id the view will render under — see the onDone
+                      // handler above.
                       const sorted = filter(
-                        tempLibraryLoadId,
+                        nextLibraryLoadId,
                         context.textFilter,
                         updatedLibrary,
                         context.settings.filters,
@@ -1915,7 +1960,7 @@ export const libraryMachine = createMachine(
                     return {
                       library: updatedLibrary,
                       cursor: nextCursor,
-                      libraryLoadId: uniqueId(),
+                      libraryLoadId: nextLibraryLoadId,
                       streaming: true,
                     };
                   }
@@ -2060,7 +2105,7 @@ export const libraryMachine = createMachine(
                 const queryData = getSessionValue('query');
                 return queryData ? queryData.textFilter : '';
               },
-              libraryLoadId: () => uniqueId(),
+              libraryLoadId: () => newLoadId(),
             }),
             always: [
               { target: 'loadedFromDB', cond: hasPersistedFilter },
@@ -2086,7 +2131,7 @@ export const libraryMachine = createMachine(
                   context.previousInitialFile || context.initialFile,
                 currentStateType: (context) =>
                   context.previousStateType || ('fs' as LibraryStateType),
-                libraryLoadId: () => uniqueId(),
+                libraryLoadId: () => newLoadId(),
                 // Clear the previous-state slot now that we've consumed it.
                 previousLibrary: () => [],
                 previousCursor: () => 0,
@@ -2210,7 +2255,7 @@ export const libraryMachine = createMachine(
                       }
                       return context.cursor;
                     },
-                    libraryLoadId: () => uniqueId(),
+                    libraryLoadId: () => newLoadId(),
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
@@ -2221,6 +2266,44 @@ export const libraryMachine = createMachine(
                         type: 'info' as const,
                         title: 'File deleted',
                         message: filename,
+                        timestamp: Date.now(),
+                      };
+                      return [...context.toasts, newToast];
+                    },
+                  }),
+                ],
+              },
+              // The database rows for this path are ALREADY gone — the sender
+              // (media-error's "Remove from Library") awaited the cleanup, so
+              // this event only drops the item from the in-memory library and
+              // lands the cursor on the next item. No IO here, unlike
+              // DELETE_FILE: that keeps "moved to the next item" meaning
+              // "cleanup finished", not "cleanup was requested".
+              FORGET_FILE: {
+                cond: (context: LibraryState) => context.canWrite,
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    library: (context, event) =>
+                      libraryWithout(context.library, event.data.path),
+                    cursor: (context, event) =>
+                      cursorAfterRemoval(
+                        context.library,
+                        context.cursor,
+                        event.data.path
+                      ),
+                    libraryLoadId: () => newLoadId(),
+                  }),
+                  assign<LibraryState, AnyEventObject>({
+                    toasts: (context, event) => {
+                      const filename =
+                        event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const newToast = {
+                        id: uniqueId(),
+                        type: 'info' as const,
+                        title: 'Removed from library',
+                        message: event.data.summary
+                          ? `${filename} — ${event.data.summary}`
+                          : filename,
                         timestamp: Date.now(),
                       };
                       return [...context.toasts, newToast];
@@ -2301,7 +2384,7 @@ export const libraryMachine = createMachine(
               SHUFFLE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: () => newLoadId(),
                   settings: (context, event) => {
                     console.log('SHUFFLE', context, event);
                     return {
@@ -2316,7 +2399,7 @@ export const libraryMachine = createMachine(
               NEXT_BATTLE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: () => newLoadId(),
                   settings: (context) => ({
                     ...context.settings,
                     sortBy: 'battle',
@@ -2326,7 +2409,7 @@ export const libraryMachine = createMachine(
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: () => newLoadId(),
                   settings: (context) => ({
                     ...context.settings,
                     sortBy: 'similarity',
@@ -2362,10 +2445,16 @@ export const libraryMachine = createMachine(
                         );
                         const updatedLibrary = context.library.concat(newItems);
 
+                        // Stashed for the libraryLoadId assigner below: the
+                        // cursor lookup must sort under the id the view will
+                        // actually render with, or shuffle/battle order puts
+                        // the cursor on the wrong item.
+                        const nextLibraryLoadId = newLoadId();
+                        (event as any).__newLoadId = nextLibraryLoadId;
+
                         if (previousSelectedPath) {
-                          const tempLibraryLoadId = 'batch-' + uniqueId();
                           const sorted = filter(
-                            tempLibraryLoadId,
+                            nextLibraryLoadId,
                             context.textFilter,
                             updatedLibrary,
                             context.settings.filters,
@@ -2395,7 +2484,8 @@ export const libraryMachine = createMachine(
                           ? computed
                           : context.cursor;
                       },
-                      libraryLoadId: () => uniqueId(),
+                      libraryLoadId: (_, event) =>
+                        ((event as any).__newLoadId as string) || newLoadId(),
                       streaming: () => true,
                     }),
                   },
@@ -2514,7 +2604,7 @@ export const libraryMachine = createMachine(
 
                         return {
                           library: updatedLibrary,
-                          libraryLoadId: uniqueId(),
+                          libraryLoadId: newLoadId(),
                           cursor: newCursor,
                           toasts: [...context.toasts, newToast],
                         };
@@ -2580,10 +2670,15 @@ export const libraryMachine = createMachine(
                       (f) => f?.path && !existing.has(f.path.toLowerCase())
                     );
                     const updatedLibrary = context.library.concat(newItems);
+                    // Stashed for the libraryLoadId assigner below: the cursor
+                    // lookup must sort under the id the view will actually
+                    // render with, or shuffle/battle order puts the cursor on
+                    // the wrong item.
+                    const nextLibraryLoadId = newLoadId();
+                    (event as any).__newLoadId = nextLibraryLoadId;
                     if (previousSelectedPath) {
-                      const tempLibraryLoadId = 'batch-' + uniqueId();
                       const sorted = filter(
-                        tempLibraryLoadId,
+                        nextLibraryLoadId,
                         context.textFilter,
                         updatedLibrary,
                         context.settings.filters,
@@ -2612,7 +2707,8 @@ export const libraryMachine = createMachine(
                       ? computed
                       : context.cursor;
                   },
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: (_, event) =>
+                    ((event as any).__newLoadId as string) || newLoadId(),
                   streaming: () => true,
                 }),
               },
@@ -2709,7 +2805,7 @@ export const libraryMachine = createMachine(
               SHUFFLE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: () => newLoadId(),
                   settings: (context, event) => {
                     console.log('SHUFFLE', context, event);
                     return {
@@ -2724,7 +2820,7 @@ export const libraryMachine = createMachine(
               NEXT_BATTLE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: () => newLoadId(),
                   settings: (context) => ({
                     ...context.settings,
                     sortBy: 'battle',
@@ -2734,7 +2830,7 @@ export const libraryMachine = createMachine(
               SORTED_SCORE: {
                 actions: assign<LibraryState, AnyEventObject>({
                   cursor: 0,
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: () => newLoadId(),
                   settings: (context) => ({
                     ...context.settings,
                     sortBy: 'similarity',
@@ -2756,7 +2852,7 @@ export const libraryMachine = createMachine(
                     }
                     return library;
                   },
-                  libraryLoadId: () => uniqueId(),
+                  libraryLoadId: () => newLoadId(),
                 }),
               },
               DELETE_FILE: {
@@ -2789,7 +2885,7 @@ export const libraryMachine = createMachine(
                       }
                       return context.cursor;
                     },
-                    libraryLoadId: () => uniqueId(),
+                    libraryLoadId: () => newLoadId(),
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
@@ -2800,6 +2896,44 @@ export const libraryMachine = createMachine(
                         type: 'info' as const,
                         title: 'File deleted',
                         message: filename,
+                        timestamp: Date.now(),
+                      };
+                      return [...context.toasts, newToast];
+                    },
+                  }),
+                ],
+              },
+              // The database rows for this path are ALREADY gone — the sender
+              // (media-error's "Remove from Library") awaited the cleanup, so
+              // this event only drops the item from the in-memory library and
+              // lands the cursor on the next item. No IO here, unlike
+              // DELETE_FILE: that keeps "moved to the next item" meaning
+              // "cleanup finished", not "cleanup was requested".
+              FORGET_FILE: {
+                cond: (context: LibraryState) => context.canWrite,
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    library: (context, event) =>
+                      libraryWithout(context.library, event.data.path),
+                    cursor: (context, event) =>
+                      cursorAfterRemoval(
+                        context.library,
+                        context.cursor,
+                        event.data.path
+                      ),
+                    libraryLoadId: () => newLoadId(),
+                  }),
+                  assign<LibraryState, AnyEventObject>({
+                    toasts: (context, event) => {
+                      const filename =
+                        event.data.path.split(/[\\/]/).pop() || event.data.path;
+                      const newToast = {
+                        id: uniqueId(),
+                        type: 'info' as const,
+                        title: 'Removed from library',
+                        message: event.data.summary
+                          ? `${filename} — ${event.data.summary}`
+                          : filename,
                         timestamp: Date.now(),
                       };
                       return [...context.toasts, newToast];
@@ -3005,21 +3139,44 @@ export const libraryMachine = createMachine(
               },
             },
           },
+          // "Find Media": point a missing item at the file's new location.
+          // Two steps — pick the file, then re-point EVERY database reference
+          // through the move endpoint (media row, tags, embedding, faces, scan
+          // markers, battle log). The picker used to do a partial rewrite of
+          // its own, which left a found file with its tags but nothing else.
           selectingFilePath: {
             invoke: {
-              src: (context, event) => {
-                console.log('selectingFilePath', context, event);
-                return invoke('select-new-path', [
+              src: async (context, event) => {
+                // Cancelling is not an error: Electron's dialog resolves null,
+                // the web file browser rejects. Both mean "never mind", and
+                // updateFilePath no-ops on a null payload.
+                const picked = await invoke('select-new-path', [
                   event.path,
                   event.updateAll,
-                ]);
+                ]).catch(() => null);
+                if (!picked?.newPath) return null;
+                // updateAll means the whole folder moved: widen to the parent
+                // directories so every sibling under it follows in the same
+                // transaction (prefix mode).
+                const { from, to } = moveRange(
+                  picked.path,
+                  picked.newPath,
+                  !!picked.updateAll
+                );
+                await invoke('move-media', [from, to, !!picked.updateAll]);
+                return picked;
               },
               onDone: {
                 target: 'loadedFromDB',
                 actions: ['updateFilePath'],
               },
               onError: {
+                // A refused move (the destination already belongs to another
+                // item) or a failed pick must say so — silently returning to
+                // the library reads as "nothing happened", and the user would
+                // reasonably assume the path was fixed.
                 target: 'loadedFromDB',
+                actions: ['addMoveErrorToast'],
               },
             },
           },
@@ -3041,6 +3198,7 @@ export const libraryMachine = createMachine(
       setDB,
       // createJob removed - jobs now handled by external job runner service
       updateFilePath,
+      addMoveErrorToast,
     },
   }
 );

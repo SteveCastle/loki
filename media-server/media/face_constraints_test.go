@@ -262,3 +262,48 @@ func TestLockPersonFacesPromotesAutoToUser(t *testing.T) {
 		t.Fatalf("people = %+v, want lockedCount 2", people)
 	}
 }
+
+func TestLockAllNamedPersonFacesSkipsUnknownClusters(t *testing.T) {
+	db := newPeopleDB(t)
+	alice, _ := CreatePerson(db, "Alice")
+	bob, _ := CreatePerson(db, "Bob")
+	unknown, _ := CreatePerson(db, "Unknown #4")
+	a1 := addFace(t, db, "la1.jpg", "m1", []float32{1, 0})
+	a2 := addFace(t, db, "la2.jpg", "m1", []float32{1, 0.1})
+	b1 := addFace(t, db, "lb1.jpg", "m1", []float32{0, 1})
+	u1 := addFace(t, db, "lu1.jpg", "m1", []float32{0.5, 0.5})
+	loose := addFace(t, db, "lo1.jpg", "m1", []float32{0.2, 0.9})
+	_ = AssignFace(db, a1, alice, "user") // already locked — not re-counted
+	_ = AssignFace(db, a2, alice, "auto")
+	_ = AssignFace(db, b1, bob, "auto")
+	_ = AssignFace(db, u1, unknown, "auto")
+
+	faces, people, err := LockAllNamedPersonFaces(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if faces != 2 || people != 2 {
+		t.Fatalf("locked %d faces across %d people, want 2 and 2", faces, people)
+	}
+	for _, id := range []int64{a1, a2, b1} {
+		f, _, _ := GetFaceByID(db, id)
+		if f.AssignedBy != "user" {
+			t.Fatalf("named-person face %d not locked: %+v", id, f)
+		}
+	}
+	if f, _, _ := GetFaceByID(db, u1); f.AssignedBy != "auto" {
+		t.Fatalf("Unknown-cluster face was locked: %+v", f)
+	}
+	if f, _, _ := GetFaceByID(db, loose); f.AssignedBy == "user" {
+		t.Fatalf("unassigned face was locked: %+v", f)
+	}
+
+	// Idempotent: a second run has nothing left to promote.
+	faces, people, err = LockAllNamedPersonFaces(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if faces != 0 || people != 0 {
+		t.Fatalf("second run locked %d faces across %d people, want 0 and 0", faces, people)
+	}
+}

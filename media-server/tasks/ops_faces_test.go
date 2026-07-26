@@ -50,6 +50,28 @@ func TestNoteFacesScanned(t *testing.T) {
 	}
 }
 
+// TestNoteFacesScannedRunBatches pins the final pass's scope: it must cover
+// every face stored THIS RUN (across all in-scan passes) and only those — the
+// pre-existing ungrouped backlog is never re-litigated per scan, so a small
+// add stays cheap no matter how large the backlog grows.
+func TestNoteFacesScannedRunBatches(t *testing.T) {
+	st := &facesOpState{clusterEvery: 100}
+	st.noteFacesScanned("sface", fakeFaceIDs(1, 60))
+	st.noteFacesScanned("sface", fakeFaceIDs(100, 60)) // 120th face → in-scan pass, dirty counters reset
+	st.noteFacesScanned("ccip", fakeFaceIDs(1000, 5))
+	if got := len(st.runBatches["sface"]); got != 120 {
+		t.Fatalf("run batch sface = %d ids, want 120 (every face stored this run)", got)
+	}
+	if got := len(st.runBatches["ccip"]); got != 5 {
+		t.Fatalf("run batch ccip = %d ids, want 5", got)
+	}
+	// The final pass's dirty-counter drain must not clear the run-wide batches.
+	st.takeDirtyBatches()
+	if got := len(st.runBatches["sface"]); got != 120 {
+		t.Fatalf("run batches must survive takeDirtyBatches; got %d", got)
+	}
+}
+
 // TestIncrementalClusterParamsAreStricter pins the false-positive guard:
 // mid-scan passes run many times per scan on small batches, so every
 // acceptance knob must be strictly tighter than the one-shot defaults.

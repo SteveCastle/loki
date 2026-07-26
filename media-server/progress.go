@@ -11,10 +11,12 @@ import (
 )
 
 // indexProgressFn returns a tasks.IndexProgress callback that renders a colorful
-// in-place progress bar to stderr while the embedding index builds at startup.
-// On a non-TTY (logs piped to a file/service) it falls back to plain percentage
-// lines so the output stays readable.
-func indexProgressFn() func(done, total int) {
+// in-place progress bar to stderr while an index builds at startup. label names
+// the index in the bar ("Building <label>"), so the embedding and face passes
+// are distinguishable as they scroll by. On a non-TTY (logs piped to a
+// file/service) it falls back to plain percentage lines so the output stays
+// readable.
+func indexProgressFn(label string) func(done, total int) {
 	fd := os.Stderr.Fd()
 	tty := isatty.IsTerminal(fd) || isatty.IsCygwinTerminal(fd)
 	if tty {
@@ -45,8 +47,8 @@ func indexProgressFn() func(done, total int) {
 			// Plain output: one line per 10% bucket (and at completion).
 			if pct/10 != lastPct/10 || final {
 				lastPct = pct
-				fmt.Fprintf(os.Stderr, "Building search index: %d%% (%s/%s)\n",
-					pct, humanInt(done), humanInt(total))
+				fmt.Fprintf(os.Stderr, "Building %s: %d%% (%s/%s)\n",
+					label, pct, humanInt(done), humanInt(total))
 			}
 			return
 		}
@@ -56,7 +58,7 @@ func indexProgressFn() func(done, total int) {
 			return // throttle redraws to ~25 fps
 		}
 		lastDraw = now
-		drawIndexBar(done, total, barWidth, started)
+		drawIndexBar(label, done, total, barWidth, started)
 		if final {
 			fmt.Fprint(os.Stderr, "\n")
 		}
@@ -65,7 +67,7 @@ func indexProgressFn() func(done, total int) {
 
 // drawIndexBar renders one frame of the bar in place (CR + clear line). The
 // filled portion is painted with a bright neon gradient.
-func drawIndexBar(done, total, width int, started time.Time) {
+func drawIndexBar(label string, done, total, width int, started time.Time) {
 	frac := float64(done) / float64(total)
 	if frac > 1 {
 		frac = 1
@@ -74,7 +76,7 @@ func drawIndexBar(done, total, width int, started time.Time) {
 
 	var b strings.Builder
 	b.WriteString("\r\x1b[2K") // carriage return + erase line
-	b.WriteString("\x1b[1m🔧 Building index\x1b[0m ")
+	fmt.Fprintf(&b, "\x1b[1m🔧 Building %s\x1b[0m ", label)
 	b.WriteString("\x1b[38;2;90;90;110m▕\x1b[0m")
 	for i := 0; i < width; i++ {
 		if i < filled {

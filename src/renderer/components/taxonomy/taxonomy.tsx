@@ -747,7 +747,9 @@ export default function Taxonomy() {
       {editingTag ? (() => {
         // The tag being edited may live outside the active category — in
         // search mode `activeCategory` is intentionally cleared, so fall back
-        // to allTagsData to recover the tag's real category and description.
+        // to allTagsData to recover the tag's real category. That list is thin
+        // (no descriptions), so the description below is only a head start:
+        // NewTagModal fetches the authoritative value for the tag it opens on.
         // categoryLabel isn't used by the edit flow itself (only the create
         // flow consumes it for cache keys), but we pass the real category for
         // correctness.

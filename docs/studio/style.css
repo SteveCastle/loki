@@ -128,6 +128,10 @@ h1 .tag { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 6px
 
 #add-section { margin-bottom: 10px; }
 
+.add-row { display: flex; align-items: center; gap: 6px; }
+.add-row .search-wrap { flex: 1; min-width: 0; }
+#btn-add-layer { flex: none; padding: 7px 10px; border-radius: 8px; white-space: nowrap; }
+
 .search-wrap { position: relative; display: flex; align-items: center; }
 .search-wrap .search-icon {
   position: absolute;
@@ -223,6 +227,55 @@ h1 .tag { font-size: 11px; color: var(--dim); font-weight: 400; margin-left: 6px
 .menu-item span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .menu-empty { color: var(--dim); padding: 10px; font-size: 12px; text-align: center; }
+
+/* Which layer a pick from this list will land on. */
+.menu-target {
+  padding: 4px 8px 6px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Floating clone of the add menu, anchored to the inspector's + Effect. */
+.fx-picker,
+.shape-picker {
+  position: fixed;
+  z-index: 60;
+  width: 300px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+.fx-picker-search {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.fx-picker-search:focus { outline: none; border-color: var(--accent); }
+.fx-picker .add-layer-list,
+.shape-picker .add-layer-list {
+  max-height: min(320px, 44vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  margin-top: 6px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  scrollbar-width: thin;
+}
 
 /* ---- main / preview ------------------------------------------------ */
 
@@ -581,6 +634,85 @@ body.mask-editing #mask-overlay {
 .insp-params h3 .hint { font-weight: 400; text-transform: none; letter-spacing: 0; }
 
 .layer-error { color: #e58784; font-size: 11px; padding: 4px 0 6px; word-break: break-word; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
+
+/* ---- effect stack (inspector) --------------------------------------- */
+
+.fx-stack { margin-bottom: 8px; }
+.fx-stack-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+}
+.fx-stack-head h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.fx-stack-head h3 .hint {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fx-entry {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg3);
+  margin-bottom: 6px;
+  border-left: 2px solid #7a5cb0;
+}
+.fx-entry.off { opacity: 0.5; }
+.fx-entry.err { border-left-color: #e58784; }
+.fx-entry.open { background: var(--bg); }
+
+.fx-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+}
+.fx-twirl { width: 16px; }
+.fx-on { accent-color: var(--accent); flex: none; }
+.fx-badge { flex: none; font-size: 11px; color: #c0a6ff; }
+.fx-entry.off .fx-name { text-decoration: line-through; }
+.fx-name {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
+.fx-name:hover { border-color: var(--border); background: var(--bg); }
+.fx-name:focus { outline: none; border-color: var(--accent); background: var(--bg); }
+.fx-entry-head .tl-mini[disabled] { opacity: 0.25; cursor: default; }
+
+.fx-entry-body { padding: 0 6px 6px; }
+.fx-entry-body .insp-params { margin-bottom: 0; }
+.fx-entry .layer-error { padding: 0 8px 6px; }
+
+.fx-spill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--dim);
+  font-size: 11px;
+  padding: 2px 2px 0;
+}
+.fx-spill input { accent-color: var(--accent); }
 
 .param-row { display: grid; grid-template-columns: 1fr 86px 54px; gap: 8px; align-items: center; margin-top: 4px; }
 .param-row.kf { grid-template-columns: 20px 1fr 80px 52px 18px 18px; gap: 6px; }
@@ -1039,6 +1171,8 @@ body.mask-editing #mask-overlay {
   color: var(--dim);
   font-size: 11px;
 }
+/* Which effect in the stack a parameter row belongs to. */
+.tl-prop-owner { color: #c0a6ff; }
 .tl-prop-val {
   width: 58px;
   text-align: right;
@@ -1124,6 +1258,8 @@ body.mask-editing #mask-overlay {
   border-color: #43a047;
   color: #dff2e8;
 }
+/* Media clip carrying its own effect stack. */
+.tl-clip.media.fxd { border-color: #7a5cb0; }
 .tl-clip.off { opacity: 0.45; }
 .tl-clip.off .tl-clip-name { text-decoration: line-through; }
 .tl-clip.sel {
@@ -1442,7 +1578,19 @@ body.mask-editing #mask-overlay {
   letter-spacing: 0.06em;
   color: var(--dim);
 }
+.shape-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.shape-head h3 { margin: 0; }
+.shape-head .btn { padding: 2px 8px; font-size: 11px; }
 .shape-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.shape-row + .shape-row { margin-top: 4px; }
+/* Preset list shared by + Shape (inspector) and + Layer (panel). */
+.shape-picker { width: 240px; }
 .shape-row select {
   flex: 1;
   min-width: 110px;

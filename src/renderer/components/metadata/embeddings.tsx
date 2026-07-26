@@ -44,7 +44,12 @@ const authHeaders = (token?: string | null): HeadersInit =>
   token ? { Authorization: `Bearer ${token}` } : {};
 
 async function getJSON<T>(url: string, token?: string | null): Promise<T> {
-  const res = await fetch(url, { headers: authHeaders(token) });
+  // Timeout so a stalled server can't pin one of Chromium's six per-origin
+  // sockets (every media-server fetch needs one — see stream-bus.ts).
+  const res = await fetch(url, {
+    headers: authHeaders(token),
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -267,7 +272,9 @@ export default function Embeddings({ path }: { path: string }) {
         authToken
       ),
     {
-      retry: false,
+      // One retry (unlike the queries above): a transient failure here hides
+      // the whole faces row, so don't give up on the first blip.
+      retry: 1,
       refetchInterval: facePending ? 3000 : false,
       enabled: canWrite,
     }

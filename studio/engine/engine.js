@@ -563,6 +563,7 @@ export class SlangFx {
    * @param {(path: string) => Promise<ImageBitmap>} [opts.readImage]
    * @param {HTMLCanvasElement} [opts.canvas] present target (optional — headless works)
    * @param {GPUDevice} [opts.device] reuse an existing device
+   * @param {Map} [opts.moduleCache] share compiled modules with another chain
    */
   static async create(opts) {
     const fx = new SlangFx();
@@ -618,7 +619,9 @@ export class SlangFx {
     }
 
     fx.layers = [];          // [{path, enabled, runtime|null, error|null}]
-    fx.moduleCache = new Map();
+    // Shareable across chains: compiled modules are keyed by source path, so
+    // several SlangFx instances on one device compile each shader once.
+    fx.moduleCache = opts.moduleCache ?? new Map();
     fx.inputW = 0;
     fx.inputH = 0;
     fx.startTime = null;
@@ -732,24 +735,45 @@ export class SlangFx {
         ?? (node.useInput ? layerInput : this.whiteView);
       node._bindGroup = this.maskComposer.bindGroup(view, this.inputSampler, node._optsBuf);
     }
-    this.updateLayerMask(this.layers.indexOf(layer));
+    this._uploadMaskSources(layer);
   }
 
+  /* Release a layer's mask GPU state. Node/composite state belongs to the
+   * group HEAD (which is the only layer holding maskTex); the blend target
+   * belongs to the tail. Read the mask through the group record the last
+   * rebuild left behind, not through layer.maskState — the host may already
+   * have moved the mask to a different layer of the stack. */
   _destroyLayerMaskGpu(layer) {
+    const owned = !!layer.maskTex;
+    const state = layer.maskGroup?.state ?? layer.maskState;
     layer.maskTex?.destroy();
     layer.blendTex?.destroy();
     layer.maskOptsBuf?.destroy();
     layer.maskTex = layer.maskView = layer.blendTex = layer.blendView = null;
     layer.blendBindGroup = layer.maskOptsBuf = null;
-    this.maskComposer.destroyPost(layer.maskState);
-    for (const node of layer.maskState?.nodes ?? []) {
+    if (!owned) return;
+    this.maskComposer.destroyPost(state);
+    for (const node of state?.nodes ?? []) {
       node._optsBuf?.destroy();
       node._tex?.destroy();
       node._optsBuf = node._tex = node._bindGroup = null;
     }
   }
 
-  /** Rebuild every layer's GPU state (structural changes + source resize). */
+  /**
+   * Rebuild every layer's GPU state (structural changes + source resize).
+   *
+   * Consecutive layers sharing a `groupId` form ONE masked group (a clip's
+   * effect stack): they chain normally, the group's head owns the mask
+   * texture — built against the view entering the GROUP, and shared with
+   * every member so custom shaders can sample `Mask` — and the group's tail
+   * blends the stack's output back over the group input. Masking the group
+   * once, rather than each effect against its own input, is what makes the
+   * mask mean "where this whole stack applies".
+   *
+   * Layers with no `groupId` are their own group, which is exactly the
+   * previous one-effect-per-layer behaviour.
+   */
   async rebuild() {
     if (!this.inputTexture) return;
     for (const layer of this.layers) {
@@ -759,67 +783,92 @@ export class SlangFx {
       layer.error = null;
       layer.effectiveView = null;
       this._destroyLayerMaskGpu(layer);
+      layer.maskGroup = null;
     }
+    const live = this.layers.filter((l) => l.enabled);
     let inputView = this.inputView;
-    for (const layer of this.layers) {
-      if (!layer.enabled) continue;
-      const layerInput = inputView;
+    for (let i = 0; i < live.length;) {
+      // Maximal run of enabled layers sharing a group id.
+      let j = i;
+      const gid = live[i].groupId;
+      if (gid != null) while (j + 1 < live.length && live[j + 1].groupId === gid) j++;
+      const head = live[i];
+      const groupInput = inputView;
       // Decide once: maskState can be assigned asynchronously (project
-      // restore) while this rebuild awaits a compile — the blend section
-      // below must not see a mask the top of the loop never built.
-      const hasMask = !!layer.maskState?.nodes?.length;
-      if (hasMask) this._buildLayerMask(layer, layerInput);
-      const buildOnce = async (compileOpts) => {
-        const presetText = await this.readFile(layer.path);
-        const preset = parsePreset(presetText, dirnameOf(layer.path));
-        const modules = [];
-        for (const pass of preset.passes) modules.push(await this.compileModule(pass.path, compileOpts));
-        const rt = new PresetRuntime(this, preset, modules, layerInput, this.inputW, this.inputH);
-        rt.maskView = layer.maskView ?? null;   // `Mask` sampler for custom shaders
-        rt.textureOverrides = layer.textureOverrides ?? null;
-        if (layer.savedParams)
-          for (const [k, v] of layer.savedParams) rt.paramValues.set(k, v);
-        await rt.build();
-        return rt;
-      };
-      try {
-        let rt;
+      // restore) while this rebuild awaits a compile — the blend below must
+      // not see a mask the top of the loop never built.
+      const maskState = head.maskState?.nodes?.length ? head.maskState : null;
+      if (maskState) this._buildLayerMask(head, groupInput);
+      const group = { head, tail: null, state: maskState, input: groupInput };
+
+      for (let k = i; k <= j; k++) {
+        const layer = live[k];
+        layer.maskGroup = group;
+        const layerInput = inputView;
+        const buildOnce = async (compileOpts) => {
+          const presetText = await this.readFile(layer.path);
+          const preset = parsePreset(presetText, dirnameOf(layer.path));
+          const modules = [];
+          for (const pass of preset.passes) modules.push(await this.compileModule(pass.path, compileOpts));
+          const rt = new PresetRuntime(this, preset, modules, layerInput, this.inputW, this.inputH);
+          rt.maskView = head.maskView ?? null;   // `Mask` sampler for custom shaders
+          rt.textureOverrides = layer.textureOverrides ?? null;
+          if (layer.savedParams)
+            for (const [k2, v] of layer.savedParams) rt.paramValues.set(k2, v);
+          await rt.build();
+          return rt;
+        };
         try {
-          rt = await buildOnce({});
-        } catch (e) {
-          if (!/uniform control flow/.test(String(e.message ?? e))) throw e;
-          // Retry with the textureLod uniformity workaround.
-          rt = await buildOnce({ textureLodWorkaround: true });
-        }
-        layer.runtime = rt;
-        if (hasMask) {
-          layer.blendTex = this.device.createTexture({
-            label: 'slangfx masked out',
-            size: [this.inputW, this.inputH],
-            format: 'rgba8unorm',
-            usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
-          });
-          layer.blendView = layer.blendTex.createView();
-          layer.maskOptsBuf = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-          this._writeMaskOpts(layer);
-          layer.blendBindGroup = this.maskBlender.bindGroup(
-            layerInput, rt.finalPass.outView, layer.maskView, this.inputSampler, layer.maskOptsBuf);
-          layer.effectiveView = layer.blendView;
-        } else {
+          let rt;
+          try {
+            rt = await buildOnce({});
+          } catch (e) {
+            if (!/uniform control flow/.test(String(e.message ?? e))) throw e;
+            // Retry with the textureLod uniformity workaround.
+            rt = await buildOnce({ textureLodWorkaround: true });
+          }
+          layer.runtime = rt;
           layer.effectiveView = rt.finalPass.outView;
+          inputView = layer.effectiveView;
+          group.tail = layer;   // last member that actually built
+        } catch (e) {
+          layer.error = String(e.message ?? e);
+          console.error(`slangfx: layer '${layer.path}' failed:`, e);
         }
-        inputView = layer.effectiveView;
-      } catch (e) {
-        layer.error = String(e.message ?? e);
-        console.error(`slangfx: layer '${layer.path}' failed:`, e);
       }
+
+      // One mask blend for the whole group, against the group's input.
+      const tail = group.tail;
+      if (maskState && tail) {
+        tail.blendTex = this.device.createTexture({
+          label: 'slangfx masked out',
+          size: [this.inputW, this.inputH],
+          format: 'rgba8unorm',
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+        });
+        tail.blendView = tail.blendTex.createView();
+        tail.maskOptsBuf = this.device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this._writeMaskOpts(tail);
+        tail.blendBindGroup = this.maskBlender.bindGroup(
+          groupInput, tail.runtime.finalPass.outView, head.maskView, this.inputSampler, tail.maskOptsBuf);
+        tail.effectiveView = tail.blendView;
+        inputView = tail.blendView;
+      }
+      i = j + 1;
     }
   }
 
   _writeMaskOpts(layer) {
-    if (!layer.maskOptsBuf || !layer.maskState) return;
+    const state = layer.maskGroup?.state ?? layer.maskState;
+    if (!layer.maskOptsBuf || !state) return;
     this.device.queue.writeBuffer(layer.maskOptsBuf, 0,
-      new Float32Array([layer.maskState.opacity ?? 1, layer.maskState.invert ? 1 : 0, 0, 0]));
+      new Float32Array([state.opacity ?? 1, state.invert ? 1 : 0, 0, 0]));
+  }
+
+  /** The built layer that owns a group's mask GPU state (its head), or null
+   * when the group has no mask or is not in the current chain. */
+  maskOwner(groupId) {
+    return this.layers.find((l) => l.groupId === groupId && l.maskTex) ?? null;
   }
 
   /** Attach (or replace) a layer's mask stack: { opacity, invert, nodes }.
@@ -839,10 +888,7 @@ export class SlangFx {
     await this.rebuild();
   }
 
-  /** Re-upload canvas-backed mask node pixels (cheap — call during brush
-   * strokes; no rebuild). The stack recomposites automatically next frame. */
-  updateLayerMask(i) {
-    const layer = this.layers[i];
+  _uploadMaskSources(layer) {
     if (!layer?.maskTex) return;
     for (const node of layer.maskState?.nodes ?? []) {
       const src = node.source;
@@ -850,6 +896,23 @@ export class SlangFx {
       if ((src.width ?? 0) !== this.inputW || (src.height ?? 0) !== this.inputH) continue;
       this.device.queue.copyExternalImageToTexture({ source: src }, { texture: node._tex }, [this.inputW, this.inputH]);
     }
+  }
+
+  /** Re-upload canvas-backed mask node pixels for a group (cheap — call
+   * during brush strokes; no rebuild). The stack recomposites next frame. */
+  updateGroupMask(groupId) {
+    this._uploadMaskSources(this.maskOwner(groupId));
+  }
+
+  /** Update a group mask's opacity / inversion without a rebuild. */
+  setGroupMaskOptions(groupId, { opacity, invert } = {}) {
+    const head = this.maskOwner(groupId);
+    const state = head?.maskGroup?.state;
+    if (!state) return;
+    if (opacity != null) state.opacity = opacity;
+    if (invert != null) state.invert = invert;
+    const tail = head.maskGroup.tail;
+    if (tail) this._writeMaskOpts(tail);
   }
 
   /** Replace one of a layer's external textures (preset `textures = ...`)
@@ -862,15 +925,6 @@ export class SlangFx {
     await this.rebuild();
   }
 
-  /** Update mask opacity / inversion without a rebuild. */
-  setLayerMaskOptions(i, { opacity, invert } = {}) {
-    const layer = this.layers[i];
-    if (!layer?.maskState) return;
-    if (opacity != null) layer.maskState.opacity = opacity;
-    if (invert != null) layer.maskState.invert = invert;
-    this._writeMaskOpts(layer);
-  }
-
   /** Per-layer info for UIs: params with metadata + current values. */
   getLayerInfo() {
     return this.layers.map((layer, i) => ({
@@ -879,8 +933,9 @@ export class SlangFx {
       name: layer.label ?? layer.path.split('/').pop(),
       enabled: layer.enabled,
       error: layer.error,
-      mask: layer.maskState
-        ? { opacity: layer.maskState.opacity ?? 1, invert: !!layer.maskState.invert }
+      groupId: layer.groupId ?? null,
+      mask: layer.maskGroup?.state
+        ? { opacity: layer.maskGroup.state.opacity ?? 1, invert: !!layer.maskGroup.state.invert }
         : null,
       textures: layer.runtime ? layer.runtime.preset.textures.map((t) => t.name) : [],
       params: layer.runtime
@@ -941,9 +996,10 @@ export class SlangFx {
 
     const encoder = this.device.createCommandEncoder();
     for (const layer of this.activeLayers) {
-      // Recomposite the mask node stack first — the layer's passes and the
-      // blend below sample maskTex this same submission.
-      if (layer.maskState?.nodes?.length && layer.maskView)
+      // Recomposite the group's mask node stack once, at its head — every
+      // member's passes and the group blend sample maskTex this same
+      // submission.
+      if (layer.maskGroup?.state && layer === layer.maskGroup.head && layer.maskView)
         this.maskComposer.encode(encoder, layer);
       layer.runtime.writeUniforms(timeSec);
       layer.runtime.encode(encoder);

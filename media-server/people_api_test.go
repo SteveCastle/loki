@@ -465,6 +465,61 @@ func TestFaceReviewLockAndRejectEndpoints(t *testing.T) {
 	}
 }
 
+// Bulk endorsement: POST /api/people/lock-all confirms every named group's
+// faces and leaves the anonymous "Unknown #N" clusters alone.
+func TestPeopleLockAllSkipsUnnamedGroups(t *testing.T) {
+	mux, deps := muxWithPeopleRoutes(t)
+
+	alice, err := media.CreatePerson(deps.DB, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := media.CreatePerson(deps.DB, "Unknown #2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newFace := func(path string, person int64, by string) int64 {
+		t.Helper()
+		ids, err := media.ReplaceFaces(deps.DB, path, "m1", []media.NewFace{
+			{X: 0.1, Y: 0.1, W: 0.2, H: 0.2, Score: 0.9, Vec: []float32{1, 0, 0}},
+		}, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := media.AssignFace(deps.DB, ids[0], person, by); err != nil {
+			t.Fatal(err)
+		}
+		return ids[0]
+	}
+	aliceAuto := newFace("la1.jpg", alice, "auto")
+	aliceUser := newFace("la2.jpg", alice, "user")
+	unknownAuto := newFace("lu1.jpg", unknown, "auto")
+
+	rec, out := doJSON(t, mux, http.MethodPost, "/api/people/lock-all", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("lock-all: %d %s", rec.Code, rec.Body.String())
+	}
+	if out["locked"].(float64) != 1 || out["people"].(float64) != 1 {
+		t.Fatalf("lock-all payload = %v, want locked 1 across 1 person", out)
+	}
+	for _, id := range []int64{aliceAuto, aliceUser} {
+		if f, _, _ := media.GetFaceByID(deps.DB, id); f.AssignedBy != "user" {
+			t.Fatalf("named face %d not confirmed: %+v", id, f)
+		}
+	}
+	if f, _, _ := media.GetFaceByID(deps.DB, unknownAuto); f.AssignedBy != "auto" {
+		t.Fatalf("Unknown-cluster face was confirmed: %+v", f)
+	}
+
+	// GET is rejected — this mutates.
+	req := httptest.NewRequest(http.MethodGet, "/api/people/lock-all", nil)
+	grec := httptest.NewRecorder()
+	mux.ServeHTTP(grec, req)
+	if grec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET lock-all: %d", grec.Code)
+	}
+}
+
 // One-shot cleanup: keep the checked faces, permanently discard the rest.
 func TestPersonCurateKeepsCheckedDiscardsRest(t *testing.T) {
 	mux, deps := muxWithPeopleRoutes(t)

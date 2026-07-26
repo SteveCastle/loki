@@ -24,12 +24,21 @@ import (
 )
 
 // Anchor prompt sets. Several prompts per class, averaged, so no single
-// phrasing dominates. These describe the IMAGE STYLE, not the content.
+// phrasing dominates. These describe the IMAGE STYLE, not the content. The
+// drawn set deliberately covers the mid-realism band (semi-realistic western
+// cartoon art, painterly digital art, 3D-rendered characters): with only
+// classic anime/cel-shaded phrasings those items sat nearer the photo anchor
+// and were scanned with the photo recognizer — ~1.9k known western-cartoon
+// items misrouted on the live library, which is where "drawn faces inside
+// photo people" came from.
 var (
 	animeAnchorPrompts = []string{
 		"an anime illustration of a character",
 		"a cartoon drawing",
 		"digital anime artwork, cel shaded",
+		"a semi-realistic digital painting of a character",
+		"western cartoon comic art",
+		"a 3d rendered animated character",
 	}
 	photoAnchorPrompts = []string{
 		"a photograph of a person",
@@ -156,6 +165,42 @@ func RoutedFaceModelForPath(ctx context.Context, db *sql.DB, path string) FaceMo
 	}
 	vec, err := ImageQueryVectorForPath(ctx, db, TextSearchModel(), path)
 	if err != nil {
+		return ActiveFaceModel()
+	}
+	return routeVec(vec, anchors)
+}
+
+// cachedDomainAnchors returns the anchor vectors only when they are already
+// cached for the current text model — unlike domainAnchors it never encodes.
+func cachedDomainAnchors() *anchorCache {
+	anchorMu.Lock()
+	defer anchorMu.Unlock()
+	if anchorOverride != nil {
+		return anchorOverride
+	}
+	if cachedAnchor != nil && cachedAnchor.model == TextSearchModel().ID {
+		return cachedAnchor
+	}
+	return nil
+}
+
+// CachedRoutedFaceModelForPath is the status-read variant of
+// RoutedFaceModelForPath: it never launches an ONNX subprocess, so it is safe
+// on hot request paths (the metadata panel polls it per file). Routing only
+// happens when the anchors are already cached (a scan or search encoded them
+// earlier) AND the item has a stored whole-image embedding; anything else
+// degrades to the active model. Scan jobs still do the full (expensive)
+// routing, so this is a display approximation, never a scan decision.
+func CachedRoutedFaceModelForPath(db *sql.DB, path string) FaceModel {
+	if !FaceRoutingEnabled() {
+		return ActiveFaceModel()
+	}
+	anchors := cachedDomainAnchors()
+	if anchors == nil {
+		return ActiveFaceModel()
+	}
+	vec, ok, err := media.GetEmbedding(db, path, TextSearchModel().ID)
+	if err != nil || !ok {
 		return ActiveFaceModel()
 	}
 	return routeVec(vec, anchors)

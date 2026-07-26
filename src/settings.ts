@@ -207,13 +207,21 @@ type SettingsObject = {
     reload: boolean;
     resetCursor?: boolean;
     options: {
-      [key: string]: {
+      [key: string]: NumericStepOption & {
         label: string;
         value: string | number | boolean;
-        increment?: number;
       };
     };
   };
+};
+
+export type NumericStepOption = {
+  increment?: number;
+  min?: number;
+  max?: number;
+  // Ascending list of values below 1 the stepper walks through before it
+  // starts adding/subtracting whole units.
+  fractionalSteps?: number[];
 };
 
 export const PLAY_SOUND = {
@@ -456,6 +464,10 @@ export const AUTO_PLAY_TIME = {
       label: '5',
       value: 5,
       increment: 5,
+      // Below one second the stepper halves instead of subtracting whole
+      // seconds, so autoplay can run at 1/2, 1/4 and 1/8 second.
+      fractionalSteps: [0.125, 0.25, 0.5],
+      min: 0.125,
     },
   },
 };
@@ -642,6 +654,59 @@ export function getNextFilterMode(
 
 export function clampVolume(volume: number): number {
   return Math.max(0, Math.min(1, volume));
+}
+
+const STEP_EPSILON = 1e-9;
+
+/**
+ * Next value for a numeric setting's +/- buttons. Returns null when the step
+ * would leave the option's range, in which case the button is a no-op.
+ *
+ * Options carrying `fractionalSteps` walk that list below one unit (autoplay
+ * time uses 1/8, 1/4, 1/2 second) and step by whole units above it.
+ */
+export function getSteppedSettingValue(
+  option: NumericStepOption,
+  currentValue: number,
+  direction: 1 | -1
+): number | null {
+  const steps = option.fractionalSteps ?? [];
+  const min = option.min ?? (steps.length ? steps[0] : 0);
+  const { max } = option;
+
+  // Stepping down out of one unit, or anywhere below it, walks the list.
+  const inFractionalRange =
+    direction === -1
+      ? currentValue <= 1 + STEP_EPSILON
+      : currentValue < 1 - STEP_EPSILON;
+
+  let newValue: number;
+  if (steps.length && inFractionalRange) {
+    if (direction === -1) {
+      const below = steps.filter((step) => step < currentValue - STEP_EPSILON);
+      if (!below.length) return null;
+      newValue = below[below.length - 1];
+    } else {
+      const above = steps.filter((step) => step > currentValue + STEP_EPSILON);
+      newValue = above.length ? above[0] : 1;
+    }
+  } else {
+    // Step by 1 at small values, otherwise by the option's increment, to give
+    // more fine grained control at small numbers.
+    const increment =
+      direction === -1
+        ? currentValue <= 5
+          ? 1
+          : option.increment ?? 1
+        : currentValue < 5
+        ? 1
+        : option.increment ?? 1;
+    newValue = currentValue + direction * increment;
+  }
+
+  if (newValue < min - STEP_EPSILON) return null;
+  if (max !== undefined && newValue > max + STEP_EPSILON) return null;
+  return newValue;
 }
 
 export const SETTINGS: SettingsObject = {

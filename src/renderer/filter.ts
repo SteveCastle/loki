@@ -3,6 +3,7 @@ import { FilterOption, SortByOption } from 'settings';
 import naturalCompare from 'natural-compare';
 import type { Item } from './state';
 import { orderForBattle } from './battle-pairing';
+import { seededShuffle } from './seeded-random';
 
 // Single-entry memoization cache keyed by libraryLoadId + filters + sortBy
 let lastCacheKey: string | null = null;
@@ -63,30 +64,28 @@ function filter(
   // Deterministic shuffle based on libraryLoadId. This prevents re-shuffling on
   // every render; the order only changes when sort switches to shuffle and the
   // caller provides a new libraryLoadId (e.g., user re-applies shuffle).
+  //
+  // Seeded Fisher-Yates rather than sorting items by a per-item hash of the
+  // seed+path: O(n) instead of O(n log n) with no per-item wrapper objects or
+  // concatenated seed+path strings, and uniform over permutations instead of
+  // only as uniform as the hash. The previous hash also folded the seed in as
+  // a string prefix, which left consecutive seeds producing near-identical
+  // orders — see seeded-random.ts.
   if (sortBy === 'shuffle') {
-    const seed = libraryLoadId;
-    const hash = (s: string) => {
-      let h = 5381;
-      for (let i = 0; i < s.length; i++) {
-        h = ((h << 5) + h) ^ s.charCodeAt(i);
-      }
-      return h >>> 0;
-    };
+    const shuffled = seededShuffle(filtered, libraryLoadId);
 
-    const ranked = filtered.map((item) => ({
-      item,
-      rank: hash(`${seed}::${item.path}`),
-    }));
+    // Items with no elo rating come first, keeping shuffled order within each
+    // group, so a partly battle-rated library still leads with unrated items.
+    let result = shuffled;
+    let rated = 0;
+    for (const item of shuffled) if (item.elo) rated++;
+    if (rated > 0 && rated < shuffled.length) {
+      const unratedFirst: Item[] = [];
+      for (const item of shuffled) if (!item.elo) unratedFirst.push(item);
+      for (const item of shuffled) if (item.elo) unratedFirst.push(item);
+      result = unratedFirst;
+    }
 
-    ranked.sort((a, b) => {
-      const aNoElo = !a.item.elo;
-      const bNoElo = !b.item.elo;
-      if (aNoElo && !bNoElo) return -1;
-      if (!aNoElo && bNoElo) return 1;
-      return a.rank - b.rank;
-    });
-
-    const result = ranked.map((r) => r.item);
     lastCacheKey = cacheKey;
     lastResult = result;
     return result;

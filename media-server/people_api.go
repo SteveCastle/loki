@@ -39,6 +39,7 @@ func broadcastPeopleChanged() {
 //	GET    /api/people/{id}/media    — the person's media, renderer item shape
 //	GET    /api/people/{id}/faces    — the person's faces with typicality, for review
 //	POST   /api/people/{id}/lock     — promote every auto face to a user assignment
+//	POST   /api/people/lock-all      — same, for every NAMED person at once
 //	POST   /api/people/{id}/curate   — {keepFaceIds}: lock the keeps, reject the rest
 //	GET    /api/faces/ungrouped      — count of faces not yet assigned to any person
 //	POST   /api/faces/{id}/assign    — {personId} or {name} (creates person)
@@ -60,6 +61,9 @@ func RegisterPeopleRoutes(mux *http.ServeMux, deps *Dependencies) {
 	mux.HandleFunc("/api/people/{id}", renderer.ApplyMiddlewares(personDeleteHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/media", renderer.ApplyMiddlewares(personMediaHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/people/{id}/faces", renderer.ApplyMiddlewares(personFacesHandler(deps), renderer.RolePublicRead))
+	// Literal path — Go's mux prefers it over the "/api/people/{id}"
+	// wildcard, so "lock-all" never lands in the delete handler.
+	mux.HandleFunc("/api/people/lock-all", renderer.ApplyMiddlewares(peopleLockAllHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/lock", renderer.ApplyMiddlewares(personLockHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/curate", renderer.ApplyMiddlewares(personCurateHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/people/{id}/cover", renderer.ApplyMiddlewares(personCoverHandler(deps), renderer.RoleAdmin))
@@ -829,6 +833,29 @@ func personLockHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		broadcastPeopleChanged()
 		writeJSON(w, map[string]any{"personId": id, "locked": n})
+	}
+}
+
+// peopleLockAllHandler is personLockHandler for the whole library: POST
+// /api/people/lock-all promotes every auto-assigned face of every NAMED person
+// to a user assignment. Unnamed "Unknown #N" clusters are skipped — endorsing
+// groups nobody has vouched for would freeze the clusterer's own mistakes in
+// place. Responds {people, locked}.
+func peopleLockAllHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			httpError(w, "use POST", http.StatusMethodNotAllowed)
+			return
+		}
+		faces, people, err := media.LockAllNamedPersonFaces(deps.DB)
+		if err != nil {
+			httpError(w, err.Error(), userErrorStatus(err))
+			return
+		}
+		if faces > 0 {
+			broadcastPeopleChanged()
+		}
+		writeJSON(w, map[string]any{"people": people, "locked": faces})
 	}
 }
 

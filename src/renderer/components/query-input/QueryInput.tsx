@@ -452,6 +452,12 @@ export default function QueryInput({
               isSimilar || (isFace && !isFaceClip)
                 ? p.value.split(/[/\\]/).pop() || p.value
                 : '';
+            // Chip thumbnails point at the FULL media file (there is no
+            // thumbnail route for an arbitrary predicate value), so every one
+            // of them is decoded with `decoding="async"` below — a synchronous
+            // decode of a large image would otherwise land in the same frame
+            // that opens the command palette and delay its first paint.
+            //
             // Embedding chips (similar/clip images and visual text) carry a
             // composite blend: hovering opens the node editor (stack images,
             // add/remove text concepts, weights, negative steering).
@@ -520,6 +526,7 @@ export default function QueryInput({
                         <>
                           <img
                             className="query-chip-thumb"
+                        decoding="async"
                             src={p.value}
                             alt=""
                           />
@@ -529,6 +536,7 @@ export default function QueryInput({
                         <>
                           <img
                             className="query-chip-thumb"
+                        decoding="async"
                             src={mediaUrl(p.value)}
                             alt=""
                             onError={(e) => {
@@ -543,6 +551,7 @@ export default function QueryInput({
                     <>
                       <img
                         className="query-chip-thumb"
+                        decoding="async"
                         src={p.value}
                         alt=""
                       />
@@ -552,6 +561,7 @@ export default function QueryInput({
                     <>
                       <img
                         className="query-chip-thumb"
+                        decoding="async"
                         src={mediaUrl(p.value)}
                         alt=""
                         onError={(e) => {

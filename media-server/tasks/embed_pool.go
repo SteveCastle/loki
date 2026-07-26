@@ -17,10 +17,13 @@ import (
 )
 
 // runWithTimeout runs fn in a goroutine and waits up to d for it to finish.
-// timedOut is true when d elapses first — fn's goroutine stays blocked until the
-// caller terminates whatever it's waiting on (e.g. kills the worker subprocess).
-// d <= 0 disables the timeout. Also returns on ctx cancellation.
-func runWithTimeout[T any](ctx context.Context, d time.Duration, fn func() (T, error)) (val T, err error, timedOut bool) {
+// abandoned is true when the deadline OR ctx cancellation fires first — either
+// way fn's goroutine is still blocked (with its request in flight), so the
+// caller must terminate whatever it's waiting on (e.g. kill the worker
+// subprocess) rather than reuse it; releasing a worker with an in-flight
+// request desyncs its line protocol for the next user. err is the ctx error on
+// cancellation and nil on a plain timeout. d <= 0 disables the deadline only.
+func runWithTimeout[T any](ctx context.Context, d time.Duration, fn func() (T, error)) (val T, err error, abandoned bool) {
 	type res struct {
 		v T
 		e error
@@ -31,7 +34,7 @@ func runWithTimeout[T any](ctx context.Context, d time.Duration, fn func() (T, e
 	if d <= 0 {
 		select {
 		case <-ctx.Done():
-			return val, ctx.Err(), false
+			return val, ctx.Err(), true
 		case r := <-ch:
 			return r.v, r.e, false
 		}
@@ -40,7 +43,7 @@ func runWithTimeout[T any](ctx context.Context, d time.Duration, fn func() (T, e
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		return val, ctx.Err(), false
+		return val, ctx.Err(), true
 	case <-timer.C:
 		return val, nil, true
 	case r := <-ch:

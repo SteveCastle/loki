@@ -1018,6 +1018,140 @@ func lokiMediaDeleteHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+// lokiMediaMoveHandler re-points every database reference from one path to
+// another — the bookkeeping half of moving a file on disk. The filesystem is
+// never touched; the caller has already moved the file(s).
+//
+// POST /api/media/move {from, to, prefix?, dryRun?}
+//   - prefix: from/to are folders; everything under from moves under to,
+//     keeping its sub-path (segment-aligned, so /a/foo never drags /a/foobar).
+//   - dryRun: performs the move and rolls it back, so the reported counts are
+//     exactly what a real run would change.
+//
+// A destination that already belongs to another item is a 409, not a merge.
+func lokiMediaMoveHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			From   string `json:"from"`
+			To     string `json:"to"`
+			Prefix bool   `json:"prefix"`
+			DryRun bool   `json:"dryRun"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		res, err := media.MovePath(r.Context(), deps.DB, req.From, req.To, media.MoveOptions{
+			Prefix: req.Prefix,
+			DryRun: req.DryRun,
+		})
+		if err != nil {
+			var conflict *media.MoveConflictError
+			if errors.As(err, &conflict) {
+				// 409 with the offending paths: the caller has to decide
+				// whether to delete the destination or pick another one.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error":     conflict.Error(),
+					"conflicts": conflict.Conflicts,
+				})
+				return
+			}
+			httpError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		if !res.DryRun && res.Items > 0 {
+			// Derived in-memory state is keyed by path: the vector index needs
+			// re-keying or similarity search keeps returning the old path, and
+			// the face index's path→keys map needs the same.
+			for _, p := range res.Paths {
+				tasks.IndexRenamePath(deps.DB, p.From, p.To)
+				tasks.FaceIndexRenamePath(p.From, p.To)
+			}
+			if res.Truncated {
+				// Too many rows to re-key one by one — the next rebuild is the
+				// honest fix, and searches stay correct via the DB meanwhile.
+				log.Printf("media move: %d items moved, index re-keyed for the first %d; rebuild the index to refresh the rest",
+					res.Items, len(res.Paths))
+			}
+			if res.Rows["face.media_path"] > 0 {
+				broadcastPeopleChanged()
+			}
+		}
+		writeJSON(w, res)
+	}
+}
+
+// lokiMediaForgetHandler erases every database reference to a path WITHOUT
+// touching the file: tags, the media row, embeddings, faces (plus the curation
+// assertions keyed by those face ids), scan markers, and battle-log rows. It's
+// the cleanup for media the viewer can't load — the file is gone or
+// permanently unreachable, so there is nothing to trash, only stale rows that
+// keep the item in queries, similarity results, and people groups.
+// POST /api/media/forget {path} → the per-table counts it removed.
+func lokiMediaForgetHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req pathRequest
+		if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Path) == "" {
+			httpError(w, "bad request", http.StatusBadRequest)
+			return
+		}
+
+		// Counted up front: the deletes below report media/tag rows only, and
+		// these two are the numbers a "cleaned up" message is actually about.
+		countRows := func(query string, args ...any) int64 {
+			var n int64
+			if err := deps.DB.QueryRow(query, args...).Scan(&n); err != nil {
+				return 0
+			}
+			return n
+		}
+		faces := countRows(`SELECT COUNT(*) FROM face WHERE media_path = ?`, req.Path)
+		embeddings := countRows(`SELECT COUNT(*) FROM media_embedding WHERE media_path = ?`, req.Path)
+
+		// Faces first: DeleteFacesForMedia also drops the vetoes, cannot-links,
+		// group-ban memberships, and person cover pointers keyed by these face
+		// ids — RemoveItemsFromDB deletes the face rows but not those, which
+		// would strand the assertions against ids that no longer exist.
+		if err := media.DeleteFacesForMedia(deps.DB, req.Path); err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Media row, tags, embeddings, scan markers — and the registered removal
+		// hook evicts the path from the vector and face indexes.
+		res, err := media.RemoveItemsFromDB(r.Context(), deps.DB, []string{req.Path})
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Battle-log rows name the path directly; leaving them keeps a deleted
+		// item in the Elo history and in rematch suppression.
+		var battles int64
+		if br, err := deps.DB.Exec(
+			`DELETE FROM battle WHERE winner_path = ? OR loser_path = ?`, req.Path, req.Path,
+		); err == nil {
+			battles, _ = br.RowsAffected()
+		}
+		media.InvalidateRandomSampleCache()
+		if faces > 0 {
+			// The item's faces were in someone's group — open People views are
+			// now showing stale counts.
+			broadcastPeopleChanged()
+		}
+
+		writeJSON(w, map[string]any{
+			"path":       req.Path,
+			"media":      res.MediaItemsRemoved,
+			"tags":       res.TagsRemoved,
+			"embeddings": embeddings,
+			"faces":      faces,
+			"battles":    battles,
+		})
+	}
+}
+
 func lokiGifMetadataHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest
@@ -1213,6 +1347,62 @@ func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
 			result = append(result, t)
 		}
 		writeJSON(w, result)
+	}
+}
+
+// lokiTaxonomyTagHandler returns full detail for a SINGLE tag.
+//
+// The counterpart to /api/taxonomy/tags staying thin (label/category/weight for
+// the whole ~190K-row table): surfaces that need a tag's description — the
+// edit-tag modal — ask for just the row they are editing instead of paying for
+// the field on every row. Mirrors the Electron `get-tag` IPC handler.
+func lokiTaxonomyTagHandler(deps *Dependencies) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		label := r.URL.Query().Get("label")
+		if label == "" {
+			httpError(w, "label is required", http.StatusBadRequest)
+			return
+		}
+
+		var (
+			category    string
+			weight      float64
+			description string
+			thumbnail   string
+		)
+		err := deps.DB.QueryRow(`
+			SELECT COALESCE(category_label, '') AS category_label,
+			       COALESCE(weight, 0) AS weight,
+			       COALESCE(description, '') AS description,
+			       COALESCE(thumbnail_path_600, '') AS thumbnail_path_600
+			FROM tag
+			WHERE label = ?`, label).Scan(&category, &weight, &description, &thumbnail)
+		if err == sql.ErrNoRows {
+			httpError(w, "tag not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		var thumbnailPath *string
+		if thumbnail != "" {
+			thumbnailPath = &thumbnail
+		}
+		writeJSON(w, struct {
+			Label       string  `json:"label"`
+			Category    string  `json:"category"`
+			Weight      float64 `json:"weight"`
+			Description string  `json:"description"`
+			Thumbnail   *string `json:"thumbnail_path_600"`
+		}{
+			Label:       label,
+			Category:    category,
+			Weight:      weight,
+			Description: description,
+			Thumbnail:   thumbnailPath,
+		})
 	}
 }
 

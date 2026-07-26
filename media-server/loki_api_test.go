@@ -33,6 +33,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 			label TEXT PRIMARY KEY,
 			category_label TEXT,
 			weight REAL,
+			description TEXT,
 			thumbnail_path_600 TEXT,
 			FOREIGN KEY (category_label) REFERENCES category (label)
 		)`,
@@ -64,7 +65,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// Seed tags
 		`INSERT INTO tag (label, category_label, weight) VALUES ('sunset', 'Subject', 0)`,
 		`INSERT INTO tag (label, category_label, weight) VALUES ('portrait', 'Subject', 1)`,
-		`INSERT INTO tag (label, category_label, weight) VALUES ('moody', 'Style', 0)`,
+		`INSERT INTO tag (label, category_label, weight, description) VALUES ('moody', 'Style', 0, 'Low-key, heavy shadows')`,
 		// Seed media
 		`INSERT INTO media (path, description, width, height) VALUES ('/photos/a.jpg', 'A beautiful sunset photo', 1920, 1080)`,
 		`INSERT INTO media (path, description, width, height) VALUES ('/photos/b.jpg', 'Portrait in the park', 1080, 1920)`,
@@ -326,5 +327,82 @@ func TestLokiCreateAssignment_ApplyTagPreview(t *testing.T) {
 	).Scan(&got)
 	if got.String != thumbFile.Name() {
 		t.Fatalf("tag thumbnail changed without applyTagPreview: %v", got)
+	}
+}
+
+// The all-tags list is deliberately thin (label/category/weight) because it
+// ships the entire tag table — ~190K rows on a large library — over the wire
+// and then into the search worker. Descriptions are fetched one tag at a time
+// instead, which is what /api/taxonomy/tag is for.
+func TestLokiTaxonomyTagsHandlerStaysThin(t *testing.T) {
+	deps := testDeps(t)
+	rr := getJSON(lokiTaxonomyTagsHandler(deps), "/api/taxonomy/tags")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 tags, got %d", len(rows))
+	}
+	for _, row := range rows {
+		if len(row) != 3 {
+			t.Errorf("expected exactly 3 fields per tag, got %d: %v", len(row), row)
+		}
+		for _, field := range []string{"label", "category", "weight"} {
+			if _, ok := row[field]; !ok {
+				t.Errorf("missing %q in %v", field, row)
+			}
+		}
+		for _, field := range []string{"description", "thumbnail_path_600"} {
+			if _, ok := row[field]; ok {
+				t.Errorf("%q must not ship on every row: %v", field, row)
+			}
+		}
+	}
+}
+
+func TestLokiTaxonomyTagHandler(t *testing.T) {
+	deps := testDeps(t)
+
+	rr := getJSON(lokiTaxonomyTagHandler(deps), "/api/taxonomy/tag?label=moody")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var tag struct {
+		Label       string  `json:"label"`
+		Category    string  `json:"category"`
+		Weight      float64 `json:"weight"`
+		Description string  `json:"description"`
+		Thumbnail   *string `json:"thumbnail_path_600"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &tag); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if tag.Label != "moody" || tag.Category != "Style" {
+		t.Errorf("unexpected tag identity: %+v", tag)
+	}
+	if tag.Description != "Low-key, heavy shadows" {
+		t.Errorf("expected the stored description, got %q", tag.Description)
+	}
+	if tag.Thumbnail != nil {
+		t.Errorf("expected null thumbnail, got %v", *tag.Thumbnail)
+	}
+
+	// A tag with no description reads back as empty, not as an error.
+	rr = getJSON(lokiTaxonomyTagHandler(deps), "/api/taxonomy/tag?label=sunset")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for sunset, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	if rr := getJSON(lokiTaxonomyTagHandler(deps), "/api/taxonomy/tag"); rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 without a label, got %d", rr.Code)
+	}
+	if rr := getJSON(lokiTaxonomyTagHandler(deps), "/api/taxonomy/tag?label=nope"); rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for an unknown tag, got %d", rr.Code)
 	}
 }

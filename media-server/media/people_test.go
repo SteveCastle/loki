@@ -9,7 +9,10 @@ import (
 
 func newPeopleDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	// foreign_keys=ON mirrors the production DSN (see db_dsn.go). SQLite
+	// defaults it OFF, so a test DB without it cannot catch constraint bugs
+	// that fire against a real library.
+	db, err := sql.Open("sqlite", ":memory:?_pragma=foreign_keys=ON")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -23,6 +26,12 @@ func newPeopleDB(t *testing.T) *sql.DB {
 		if _, err := db.Exec(`INSERT INTO media (path) VALUES (?)`, p); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// tag.category_label is a foreign key to category(label). Tests that stand
+	// up a curated tag competing with a person name use this category, so it
+	// has to exist before they can insert into tag.
+	if _, err := db.Exec(`INSERT INTO category (label) VALUES ('Appearance')`); err != nil {
+		t.Fatal(err)
 	}
 	return db
 }

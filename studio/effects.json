@@ -196,6 +196,11 @@
       "category": "crt"
     },
     {
+      "name": "security-cam",
+      "path": "shaders/crt/security-cam/security-cam.slangp",
+      "category": "crt"
+    },
+    {
       "name": "soft-crt",
       "path": "shaders/crt/soft-crt/soft-crt.slangp",
       "category": "crt"
@@ -203,6 +208,11 @@
     {
       "name": "vector-display",
       "path": "shaders/crt/vector-display/vector-display.slangp",
+      "category": "crt"
+    },
+    {
+      "name": "vhs-bootleg",
+      "path": "shaders/crt/vhs-bootleg/vhs-bootleg.slangp",
       "category": "crt"
     },
     {

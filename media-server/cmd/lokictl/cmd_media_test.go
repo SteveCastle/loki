@@ -139,3 +139,82 @@ func TestDBSchemaWithTable(t *testing.T) {
 		t.Errorf("body = %s", got.Body)
 	}
 }
+
+func TestMediaMoveSendsPathsAndFlags(t *testing.T) {
+	srv, reqs := newRecordingServer(t, http.StatusOK, `{"items":2,"total":9,"rows":{}}`)
+	a, out, _ := appForServer(srv.URL)
+	code := cmdMediaMove(a, []string{`C:\photos\2023`, `D:\archive\2023`, "--prefix", "--dry-run"})
+	if code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	got := (*reqs)[0]
+	if got.Method != "POST" || got.Path != "/api/media/move" {
+		t.Errorf("request = %+v", got)
+	}
+	var body struct {
+		From   string `json:"from"`
+		To     string `json:"to"`
+		Prefix bool   `json:"prefix"`
+		DryRun bool   `json:"dryRun"`
+	}
+	if err := json.Unmarshal([]byte(got.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.From != `C:\photos\2023` || body.To != `D:\archive\2023` || !body.Prefix || !body.DryRun {
+		t.Errorf("body = %+v", body)
+	}
+	if !strings.Contains(out.String(), `"items"`) {
+		t.Errorf("stdout = %s", out.String())
+	}
+}
+
+func TestMediaMoveDefaultsToAnExactSingleFileMove(t *testing.T) {
+	srv, reqs := newRecordingServer(t, http.StatusOK, `{"items":1}`)
+	a, _, _ := appForServer(srv.URL)
+	if code := cmdMediaMove(a, []string{"/a.jpg", "/b.jpg"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	body := (*reqs)[0].Body
+	if !strings.Contains(body, `"prefix":false`) || !strings.Contains(body, `"dryRun":false`) {
+		t.Errorf("body = %s", body)
+	}
+}
+
+func TestMediaMoveNeedsTwoPaths(t *testing.T) {
+	a, _, _ := appForServer("http://127.0.0.1:1")
+	for _, args := range [][]string{nil, {"/only.jpg"}, {"--prefix", "/a", "/b"}} {
+		if code := cmdMediaMove(a, args); code != 2 {
+			t.Errorf("args %v → exit %d, want 2", args, code)
+		}
+	}
+}
+
+func TestMediaMoveConflictSurfacesTheServerDetail(t *testing.T) {
+	srv, _ := newRecordingServer(t, http.StatusConflict,
+		`{"error":"destination already exists in the library: /b.jpg","conflicts":["/b.jpg"]}`)
+	a, _, errOut := appForServer(srv.URL)
+	if code := cmdMediaMove(a, []string{"/a.jpg", "/b.jpg"}); code != 1 {
+		t.Fatalf("exit = %d, want 1", code)
+	}
+	if !strings.Contains(errOut.String(), "/b.jpg") {
+		t.Errorf("stderr = %s", errOut.String())
+	}
+}
+
+func TestMediaForgetRequiresConfirmation(t *testing.T) {
+	srv, reqs := newRecordingServer(t, http.StatusOK, `{"media":1}`)
+	a, _, _ := appForServer(srv.URL)
+	if code := cmdMediaForget(a, []string{"/a.jpg"}); code != 2 {
+		t.Errorf("without --yes: exit = %d, want 2", code)
+	}
+	if len(*reqs) != 0 {
+		t.Errorf("unconfirmed forget still called the server: %+v", *reqs)
+	}
+	if code := cmdMediaForget(a, []string{"/a.jpg", "--yes"}); code != 0 {
+		t.Fatalf("exit = %d", code)
+	}
+	got := (*reqs)[0]
+	if got.Method != "POST" || got.Path != "/api/media/forget" || !strings.Contains(got.Body, "/a.jpg") {
+		t.Errorf("request = %+v", got)
+	}
+}

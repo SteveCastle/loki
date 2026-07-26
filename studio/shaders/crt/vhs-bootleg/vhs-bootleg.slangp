@@ -1,0 +1,42 @@
+# vhs-bootleg — an nth-generation tape dub: smeared lagging chroma, edge
+# ringing, timebase jitter, a crawling tracking band, dropouts, head-switch
+# tearing at the bottom and the vertical hold giving out now and then.
+shaders = 2
+
+# Pass 0 — signal degradation, at source resolution (chroma bandwidth is a
+# property of the recorded picture, not of the screen it ends up on).
+shader0        = vhs-chroma.slang
+alias0         = VhsSignal
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+# Pass 1 — tape transport damage, at viewport resolution.
+shader1        = vhs-bootleg.slang
+filter_linear1 = true
+scale_type1    = viewport
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+# Tunable defaults (edit here; slangfx applies values from the preset).
+parameters = "chroma_bw;chroma_lag;gen_loss;ring;smear;chroma_noise;amount;overscan;tape_lines;jitter;wobble;tracking;dropout;snow;headswitch;roll;comb;pump;edge"
+chroma_bw    = 4.0
+chroma_lag   = 3.0
+gen_loss     = 0.55
+ring         = 0.6
+smear        = 2.4
+chroma_noise = 0.25
+amount       = 1.0
+overscan     = 1.03
+tape_lines   = 240.0
+jitter       = 2.5
+wobble       = 1.8
+tracking     = 0.5
+dropout      = 0.45
+snow         = 0.07
+headswitch   = 0.6
+roll         = 0.5
+comb         = 0.5
+pump         = 0.5
+edge         = 0.6

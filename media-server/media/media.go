@@ -2109,6 +2109,12 @@ func InitializeSchema(db *sql.DB) error {
 		return fmt.Errorf("failed to create tag table: %w", err)
 	}
 
+	// The desktop viewer has always written tag descriptions (its
+	// update-tag-description IPC), but this schema never created the column, so
+	// a server-created database diverged from an Electron-created one. Same
+	// idempotent-ALTER pattern as category above.
+	_, _ = db.Exec(`ALTER TABLE tag ADD COLUMN description TEXT`)
+
 	// Create media_tag_by_category table
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS media_tag_by_category (

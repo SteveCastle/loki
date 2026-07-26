@@ -72,6 +72,11 @@ type facesOpState struct {
 	// Lazily-started per-recognizer pools.
 	mu    sync.Mutex
 	pools map[string]*servePool
+	// Lazily-started SigLIP pool for routing embeds (items with no stored
+	// whole-image vector), plus its sticky start failure so a broken embed
+	// setup degrades to the active model once instead of retrying per item.
+	routePool    *servePool
+	routePoolErr error
 
 	// newFaces counts face rows stored this run (across all items/workers). A
 	// positive count at Finalize queues a clustering pass so the fresh faces
@@ -81,10 +86,10 @@ type facesOpState struct {
 	// Incremental clustering bookkeeping. Touched ONLY from the runner's
 	// single committer goroutine (inside Commit closures) and from Finalize
 	// (which runs after the committer drains), so no locking is needed.
-	clusterEvery  int                 // faces per in-scan pass; 0 = end-of-scan job only
-	sinceCluster  int                 // faces stored since the last in-scan pass
-	dirtyBatches  map[string][]int64  // model ID -> face ids stored since its last pass
-	touchedModels map[string]struct{} // every model that stored faces this run
+	clusterEvery int                // faces per in-scan pass; 0 = end-of-scan job only
+	sinceCluster int                // faces stored since the last in-scan pass
+	dirtyBatches map[string][]int64 // model ID -> face ids stored since its last pass
+	runBatches   map[string][]int64 // model ID -> EVERY face id stored this run (final pass)
 }
 
 // noteFacesScanned records freshly stored face ids for a model and reports
@@ -100,11 +105,11 @@ func (st *facesOpState) noteFacesScanned(modelID string, ids []int64) (due bool,
 	if st.dirtyBatches == nil {
 		st.dirtyBatches = map[string][]int64{}
 	}
-	if st.touchedModels == nil {
-		st.touchedModels = map[string]struct{}{}
+	if st.runBatches == nil {
+		st.runBatches = map[string][]int64{}
 	}
 	st.dirtyBatches[modelID] = append(st.dirtyBatches[modelID], ids...)
-	st.touchedModels[modelID] = struct{}{}
+	st.runBatches[modelID] = append(st.runBatches[modelID], ids...)
 	st.sinceCluster += len(ids)
 	if st.clusterEvery <= 0 || st.sinceCluster < st.clusterEvery {
 		return false, nil
@@ -123,24 +128,36 @@ func (st *facesOpState) takeDirtyBatches() map[string][]int64 {
 
 // runClusterPass runs one clustering pass per batched model, inline in the
 // scan job (a separate faces-cluster job could not run anyway: it shares the
-// faces + local-compute buckets with the scan). Mid-scan passes use the
-// strict incremental params (high-precision preview) and are RESTRICTED to
-// each model's batch of newly stored faces — the pass cost tracks the batch,
-// not the library, so long scans don't slow down as the unassigned backlog
-// grows. The final pass at scan end (nil batch = unrestricted) uses the
-// normal defaults over everything, settling borderline cases exactly once.
-// Neither reprocesses already-assigned faces — in-scan rebuilds (reset +
-// full regroup) were tried and dropped: re-litigating every unnamed group on
-// a cadence stalled long scans far too much. Logs the outcome and broadcasts
-// "people-updated" so open People views refresh.
+// faces + local-compute buckets with the scan). EVERY pass is RESTRICTED to
+// its batch of newly stored faces — the pass cost tracks the batch, not the
+// library, so scans don't slow down as the unassigned backlog grows. Mid-scan
+// passes use the strict incremental params (high-precision preview) over the
+// faces since the last pass; the final pass at scan end uses the normal
+// defaults over ALL faces stored this run, settling this run's borderline
+// cases exactly once. It used to be unrestricted, "exactly like the old
+// scan-then-cluster pipeline" — which meant every scan, however small,
+// re-scored the whole ungrouped backlog (tens of thousands of junk faces that
+// never join anything) against every seed: minutes of every-core compute to
+// add 600 items. The backlog already had its full-data chance in its own
+// runs' final passes; re-litigating it is the explicit faces-cluster job
+// ("Group new faces" in People), not a per-scan tax. Neither pass reprocesses
+// already-assigned faces — in-scan rebuilds (reset + full regroup) were tried
+// and dropped: re-litigating every unnamed group on a cadence stalled long
+// scans far too much. Logs the outcome and broadcasts "people-updated" so
+// open People views refresh.
 func (st *facesOpState) runClusterPass(batches map[string][]int64, final bool) {
 	db := st.q.run.Queue.Db
+	ctx := st.q.run.Job.Ctx
 	label := "incremental (strict)"
 	if final {
-		label = "final (full)"
+		label = "final"
 	}
 	models := make([]string, 0, len(batches))
 	for id, ids := range batches {
+		if ctx.Err() != nil {
+			st.q.log(fmt.Sprintf("  clustering %s canceled", label))
+			break
+		}
 		m, known := FaceModelByID(id)
 		if !known {
 			continue
@@ -149,15 +166,18 @@ func (st *facesOpState) runClusterPass(batches map[string][]int64, final bool) {
 		params := incrementalClusterParams(m)
 		if final {
 			params = defaultClusterParams(m)
-		} else {
-			only := make(map[int64]bool, len(ids))
-			for _, fid := range ids {
-				only[fid] = true
-			}
-			params.onlyFaceIDs = only
 		}
-		stats, err := clusterFaces(db, m, params)
+		only := make(map[int64]bool, len(ids))
+		for _, fid := range ids {
+			only[fid] = true
+		}
+		params.onlyFaceIDs = only
+		stats, err := clusterFaces(ctx, db, m, params)
 		if err != nil {
+			if ctx.Err() != nil {
+				st.q.log(fmt.Sprintf("  clustering %s (%s) canceled", label, id))
+				break
+			}
 			st.q.log(fmt.Sprintf("  clustering %s (%s) failed: %v", label, id, err))
 			continue
 		}
@@ -259,19 +279,25 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 		Finalize: func() error {
 			if st.clusterEvery > 0 {
 				// Incremental mode: the in-scan passes were deliberately
-				// strict AND batch-restricted, so finish with ONE full,
-				// unrestricted pass over every model that stored faces this
-				// run — borderline cases and batch leftovers are settled
-				// here, with complete data, exactly like the old
-				// scan-then-cluster pipeline. No follow-up job needed.
-				st.takeDirtyBatches() // counters are superseded by the full pass
-				if len(st.touchedModels) > 0 {
-					full := make(map[string][]int64, len(st.touchedModels))
-					for id := range st.touchedModels {
-						full[id] = nil // nil batch = unrestricted
+				// strict AND batch-restricted, so finish with one pass at the
+				// normal defaults over every face stored THIS RUN — the
+				// strict passes' leftovers get their borderline cases settled
+				// with complete seed data. Restricted to the run's faces on
+				// purpose: the pre-existing ungrouped backlog is not
+				// re-litigated per scan (see runClusterPass), so this cost
+				// tracks the scan, not the library. No follow-up job needed.
+				st.takeDirtyBatches() // counters are superseded by the run-wide pass
+				if len(st.runBatches) > 0 {
+					newFaces := 0
+					for _, ids := range st.runBatches {
+						newFaces += len(ids)
 					}
-					q.PushJobStdout(j.ID, "Final full clustering pass")
-					st.runClusterPass(full, true)
+					q.PushJobStdout(j.ID, fmt.Sprintf("Final clustering pass over this run's %d new face(s)", newFaces))
+					st.runClusterPass(st.runBatches, true)
+					if n, err := CountUngroupedFaces(q.Db); err == nil && n > 0 {
+						q.PushJobStdout(j.ID, fmt.Sprintf(
+							"%d ungrouped face(s) remain (this run's no-joins plus earlier scans); use Group new faces in People to re-litigate them", n))
+					}
 				}
 				return nil
 			}
@@ -285,6 +311,9 @@ func prepareFacesOp(run *ItemRun) (*ItemProcessor, error) {
 			defer st.mu.Unlock()
 			for _, p := range st.pools {
 				p.close()
+			}
+			if st.routePool != nil {
+				st.routePool.close()
 			}
 		},
 	}, nil
@@ -324,10 +353,81 @@ func (st *facesOpState) modelFor(ctx context.Context, run *ItemRun, path, localP
 	if vec, ok, err := media.GetEmbedding(run.Queue.Db, path, st.embedModel.ID); err == nil && ok {
 		return routeVec(vec, st.anchors)
 	}
-	if fresh, err := ImageQueryVectorForPathAt(ctx, run.Queue.Db, st.embedModel, path, localPath); err == nil {
+	if fresh, err := st.routeEmbed(ctx, run, path, localPath); err == nil {
 		return routeVec(fresh, st.anchors)
 	}
 	return ActiveFaceModel()
+}
+
+// routingPool lazily starts (and caches) the SigLIP serve pool that embeds
+// items with no stored whole-image vector at routing time. The old path spawned
+// a ONE-SHOT embed subprocess per item, reloading the model every time — on a
+// fresh library (where the embed op's writes for the same item commit only
+// after faces computes) that was a continuous stream of full model loads
+// across every worker for the whole run. A start failure is sticky: routing
+// degrades to the active model for the rest of the run instead of paying the
+// failed spawn per item.
+func (st *facesOpState) routingPool(ctx context.Context, run *ItemRun) (*servePool, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.routePool != nil || st.routePoolErr != nil {
+		return st.routePool, st.routePoolErr
+	}
+	imageModel, err := deps.ModelPath(st.embedModel.ID, st.embedModel.ImageModelFile)
+	if err != nil || imageModel == "" {
+		st.routePoolErr = fmt.Errorf("%s image model not installed", st.embedModel.DisplayName)
+		return nil, st.routePoolErr
+	}
+	_, threads := ResolveEmbedResources()
+	ortLib, provider := resolveONNXRuntime(EmbedProviderFromConfig())
+	st.q.log(fmt.Sprintf("Routing embeds: %s pool, %d worker(s), provider=%s", st.embedModel.ID, run.Workers, provider))
+	pool, perr := newServePool(ctx, run.Workers, st.embedBin, buildServeArgs(imageModel, ortLib, st.embedModel, provider, threads), run.Background)
+	if perr != nil {
+		st.routePoolErr = fmt.Errorf("start routing embed worker: %w", perr)
+		return nil, st.routePoolErr
+	}
+	st.routePool = pool
+	return pool, nil
+}
+
+// routeEmbed computes the whole-image routing embedding for one item through
+// the persistent routing pool and persists it (same contract as the old
+// on-the-fly path: the next lookup — search or a later scan — is free).
+func (st *facesOpState) routeEmbed(ctx context.Context, run *ItemRun, path, localPath string) ([]float32, error) {
+	pool, perr := st.routingPool(ctx, run)
+	if perr != nil {
+		return nil, perr
+	}
+	imagePath, tempFrame, ferr := extractFrameForFile(ctx, localPath, st.timeout)
+	if ferr != nil {
+		return nil, fmt.Errorf("frame extract: %w", ferr)
+	}
+	defer func() {
+		if tempFrame != "" {
+			_ = os.Remove(tempFrame)
+		}
+	}()
+	w, aerr := pool.acquire(ctx)
+	if aerr != nil {
+		return nil, aerr
+	}
+	vec, err, abandoned := runWithTimeout(ctx, st.timeout, func() ([]float32, error) { return w.embed(imagePath) })
+	if abandoned {
+		pool.discard(w) // request still in flight — the worker is unusable
+		if err != nil {
+			return nil, err // cancelled mid-compute
+		}
+		return nil, fmt.Errorf("routing embed timed out after %s", st.timeout)
+	}
+	pool.release(w)
+	if err != nil {
+		return nil, err
+	}
+	db := run.Queue.Db
+	if uerr := media.UpsertEmbedding(db, path, st.embedModel.ID, vec, 0); uerr == nil {
+		indexAdd(st.embedModel.ID, path, vec) // index normalizes internally
+	}
+	return vec, nil
 }
 
 // poolFor lazily starts (and caches) the serve pool for one recognizer,
@@ -392,7 +492,7 @@ func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path, loca
 	if aerr != nil {
 		return nil, aerr
 	}
-	faces, err, timedOut := runWithTimeout(ctx, st.timeout, func() ([]media.NewFace, error) {
+	faces, err, abandoned := runWithTimeout(ctx, st.timeout, func() ([]media.NewFace, error) {
 		if werr := w.writeLine(imagePath); werr != nil {
 			return nil, werr
 		}
@@ -405,8 +505,11 @@ func (st *facesOpState) processOne(ctx context.Context, run *ItemRun, path, loca
 		}
 		return parseFacesLine(line)
 	})
-	if timedOut {
-		pool.discard(w)
+	if abandoned {
+		pool.discard(w) // request still in flight — the worker is unusable
+		if err != nil {
+			return nil, err // cancelled mid-compute
+		}
 		return nil, fmt.Errorf("timed out after %s", st.timeout)
 	}
 	pool.release(w)

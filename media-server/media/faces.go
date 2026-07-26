@@ -217,6 +217,25 @@ func FaceScansForPaths(db *sql.DB, models []string, paths []string) (map[string]
 	return out, nil
 }
 
+// LatestFaceScan returns the model that most recently scanned path and when
+// (unix seconds; 0 for legacy rows without a timestamp). ReplaceFaces keeps
+// one scan row per item, but legacy data may hold several — the newest wins.
+// ok is false when the path was never scanned under any model.
+func LatestFaceScan(db *sql.DB, path string) (model string, scannedAt int64, ok bool, err error) {
+	err = db.QueryRow(
+		`SELECT model, COALESCE(scanned_at, 0) FROM face_scan
+		 WHERE media_path=? ORDER BY COALESCE(scanned_at, 0) DESC LIMIT 1`,
+		path,
+	).Scan(&model, &scannedAt)
+	if err == sql.ErrNoRows {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, err
+	}
+	return model, scannedAt, true, nil
+}
+
 // HasFaceScan reports whether path was already scanned under model.
 func HasFaceScan(db *sql.DB, path, model string) (bool, error) {
 	var one int

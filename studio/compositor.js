@@ -83,7 +83,8 @@ struct Xform {
   place : vec4<f32>,
   // misc: opacity 0..1, rotation (rad), mask opacity, mask invert (0/1)
   misc  : vec4<f32>,
-  // misc2: output shaping (0 straight / 1 premult / 2 fade-to-white), unused x3
+  // misc2: output shaping (0 straight / 1 premult / 2 fade-to-white),
+  //        gate enabled (0/1), unused x2
   misc2 : vec4<f32>,
 };
 
@@ -92,6 +93,10 @@ struct Xform {
 @group(0) @binding(2) var smp : sampler;
 // Comp-space mask multiplied into the clip's alpha (1x1 white = no mask).
 @group(0) @binding(3) var maskTex : texture_2d<f32>;
+// Comp-space coverage gate: the ALPHA of a clip's pre-effect isolate, used
+// to keep a media clip's effect output inside the media it came from
+// (shaders routinely write alpha = 1 across the whole frame).
+@group(0) @binding(4) var gateTex : texture_2d<f32>;
 
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
@@ -124,9 +129,12 @@ fn vs(@builtin(vertex_index) i : u32) -> VSOut {
 @fragment
 fn fs(in : VSOut) -> @location(0) vec4<f32> {
   let color = textureSample(tex, smp, in.uv);
-  var m = textureSample(maskTex, smp, in.pos.xy / xf.sizes.xy).r;
+  let compUV = in.pos.xy / xf.sizes.xy;
+  var m = textureSample(maskTex, smp, compUV).r;
   if (xf.misc.w > 0.5) { m = 1.0 - m; }
-  let a = color.a * xf.misc.x * mix(1.0, m, xf.misc.z);
+  var cov = color.a;
+  if (xf.misc2.y > 0.5) { cov = textureSample(gateTex, smp, compUV).a; }
+  let a = cov * xf.misc.x * mix(1.0, m, xf.misc.z);
   let shape = xf.misc2.x;
   if (shape < 0.5) {          // normal: straight alpha, factors do the mixing
     return vec4<f32>(color.rgb, a);
@@ -148,6 +156,7 @@ export class Compositor {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
     const white = device.createTexture({
@@ -175,10 +184,11 @@ export class Compositor {
     this.items = new Map(); // clipId -> {ubo, bindGroup, view}
   }
 
-  _item(clipId, view, maskView) {
+  _item(clipId, view, maskView, gateView) {
     const mask = maskView ?? this.whiteView;
+    const gate = gateView ?? this.whiteView;
     let item = this.items.get(clipId);
-    if (!item || item.view !== view || item.maskView !== mask) {
+    if (!item || item.view !== view || item.maskView !== mask || item.gateView !== gate) {
       const ubo = item?.ubo ?? this.device.createBuffer({
         size: 64,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -187,6 +197,7 @@ export class Compositor {
         ubo,
         view,
         maskView: mask,
+        gateView: gate,
         bindGroup: this.device.createBindGroup({
           layout: this.layout,
           entries: [
@@ -194,6 +205,7 @@ export class Compositor {
             { binding: 1, resource: view },
             { binding: 2, resource: this.sampler },
             { binding: 3, resource: mask },
+            { binding: 4, resource: gate },
           ],
         }),
       };
@@ -211,19 +223,19 @@ export class Compositor {
    * Composite `draws` into `targetView`. By default the target is cleared
    * to opaque black first; pass `over: true` to draw on top of existing
    * contents (used to layer media above an effect's output).
-   * @param {Array<{clipId, view, w, h, x, y, scaleX, scaleY, rot, opacity, blend?}>}
+   * @param {Array<{clipId, view, w, h, x, y, scaleX, scaleY, rot, opacity, blend?, gateView?}>}
    *        draws bottom-most first; scale 1 = 100%, rot degrees, opacity 0..1
    */
   composite(encoder, targetView, compW, compH, draws, { over = false, transparent = false } = {}) {
     for (const d of draws) {
-      const item = this._item(d.clipId, d.view, d.maskView);
+      const item = this._item(d.clipId, d.view, d.maskView, d.gateView);
       const def = BLEND_DEFS[d.blend] ?? BLEND_DEFS.normal;
       this.device.queue.writeBuffer(item.ubo, 0, new Float32Array([
         compW, compH, d.w, d.h,
         d.x, d.y, d.scaleX, d.scaleY,
         d.opacity, d.rot * Math.PI / 180,
         d.maskView ? (d.maskOpacity ?? 1) : 0, d.maskInvert ? 1 : 0,
-        def.out, 0, 0, 0,
+        def.out, d.gateView ? 1 : 0, 0, 0,
       ]));
     }
     const pass = encoder.beginRenderPass({

@@ -2504,7 +2504,7 @@ func main() {
 	// searches RAM instead of re-reading the DB on every request.  If the
 	// media_embedding table is empty (or missing) this logs and continues.
 	log.Printf("Building embedding search index…")
-	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn()); err == nil {
+	if model, n, err := tasks.RebuildActiveIndex(db, indexProgressFn("embedding index")); err == nil {
 		log.Printf("embedding index loaded: %d vectors (model %s)", n, model)
 	} else {
 		log.Printf("embedding index unavailable (model %s), using brute-force: %v", model, err)
@@ -2611,6 +2611,8 @@ func main() {
 	mux.HandleFunc("/api/media/description", renderer.ApplyMiddlewares(lokiUpdateDescriptionHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/preview", renderer.ApplyMiddlewares(lokiMediaPreviewHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/media/delete", renderer.ApplyMiddlewares(lokiMediaDeleteHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/forget", renderer.ApplyMiddlewares(lokiMediaForgetHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/move", renderer.ApplyMiddlewares(lokiMediaMoveHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/gif-metadata", renderer.ApplyMiddlewares(lokiGifMetadataHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/media/similar", renderer.ApplyMiddlewares(lokiSimilarHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/media/search/visual", renderer.ApplyMiddlewares(lokiVisualSearchHandler(deps), renderer.RolePublicRead))
@@ -2619,6 +2621,7 @@ func main() {
 	mux.HandleFunc("/api/taxonomy", renderer.ApplyMiddlewares(lokiTaxonomyHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/taxonomy/categories", renderer.ApplyMiddlewares(lokiCategoriesHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/taxonomy/tags", renderer.ApplyMiddlewares(lokiTaxonomyTagsHandler(deps), renderer.RolePublicRead))
+	mux.HandleFunc("/api/taxonomy/tag", renderer.ApplyMiddlewares(lokiTaxonomyTagHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/taxonomy/category-count", renderer.ApplyMiddlewares(lokiCategoryCountHandler(deps), renderer.RolePublicRead))
 
 	mux.HandleFunc("/api/tags", renderer.ApplyMiddlewares(func(w http.ResponseWriter, r *http.Request) {

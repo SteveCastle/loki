@@ -44,15 +44,26 @@ func TestRunWithTimeout(t *testing.T) {
 		t.Errorf("disabled: got (%d, timedOut=%v), want (7, false)", v, timedOut)
 	}
 
-	// Cancelled context returns promptly without a timeout flag.
+	// Cancelled context returns promptly, flagged abandoned: fn is still in
+	// flight, so the caller must kill its target (discard the worker), never
+	// reuse it.
 	cctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err, timedOut = runWithTimeout(cctx, time.Second, func() (int, error) {
 		time.Sleep(time.Second)
 		return 0, nil
 	})
-	if timedOut || err == nil {
-		t.Errorf("cancelled: got (%v, timedOut=%v), want (ctx err, false)", err, timedOut)
+	if !timedOut || err == nil {
+		t.Errorf("cancelled: got (%v, abandoned=%v), want (ctx err, true)", err, timedOut)
+	}
+
+	// Cancelled context with the deadline disabled: same abandoned contract.
+	_, err, timedOut = runWithTimeout(cctx, 0, func() (int, error) {
+		time.Sleep(time.Second)
+		return 0, nil
+	})
+	if !timedOut || err == nil {
+		t.Errorf("cancelled (no deadline): got (%v, abandoned=%v), want (ctx err, true)", err, timedOut)
 	}
 }
 

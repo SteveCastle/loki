@@ -1,6 +1,8 @@
 package tasks
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -46,7 +48,7 @@ func TestClusterFacesJoinsSeedsAndMintsUnknowns(t *testing.T) {
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
 	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 2}
-	stats, err := clusterFaces(db, model, params)
+	stats, err := clusterFaces(context.Background(), db, model, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +79,7 @@ func TestClusterFacesJoinsSeedsAndMintsUnknowns(t *testing.T) {
 	}
 
 	// Idempotency: a second pass with nothing new changes nothing.
-	stats2, err := clusterFaces(db, model, params)
+	stats2, err := clusterFaces(context.Background(), db, model, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +129,7 @@ func TestClusterFacesOnlyFaceIDsRestrictsCandidates(t *testing.T) {
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
 	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 2, onlyFaceIDs: only}
-	stats, err := clusterFaces(db, model, params)
+	stats, err := clusterFaces(context.Background(), db, model, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +164,7 @@ func TestClusterFacesOnlyFaceIDsRestrictsCandidates(t *testing.T) {
 	// A follow-up FULL pass (nil restriction) settles the backlog exactly as
 	// the end-of-scan pass does.
 	params.onlyFaceIDs = nil
-	stats, err = clusterFaces(db, model, params)
+	stats, err = clusterFaces(context.Background(), db, model, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +301,7 @@ func TestDissolvedGroupDoesNotReform(t *testing.T) {
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
 	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 2}
-	stats, err := clusterFaces(db, model, params)
+	stats, err := clusterFaces(context.Background(), db, model, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -411,7 +413,7 @@ func TestClusterAnchorsToConfirmedCore(t *testing.T) {
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
 	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 2}
-	stats, err := clusterFaces(db, model, params)
+	stats, err := clusterFaces(context.Background(), db, model, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +485,7 @@ func TestClusterFacesNeverTouchesUserAssignments(t *testing.T) {
 	_ = media.AssignFace(db, contraIDs[0], bob, "user")
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
-	if _, err := clusterFaces(db, model, defaultClusterParams(model)); err != nil {
+	if _, err := clusterFaces(context.Background(), db, model, defaultClusterParams(model)); err != nil {
 		t.Fatal(err)
 	}
 	f, _, _ := media.GetFaceByID(db, contraIDs[0])
@@ -518,7 +520,7 @@ func TestCorroboratedJoinWidensTheGate(t *testing.T) {
 	queryIDs := seedFaces(t, db, "query.jpg", "m1", vecAt(0))
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
-	stats, err := clusterFaces(db, model, clusterParams{
+	stats, err := clusterFaces(context.Background(), db, model, clusterParams{
 		joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 1,
 	})
 	if err != nil {
@@ -548,7 +550,7 @@ func TestSecondPassPullsInNearDuplicates(t *testing.T) {
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
 	onePass := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 1}
-	stats, err := clusterFaces(db, model, onePass)
+	stats, err := clusterFaces(context.Background(), db, model, onePass)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -561,7 +563,7 @@ func TestSecondPassPullsInNearDuplicates(t *testing.T) {
 	}
 
 	// Second run (equivalent to passes=2 from scratch): A is now a seed.
-	stats, err = clusterFaces(db, model, onePass)
+	stats, err = clusterFaces(context.Background(), db, model, onePass)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +597,7 @@ func TestMeanGuardBlocksChainDrift(t *testing.T) {
 	bIDs := seedFaces(t, db, "b.jpg", "m1", vecAt(0.898))
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
-	stats, err := clusterFaces(db, model, clusterParams{
+	stats, err := clusterFaces(context.Background(), db, model, clusterParams{
 		joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 3,
 	})
 	if err != nil {
@@ -687,7 +689,7 @@ func TestRejectedFaceNeverRejoinsPerson(t *testing.T) {
 	}
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
-	stats, err := clusterFaces(db, model, defaultClusterParams(model))
+	stats, err := clusterFaces(context.Background(), db, model, defaultClusterParams(model))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -717,7 +719,7 @@ func TestRejectionSurvivesClusterDissolveAndReform(t *testing.T) {
 		got := seedFaces(t, db, fmt.Sprintf("c%d.jpg", i), "m1", vecNear([]float32{0, 1, 0}, eps))
 		ids = append(ids, got[0])
 	}
-	if _, err := clusterFaces(db, model, params); err != nil {
+	if _, err := clusterFaces(context.Background(), db, model, params); err != nil {
 		t.Fatal(err)
 	}
 	f, _, _ := media.GetFaceByID(db, ids[3])
@@ -737,7 +739,7 @@ func TestRejectionSurvivesClusterDissolveAndReform(t *testing.T) {
 	if _, ok, _ := media.GetPersonByID(db, unknown); ok {
 		t.Fatal("setup: emptied Unknown person should have dissolved")
 	}
-	stats, err := clusterFaces(db, model, params)
+	stats, err := clusterFaces(context.Background(), db, model, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -749,7 +751,7 @@ func TestRejectionSurvivesClusterDissolveAndReform(t *testing.T) {
 		t.Fatalf("rejected face rejoined the re-formed cluster (person %d)", f.PersonID)
 	}
 	// And phase 1 of yet another pass can't pull it in either.
-	if _, err := clusterFaces(db, model, params); err != nil {
+	if _, err := clusterFaces(context.Background(), db, model, params); err != nil {
 		t.Fatal(err)
 	}
 	f, _, _ = media.GetFaceByID(db, ids[3])
@@ -777,7 +779,7 @@ func TestUserSeedsOutweighAutoSeeds(t *testing.T) {
 	queryIDs := seedFaces(t, db, "query.jpg", "m1", vecAt(0))
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
-	stats, err := clusterFaces(db, model, clusterParams{
+	stats, err := clusterFaces(context.Background(), db, model, clusterParams{
 		joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 1,
 	})
 	if err != nil {
@@ -805,7 +807,7 @@ func TestQualityFloorBlocksClusterFounding(t *testing.T) {
 		}
 	}
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
-	stats, err := clusterFaces(db, model, clusterParams{
+	stats, err := clusterFaces(context.Background(), db, model, clusterParams{
 		joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 1,
 	})
 	if err != nil {
@@ -827,7 +829,7 @@ func TestFormationThresholdStricterThanJoin(t *testing.T) {
 
 	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
 	strict := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 2, passes: 1}
-	stats, err := clusterFaces(db, model, strict)
+	stats, err := clusterFaces(context.Background(), db, model, strict)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -837,11 +839,160 @@ func TestFormationThresholdStricterThanJoin(t *testing.T) {
 
 	relaxed := strict
 	relaxed.formThreshold = 0.9
-	stats, err = clusterFaces(db, model, relaxed)
+	stats, err = clusterFaces(context.Background(), db, model, relaxed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if stats.NewPeople != 1 || stats.NewlyClustered != 2 {
 		t.Fatalf("relaxed formation: %+v, want one new 2-face person", stats)
+	}
+}
+
+// A purely automatic (never user-confirmed) person gets NO mean-guard slack:
+// a candidate must clear the join threshold ON AVERAGE against the person,
+// not just via one member. The slack exists for genuinely multi-modal people,
+// and multi-modality is established by human confirmation — for auto-only
+// clusters the slack was the blob-growth pathway (formed at the strict
+// formation gate, then absorbed forever at threshold − 0.12 against a
+// drifting mean).
+func TestAutoOnlyPersonMeanGuardHasNoSlack(t *testing.T) {
+	db := newFaceIndexDB(t)
+	resetFaceIndex(t)
+
+	blob, err := media.CreatePerson(db, "Unknown #1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two drifted AUTO seeds, cos ≈ 0.825 apart — a small blob.
+	s1 := seedFaces(t, db, "s1.jpg", "m1", vecAt(0))
+	s2 := seedFaces(t, db, "s2.jpg", "m1", vecAt(0.6))
+	_ = media.AssignFace(db, s1[0], blob, "auto")
+	_ = media.AssignFace(db, s2[0], blob, "auto")
+
+	// Candidate at vecAt(-0.05): best single match ≈ 0.9988 (clears the 0.9
+	// join easily) but mean over the person ≈ (0.9988 + 0.796)/2 ≈ 0.897 —
+	// under the old uniform floor (0.9 − 0.12 = 0.78) this joined and the
+	// blob kept growing; at the auto-only floor (= 0.9) it must not.
+	candIDs := seedFaces(t, db, "cand.jpg", "m1", vecAt(-0.05))
+
+	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
+	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 1}
+	stats, err := clusterFaces(context.Background(), db, model, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.JoinedExisting != 0 {
+		t.Fatalf("joined = %d, want 0 (auto-only person gives no mean slack)", stats.JoinedExisting)
+	}
+	f, _, _ := media.GetFaceByID(db, candIDs[0])
+	if f.PersonID != 0 {
+		t.Fatalf("candidate absorbed into auto-only blob: %+v", f)
+	}
+
+	// The SAME geometry with a user-confirmed face keeps the slack: the
+	// confirmed center is s1 alone, and the candidate scores 0.9988 there.
+	if err := media.AssignFace(db, s1[0], blob, "user"); err != nil {
+		t.Fatal(err)
+	}
+	stats, err = clusterFaces(context.Background(), db, model, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.JoinedExisting != 1 {
+		t.Fatalf("joined = %d, want 1 (user-anchored person keeps the slack)", stats.JoinedExisting)
+	}
+	f, _, _ = media.GetFaceByID(db, candIDs[0])
+	if f.PersonID != blob {
+		t.Fatalf("candidate refused from user-anchored person: %+v", f)
+	}
+}
+
+// The per-commit incremental assigner must run at the TUNED join threshold
+// (saved tuner offset applied), not the raw model default — it makes more
+// join decisions than any clustering pass, so it must never be the loosest
+// gate in the system.
+func TestAutoAssignNewFacesUsesTunedThreshold(t *testing.T) {
+	prev := appconfig.Get()
+	t.Cleanup(func() { appconfig.Set(prev) })
+
+	db := newFaceIndexDB(t)
+	resetFaceIndex(t)
+
+	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
+	alice, _ := media.CreatePerson(db, "Alice")
+	seedIDs := seedFaces(t, db, "seed.jpg", "m1", vecAt(0))
+	_ = media.AssignFace(db, seedIDs[0], alice, "user")
+
+	idx, pathKeys, err := BuildFaceIndexFromDB(db, "m1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	SetFaceIndexForModel(idx, "m1", pathKeys)
+
+	// New face at cos ≈ 0.913 to Alice's seed: above the raw 0.9 threshold,
+	// below the tuned 0.95.
+	newFaces := []media.NewFace{{Score: 0.9, Vec: vecAt(0.42)}}
+	ids, err := media.ReplaceFaces(db, "new.jpg", "m1", newFaces, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	faceIndexReplacePath("m1", "new.jpg", ids, newFaces)
+
+	cfg := appconfig.Get()
+	cfg.FaceClusterThresholdOffset = 0.05
+	appconfig.Set(cfg)
+	if n := autoAssignNewFaces(db, model, ids, newFaces); n != 0 {
+		t.Fatalf("auto-assigned %d at tuned threshold 0.95, want 0", n)
+	}
+
+	cfg.FaceClusterThresholdOffset = 0
+	appconfig.Set(cfg)
+	if n := autoAssignNewFaces(db, model, ids, newFaces); n != 1 {
+		t.Fatalf("auto-assigned %d at default threshold 0.9, want 1", n)
+	}
+}
+
+// A cancelled context aborts a clustering pass promptly and applies nothing —
+// the pass is minutes of every-core compute on a big backlog, and cancelling
+// the owning job must actually stop it (it used to run to completion,
+// uncancellable, after the job was already marked done).
+func TestClusterFacesCancelledContext(t *testing.T) {
+	db := newFaceIndexDB(t)
+	resetFaceIndex(t)
+
+	alice, err := media.CreatePerson(db, "Alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedIDs := seedFaces(t, db, "seed.jpg", "m1", []float32{1, 0, 0})
+	if err := media.AssignFace(db, seedIDs[0], alice, "user"); err != nil {
+		t.Fatal(err)
+	}
+	seedFaces(t, db, "a1.jpg", "m1", vecNear([]float32{1, 0, 0}, 0.05))
+	seedFaces(t, db, "b1.jpg", "m1", vecNear([]float32{0, 1, 0}, 0.03))
+	seedFaces(t, db, "b2.jpg", "m1", vecNear([]float32{0, 1, 0}, -0.03))
+	seedFaces(t, db, "b3.jpg", "m1", []float32{0, 1, 0})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	model := FaceModel{ID: "m1", MatchThreshold: 0.9}
+	params := clusterParams{joinThreshold: 0.9, formThreshold: 0.95, minQuality: 0.75, minCluster: 3, passes: 2}
+	if _, err := clusterFaces(ctx, db, model, params); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled pass: err = %v, want context.Canceled", err)
+	}
+
+	// Nothing was assigned and no people were minted.
+	people, err := media.GetPeople(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range people {
+		if p.Name == "Alice" {
+			if p.FaceCount != 1 {
+				t.Fatalf("Alice faces = %d, want 1 (no joins applied)", p.FaceCount)
+			}
+			continue
+		}
+		t.Fatalf("unexpected person %q minted by a cancelled pass", p.Name)
 	}
 }

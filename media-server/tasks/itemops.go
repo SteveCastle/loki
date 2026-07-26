@@ -516,13 +516,15 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 		return jobqueue.ErrPaused
 	}
 
-	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d processed, %d skipped, %d failed", processed, skipped, failed))
-	q.CompleteJob(j.ID)
-
-	// Success-path only: give each op a chance to queue follow-up work now that
-	// the whole run committed. Reached solely here — the pause/cancel/error
-	// returns above skip it, so a resumed run fires Finalize when it truly
-	// completes. A Finalize error is logged, never fatal (the run succeeded).
+	// Success-path only: give each op a chance to run completion work (the
+	// faces op's final full clustering pass, follow-up jobs) now that every
+	// item committed. Reached solely here — the pause/cancel/error returns
+	// above skip it, so a resumed run fires Finalize when it truly completes.
+	// It runs BEFORE CompleteJob: finalization can be minutes of every-core
+	// compute, and marking the job complete first left the server pegged with
+	// nothing visibly running, nothing holding the job's concurrency buckets,
+	// and no way to cancel. A Finalize error is logged, never fatal (the items
+	// all committed).
 	for _, p := range procs {
 		if p != nil && p.Finalize != nil {
 			if ferr := p.Finalize(); ferr != nil {
@@ -530,6 +532,14 @@ func runItemOps(j *jobqueue.Job, q *jobqueue.Queue, opIDs []string, prefixed boo
 			}
 		}
 	}
+	if ctx.Err() != nil { // cancelled during finalization
+		q.PushJobStdout(j.ID, "Canceled during finalization - completed work is saved")
+		_ = q.CancelJob(j.ID)
+		return ctx.Err()
+	}
+
+	q.PushJobStdout(j.ID, fmt.Sprintf("Completed: %d processed, %d skipped, %d failed", processed, skipped, failed))
+	q.CompleteJob(j.ID)
 	return nil
 }
 

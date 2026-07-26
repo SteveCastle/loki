@@ -208,6 +208,25 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'DELETE',
       argsToBody: (args) => ({ path: args[0] }),
     },
+    // Erase a path's database rows without touching the file — the cleanup for
+    // media that can no longer be loaded.
+    'forget-media': {
+      url: '/api/media/forget',
+      method: 'POST',
+      argsToBody: (args) => ({ path: args[0] }),
+    },
+    // Re-point every database reference after a file moved on disk.
+    // move-media args: [from, to, prefix?, dryRun?]
+    'move-media': {
+      url: '/api/media/move',
+      method: 'POST',
+      argsToBody: (args) => ({
+        from: args[0],
+        to: args[1],
+        prefix: !!args[2],
+        dryRun: !!args[3],
+      }),
+    },
     'load-categories': {
       url: '/api/taxonomy/categories',
       method: 'GET',
@@ -223,6 +242,13 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       url: '/api/taxonomy/tags',
       method: 'GET',
       argsToBody: () => null,
+    },
+    // Full detail for one tag (description included). The all-tags list is
+    // deliberately thin, so anything needing a description asks per tag.
+    'get-tag': {
+      url: '/api/taxonomy/tag',
+      method: 'GET',
+      argsToBody: (args) => ({ label: args[0] }),
     },
     'get-category-count': {
       url: '/api/taxonomy/category-count',
@@ -572,7 +598,7 @@ if (isElectron) {
 
   // Channels that are Electron-only and should silently return undefined
   const stubbedChannels = [
-    'select-db', 'select-new-path',
+    'select-db',
     'refresh-library', 'copy-file-into-clipboard',
     'check-for-updates',
     'load-duplicates-by-path', 'merge-duplicates-by-path',
@@ -587,6 +613,20 @@ if (isElectron) {
     if (channel === 'select-file') {
       const { openFileBrowser } = await import('./components/controls/file-browser-modal');
       return openFileBrowser('file');
+    }
+    // "Find Media": there is no native dialog in the browser, so the
+    // server-backed file browser stands in. Returns the Electron handler's
+    // shape — the caller turns it into a move-media call either way. Cancel
+    // rejects; the caller treats that as "never mind".
+    if (channel === 'select-new-path') {
+      const { openFileBrowser } = await import('./components/controls/file-browser-modal');
+      const newPath = await openFileBrowser('file');
+      if (!newPath) return null;
+      return {
+        newPath,
+        path: String(args?.[0] ?? ''),
+        updateAll: !!args?.[1],
+      };
     }
 
     if (stubbedChannels.includes(channel)) {
@@ -619,12 +659,30 @@ if (isElectron) {
   };
 
   send = (channel, args) => {
-    if (
-      ['shutdown', 'minimize', 'toggle-fullscreen', 'set-always-on-top'].includes(
-        channel
-      )
-    )
+    // Window controls, mapped to their closest browser equivalents. The
+    // palette renders the same traffic-light buttons in both environments.
+    if (channel === 'shutdown') {
+      // "Close" the viewer: leave the SPA for the server's home page.
+      window.location.href = '/';
       return;
+    }
+    if (channel === 'toggle-fullscreen') {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+      return;
+    }
+    if (channel === 'minimize') {
+      // No tab minimize exists; the palette draws this as the "windowed"
+      // control, so restore from fullscreen when in it.
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+      return;
+    }
+    if (channel === 'set-always-on-top') return;
     if (channel === 'open-external' && args?.[0]) {
       window.open(String(args[0]), '_blank');
       return;

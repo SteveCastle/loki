@@ -11,6 +11,10 @@ import { GlobalStateContext } from '../state';
 import { invoke } from '../platform';
 import { indexTags, type TagConcept } from '../search/tag-search-service';
 
+// Deliberately thin rows: label + category + weight (see loadAllTags in
+// src/main/taxonomy.ts and the /api/taxonomy/tags handler). This is the whole
+// tag table on both hops — IPC/HTTP and then the worker's postMessage — so
+// don't add fields here; fetch per-tag detail with `get-tag` instead.
 async function loadAllTags(): Promise<TagConcept[]> {
   const result = await invoke('load-all-tags', []);
   return (result as TagConcept[]) ?? [];
