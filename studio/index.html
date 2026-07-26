@@ -80,6 +80,7 @@
         <input type="file" id="file-input" accept="video/*,image/*" multiple hidden>
       </label>
       <button id="btn-settings" class="btn" title="composition settings — size, frame rate, duration">⚙ Comp</button>
+      <button id="btn-crop" class="btn" title="crop & straighten — reframe the comp and rotate its contents">⧉ Crop</button>
       <button id="btn-export-png" class="btn" title="Export the current frame as a PNG">Screenshot</button>
       <button id="btn-export-webm" class="btn" title="Record the comp to WebM in real time as it plays — captures the audio mix">Record</button>
       <button id="btn-export-webm-fast" class="btn" title="Render the comp to WebM offline, as fast as possible — frame-exact, no dropped frames, audio mixed offline">Render</button>
@@ -103,6 +104,30 @@
           </div>
         </div>
       </div>
+      <div id="crop-overlay" hidden>
+        <div id="crop-box">
+          <div class="cr-thirds"></div>
+          <div class="cr-h cr-nw" data-h="nw"></div><div class="cr-h cr-n" data-h="n"></div>
+          <div class="cr-h cr-ne" data-h="ne"></div><div class="cr-h cr-e" data-h="e"></div>
+          <div class="cr-h cr-se" data-h="se"></div><div class="cr-h cr-s" data-h="s"></div>
+          <div class="cr-h cr-sw" data-h="sw"></div><div class="cr-h cr-w" data-h="w"></div>
+        </div>
+      </div>
+      <div id="crop-bar" hidden>
+        <button class="btn" id="cr-ccw" title="rotate 90° counter-clockwise">⟲</button>
+        <button class="btn" id="cr-cw" title="rotate 90° clockwise">⟳</button>
+        <label class="cr-angle">
+          angle
+          <input type="range" id="cr-slider" min="-45" max="45" step="0.1" value="0">
+          <input type="number" id="cr-num" step="0.1" value="0">°
+        </label>
+        <span id="cr-size" class="cr-size"></span>
+        <button class="btn" id="cr-reset" title="back to the whole frame, no rotation">Reset</button>
+        <span class="cr-flex"></span>
+        <button class="btn" id="cr-cancel">Cancel</button>
+        <button class="btn" id="cr-apply">Apply crop</button>
+      </div>
+
       <div id="view-controls">
         <button class="btn" id="zoom-readout" title="viewport zoom (scroll wheel) — click to reset to Fit" hidden>100%</button>
         <button class="btn" data-mode="fit" title="scale to fit the pane">Fit</button>

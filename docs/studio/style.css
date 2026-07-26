@@ -293,6 +293,92 @@ main { flex: 1; display: flex; min-height: 0; }
   position: relative;
 }
 
+/* ---- crop & straighten ---------------------------------------------- */
+
+/* Covers the whole preview pane: inside the box reframes, outside it
+   straightens, so the overlay has to receive both. */
+#crop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  cursor: grab;
+  touch-action: none;
+}
+#crop-overlay[hidden] { display: none; }
+
+#crop-box {
+  position: absolute;
+  border: 1px solid #fff;
+  cursor: move;
+  /* Everything outside the box dims, without a second element to keep in
+     sync — the spread is just larger than any viewport. */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
+}
+.cr-thirds {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background:
+    linear-gradient(to right, transparent calc(33.333% - 0.5px), #fff calc(33.333% - 0.5px),
+      #fff calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px)),
+    linear-gradient(to right, transparent calc(66.666% - 0.5px), #fff calc(66.666% - 0.5px),
+      #fff calc(66.666% + 0.5px), transparent calc(66.666% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(33.333% - 0.5px), #fff calc(33.333% - 0.5px),
+      #fff calc(33.333% + 0.5px), transparent calc(33.333% + 0.5px)),
+    linear-gradient(to bottom, transparent calc(66.666% - 0.5px), #fff calc(66.666% - 0.5px),
+      #fff calc(66.666% + 0.5px), transparent calc(66.666% + 0.5px));
+}
+.cr-h {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+.cr-nw { left: -7px; top: -7px; cursor: nwse-resize; }
+.cr-ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.cr-se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.cr-sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.cr-n { left: 50%; top: -7px; margin-left: -7px; cursor: ns-resize; }
+.cr-s { left: 50%; bottom: -7px; margin-left: -7px; cursor: ns-resize; }
+.cr-w { left: -7px; top: 50%; margin-top: -7px; cursor: ew-resize; }
+.cr-e { right: -7px; top: 50%; margin-top: -7px; cursor: ew-resize; }
+
+#crop-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 31;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(18, 20, 26, 0.94);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  white-space: nowrap;
+}
+#crop-bar[hidden] { display: none; }
+.cr-angle { display: flex; align-items: center; gap: 6px; color: var(--dim); }
+#cr-slider { width: 150px; accent-color: var(--accent); }
+#cr-num {
+  width: 58px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 4px;
+  font: 12px/1.4 Consolas, monospace;
+}
+.cr-size { color: var(--accent); font-variant-numeric: tabular-nums; }
+.cr-flex { width: 10px; }
+#btn-crop.active { border-color: var(--accent); color: var(--accent); }
+
 #viewer {
   flex: 1;
   width: 100%;

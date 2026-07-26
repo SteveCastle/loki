@@ -3140,6 +3140,9 @@ function canvasDisplayRect() {
 }
 
 function updateGizmo() {
+  // Crop owns the viewport while it's open; a transform gizmo on a clip
+  // that's about to be re-placed would only be in the way.
+  if (crop) { gizmo.hidden = true; return; }
   const tgt = !gzDrag ? gizmoTarget() : { clip: gzDrag.clip, asset: assets.get(gzDrag.clip.assetId) };
   if (!tgt) { gizmo.hidden = true; return; }
   const { clip, asset } = tgt;
@@ -3385,6 +3388,308 @@ function reorderClip(clip, toFront) {
   onModelChange({ structural: true });
   setStatus(`${clip.name} ${toFront ? 'brought to front' : 'sent to back'}`);
 }
+
+/* =====================================================================
+ * Crop & straighten
+ *
+ * The box is axis-aligned ON SCREEN and the contents rotate under it
+ * (Lightroom's crop+straighten), so `crop` lives in "rotated space": the
+ * comp turned by `angle` about its own centre. cx/cy are the box centre
+ * in that space, relative to the comp centre, in comp pixels.
+ *
+ * Preview rotation is a CSS transform on #canvas-inner — nothing in the
+ * render pipeline knows about crop mode, and Cancel is just "throw the
+ * state away". Applying bakes the same transform into every media clip.
+ * =================================================================== */
+
+let crop = null;        // { cx, cy, w, h, angle } or null when not cropping
+let cropBase = null;    // screen geometry captured on entry (see cropMeasure)
+let cropDrag = null;
+
+const cropOverlay = $('crop-overlay');
+const cropBox = $('crop-box');
+const cropBar = $('crop-bar');
+
+/** Rotate (x, y) by `deg` about the origin. Comp space is y-down, so a
+ * positive angle reads as clockwise, matching CSS and the compositor. */
+function rot2(x, y, deg) {
+  const a = deg * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+  return [x * c - y * s, x * s + y * c];
+}
+
+/** Screen placement of the comp frame, measured with the crop rotation
+ * temporarily off: getBoundingClientRect on a rotated element returns the
+ * bounding box of the rotation, which is not what we want to map through. */
+function cropMeasure() {
+  const inner = $('canvas-inner');
+  const prev = inner.style.transform;
+  inner.style.transform = '';
+  const d = canvasDisplayRect();
+  const wrapR = $('preview-wrap').getBoundingClientRect();
+  inner.style.transform = prev;
+  cropBase = {
+    s: d.s,
+    ccx: d.left + comp.width * d.s / 2 - wrapR.left,
+    ccy: d.top + comp.height * d.s / 2 - wrapR.top,
+  };
+}
+
+/** Largest axis-aligned box (in rotated space) that stays inside the
+ * rotated comp — the crop can't include area the comp never had. */
+function cropMaxBox(angle) {
+  const W = comp.width, H = comp.height;
+  const corners = [[-W / 2, -H / 2], [W / 2, -H / 2], [W / 2, H / 2], [-W / 2, H / 2]]
+    .map(([x, y]) => rot2(x, y, angle));
+  const a = Math.abs(angle % 180) * Math.PI / 180;
+  const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+  // Inscribed rectangle of the same aspect as the comp, standard result.
+  const denom = c * c - s * s;
+  if (Math.abs(denom) < 1e-6) return { w: Math.min(W, H), h: Math.min(W, H) };
+  const w = (W * c - H * s) / denom;
+  const h = (H * c - W * s) / denom;
+  const bx = Math.max(...corners.map((p) => Math.abs(p[0]))) * 2;
+  const by = Math.max(...corners.map((p) => Math.abs(p[1]))) * 2;
+  return {
+    w: clamp(w > 0 ? w : Math.min(W, H), 16, bx),
+    h: clamp(h > 0 ? h : Math.min(W, H), 16, by),
+  };
+}
+
+function cropRender() {
+  if (!crop) return;
+  if (!cropBase) cropMeasure();
+  const { s, ccx, ccy } = cropBase;
+  $('canvas-inner').style.transform = `rotate(${crop.angle}deg)`;
+  cropBox.style.left = `${ccx + (crop.cx - crop.w / 2) * s}px`;
+  cropBox.style.top = `${ccy + (crop.cy - crop.h / 2) * s}px`;
+  cropBox.style.width = `${crop.w * s}px`;
+  cropBox.style.height = `${crop.h * s}px`;
+  $('cr-size').textContent =
+    `${Math.max(16, Math.round(crop.w))} × ${Math.max(16, Math.round(crop.h))}`;
+  const slider = $('cr-slider');
+  const num = $('cr-num');
+  // The slider only spans ±45; quarter turns live outside it.
+  const fine = ((crop.angle % 90) + 135) % 90 - 45;
+  if (document.activeElement !== slider) slider.value = String(fine);
+  if (document.activeElement !== num) num.value = String(Math.round(crop.angle * 10) / 10);
+}
+
+function enterCrop() {
+  if (crop) return exitCrop(false);
+  cropMeasure();
+  crop = { cx: 0, cy: 0, w: comp.width, h: comp.height, angle: 0 };
+  cropOverlay.hidden = false;
+  cropBar.hidden = false;
+  gizmo.hidden = true;
+  $('btn-crop').classList.add('active');
+  cropRender();
+  setStatus('crop — drag the box, drag outside it to straighten, then Apply');
+}
+
+function exitCrop(commit) {
+  if (!crop) return;
+  const state = crop;
+  crop = null;
+  cropDrag = null;
+  cropOverlay.hidden = true;
+  cropBar.hidden = true;
+  $('btn-crop').classList.remove('active');
+  $('canvas-inner').style.transform = '';
+  if (commit) applyCrop(state);
+  else setStatus('crop cancelled');
+}
+
+/** Rewrite a clip's x/y through an arbitrary point map. A rotation makes
+ * x' depend on y and vice versa, so when either track is animated both
+ * have to be resampled onto the union of their key times first. Rotation
+ * is linear, so this is exact wherever the two tracks share easing. */
+function mapClipPosition(clip, fn) {
+  const px = clip.props.x, py = clip.props.y;
+  if (!px || !py) return;
+  const animated = (px.anim && px.keys.length) || (py.anim && py.keys.length);
+  if (!animated) {
+    const [nx, ny] = fn(px.v, py.v);
+    px.v = nx; py.v = ny;
+    return;
+  }
+  const times = [...new Set([
+    ...(px.anim ? px.keys.map((k) => k.t) : []),
+    ...(py.anim ? py.keys.map((k) => k.t) : []),
+  ])].sort((a, b) => a - b);
+  const easeOf = (prop, t) => prop.keys.find((k) => Math.abs(k.t - t) < 1e-9)?.e;
+  const pts = times.map((t) => {
+    const [nx, ny] = fn(evalProp(px, t), evalProp(py, t));
+    return { t, nx, ny };
+  });
+  for (const [prop, pick] of [[px, (p) => p.nx], [py, (p) => p.ny]]) {
+    const keys = pts.map((p) => {
+      const e = easeOf(prop, p.t);
+      return e ? { t: p.t, v: pick(p), e } : { t: p.t, v: pick(p) };
+    });
+    prop.anim = true;
+    prop.keys = keys;
+    prop.v = keys.length ? keys[0].v : prop.v;
+  }
+}
+
+function addToProp(prop, d) {
+  if (!prop || !d) return;
+  prop.v += d;
+  for (const k of prop.keys) k.v += d;
+}
+
+async function applyCrop(state) {
+  const W = clamp(2 * Math.round(state.w / 2), 16, 7680);
+  const H = clamp(2 * Math.round(state.h / 2), 16, 4320);
+  const { cx, cy, angle } = state;
+  const oldCx = comp.width / 2, oldCy = comp.height / 2;
+  // Comp point -> rotated space about the comp centre -> new frame origin.
+  const place = (x, y) => {
+    const [rx, ry] = rot2(x - oldCx, y - oldCy, angle);
+    return [rx - cx + W / 2, ry - cy + H / 2];
+  };
+
+  let driven = 0, masked = 0;
+  history.record(comp, () => {
+    for (const track of comp.tracks)
+      for (const c of track.clips) {
+        if (c.kind !== 'media') continue;
+        if (c.props.x?.driver?.enabled || c.props.y?.driver?.enabled) driven++;
+        if (clipMasks.get(c.id)?.nodes?.length) masked++;
+        mapClipPosition(c, place);
+        addToProp(c.props.rot, angle);
+      }
+    comp.width = W;
+    comp.height = H;
+    comp._autoSize = false;
+  });
+  await applyCompSize();
+  setTime(tCur);
+  onModelChange({ structural: true });
+
+  // Both caveats are real and neither is silently recoverable, so say so
+  // rather than let someone find it later in a render.
+  const notes = [];
+  if (driven) notes.push(`${driven} clip${driven > 1 ? 's' : ''} with a driver on X/Y kept its own motion`);
+  if (masked) notes.push(`${masked} mask${masked > 1 ? 's are' : ' is'} authored in the old frame`);
+  setStatus(`cropped to ${W}×${H}${angle ? ` at ${Math.round(angle * 10) / 10}°` : ''}`
+    + (notes.length ? ` — ${notes.join('; ')}` : ''));
+}
+
+/* ---- crop interaction ------------------------------------------------ */
+
+$('btn-crop').addEventListener('click', enterCrop);
+$('cr-cancel').addEventListener('click', () => exitCrop(false));
+$('cr-apply').addEventListener('click', () => exitCrop(true));
+$('cr-reset').addEventListener('click', () => {
+  if (!crop) return;
+  crop = { cx: 0, cy: 0, w: comp.width, h: comp.height, angle: 0 };
+  cropRender();
+});
+
+function setCropAngle(deg) {
+  if (!crop) return;
+  crop.angle = deg;
+  // Keep the box inside the rotated frame so you can't crop in blank space.
+  const max = cropMaxBox(deg);
+  crop.w = Math.min(crop.w, max.w);
+  crop.h = Math.min(crop.h, max.h);
+  crop.cx = clamp(crop.cx, -(max.w - crop.w) / 2, (max.w - crop.w) / 2);
+  crop.cy = clamp(crop.cy, -(max.h - crop.h) / 2, (max.h - crop.h) / 2);
+  cropRender();
+}
+
+$('cr-slider').addEventListener('input', () => {
+  if (!crop) return;
+  const quarter = Math.round(crop.angle / 90) * 90;
+  setCropAngle(quarter + parseFloat($('cr-slider').value));
+});
+$('cr-num').addEventListener('input', () => {
+  const v = parseFloat($('cr-num').value);
+  if (Number.isFinite(v)) setCropAngle(clamp(v, -180, 180));
+});
+$('cr-num').addEventListener('keydown', (e) => e.stopPropagation());
+$('cr-ccw').addEventListener('click', () => { if (crop) quarterTurn(-90); });
+$('cr-cw').addEventListener('click', () => { if (crop) quarterTurn(90); });
+
+/** A quarter turn swaps which way the frame is long, so refit the box. */
+function quarterTurn(d) {
+  const angle = crop.angle + d;
+  const max = cropMaxBox(angle);
+  crop = { cx: 0, cy: 0, w: max.w, h: max.h, angle };
+  cropRender();
+}
+
+cropOverlay.addEventListener('pointerdown', (e) => {
+  if (!crop || e.button !== 0) return;
+  e.preventDefault();
+  try { cropOverlay.setPointerCapture(e.pointerId); } catch {}
+  const handle = e.target.closest('.cr-h')?.dataset.h ?? null;
+  const inBox = !!e.target.closest('#crop-box');
+  const wrapR = $('preview-wrap').getBoundingClientRect();
+  const px = e.clientX - wrapR.left, py = e.clientY - wrapR.top;
+  cropDrag = {
+    handle,
+    // Outside the box with no handle = straighten instead of reframe.
+    mode: handle ? 'resize' : inBox ? 'move' : 'spin',
+    x0: px, y0: py,
+    start: { ...crop },
+    a0: Math.atan2(py - cropBase.ccy, px - cropBase.ccx) * 180 / Math.PI,
+  };
+});
+
+cropOverlay.addEventListener('pointermove', (e) => {
+  if (!cropDrag || !crop) return;
+  const wrapR = $('preview-wrap').getBoundingClientRect();
+  const px = e.clientX - wrapR.left, py = e.clientY - wrapR.top;
+  const s = cropBase.s;
+  const dx = (px - cropDrag.x0) / s, dy = (py - cropDrag.y0) / s;
+  const st = cropDrag.start;
+
+  if (cropDrag.mode === 'spin') {
+    const a = Math.atan2(py - cropBase.ccy, px - cropBase.ccx) * 180 / Math.PI;
+    setCropAngle(clamp(st.angle + (a - cropDrag.a0), -180, 180));
+    return;
+  }
+  if (cropDrag.mode === 'move') {
+    const max = cropMaxBox(crop.angle);
+    crop.cx = clamp(st.cx + dx, -(max.w - crop.w) / 2, (max.w - crop.w) / 2);
+    crop.cy = clamp(st.cy + dy, -(max.h - crop.h) / 2, (max.h - crop.h) / 2);
+    cropRender();
+    return;
+  }
+  // Resize: move only the edges the grabbed handle owns.
+  const h = cropDrag.handle;
+  let l = st.cx - st.w / 2, r = st.cx + st.w / 2;
+  let t = st.cy - st.h / 2, b = st.cy + st.h / 2;
+  if (h.includes('w')) l = Math.min(l + dx, r - 16);
+  if (h.includes('e')) r = Math.max(r + dx, l + 16);
+  if (h.includes('n')) t = Math.min(t + dy, b - 16);
+  if (h.includes('s')) b = Math.max(b + dy, t + 16);
+  const max = cropMaxBox(crop.angle);
+  l = Math.max(l, -max.w / 2); r = Math.min(r, max.w / 2);
+  t = Math.max(t, -max.h / 2); b = Math.min(b, max.h / 2);
+  crop.w = Math.max(16, r - l);
+  crop.h = Math.max(16, b - t);
+  crop.cx = (l + r) / 2;
+  crop.cy = (t + b) / 2;
+  cropRender();
+});
+
+const endCropDrag = () => { cropDrag = null; };
+cropOverlay.addEventListener('pointerup', endCropDrag);
+cropOverlay.addEventListener('pointercancel', endCropDrag);
+
+window.addEventListener('resize', () => { if (crop) { cropMeasure(); cropRender(); } });
+
+// Escape backs out, Enter commits — captured so crop mode wins over the
+// timeline's own shortcuts while it owns the viewport.
+window.addEventListener('keydown', (e) => {
+  if (!crop) return;
+  if (e.target.matches?.('input, textarea, select') && e.key !== 'Escape') return;
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); exitCrop(false); }
+  else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); exitCrop(true); }
+}, true);
 
 gizmo.addEventListener('contextmenu', (e) => {
   e.preventDefault();
