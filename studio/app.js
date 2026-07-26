@@ -3433,12 +3433,13 @@ gizmo.addEventListener('contextmenu', (e) => {
 const SHAPE_TEX_SIZE = 1024;
 
 // New shapes reuse whatever fill you picked last, across sessions — drawing
-// six shapes in one colour shouldn't mean setting it six times. Black until
-// you've picked anything.
+// six shapes in one colour shouldn't mean setting it six times. White until
+// you've picked anything, because an empty comp is black and the first
+// shape you draw should be something you can see.
 const SHAPE_COLOR_KEY = 'lowkey-studio.shape-color';
 let lastShapeColor = /^#[0-9a-f]{6}$/i.test(localStorage.getItem(SHAPE_COLOR_KEY) ?? '')
   ? localStorage.getItem(SHAPE_COLOR_KEY)
-  : '#000000';
+  : '#ffffff';
 
 function setLastShapeColor(hex) {
   lastShapeColor = hex;
