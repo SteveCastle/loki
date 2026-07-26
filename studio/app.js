@@ -1441,7 +1441,7 @@ const timelineHost = {
   toggleAnim,
   toggleKey,
   onModelChange,
-  onSelect: () => renderInspector(),
+  onSelect: () => { gizmoOff = false; renderInspector(); },
   addMediaAt: (files, t, trackIdx) => importFiles(files, { t, trackIdx }),
   setTrimPreview: (t) => {
     trimPreviewT = t;
@@ -3125,8 +3125,15 @@ for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
 }
 $('canvas-inner').appendChild(gizmo);
 
+/* A layer can be selected without being armed for transform. Clicking the
+ * canvas away from it puts down the handles but leaves it selected, so the
+ * inspector and timeline still target it — click it again to pick them
+ * back up. Reset whenever the selection itself changes. */
+let gizmoOff = false;
+
 function gizmoTarget() {
   const clip = timeline?.selectedClip;
+  if (gizmoOff) return null;
   if (!clip || clip.kind !== 'media' || maskEdit) return null;
   // While a shape draw is armed the pointer belongs to the draw, not to the
   // selected layer's handles.
@@ -3359,9 +3366,20 @@ function clipAtViewportPoint(clientX, clientY) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
-  if (e.button !== 0 || maskEdit) return;
+  if (e.button !== 0 || maskEdit || crop) return;
   const hit = clipAtViewportPoint(e.clientX, e.clientY);
+  const sel = timeline?.selectedClip;
+  // Clicking off an armed layer disarms it first and keeps it selected —
+  // otherwise, with a full-frame layer underneath, there is nowhere to
+  // click that isn't "select that other layer" and the handles can never
+  // be put down. A second click then selects normally.
+  if (sel && !gizmoOff && (!hit || hit.id !== sel.id)) {
+    gizmoOff = true;
+    updateGizmo();
+    return;
+  }
   timeline.selectClip(hit ? hit.id : null);
+  gizmoOff = false;
   updateGizmo();
 });
 
@@ -4867,32 +4885,9 @@ function renderInspector() {
   head.appendChild(del);
   inspectorEl.appendChild(head);
 
-  /* -- timing -- */
-  const timing = document.createElement('div');
-  timing.className = 'insp-timing';
-  const tItem = (label, get, set, title = '') => {
-    const l = document.createElement('label');
-    l.textContent = label;
-    if (title) l.title = title;
-    const inp = document.createElement('input');
-    inp.type = 'number';
-    inp.step = String(1 / comp.fps);
-    inp.value = fmtVal(get());
-    inp.addEventListener('keydown', (e) => e.stopPropagation());
-    inp.addEventListener('change', () => {
-      const v = parseFloat(inp.value);
-      if (Number.isNaN(v)) return;
-      history.record(comp, () => set(v));
-      onModelChange({ structural: true });
-    });
-    l.appendChild(inp);
-    timing.appendChild(l);
-  };
-  tItem('start', () => clip.start, (v) => { clip.start = Math.max(0, quantize(v, comp.fps)); ensureDur(comp); });
-  tItem('length', () => clip.dur, (v) => { clip.dur = Math.max(1 / comp.fps, quantize(v, comp.fps)); ensureDur(comp); });
-  if (clip.kind === 'media')
-    tItem('trim-in', () => clip.in, (v) => { clip.in = Math.max(0, v); }, 'seconds trimmed from the source head');
-  inspectorEl.appendChild(timing);
+  /* Timing is not in here: start / length / trim-in are all easier to
+   * judge against the ruler, so the timeline owns them (drag the clip,
+   * drag its edges, split at the playhead). */
 
   /* -- media source info -- */
   if (clip.kind === 'media') {
