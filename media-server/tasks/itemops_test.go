@@ -167,6 +167,30 @@ func TestResolveJobItemsInputList(t *testing.T) {
 	}
 }
 
+// A comma is a valid path character on every platform, so it must never act
+// as a list separator — "foo, bar.jpg" is one file, not two. Only newlines
+// separate paths.
+func TestResolveJobItemsCommaPathsSurvive(t *testing.T) {
+	db := setupItemOpsDB(t)
+	q := jobqueue.NewQueueWithDB(db)
+
+	commaPath := filepath.Join(t.TempDir(), "foo, bar.jpg")
+	plainPath := filepath.Join(t.TempDir(), "plain.jpg")
+	id, _ := q.AddJob("", "hash", nil, commaPath+"\n"+plainPath, nil)
+	j := q.GetJob(id)
+
+	res, err := resolveJobItems(j, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Paths) != 2 {
+		t.Fatalf("expected 2 items, got %d: %v", len(res.Paths), res.Paths)
+	}
+	if res.Paths[0] != commaPath || res.Paths[1] != plainPath {
+		t.Fatalf("paths mangled: %v, want [%s %s]", res.Paths, commaPath, plainPath)
+	}
+}
+
 func TestRunItemOpsProcessesAllItemsAndReportsProgress(t *testing.T) {
 	db := setupItemOpsDB(t)
 	paths := writeTempMedia(t, db, 3)

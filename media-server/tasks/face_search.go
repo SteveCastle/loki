@@ -141,8 +141,9 @@ func FacesForPathOrScan(ctx context.Context, db *sql.DB, path string) ([]media.F
 }
 
 // SearchFacesByMediaPath finds the stored faces most similar to the LARGEST
-// face in a library item (scanning it on the fly when needed).
-func SearchFacesByMediaPath(ctx context.Context, db *sql.DB, path string, limit int) ([]FaceHit, error) {
+// face in a library item (scanning it on the fly when needed). allow restricts
+// which media the returned faces may belong to; nil = whole library.
+func SearchFacesByMediaPath(ctx context.Context, db *sql.DB, path string, limit int, allow PathSet) ([]FaceHit, error) {
 	faces, m, err := FacesForPathOrScan(ctx, db, path)
 	if err != nil {
 		return nil, err
@@ -156,7 +157,7 @@ func SearchFacesByMediaPath(ctx context.Context, db *sql.DB, path string, limit 
 			best = f
 		}
 	}
-	return SearchFacesByVector(db, m.ID, best.Vec, limit)
+	return searchFacesByVectorWithin(db, m.ID, best.Vec, limit, allow)
 }
 
 // FaceQueryVectorForBytes returns the embedding of the LARGEST face in the
@@ -187,6 +188,32 @@ func FaceQueryVectorForBytes(ctx context.Context, image []byte) ([]float32, Face
 // cosine over all stored faces otherwise. Hits are hydrated with their face
 // rows (bbox, media path, person).
 func SearchFacesByVector(db *sql.DB, model string, query []float32, limit int) ([]FaceHit, error) {
+	return searchFacesByVectorWithin(db, model, query, limit, nil)
+}
+
+// searchFacesByVectorWithin is SearchFacesByVector restricted to faces whose
+// media path is in allow (nil = no restriction). The face index is keyed by
+// face id and cannot see media paths, so a filtered search always brute-forces
+// over the stored faces — exact, and face counts are far below media counts.
+func searchFacesByVectorWithin(db *sql.DB, model string, query []float32, limit int, allow PathSet) ([]FaceHit, error) {
+	if allow != nil {
+		all, err := media.LoadAllFaces(db, model)
+		if err != nil {
+			return nil, err
+		}
+		hits := make([]FaceHit, 0, len(all))
+		for _, f := range all {
+			if _, ok := allow[f.MediaPath]; !ok {
+				continue
+			}
+			hits = append(hits, faceToHit(f, embedvec.CosineSim(query, f.Vec)))
+		}
+		sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+		if limit > 0 && len(hits) > limit {
+			hits = hits[:limit]
+		}
+		return hits, nil
+	}
 	if raw, ok := faceIndexSearch(model, query, limit); ok {
 		ids := make([]int64, 0, len(raw))
 		scores := make(map[int64]float32, len(raw))
@@ -222,13 +249,14 @@ func SearchFacesByVector(db *sql.DB, model string, query []float32, limit int) (
 }
 
 // SearchFacesByImage finds the stored faces most similar to the largest face
-// in an uploaded image, under the active recognizer.
-func SearchFacesByImage(ctx context.Context, db *sql.DB, image []byte, limit int) ([]FaceHit, error) {
+// in an uploaded image, under the active recognizer. allow restricts which
+// media the returned faces may belong to; nil = whole library.
+func SearchFacesByImage(ctx context.Context, db *sql.DB, image []byte, limit int, allow PathSet) ([]FaceHit, error) {
 	vec, m, err := FaceQueryVectorForBytes(ctx, image)
 	if err != nil {
 		return nil, err
 	}
-	return SearchFacesByVector(db, m.ID, vec, limit)
+	return searchFacesByVectorWithin(db, m.ID, vec, limit, allow)
 }
 
 // SimilarFacesByID returns the stored faces most similar to face id, INCLUDING

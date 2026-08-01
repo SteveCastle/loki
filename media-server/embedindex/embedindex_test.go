@@ -207,6 +207,59 @@ func BenchmarkSearch50k(b *testing.B) {
 	}
 }
 
+// TestSearchFilteredRestrictsToAllowSet verifies SearchFiltered ranks only
+// within the allow set: a globally-nearer path outside the set never appears,
+// and paths in the set that aren't indexed are skipped safely.
+func TestSearchFilteredRestrictsToAllowSet(t *testing.T) {
+	idx := New()
+	idx.Add("nearest", embedvec.Normalize([]float32{1, 0}))
+	idx.Add("mid", embedvec.Normalize([]float32{0.5, 0.5}))
+	idx.Add("far", embedvec.Normalize([]float32{0, 1}))
+	allow := map[string]struct{}{"mid": {}, "far": {}, "ghost": {}}
+	hits := idx.SearchFiltered(embedvec.Normalize([]float32{1, 0}), 10, allow)
+	if len(hits) != 2 || hits[0].Path != "mid" || hits[1].Path != "far" {
+		t.Fatalf("expected [mid far], got %+v", hits)
+	}
+}
+
+// TestSearchFilteredBothCollectionBranches pins both slot-collection paths:
+// allow smaller than the index (iterate allow) and allow at least as large
+// (iterate the index).
+func TestSearchFilteredBothCollectionBranches(t *testing.T) {
+	idx := New()
+	for i, p := range []string{"a", "b", "c", "d"} {
+		idx.Add(p, embedvec.Normalize([]float32{1, float32(i)}))
+	}
+	q := embedvec.Normalize([]float32{1, 0})
+
+	small := map[string]struct{}{"c": {}}
+	if hits := idx.SearchFiltered(q, 10, small); len(hits) != 1 || hits[0].Path != "c" {
+		t.Fatalf("small allow: expected [c], got %+v", hits)
+	}
+	big := map[string]struct{}{"b": {}, "c": {}, "x": {}, "y": {}, "z": {}}
+	hits := idx.SearchFiltered(q, 10, big)
+	if len(hits) != 2 || hits[0].Path != "b" || hits[1].Path != "c" {
+		t.Fatalf("big allow: expected [b c], got %+v", hits)
+	}
+}
+
+// TestSearchFilteredNilAndEmpty verifies nil allow behaves exactly like Search
+// and an empty (or fully-unindexed) allow set returns nothing.
+func TestSearchFilteredNilAndEmpty(t *testing.T) {
+	idx := New()
+	idx.Add("a", embedvec.Normalize([]float32{1, 0}))
+	q := embedvec.Normalize([]float32{1, 0})
+	if hits := idx.SearchFiltered(q, 1, nil); len(hits) != 1 || hits[0].Path != "a" {
+		t.Fatalf("nil allow: expected [a], got %+v", hits)
+	}
+	if hits := idx.SearchFiltered(q, 1, map[string]struct{}{}); hits != nil {
+		t.Fatalf("empty allow: expected nil, got %+v", hits)
+	}
+	if hits := idx.SearchFiltered(q, 1, map[string]struct{}{"ghost": {}}); hits != nil {
+		t.Fatalf("unindexed allow: expected nil, got %+v", hits)
+	}
+}
+
 // TestSearchKLargerThanIndex verifies k > Len returns everything, ordered.
 func TestSearchKLargerThanIndex(t *testing.T) {
 	idx := New()

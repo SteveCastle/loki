@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Path Coverage — Lowkey Media Server</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: rgba(17, 22, 32, 0.92);
+    --border: #232b3b;
+    --text: #d7dce6;
+    --dim: #8a93a6;
+    --accent: #6ea8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg);
+    font: 13px/1.45 system-ui, "Segoe UI", sans-serif; color: var(--text); }
+  body { display: flex; flex-direction: column; }
+
+  #topbar {
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  #topbar h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap; }
+  #topbar .back { color: var(--dim); text-decoration: none; white-space: nowrap; }
+  #topbar .back:hover { color: var(--accent); }
+  #tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tab {
+    background: #151b28; color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer; white-space: nowrap;
+  }
+  .tab:hover { border-color: #35415a; }
+  .tab.active { border-color: var(--accent); color: var(--accent); }
+  .tab .n { color: var(--dim); margin-left: 6px; font-size: 11px; }
+  .tab.active .n { color: var(--accent); opacity: 0.75; }
+
+  #subbar {
+    display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+    padding: 6px 12px; border-bottom: 1px solid var(--border);
+  }
+  #crumbs { display: flex; gap: 2px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+  .crumb { background: none; border: none; color: var(--accent); font: inherit;
+    cursor: pointer; padding: 0 2px; word-break: break-all; }
+  .crumb:hover { text-decoration: underline; }
+  .crumb.here { color: var(--text); cursor: default; text-decoration: none; }
+  .crumb-sep { color: var(--dim); }
+  #summary { color: var(--dim); margin-left: auto; text-align: right; }
+  #summary b { color: var(--text); font-weight: 600; }
+
+  #map { position: relative; flex: 1; margin: 8px; overflow: hidden; }
+
+  .cell { position: absolute; overflow: hidden; border-radius: 2px;
+    outline: 1px solid rgba(0,0,0,0.45); }
+  .cell.dir { cursor: pointer; }
+  .cell.dir:hover { outline: 1px solid rgba(255,255,255,0.75); z-index: 5; }
+  .cell.files { background: linear-gradient(135deg, #4a5264, #343b4a); }
+  .cell.other { cursor: pointer;
+    background: repeating-linear-gradient(45deg, #2a3040, #2a3040 6px, #222736 6px, #222736 12px); }
+  .cell.other:hover { outline: 1px solid rgba(255,255,255,0.75); }
+  .cell-label {
+    position: absolute; top: 0; left: 0; right: 0; height: 16px;
+    padding: 1px 4px; font-size: 11px; line-height: 14px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; color: #e8ecf4;
+    background: rgba(0,0,0,0.28); pointer-events: none;
+  }
+  .cell-fill { position: absolute; inset: 0; pointer-events: none; }
+  .cell-inner { position: absolute; }
+
+  #tooltip {
+    position: fixed; z-index: 50; display: none; max-width: 460px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; pointer-events: none; box-shadow: 0 8px 28px rgba(0,0,0,0.55);
+  }
+  #tooltip .tname { font-weight: 600; word-break: break-all; }
+  #tooltip .tpath { color: var(--dim); font-size: 11px; word-break: break-all; margin-bottom: 4px; }
+  #tooltip .trow { white-space: nowrap; }
+  #tooltip .cov { color: var(--accent); }
+
+  #help { padding: 4px 12px 8px; color: var(--dim); font-size: 12px; user-select: none; }
+
+  #overlay { position: absolute; inset: 0; z-index: 30; display: none;
+    align-items: center; justify-content: center; background: rgba(11,14,20,0.55); }
+  #overlay .msg { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 22px; }
+  .spin { display: inline-block; width: 12px; height: 12px; margin-right: 8px;
+    border: 2px solid var(--dim); border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <a class="back" href="/viz/" title="All visualizations">‹ viz</a>
+  <h1>Path Coverage</h1>
+  <div id="tabs"></div>
+</div>
+
+<div id="subbar">
+  <div id="crumbs"></div>
+  <div id="summary"></div>
+</div>
+
+<div id="map">
+  <div id="overlay"><div class="msg" id="overlaymsg"></div></div>
+</div>
+
+<div id="help">click&nbsp;folder&nbsp;=&nbsp;dive&nbsp;in&nbsp;&middot;&nbsp;right-click&nbsp;/&nbsp;backspace&nbsp;=&nbsp;up&nbsp;&middot;&nbsp;hatched&nbsp;block&nbsp;=&nbsp;smaller&nbsp;folders,&nbsp;click&nbsp;to&nbsp;expand&nbsp;&middot;&nbsp;grey&nbsp;block&nbsp;=&nbsp;files&nbsp;directly&nbsp;in&nbsp;this&nbsp;folder</div>
+
+<div id="tooltip"></div>
+
+<script>
+'use strict';
+// ============================================================================
+// Path-coverage treemap: squarified layout of per-directory row counts from
+// /api/treemap, with one tab per metric (items, tags, each embedding/face
+// model). No external libraries — plain DOM, so the page works offline and
+// embeds in the Go binary.
+// ============================================================================
+
+const mapEl = document.getElementById('map');
+const tabsEl = document.getElementById('tabs');
+const crumbsEl = document.getElementById('crumbs');
+const summaryEl = document.getElementById('summary');
+const tooltip = document.getElementById('tooltip');
+const overlay = document.getElementById('overlay');
+const overlayMsg = document.getElementById('overlaymsg');
+
+const DEFAULT_LIMIT = 100;
+const state = { metric: 'items', path: '', limit: DEFAULT_LIMIT, data: null, metrics: [] };
+
+const fmt = n => (n ?? 0).toLocaleString('en-US');
+const short = n => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M'
+  : n >= 1e4 ? Math.round(n / 1e3) + 'k'
+  : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n);
+const pct = (a, b) => b > 0 ? (100 * a / b < 0.1 && a > 0 ? '<0.1' : (100 * a / b).toFixed(1)) + '%' : '—';
+
+function showOverlay(html) { overlayMsg.innerHTML = html; overlay.style.display = 'flex'; }
+function hideOverlay() { overlay.style.display = 'none'; }
+
+// Stable hue per directory name so a folder keeps its color while navigating.
+function hueOf(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
+// Split a path into breadcrumb steps, keeping the byte-exact prefix for each
+// (mixed / and \ separators must round-trip to the server unchanged).
+function crumbsOf(p) {
+  const out = [{ label: 'library', path: '' }];
+  let start = 0;
+  for (let i = 0; i <= p.length; i++) {
+    if (i < p.length && p[i] !== '/' && p[i] !== '\\') continue;
+    const seg = p.slice(start, i);
+    if (seg) out.push({ label: seg, path: p.slice(0, i) });
+    start = i + 1;
+  }
+  return out;
+}
+
+// --------------------------------------------------------------------------
+// Squarified treemap layout (Bruls et al.). items: [{v}], v > 0, sorted desc.
+// Returns rects [{x,y,w,h}] parallel to items.
+// --------------------------------------------------------------------------
+function squarify(items, x, y, w, h) {
+  const out = [];
+  const total = items.reduce((s, it) => s + it.v, 0);
+  if (total <= 0 || w <= 1 || h <= 1) return items.map(() => ({ x, y, w: 0, h: 0 }));
+  const scale = (w * h) / total;
+  let i = 0, cx = x, cy = y, cw = w, ch = h;
+  while (i < items.length) {
+    const L = Math.max(Math.min(cw, ch), 1e-6);
+    let s = 0, mn = Infinity, mx = 0, j = i, best = Infinity;
+    while (j < items.length) {
+      const a = Math.max(items[j].v * scale, 1e-9);
+      const ns = s + a, nmn = Math.min(mn, a), nmx = Math.max(mx, a);
+      const worst = Math.max((L * L * nmx) / (ns * ns), (ns * ns) / (L * L * nmn));
+      if (worst > best) break;
+      best = worst; s = ns; mn = nmn; mx = nmx; j++;
+    }
+    const vert = cw >= ch;      // lay the row as a vertical strip on the left
+    const thick = s / L;
+    let off = 0;
+    for (let k = i; k < j; k++) {
+      const len = Math.max(items[k].v * scale, 1e-9) / thick;
+      out.push(vert ? { x: cx, y: cy + off, w: thick, h: len }
+                    : { x: cx + off, y: cy, w: len, h: thick });
+      off += len;
+    }
+    if (vert) { cx += thick; cw -= thick; } else { cy += thick; ch -= thick; }
+    i = j;
+  }
+  return out;
+}
+
+// --------------------------------------------------------------------------
+// Rendering
+// --------------------------------------------------------------------------
+const LABEL_H = 16, MAX_NEST = 2;
+
+function childItems(node) {
+  const items = (node.children || []).map(c => ({ kind: 'dir', v: c.count, node: c }));
+  if (node.direct > 0) items.push({ kind: 'files', v: node.direct, node });
+  if (node.otherCount > 0) items.push({ kind: 'other', v: node.otherCount, dirs: node.otherDirs });
+  return items.filter(it => it.v > 0).sort((a, b) => b.v - a.v);
+}
+
+function renderInto(container, node, w, h, depth, hue) {
+  const items = childItems(node);
+  const rects = squarify(items, 0, 0, w, h);
+  items.forEach((it, idx) => {
+    const r = rects[idx];
+    if (r.w < 3 || r.h < 3) return;
+    const div = document.createElement('div');
+    div.className = 'cell ' + it.kind;
+    div.style.left = r.x + 'px'; div.style.top = r.y + 'px';
+    div.style.width = r.w + 'px'; div.style.height = r.h + 'px';
+
+    if (it.kind === 'dir') {
+      const cellHue = depth === 0 ? hueOf(it.node.name) : hue;
+      const l = Math.min(40 + depth * 7, 60);
+      const fill = document.createElement('div');
+      fill.className = 'cell-fill';
+      fill.style.background =
+        `radial-gradient(130% 130% at 22% 16%, hsl(${cellHue},52%,${l + 13}%), hsl(${cellHue},55%,${l - 8}%))`;
+      div.appendChild(fill);
+
+      const showLabel = r.h >= LABEL_H + 6 && r.w >= 44;
+      if (showLabel) {
+        const lab = document.createElement('div');
+        lab.className = 'cell-label';
+        lab.textContent = `${it.node.name} · ${short(it.v)}`;
+        div.appendChild(lab);
+      }
+      // Nest one more level when there is room to actually see it.
+      const iy = showLabel ? LABEL_H : 2;
+      const iw = r.w - 4, ih = r.h - iy - 2;
+      const hasInner = (it.node.children && it.node.children.length) ||
+        (it.node.direct > 0 && it.node.direct < it.node.count) || it.node.otherCount > 0;
+      if (depth < MAX_NEST && hasInner && iw >= 60 && ih >= 36) {
+        const inner = document.createElement('div');
+        inner.className = 'cell-inner';
+        inner.style.left = '2px'; inner.style.top = iy + 'px';
+        inner.style.width = iw + 'px'; inner.style.height = ih + 'px';
+        renderInto(inner, it.node, iw, ih, depth + 1, cellHue);
+        div.appendChild(inner);
+      }
+      div.addEventListener('click', e => { e.stopPropagation(); nav(it.node.path); });
+    } else if (it.kind === 'other') {
+      div.addEventListener('click', e => {
+        e.stopPropagation();
+        state.limit = Math.min(state.limit * 4, 2000);
+        load();
+      });
+    }
+
+    div.addEventListener('mousemove', e => { e.stopPropagation(); showTooltip(e, it); });
+    div.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    container.appendChild(div);
+  });
+}
+
+function render() {
+  mapEl.querySelectorAll('.cell').forEach(el => el.remove());
+  tooltip.style.display = 'none';
+  renderCrumbs();
+  renderSummary();
+  const d = state.data;
+  if (!d) return;
+  if (!d.node.count) {
+    showOverlay(state.path
+      ? 'no rows under this folder for this metric'
+      : 'no rows for this metric yet');
+    return;
+  }
+  hideOverlay();
+  renderInto(mapEl, d.node, mapEl.clientWidth, mapEl.clientHeight, 0, 210);
+}
+
+function renderCrumbs() {
+  crumbsEl.innerHTML = '';
+  const crumbs = crumbsOf(state.path);
+  crumbs.forEach((c, i) => {
+    if (i) {
+      const sep = document.createElement('span');
+      sep.className = 'crumb-sep'; sep.textContent = '›';
+      crumbsEl.appendChild(sep);
+    }
+    const b = document.createElement('button');
+    b.className = 'crumb' + (i === crumbs.length - 1 ? ' here' : '');
+    b.textContent = c.label;
+    if (i < crumbs.length - 1) b.addEventListener('click', () => nav(c.path));
+    crumbsEl.appendChild(b);
+  });
+}
+
+function renderSummary() {
+  const d = state.data;
+  if (!d) { summaryEl.textContent = ''; return; }
+  const n = d.node;
+  let html = `<b>${fmt(n.count)}</b> rows (${pct(n.count, d.total)} of library)`;
+  if (d.metric !== 'items') {
+    html += ` · covers <b>${fmt(n.covered)}</b> / ${fmt(n.itemCount || 0)} items` +
+      ` (<b>${pct(n.covered, n.itemCount || 0)}</b>)`;
+  }
+  summaryEl.innerHTML = html;
+}
+
+function showTooltip(e, it) {
+  let html = '';
+  const d = state.data;
+  if (it.kind === 'dir') {
+    const n = it.node;
+    html = `<div class="tname">${escapeHtml(n.name)}</div>` +
+      `<div class="tpath">${escapeHtml(n.path)}</div>` +
+      `<div class="trow"><b>${fmt(n.count)}</b> rows · ${pct(n.count, d.node.count)} of view · ${pct(n.count, d.total)} of library</div>`;
+    if (d.metric !== 'items') {
+      html += `<div class="trow cov">covers ${fmt(n.covered)} / ${fmt(n.itemCount || 0)} items (${pct(n.covered, n.itemCount || 0)})</div>`;
+    }
+  } else if (it.kind === 'files') {
+    html = `<div class="tname">(files)</div>` +
+      `<div class="trow"><b>${fmt(it.v)}</b> rows on files directly in this folder</div>`;
+  } else {
+    html = `<div class="tname">(${fmt(it.dirs)} smaller folders)</div>` +
+      `<div class="trow"><b>${fmt(it.v)}</b> rows · click to expand</div>`;
+  }
+  tooltip.innerHTML = html;
+  tooltip.style.display = 'block';
+  const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + tw > innerWidth - 8) x = e.clientX - tw - 10;
+  if (y + th > innerHeight - 8) y = e.clientY - th - 10;
+  tooltip.style.left = x + 'px'; tooltip.style.top = y + 'px';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// --------------------------------------------------------------------------
+// Data + navigation
+// --------------------------------------------------------------------------
+let loadSeq = 0;
+
+async function load() {
+  const seq = ++loadSeq;
+  showOverlay('<span class="spin"></span>counting rows…');
+  const qs = new URLSearchParams({ metric: state.metric, path: state.path, limit: String(state.limit) });
+  try {
+    let res = await fetch('/api/treemap?' + qs);
+    if (res.status === 404 && state.path) {
+      // Current folder doesn't exist under this metric — fall back to root.
+      state.path = '';
+      qs.set('path', '');
+      res = await fetch('/api/treemap?' + qs);
+    }
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    if (seq !== loadSeq) return; // a newer navigation superseded this response
+    state.data = data;
+    hideOverlay();
+    render();
+  } catch (err) {
+    if (seq !== loadSeq) return;
+    showOverlay('failed to load: ' + escapeHtml(err.message || err));
+  }
+}
+
+function nav(path) {
+  state.path = path;
+  state.limit = DEFAULT_LIMIT;
+  load();
+}
+
+function up() {
+  const crumbs = crumbsOf(state.path);
+  if (crumbs.length > 1) nav(crumbs[crumbs.length - 2].path);
+}
+
+function setMetric(id) {
+  state.metric = id;
+  state.limit = DEFAULT_LIMIT;
+  tabsEl.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.id === id));
+  load();
+}
+
+async function loadMetrics() {
+  showOverlay('<span class="spin"></span>loading metrics…');
+  try {
+    const res = await fetch('/api/treemap/metrics');
+    if (!res.ok) throw new Error(await res.text());
+    state.metrics = (await res.json()).metrics || [];
+    tabsEl.innerHTML = '';
+    for (const m of state.metrics) {
+      const b = document.createElement('button');
+      b.className = 'tab' + (m.id === state.metric ? ' active' : '');
+      b.dataset.id = m.id;
+      b.innerHTML = `${escapeHtml(m.label)}<span class="n">${short(m.count)}</span>`;
+      b.addEventListener('click', () => setMetric(m.id));
+      tabsEl.appendChild(b);
+    }
+    load();
+  } catch (err) {
+    showOverlay('failed to load metrics: ' + escapeHtml(err.message || err));
+  }
+}
+
+mapEl.addEventListener('contextmenu', e => { e.preventDefault(); up(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Backspace' && !e.target.closest('input,textarea')) { e.preventDefault(); up(); }
+});
+let resizeTimer = 0;
+addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(render, 120);
+});
+
+loadMetrics();
+</script>
+</body>
+</html>

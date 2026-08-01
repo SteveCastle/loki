@@ -56,7 +56,7 @@ func maybeHandleSwipeSimilar(w http.ResponseWriter, r *http.Request, deps *Depen
 	fetch := need + swipeSimilarCandidateSlack
 	var ranked []string
 	for {
-		hits, err := tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, modelID, anchor, fetch+1)
+		hits, err := tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, modelID, anchor, fetch+1, nil)
 		if err != nil {
 			log.Printf("swipe similar search failed (anchor=%q model=%q): %v", anchor, modelID, err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)

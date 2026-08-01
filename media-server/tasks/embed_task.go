@@ -89,9 +89,10 @@ func IndexSize() int {
 	return vectorIndex.Len()
 }
 
-// indexSearch runs a locked ANN search for model. ok is false when no index is
-// installed or the index holds a different model's vectors (caller brute-forces).
-func indexSearch(model string, query []float32, k int) ([]embedindex.SearchHit, bool) {
+// indexSearch runs a locked ANN search for model, restricted to allow when
+// non-nil. ok is false when no index is installed or the index holds a
+// different model's vectors (caller brute-forces).
+func indexSearch(model string, query []float32, k int, allow PathSet) ([]embedindex.SearchHit, bool) {
 	vectorIndexMu.Lock()
 	defer vectorIndexMu.Unlock()
 	if vectorIndex == nil {
@@ -100,7 +101,7 @@ func indexSearch(model string, query []float32, k int) ([]embedindex.SearchHit, 
 	if vectorIndexModel != "" && vectorIndexModel != model {
 		return nil, false
 	}
-	return vectorIndex.Search(query, k), true
+	return vectorIndex.SearchFiltered(query, k, allow), true
 }
 
 // indexAdd inserts one vector into the active index under lock, but only when
@@ -189,12 +190,24 @@ func BuildIndexFromDB(db *sql.DB, model string, onProgress IndexProgress) (embed
 	return idx, nil
 }
 
+// PathSet restricts a similarity search to a subset of media paths (nil = no
+// restriction). Composed queries resolve their SQL predicates into a PathSet
+// first, so the vector scan ranks within the filtered set instead of the
+// whole library.
+type PathSet map[string]struct{}
+
 // SearchByVector returns the top-limit most similar media to query using the
 // installed ANN index (when present) or brute-force cosine over all stored
 // embeddings. No self-exclusion is performed — callers that need it (e.g.
 // SimilarByPath) must filter afterward.
 func SearchByVector(db *sql.DB, model string, query []float32, limit int) ([]SimilarHit, error) {
-	if raw, ok := indexSearch(model, query, limit); ok {
+	return searchByVectorWithin(db, model, query, limit, nil)
+}
+
+// searchByVectorWithin is SearchByVector restricted to allow (nil = whole
+// library).
+func searchByVectorWithin(db *sql.DB, model string, query []float32, limit int, allow PathSet) ([]SimilarHit, error) {
+	if raw, ok := indexSearch(model, query, limit, allow); ok {
 		hits := make([]SimilarHit, 0, len(raw))
 		for _, h := range raw {
 			hits = append(hits, SimilarHit{Path: h.Path, Score: h.Score})
@@ -207,6 +220,11 @@ func SearchByVector(db *sql.DB, model string, query []float32, limit int) ([]Sim
 	}
 	hits := make([]SimilarHit, 0, len(all))
 	for _, e := range all {
+		if allow != nil {
+			if _, ok := allow[e.Path]; !ok {
+				continue
+			}
+		}
 		// CosineSim (not raw dot) so legacy rows stored before the embed binary
 		// normalized its output still rank correctly.
 		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.CosineSim(query, e.Vec)})
@@ -237,14 +255,15 @@ func SimilarByPath(db *sql.DB, model, path string, limit int) ([]SimilarHit, err
 // SimilarByPathOrEmbed is like SimilarByPath but, when the query item has no
 // stored embedding for the model yet, it embeds the file on the fly so
 // "find similar" works on any media — not only already-indexed items — and
-// persists the result so subsequent searches are instant.
-func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string, limit int) ([]SimilarHit, error) {
+// persists the result so subsequent searches are instant. allow restricts the
+// results (not the query item) to a path subset; nil = whole library.
+func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string, limit int, allow PathSet) ([]SimilarHit, error) {
 	vec, ok, err := media.GetEmbedding(db, path, modelID)
 	if err != nil {
 		return nil, err
 	}
 	if ok {
-		return SearchByVector(db, modelID, vec, limit)
+		return searchByVectorWithin(db, modelID, vec, limit, allow)
 	}
 	m, found := EmbedModelByID(modelID)
 	if !found {
@@ -254,7 +273,7 @@ func SimilarByPathOrEmbed(ctx context.Context, db *sql.DB, modelID, path string,
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, m.ID, fresh, limit)
+	return searchByVectorWithin(db, m.ID, fresh, limit, allow)
 }
 
 // embedAndPersist embeds path under m, then persists + indexes the vector so
@@ -441,14 +460,15 @@ func TextQueryVector(ctx context.Context, text string) ([]float32, EmbedModel, e
 }
 
 // SearchByText encodes text via the SigLIP 2 text encoder subprocess and
-// returns the top-limit most similar media by cosine similarity. Returns an
-// error (not a panic) when the model, tokenizer, or embed binary is absent.
-func SearchByText(ctx context.Context, db *sql.DB, text string, limit int) ([]SimilarHit, error) {
+// returns the top-limit most similar media by cosine similarity, restricted
+// to allow when non-nil. Returns an error (not a panic) when the model,
+// tokenizer, or embed binary is absent.
+func SearchByText(ctx context.Context, db *sql.DB, text string, limit int, allow PathSet) ([]SimilarHit, error) {
 	vec, m, err := TextQueryVector(ctx, text)
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, m.ID, vec, limit)
+	return searchByVectorWithin(db, m.ID, vec, limit, allow)
 }
 
 // embedModelOverrideFromJob returns an explicit `--model=<id>` (or `--model

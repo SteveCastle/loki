@@ -140,19 +140,18 @@ func tokenizeCommandLine(s string) []string {
 	return tokens
 }
 
-// parseInputPaths parses newline and comma separated file paths from j.Input
+// parseInputPaths parses newline-separated file paths from j.Input. Newline
+// is the ONLY list separator: it is the one character that cannot appear in a
+// Windows path and never practically appears in a POSIX one, so every valid
+// path — including ones containing commas — survives verbatim. (Commas used
+// to be separators too, which split "C:\a, b.jpg" into two bogus paths; every
+// submitter joins with \n.)
 func parseInputPaths(raw string) []string {
 	var paths []string
 	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		for _, part := range strings.Split(line, ",") {
-			p := strings.Trim(strings.TrimSpace(part), `"'`)
-			if p != "" {
-				paths = append(paths, p)
-			}
+		p := strings.Trim(strings.TrimSpace(line), `"'`)
+		if p != "" {
+			paths = append(paths, p)
 		}
 	}
 	return paths
@@ -230,7 +229,7 @@ type resolvedItems struct {
 // resolveJobItems is the single input-resolution path for per-item tasks.
 // Precedence matches the historical behavior of every task: a search query
 // (--query / --query64, in arguments or input) wins; otherwise the input is
-// parsed as a newline/comma-separated path list (flag tokens dropped, paths
+// parsed as a newline-separated path list (flag tokens dropped, paths
 // absolutized, non-media files filtered out).
 func resolveJobItems(j *jobqueue.Job, q *jobqueue.Queue) (resolvedItems, error) {
 	return resolveJobItemsFiltered(j, q, true)

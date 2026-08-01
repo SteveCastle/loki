@@ -26,6 +26,8 @@
     padding: 8px 10px; backdrop-filter: blur(6px);
   }
   #toolbar label { color: var(--dim); }
+  #toolbar .back { color: var(--dim); text-decoration: none; margin-right: 2px; }
+  #toolbar .back:hover { color: var(--accent); }
   select, button {
     background: #151b28; color: var(--text); border: 1px solid var(--border);
     border-radius: 6px; padding: 4px 8px; font: inherit; cursor: pointer;
@@ -69,6 +71,7 @@
 <canvas id="gl"></canvas>
 
 <div id="toolbar">
+  <a class="back" href="/viz/" title="All visualizations">‹ viz</a>
   <label for="model">Model</label>
   <select id="model"></select>
   <label for="sample">Points</label>

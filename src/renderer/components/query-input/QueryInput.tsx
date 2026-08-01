@@ -127,6 +127,10 @@ export default function QueryInput({
   // "Search by meaning" mode: typed text commits as a visual: predicate.
   // Shared + sticky: stays on across palette open/close until toggled off.
   const { meaningMode, setMeaningMode } = useMeaningMode();
+  // Meaning mode only takes effect while the parent offers visual search —
+  // the gate (server reachable + logged in) can close while the sticky
+  // shared mode is still on, and the field must not keep advertising it.
+  const meaningActive = meaningMode && Boolean(onSubmitVisual);
   const toggleMeaningMode = useCallback(() => {
     setMeaningMode(!meaningMode);
     inputRef.current?.focus();
@@ -771,13 +775,13 @@ export default function QueryInput({
         </div>
       )}
       <div
-        className={`query-input-field${meaningMode ? ' meaning-mode' : ''}`}
+        className={`query-input-field${meaningActive ? ' meaning-mode' : ''}`}
       >
         <input
           ref={inputRef}
           type="text"
           placeholder={
-            meaningMode
+            meaningActive
               ? 'Describe what you’re looking for…'
               : 'Search & filter'
           }

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visualizations — Lowkey Media Server</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: rgba(17, 22, 32, 0.92);
+    --border: #232b3b;
+    --text: #d7dce6;
+    --dim: #8a93a6;
+    --accent: #6ea8ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg);
+    font: 14px/1.5 system-ui, "Segoe UI", sans-serif; color: var(--text); }
+  #wrap { max-width: 880px; margin: 0 auto; padding: 32px 20px; }
+  header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 4px; }
+  h1 { font-size: 20px; margin: 0; font-weight: 650; }
+  header a { color: var(--dim); text-decoration: none; font-size: 13px; }
+  header a:hover { color: var(--accent); }
+  p.lead { color: var(--dim); margin: 4px 0 24px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+  .card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; transition: border-color 0.15s, transform 0.15s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .card h2 { font-size: 15px; margin: 0 0 6px; font-weight: 600; color: var(--accent); }
+  .card p { margin: 0; color: var(--dim); font-size: 13px; }
+  .card .preview {
+    height: 96px; border-radius: 8px; margin-bottom: 12px;
+    border: 1px solid var(--border); overflow: hidden; position: relative;
+  }
+  /* Tiny handmade previews so the hub reads at a glance — no images to embed. */
+  .preview.scatter { background:
+    radial-gradient(2px 2px at 18% 40%, #6ea8ff 50%, transparent 51%),
+    radial-gradient(2px 2px at 26% 62%, #6ea8ff 50%, transparent 51%),
+    radial-gradient(2px 2px at 34% 30%, #8fc0ff 50%, transparent 51%),
+    radial-gradient(2px 2px at 43% 55%, #6ea8ff 50%, transparent 51%),
+    radial-gradient(2px 2px at 55% 38%, #b06eff 50%, transparent 51%),
+    radial-gradient(2px 2px at 61% 66%, #b06eff 50%, transparent 51%),
+    radial-gradient(2px 2px at 70% 28%, #ff8f6e 50%, transparent 51%),
+    radial-gradient(2px 2px at 78% 52%, #ff8f6e 50%, transparent 51%),
+    radial-gradient(2px 2px at 86% 40%, #ffd36e 50%, transparent 51%),
+    radial-gradient(140% 120% at 50% 120%, #131a29, #0d1119); }
+  .preview.treemap { display: flex; gap: 2px; padding: 4px; background: #0d1119; }
+  .preview.treemap i { border-radius: 2px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <header>
+    <h1>Visualizations</h1>
+    <a href="/">‹ back to server</a>
+  </header>
+  <p class="lead">Interactive views of the library and its indexes. Both run entirely from this server — no external services.</p>
+
+  <div class="cards">
+    <a class="card" href="/viz/embeddings">
+      <div class="preview scatter"></div>
+      <h2>Embedding Space</h2>
+      <p>3D scatter of the visual-embedding index (PCA projection). Orbit and zoom the point
+        cloud, hover points to preview media, and switch models to compare how each one
+        clusters the same library.</p>
+    </a>
+
+    <a class="card" href="/viz/treemap">
+      <div class="preview treemap">
+        <i style="flex:5; background:linear-gradient(135deg,#4d7fd6,#31519a)"></i>
+        <div style="flex:3; display:flex; flex-direction:column; gap:2px">
+          <i style="flex:3; background:linear-gradient(135deg,#c95e8f,#8f3a63)"></i>
+          <i style="flex:2; background:linear-gradient(135deg,#4aa06a,#2f6a45)"></i>
+        </div>
+        <div style="flex:2; display:flex; flex-direction:column; gap:2px">
+          <i style="flex:2; background:linear-gradient(135deg,#b8873d,#7d5a26)"></i>
+          <i style="flex:1; background:#3a4254"></i>
+          <i style="flex:1; background:linear-gradient(135deg,#7d5ec9,#54408c)"></i>
+        </div>
+      </div>
+      <h2>Path Coverage</h2>
+      <p>WinDirStat-style treemap of where items live on disk and how much of each folder the
+        indexes cover — tabs for raw items, tag rows, and every embedding and face table.
+        Click folders to dive in.</p>
+    </a>
+  </div>
+</div>
+</body>
+</html>

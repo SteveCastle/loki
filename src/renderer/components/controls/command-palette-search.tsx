@@ -19,6 +19,7 @@ import type { Predicate } from '../../query/types';
 import { getNextFilterMode } from '../../../settings';
 import { useSearchHistory } from '../../hooks/useSearchHistory';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
+import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
 import { useAfterPaint } from '../../hooks/useAfterPaint';
 import QueryInput from '../query-input/QueryInput';
 import CommandPaletteResults from './command-palette-results';
@@ -41,6 +42,10 @@ export default function CommandPaletteSearch({
     libraryService,
     (s: any) => s.context.settings.filteringMode
   );
+  const authToken = useSelector(
+    libraryService,
+    (s: any) => s.context.authToken
+  );
 
   const currentPath = currentItem?.path;
 
@@ -51,6 +56,9 @@ export default function CommandPaletteSearch({
   // tag-suggestion surface is suppressed (it's irrelevant to semantic search).
   // Shared + sticky (useMeaningMode) — survives the palette closing/reopening.
   const { meaningMode } = useMeaningMode();
+  // Vector search needs a reachable, logged-in media server (Electron); the
+  // ✨ toggle is hidden and meaning mode force-disabled without one.
+  const visualSearchAvailable = useVisualSearchAvailable(authToken);
   // Index into `navItems` of the currently highlighted result. Enter commits
   // it; arrow keys move it; the top result is highlighted by default.
   const [highlightIndex, setHighlightIndex] = useState(0);
@@ -175,16 +183,25 @@ export default function CommandPaletteSearch({
           libraryService.send({ type: 'CLEAR_QUERY' });
           clearText();
         }}
-        onSubmitVisual={(t) => {
-          libraryService.send({
-            type: 'ADD_PREDICATE',
-            data: {
-              predicate: { type: 'visual', value: t, exclude: false, join },
-            },
-          });
-          clearText();
-          setHighlightIndex(0);
-        }}
+        onSubmitVisual={
+          visualSearchAvailable
+            ? (t) => {
+                libraryService.send({
+                  type: 'ADD_PREDICATE',
+                  data: {
+                    predicate: {
+                      type: 'visual',
+                      value: t,
+                      exclude: false,
+                      join,
+                    },
+                  },
+                });
+                clearText();
+                setHighlightIndex(0);
+              }
+            : undefined
+        }
         resultNavCount={navItems.length}
         onResultNavMove={moveHighlight}
         onResultNavSubmit={() => {
@@ -192,7 +209,7 @@ export default function CommandPaletteSearch({
         }}
       />
 
-      {meaningMode && (
+      {meaningMode && visualSearchAvailable && (
         <div className="commandPaletteMeaningHint">
           {hasText ? (
             <>

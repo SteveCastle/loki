@@ -10,7 +10,7 @@ import (
 
 // itemsTestResolver mimics the shape of tasks.ResolveItems: nil when a query
 // flag is present (membership unknown until claim), else the input parsed as
-// a comma-separated path list.
+// a newline-separated path list.
 func itemsTestResolver(command string, arguments []string, input string) []string {
 	for _, a := range arguments {
 		if strings.HasPrefix(a, "--query") {
@@ -18,7 +18,7 @@ func itemsTestResolver(command string, arguments []string, input string) []strin
 		}
 	}
 	var out []string
-	for _, p := range strings.Split(input, ",") {
+	for _, p := range strings.Split(input, "\n") {
 		if p = strings.TrimSpace(p); p != "" && !strings.HasPrefix(p, "--") {
 			out = append(out, p)
 		}

@@ -29,6 +29,7 @@ import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
+import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
 
 const VIRTUALIZE_THRESHOLD = 300;
 
@@ -92,6 +93,10 @@ export default function Taxonomy() {
     libraryService,
     (state) => state.context.canWrite
   );
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken
+  );
 
   const state = useSelector(
     libraryService,
@@ -112,6 +117,9 @@ export default function Taxonomy() {
   // predicate instead of filtering the tag tree. Shared + sticky with the
   // command palette (useMeaningMode) — stays on until the user toggles it off.
   const { meaningMode } = useMeaningMode();
+  // Vector search needs a reachable, logged-in media server (Electron); the
+  // ✨ toggle is hidden and meaning mode force-disabled without one.
+  const visualSearchAvailable = useVisualSearchAvailable(authToken);
   // Set once the search input has been focused. Used to warm the full-tag
   // fetch (and worker index) before the first keystroke so the initial search
   // isn't stalled waiting on the network. Stays true for the session — with
@@ -377,22 +385,26 @@ export default function Taxonomy() {
                 data: { key, index, patch },
               })
             }
-            onSubmitVisual={(t) => {
-              libraryService.send({
-                type: 'ADD_PREDICATE',
-                data: {
-                  predicate: {
-                    type: 'visual',
-                    value: t,
-                    exclude: false,
-                    join: filteringMode === 'OR' ? 'OR' : 'AND',
-                  },
-                },
-              });
-              setTagFilterInput('');
-              setTagFilter('');
-              debouncedSetTagFilter.current.cancel();
-            }}
+            onSubmitVisual={
+              visualSearchAvailable
+                ? (t) => {
+                    libraryService.send({
+                      type: 'ADD_PREDICATE',
+                      data: {
+                        predicate: {
+                          type: 'visual',
+                          value: t,
+                          exclude: false,
+                          join: filteringMode === 'OR' ? 'OR' : 'AND',
+                        },
+                      },
+                    });
+                    setTagFilterInput('');
+                    setTagFilter('');
+                    debouncedSetTagFilter.current.cancel();
+                  }
+                : undefined
+            }
             onClearText={() => {
               setTagFilterInput('');
               setTagFilter('');

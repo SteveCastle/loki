@@ -492,6 +492,12 @@ func TestRemoveItemsFromDB(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to insert test tag: %v", err)
 		}
+
+		_, err = db.Exec("INSERT INTO media_embedding (media_path, model, dim, vector) VALUES (?, 'siglip2', 2, ?)",
+			path, []byte{0, 1})
+		if err != nil {
+			t.Fatalf("Failed to insert test embedding: %v", err)
+		}
 	}
 
 	// Test removing items
@@ -517,6 +523,23 @@ func TestRemoveItemsFromDB(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("Expected 1 remaining media item, got %d", count)
+	}
+
+	// Embeddings for the removed paths must go with them; the survivor keeps its row.
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{testPaths[0], 0},
+		{testPaths[1], 0},
+		{testPaths[2], 1},
+	} {
+		if err := db.QueryRow("SELECT COUNT(*) FROM media_embedding WHERE media_path = ?", tc.path).Scan(&count); err != nil {
+			t.Fatalf("Failed to count embeddings for %s: %v", tc.path, err)
+		}
+		if count != tc.want {
+			t.Errorf("Expected %d embedding rows for %s after removal, got %d", tc.want, tc.path, count)
+		}
 	}
 
 	// Test with empty slice

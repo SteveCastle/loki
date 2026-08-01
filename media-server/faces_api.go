@@ -116,7 +116,7 @@ func lokiFaceSearchHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "image body required", http.StatusBadRequest)
 			return
 		}
-		hits, err := tasks.SearchFacesByImage(r.Context(), deps.DB, body, searchLimit(r, 100, 500))
+		hits, err := tasks.SearchFacesByImage(r.Context(), deps.DB, body, searchLimit(r, 100, 500), nil)
 		if err != nil {
 			if errors.Is(err, tasks.ErrNoFaceInQuery) {
 				httpError(w, err.Error(), http.StatusUnprocessableEntity)

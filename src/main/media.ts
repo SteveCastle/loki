@@ -326,7 +326,11 @@ const loadMediaByDescriptionSearch =
   `;
 
     try {
-      const mediaRows = await db.all(sql, params, 'loadMediaByDescriptionSearch');
+      const mediaRows = await db.all(
+        sql,
+        params,
+        'loadMediaByDescriptionSearch'
+      );
 
       const library = mediaRows.map((m: any) => ({
         path: m.path,
@@ -427,7 +431,11 @@ const loadMediaByTags =
     }
   };
 
-type FetchMediaPreviewInput = [filePath: string, cache?: string, timeStamp?: number];
+type FetchMediaPreviewInput = [
+  filePath: string,
+  cache?: string,
+  timeStamp?: number
+];
 const fetchMediaPreview =
   (db: Database, store: Store) =>
   (_: IpcMainInvokeEvent, args: FetchMediaPreviewInput) => {
@@ -594,10 +602,12 @@ const deleteMedia =
       console.error('Error trashing file, trying unlink:');
       await fs.promises.unlink(filePath);
     }
-    db.run('DELETE FROM media WHERE path = ?', [filePath]);
-    db.run('DELETE FROM media_tag_by_category WHERE media_path = ?', [
-      filePath,
-    ]);
+    // Same cleanup as forgetMedia: every index that stores the path (tags,
+    // embeddings, faces + their assertions, scan markers, battle log) — not
+    // just the media row. Runs only after the file is actually gone; if both
+    // trash and unlink threw above, the rows stay so the item remains
+    // recoverable via the media-unavailable panel.
+    return eraseMediaReferences(db, filePath);
   };
 
 // moveMedia: the bookkeeping half of moving a file on disk — re-point every
@@ -642,7 +652,9 @@ export class MoveConflictError extends Error {
     super(
       conflicts.length === 1
         ? `destination already exists in the library: ${conflicts[0]}`
-        : `${conflicts.length} destination paths already exist in the library (e.g. ${conflicts
+        : `${
+            conflicts.length
+          } destination paths already exist in the library (e.g. ${conflicts
             .slice(0, 3)
             .join(', ')})`
     );
@@ -807,122 +819,132 @@ async function tableExists(db: Database, name: string): Promise<boolean> {
   return !!row;
 }
 
+// eraseMediaReferences: the one routine that removes EVERY database reference
+// to a path. Shared by forgetMedia (file already gone), deleteMedia (file just
+// trashed), and mergeDuplicatesByPath (duplicate just trashed) so the table
+// list can never drift between them — this mirrors MOVABLE_PATH_COLUMNS above,
+// plus the face-id-keyed assertion tables that only deletion has to clean.
+export async function eraseMediaReferences(
+  db: Database,
+  filePath: string
+): Promise<ForgetMediaResult> {
+  const result: ForgetMediaResult = {
+    path: filePath,
+    tags: 0,
+    media: 0,
+    embeddings: 0,
+    faces: 0,
+    battles: 0,
+  };
+  const [hasEmbeddings, hasFaces, hasFaceScan, hasPerson] = await Promise.all(
+    ['media_embedding', 'face', 'face_scan', 'person'].map((t) =>
+      tableExists(db, t)
+    )
+  );
+
+  await db.withTransaction(async () => {
+    const tags = await db.run(
+      'DELETE FROM media_tag_by_category WHERE media_path = ?',
+      [filePath],
+      'forgetMedia:tags'
+    );
+    result.tags = tags.changes;
+
+    if (hasEmbeddings) {
+      const embeddings = await db.run(
+        'DELETE FROM media_embedding WHERE media_path = ?',
+        [filePath],
+        'forgetMedia:embeddings'
+      );
+      result.embeddings = embeddings.changes;
+    }
+
+    if (hasFaces) {
+      // Curation assertions and cover pointers reference face ids, so they
+      // have to go before the face rows they point at — otherwise the
+      // subqueries below match nothing and the rows are orphaned forever.
+      if (hasPerson) {
+        await db.run(
+          `UPDATE person SET cover_face_id = NULL
+             WHERE cover_face_id IN (SELECT id FROM face WHERE media_path = ?)`,
+          [filePath],
+          'forgetMedia:personCover'
+        );
+      }
+      const constraintDeletes: Array<{
+        table: string;
+        sql: string;
+        params: string[];
+      }> = [
+        {
+          table: 'face_veto',
+          sql: `DELETE FROM face_veto
+                  WHERE face_id IN (SELECT id FROM face WHERE media_path = ?)`,
+          params: [filePath],
+        },
+        {
+          table: 'face_cannot_link',
+          sql: `DELETE FROM face_cannot_link
+                  WHERE face_a IN (SELECT id FROM face WHERE media_path = ?)
+                     OR face_b IN (SELECT id FROM face WHERE media_path = ?)`,
+          params: [filePath, filePath],
+        },
+        {
+          table: 'face_group_ban_member',
+          sql: `DELETE FROM face_group_ban_member
+                  WHERE face_id IN (SELECT id FROM face WHERE media_path = ?)`,
+          params: [filePath],
+        },
+      ];
+      for (const del of constraintDeletes) {
+        // Each constraint table is itself optional on older libraries.
+        // eslint-disable-next-line no-await-in-loop
+        if (!(await tableExists(db, del.table))) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await db.run(del.sql, del.params, `forgetMedia:${del.table}`);
+      }
+      const faces = await db.run(
+        'DELETE FROM face WHERE media_path = ?',
+        [filePath],
+        'forgetMedia:faces'
+      );
+      result.faces = faces.changes;
+    }
+    if (hasFaceScan) {
+      await db.run(
+        'DELETE FROM face_scan WHERE media_path = ?',
+        [filePath],
+        'forgetMedia:faceScan'
+      );
+    }
+
+    // Battle-log rows name the path directly; leaving them would keep a
+    // deleted item in the Elo history and in rematch suppression.
+    const battles = await db.run(
+      'DELETE FROM battle WHERE winner_path = ? OR loser_path = ?',
+      [filePath, filePath],
+      'forgetMedia:battles'
+    );
+    result.battles = battles.changes;
+
+    const media = await db.run(
+      'DELETE FROM media WHERE path = ?',
+      [filePath],
+      'forgetMedia:media'
+    );
+    result.media = media.changes;
+  });
+
+  return result;
+}
+
 const forgetMedia =
   (db: Database) =>
   async (
     _: IpcMainInvokeEvent,
     args: ForgetMediaInput
-  ): Promise<ForgetMediaResult> => {
-    const filePath = args[0];
-    const result: ForgetMediaResult = {
-      path: filePath,
-      tags: 0,
-      media: 0,
-      embeddings: 0,
-      faces: 0,
-      battles: 0,
-    };
-    const [hasEmbeddings, hasFaces, hasFaceScan, hasPerson] = await Promise.all(
-      ['media_embedding', 'face', 'face_scan', 'person'].map((t) =>
-        tableExists(db, t)
-      )
-    );
-
-    await db.withTransaction(async () => {
-      const tags = await db.run(
-        'DELETE FROM media_tag_by_category WHERE media_path = ?',
-        [filePath],
-        'forgetMedia:tags'
-      );
-      result.tags = tags.changes;
-
-      if (hasEmbeddings) {
-        const embeddings = await db.run(
-          'DELETE FROM media_embedding WHERE media_path = ?',
-          [filePath],
-          'forgetMedia:embeddings'
-        );
-        result.embeddings = embeddings.changes;
-      }
-
-      if (hasFaces) {
-        // Curation assertions and cover pointers reference face ids, so they
-        // have to go before the face rows they point at — otherwise the
-        // subqueries below match nothing and the rows are orphaned forever.
-        if (hasPerson) {
-          await db.run(
-            `UPDATE person SET cover_face_id = NULL
-             WHERE cover_face_id IN (SELECT id FROM face WHERE media_path = ?)`,
-            [filePath],
-            'forgetMedia:personCover'
-          );
-        }
-        const constraintDeletes: Array<{
-          table: string;
-          sql: string;
-          params: string[];
-        }> = [
-          {
-            table: 'face_veto',
-            sql: `DELETE FROM face_veto
-                  WHERE face_id IN (SELECT id FROM face WHERE media_path = ?)`,
-            params: [filePath],
-          },
-          {
-            table: 'face_cannot_link',
-            sql: `DELETE FROM face_cannot_link
-                  WHERE face_a IN (SELECT id FROM face WHERE media_path = ?)
-                     OR face_b IN (SELECT id FROM face WHERE media_path = ?)`,
-            params: [filePath, filePath],
-          },
-          {
-            table: 'face_group_ban_member',
-            sql: `DELETE FROM face_group_ban_member
-                  WHERE face_id IN (SELECT id FROM face WHERE media_path = ?)`,
-            params: [filePath],
-          },
-        ];
-        for (const del of constraintDeletes) {
-          // Each constraint table is itself optional on older libraries.
-          // eslint-disable-next-line no-await-in-loop
-          if (!(await tableExists(db, del.table))) continue;
-          // eslint-disable-next-line no-await-in-loop
-          await db.run(del.sql, del.params, `forgetMedia:${del.table}`);
-        }
-        const faces = await db.run(
-          'DELETE FROM face WHERE media_path = ?',
-          [filePath],
-          'forgetMedia:faces'
-        );
-        result.faces = faces.changes;
-      }
-      if (hasFaceScan) {
-        await db.run(
-          'DELETE FROM face_scan WHERE media_path = ?',
-          [filePath],
-          'forgetMedia:faceScan'
-        );
-      }
-
-      // Battle-log rows name the path directly; leaving them would keep a
-      // deleted item in the Elo history and in rematch suppression.
-      const battles = await db.run(
-        'DELETE FROM battle WHERE winner_path = ? OR loser_path = ?',
-        [filePath, filePath],
-        'forgetMedia:battles'
-      );
-      result.battles = battles.changes;
-
-      const media = await db.run(
-        'DELETE FROM media WHERE path = ?',
-        [filePath],
-        'forgetMedia:media'
-      );
-      result.media = media.changes;
-    });
-
-    return result;
-  };
+  ): Promise<ForgetMediaResult> =>
+    eraseMediaReferences(db, args[0]);
 
 // Function to calculate file hash
 async function calculateFileHash(filePath: string): Promise<string> {
@@ -1100,11 +1122,10 @@ const mergeDuplicatesByPath =
               await fs.promises.unlink(dupPath);
             } catch {}
           }
-          await db.run('DELETE FROM media WHERE path = ?', [dupPath]);
-          await db.run(
-            'DELETE FROM media_tag_by_category WHERE media_path = ?',
-            [dupPath]
-          );
+          // Full reference cleanup, same as delete: the duplicate's
+          // embeddings, faces, scan markers, and battle rows would otherwise
+          // orphan (its tags were already copied to the merge target above).
+          await eraseMediaReferences(db, dupPath);
           deleted.push(dupPath);
         } catch (e) {
           console.error('Failed to delete duplicate', dupPath, e);
@@ -1219,7 +1240,7 @@ type ImportFilesInput = [
     destination: string;
     move: boolean;
     tags: { label: string; category: string }[];
-  },
+  }
 ];
 
 const importFiles =
@@ -1252,11 +1273,18 @@ const importFiles =
         let counter = 1;
         while (true) {
           try {
-            await fs.promises.copyFile(sourcePath, destPath, fs.constants.COPYFILE_EXCL);
+            await fs.promises.copyFile(
+              sourcePath,
+              destPath,
+              fs.constants.COPYFILE_EXCL
+            );
             break; // Success
           } catch (err: any) {
             if (err.code === 'EEXIST' && counter < 10000) {
-              destPath = path.join(destination, `${nameWithoutExt}_${counter}${ext}`);
+              destPath = path.join(
+                destination,
+                `${nameWithoutExt}_${counter}${ext}`
+              );
               counter++;
             } else {
               throw err;

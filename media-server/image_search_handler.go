@@ -58,7 +58,7 @@ func lokiImageSearchHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "image body required", http.StatusBadRequest)
 			return
 		}
-		hits, err := tasks.SearchByImage(r.Context(), deps.DB, image, 50)
+		hits, err := tasks.SearchByImage(r.Context(), deps.DB, image, 50, nil)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return

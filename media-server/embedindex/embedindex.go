@@ -47,6 +47,10 @@ type VectorIndex interface {
 	// Search returns up to k nearest neighbours to query, ordered by
 	// descending cosine similarity. The query is L2-normalized internally.
 	Search(query []float32, k int) []SearchHit
+	// SearchFiltered is Search restricted to the paths in allow (nil = no
+	// restriction). Only allowed vectors are scored, so a narrow allow set
+	// costs less than a full scan, not more.
+	SearchFiltered(query []float32, k int, allow map[string]struct{}) []SearchHit
 	// Len returns the number of vectors in the index.
 	Len() int
 }
@@ -133,14 +137,87 @@ func (x *exactIndex) Search(query []float32, k int) []SearchHit {
 	for _, i := range top {
 		hits = append(hits, SearchHit{Path: x.paths[i], Score: scores[i]})
 	}
-	// Deterministic order: score descending, then path ascending on ties.
+	sortHits(hits)
+	return hits
+}
+
+// SearchFiltered scans only the vectors whose path is in allow, so the cost is
+// O(|allow|·dim) rather than O(N·dim). Slot collection iterates whichever of
+// allow / the index is smaller; either way paths absent from the other side
+// are simply skipped.
+func (x *exactIndex) SearchFiltered(query []float32, k int, allow map[string]struct{}) []SearchHit {
+	if allow == nil {
+		return x.Search(query, k)
+	}
+	if len(x.paths) == 0 || k <= 0 || len(allow) == 0 {
+		return nil
+	}
+	var slots []int
+	if len(allow) < len(x.paths) {
+		slots = make([]int, 0, len(allow))
+		for p := range allow {
+			if i, ok := x.slot[p]; ok {
+				slots = append(slots, i)
+			}
+		}
+	} else {
+		slots = make([]int, 0, len(x.paths))
+		for i, p := range x.paths {
+			if _, ok := allow[p]; ok {
+				slots = append(slots, i)
+			}
+		}
+	}
+	n := len(slots)
+	if n == 0 {
+		return nil
+	}
+	q := embedvec.Normalize(query)
+
+	scores := make([]float32, n) // scores[j] belongs to slots[j]
+	workers := runtime.NumCPU()
+	if workers > n {
+		workers = n
+	}
+	chunk := (n + workers - 1) / workers
+	var wg sync.WaitGroup
+	for lo := 0; lo < n; lo += chunk {
+		hi := lo + chunk
+		if hi > n {
+			hi = n
+		}
+		wg.Add(1)
+		go func(lo, hi int) {
+			defer wg.Done()
+			for j := lo; j < hi; j++ {
+				scores[j] = embedvec.Cosine(q, x.vecs[slots[j]])
+			}
+		}(lo, hi)
+	}
+	wg.Wait()
+
+	if k > n {
+		k = n
+	}
+	top := topKIndices(scores, k)
+
+	hits := make([]SearchHit, 0, k)
+	for _, j := range top {
+		hits = append(hits, SearchHit{Path: x.paths[slots[j]], Score: scores[j]})
+	}
+	sortHits(hits)
+	return hits
+}
+
+// sortHits orders hits deterministically: score descending, then path
+// ascending on ties.
+func sortHits(hits []SearchHit) {
 	sort.Slice(hits, func(a, b int) bool {
 		if hits[a].Score != hits[b].Score {
 			return hits[a].Score > hits[b].Score
 		}
 		return hits[a].Path < hits[b].Path
 	})
-	return hits
 }
 
 // topKIndices selects the indices of the k largest scores using a min-heap of

@@ -4112,8 +4112,8 @@
 
         function getItemCount(job) {
           if (!job.input) return null;
-          // Count items (newlines or commas depending on format)
-          const lines = job.input.split(/[\n,]/).filter((l) => l.trim());
+          // Paths are newline-separated (commas are valid path characters).
+          const lines = job.input.split('\n').filter((l) => l.trim());
           return lines.length;
         }
 

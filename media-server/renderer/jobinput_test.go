@@ -45,7 +45,8 @@ func TestJobInputView_Paths(t *testing.T) {
 		{`C:\Users\me\pic.jpg`, []string{`C:\Users\me\pic.jpg`}},
 		{"/home/me/a.png", []string{"/home/me/a.png"}},
 		{"/a/b.jpg\n/c/d.png", []string{"/a/b.jpg", "/c/d.png"}},
-		{"/a/b.jpg, /c/d.png", []string{"/a/b.jpg", "/c/d.png"}},
+		// Commas are valid path characters, never separators.
+		{`C:\shots\foo, bar.jpg`, []string{`C:\shots\foo, bar.jpg`}},
 		{`"C:/My Folder/clip.mp4"`, []string{`C:/My Folder/clip.mp4`}},
 		{"holiday.jpeg", []string{"holiday.jpeg"}}, // bare filename w/ media ext
 	}

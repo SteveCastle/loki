@@ -64,13 +64,15 @@ func decodeQuery64(input string) (query, prefix string, ok bool) {
 }
 
 // asPathList returns the input split into paths when it looks like a path or a
-// (newline/comma-separated) list of paths and carries no CLI flags.
+// (newline-separated) list of paths and carries no CLI flags. Newline-only,
+// matching tasks.parseInputPaths — commas are valid path characters, so a
+// comma must never split a path in two here either.
 func asPathList(input string) ([]string, bool) {
 	if strings.Contains(input, "--") {
 		return nil, false // has flags → not a plain path list
 	}
 	parts := strings.FieldsFunc(input, func(r rune) bool {
-		return r == '\n' || r == '\r' || r == ','
+		return r == '\n' || r == '\r'
 	})
 	var paths []string
 	for _, p := range parts {

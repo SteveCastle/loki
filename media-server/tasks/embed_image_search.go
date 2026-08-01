@@ -48,15 +48,16 @@ func ImageQueryVectorForBytes(ctx context.Context, m EmbedModel, image []byte) (
 }
 
 // SearchByImage embeds an arbitrary image (e.g. a captured screen region) with
-// the active model's image encoder and returns the top-limit most similar media.
-// Returns an error (not a panic) when the model or embed binary is absent.
-func SearchByImage(ctx context.Context, db *sql.DB, image []byte, limit int) ([]SimilarHit, error) {
+// the active model's image encoder and returns the top-limit most similar
+// media, restricted to allow when non-nil. Returns an error (not a panic)
+// when the model or embed binary is absent.
+func SearchByImage(ctx context.Context, db *sql.DB, image []byte, limit int, allow PathSet) ([]SimilarHit, error) {
 	model := ActiveEmbedModel()
 	vec, err := ImageQueryVectorForBytes(ctx, model, image)
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, model.ID, vec, limit)
+	return searchByVectorWithin(db, model.ID, vec, limit, allow)
 }
 
 // QueryTerm is one component of a composite latent-space query: a library
@@ -75,7 +76,8 @@ type QueryTerm struct {
 // the top-limit most similar media. With any text term present all terms are
 // embedded with the multimodal text-search model so they share a space;
 // otherwise the active embed model is used (matching plain similar: search).
-func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit int) ([]SimilarHit, error) {
+// allow restricts the results to a path subset; nil = whole library.
+func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit int, allow PathSet) ([]SimilarHit, error) {
 	if len(terms) == 0 {
 		return nil, fmt.Errorf("composite query has no terms")
 	}
@@ -113,7 +115,7 @@ func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, m.ID, combined, limit)
+	return searchByVectorWithin(db, m.ID, combined, limit, allow)
 }
 
 func truncateForLog(s string) string {
@@ -127,8 +129,9 @@ func truncateForLog(s string) string {
 // embedding into one query vector ((1-w)*image + w*text, renormalized) and
 // returns the top-limit most similar media. textWeight 0 = pure image,
 // 1 = pure text. Both vectors come from the multimodal text-search model so
-// they share one embedding space.
-func SearchByPathAndText(ctx context.Context, db *sql.DB, path, text string, textWeight float32, limit int) ([]SimilarHit, error) {
+// they share one embedding space. allow restricts the results to a path
+// subset; nil = whole library.
+func SearchByPathAndText(ctx context.Context, db *sql.DB, path, text string, textWeight float32, limit int, allow PathSet) ([]SimilarHit, error) {
 	tvec, m, err := TextQueryVector(ctx, text)
 	if err != nil {
 		return nil, err
@@ -141,12 +144,12 @@ func SearchByPathAndText(ctx context.Context, db *sql.DB, path, text string, tex
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, m.ID, blended, limit)
+	return searchByVectorWithin(db, m.ID, blended, limit, allow)
 }
 
 // SearchByImageAndText is SearchByPathAndText for raw image bytes (a captured
 // screen region) instead of a library item.
-func SearchByImageAndText(ctx context.Context, db *sql.DB, image []byte, text string, textWeight float32, limit int) ([]SimilarHit, error) {
+func SearchByImageAndText(ctx context.Context, db *sql.DB, image []byte, text string, textWeight float32, limit int, allow PathSet) ([]SimilarHit, error) {
 	tvec, m, err := TextQueryVector(ctx, text)
 	if err != nil {
 		return nil, err
@@ -159,5 +162,5 @@ func SearchByImageAndText(ctx context.Context, db *sql.DB, image []byte, text st
 	if err != nil {
 		return nil, err
 	}
-	return SearchByVector(db, m.ID, blended, limit)
+	return searchByVectorWithin(db, m.ID, blended, limit, allow)
 }

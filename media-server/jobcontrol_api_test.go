@@ -108,8 +108,10 @@ func TestCreateHashJobEndToEnd(t *testing.T) {
 		paths = append(paths, p)
 	}
 
+	// Newline-joined inside one quoted token — the multi-path convention
+	// (commas are valid path characters, so they never separate paths).
 	rr := jobCtlPost(t, mux, "/create", map[string]any{
-		"input": `hash "` + strings.Join(paths, ",") + `"`,
+		"input": `hash "` + strings.Join(paths, "\n") + `"`,
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create status = %d: %s", rr.Code, rr.Body.String())

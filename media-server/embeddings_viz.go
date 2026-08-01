@@ -14,6 +14,7 @@ import (
 // -----------------------------------------------------------------------------
 // Embedding-space visualization (shared across all platform mains).
 //
+//   GET /viz/                        — index page listing all visualizations
 //   GET /viz/embeddings              — WebGL 3D scatter of the embedding space
 //   GET /api/embeddings/projection   — PCA-projected [x,y,z] points for a model
 //
@@ -25,11 +26,34 @@ import (
 //go:embed vizstatic/embeddings.html
 var embeddingsVizHTML []byte
 
-// RegisterVizRoutes wires the visualization page + its data API onto mux.
+//go:embed vizstatic/index.html
+var vizIndexHTML []byte
+
+// RegisterVizRoutes wires the visualization pages + their data APIs onto mux.
 // Called from each platform's main file alongside the other API routes.
 func RegisterVizRoutes(mux *http.ServeMux, deps *Dependencies) {
+	// "/viz/" (subtree) also makes ServeMux 301 bare "/viz" here; the specific
+	// page patterns below are longer, so they win over the index.
+	mux.HandleFunc("/viz/", renderer.ApplyMiddlewares(vizIndexPageHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/viz/embeddings", renderer.ApplyMiddlewares(embeddingsVizPageHandler(), renderer.RoleAdmin))
 	mux.HandleFunc("/api/embeddings/projection", renderer.ApplyMiddlewares(embeddingsProjectionHandler(deps), renderer.RoleAdmin))
+
+	// Path-coverage treemap (treemap_viz.go).
+	tm := newTreemapAPI(deps)
+	mux.HandleFunc("/viz/treemap", renderer.ApplyMiddlewares(treemapPageHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/api/treemap", renderer.ApplyMiddlewares(tm.dataHandler(), renderer.RoleAdmin))
+	mux.HandleFunc("/api/treemap/metrics", renderer.ApplyMiddlewares(treemapMetricsHandler(deps), renderer.RoleAdmin))
+}
+
+func vizIndexPageHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			httpError(w, "use GET", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(vizIndexHTML)
+	}
 }
 
 func embeddingsVizPageHandler() http.HandlerFunc {

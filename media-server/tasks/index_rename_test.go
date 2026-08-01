@@ -33,7 +33,7 @@ func TestIndexRenamePathMovesTheVectorToTheNewPath(t *testing.T) {
 	}
 	IndexRenamePath(db, from, to)
 
-	hits, ok := indexSearch(model, []float32{1, 0, 0}, 5)
+	hits, ok := indexSearch(model, []float32{1, 0, 0}, 5, nil)
 	if !ok {
 		t.Fatal("no index installed")
 	}

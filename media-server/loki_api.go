@@ -337,7 +337,7 @@ func lokiSimilarHandler(deps *Dependencies) http.HandlerFunc {
 				limit = n
 			}
 		}
-		hits, err := tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, path, limit)
+		hits, err := tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, path, limit, nil)
 		if err != nil {
 			log.Printf("similar search failed (path=%q model=%q): %v", path, tasks.ActiveEmbedModel().ID, err)
 			httpError(w, err.Error(), http.StatusInternalServerError)
@@ -360,7 +360,7 @@ func lokiVisualSearchHandler(deps *Dependencies) http.HandlerFunc {
 				limit = n
 			}
 		}
-		hits, err := tasks.SearchByText(r.Context(), deps.DB, q, limit)
+		hits, err := tasks.SearchByText(r.Context(), deps.DB, q, limit, nil)
 		if err != nil {
 			log.Printf("visual (text) search failed (q=%q): %v", q, err)
 			httpError(w, err.Error(), http.StatusInternalServerError)
@@ -454,6 +454,79 @@ func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
 	})
 }
 
+// isVisualPredicate reports whether p is resolved via the embedding backend —
+// the same guard the resolution loop and platform.ts use: a visual type with a
+// non-empty value.
+func isVisualPredicate(p Predicate) bool {
+	return (p.Type == "similar" || p.Type == "visual" || p.Type == "clip" || p.Type == "face") &&
+		p.Value != ""
+}
+
+// allAndPredicates reports whether every connector in the left-to-right
+// predicate chain is AND, mirroring BuildMediaQuery: a predicate's explicit
+// Join overrides mode, and empty-value predicates don't participate.
+func allAndPredicates(preds []Predicate, mode string) bool {
+	defaultJoin := "AND"
+	if mode == "OR" {
+		defaultJoin = "OR"
+	}
+	first := true
+	for _, p := range preds {
+		if p.Value == "" {
+			continue
+		}
+		if first {
+			// The first valid predicate is the base; its own Join is unused.
+			first = false
+			continue
+		}
+		join := p.Join
+		if join != "AND" && join != "OR" {
+			join = defaultJoin
+		}
+		if join != "AND" {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveFilterPaths runs the query's NON-visual predicates and returns the
+// matching path set — the universe an all-AND query's similarity scans are
+// restricted to. A broad filter can return a large set; that is the price of
+// filter-first semantics, and the subsequent vector scan only scores this set,
+// so narrow filters make the search cheaper, not costlier.
+func resolveFilterPaths(deps *Dependencies, preds []Predicate, mode string) (tasks.PathSet, error) {
+	sqlPreds := make([]Predicate, 0, len(preds))
+	for _, p := range preds {
+		switch p.Type {
+		case "similar", "visual", "clip", "face":
+			continue
+		}
+		sqlPreds = append(sqlPreds, p)
+	}
+	querySQL, params := BuildMediaQuery(sqlPreds, mode)
+	rows, err := deps.DB.Query(querySQL, params...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	allow := tasks.PathSet{}
+	for rows.Next() {
+		// Same 9-column positional scan as the result loop; only path is kept.
+		var path string
+		var elo, weight, timeStamp sql.NullFloat64
+		var height, width, createdAt, battles sql.NullInt64
+		var tagLabel sql.NullString
+		if err := rows.Scan(&path, &elo, &height, &width,
+			&weight, &tagLabel, &timeStamp, &createdAt, &battles); err != nil {
+			continue
+		}
+		allow[path] = struct{}{}
+	}
+	return allow, rows.Err()
+}
+
 func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 	type queryRequest struct {
 		Predicates []Predicate `json:"predicates"`
@@ -461,9 +534,12 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 	}
 	// Candidate cap for visual predicates: we pull the top-N most similar paths
 	// from the ANN/brute-force search, then compose them with the other SQL
-	// predicates. A composite like `visual:x AND tag:y` therefore only considers
-	// the top-N by similarity — a `y` match ranked beyond N is not returned.
-	// 1000 balances recall vs. the SQL IN-list size (well under SQLite's 32766 var cap).
+	// predicates. 1000 balances recall vs. the SQL IN-list size (well under
+	// SQLite's 32766 var cap). For all-AND queries the similarity scan is
+	// restricted to the set matching the OTHER predicates first, so
+	// `visual:x AND tag:y` returns the top-N most similar items WITHIN tag:y —
+	// not tag:y intersected with the global top-N (which silently dropped
+	// matches ranked beyond the cap).
 	const visualCandidateLimit = 1000
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -473,6 +549,30 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Filter-first: when every predicate is AND-composed and the query
+		// mixes visual and SQL predicates, resolve the SQL side into a path
+		// set the similarity scans are restricted to. OR/mixed chains keep
+		// resolve-then-compose — there the visual predicate stands alone in
+		// the boolean expression rather than narrowing the others.
+		hasVisualPred := false
+		hasSQLPred := false
+		for _, p := range req.Predicates {
+			if isVisualPredicate(p) {
+				hasVisualPred = true
+			} else if p.Value != "" {
+				hasSQLPred = true
+			}
+		}
+		var allow tasks.PathSet
+		if hasVisualPred && hasSQLPred && allAndPredicates(req.Predicates, req.Mode) {
+			var err error
+			allow, err = resolveFilterPaths(deps, req.Predicates, req.Mode)
+			if err != nil {
+				httpError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+
 		// Resolve visual predicates (similar/visual/clip) into path sets before
 		// BuildMediaQuery, which is pure and cannot call the model.
 		scoreByPath := map[string]float32{}
@@ -480,8 +580,14 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 		for i := range req.Predicates {
 			pt := req.Predicates[i].Type
 			val := req.Predicates[i].Value
-			if (pt == "similar" || pt == "visual" || pt == "clip" || pt == "face") && val != "" {
+			if isVisualPredicate(req.Predicates[i]) {
 				hasVisual = true
+				if allow != nil && len(allow) == 0 {
+					// The SQL filter matched nothing: the intersection is empty
+					// no matter what the scan would return, so skip the model
+					// call entirely (Resolved stays nil → clause (1=0)).
+					continue
+				}
 				var hits []tasks.SimilarHit
 				var err error
 				// An image predicate carrying text becomes a blended query: one
@@ -495,12 +601,12 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 						var terms []tasks.QueryTerm
 						terms, err = compositeTerms(tasks.QueryTerm{Kind: "path", Value: val, Weight: 1}, req.Predicates[i])
 						if err == nil {
-							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit, allow)
 						}
 					} else if blendText != "" {
-						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
+						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit, allow)
 					} else {
-						hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit)
+						hits, err = tasks.SimilarByPathOrEmbed(r.Context(), deps.DB, tasks.ActiveEmbedModel().ID, val, visualCandidateLimit, allow)
 					}
 				case "clip":
 					// A captured screen region: the value is a PNG data URL.
@@ -510,12 +616,12 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 							var terms []tasks.QueryTerm
 							terms, err = compositeTerms(tasks.QueryTerm{Kind: "image", Image: image, Weight: 1}, req.Predicates[i])
 							if err == nil {
-								hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+								hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit, allow)
 							}
 						} else if blendText != "" {
-							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit)
+							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit, allow)
 						} else {
-							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+							hits, err = tasks.SearchByImage(r.Context(), deps.DB, image, visualCandidateLimit, allow)
 						}
 					}
 				case "face":
@@ -526,10 +632,10 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 					if strings.HasPrefix(val, "data:") {
 						var image []byte
 						if image, err = decodeImageDataURL(val); err == nil {
-							faceHits, err = tasks.SearchFacesByImage(r.Context(), deps.DB, image, visualCandidateLimit)
+							faceHits, err = tasks.SearchFacesByImage(r.Context(), deps.DB, image, visualCandidateLimit, allow)
 						}
 					} else {
-						faceHits, err = tasks.SearchFacesByMediaPath(r.Context(), deps.DB, val, visualCandidateLimit)
+						faceHits, err = tasks.SearchFacesByMediaPath(r.Context(), deps.DB, val, visualCandidateLimit, allow)
 					}
 					hits = tasks.FaceHitsToMediaHits(faceHits)
 				default: // "visual": free-text → image search, composable like similar/clip
@@ -537,10 +643,10 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 						var terms []tasks.QueryTerm
 						terms, err = compositeTerms(tasks.QueryTerm{Kind: "text", Value: val, Weight: 1}, req.Predicates[i])
 						if err == nil {
-							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit)
+							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit, allow)
 						}
 					} else {
-						hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit)
+						hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit, allow)
 					}
 				}
 				if err != nil {
@@ -999,23 +1105,77 @@ func mediaThumbnailHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
+// lokiMediaDeleteHandler removes an item from the library. The file itself is
+// never touched (the desktop viewer trashes it before its own cleanup; the web
+// UI intentionally leaves files alone) — but the database cleanup is the FULL
+// reference set, shared with /api/media/forget: faces and their assertions,
+// scan markers, and the battle log too, not just media/tags/embeddings.
 func lokiMediaDeleteHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req pathRequest
-		if err := readJSON(r, &req); err != nil {
+		if err := readJSON(r, &req); err != nil || strings.TrimSpace(req.Path) == "" {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-
-		// Delete from database
-		deps.DB.Exec("DELETE FROM media_tag_by_category WHERE media_path = ?", req.Path)
-		deps.DB.Exec("DELETE FROM media WHERE path = ?", req.Path)
-		deps.DB.Exec("DELETE FROM media_embedding WHERE media_path = ?", req.Path)
-		// Path removed — drop it from the swipe sampler and ANN index.
-		media.InvalidateRandomSampleCache()
-		tasks.IndexDelete(req.Path)
-		writeJSON(w, map[string]string{})
+		res, err := eraseMediaReferences(r.Context(), deps, req.Path)
+		if err != nil {
+			httpError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, res)
 	}
+}
+
+// eraseMediaReferences removes every database reference to a path: faces and
+// the face-id-keyed assertions first (DeleteFacesForMedia — RemoveItemsFromDB
+// deletes face rows but would strand vetoes, cannot-links, ban memberships,
+// and person cover pointers), then the media row, tags, embeddings, and scan
+// markers (RemoveItemsFromDB, whose registered removal hook also evicts the
+// path from the vector and face indexes), then the battle log. Shared by
+// /api/media/delete and /api/media/forget so their table lists can't drift.
+// Mirrored in the Electron viewer (eraseMediaReferences in src/main/media.ts).
+func eraseMediaReferences(ctx context.Context, deps *Dependencies, path string) (map[string]any, error) {
+	countRows := func(query string, args ...any) int64 {
+		var n int64
+		if err := deps.DB.QueryRow(query, args...).Scan(&n); err != nil {
+			return 0
+		}
+		return n
+	}
+	// Counted up front: the deletes below report media/tag rows only, and
+	// these two are the numbers a "cleaned up" message is actually about.
+	faces := countRows(`SELECT COUNT(*) FROM face WHERE media_path = ?`, path)
+	embeddings := countRows(`SELECT COUNT(*) FROM media_embedding WHERE media_path = ?`, path)
+
+	if err := media.DeleteFacesForMedia(deps.DB, path); err != nil {
+		return nil, err
+	}
+	res, err := media.RemoveItemsFromDB(ctx, deps.DB, []string{path})
+	if err != nil {
+		return nil, err
+	}
+	// Battle-log rows name the path directly; leaving them keeps a deleted
+	// item in the Elo history and in rematch suppression.
+	var battles int64
+	if br, err := deps.DB.Exec(
+		`DELETE FROM battle WHERE winner_path = ? OR loser_path = ?`, path, path,
+	); err == nil {
+		battles, _ = br.RowsAffected()
+	}
+	media.InvalidateRandomSampleCache()
+	if faces > 0 {
+		// The item's faces were in someone's group — open People views are
+		// now showing stale counts.
+		broadcastPeopleChanged()
+	}
+	return map[string]any{
+		"path":       path,
+		"media":      res.MediaItemsRemoved,
+		"tags":       res.TagsRemoved,
+		"embeddings": embeddings,
+		"faces":      faces,
+		"battles":    battles,
+	}, nil
 }
 
 // lokiMediaMoveHandler re-points every database reference from one path to
@@ -1098,57 +1258,12 @@ func lokiMediaForgetHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, "bad request", http.StatusBadRequest)
 			return
 		}
-
-		// Counted up front: the deletes below report media/tag rows only, and
-		// these two are the numbers a "cleaned up" message is actually about.
-		countRows := func(query string, args ...any) int64 {
-			var n int64
-			if err := deps.DB.QueryRow(query, args...).Scan(&n); err != nil {
-				return 0
-			}
-			return n
-		}
-		faces := countRows(`SELECT COUNT(*) FROM face WHERE media_path = ?`, req.Path)
-		embeddings := countRows(`SELECT COUNT(*) FROM media_embedding WHERE media_path = ?`, req.Path)
-
-		// Faces first: DeleteFacesForMedia also drops the vetoes, cannot-links,
-		// group-ban memberships, and person cover pointers keyed by these face
-		// ids — RemoveItemsFromDB deletes the face rows but not those, which
-		// would strand the assertions against ids that no longer exist.
-		if err := media.DeleteFacesForMedia(deps.DB, req.Path); err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Media row, tags, embeddings, scan markers — and the registered removal
-		// hook evicts the path from the vector and face indexes.
-		res, err := media.RemoveItemsFromDB(r.Context(), deps.DB, []string{req.Path})
+		res, err := eraseMediaReferences(r.Context(), deps, req.Path)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Battle-log rows name the path directly; leaving them keeps a deleted
-		// item in the Elo history and in rematch suppression.
-		var battles int64
-		if br, err := deps.DB.Exec(
-			`DELETE FROM battle WHERE winner_path = ? OR loser_path = ?`, req.Path, req.Path,
-		); err == nil {
-			battles, _ = br.RowsAffected()
-		}
-		media.InvalidateRandomSampleCache()
-		if faces > 0 {
-			// The item's faces were in someone's group — open People views are
-			// now showing stale counts.
-			broadcastPeopleChanged()
-		}
-
-		writeJSON(w, map[string]any{
-			"path":       req.Path,
-			"media":      res.MediaItemsRemoved,
-			"tags":       res.TagsRemoved,
-			"embeddings": embeddings,
-			"faces":      faces,
-			"battles":    battles,
-		})
+		writeJSON(w, res)
 	}
 }
 

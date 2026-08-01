@@ -128,6 +128,25 @@ func TestEmbeddingsProjectionRejectsBadLimit(t *testing.T) {
 	}
 }
 
+func TestVizIndexPageServed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/viz/", nil)
+	rr := httptest.NewRecorder()
+	vizIndexPageHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("content-type = %q", ct)
+	}
+	body := rr.Body.String()
+	// The index must link every visualization page.
+	for _, want := range []string{`href="/viz/embeddings"`, `href="/viz/treemap"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index page missing %q", want)
+		}
+	}
+}
+
 func TestEmbeddingsVizPageServed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/viz/embeddings", nil)
 	rr := httptest.NewRecorder()

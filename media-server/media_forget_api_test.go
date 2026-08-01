@@ -11,14 +11,19 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// POST /api/media/forget erases every database reference to a path without
-// touching the file — the cleanup behind "Remove from Library" on the
-// media-unavailable panel. /api/media/delete is not a substitute: it leaves
-// faces, the assertions keyed by them, and the battle log behind.
-func TestMediaForgetErasesEveryReference(t *testing.T) {
+// /api/media/forget and /api/media/delete share one cleanup routine
+// (eraseMediaReferences): erase every database reference to a path without
+// touching the file — media row, tags, embeddings, faces plus the assertions
+// keyed by their ids, scan markers, and the battle log. Delete used to leave
+// faces, assertions, and battles behind; this scenario now pins both to the
+// full contract.
+func runEraseEveryReferenceTest(
+	t *testing.T, makeHandler func(*Dependencies) http.HandlerFunc, url string,
+) {
+	t.Helper()
 	db := newFacesTestDB(t)
 	deps := &Dependencies{DB: db}
-	handler := lokiMediaForgetHandler(deps)
+	handler := makeHandler(deps)
 
 	const gone = "/photos/gone.jpg"
 	const kept = "/photos/kept.jpg"
@@ -92,13 +97,13 @@ func TestMediaForgetErasesEveryReference(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/media/forget",
+	req := httptest.NewRequest(http.MethodPost, url,
 		strings.NewReader(`{"path":"`+gone+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	handler(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("forget: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("%s: %d %s", url, rec.Code, rec.Body.String())
 	}
 	var out map[string]any
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -167,16 +172,28 @@ func TestMediaForgetErasesEveryReference(t *testing.T) {
 	}
 }
 
-func TestMediaForgetRejectsEmptyPath(t *testing.T) {
+func TestMediaForgetErasesEveryReference(t *testing.T) {
+	runEraseEveryReferenceTest(t, lokiMediaForgetHandler, "/api/media/forget")
+}
+
+func TestMediaDeleteErasesEveryReference(t *testing.T) {
+	runEraseEveryReferenceTest(t, lokiMediaDeleteHandler, "/api/media/delete")
+}
+
+func TestMediaForgetAndDeleteRejectEmptyPath(t *testing.T) {
 	db := newFacesTestDB(t)
-	handler := lokiMediaForgetHandler(&Dependencies{DB: db})
-	for _, body := range []string{`{}`, `{"path":"  "}`, `not json`} {
-		req := httptest.NewRequest(http.MethodPost, "/api/media/forget", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-		handler(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("body %q → %d, want 400", body, rec.Code)
+	for name, handler := range map[string]http.HandlerFunc{
+		"forget": lokiMediaForgetHandler(&Dependencies{DB: db}),
+		"delete": lokiMediaDeleteHandler(&Dependencies{DB: db}),
+	} {
+		for _, body := range []string{`{}`, `{"path":"  "}`, `not json`} {
+			req := httptest.NewRequest(http.MethodPost, "/api/media/"+name, strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("%s: body %q → %d, want 400", name, body, rec.Code)
+			}
 		}
 	}
 }
