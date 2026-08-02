@@ -109,7 +109,33 @@ export function addOrMergeSimilarityPredicate(
         // concept input) so it steers rather than overwhelms the base.
         { kind: 'text', value: p.value, weight: 0.5 }
       : { kind: p.type === 'similar' ? 'image' : 'clip', value: p.value };
-  return addBlendNode(q, predicateKey(target), node);
+  let next = addBlendNode(q, predicateKey(target), node);
+  // A predicate that already carries blend nodes (e.g. a group similarity
+  // search built from a multi-selection) folds them all into the target —
+  // dropping them would silently shrink the group to its first item.
+  const key = predicateKey(target);
+  for (const extra of effectiveBlendNodes(p)) {
+    next = addBlendNode(next, key, extra);
+  }
+  return next;
+}
+
+// groupSimilarPredicate builds ONE composite 'similar' predicate for a
+// multi-item selection: the first path is the base value and every other path
+// joins as an equal-weight image node. The server combines all the vectors
+// into a single query (the group centroid), so results rank by similarity to
+// the selection as a whole rather than to any single item.
+export function groupSimilarPredicate(
+  paths: string[],
+  join?: 'AND' | 'OR'
+): Predicate {
+  const [base, ...rest] = paths;
+  const p: Predicate = { type: 'similar', value: base, exclude: false, join };
+  const nodes = rest
+    .filter((v, i) => v !== base && rest.indexOf(v) === i)
+    .map((value): BlendNode => ({ kind: 'image', value }));
+  if (nodes.length) p.nodes = nodes;
+  return p;
 }
 
 // migrateLegacyBlend folds the old single-text blend fields into `nodes` so
@@ -211,7 +237,11 @@ export function updatePredicateBlend(
   };
 }
 
-export function setPredicateJoin(q: Query, key: string, join: 'AND' | 'OR'): Query {
+export function setPredicateJoin(
+  q: Query,
+  key: string,
+  join: 'AND' | 'OR'
+): Query {
   return {
     predicates: q.predicates.map((x) =>
       predicateKey(x) === key ? { ...x, join } : x

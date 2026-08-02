@@ -30,7 +30,12 @@ import {
   tagsFromQuery,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
+import {
+  pushQueryHistory,
+  type QueryHistoryEntry,
+} from './query/history';
 import { cursorAfterRemoval, libraryWithout } from './library-cursor';
+import { extendSelection } from './context-selection';
 import { movedPath, moveRange } from './media-path';
 import filter from './filter';
 import {
@@ -75,19 +80,25 @@ type LibraryState = {
   library: Item[];
   libraryLoadId: string;
   initSessionId: string;
+  // The filesystem BASE snapshot: the folder scan the current session's
+  // queries started from. This trio holds loadedFromFS contents ONLY — a
+  // folder scan is the one load too slow to just re-run, so it is kept in
+  // memory and restored verbatim. DB query states are NOT snapshotted here;
+  // they live in queryHistory and are re-applied by re-running the query.
+  // The snapshot is never consumed by a restore — it stays available until a
+  // new folder load (or workspace/db switch) replaces it.
   previousLibrary: Item[];
   cursor: number;
   textFilter: string;
-  // Track current and previous state types for proper restoration
+  // Which mode the current library came from ('fs' folder scan | 'db' query).
   currentStateType: LibraryStateType;
-  previousStateType: LibraryStateType | null;
-  previousTextFilter: string;
-  previousDbQuery: { tags: string[] };
-  previousQuery: Query;
-  // Path the library was loaded for. Captured alongside previousLibrary
-  // so back-restoration keeps the UI's path/filter/search/library
-  // coherent — without this, library and initialFile drift apart.
+  // Path the base snapshot was loaded for. Restored alongside
+  // previousLibrary so the UI's path/library stay coherent.
   previousInitialFile: string;
+  // Session history of committed DB filter states, newest first, capped at
+  // MAX_QUERY_HISTORY. Recorded on every successful query load; re-applied
+  // via APPLY_QUERY_STATE (which re-runs the query). In-memory only.
+  queryHistory: QueryHistoryEntry[];
   activeCategory: string;
   storedCategories: {
     [key: string]: string;
@@ -153,6 +164,13 @@ type LibraryState = {
       | { type: 'file'; path: string }
       | { type: 'tag'; tag: string }
       | { type: 'category'; category: string };
+    // Multi-item selection built while the palette is open (shift+right-click
+    // = range from anchor, ctrl+click = toggle one). Tasks act on this list
+    // when non-empty. anchorIdx is the display index the palette was opened
+    // on — the range anchor — or null when opened off the list (detail view,
+    // library background, tag/category).
+    selection: string[];
+    anchorIdx: number | null;
   };
   // jobs: removed - now handled by external job runner service
   toasts: {
@@ -250,119 +268,18 @@ const setLibrary = assign<LibraryState, AnyEventObject>({
   cursor: (_, event) => event.data.cursor,
 });
 
-// Atomically snapshot the current state into the previous-state slot. Use
-// this instead of inlining the six previous* assigns at each save site so a
-// future edit cannot accidentally save five of six fields and leave the
-// restore inconsistent.
-const capturePrevious = assign<LibraryState, AnyEventObject>({
-  previousLibrary: (context) => context.library,
-  previousCursor: (context) => context.cursor,
-  previousStateType: (context) => context.currentStateType,
-  previousTextFilter: (context) => context.textFilter,
-  previousDbQuery: (context) => ({ ...context.dbQuery }),
-  previousQuery: (context) => ({ predicates: [...context.query.predicates] }),
-  previousInitialFile: (context) => context.initialFile,
-});
-
-// Capture the current view into the previous-state slot ONLY if nothing is
-// stored there yet. The query-mutation handlers use this so the first filter
-// applied from a view (typically FS) snapshots that view — letting a later
-// "removed the last predicate" restore it from memory (loadingFromPreviousLibrary).
-// Subsequent edits (slot already full) leave the snapshot intact.
-const capturePreviousIfEmpty = assign<LibraryState, AnyEventObject>({
+// Snapshot the current FS view into the base slot. Runs alongside every
+// query commit: while in FS mode it refreshes the snapshot to the live view
+// (the folder may have streamed in more files since the last capture); while
+// in DB mode it is a no-op — the base holds loadedFromFS contents ONLY, and
+// query-over-query navigation goes through queryHistory instead.
+const captureFsBase = assign<LibraryState, AnyEventObject>({
   previousLibrary: (c) =>
-    c.previousLibrary.length > 0 ? c.previousLibrary : c.library,
+    c.currentStateType === 'fs' ? c.library : c.previousLibrary,
   previousCursor: (c) =>
-    c.previousLibrary.length > 0 ? c.previousCursor : c.cursor,
-  previousStateType: (c) =>
-    c.previousLibrary.length > 0 ? c.previousStateType : c.currentStateType,
-  previousTextFilter: (c) =>
-    c.previousLibrary.length > 0 ? c.previousTextFilter : c.textFilter,
-  previousDbQuery: (c) =>
-    c.previousLibrary.length > 0 ? c.previousDbQuery : { ...c.dbQuery },
-  previousQuery: (c) =>
-    c.previousLibrary.length > 0
-      ? c.previousQuery
-      : { predicates: [...c.query.predicates] },
+    c.currentStateType === 'fs' ? c.cursor : c.previousCursor,
   previousInitialFile: (c) =>
-    c.previousLibrary.length > 0 ? c.previousInitialFile : c.initialFile,
-});
-
-const setLibraryWithPrevious = assign<LibraryState, AnyEventObject>({
-  // Only save previous state if not already saved by an action (check if previousLibrary is empty)
-  previousLibrary: (context) =>
-    context.previousLibrary.length > 0
-      ? context.previousLibrary
-      : context.library,
-  previousCursor: (context) =>
-    context.previousLibrary.length > 0
-      ? context.previousCursor
-      : context.cursor,
-  previousStateType: (context) =>
-    context.previousLibrary.length > 0
-      ? context.previousStateType
-      : context.currentStateType,
-  previousTextFilter: (context) =>
-    context.previousLibrary.length > 0
-      ? context.previousTextFilter
-      : context.textFilter,
-  previousDbQuery: (context) =>
-    context.previousLibrary.length > 0
-      ? context.previousDbQuery
-      : { ...context.dbQuery },
-  previousQuery: (context) =>
-    context.previousLibrary.length > 0
-      ? context.previousQuery
-      : { predicates: [...context.query.predicates] },
-  previousInitialFile: (context) =>
-    context.previousLibrary.length > 0
-      ? context.previousInitialFile
-      : context.initialFile,
-  library: (context, event) => {
-    const library = event.data.library;
-    // Use existing previous state if already set, otherwise use current state
-    const hasPrevious = context.previousLibrary.length > 0;
-    const previousLibrary = hasPrevious
-      ? context.previousLibrary
-      : context.library;
-    const previousCursor = hasPrevious
-      ? context.previousCursor
-      : context.cursor;
-    const previousStateType = hasPrevious
-      ? context.previousStateType
-      : context.currentStateType;
-    const previousTextFilter = hasPrevious
-      ? context.previousTextFilter
-      : context.textFilter;
-    const previousDbQuery = hasPrevious
-      ? context.previousDbQuery
-      : context.dbQuery;
-    const previousQuery = hasPrevious
-      ? context.previousQuery
-      : context.query;
-    const previousInitialFile = hasPrevious
-      ? context.previousInitialFile
-      : context.initialFile;
-
-    // Update all session data using session store (async, debounced, batched)
-    setSessionValues({
-      library: { library, initialFile: context.initialFile },
-      cursor: { cursor: event.data.cursor },
-      previous: {
-        previousLibrary,
-        previousCursor,
-        previousStateType,
-        previousTextFilter,
-        previousDbQuery,
-        previousQuery,
-        previousInitialFile,
-      },
-    });
-
-    return library;
-  },
-  libraryLoadId: () => newLoadId(),
-  cursor: (_, event) => event.data.cursor,
+    c.currentStateType === 'fs' ? c.initialFile : c.previousInitialFile,
 });
 
 const clearPersistedLibrary = () => {
@@ -389,18 +306,15 @@ const updatePersistedState = (context: LibraryState) => {
   });
 };
 
-// Mirror the just-captured previous* fields from context to the session store.
-// Why: capturing previous in the assign only updates in-memory context. If the
-// app closes (or a beforeunload flush fires) before setLibraryWithPrevious runs
-// at the end of the load, the on-disk previous would lag by one transition.
-const persistPreviousState = (context: LibraryState) => {
+// Mirror the just-captured base snapshot from context to the session store so
+// a restart can still restore it. Runs right after captureFsBase; skipped in
+// DB mode, where the capture was a no-op — re-serializing a large unchanged
+// previousLibrary on every chip edit would be pure IPC waste.
+const persistFsBase = (context: LibraryState) => {
+  if (context.currentStateType !== 'fs') return;
   setSessionValue('previous', {
     previousLibrary: context.previousLibrary,
     previousCursor: context.previousCursor,
-    previousStateType: context.previousStateType,
-    previousTextFilter: context.previousTextFilter,
-    previousDbQuery: context.previousDbQuery,
-    previousQuery: context.previousQuery,
     previousInitialFile: context.previousInitialFile,
   });
 };
@@ -422,18 +336,10 @@ const setPath = assign<LibraryState, AnyEventObject>({
       filters: 'all',
     };
   },
-  // Wipe in-memory previous-state slot when starting in a new workspace,
-  // so a back-navigation doesn't restore a library from the prior path.
+  // Wipe the in-memory base snapshot when starting in a new workspace,
+  // so a base restore doesn't surface a library from the prior path.
   previousLibrary: (context, event) => (event.data ? [] : context.previousLibrary),
   previousCursor: (context, event) => (event.data ? 0 : context.previousCursor),
-  previousStateType: (context, event) =>
-    event.data ? null : context.previousStateType,
-  previousTextFilter: (context, event) =>
-    event.data ? '' : context.previousTextFilter,
-  previousDbQuery: (context, event) =>
-    event.data ? { tags: [] } : context.previousDbQuery,
-  previousQuery: (context, event) =>
-    event.data ? { predicates: [] } : context.previousQuery,
   previousInitialFile: (context, event) =>
     event.data ? '' : context.previousInitialFile,
 });
@@ -508,32 +414,19 @@ const setDB = assign<LibraryState, AnyEventObject>({
     }
     return '';
   },
-  // Wipe in-memory previous-state slot when switching databases so a
-  // back-navigation can't surface a library from the prior DB.
+  // Wipe the in-memory base snapshot AND the query history when switching
+  // databases: the snapshot belongs to the prior workspace and every recorded
+  // query state referenced the prior DB's contents.
   previousLibrary: (context, event) =>
     event.data && event.data !== context.dbPath ? [] : context.previousLibrary,
   previousCursor: (context, event) =>
     event.data && event.data !== context.dbPath ? 0 : context.previousCursor,
-  previousStateType: (context, event) =>
-    event.data && event.data !== context.dbPath
-      ? null
-      : context.previousStateType,
-  previousTextFilter: (context, event) =>
-    event.data && event.data !== context.dbPath
-      ? ''
-      : context.previousTextFilter,
-  previousDbQuery: (context, event) =>
-    event.data && event.data !== context.dbPath
-      ? { tags: [] }
-      : context.previousDbQuery,
-  previousQuery: (context, event) =>
-    event.data && event.data !== context.dbPath
-      ? { predicates: [] }
-      : context.previousQuery,
   previousInitialFile: (context, event) =>
     event.data && event.data !== context.dbPath
       ? ''
       : context.previousInitialFile,
+  queryHistory: (context, event) =>
+    event.data && event.data !== context.dbPath ? [] : context.queryHistory,
 });
 
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
@@ -702,13 +595,9 @@ const getInitialContext = (): LibraryState => {
     cursor: 0,
     previousLibrary: [],
     previousCursor: 0,
-    // State type tracking for proper restoration
     currentStateType: 'fs' as LibraryStateType,
-    previousStateType: null,
-    previousTextFilter: '',
-    previousDbQuery: { tags: [] },
-    previousQuery: { predicates: [] },
     previousInitialFile: '',
+    queryHistory: [],
     scrollPosition: 0,
     previousScrollPosition: 0,
     availableAudioTracks: [],
@@ -840,6 +729,8 @@ const getInitialContext = (): LibraryState => {
       display: false,
       position: { x: 0, y: 0 },
       target: { type: 'library' } as LibraryState['contextPalette']['target'],
+      selection: [] as string[],
+      anchorIdx: null as number | null,
     },
     // jobs: removed - now handled by external job runner service
     toasts: [],
@@ -864,9 +755,10 @@ const queryMutationOn = {
   ADD_PREDICATE: {
     target: 'runningQuery',
     actions: [
-      // Snapshot the pre-query (e.g. FS) view so clearing back to empty can
-      // restore it from memory.
-      capturePreviousIfEmpty,
+      // Snapshot the FS view (no-op in DB mode) so clearing back to an empty
+      // query can restore the folder scan from memory.
+      captureFsBase,
+      persistFsBase,
       assign<LibraryState, AnyEventObject>((context, event) => {
         // EXCLUSIVE mode replaces the entire query with the selected filter,
         // regardless of predicate type (tag/path/category/description/hash).
@@ -992,7 +884,8 @@ const queryMutationOn = {
     {
       target: 'runningQuery',
       actions: [
-        capturePreviousIfEmpty,
+        captureFsBase,
+        persistFsBase,
         assign<LibraryState, AnyEventObject>((_context, event) => {
           const q = { predicates: parseQuery(event.data.text) };
           return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
@@ -1000,9 +893,35 @@ const queryMutationOn = {
       ],
     },
   ],
+  // Re-apply a filter state from the session history dropdown: replace the
+  // whole query and RE-RUN it (DB states are never restored from cached
+  // results — the data may have changed since the entry was recorded). An
+  // empty state is the base and routes to the FS restore instead.
+  APPLY_QUERY_STATE: [
+    {
+      target: 'loadingFromPreviousLibrary',
+      cond: (_context: LibraryState, event: AnyEventObject) =>
+        !event.data?.predicates?.length,
+    },
+    {
+      target: 'runningQuery',
+      actions: [
+        captureFsBase,
+        persistFsBase,
+        assign<LibraryState, AnyEventObject>((_context, event) => {
+          const q = { predicates: [...event.data.predicates] } as Query;
+          return {
+            query: q,
+            dbQuery: { tags: tagsFromQuery(q) },
+            scrollPosition: 0,
+          };
+        }),
+      ],
+    },
+  ],
   CLEAR_QUERY: {
-    // No actions: loadingFromPreviousLibrary's entry restores query/library
-    // from the previous* snapshot (mirrors CLEAR_QUERY_TAG).
+    // No actions: loadingFromPreviousLibrary's entry restores the FS base
+    // (mirrors CLEAR_QUERY_TAG and removing the last predicate).
     target: 'loadingFromPreviousLibrary',
   },
 };
@@ -1343,16 +1262,52 @@ export const libraryMachine = createMachine(
           SHOW_CONTEXT_PALETTE: {
             actions: assign<LibraryState, AnyEventObject>({
               contextPalette: (context, event) => {
+                const target = event.target || { type: 'library' };
                 return {
                   display: true,
                   position: event.position,
-                  target: event.target || { type: 'library' },
+                  target,
+                  // A fresh open starts a fresh selection: the clicked file
+                  // when there is one, seeded as the range anchor.
+                  selection: target.type === 'file' ? [target.path] : [],
+                  anchorIdx: typeof event.idx === 'number' ? event.idx : null,
                 };
               },
               commandPalette: (context) => {
                 return {
                   display: false,
                   position: context.commandPalette.position,
+                };
+              },
+            }),
+          },
+          // Modifier-clicks on list items while the palette is open grow the
+          // selection instead of reopening: shift = the visual range from the
+          // anchor to the clicked item, ctrl/cmd = toggle just that item.
+          EXTEND_CONTEXT_SELECTION: {
+            actions: assign<LibraryState, AnyEventObject>({
+              contextPalette: (context, event) => {
+                const cp = context.contextPalette;
+                if (!cp.display) return cp;
+                // The same memoized filter call the list renders from, so
+                // range indices match exactly what the user sees.
+                const items = filter(
+                  context.libraryLoadId,
+                  context.textFilter,
+                  context.library,
+                  context.settings.filters,
+                  context.settings.sortBy
+                );
+                return {
+                  ...cp,
+                  selection: extendSelection(
+                    cp.selection ?? [],
+                    event.mode === 'range' ? 'range' : 'single',
+                    cp.anchorIdx ?? null,
+                    event.idx,
+                    event.path,
+                    items
+                  ),
                 };
               },
             }),
@@ -1717,8 +1672,8 @@ export const libraryMachine = createMachine(
                 const cursorData = getSessionValue('cursor');
                 return cursorData ? cursorData.cursor : 0;
               },
-              // Restore back-navigation slot from session so a reload in
-              // web mode keeps the same one-step undo as Electron mode.
+              // Restore the FS base snapshot from session so a reload in web
+              // mode keeps the same back-to-base behaviour as Electron mode.
               previousLibrary: () => {
                 const previousData = getSessionValue('previous');
                 return previousData ? previousData.previousLibrary : [];
@@ -1726,22 +1681,6 @@ export const libraryMachine = createMachine(
               previousCursor: () => {
                 const previousData = getSessionValue('previous');
                 return previousData ? previousData.previousCursor : 0;
-              },
-              previousStateType: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousStateType ?? null;
-              },
-              previousTextFilter: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousTextFilter ?? '';
-              },
-              previousDbQuery: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousDbQuery ?? { tags: [] };
-              },
-              previousQuery: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousQuery ?? { predicates: [] };
               },
               previousInitialFile: () => {
                 const previousData = getSessionValue('previous');
@@ -1808,21 +1747,31 @@ export const libraryMachine = createMachine(
             },
           },
           loadingFromFS: {
-            entry: assign<LibraryState, AnyEventObject>({
-              library: (context) => [{ path: context.initialFile, mtimeMs: 0 }],
-              libraryLoadId: () => newLoadId(),
-              cursor: 0,
-              dbQuery: () => ({ tags: [] }),
-              query: () => ({ predicates: [] }),
-              streaming: () => true,
-              pinnedPath: (context) => context.initialFile,
-              savedSortByDuringStreaming: (context) => context.settings.sortBy,
-              userMovedCursorDuringStreaming: () => false,
-              settings: (context) => ({
-                ...context.settings,
-                sortBy: 'stream',
+            entry: [
+              assign<LibraryState, AnyEventObject>({
+                library: (context) => [{ path: context.initialFile, mtimeMs: 0 }],
+                libraryLoadId: () => newLoadId(),
+                cursor: 0,
+                dbQuery: () => ({ tags: [] }),
+                query: () => ({ predicates: [] }),
+                streaming: () => true,
+                pinnedPath: (context) => context.initialFile,
+                savedSortByDuringStreaming: (context) => context.settings.sortBy,
+                userMovedCursorDuringStreaming: () => false,
+                settings: (context) => ({
+                  ...context.settings,
+                  sortBy: 'stream',
+                }),
+                // A fresh folder scan starts a new base era: the old snapshot
+                // (possibly a different folder) must not be restorable. The
+                // new base is captured from the live view on the next query
+                // commit (captureFsBase).
+                previousLibrary: () => [],
+                previousCursor: () => 0,
+                previousInitialFile: () => '',
               }),
-            }),
+              () => clearSessionKeys(['previous']),
+            ],
             invoke: {
               src: (context, event) => {
                 console.log('loadingFromFS', context, event);
@@ -2004,7 +1953,7 @@ export const libraryMachine = createMachine(
                 target: 'loadedFromDB',
                 // applySimilaritySort here too (not just on runningQuery) so a
                 // loaded/restored visual query also auto-sorts by similarity.
-                actions: ['setLibraryWithPrevious', 'applySimilaritySort'],
+                actions: ['setLibrary', 'applySimilaritySort'],
               },
               onError: {
                 target: 'loadedFromFS',
@@ -2064,23 +2013,6 @@ export const libraryMachine = createMachine(
                 const previousData = getSessionValue('previous');
                 return previousData ? previousData.previousCursor : 0;
               },
-              // Restore previous state type info for proper back navigation
-              previousStateType: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousStateType ?? null;
-              },
-              previousTextFilter: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousTextFilter ?? '';
-              },
-              previousDbQuery: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousDbQuery ?? { tags: [] };
-              },
-              previousQuery: () => {
-                const previousData = getSessionValue('previous');
-                return previousData?.previousQuery ?? { predicates: [] };
-              },
               previousInitialFile: () => {
                 const previousData = getSessionValue('previous');
                 return previousData?.previousInitialFile ?? '';
@@ -2112,82 +2044,68 @@ export const libraryMachine = createMachine(
               { target: 'loadedFromFS' },
             ],
           },
+          // Restore the session's BASE state — the folder scan queries started
+          // from. Entered whenever the query empties out (last predicate
+          // removed, clear button, empty SET_QUERY, the dropdown's base row).
+          // The base snapshot is NOT consumed: it stays in previous* so the
+          // base remains restorable any number of times. When no snapshot is
+          // in memory the folder is re-scanned from disk (slow path), and a
+          // web session with no folder at all falls back to the full library.
           loadingFromPreviousLibrary: {
-            // Restoration runs in three discrete actions so the assign is
-            // pure and the side effects are visible: (1) atomic context
-            // restore from previous*, (2) mirror the restored snapshot to
-            // the session store, (3) `always` then routes to the correct
-            // loaded* state based on the restored currentStateType.
             entry: [
-              assign<LibraryState, AnyEventObject>({
-                library: (context) => context.previousLibrary,
-                cursor: (context) => context.previousCursor,
-                textFilter: (context) => context.previousTextFilter,
-                dbQuery: (context) => ({ ...context.previousDbQuery }),
-                query: (context) => ({
-                  predicates: [...context.previousQuery.predicates],
-                }),
-                initialFile: (context) =>
-                  context.previousInitialFile || context.initialFile,
-                currentStateType: (context) =>
-                  context.previousStateType || ('fs' as LibraryStateType),
-                libraryLoadId: () => newLoadId(),
-                // Clear the previous-state slot now that we've consumed it.
-                previousLibrary: () => [],
-                previousCursor: () => 0,
-                previousStateType: () => null,
-                previousTextFilter: () => '',
-                previousDbQuery: () => ({ tags: [] }),
-                previousQuery: () => ({ predicates: [] }),
-                previousInitialFile: () => '',
+              assign<LibraryState, AnyEventObject>((context) => {
+                const base = {
+                  textFilter: '',
+                  dbQuery: { tags: [] },
+                  query: { predicates: [] as Predicate[] },
+                  scrollPosition: 0,
+                };
+                if (context.previousLibrary.length === 0) {
+                  // Nothing in memory — the always-branches below pick a
+                  // reload path; only the query state is cleared here.
+                  return base;
+                }
+                return {
+                  ...base,
+                  library: context.previousLibrary,
+                  cursor: context.previousCursor,
+                  initialFile: context.previousInitialFile || context.initialFile,
+                  currentStateType: 'fs' as LibraryStateType,
+                  libraryLoadId: newLoadId(),
+                };
               }),
-              // Mirror the restored snapshot to the session store. context
-              // here is post-assign, so library/cursor/textFilter/dbQuery
-              // already reflect the restored values.
+              // Mirror the restored view to the session store (the cleared
+              // query state is mirrored by loadedFromFS's entry invariant).
               (context) => {
+                if (context.previousLibrary.length === 0) return;
                 setSessionValues({
                   library: {
                     library: context.library,
                     initialFile: context.initialFile,
                   },
                   cursor: { cursor: context.cursor },
-                  previous: {
-                    previousLibrary: [],
-                    previousCursor: 0,
-                    previousStateType: null,
-                    previousTextFilter: '',
-                    previousDbQuery: { tags: [] },
-                    previousQuery: { predicates: [] },
-                    previousInitialFile: '',
-                  },
                 });
-                updatePersistedState(context);
               },
             ],
             always: [
               {
-                target: 'loadedFromDB',
-                cond: (context) => context.currentStateType === 'db',
+                target: 'loadedFromFS',
+                cond: (context) => context.previousLibrary.length > 0,
               },
               {
-                // If previous library is empty and we're going back to FS mode,
-                // reload from disk instead of showing empty library
-                // (but only if we have an initialFile to reload from)
+                // No snapshot in memory: re-scan the base folder from disk.
                 target: 'loadingFromFS',
-                cond: (context) =>
-                  context.currentStateType === 'fs' &&
-                  context.library.length === 0 &&
-                  context.initialFile.length > 0,
+                cond: (context) => context.initialFile.length > 0,
               },
               {
-                // If no initialFile and empty library, prompt user to select
-                target: 'selecting',
-                cond: (context) =>
-                  context.currentStateType === 'fs' &&
-                  context.library.length === 0 &&
-                  context.initialFile.length === 0,
+                // Web session with no folder (view-only visitors start on the
+                // full library): the base is the whole DB — re-run the now-
+                // empty query instead of prompting for a folder.
+                target: 'loadingFromDB',
+                cond: () => !isElectron,
               },
-              { target: 'loadedFromFS' },
+              // Nothing to restore at all: prompt for a file.
+              { target: 'selecting' },
             ],
           },
           loadedFromFS: {
@@ -2279,6 +2197,37 @@ export const libraryMachine = createMachine(
               // lands the cursor on the next item. No IO here, unlike
               // DELETE_FILE: that keeps "moved to the next item" meaning
               // "cleanup finished", not "cleanup was requested".
+              // Drop several paths at once after a client-side merge: the
+              // sources were deleted and their DB rows erased by the palette's
+              // Merge action, so this only updates the in-memory library and
+              // cursor. One event (not N FORGET_FILEs) = one loadId mint and
+              // no per-file toast — the palette shows its own merge summary.
+              REMOVE_MERGED_FILES: {
+                cond: (context: LibraryState) => context.canWrite,
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    library: (context, event) => {
+                      let lib = context.library;
+                      for (const p of (event.data.paths as string[]) || []) {
+                        lib = libraryWithout(lib, p);
+                      }
+                      return lib;
+                    },
+                    cursor: (context, event) => {
+                      // Sequential single-removal semantics so the cursor lands
+                      // exactly where repeated FORGET_FILEs would put it.
+                      let lib = context.library;
+                      let cur = context.cursor;
+                      for (const p of (event.data.paths as string[]) || []) {
+                        cur = cursorAfterRemoval(lib, cur, p);
+                        lib = libraryWithout(lib, p);
+                      }
+                      return cur;
+                    },
+                    libraryLoadId: () => newLoadId(),
+                  }),
+                ],
+              },
               FORGET_FILE: {
                 cond: (context: LibraryState) => context.canWrite,
                 actions: [
@@ -2343,11 +2292,11 @@ export const libraryMachine = createMachine(
                 {
                   target: 'loadingFromDB',
                   actions: [
-                    // Atomic snapshot of current state for back-navigation,
-                    // then mutate dbQuery in a separate assign so the capture
-                    // and the mutation can't race.
-                    capturePrevious,
-                    persistPreviousState,
+                    // Snapshot the FS base for later restore, then mutate
+                    // dbQuery in a separate assign so the capture and the
+                    // mutation can't race.
+                    captureFsBase,
+                    persistFsBase,
                     assign<LibraryState, AnyEventObject>({
                       dbQuery: (context, event) => {
                         console.log(
@@ -2641,6 +2590,16 @@ export const libraryMachine = createMachine(
               assign<LibraryState, AnyEventObject>({
                 currentStateType: () => 'db' as LibraryStateType,
                 textFilter: () => '',
+                // Record the committed filter state in the session history.
+                // Doing it here (not at event time) means only queries that
+                // actually LOADED are recorded — a failed query never becomes
+                // a history entry — and the entry carries the result count.
+                queryHistory: (context) =>
+                  pushQueryHistory(
+                    context.queryHistory,
+                    context.query,
+                    context.library.length
+                  ),
               }),
               (context) => updatePersistedState(context),
             ],
@@ -2720,9 +2679,11 @@ export const libraryMachine = createMachine(
               },
               SET_FILE: {
                 target: 'loadingFromFS',
+                // No base capture here: the base slot holds FS contents only,
+                // and the DB query being left is already in queryHistory. The
+                // new folder scan starts a fresh base era (loadingFromFS
+                // clears the old snapshot).
                 actions: [
-                  capturePrevious,
-                  persistPreviousState,
                   assign<LibraryState, AnyEventObject>({
                     textFilter: () => '',
                     initialFile: (context, event) => event.path,
@@ -2745,9 +2706,8 @@ export const libraryMachine = createMachine(
                 target: 'loadingFromPreviousLibrary',
               },
               // Remove a single tag from the active query. Falls back to
-              // CLEAR semantics (restoring the previous library) when the
-              // last tag is removed; otherwise reloads against the
-              // remaining tag set.
+              // CLEAR semantics (restoring the FS base) when the last tag is
+              // removed; otherwise reloads against the remaining tag set.
               REMOVE_QUERY_TAG: [
                 {
                   cond: (context, event) => {
@@ -2756,10 +2716,6 @@ export const libraryMachine = createMachine(
                     );
                     return remaining.length > 0;
                   },
-                  // Target runningQuery (which uses setLibrary, not
-                  // setLibraryWithPrevious) so the original entry-mode
-                  // previous (e.g. FS → DB) is preserved across within-DB
-                  // tag tweaks. Symmetric with SET_QUERY_TAG.
                   target: 'runningQuery',
                   actions: [
                     assign<LibraryState, AnyEventObject>({
@@ -2909,6 +2865,37 @@ export const libraryMachine = createMachine(
               // lands the cursor on the next item. No IO here, unlike
               // DELETE_FILE: that keeps "moved to the next item" meaning
               // "cleanup finished", not "cleanup was requested".
+              // Drop several paths at once after a client-side merge: the
+              // sources were deleted and their DB rows erased by the palette's
+              // Merge action, so this only updates the in-memory library and
+              // cursor. One event (not N FORGET_FILEs) = one loadId mint and
+              // no per-file toast — the palette shows its own merge summary.
+              REMOVE_MERGED_FILES: {
+                cond: (context: LibraryState) => context.canWrite,
+                actions: [
+                  assign<LibraryState, AnyEventObject>({
+                    library: (context, event) => {
+                      let lib = context.library;
+                      for (const p of (event.data.paths as string[]) || []) {
+                        lib = libraryWithout(lib, p);
+                      }
+                      return lib;
+                    },
+                    cursor: (context, event) => {
+                      // Sequential single-removal semantics so the cursor lands
+                      // exactly where repeated FORGET_FILEs would put it.
+                      let lib = context.library;
+                      let cur = context.cursor;
+                      for (const p of (event.data.paths as string[]) || []) {
+                        cur = cursorAfterRemoval(lib, cur, p);
+                        lib = libraryWithout(lib, p);
+                      }
+                      return cur;
+                    },
+                    libraryLoadId: () => newLoadId(),
+                  }),
+                ],
+              },
               FORGET_FILE: {
                 cond: (context: LibraryState) => context.canWrite,
                 actions: [
@@ -3193,7 +3180,6 @@ export const libraryMachine = createMachine(
       setLibrary,
       applySimilaritySort,
       addQueryErrorToast,
-      setLibraryWithPrevious,
       setPath,
       setDB,
       // createJob removed - jobs now handled by external job runner service

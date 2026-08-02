@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 // the toggle is sticky: it survives the command palette closing/reopening and
 // stays wherever the user set it until they flip it back themselves. A
 // listener registry keeps every mounted surface (palette + taxonomy sidebar)
-// in sync — same pattern as useSearchHistory.
+// in sync — a module-level listener registry shared by all hook instances.
 let meaningModeOn = false;
 const listeners = new Set<(on: boolean) => void>();
 

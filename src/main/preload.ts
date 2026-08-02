@@ -66,6 +66,7 @@ export type Channels =
   | 'modify-transcript'
   | 'delete-file'
   | 'forget-media'
+  | 'merge-item-metadata'
   | 'move-media'
   | 'import-files'
   | 'minimize'

@@ -946,6 +946,226 @@ const forgetMedia =
   ): Promise<ForgetMediaResult> =>
     eraseMediaReferences(db, args[0]);
 
+// mergeItemMetadata: consolidate a multi-selection into its FIRST item — the
+// synchronous client-side "Merge" action behind the context palette's
+// discrete selection. Metadata merge is additive (tag rows and per-model
+// embedding rows the target lacks are copied in; the target's own rows always
+// win; an empty transcript is filled from the first source that has one, and
+// that source's .vtt sidecar file is moved to sit next to the target). The
+// sources are then DELETED: file trashed (unlink fallback), leftover .vtt
+// sidecar trashed with it, and every database reference erased. A source
+// whose file cannot be deleted keeps its rows and is reported in `failed`.
+// Mirrored by the media-server's /api/media/merge-metadata so web mode
+// behaves identically.
+type MergeItemMetadataInput = [string[]]; // paths; [0] is the merge target
+export interface MergeItemMetadataResult {
+  target: string;
+  sources: string[];
+  tags: number; // tag rows added to the target
+  embeddings: number; // embedding rows added to the target
+  transcript: boolean; // true when the target's empty transcript was filled
+  transcriptFile: string | null; // the moved sidecar's new path, when moved
+  deleted: string[]; // sources whose file was removed and rows erased
+  failed: string[]; // sources left intact because file deletion failed
+}
+
+// Transcript sidecars live next to the media file: `<base>.vtt` (extension
+// replaced — the transcribe convention) or `<path>.vtt` (appended). Mirrors
+// loadTranscript in transcript.ts.
+function vttCandidates(mediaPath: string): string[] {
+  const replaced = mediaPath.replace(/\.[^/.]+$/, '.vtt');
+  return replaced === mediaPath
+    ? [mediaPath + '.vtt']
+    : [replaced, mediaPath + '.vtt'];
+}
+
+async function findVttSidecar(mediaPath: string): Promise<string | null> {
+  for (const candidate of vttCandidates(mediaPath)) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await fs.promises.access(candidate);
+      return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+  return null;
+}
+
+const mergeItemMetadata =
+  (db: Database) =>
+  async (
+    _: IpcMainInvokeEvent,
+    args: MergeItemMetadataInput
+  ): Promise<MergeItemMetadataResult> => {
+    const [paths] = args;
+    const [target, ...rest] = paths ?? [];
+    const sources = rest.filter((p) => p && p !== target);
+    const result: MergeItemMetadataResult = {
+      target: target ?? '',
+      sources,
+      tags: 0,
+      embeddings: 0,
+      transcript: false,
+      transcriptFile: null,
+      deleted: [],
+      failed: [],
+    };
+    if (!target || sources.length === 0) return result;
+
+    // Embedding table belongs to the Go server's schema — a viewer-only
+    // library may not have it (same guard as eraseMediaReferences above).
+    const hasEmbeddings = await tableExists(db, 'media_embedding');
+
+    await db.withTransaction(async () => {
+      const countRows = async (sql: string) =>
+        Number(
+          (await db.get(sql, [target], 'mergeItemMetadata:count'))?.n || 0
+        );
+
+      const tagsBefore = await countRows(
+        `SELECT COUNT(*) AS n FROM media_tag_by_category WHERE media_path = ?`
+      );
+      for (const src of sources) {
+        // NOT EXISTS with IS-comparison rather than ON CONFLICT: the PK
+        // includes time_stamp, and SQLite treats NULL PK values as distinct,
+        // so conflict resolution alone would duplicate NULL-timestamp tags.
+        // eslint-disable-next-line no-await-in-loop
+        await db.run(
+          `INSERT INTO media_tag_by_category
+             (media_path, tag_label, category_label, weight, time_stamp, created_at)
+           SELECT $1, s.tag_label, s.category_label, s.weight, s.time_stamp, s.created_at
+           FROM media_tag_by_category s
+           WHERE s.media_path = $2
+             AND NOT EXISTS (
+               SELECT 1 FROM media_tag_by_category t
+               WHERE t.media_path = $1
+                 AND t.tag_label = s.tag_label
+                 AND t.category_label IS s.category_label
+                 AND t.time_stamp IS s.time_stamp
+             )`,
+          [target, src],
+          'mergeItemMetadata:tags'
+        );
+      }
+      result.tags =
+        (await countRows(
+          `SELECT COUNT(*) AS n FROM media_tag_by_category WHERE media_path = ?`
+        )) - tagsBefore;
+
+      if (hasEmbeddings) {
+        const embBefore = await countRows(
+          `SELECT COUNT(*) AS n FROM media_embedding WHERE media_path = ?`
+        );
+        for (const src of sources) {
+          // PK (media_path, model): the target's existing per-model vectors
+          // win; earlier sources win over later ones for models it lacks.
+          // eslint-disable-next-line no-await-in-loop
+          await db.run(
+            `INSERT OR IGNORE INTO media_embedding
+               (media_path, model, dim, vector, created_at)
+             SELECT ?, model, dim, vector, created_at
+             FROM media_embedding WHERE media_path = ?`,
+            [target, src],
+            'mergeItemMetadata:embeddings'
+          );
+        }
+        result.embeddings =
+          (await countRows(
+            `SELECT COUNT(*) AS n FROM media_embedding WHERE media_path = ?`
+          )) - embBefore;
+      }
+
+      // Transcript column: fill only when the target has none — never
+      // overwrite.
+      const targetRow = await db.get(
+        `SELECT transcript FROM media WHERE path = ?`,
+        [target],
+        'mergeItemMetadata:transcript'
+      );
+      if (!targetRow?.transcript) {
+        for (const src of sources) {
+          // eslint-disable-next-line no-await-in-loop
+          const srcRow = await db.get(
+            `SELECT transcript FROM media WHERE path = ?`,
+            [src],
+            'mergeItemMetadata:transcript'
+          );
+          if (srcRow?.transcript) {
+            // eslint-disable-next-line no-await-in-loop
+            await db.run(
+              `UPDATE media SET transcript = ? WHERE path = ?`,
+              [srcRow.transcript, target],
+              'mergeItemMetadata:transcript'
+            );
+            result.transcript = true;
+            break;
+          }
+        }
+      }
+    });
+
+    // Transcript sidecar file: when the target has no .vtt of its own, move
+    // the first source's sidecar next to the target — BEFORE the sources are
+    // deleted below, so the file is never lost.
+    if (!(await findVttSidecar(target))) {
+      for (const src of sources) {
+        // eslint-disable-next-line no-await-in-loop
+        const srcVtt = await findVttSidecar(src);
+        if (!srcVtt) continue;
+        const destVtt = vttCandidates(target)[0];
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await fs.promises.rename(srcVtt, destVtt);
+        } catch {
+          // Cross-volume rename: copy + best-effort cleanup of the original.
+          // eslint-disable-next-line no-await-in-loop
+          await fs.promises.copyFile(srcVtt, destVtt);
+          // eslint-disable-next-line no-await-in-loop
+          await fs.promises.unlink(srcVtt).catch(() => {});
+        }
+        result.transcript = true;
+        result.transcriptFile = destVtt;
+        break;
+      }
+    }
+
+    // Delete the merged-away sources: trash the media file (unlink fallback),
+    // trash any leftover .vtt sidecar with it, then erase every database
+    // reference. A source whose file can't be removed keeps its rows — same
+    // recoverability contract as deleteMedia.
+    for (const src of sources) {
+      try {
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await shell.trashItem(src);
+        } catch {
+          // eslint-disable-next-line no-await-in-loop
+          await fs.promises.unlink(src);
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const leftoverVtt = await findVttSidecar(src);
+        if (leftoverVtt) {
+          try {
+            // eslint-disable-next-line no-await-in-loop
+            await shell.trashItem(leftoverVtt);
+          } catch {
+            // eslint-disable-next-line no-await-in-loop
+            await fs.promises.unlink(leftoverVtt).catch(() => {});
+          }
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await eraseMediaReferences(db, src);
+        result.deleted.push(src);
+      } catch (e) {
+        console.error('mergeItemMetadata: failed to delete source', src, e);
+        result.failed.push(src);
+      }
+    }
+
+    return result;
+  };
+
 // Function to calculate file hash
 async function calculateFileHash(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -1147,6 +1367,7 @@ export {
   copyFileIntoClipboard,
   deleteMedia,
   forgetMedia,
+  mergeItemMetadata,
   moveMedia,
   recordBattle,
   updateDescription,

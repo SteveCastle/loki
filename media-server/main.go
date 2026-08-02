@@ -2611,6 +2611,7 @@ func main() {
 	mux.HandleFunc("/api/media/description", renderer.ApplyMiddlewares(lokiUpdateDescriptionHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/preview", renderer.ApplyMiddlewares(lokiMediaPreviewHandler(deps), renderer.RolePublicRead))
 	mux.HandleFunc("/api/media/delete", renderer.ApplyMiddlewares(lokiMediaDeleteHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/media/merge-metadata", renderer.ApplyMiddlewares(lokiMediaMergeMetadataHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/forget", renderer.ApplyMiddlewares(lokiMediaForgetHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/move", renderer.ApplyMiddlewares(lokiMediaMoveHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/media/gif-metadata", renderer.ApplyMiddlewares(lokiGifMetadataHandler(deps), renderer.RolePublicRead))

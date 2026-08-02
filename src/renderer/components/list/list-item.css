@@ -15,6 +15,14 @@
   filter: brightness(50%);
 }
 
+/* Items in the context palette's multi-selection (shift/ctrl-click while the
+   palette is open). Inset outline so the virtualized grid never clips it. */
+.ListItem.context-selected {
+  outline: 2px solid #6ea8ff;
+  outline-offset: -2px;
+  filter: brightness(100%);
+}
+
 .ListItem.hovered {
   filter: brightness(105%) blur(1px);
 }

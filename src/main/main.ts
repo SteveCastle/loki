@@ -397,6 +397,7 @@ ipcMain.handle('load-db', async (event, args) => {
   ipcMain.removeHandler('regenerate-thumbnail');
   ipcMain.removeHandler('delete-file');
   ipcMain.removeHandler('forget-media');
+  ipcMain.removeHandler('merge-item-metadata');
   ipcMain.removeHandler('move-media');
   ipcMain.removeHandler('load-files');
   ipcMain.removeHandler('load-file-metadata');
@@ -436,6 +437,7 @@ ipcMain.handle('load-db', async (event, args) => {
   );
   ipcMain.handle('delete-file', mediaModule.deleteMedia(db));
   ipcMain.handle('forget-media', mediaModule.forgetMedia(db));
+  ipcMain.handle('merge-item-metadata', mediaModule.mergeItemMetadata(db));
   ipcMain.handle('move-media', mediaModule.moveMedia(db));
   ipcMain.handle('import-files', mediaModule.importFiles(db));
   ipcMain.handle(

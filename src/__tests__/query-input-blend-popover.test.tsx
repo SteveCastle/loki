@@ -15,16 +15,6 @@ import { render, fireEvent, act } from '@testing-library/react';
 // re-arm while the popover is genuinely in use, and adds a document-level
 // pointerdown that hard-closes on any press outside the chip+popover.
 
-jest.mock('../renderer/hooks/useSearchHistory', () => ({
-  __esModule: true,
-  useSearchHistory: () => ({
-    history: [],
-    addSearch: jest.fn(),
-    removeSearch: jest.fn(),
-    clearAll: jest.fn(),
-  }),
-}));
-
 jest.mock('../renderer/hooks/useMeaningMode', () => ({
   __esModule: true,
   useMeaningMode: () => ({ meaningMode: false, setMeaningMode: jest.fn() }),
@@ -68,6 +58,10 @@ function renderInput(query: Query) {
     onUpdateBlendNode: noop,
     onClearAll: noop,
     onClearText: noop,
+    history: [],
+    onApplyHistory: noop,
+    baseLabel: 'pictures',
+    onApplyBase: noop,
   };
   const utils = render(<QueryInput {...props} />);
   return {

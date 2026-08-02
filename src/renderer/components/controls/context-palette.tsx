@@ -10,7 +10,13 @@ import { useSelector } from '@xstate/react';
 import { useQueryClient } from '@tanstack/react-query';
 import useComponentSize from '@rehooks/component-size';
 import { GlobalStateContext } from '../../state';
-import { capabilities, mediaServerBase, isElectron, send } from '../../platform';
+import {
+  capabilities,
+  mediaServerBase,
+  isElectron,
+  invoke,
+  send,
+} from '../../platform';
 import { subscribeStream, streamConnected } from '../../stream-bus';
 import { displayTagLabel } from '../../tag-display';
 import type { Predicate } from '../../query/types';
@@ -25,6 +31,7 @@ import {
   quoteValue,
   LEGACY_PREFIX,
 } from './context-query';
+import { groupSimilarPredicate } from '../../query/reducer';
 import {
   fetchStatus,
   startModelDownload,
@@ -77,6 +84,10 @@ const METADATA_TYPES: MetadataType[] = [
 
 // The chip selection persists across palette opens and app restarts.
 const SELECTED_TYPES_STORAGE_KEY = 'loki.contextPalette.selectedTypes';
+
+// Stable empty array so the selection selector never re-renders on identity
+// when a pre-selection machine snapshot lacks the field.
+const EMPTY_SELECTION: string[] = [];
 
 // loadSelectedTypes restores the persisted chip selection, dropping any label
 // that no longer exists (chips get renamed/removed across versions).
@@ -152,7 +163,9 @@ function buildLabel(
       return `Category: ${target.category}`;
     case 'library': {
       const { predicates, initialFile } = libraryContext;
-      const n = predicates.filter((p) => LEGACY_PREFIX[p.type] && p.value).length;
+      const n = predicates.filter(
+        (p) => LEGACY_PREFIX[p.type] && p.value
+      ).length;
       if (n > 0) {
         return `${n} filter${n !== 1 ? 's' : ''} selected`;
       }
@@ -162,12 +175,7 @@ function buildLabel(
   }
 }
 
-type JobState =
-  | 'pending'
-  | 'in_progress'
-  | 'completed'
-  | 'cancelled'
-  | 'error';
+type JobState = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'error';
 
 interface JobInfo {
   id: string;
@@ -337,7 +345,11 @@ function DepRequirementRows({
               <span>
                 {req.feature} uses your configured AI provider — Ollama not
                 detected.{' '}
-                <a href="https://ollama.com/download" target="_blank" rel="noreferrer">
+                <a
+                  href="https://ollama.com/download"
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   Get Ollama
                 </a>
               </span>
@@ -348,14 +360,19 @@ function DepRequirementRows({
           const inst = d.detail || {};
           const done: number = inst.bytes_done ?? 0;
           const total: number = inst.bytes_total ?? d.size_bytes ?? 0;
-          const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+          const pct =
+            total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
           return (
             <div key={label} className="dep-row">
               <span>
-                {req.feature}: downloading… {fmtSize(done)} / {fmtSize(total)} ({pct}%)
+                {req.feature}: downloading… {fmtSize(done)} / {fmtSize(total)} (
+                {pct}%)
               </span>
               <div className="dep-progress">
-                <div className="dep-progress-fill" style={{ width: `${pct}%` }} />
+                <div
+                  className="dep-progress-fill"
+                  style={{ width: `${pct}%` }}
+                />
               </div>
             </div>
           );
@@ -364,7 +381,9 @@ function DepRequirementRows({
           <div key={label} className="dep-row">
             <span>
               {req.feature} needs a one-time download ({fmtSize(d.size_bytes)}).
-              {d.state === 'failed' && d.error ? ` Last attempt failed: ${d.error}` : ''}
+              {d.state === 'failed' && d.error
+                ? ` Last attempt failed: ${d.error}`
+                : ''}
             </span>
             <button
               type="button"
@@ -489,14 +508,20 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.contextPalette.target
   ) as ContextTarget;
+  // Multi-item selection accumulated while the palette is open (shift+right-
+  // click = range from the opening item, ctrl+click = one item). When
+  // non-empty, tasks run on this explicit list instead of a query. The
+  // fallback covers machine snapshots from before the field existed
+  // (rehydrated sessions, older test stubs).
+  const selection = useSelector(
+    libraryService,
+    (state) => state.context.contextPalette.selection ?? EMPTY_SELECTION
+  );
   const currentStateType = useSelector(
     libraryService,
     (state) => state.context.currentStateType
   );
-  const dbQuery = useSelector(
-    libraryService,
-    (state) => state.context.dbQuery
-  );
+  const dbQuery = useSelector(libraryService, (state) => state.context.dbQuery);
   const predicates = useSelector(
     libraryService,
     (state) => state.context.query.predicates
@@ -517,10 +542,7 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.settings.recursive
   );
-  const library = useSelector(
-    libraryService,
-    (state) => state.context.library
-  );
+  const library = useSelector(libraryService, (state) => state.context.library);
   const libraryLoadId = useSelector(
     libraryService,
     (state) => state.context.libraryLoadId
@@ -559,9 +581,8 @@ export default function ContextPalette() {
   // the picked set is a preference ("these are the ops I generate"), and
   // nothing launches without an explicit Run click, so stickiness is safe
   // (unlike the mode, which deliberately snaps back to `missing`).
-  const [selectedTypes, setSelectedTypes] = useState<string[]>(
-    loadSelectedTypes
-  );
+  const [selectedTypes, setSelectedTypes] =
+    useState<string[]>(loadSelectedTypes);
   useEffect(() => {
     if (display) setGenMode('missing');
   }, [display]);
@@ -680,6 +701,10 @@ export default function ContextPalette() {
   // doubles as navigation. (Same treatment as the command palette.)
   useOnClickOutside(paletteRef, (event) => {
     if (!display) return;
+    // Modifier-clicks on list items grow the palette's selection (shift =
+    // range, ctrl/cmd = single) — they must never dismiss the palette. This
+    // fires on mousedown, before the item's click/contextmenu handler runs.
+    if (event.shiftKey || event.ctrlKey || event.metaKey) return;
     // Defensive: walk up from the click target like the command palette does
     // — its ref-based containment check has been observed to misfire on
     // clicks inside the palette (pill × buttons re-render under the pointer).
@@ -741,8 +766,19 @@ export default function ContextPalette() {
     settings: { filteringMode, recursive },
   };
   const items = filter(libraryLoadId, textFilter, library, filters, sortBy);
-  const itemCount = target.type === 'file' ? 1 : items.length;
-  const contextLabel = buildLabel(target, libraryCtx);
+  // Explicit multi-selection wins over the single-file/query context: tasks
+  // run on these paths, passed as ONE quoted newline-joined token (newline is
+  // the path-list separator — commas are valid path characters).
+  const hasSelection = selection.length > 0;
+  const multiSelection = selection.length > 1;
+  const itemCount = hasSelection
+    ? selection.length
+    : target.type === 'file'
+    ? 1
+    : items.length;
+  const contextLabel = multiSelection
+    ? `${selection.length} files selected`
+    : buildLabel(target, libraryCtx);
   const queryString = buildQuery(target, libraryCtx);
   const isFolderContext =
     target.type === 'library' &&
@@ -751,22 +787,31 @@ export default function ContextPalette() {
     btoa(
       new TextEncoder()
         .encode(q)
-        .reduce((s, b) => s + String.fromCharCode(b), ''),
+        .reduce((s, b) => s + String.fromCharCode(b), '')
     );
   const query64 = encodeQuery64(queryString);
 
-  // Visual/vector similarity search for the right-clicked file. Adds a `similar`
-  // predicate to the unified query (no server job) and closes the palette.
+  // Visual/vector similarity search. With a discrete multi-selection it
+  // searches for media most similar to the GROUP: one composite `similar`
+  // predicate whose base is the first-selected item and whose other items
+  // join as equal-weight image blend nodes — the server combines all the
+  // vectors into a single query (the group centroid) instead of intersecting
+  // per-item result sets. A single file falls back to the classic
+  // find-similar. No server job either way.
+  const similarSearchPaths = hasSelection
+    ? selection
+    : similarTargetPath
+    ? [similarTargetPath]
+    : [];
   const handleFindSimilar = () => {
+    if (similarSearchPaths.length === 0) return;
     libraryService.send({
       type: 'ADD_PREDICATE',
       data: {
-        predicate: {
-          type: 'similar',
-          value: similarTargetPath,
-          exclude: false,
-          join: filteringMode === 'OR' ? 'OR' : 'AND',
-        },
+        predicate: groupSimilarPredicate(
+          similarSearchPaths,
+          filteringMode === 'OR' ? 'OR' : 'AND'
+        ),
       },
     });
     libraryService.send('HIDE_CONTEXT_PALETTE');
@@ -788,6 +833,77 @@ export default function ContextPalette() {
       },
     });
     libraryService.send('HIDE_CONTEXT_PALETTE');
+  };
+
+  // Merge the discrete multi-selection into its FIRST item, synchronously
+  // (no job): tags/embeddings/transcript are consolidated onto the first
+  // item, the transcript sidecar moves with it, and the other files are
+  // deleted from disk with all their database references erased. In Electron
+  // this runs against the local library over IPC; in web mode it hits the
+  // synchronous /api/media/merge-metadata endpoint.
+  const [merging, setMerging] = useState(false);
+  const handleMergeSelection = async () => {
+    if (selection.length < 2 || merging) return;
+    setMerging(true);
+    try {
+      const result = (await invoke('merge-item-metadata', [selection])) as {
+        target: string;
+        tags: number;
+        embeddings: number;
+        transcript: boolean;
+        deleted: string[];
+        failed: string[];
+      };
+      // Deleted sources leave the in-memory library immediately (their DB
+      // rows are already gone), and every metadata cache the merge touched
+      // refetches so the target's panels show the consolidated data.
+      if (result.deleted?.length) {
+        libraryService.send('REMOVE_MERGED_FILES', {
+          data: { paths: result.deleted },
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
+      queryClient.invalidateQueries({ queryKey: ['metadata'] });
+      queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+      queryClient.invalidateQueries({ queryKey: ['embeddings'] });
+      queryClient.invalidateQueries({ queryKey: ['transcript'] });
+
+      const targetName = result.target.split(/[\\/]/).pop() || result.target;
+      const parts = [
+        `${result.tags} tag${result.tags === 1 ? '' : 's'}`,
+        `${result.embeddings} embedding${result.embeddings === 1 ? '' : 's'}`,
+      ];
+      if (result.transcript) parts.push('transcript');
+      const failNote = result.failed?.length
+        ? ` — ${result.failed.length} source${
+            result.failed.length === 1 ? '' : 's'
+          } could not be deleted`
+        : '';
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: result.failed?.length ? 'info' : 'success',
+          title: `Merged ${selection.length} items into ${targetName}`,
+          message: `Copied ${parts.join(', ')}; ${
+            result.deleted?.length ?? 0
+          } file${
+            (result.deleted?.length ?? 0) === 1 ? '' : 's'
+          } deleted${failNote}`,
+        },
+      });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch (e) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Merge failed',
+          message: e instanceof Error ? e.message : 'Could not merge items',
+        },
+      });
+    } finally {
+      setMerging(false);
+    }
   };
 
   // Electron-only: hand the right-clicked file to Lowkey Studio. The main
@@ -823,8 +939,13 @@ export default function ContextPalette() {
           signal: controller.signal,
         });
         if (!res.ok) return;
-        const people = (await res.json()) as Array<{ id: number; name: string }>;
-        const match = people.find((p) => p.name === (target as { tag: string }).tag);
+        const people = (await res.json()) as Array<{
+          id: number;
+          name: string;
+        }>;
+        const match = people.find(
+          (p) => p.name === (target as { tag: string }).tag
+        );
         if (match) {
           setPersonTarget(match);
           setPersonRename(displayTagLabel(match.name));
@@ -870,7 +991,9 @@ export default function ContextPalette() {
         data: {
           type: 'success',
           title: 'Person renamed',
-          message: `${displayTagLabel(personTarget.name)} → ${personRename.trim()}`,
+          message: `${displayTagLabel(
+            personTarget.name
+          )} → ${personRename.trim()}`,
         },
       });
       libraryService.send('HIDE_CONTEXT_PALETTE');
@@ -886,7 +1009,6 @@ export default function ContextPalette() {
     }
   };
 
-
   // Chip selection: chips toggle; the Run button launches everything the
   // user picked as ONE combined job (plus a parallel faces job when chosen).
   const toggleType = (meta: MetadataType) => {
@@ -897,13 +1019,20 @@ export default function ContextPalette() {
     if (!alreadySelected) {
       const req = TASK_REQUIREMENTS[meta.label];
       const dep = req ? deps.get(req.depId) : undefined;
-      if (req && req.kind === 'downloadable' && dep && isDownloadableState(dep.state)) {
+      if (
+        req &&
+        req.kind === 'downloadable' &&
+        dep &&
+        isDownloadableState(dep.state)
+      ) {
         libraryService.send({
           type: 'ADD_TOAST',
           data: {
             type: 'info',
             title: `${req.feature} needs a one-time download`,
-            message: `Use the Download button under the ${meta.label} chip (${fmtSize(dep.size_bytes)}).`,
+            message: `Use the Download button under the ${
+              meta.label
+            } chip (${fmtSize(dep.size_bytes)}).`,
           },
         });
         return;
@@ -949,11 +1078,18 @@ export default function ContextPalette() {
     const effectiveQuery64 =
       effectiveQuery === queryString ? query64 : encodeQuery64(effectiveQuery);
 
+    // The job target must be the LAST token (the server takes the final
+    // ParseCommand token as the job input). An explicit selection is passed
+    // as one quoted newline-joined path list; otherwise the query context.
+    const targetTail = hasSelection
+      ? `"${selection.join('\n')}"`
+      : `--query64=${effectiveQuery64}`;
+
     const ops = selected.flatMap((m) => m.ops);
     const input =
       ops.length === 1
-        ? `${ops[0]}${overwrite} --query64=${effectiveQuery64}`
-        : `process --ops=${ops.join(',')}${overwrite} --query64=${effectiveQuery64}`;
+        ? `${ops[0]}${overwrite} ${targetTail}`
+        : `process --ops=${ops.join(',')}${overwrite} ${targetTail}`;
 
     try {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
@@ -985,12 +1121,19 @@ export default function ContextPalette() {
     try {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
       if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      // Workflow input is passed verbatim (no shell-style tokenization), so
+      // an explicit selection goes in as a raw newline-separated path list.
+      const workflowInput = hasSelection
+        ? selection.join('\n')
+        : queryString
+        ? `--query64=${query64}`
+        : '';
       const res = await fetch(
         `${mediaServerBase}/workflows/${workflow.id}/run`,
         {
           method: 'POST',
           headers,
-          body: JSON.stringify({ input: queryString ? `--query64=${query64}` : '' }),
+          body: JSON.stringify({ input: workflowInput }),
           signal: AbortSignal.timeout(10000),
           redirect: 'error',
         }
@@ -1025,12 +1168,15 @@ export default function ContextPalette() {
       <div className="context-palette-header">
         <span className="context-label">{contextLabel}</span>
         <div className="context-header-right">
-          {target.type === 'library' && (
+          {multiSelection ? (
+            <span className="context-count" title={selection.join('\n')}>
+              {itemCount} files
+            </span>
+          ) : target.type === 'library' ? (
             <span className="context-count">{itemCount} items</span>
-          )}
-          {target.type === 'file' && (
+          ) : target.type === 'file' ? (
             <span className="context-count">1 file</span>
-          )}
+          ) : null}
           {isElectron &&
             similarTargetPath &&
             STUDIO_MEDIA_RE.test(similarTargetPath) && (
@@ -1059,57 +1205,87 @@ export default function ContextPalette() {
                 </svg>
               </button>
             )}
-          {(capabilities.visualSearch ||
-            (serverAvailable && authToken)) &&
+          {(capabilities.visualSearch || (serverAvailable && authToken)) &&
+            similarSearchPaths.length > 0 && (
+              <button
+                className="find-similar-btn"
+                onClick={handleFindSimilar}
+                title={
+                  multiSelection
+                    ? `Find media similar to these ${selection.length} items (combined search)`
+                    : 'Find visually similar'
+                }
+                aria-label={
+                  multiSelection
+                    ? `Find media similar to these ${selection.length} items`
+                    : 'Find visually similar'
+                }
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <line x1="21" y1="21" x2="16.5" y2="16.5" />
+                  <path d="M11 8l.9 1.8 1.9.3-1.4 1.4.3 1.9-1.7-.9-1.7.9.3-1.9L8.2 10.1l1.9-.3z" />
+                </svg>
+              </button>
+            )}
+          {(capabilities.visualSearch || (serverAvailable && authToken)) &&
             similarTargetPath && (
-              <>
-                <button
-                  className="find-similar-btn"
-                  onClick={handleFindSimilar}
-                  title="Find visually similar"
-                  aria-label="Find visually similar"
+              <button
+                className="find-similar-btn"
+                onClick={handleFindPerson}
+                title="Find this person (face match)"
+                aria-label="Find this person"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <circle cx="11" cy="11" r="7" />
-                    <line x1="21" y1="21" x2="16.5" y2="16.5" />
-                    <path d="M11 8l.9 1.8 1.9.3-1.4 1.4.3 1.9-1.7-.9-1.7.9.3-1.9L8.2 10.1l1.9-.3z" />
-                  </svg>
-                </button>
-                <button
-                  className="find-similar-btn"
-                  onClick={handleFindPerson}
-                  title="Find this person (face match)"
-                  aria-label="Find this person"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <circle cx="12" cy="8" r="4" />
-                    <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
-                  </svg>
-                </button>
-              </>
+                  <circle cx="12" cy="8" r="4" />
+                  <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
+                </svg>
+              </button>
             )}
         </div>
       </div>
+
+      {multiSelection && (isElectron || (serverAvailable && authToken)) && (
+        <div className="context-palette-merge">
+          <span className="action-group-title">Selection</span>
+          <button
+            type="button"
+            className="merge-selection-btn"
+            onClick={handleMergeSelection}
+            disabled={merging}
+            title="Copy tags, embeddings, and the transcript onto the first-selected item, then delete the other files"
+          >
+            {merging
+              ? 'Merging…'
+              : `Merge ${selection.length} items into first`}
+          </button>
+          <span className="merge-selection-note">
+            keeps “{(selection[0] || '').split(/[\\/]/).pop()}” — the other{' '}
+            {selection.length - 1} file
+            {selection.length - 1 === 1 ? '' : 's'} will be deleted
+          </span>
+        </div>
+      )}
 
       {personTarget && serverAvailable && authToken && (
         <div className="context-palette-person">
@@ -1148,9 +1324,7 @@ export default function ContextPalette() {
       )}
 
       {serverAvailable === null && (
-        <div className="context-palette-checking">
-          Checking job service...
-        </div>
+        <div className="context-palette-checking">Checking job service...</div>
       )}
 
       {serverAvailable && !authToken && (
@@ -1160,12 +1334,14 @@ export default function ContextPalette() {
       )}
 
       {serverAvailable && authToken && (
-        <div
-          className={`generate-block${genMode === 'all' ? ' caution' : ''}`}
-        >
+        <div className={`generate-block${genMode === 'all' ? ' caution' : ''}`}>
           <div className="generate-mode-row">
             <span className="generate-label">Generate</span>
-            <div className="mode-toggle" role="radiogroup" aria-label="Generation mode">
+            <div
+              className="mode-toggle"
+              role="radiogroup"
+              aria-label="Generation mode"
+            >
               <button
                 type="button"
                 role="radio"
@@ -1191,8 +1367,12 @@ export default function ContextPalette() {
               const req = TASK_REQUIREMENTS[meta.label];
               const dep = req ? deps.get(req.depId) : undefined;
               const needsDownload =
-                !!req && req.kind === 'downloadable' && !!dep && isDownloadableState(dep.state);
-              const downloading = !!req && !!dep && isDownloadingState(dep.state);
+                !!req &&
+                req.kind === 'downloadable' &&
+                !!dep &&
+                isDownloadableState(dep.state);
+              const downloading =
+                !!req && !!dep && isDownloadingState(dep.state);
               const isSelected = selectedTypes.includes(meta.label);
               return (
                 <button
@@ -1214,7 +1394,9 @@ export default function ContextPalette() {
                   {isSelected && <span className="chip-check">✓</span>}
                   {meta.label}
                   {needsDownload && <span className="dep-badge">setup</span>}
-                  {downloading && <span className="dep-badge downloading">…</span>}
+                  {downloading && (
+                    <span className="dep-badge downloading">…</span>
+                  )}
                 </button>
               );
             })}
@@ -1253,10 +1435,7 @@ export default function ContextPalette() {
       )}
 
       {serverAvailable && authToken && savedWorkflows.length > 0 && (
-        <WorkflowPicker
-          workflows={savedWorkflows}
-          onRun={handleRunWorkflow}
-        />
+        <WorkflowPicker workflows={savedWorkflows} onRun={handleRunWorkflow} />
       )}
 
       {serverAvailable && authToken && activeJobs.length > 0 && (
@@ -1269,9 +1448,7 @@ export default function ContextPalette() {
                 <span className="job-label">
                   {JOB_TITLES[job.command] || job.command}
                 </span>
-                <span className="job-state">
-                  {job.state.replace('_', ' ')}
-                </span>
+                <span className="job-state">{job.state.replace('_', ' ')}</span>
                 <button
                   className="job-cancel"
                   onClick={async () => {
@@ -1279,10 +1456,10 @@ export default function ContextPalette() {
                       const headers: HeadersInit = {};
                       if (authToken)
                         headers['Authorization'] = `Bearer ${authToken}`;
-                      await fetch(
-                        `${mediaServerBase}/job/${job.id}/cancel`,
-                        { method: 'POST', headers }
-                      );
+                      await fetch(`${mediaServerBase}/job/${job.id}/cancel`, {
+                        method: 'POST',
+                        headers,
+                      });
                     } catch {
                       // ignore
                     }

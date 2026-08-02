@@ -20,6 +20,13 @@ jest.mock('@xstate/react', () => ({
         query: { predicates: [], mode: 'AND' },
         settings: { filteringMode: 'AND', applyTagPreview: false },
         initSessionId: 'session-123',
+        // Filter-state history dropdown inputs (useFilterHistory).
+        queryHistory: [],
+        currentStateType: 'fs',
+        library: [],
+        previousLibrary: [],
+        initialFile: '/test/folder',
+        previousInitialFile: '',
       },
     }),
 }));

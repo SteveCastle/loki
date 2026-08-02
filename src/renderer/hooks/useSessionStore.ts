@@ -38,20 +38,15 @@ export interface SessionQueryData {
   textFilter: string;
 }
 
-// State type for tracking which mode the library was loaded from
-type LibraryStateType = 'fs' | 'db';
-
+// The FS base snapshot: the folder scan the session's queries started from.
+// Holds loadedFromFS contents ONLY — DB query states are re-run from the
+// in-memory query history, never restored from a snapshot. (Snapshots written
+// by older versions carried extra previous* query fields; they are ignored.)
 export interface SessionPreviousData {
   previousLibrary: Item[];
   previousCursor: number;
-  // State type tracking for proper restoration
-  previousStateType?: LibraryStateType | null;
-  previousTextFilter?: string;
-  previousDbQuery?: { tags: string[] };
-  // Previous unified structured query, mirrored alongside previousDbQuery.
-  previousQuery?: import('../query/types').Query;
-  // Path the library was loaded for, so back-restoration keeps
-  // initialFile coherent with the restored library snapshot.
+  // Path the snapshot was loaded for, so restoration keeps initialFile
+  // coherent with the restored library.
   previousInitialFile?: string;
 }
 
@@ -326,22 +321,16 @@ export function updateQuery(
 }
 
 /**
- * Update previous library state (for back navigation)
+ * Update the persisted FS base snapshot (for base restoration)
  */
 export function updatePrevious(
   previousLibrary: Item[],
   previousCursor: number,
-  previousStateType?: LibraryStateType | null,
-  previousTextFilter?: string,
-  previousDbQuery?: { tags: string[] },
   previousInitialFile?: string
 ): void {
   setSessionValue('previous', {
     previousLibrary,
     previousCursor,
-    previousStateType,
-    previousTextFilter,
-    previousDbQuery,
     previousInitialFile,
   });
 }

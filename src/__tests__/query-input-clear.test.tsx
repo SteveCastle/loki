@@ -2,18 +2,6 @@ import { render, fireEvent } from '@testing-library/react';
 import QueryInput from '../renderer/components/query-input/QueryInput';
 import type { Query } from '../renderer/query/types';
 
-// Mock the search-history hook so the test doesn't transitively pull in
-// platform.ts (which carries unrelated, pre-existing type errors that would
-// fail ts-jest). The clear button doesn't depend on history behaviour.
-jest.mock('../renderer/hooks/useSearchHistory', () => ({
-  useSearchHistory: () => ({
-    history: [],
-    addSearch: () => {},
-    removeSearch: () => {},
-    clearAll: () => {},
-  }),
-}));
-
 // The clear button must distinguish two cases:
 //  - filters present  -> full clear (chips + text), which resets the library.
 //  - only text typed  -> clear the text only; a no-op on the library.
@@ -31,6 +19,10 @@ function renderInput(query: Query, textValue: string) {
       onSetPredicateJoin={() => {}}
       onClearAll={onClearAll}
       onClearText={onClearText}
+      history={[]}
+      onApplyHistory={() => {}}
+      baseLabel="pictures"
+      onApplyBase={() => {}}
     />
   );
   const clearButton = utils.container.querySelector(

@@ -1,5 +1,5 @@
 // src/__tests__/query-reducer.test.ts
-import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, updatePredicateBlend, tagsFromQuery, addPredicateWithMode, addOrMergeSimilarityPredicate, addBlendNode, removeBlendNode, updateBlendNode, effectiveBlendNodes } from '../renderer/query/reducer';
+import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, updatePredicateBlend, tagsFromQuery, addPredicateWithMode, addOrMergeSimilarityPredicate, addBlendNode, removeBlendNode, updateBlendNode, effectiveBlendNodes, groupSimilarPredicate } from '../renderer/query/reducer';
 import type { Query } from '../renderer/query/types';
 
 const q = (preds: Query['predicates']): Query => ({ predicates: preds });
@@ -351,5 +351,58 @@ describe('composing from a visual (text) base', () => {
       'AND'
     );
     expect(twice.predicates[0].nodes).toHaveLength(1);
+  });
+
+  // Group similarity search: the context palette's multi-selection becomes
+  // ONE composite similar predicate (first item = base, the rest equal-weight
+  // image nodes), so the server ranks against the group centroid.
+  describe('groupSimilarPredicate', () => {
+    it('builds base + equal-weight image nodes from a selection', () => {
+      expect(groupSimilarPredicate(['a.jpg', 'b.jpg', 'c.jpg'], 'AND')).toEqual({
+        type: 'similar',
+        value: 'a.jpg',
+        exclude: false,
+        join: 'AND',
+        nodes: [
+          { kind: 'image', value: 'b.jpg' },
+          { kind: 'image', value: 'c.jpg' },
+        ],
+      });
+    });
+
+    it('a single path is the classic find-similar (no nodes)', () => {
+      expect(groupSimilarPredicate(['a.jpg'], 'AND')).toEqual({
+        type: 'similar',
+        value: 'a.jpg',
+        exclude: false,
+        join: 'AND',
+      });
+    });
+
+    it('dedupes repeated paths and the base itself', () => {
+      const p = groupSimilarPredicate(['a.jpg', 'b.jpg', 'a.jpg', 'b.jpg']);
+      expect(p.nodes).toEqual([{ kind: 'image', value: 'b.jpg' }]);
+    });
+  });
+
+  it('stacking a node-carrying predicate folds ALL its nodes into the target', () => {
+    const start = q([{ type: 'similar', value: 'base.jpg', exclude: false }]);
+    const group = groupSimilarPredicate(['a.jpg', 'b.jpg', 'c.jpg'], 'AND');
+    const next = addOrMergeSimilarityPredicate(start, group, 'AND');
+    expect(next.predicates).toHaveLength(1);
+    expect(next.predicates[0].value).toBe('base.jpg');
+    expect(next.predicates[0].nodes).toEqual([
+      { kind: 'image', value: 'a.jpg' },
+      { kind: 'image', value: 'b.jpg' },
+      { kind: 'image', value: 'c.jpg' },
+    ]);
+  });
+
+  it('EXCLUSIVE replaces the query with the whole group predicate', () => {
+    const start = q([{ type: 'tag', value: 'x', exclude: false }]);
+    const group = groupSimilarPredicate(['a.jpg', 'b.jpg'], 'AND');
+    expect(
+      addOrMergeSimilarityPredicate(start, group, 'EXCLUSIVE').predicates
+    ).toEqual([group]);
   });
 });

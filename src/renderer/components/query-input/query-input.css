@@ -475,61 +475,202 @@
   user-select: none;
 }
 
-.query-input-clear-all {
-  all: unset;
-  cursor: pointer;
-  color: #888;
-  font-size: 11px;
+.query-input-section-hint {
+  color: #5c5c62;
+  font-size: 10px;
   text-transform: none;
-  transition: color 0.15s;
 }
 
-.query-input-clear-all:hover {
-  color: #fff;
-}
-
-/* History items */
-.query-input-item {
+/* Filter-state history rows: a read-only miniature of the chip bar on the
+   left, result count + recency on the right. Clicking re-runs the state. */
+.query-history-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0.4rem 0.5rem;
-  color: #fff;
+  gap: 8px;
+  padding: 0.35rem 0.5rem;
   cursor: pointer;
-  font-size: 13px;
 }
 
-.query-input-item:hover,
-.query-input-item.highlighted {
+.query-history-row:hover,
+.query-history-row.highlighted {
   background: #3e3e42;
 }
 
-.query-input-item-text {
-  flex: 1;
+.query-history-row.current {
+  box-shadow: inset 2px 0 0 #6c5cff;
+}
+
+.query-history-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Mini chips echo the live chip palette so a state reads at a glance. */
+.query-history-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  font-size: 11px;
+  max-width: 160px;
+  background: #2b3a4a;
+  color: #cfe3f5;
+  border: 1px solid #3d5a78;
+}
+
+.query-history-chip.category {
+  background: #2b4a38;
+  color: #cff5dc;
+  border-color: #3d785a;
+}
+
+.query-history-chip.visual {
+  background: #332b4a;
+  color: #e0d6ff;
+  border-color: #5a4d8a;
+}
+
+.query-history-chip.similar {
+  background: #2b3f4a;
+  color: #d6ecff;
+  border-color: #3d6378;
+}
+
+.query-history-chip.exclude {
+  background: #4a2b2b;
+  color: #f5cfcf;
+  border-color: #784040;
+}
+
+.query-history-chip-not {
+  font-weight: 700;
+}
+
+.query-history-chip-glyph {
+  opacity: 0.75;
+  flex-shrink: 0;
+}
+
+.query-history-chip-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.query-history-chip-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.query-history-chip-nodes {
+  color: #cdb8ff;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.query-history-join {
+  font-size: 9px;
+  font-weight: 600;
+  color: #9aa4b0;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.query-history-join.or {
+  color: #d8b980;
+}
+
+.query-history-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.query-history-badge {
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: #3a3357;
+  border: 1px solid #6c5cff;
+  color: #cdc3ff;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.query-history-count {
+  color: #aab;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.query-history-time {
+  color: #666;
+  font-size: 10px;
+}
+
+/* Pinned base row: the session's starting library (folder scan). Always the
+   last row — the state everything falls back to. */
+.query-history-base {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0.4rem 0.5rem;
+  margin-top: 2px;
+  border-top: 1px solid #3e3e42;
+  cursor: pointer;
+}
+
+.query-history-base:hover,
+.query-history-base.highlighted {
+  background: #3e3e42;
+}
+
+.query-history-base.current {
+  box-shadow: inset 2px 0 0 #6c5cff;
+}
+
+.query-history-base-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: #35343a;
+  color: #d5d0c4;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.query-history-base-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.query-history-base-label {
+  color: #eee;
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.query-input-item-remove {
-  all: unset;
-  cursor: pointer;
-  color: #888;
-  font-size: 16px;
-  line-height: 1;
-  padding: 0 0.2rem;
-  opacity: 0.5;
-  transition: opacity 0.15s;
-  flex-shrink: 0;
-}
-
-.query-input-item:hover .query-input-item-remove,
-.query-input-item.highlighted .query-input-item-remove {
-  opacity: 1;
-}
-
-.query-input-item-remove:hover {
-  color: #fff;
+.query-history-base-sub {
+  color: #777;
+  font-size: 10px;
 }
 
 .query-input-empty {

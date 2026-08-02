@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useSearchHistory } from '../../hooks/useSearchHistory';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import { mediaUrl } from '../../platform';
 import type { Query, Predicate, BlendNode } from '../../query/types';
 import { predicateKey } from '../../query/types';
+import {
+  queryStateKey,
+  type QueryHistoryEntry,
+} from '../../query/history';
 import { effectiveBlendNodes } from '../../query/reducer';
 import { displayTagLabel } from '../../tag-display';
 import type { FilterModeOption } from '../../../settings';
@@ -65,6 +68,17 @@ interface QueryInputProps {
   // The toggle state itself is shared via useMeaningMode — parents that need
   // to react (e.g. hide tag suggestions) read the same hook.
   onSubmitVisual?: (text: string) => void;
+  // Session filter-state history (machine context.queryHistory): the last few
+  // committed DB query states, newest first. Selecting one RE-RUNS that query
+  // via onApplyHistory. The dropdown also pins a base row that restores the
+  // session's starting library (the folder scan) via onApplyBase.
+  history: QueryHistoryEntry[];
+  onApplyHistory: (entry: QueryHistoryEntry) => void;
+  // Label for the pinned base row (e.g. the folder's basename) and, when
+  // known, how many items the base library holds.
+  baseLabel: string;
+  baseCount?: number;
+  onApplyBase: () => void;
 }
 
 // Glyph prefix shown on a chip for each predicate type.
@@ -96,8 +110,113 @@ const FILTER_MODE_LABELS: Record<FilterModeOption, string> = {
   EXCLUSIVE: 'Exclusive',
 };
 
-const MAX_VISIBLE_RECENT = 5;
-const MAX_VISIBLE_FILTERED = 10;
+// Compact "how long ago did this state last run" formatter for history rows.
+function timeAgo(at: number): string {
+  const s = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// Short display label for a predicate in a history row's mini-chip.
+function predicateMiniLabel(p: Predicate): string {
+  if (p.type === 'clip') return 'Screen clip';
+  if (p.type === 'face' && p.value.startsWith('data:')) return 'Face clip';
+  if (p.type === 'similar' || p.type === 'face') {
+    return p.value.split(/[/\\]/).pop() || p.value;
+  }
+  return p.type === 'tag' ? displayTagLabel(p.value) : p.value;
+}
+
+// Substring match across everything a filter state is made of, so typing
+// narrows the history the same way it narrows tag suggestions.
+function entryMatchesText(entry: QueryHistoryEntry, needle: string): boolean {
+  return entry.query.predicates.some(
+    (p) =>
+      predicateMiniLabel(p).toLowerCase().includes(needle) ||
+      (p.text ?? '').toLowerCase().includes(needle) ||
+      (p.nodes ?? []).some((n) => n.value.toLowerCase().includes(needle))
+  );
+}
+
+// One predicate of a history entry, rendered as a read-only mini-chip:
+// join connector, thumbnail/glyph, truncated value, blend-node count.
+function HistoryMiniChip({ p, first }: { p: Predicate; first: boolean }) {
+  const isImage =
+    p.type === 'clip' ||
+    (p.type === 'face' && p.value.startsWith('data:')) ||
+    p.type === 'similar' ||
+    (p.type === 'face' && !p.value.startsWith('data:'));
+  const src =
+    p.type === 'clip' || p.value.startsWith('data:')
+      ? p.value
+      : mediaUrl(p.value);
+  const nodeCount = effectiveBlendNodes(p).length;
+  const typeClass =
+    p.type === 'visual'
+      ? ' visual'
+      : p.type === 'similar' || p.type === 'clip' || p.type === 'face'
+      ? ' similar'
+      : p.type === 'category'
+      ? ' category'
+      : '';
+  return (
+    <>
+      {!first && (
+        <span
+          className={`query-history-join${
+            (p.join ?? 'AND') === 'OR' ? ' or' : ''
+          }`}
+        >
+          {p.join ?? 'AND'}
+        </span>
+      )}
+      <span
+        className={`query-history-chip${p.exclude ? ' exclude' : ''}${typeClass}`}
+      >
+        {p.exclude && <span className="query-history-chip-not">−</span>}
+        {p.type === 'visual' && (
+          <span className="query-history-chip-glyph" aria-hidden="true">
+            ✨
+          </span>
+        )}
+        {p.type === 'face' && (
+          <span className="query-history-chip-glyph" aria-hidden="true">
+            👤
+          </span>
+        )}
+        {isImage && (
+          <img
+            className="query-history-chip-thumb"
+            decoding="async"
+            src={src}
+            alt=""
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
+        )}
+        {!isImage && p.type !== 'visual' && (
+          <span className="query-history-chip-glyph">{TYPE_GLYPH[p.type]}</span>
+        )}
+        <span className="query-history-chip-value">
+          {predicateMiniLabel(p)}
+        </span>
+        {nodeCount > 0 && (
+          <span
+            className="query-history-chip-nodes"
+            title={`${nodeCount} blended concept${nodeCount === 1 ? '' : 's'}`}
+          >
+            ⊕{nodeCount}
+          </span>
+        )}
+      </span>
+    </>
+  );
+}
 
 export default function QueryInput({
   query,
@@ -122,8 +241,12 @@ export default function QueryInput({
   filteringMode,
   onCycleFilterMode,
   onSubmitVisual,
+  history,
+  onApplyHistory,
+  baseLabel,
+  baseCount,
+  onApplyBase,
 }: QueryInputProps) {
-  const { history, addSearch, removeSearch, clearAll } = useSearchHistory();
   // "Search by meaning" mode: typed text commits as a visual: predicate.
   // Shared + sticky: stays on across palette open/close until toggled off.
   const { meaningMode, setMeaningMode } = useMeaningMode();
@@ -232,15 +355,20 @@ export default function QueryInput({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const filteredHistory = textValue.trim()
-    ? history
-        .filter((item) =>
-          item.toLowerCase().includes(textValue.trim().toLowerCase())
-        )
-        .slice(0, MAX_VISIBLE_FILTERED)
-    : history.slice(0, MAX_VISIBLE_RECENT);
+  // Identity of the CURRENT filter state, so the dropdown can mark the entry
+  // (or the base row, when the query is empty) the user is already on.
+  const currentKey = queryStateKey(query);
+  const atBase = query.predicates.length === 0;
 
-  const hasItems = filteredHistory.length > 0;
+  const needle = textValue.trim().toLowerCase();
+  const filteredHistory = needle
+    ? history.filter((entry) => entryMatchesText(entry, needle))
+    : history;
+
+  // The base row is always present, so the dropdown always has something to
+  // show; keyboard navigation spans the history rows then the base row.
+  const navCount = filteredHistory.length + 1;
+  const baseIndex = filteredHistory.length;
 
   // Reset highlight when input changes
   useEffect(() => {
@@ -280,23 +408,38 @@ export default function QueryInput({
     }, 200);
   }, []);
 
-  // Select a search-history entry: push its text into the input, record it,
-  // then commit it via the taxonomy-owned submit handler.
-  const selectItem = useCallback(
-    (item: string) => {
-      onTextChange(item);
-      addSearch(item);
-      onSubmitText();
+  // Re-apply a filter state from the dropdown (re-runs the query), or return
+  // to the base library. Both clear any typed text — the applied state is now
+  // the whole query.
+  const applyEntry = useCallback(
+    (entry: QueryHistoryEntry) => {
+      onApplyHistory(entry);
+      onTextChange('');
       setIsOpen(false);
       setHighlightIndex(-1);
     },
-    [onTextChange, addSearch, onSubmitText]
+    [onApplyHistory, onTextChange]
+  );
+
+  const applyBase = useCallback(() => {
+    onApplyBase();
+    onTextChange('');
+    setIsOpen(false);
+    setHighlightIndex(-1);
+  }, [onApplyBase, onTextChange]);
+
+  const applyRow = useCallback(
+    (index: number) => {
+      if (index === baseIndex) applyBase();
+      else if (index >= 0 && index < filteredHistory.length)
+        applyEntry(filteredHistory[index]);
+    },
+    [baseIndex, applyBase, applyEntry, filteredHistory]
   );
 
   const handleSubmit = useCallback(() => {
     const trimmed = textValue.trim();
     if (trimmed) {
-      addSearch(trimmed);
       if (meaningMode && onSubmitVisual) {
         // Commit the raw text as a visual (text→image) embedding search.
         onSubmitVisual(trimmed);
@@ -306,7 +449,7 @@ export default function QueryInput({
       setIsOpen(false);
       setHighlightIndex(-1);
     }
-  }, [textValue, addSearch, onSubmitText, meaningMode, onSubmitVisual]);
+  }, [textValue, onSubmitText, meaningMode, onSubmitVisual]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -336,7 +479,7 @@ export default function QueryInput({
         }
       }
 
-      if (!isOpen || !hasItems) {
+      if (!isOpen) {
         if (e.key === 'Enter') {
           handleSubmit();
           return;
@@ -346,9 +489,9 @@ export default function QueryInput({
           return;
         }
         // Keyboard affordance: open (and highlight the first row) on ArrowDown
-        // so keyboard-only users can still reach history now that focus alone
-        // no longer opens the dropdown.
-        if (e.key === 'ArrowDown' && hasItems) {
+        // so keyboard-only users can still reach the filter history now that
+        // focus alone no longer opens the dropdown.
+        if (e.key === 'ArrowDown') {
           e.preventDefault();
           setIsOpen(true);
           setHighlightIndex(0);
@@ -360,19 +503,15 @@ export default function QueryInput({
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          setHighlightIndex((prev) =>
-            prev < filteredHistory.length - 1 ? prev + 1 : 0
-          );
+          setHighlightIndex((prev) => (prev < navCount - 1 ? prev + 1 : 0));
           break;
         case 'ArrowUp':
           e.preventDefault();
-          setHighlightIndex((prev) =>
-            prev > 0 ? prev - 1 : filteredHistory.length - 1
-          );
+          setHighlightIndex((prev) => (prev > 0 ? prev - 1 : navCount - 1));
           break;
         case 'Enter':
-          if (highlightIndex >= 0 && highlightIndex < filteredHistory.length) {
-            selectItem(filteredHistory[highlightIndex]);
+          if (highlightIndex >= 0 && highlightIndex < navCount) {
+            applyRow(highlightIndex);
           } else {
             handleSubmit();
           }
@@ -381,32 +520,14 @@ export default function QueryInput({
           setIsOpen(false);
           setHighlightIndex(-1);
           break;
-        case 'Delete':
-        case 'Backspace':
-          if (
-            !textValue &&
-            highlightIndex >= 0 &&
-            highlightIndex < filteredHistory.length
-          ) {
-            e.preventDefault();
-            const itemToRemove = filteredHistory[highlightIndex];
-            removeSearch(itemToRemove);
-            setHighlightIndex((prev) =>
-              prev >= filteredHistory.length - 1 ? prev - 1 : prev
-            );
-          }
-          break;
       }
     },
     [
       isOpen,
-      hasItems,
       highlightIndex,
-      filteredHistory,
-      textValue,
+      navCount,
+      applyRow,
       handleSubmit,
-      selectItem,
-      removeSearch,
       resultNavActive,
       onResultNavMove,
       onResultNavSubmit,
@@ -428,8 +549,9 @@ export default function QueryInput({
   }, [query.predicates.length, onClearAll, onClearText]);
 
   // Suppress the history dropdown while the parent's results surface is the
-  // active navigation target, so the two don't overlap or fight for arrow keys.
-  const dropdownOpen = !resultNavActive && isOpen && hasItems;
+  // active navigation target, so the two don't overlap or fight for arrow
+  // keys. The dropdown always has content — the base row is always there.
+  const dropdownOpen = !resultNavActive && isOpen;
 
   return (
     <div className="query-input" ref={containerRef}>
@@ -845,54 +967,99 @@ export default function QueryInput({
       </div>
       {dropdownOpen && (
         <div className="query-input-dropdown">
-          {
-            <div className="query-input-history">
-              <div className="query-input-section-header">
-                <span>
-                  {textValue.trim() ? 'Search History' : 'Recent Searches'}
-                </span>
-                {history.length > 0 && (
-                  <button
-                    className="query-input-clear-all"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      clearAll();
-                      setHighlightIndex(-1);
-                    }}
-                  >
-                    Clear All
-                  </button>
-                )}
+          <div className="query-input-history">
+            <div className="query-input-section-header">
+              <span>
+                {needle ? 'Matching filters' : 'Session filters'}
+              </span>
+              <span className="query-input-section-hint">
+                click to re-run
+              </span>
+            </div>
+            {filteredHistory.length === 0 ? (
+              <div className="query-input-empty">
+                {history.length === 0
+                  ? 'Filters you apply will appear here'
+                  : 'No filters match the typed text'}
               </div>
-              {filteredHistory.length === 0 ? (
-                <div className="query-input-empty">No recent searches</div>
-              ) : (
-                filteredHistory.map((item, index) => (
+            ) : (
+              filteredHistory.map((entry, index) => {
+                const isCurrent = !atBase && entry.key === currentKey;
+                return (
                   <div
-                    className={`query-input-item${index === highlightIndex ? ' highlighted' : ''}`}
-                    key={item}
+                    className={`query-history-row${
+                      index === highlightIndex ? ' highlighted' : ''
+                    }${isCurrent ? ' current' : ''}`}
+                    key={entry.key}
                     onMouseEnter={() => setHighlightIndex(index)}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => selectItem(item)}
+                    onClick={() => applyEntry(entry)}
+                    title={
+                      isCurrent
+                        ? 'This is the active filter — click to re-run it'
+                        : 'Apply this filter state (re-runs the query)'
+                    }
                   >
-                    <span className="query-input-item-text">{item}</span>
-                    <button
-                      className="query-input-item-remove"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeSearch(item);
-                        setHighlightIndex(-1);
-                      }}
-                      title="Remove"
-                    >
-                      &times;
-                    </button>
+                    <span className="query-history-chips">
+                      {entry.query.predicates.map((p, pi) => (
+                        <HistoryMiniChip
+                          key={`${predicateKey(p)}:${pi}`}
+                          p={p}
+                          first={pi === 0}
+                        />
+                      ))}
+                    </span>
+                    <span className="query-history-meta">
+                      {isCurrent && (
+                        <span className="query-history-badge">current</span>
+                      )}
+                      <span className="query-history-count">
+                        {entry.count.toLocaleString()}{' '}
+                        {entry.count === 1 ? 'item' : 'items'}
+                      </span>
+                      <span className="query-history-time">
+                        {timeAgo(entry.at)}
+                      </span>
+                    </span>
                   </div>
-                ))
-              )}
+                );
+              })
+            )}
+            <div
+              className={`query-history-base${
+                highlightIndex === baseIndex ? ' highlighted' : ''
+              }${atBase ? ' current' : ''}`}
+              onMouseEnter={() => setHighlightIndex(baseIndex)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={applyBase}
+              title={
+                atBase
+                  ? 'You are on the starting library'
+                  : 'Back to the starting library (clears all filters)'
+              }
+            >
+              <span className="query-history-base-icon" aria-hidden="true">
+                ⌂
+              </span>
+              <span className="query-history-base-text">
+                <span className="query-history-base-label">{baseLabel}</span>
+                <span className="query-history-base-sub">
+                  Starting library
+                </span>
+              </span>
+              <span className="query-history-meta">
+                {atBase && (
+                  <span className="query-history-badge">current</span>
+                )}
+                {typeof baseCount === 'number' && baseCount > 0 && (
+                  <span className="query-history-count">
+                    {baseCount.toLocaleString()}{' '}
+                    {baseCount === 1 ? 'item' : 'items'}
+                  </span>
+                )}
+              </span>
             </div>
-          }
+          </div>
         </div>
       )}
     </div>

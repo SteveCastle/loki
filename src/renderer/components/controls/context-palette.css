@@ -603,3 +603,42 @@
   opacity: 0.4;
   cursor: default;
 }
+
+/* ── Selection actions (discrete multi-selection targets) ── */
+
+.context-palette-merge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ctx-hairline);
+}
+
+.merge-selection-btn {
+  background: var(--ctx-accent-soft);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--ctx-accent);
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.merge-selection-btn:hover:not(:disabled) {
+  background: var(--ctx-accent-strong);
+  border-color: var(--ctx-accent);
+  color: white;
+}
+
+.merge-selection-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.merge-selection-note {
+  font-size: 11px;
+  opacity: 0.55;
+  line-height: 1.35;
+  word-break: break-all;
+}

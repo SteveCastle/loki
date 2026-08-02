@@ -47,12 +47,11 @@ export interface SessionQueryData {
   textFilter: string;
 }
 
+// The FS base snapshot: the folder scan the session's queries started from.
+// Older snapshots carried extra previous* query fields; they are ignored.
 export interface SessionPreviousData {
   previousLibrary: SessionLibraryData['library'];
   previousCursor: number;
-  previousStateType?: 'fs' | 'db' | null;
-  previousTextFilter?: string;
-  previousDbQuery?: { tags: string[] };
   previousInitialFile?: string;
 }
 

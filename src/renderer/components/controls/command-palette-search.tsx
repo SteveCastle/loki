@@ -17,7 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import type { Predicate } from '../../query/types';
 import { getNextFilterMode } from '../../../settings';
-import { useSearchHistory } from '../../hooks/useSearchHistory';
+import { useFilterHistory } from '../../hooks/useFilterHistory';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
 import { useAfterPaint } from '../../hooks/useAfterPaint';
@@ -49,7 +49,8 @@ export default function CommandPaletteSearch({
 
   const currentPath = currentItem?.path;
 
-  const { addSearch } = useSearchHistory();
+  // Session filter-state history + base row for the QueryInput dropdown.
+  const filterHistory = useFilterHistory(libraryService);
 
   const [text, setText] = useState('');
   // "Search by meaning" mode: typed text commits as a visual: predicate and the
@@ -93,20 +94,19 @@ export default function CommandPaletteSearch({
     setHighlightIndex(0);
   }, [text]);
 
-  // Commit a chosen result: add it to the query AND record it in recent
-  // searches (the user selected it — that's the search worth remembering),
-  // then clear the typed text.
+  // Commit a chosen result: add it to the query, then clear the typed text.
+  // (The resulting filter STATE is recorded by the machine once it loads —
+  // see queryHistory in state.tsx.)
   const commitPredicate = useCallback(
     (predicate: Predicate) => {
       libraryService.send({
         type: 'ADD_PREDICATE',
         data: { predicate: { ...predicate, join } },
       });
-      addSearch(predicate.value);
       setText('');
       setHighlightIndex(0);
     },
-    [libraryService, join, addSearch]
+    [libraryService, join]
   );
 
   const moveHighlight = (delta: 1 | -1) => {
@@ -132,6 +132,11 @@ export default function CommandPaletteSearch({
         query={query}
         textValue={text}
         onTextChange={setText}
+        history={filterHistory.history}
+        onApplyHistory={filterHistory.onApplyHistory}
+        baseLabel={filterHistory.baseLabel}
+        baseCount={filterHistory.baseCount}
+        onApplyBase={filterHistory.onApplyBase}
         filteringMode={filteringMode}
         onCycleFilterMode={() =>
           libraryService.send({

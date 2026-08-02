@@ -30,6 +30,7 @@ import QueryInput from '../query-input/QueryInput';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
+import { useFilterHistory } from '../../hooks/useFilterHistory';
 
 const VIRTUALIZE_THRESHOLD = 300;
 
@@ -87,6 +88,8 @@ export default function Taxonomy() {
 
   // The unified query (chips) shown in QueryInput.
   const query = useSelector(libraryService, (state) => state.context.query);
+  // Session filter-state history + base row for the QueryInput dropdown.
+  const filterHistory = useFilterHistory(libraryService);
   // View-only public visitors: no tag/category/person creation and no
   // apply-tag toggles; browsing, search, and reset stay.
   const canWrite = useSelector(
@@ -315,6 +318,11 @@ export default function Taxonomy() {
             query={query}
             textValue={tagFilterInput}
             onTextChange={setTagFilterInput}
+            history={filterHistory.history}
+            onApplyHistory={filterHistory.onApplyHistory}
+            baseLabel={filterHistory.baseLabel}
+            baseCount={filterHistory.baseCount}
+            onApplyBase={filterHistory.onApplyBase}
             filteringMode={filteringMode}
             onCycleFilterMode={() =>
               libraryService.send({

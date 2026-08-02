@@ -102,6 +102,13 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   >(null);
   const { libraryService } = useContext(GlobalStateContext);
   const cursor = useSelector(libraryService, (state) => state.context.cursor);
+  // Highlight items in the context palette's multi-selection while it's open.
+  const inContextSelection = useSelector(
+    libraryService,
+    (state) =>
+      state.context.contextPalette.display &&
+      (state.context.contextPalette.selection ?? []).includes(item.path)
+  );
   const { sortBy } = useSelector(libraryService, (state) => {
     return state.context.settings;
   });
@@ -202,24 +209,49 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
   );
   drag(drop(containerRef));
 
-  const handleClick = useCallback(() => {
-    libraryService.send('SET_CURSOR', { idx });
-  }, [libraryService, idx]);
+  const paletteOpen = () =>
+    libraryService.getSnapshot().context.contextPalette.display;
+
+  const handleClick = useCallback(
+    (e: React.MouseEvent) => {
+      // Ctrl/cmd+click while the context palette is open toggles this item
+      // in the palette's selection instead of moving the cursor.
+      if ((e.ctrlKey || e.metaKey) && paletteOpen()) {
+        libraryService.send('EXTEND_CONTEXT_SELECTION', {
+          mode: 'single',
+          idx,
+          path: item.path,
+        });
+        return;
+      }
+      libraryService.send('SET_CURSOR', { idx });
+    },
+    [libraryService, idx, item.path]
+  );
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (paletteOpen() && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+        // Palette already open: modifier-right-clicks build the selection —
+        // shift adds the whole range from the opening item, ctrl adds one.
+        libraryService.send('EXTEND_CONTEXT_SELECTION', {
+          mode: e.shiftKey ? 'range' : 'single',
+          idx,
+          path: item.path,
+        });
+        return;
+      }
       if (e.shiftKey) {
+        // Shift+right-click opens the palette targeting THIS file and anchors
+        // it at this display index so a later shift+right-click can extend a
+        // range from here. (Library-wide targeting lives on the panel
+        // background's shift+right-click.)
         libraryService.send('SHOW_CONTEXT_PALETTE', {
           position: { x: e.clientX, y: e.clientY },
-          // Shift-clicking the item under the cursor (the library selection)
-          // targets that file specifically — same as the detail view — while
-          // any other item targets the whole library selection.
-          target:
-            cursor === idx
-              ? { type: 'file', path: item.path }
-              : { type: 'library' },
+          target: { type: 'file', path: item.path },
+          idx,
         });
       } else {
         libraryService.send('SHOW_COMMAND_PALETTE', {
@@ -227,7 +259,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
         });
       }
     },
-    [libraryService, cursor, idx, item.path]
+    [libraryService, idx, item.path]
   );
 
   const handleFilePathClick = useCallback(() => {
@@ -238,6 +270,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
       [
         'ListItem',
         cursor === idx ? 'selected' : '',
+        inContextSelection ? 'context-selected' : '',
         collectedProps.isOver &&
         !collectedProps.isSelf &&
         collectedProps.itemType === 'MEDIA'
@@ -254,6 +287,7 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
     [
       cursor,
       idx,
+      inContextSelection,
       canDrag,
       collectedProps.isOver,
       collectedProps.isSelf,

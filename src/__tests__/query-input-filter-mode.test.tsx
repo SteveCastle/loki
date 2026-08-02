@@ -2,18 +2,6 @@ import { render, fireEvent } from '@testing-library/react';
 import QueryInput from '../renderer/components/query-input/QueryInput';
 import type { Query } from '../renderer/query/types';
 
-// Mock the search-history hook so the test doesn't transitively pull in
-// platform.ts (which carries unrelated, pre-existing type errors that would
-// fail ts-jest). The filter-mode toggle doesn't depend on history behaviour.
-jest.mock('../renderer/hooks/useSearchHistory', () => ({
-  useSearchHistory: () => ({
-    history: [],
-    addSearch: () => {},
-    removeSearch: () => {},
-    clearAll: () => {},
-  }),
-}));
-
 const baseProps = {
   query: { predicates: [] } as Query,
   textValue: '',
@@ -24,6 +12,10 @@ const baseProps = {
   onSetPredicateJoin: () => {},
   onClearAll: () => {},
   onClearText: () => {},
+  history: [],
+  onApplyHistory: () => {},
+  baseLabel: 'pictures',
+  onApplyBase: () => {},
 };
 
 describe('QueryInput filtering-mode toggle', () => {

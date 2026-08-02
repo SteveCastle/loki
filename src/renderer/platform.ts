@@ -215,6 +215,13 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
       method: 'POST',
       argsToBody: (args) => ({ path: args[0] }),
     },
+    // Consolidate tags/embeddings/transcript from a multi-selection onto its
+    // first item (synchronous, additive — no job, nothing deleted).
+    'merge-item-metadata': {
+      url: '/api/media/merge-metadata',
+      method: 'POST',
+      argsToBody: (args) => ({ paths: args[0] }),
+    },
     // Re-point every database reference after a file moved on disk.
     // move-media args: [from, to, prefix?, dryRun?]
     'move-media': {
@@ -747,7 +754,7 @@ if (isElectron) {
   } catch {}
 
   // Persist only lightweight session keys (skip library/previous - too large for localStorage)
-  const SESSION_PERSIST_KEYS = ['query', 'cursor', 'searchHistory'];
+  const SESSION_PERSIST_KEYS = ['query', 'cursor'];
   let _sessionDirty = false;
   let _sessionTimer: ReturnType<typeof setTimeout> | null = null;
   const _persistSession = () => {
