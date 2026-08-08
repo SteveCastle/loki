@@ -28,8 +28,13 @@ type Predicate struct {
 	TextWeight *float64 `json:"textWeight"`
 	// Composite similarity (similar/clip/visual): extra image/clip/text nodes
 	// merged with the base value into ONE query vector (embedvec.Combine).
-	Nodes    []BlendNode `json:"nodes"`
-	Resolved []string    `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
+	Nodes []BlendNode `json:"nodes"`
+	// BlendMode selects how a multi-node composite is scored: "" or "blend" =
+	// one combined centroid vector (average-of-similarities semantics);
+	// "shared" = must-match-all (tasks.SearchBySharedConcept), which zeroes in
+	// on what the positive nodes have in common.
+	BlendMode string   `json:"blendMode"`
+	Resolved  []string `json:"-"` // visual predicates (similar/visual/clip): paths resolved by the handler before BuildMediaQuery
 }
 
 // Columns returned for the library list. media.description is intentionally
@@ -84,6 +89,31 @@ func clauseFor(p Predicate, params *[]any) string {
 			return "(media.hash NOT LIKE ?)"
 		}
 		return "(media.hash LIKE ?)"
+	case "orientation":
+		// orientation:landscape / portrait / square — compares the stored
+		// media dimensions. Items with missing or zero width/height have no
+		// known orientation: they never match an include, and an exclude
+		// keeps them (excluding "landscape" should not hide unscanned items).
+		// Unknown values match nothing. Mirror of query-sql.ts.
+		var cmp string
+		switch strings.ToLower(p.Value) {
+		case "landscape":
+			cmp = ">"
+		case "portrait":
+			cmp = "<"
+		case "square":
+			cmp = "="
+		default:
+			if p.Exclude {
+				return "(1=1)"
+			}
+			return "(1=0)"
+		}
+		oriented := "(media.width > 0 AND media.height > 0 AND media.width " + cmp + " media.height)"
+		if p.Exclude {
+			return "(NOT " + oriented + ")"
+		}
+		return oriented
 	case "faces":
 		// faces:ungrouped — media whose detected faces are ALL still
 		// unassigned (the People panel's Ungrouped card). One grouped face

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,6 +109,47 @@ func seedTwoTastes(t *testing.T, l *fakeLibrary) {
 	l.like(t, "/b/1.jpg", 103)
 }
 
+func TestPageOrientationRestriction(t *testing.T) {
+	l := newFakeLibrary(t)
+	seedTwoTastes(t, l)
+	// /a/* portrait, /b/* landscape, /z/* left without dimensions (unknown
+	// orientation — must never appear in a restricted feed).
+	if _, err := l.db.Exec(`UPDATE media SET width = 1080, height = 1920 WHERE path LIKE '/a/%'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.db.Exec(`UPDATE media SET width = 1920, height = 1080 WHERE path LIKE '/b/%'`); err != nil {
+		t.Fatal(err)
+	}
+	e := newTestEngine(l, Tuning{BatchSize: 10})
+
+	// Page deep enough to force the session through full generation. Every
+	// batch is dominated by filtered-out items, so this also proves a
+	// zero-append round doesn't end the feed early (exhaustion is judged on
+	// what the lanes drew, not on what survived the filter).
+	seen := map[string]bool{}
+	for offset := 0; offset < 40; offset += 10 {
+		page, _, err := e.Page(context.Background(), "s-portrait", offset, 10, "portrait", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range page {
+			if !strings.HasPrefix(p, "/a/") {
+				t.Fatalf("portrait feed served %q (not a portrait item)", p)
+			}
+			if seen[p] {
+				t.Fatalf("path %q repeated in restricted feed", p)
+			}
+			seen[p] = true
+		}
+	}
+	// Every eligible portrait item must eventually surface — a premature
+	// exhaustion would truncate the set. Eligible = the 20 /a/ items minus
+	// the 2 the profile counts as likes (IncludeLiked defaults to false).
+	if len(seen) != 18 {
+		t.Fatalf("portrait feed surfaced %d of 18 eligible portrait items", len(seen))
+	}
+}
+
 func TestPageComposesAndNeverRepeats(t *testing.T) {
 	l := newFakeLibrary(t)
 	seedTwoTastes(t, l)
@@ -116,7 +158,7 @@ func TestPageComposesAndNeverRepeats(t *testing.T) {
 	seen := map[string]bool{}
 	var all []string
 	for offset := 0; offset < 40; offset += 10 {
-		page, _, err := e.Page(context.Background(), "s1", offset, 10, nil)
+		page, _, err := e.Page(context.Background(), "s1", offset, 10, "", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,11 +179,11 @@ func TestPageIsDeterministicPerSession(t *testing.T) {
 	l := newFakeLibrary(t)
 	seedTwoTastes(t, l)
 
-	page1, _, err := newTestEngine(l, Tuning{BatchSize: 12}).Page(context.Background(), "same-session", 0, 12, nil)
+	page1, _, err := newTestEngine(l, Tuning{BatchSize: 12}).Page(context.Background(), "same-session", 0, 12, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	page2, _, err := newTestEngine(l, Tuning{BatchSize: 12}).Page(context.Background(), "same-session", 0, 12, nil)
+	page2, _, err := newTestEngine(l, Tuning{BatchSize: 12}).Page(context.Background(), "same-session", 0, 12, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +202,7 @@ func TestLikedItemsExcludedByDefault(t *testing.T) {
 	seedTwoTastes(t, l)
 	e := newTestEngine(l, Tuning{BatchSize: 30})
 
-	page, _, err := e.Page(context.Background(), "s", 0, 30, nil)
+	page, _, err := e.Page(context.Background(), "s", 0, 30, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +219,7 @@ func TestFeedCoversBothTastesAndWildcards(t *testing.T) {
 	seedTwoTastes(t, l)
 	e := newTestEngine(l, Tuning{BatchSize: 40})
 
-	page, _, err := e.Page(context.Background(), "s", 0, 40, nil)
+	page, _, err := e.Page(context.Background(), "s", 0, 40, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +251,7 @@ func TestOrphanEmbeddingsFilteredOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := newTestEngine(l, Tuning{BatchSize: 40})
-	page, _, err := e.Page(context.Background(), "s", 0, 40, nil)
+	page, _, err := e.Page(context.Background(), "s", 0, 40, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +268,7 @@ func TestColdStartFallsBackToWildcard(t *testing.T) {
 		l.addItem(t, fmt.Sprintf("/m/%d.jpg", i), nil) // no embeddings, no likes
 	}
 	e := newTestEngine(l, Tuning{BatchSize: 10})
-	page, hasMore, err := e.Page(context.Background(), "s", 0, 10, nil)
+	page, hasMore, err := e.Page(context.Background(), "s", 0, 10, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,14 +286,14 @@ func TestExhaustionEndsFeed(t *testing.T) {
 		l.addItem(t, fmt.Sprintf("/m/%d.jpg", i), nil)
 	}
 	e := newTestEngine(l, Tuning{BatchSize: 10})
-	page, _, err := e.Page(context.Background(), "s", 0, 10, nil)
+	page, _, err := e.Page(context.Background(), "s", 0, 10, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(page) != 5 {
 		t.Fatalf("got %d items, want the whole 5-item library", len(page))
 	}
-	page2, hasMore, err := e.Page(context.Background(), "s", 5, 10, nil)
+	page2, hasMore, err := e.Page(context.Background(), "s", 5, 10, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +315,7 @@ func TestNewLikeRebuildsProfileWithinCheckWindow(t *testing.T) {
 	clock := time.Unix(1000, 0)
 	e.now = func() time.Time { return clock }
 
-	if _, _, err := e.Page(context.Background(), "s", 0, 10, nil); err != nil {
+	if _, _, err := e.Page(context.Background(), "s", 0, 10, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	firstSig := e.profile.signature
@@ -281,7 +323,7 @@ func TestNewLikeRebuildsProfileWithinCheckWindow(t *testing.T) {
 	// A new like lands; within LikeCheckSeconds the cached profile is
 	// still served, after it the signature check forces a rebuild.
 	l.like(t, "/z/0.jpg", 200)
-	if _, _, err := e.Page(context.Background(), "s", 10, 10, nil); err != nil {
+	if _, _, err := e.Page(context.Background(), "s", 10, 10, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if e.profile.signature != firstSig {
@@ -289,7 +331,7 @@ func TestNewLikeRebuildsProfileWithinCheckWindow(t *testing.T) {
 	}
 
 	clock = clock.Add(10 * time.Second) // past LikeCheckSeconds (default 5)
-	if _, _, err := e.Page(context.Background(), "s", 20, 10, nil); err != nil {
+	if _, _, err := e.Page(context.Background(), "s", 20, 10, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if e.profile.signature == firstSig {
@@ -306,7 +348,7 @@ func TestQueryOverrideChangesLaneMix(t *testing.T) {
 	e := newTestEngine(l, Tuning{BatchSize: 20})
 
 	// Force a pure-wildcard feed via the per-request override hook.
-	page, _, err := e.Page(context.Background(), "s", 0, 20, func(t *Tuning) {
+	page, _, err := e.Page(context.Background(), "s", 0, 20, "", func(t *Tuning) {
 		t.ExploitWeight, t.FreshWeight, t.BridgeWeight, t.WildcardWeight = 0.000001, 0.000001, 0.000001, 1
 	})
 	if err != nil {
@@ -329,7 +371,7 @@ func TestSearchBudgetBoundsPerPageCost(t *testing.T) {
 	tun := Tuning{BatchSize: 20, MaxSearchesPerPage: 2}
 	e := NewEngine(l.db, func() string { return testModel }, counting, func() Tuning { return tun })
 
-	page, _, err := e.Page(context.Background(), "s", 0, 20, nil)
+	page, _, err := e.Page(context.Background(), "s", 0, 20, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +383,7 @@ func TestSearchBudgetBoundsPerPageCost(t *testing.T) {
 	}
 
 	// Later pages get their own budget, warming up more pools over time.
-	if _, _, err := e.Page(context.Background(), "s", 20, 20, nil); err != nil {
+	if _, _, err := e.Page(context.Background(), "s", 20, 20, "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if searches > 4 {
@@ -356,7 +398,7 @@ func TestPageStopsOnCanceledContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := e.Page(ctx, "s", 0, 10, nil); err == nil {
+	if _, _, err := e.Page(ctx, "s", 0, 10, "", nil); err == nil {
 		t.Fatal("expected an error from a canceled context")
 	}
 }
@@ -378,5 +420,67 @@ func TestTuningDefaults(t *testing.T) {
 	s := Tuning{BatchSize: 5}.WithDefaults()
 	if s.BatchSize != 5 || s.MaxClusters != 12 {
 		t.Fatalf("sparse tuning merged wrong: %+v", s)
+	}
+}
+
+// Reset must re-point the engine at the new database and drop the taste
+// profile and every session — the DB hot-swap contract. Before Reset existed
+// the engine kept the old (closed) *sql.DB behind a sync.Once and served
+// old-library paths from cached sessions, so mode=feed broke until restart.
+func TestResetSwapsDatabaseAndDropsCaches(t *testing.T) {
+	l1 := newFakeLibrary(t)
+	seedTwoTastes(t, l1)
+
+	l2 := newFakeLibrary(t)
+	for i := 0; i < 20; i++ {
+		f := float32(i) * 0.01
+		l2.addItem(t, fmt.Sprintf("/new/%d.jpg", i), embedvec.Normalize([]float32{1, f, 0}))
+	}
+	l2.like(t, "/new/0.jpg", 100)
+	l2.like(t, "/new/1.jpg", 101)
+
+	// The search fn follows the swap, like production's deps.DB-reading closure.
+	active := l1
+	e := NewEngine(
+		l1.db,
+		func() string { return testModel },
+		func(model string, q []float32, limit int) ([]string, error) { return active.search(model, q, limit) },
+		func() Tuning { return Tuning{BatchSize: 10} },
+	)
+
+	page, _, err := e.Page(context.Background(), "s", 0, 10, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) == 0 {
+		t.Fatal("expected a non-empty pre-swap feed")
+	}
+
+	active = l2
+	e.Reset(l2.db)
+
+	e.mu.Lock()
+	db, profile, sessions := e.db, e.profile, len(e.sessions)
+	e.mu.Unlock()
+	if db != l2.db {
+		t.Fatal("Reset did not swap the engine's database handle")
+	}
+	if profile != nil || sessions != 0 {
+		t.Fatalf("Reset left cached state: profile=%v sessions=%d", profile != nil, sessions)
+	}
+
+	// Same session ID, fresh sequence — and every path must come from the
+	// NEW library, even though this session was mid-feed on the old one.
+	page, _, err = e.Page(context.Background(), "s", 0, 10, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) == 0 {
+		t.Fatal("expected a non-empty post-swap feed")
+	}
+	for _, p := range page {
+		if !strings.HasPrefix(p, "/new/") {
+			t.Fatalf("post-swap feed served old-library path %q", p)
+		}
 	}
 }

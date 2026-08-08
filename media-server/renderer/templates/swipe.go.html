@@ -697,6 +697,49 @@
         color: var(--text-dim);
       }
 
+      /* Orientation restriction: 3-way segmented control (Both / Portrait /
+         Landscape) limiting the swipe pool by media dimensions. */
+      .orientation-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+
+      .orientation-toggle-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text-dim);
+      }
+
+      .orientation-segments {
+        display: flex;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.06);
+        overflow: hidden;
+      }
+
+      .orientation-segment {
+        padding: 8px 14px;
+        background: transparent;
+        border: none;
+        color: var(--text-dim);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+
+      .orientation-segment + .orientation-segment {
+        border-left: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      .orientation-segment.active {
+        background: rgba(0, 217, 165, 0.15);
+        color: var(--accent);
+      }
+
       .filter-close {
         width: 36px;
         height: 36px;
@@ -1488,6 +1531,24 @@
         </button>
       </div>
 
+      <div
+        class="orientation-toggle"
+        title="Restrict the swipe pool to portrait or landscape media"
+      >
+        <span class="orientation-toggle-label">Orientation</span>
+        <div class="orientation-segments" id="orientationSegments" role="group">
+          <button type="button" class="orientation-segment" data-orientation="both">
+            Both
+          </button>
+          <button type="button" class="orientation-segment" data-orientation="portrait">
+            Portrait
+          </button>
+          <button type="button" class="orientation-segment" data-orientation="landscape">
+            Landscape
+          </button>
+        </div>
+      </div>
+
       <div class="selected-tags" id="selectedTags">
         <!-- Selected tag chips will be inserted here -->
       </div>
@@ -1654,10 +1715,16 @@
         const btn = document.getElementById('filterBtn');
         if (!btn) return;
         const count = selectedTags.size;
-        if (count > 0) {
+        // The orientation restriction counts as an active filter too — a
+        // silently narrowed pool is exactly what this indicator exists for.
+        const orientationActive = orientationMode !== 'both';
+        if (count > 0 || orientationActive) {
           btn.classList.add('has-filter');
-          btn.dataset.filterCount = String(count);
-          btn.title = `Filter (${count} active) — tap to edit`;
+          const parts = [];
+          if (count > 0) parts.push(`${count} tag${count > 1 ? 's' : ''}`);
+          if (orientationActive) parts.push(`${orientationMode} only`);
+          btn.dataset.filterCount = String(count + (orientationActive ? 1 : 0));
+          btn.title = `Filter (${parts.join(', ')}) — tap to edit`;
         } else {
           btn.classList.remove('has-filter');
           delete btn.dataset.filterCount;
@@ -1807,6 +1874,82 @@
         applyOverlayVisibility();
       }
 
+      // --- Orientation restriction (Both / Portrait / Landscape) ---
+      // Limits the pool of items considered for swiping by the media's stored
+      // dimensions, across ALL modes (shuffle, similar, feed). Persisted
+      // per-device; sent as an `orientation` query param the server applies
+      // BEFORE pagination so offsets stay stable.
+      const ORIENTATION_KEY = 'swipe_orientation';
+      let orientationMode = (() => {
+        const v = localStorage.getItem(ORIENTATION_KEY);
+        return v === 'portrait' || v === 'landscape' ? v : 'both';
+      })();
+
+      // Every /swipe/api request must carry the restriction — a mode or page
+      // that forgets it would leak wrong-orientation items into the stack.
+      function applyOrientationParam(params) {
+        if (orientationMode !== 'both') {
+          params.set('orientation', orientationMode);
+        }
+      }
+
+      function renderOrientationToggle() {
+        document
+          .querySelectorAll('#orientationSegments .orientation-segment')
+          .forEach((btn) => {
+            btn.classList.toggle(
+              'active',
+              btn.dataset.orientation === orientationMode
+            );
+          });
+      }
+
+      function setupOrientationToggle() {
+        document
+          .querySelectorAll('#orientationSegments .orientation-segment')
+          .forEach((btn) => {
+            btn.addEventListener('click', () => {
+              const v = btn.dataset.orientation;
+              if (v === orientationMode) return;
+              orientationMode = v;
+              localStorage.setItem(ORIENTATION_KEY, v);
+              renderOrientationToggle();
+              updateFilterButtonIndicator();
+              restartAfterPoolChange();
+            });
+          });
+        renderOrientationToggle();
+      }
+
+      // A changed pool restriction invalidates everything derived from the
+      // old pool: similar/feed sequences, the stashed shuffle, in-flight
+      // fetches, and the session seed (the server keys sequences on it).
+      // Mirrors the reset applyFilter() performs for a tag-filter change.
+      function restartAfterPoolChange() {
+        if (similarMode || feedMode || randomStash) {
+          similarMode = false;
+          similarAnchor = null;
+          feedMode = false;
+          randomStash = null;
+          updateSimilarButton();
+          updateFeedButton();
+        }
+        if (fetchController) {
+          fetchController.abort();
+          fetchController = null;
+        }
+        isLoading = false;
+        isPreloading = false;
+        items = [];
+        currentIndex = 0;
+        hasMore = true;
+        const randomArray = new Uint32Array(1);
+        crypto.getRandomValues(randomArray);
+        sessionSeed = randomArray[0].toString();
+        sessionStorage.setItem(SESSION_SEED_KEY, sessionSeed);
+        loadInitial();
+      }
+
       async function init() {
         // Do NOT restore saved position to ensure fresh start every time
         // const savedPath = getSavedPosition();
@@ -1814,6 +1957,7 @@
         // Wire up the tag/description overlay toggles and apply the saved state
         // before the first render so hidden overlays never flash in.
         setupOverlayToggles();
+        setupOrientationToggle();
 
         // Surface any persisted tag filter from localStorage immediately,
         // before the first fetch, so the user can see why an "empty" view
@@ -1845,6 +1989,7 @@
           if (searchQuery) {
             params.set('q', searchQuery);
           }
+          applyOrientationParam(params);
 
           const response = await fetch(`/swipe/api?${params}`, {
             signal: controller.signal,
@@ -1871,18 +2016,23 @@
             // persisted filter doesn't look like "the library is empty".
             const emptyText = document.getElementById('emptyText');
             const emptyClearBtn = document.getElementById('emptyClearFilter');
+            // Note items with unknown dimensions are excluded from a
+            // restricted pool — an aggressive-looking cause of emptiness.
+            const orientationNote =
+              orientationMode !== 'both'
+                ? ` The ${orientationMode}-only setting also hides items whose dimensions haven't been scanned yet.`
+                : '';
             if (selectedTags.size > 0) {
               const tagList = Array.from(selectedTags)
                 .map((t) => `"${t}"`)
                 .join(', ');
               if (emptyText) {
-                emptyText.textContent = `No media matches your tag filter (${tagList}). Clear the filter or pick different tags.`;
+                emptyText.textContent = `No media matches your tag filter (${tagList}). Clear the filter or pick different tags.${orientationNote}`;
               }
               if (emptyClearBtn) emptyClearBtn.style.display = 'inline-flex';
             } else {
               if (emptyText) {
-                emptyText.textContent =
-                  'Try adjusting your filter or add some media to your library.';
+                emptyText.textContent = `Try adjusting your filter or add some media to your library.${orientationNote}`;
               }
               if (emptyClearBtn) emptyClearBtn.style.display = 'none';
             }
@@ -1951,6 +2101,7 @@
               params.set('q', searchQuery);
             }
           }
+          applyOrientationParam(params);
 
           const response = await fetch(`/swipe/api?${params}`, {
             signal: controller.signal,

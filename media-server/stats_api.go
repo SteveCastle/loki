@@ -134,6 +134,38 @@ var libStats struct {
 	dirty     bool           // deltas or snapshot changed since last broadcast
 	computeMs int64
 	computing bool
+	// gen is bumped by resetLibraryStats (DB swap). A recount snapshots it at
+	// start and discards its result if it moved — otherwise a count that
+	// straddled the swap installs totals mixing both databases.
+	gen uint64
+}
+
+// resetLibraryStats drops the snapshot and progress overlay. Called on DB
+// swap: both count the OLD library, and /api/stats, the SSE "stats" event,
+// and the autoscheduler's gap check would keep serving them for up to the
+// TTL (5 min on large libraries). The gen bump invalidates in-flight counts.
+func resetLibraryStats() {
+	libStats.mu.Lock()
+	libStats.gen++
+	libStats.snapshot = nil
+	libStats.deltas = nil
+	libStats.dirty = false
+	libStats.computeMs = 0
+	libStats.mu.Unlock()
+}
+
+// warmLibraryStats kicks off a background recount unless one is already
+// running — so the home page shows numbers right after a DB swap instead of
+// "ready:false" until someone polls.
+func warmLibraryStats(deps *Dependencies) {
+	libStats.mu.Lock()
+	if libStats.computing {
+		libStats.mu.Unlock()
+		return
+	}
+	libStats.computing = true
+	libStats.mu.Unlock()
+	go computeLibraryStats(deps)
 }
 
 // applyStatsDelta is the tasks.SetProgressNotifier callback: one completed
@@ -248,6 +280,7 @@ func computeLibraryStats(deps *Dependencies) {
 	// what the recount will read, so they are subtracted once the snapshot
 	// installs. Progress reported DURING the recount stays in the overlay.
 	libStats.mu.Lock()
+	startGen := libStats.gen
 	preDeltas := make(map[string]int, len(libStats.deltas))
 	for k, v := range libStats.deltas {
 		preDeltas[k] = v
@@ -339,6 +372,14 @@ func computeLibraryStats(deps *Dependencies) {
 	data.GeneratedAt = time.Now().Unix()
 
 	libStats.mu.Lock()
+	if libStats.gen != startGen {
+		// The database was swapped while we were counting: some queries ran
+		// against the old DB, some against the new. Discard rather than
+		// install a chimera; the post-swap warm (or the next poll) recounts.
+		libStats.mu.Unlock()
+		log.Printf("stats: discarding snapshot computed across a database switch")
+		return
+	}
 	libStats.snapshot = &data
 	// Retire the deltas the recount has absorbed; keep progress that arrived
 	// while it ran.

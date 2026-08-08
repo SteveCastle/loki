@@ -1261,6 +1261,116 @@ body.mask-editing #mask-overlay {
 /* Timeline                                                             */
 /* ==================================================================== */
 
+/* ---- media bin ------------------------------------------------------
+   Left drawer listing every imported asset. Cards drag onto the timeline;
+   one import backs any number of clips. */
+
+#media-bin {
+  width: 216px;
+  flex: none;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#media-bin[hidden] { display: none; }
+
+.bin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 6px;
+}
+.bin-head h2 {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--dim);
+  opacity: 0.6;
+  margin: 0;
+}
+.bin-import { padding: 1px 8px; }
+
+#media-bin-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bin-empty { color: var(--dim); font-size: 11px; padding: 8px 2px; line-height: 1.5; }
+
+.bin-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg3);
+  cursor: grab;
+  overflow: hidden;
+  flex: none;
+}
+.bin-card:hover { border-color: var(--accent); }
+.bin-card.loading { opacity: 0.5; }
+
+.bin-thumb {
+  height: 64px;
+  background: #0d0f13;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--dim);
+  pointer-events: none;   /* the CARD is the drag handle, not its contents */
+}
+.bin-thumb canvas, .bin-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.bin-name {
+  font-size: 11px;
+  padding: 5px 8px 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bin-meta { font-size: 10px; color: var(--dim); padding: 0 8px 6px; }
+
+.bin-del {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: none;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+}
+.bin-card:hover .bin-del { display: block; }
+.bin-del:hover { background: #a33; }
+
+.bin-hint {
+  flex: none;
+  color: var(--dim);
+  font-size: 10px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  line-height: 1.4;
+}
+
+#btn-media-bin.active { border-color: var(--accent); color: var(--accent); }
+
 #tl-resize {
   flex: none;
   height: 5px;

@@ -11,16 +11,13 @@ import (
 
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
 )
 
 // isImageExt returns true for image file extensions (case-insensitive).
 func isImageExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff":
-		return true
-	}
-	return false
+	return mediaext.IsImage("x" + ext)
 }
 
 // imageOutputExt returns the output extension for an image file.

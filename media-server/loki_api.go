@@ -440,6 +440,17 @@ func compositeTerms(base tasks.QueryTerm, p Predicate) ([]tasks.QueryTerm, error
 	return terms, nil
 }
 
+// searchComposite dispatches a multi-node similarity predicate by its
+// BlendMode: "shared" scores candidates against every positive term at once
+// (must-match-all), anything else blends the terms into one centroid vector
+// (the historical behavior).
+func searchComposite(ctx context.Context, db *sql.DB, p Predicate, terms []tasks.QueryTerm, limit int, allow tasks.PathSet) ([]tasks.SimilarHit, error) {
+	if p.BlendMode == "shared" {
+		return tasks.SearchBySharedConcept(ctx, db, terms, limit, allow)
+	}
+	return tasks.SearchByComposite(ctx, db, terms, limit, allow)
+}
+
 // sortItemsByScore orders items (each a map with "path") by descending score
 // from scoreByPath, attaching item["score"]. Stable for equal scores.
 func sortItemsByScore(items []map[string]any, scoreByPath map[string]float32) {
@@ -601,7 +612,7 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 						var terms []tasks.QueryTerm
 						terms, err = compositeTerms(tasks.QueryTerm{Kind: "path", Value: val, Weight: 1}, req.Predicates[i])
 						if err == nil {
-							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit, allow)
+							hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, visualCandidateLimit, allow)
 						}
 					} else if blendText != "" {
 						hits, err = tasks.SearchByPathAndText(r.Context(), deps.DB, val, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit, allow)
@@ -616,7 +627,7 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 							var terms []tasks.QueryTerm
 							terms, err = compositeTerms(tasks.QueryTerm{Kind: "image", Image: image, Weight: 1}, req.Predicates[i])
 							if err == nil {
-								hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit, allow)
+								hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, visualCandidateLimit, allow)
 							}
 						} else if blendText != "" {
 							hits, err = tasks.SearchByImageAndText(r.Context(), deps.DB, image, blendText, blendTextWeight(req.Predicates[i].TextWeight), visualCandidateLimit, allow)
@@ -643,7 +654,7 @@ func lokiMediaQueryHandler(deps *Dependencies) http.HandlerFunc {
 						var terms []tasks.QueryTerm
 						terms, err = compositeTerms(tasks.QueryTerm{Kind: "text", Value: val, Weight: 1}, req.Predicates[i])
 						if err == nil {
-							hits, err = tasks.SearchByComposite(r.Context(), deps.DB, terms, visualCandidateLimit, allow)
+							hits, err = searchComposite(r.Context(), deps.DB, req.Predicates[i], terms, visualCandidateLimit, allow)
 						}
 					} else {
 						hits, err = tasks.SearchByText(r.Context(), deps.DB, val, visualCandidateLimit, allow)

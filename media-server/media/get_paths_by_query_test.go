@@ -282,6 +282,54 @@ func TestGetPathsByQuery_FacesUngrouped(t *testing.T) {
 	}
 }
 
+// TestGetPathsByQuery_Orientation pins the orientation: predicate: landscape /
+// portrait / square classify by the stored width vs height, items with missing
+// or zero dimensions never match, and unknown values fail closed.
+func TestGetPathsByQuery_Orientation(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	rows := []struct {
+		path          string
+		width, height interface{}
+	}{
+		{"/lib/wide.jpg", 1920, 1080},
+		{"/lib/tall.jpg", 1080, 1920},
+		{"/lib/box.jpg", 512, 512},
+		{"/lib/unscanned.jpg", nil, nil}, // dimensions unknown — never matches
+		{"/lib/zero.jpg", 0, 0},          // zero dims read as unknown, not square
+	}
+	for _, r := range rows {
+		if _, err := db.Exec(
+			"INSERT INTO media (path, width, height) VALUES (?, ?, ?)",
+			r.path, r.width, r.height,
+		); err != nil {
+			t.Fatalf("insert media %s: %v", r.path, err)
+		}
+	}
+
+	for val, want := range map[string]string{
+		"landscape": "/lib/wide.jpg",
+		"portrait":  "/lib/tall.jpg",
+		"square":    "/lib/box.jpg",
+	} {
+		paths, err := GetPathsByQuery(db, "orientation:"+val)
+		if err != nil {
+			t.Fatalf("GetPathsByQuery(orientation:%s) error = %v", val, err)
+		}
+		if len(paths) != 1 || paths[0] != want {
+			t.Fatalf("orientation:%s matched %v, want only [%s]", val, paths, want)
+		}
+	}
+
+	paths, err := GetPathsByQuery(db, "orientation:diagonal")
+	if err != nil {
+		t.Fatalf("GetPathsByQuery() error = %v", err)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("orientation:diagonal matched %d paths, want 0 (%v)", len(paths), paths)
+	}
+}
+
 // TestGetPathsByQuery_FiletypeUnknownMatchesNothing guards the fail-closed
 // contract: an unrecognized filetype value must select zero rows, not the
 // whole library.

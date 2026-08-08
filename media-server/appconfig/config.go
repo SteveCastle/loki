@@ -280,6 +280,16 @@ type Config struct {
 	TranscriptionLanguage  string `json:"transcriptionLanguage"`
 	TranscriptionVADFilter bool   `json:"transcriptionVadFilter"`
 
+	// InitialPrompt is free text fed to the decoder as context — names,
+	// jargon, and preferred spellings the model should recognize (a custom
+	// vocabulary list). Hotwords is a shorter hint list injected into every
+	// decoding window; stronger biasing but costs context space (XXL builds
+	// only). VocalExtract isolates vocals from background music/noise with
+	// the MDX filter before transcribing (XXL builds only).
+	TranscriptionInitialPrompt string `json:"transcriptionInitialPrompt"`
+	TranscriptionHotwords      string `json:"transcriptionHotwords"`
+	TranscriptionVocalExtract  bool   `json:"transcriptionVocalExtract"`
+
 	// Optional path to a user-supplied faster-whisper executable. Overrides
 	// the binary installed via the Dependencies downloader.
 	FasterWhisperPath string `json:"fasterWhisperPath"`
@@ -904,6 +914,22 @@ func applyEnvOverrides(c *Config) {
 			c.TranscriptionVADFilter = false
 		default:
 			log.Printf("Warning: LOWKEY_TRANSCRIPTION_VAD=%q is not a boolean; ignored", v)
+		}
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_INITIAL_PROMPT"); v != "" {
+		c.TranscriptionInitialPrompt = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_HOTWORDS"); v != "" {
+		c.TranscriptionHotwords = v
+	}
+	if v := os.Getenv("LOWKEY_TRANSCRIPTION_VOCAL_EXTRACT"); v != "" {
+		switch strings.ToLower(v) {
+		case "true", "1", "yes", "on":
+			c.TranscriptionVocalExtract = true
+		case "false", "0", "no", "off":
+			c.TranscriptionVocalExtract = false
+		default:
+			log.Printf("Warning: LOWKEY_TRANSCRIPTION_VOCAL_EXTRACT=%q is not a boolean; ignored", v)
 		}
 	}
 	if v := os.Getenv("LOWKEY_DEFAULT_START_PATH"); v != "" {

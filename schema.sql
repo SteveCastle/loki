@@ -17,8 +17,13 @@ CREATE TABLE IF NOT EXISTS media_tag_by_category (
   media_path TEXT,
   tag_label TEXT,
   category_label TEXT,
-  weight INTEGER,
-  PRIMARY KEY (media_path, tag_label, category_label),
+  weight REAL,
+  -- time_stamp is the in-media offset (seconds into a video) the tag applies
+  -- to; 0 means the media in general. It is NOT a creation time.
+  time_stamp REAL,
+  -- created_at is the wall-clock moment the tag was applied (Unix epoch).
+  created_at INTEGER,
+  PRIMARY KEY (media_path, tag_label, category_label, time_stamp),
   FOREIGN KEY (media_path) REFERENCES media (path),
   FOREIGN KEY (tag_label) REFERENCES tag (label),
   FOREIGN KEY (category_label) REFERENCES category (label)

@@ -124,6 +124,51 @@ describe('orderForBattle', () => {
     const single = [item('only', 1500, 0)];
     expect(orderForBattle(single, 'seed')).toEqual(single);
   });
+
+  // A tag query can return the same file twice (one entry per tag instance,
+  // e.g. a timestamped and an untimestamped assignment). Duplicates share a
+  // rating, so they must never be paired against each other — the backend
+  // rejects same-path battles and the vote used to fail silently.
+  describe('duplicate path entries (multiple tag instances of one file)', () => {
+    it('never pairs an item against its own duplicate', () => {
+      // The duplicate shares the anchor's exact rating, making it the
+      // closest-rated candidate by far — the pathological case.
+      const items = [
+        item('dup', 1500, 0),
+        item('dup', 1500, 0), // same file, second tag instance
+        item('a', 1900, 5),
+        item('b', 2100, 5),
+        item('c', 2300, 5),
+      ];
+      for (const seed of SEEDS) {
+        const out = orderForBattle(items, seed);
+        expect(out[0].path).not.toBe(out[1].path);
+      }
+    });
+
+    it('never bisects placement against a duplicate of the unranked anchor', () => {
+      const ranked = Array.from({ length: 20 }, (_, i) =>
+        item(`r${i}`, 1000 + i * 50, 10)
+      );
+      const items = [
+        item('new', undefined, 0),
+        item('new', undefined, 0),
+        ...ranked,
+      ];
+      for (const seed of SEEDS) {
+        const out = orderForBattle(items, seed);
+        expect(out[0].path).toBe('new');
+        expect(out[1].path).not.toBe('new');
+      }
+    });
+
+    it('returns the set unchanged when every entry is the same file', () => {
+      const items = [item('only', 1500, 2), item('only', 1500, 2)];
+      const out = orderForBattle(items, 'seed');
+      expect(out).toHaveLength(2);
+      expect(out.every((i) => i.path === 'only')).toBe(true);
+    });
+  });
 });
 
 describe('binary-search placement', () => {

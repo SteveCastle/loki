@@ -393,6 +393,12 @@ export default function Taxonomy() {
                 data: { key, index, patch },
               })
             }
+            onSetBlendMode={(key, mode) =>
+              libraryService.send({
+                type: 'SET_BLEND_MODE',
+                data: { key, mode },
+              })
+            }
             onSubmitVisual={
               visualSearchAvailable
                 ? (t) => {

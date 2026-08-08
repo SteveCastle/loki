@@ -74,6 +74,11 @@ export default function BattleMode({ item, offset }: Props) {
       }
       libraryService.send('NEXT_BATTLE');
     },
+    onError: (error) => {
+      // A failed vote used to vanish without a trace (the pair just sat
+      // there); at minimum leave evidence.
+      console.error('record-battle failed', error);
+    },
   });
 
   const otherItemIndex = offset === 0 ? 1 : 0;
@@ -103,7 +108,12 @@ export default function BattleMode({ item, offset }: Props) {
   );
   const confidence = useMemo(() => sortConfidence(view), [view]);
 
-  const pairReady = !!item?.path && !!otherItem?.path;
+  // A file can appear twice in a tag query (one entry per tag instance, e.g.
+  // with and without a video timestamp). Ratings are per file, so a same-path
+  // pair is unvotable — the backend rejects an item battling itself, and
+  // without this guard the vote failed silently.
+  const pairReady =
+    !!item?.path && !!otherItem?.path && item.path !== otherItem.path;
 
   return (
     <div className={`BattleMode ${offset ? 'left' : 'right'}`}>

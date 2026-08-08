@@ -56,6 +56,16 @@ var cliAuthCodes = struct {
 	m map[string]*cliAuthCode
 }{m: map[string]*cliAuthCode{}}
 
+// resetCLIAuthCodes drops all pending device-auth codes. Called on DB swap:
+// a pending code is bound to a username from the OLD database, and redeeming
+// it afterwards would mint an API key for whatever user happens to share
+// that name in the new one.
+func resetCLIAuthCodes() {
+	cliAuthCodes.Lock()
+	cliAuthCodes.m = map[string]*cliAuthCode{}
+	cliAuthCodes.Unlock()
+}
+
 func mintCLIAuthCode(username, challenge, keyName string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {

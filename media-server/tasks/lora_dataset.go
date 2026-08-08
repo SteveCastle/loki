@@ -14,6 +14,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
 )
 
@@ -154,12 +155,7 @@ func loraDatasetTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 // isImageFile checks if a file is a supported image file based on its extension
 func isImageFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff":
-		return true
-	}
-	return false
+	return mediaext.IsImage(path)
 }
 
 // convertToJPG converts an image file to JPG format using ffmpeg

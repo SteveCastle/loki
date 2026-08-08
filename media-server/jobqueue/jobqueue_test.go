@@ -41,6 +41,49 @@ func TestGetHost(t *testing.T) {
 	}
 }
 
+// TestRegisterOutputFiles checks the bulk variant matches what the one-at-a-time
+// call produces (same OutputFiles/SourceFiles shape, persisted) — it exists only
+// to avoid the quadratic per-path job rewrite, not to behave differently.
+func TestRegisterOutputFiles(t *testing.T) {
+	q := setupTestQueue(t)
+	defer q.Db.Close()
+
+	id, _ := q.AddJob("", "remove", nil, "/a.jpg", nil)
+
+	q.RegisterOutputFile(id, "/a.jpg")
+	if err := q.RegisterOutputFiles(id, []string{"/b.jpg", "/c.jpg"}); err != nil {
+		t.Fatalf("RegisterOutputFiles() error = %v", err)
+	}
+
+	job := q.GetJob(id)
+	want := []string{"/a.jpg", "/b.jpg", "/c.jpg"}
+	if len(job.OutputFiles) != len(want) {
+		t.Fatalf("OutputFiles = %v, want %v", job.OutputFiles, want)
+	}
+	for i, p := range want {
+		if job.OutputFiles[i] != p {
+			t.Errorf("OutputFiles[%d] = %q, want %q", i, job.OutputFiles[i], p)
+		}
+	}
+	// SourceFiles is read positionally against OutputFiles by downstream tasks,
+	// so it must stay the same length.
+	if len(job.SourceFiles) != len(want) {
+		t.Errorf("SourceFiles has %d entries, want %d (parallel to OutputFiles)", len(job.SourceFiles), len(want))
+	}
+
+	// Empty input is a no-op, not an error, and must not touch the job.
+	if err := q.RegisterOutputFiles(id, nil); err != nil {
+		t.Errorf("RegisterOutputFiles(nil) error = %v", err)
+	}
+	if len(q.GetJob(id).OutputFiles) != len(want) {
+		t.Errorf("RegisterOutputFiles(nil) changed OutputFiles")
+	}
+
+	if err := q.RegisterOutputFiles("no-such-job", []string{"/x.jpg"}); err == nil {
+		t.Error("RegisterOutputFiles() on unknown job should error")
+	}
+}
+
 func TestHostAssignment(t *testing.T) {
 	q := setupTestQueue(t)
 	defer q.Db.Close()

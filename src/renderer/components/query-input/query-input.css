@@ -204,6 +204,38 @@
   color: #f08080;
 }
 
+/* Segmented toggle: how the composite's components combine server-side —
+   Blend (centroid average) vs Match all (shared-concept, must match every
+   positive component). */
+.query-blend-mode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.query-blend-mode-btn {
+  flex: 1 1 0;
+  padding: 3px 0;
+  border: 1px solid #4a4356;
+  border-radius: 3px;
+  background: transparent;
+  color: #aaa;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.query-blend-mode-btn:hover {
+  color: #fff;
+  border-color: #6c5cff;
+}
+
+.query-blend-mode-btn.active {
+  background: #322b52;
+  border-color: #6c5cff;
+  color: #cfc7ff;
+}
+
 .query-blend-pop-hint {
   font-size: 10px;
   color: #777;

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -555,6 +556,199 @@ func TestRemoveItemsFromDB(t *testing.T) {
 	_, err = RemoveItemsFromDB(ctx, nil, []string{"test"})
 	if err == nil {
 		t.Error("RemoveItemsFromDB() with nil db should return error")
+	}
+}
+
+// TestRemoveItemsFromDBStreamReportsCommittedBatches asserts the streaming
+// contract the remove job's progress bar depends on: onBatch fires once per
+// batch (not once at the end), Done advances monotonically to Total, and the
+// rows are ALREADY gone when the callback runs — a caller may report the batch
+// as durable progress.
+func TestRemoveItemsFromDBStreamReportsCommittedBatches(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	const n = 1200 // > 2 batches at the 500-path batch size
+	paths := make([]string, n)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("/lib/file%04d.jpg", i)
+		if _, err := db.Exec("INSERT INTO media (path) VALUES (?)", paths[i]); err != nil {
+			t.Fatalf("Failed to insert test media: %v", err)
+		}
+		if _, err := db.Exec("INSERT INTO media_tag_by_category (media_path, tag_label, category_label) VALUES (?, 'test', 'category')", paths[i]); err != nil {
+			t.Fatalf("Failed to insert test tag: %v", err)
+		}
+	}
+
+	var batches []RemovalBatch
+	result, err := RemoveItemsFromDBStream(context.Background(), db, paths, func(b RemovalBatch) {
+		batches = append(batches, b)
+
+		// The batch's rows must be committed by the time we're told about it.
+		var remaining int
+		if err := db.QueryRow("SELECT COUNT(*) FROM media WHERE path >= ? AND path <= ?", b.Paths[0], b.Paths[len(b.Paths)-1]).Scan(&remaining); err != nil {
+			t.Errorf("count after batch: %v", err)
+		}
+		if remaining != 0 {
+			t.Errorf("batch ending at %d: %d rows still present, want 0 (batch not committed before callback)", b.Done, remaining)
+		}
+	})
+	if err != nil {
+		t.Fatalf("RemoveItemsFromDBStream() error = %v", err)
+	}
+
+	if len(batches) != 3 {
+		t.Fatalf("got %d batch callbacks, want 3 (500+500+200)", len(batches))
+	}
+	prev := 0
+	for i, b := range batches {
+		if b.Total != n {
+			t.Errorf("batch %d: Total = %d, want %d", i, b.Total, n)
+		}
+		if b.Done <= prev {
+			t.Errorf("batch %d: Done = %d, not advancing past %d", i, b.Done, prev)
+		}
+		if b.Done != prev+len(b.Paths) {
+			t.Errorf("batch %d: Done = %d, want %d for %d paths", i, b.Done, prev+len(b.Paths), len(b.Paths))
+		}
+		if b.MediaItemsRemoved != int64(b.Done) {
+			t.Errorf("batch %d: MediaItemsRemoved = %d, want running total %d", i, b.MediaItemsRemoved, b.Done)
+		}
+		prev = b.Done
+	}
+	if prev != n {
+		t.Errorf("final Done = %d, want %d", prev, n)
+	}
+	if result.MediaItemsRemoved != n {
+		t.Errorf("MediaItemsRemoved = %d, want %d", result.MediaItemsRemoved, n)
+	}
+}
+
+// TestRemoveItemsFromDBWithEnforcedForeignKeys removes from a schema where the
+// sidecar tables DO declare foreign keys to media(path) and enforcement is on —
+// the shape of the Electron client's dream-x.sqlite, which carries FKs the Go
+// schema never creates. Without the in-transaction deferral, one out-of-order
+// DELETE aborts the whole batch with "FOREIGN KEY constraint failed".
+func TestRemoveItemsFromDBWithEnforcedForeignKeys(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:fkremove?mode=memory&cache=shared&_pragma=foreign_keys=ON")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	for _, stmt := range []string{
+		`CREATE TABLE media (path TEXT PRIMARY KEY)`,
+		`CREATE TABLE media_tag_by_category (
+			media_path TEXT, tag_label TEXT, category_label TEXT,
+			FOREIGN KEY (media_path) REFERENCES media(path))`,
+		`CREATE TABLE media_embedding (
+			media_path TEXT NOT NULL, model TEXT NOT NULL, dim INTEGER NOT NULL,
+			vector BLOB NOT NULL, created_at INTEGER,
+			PRIMARY KEY (media_path, model),
+			FOREIGN KEY (media_path) REFERENCES media(path))`,
+		`CREATE TABLE face (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, media_path TEXT NOT NULL,
+			model TEXT NOT NULL, frame_ts REAL NOT NULL DEFAULT 0,
+			bbox_x REAL NOT NULL, bbox_y REAL NOT NULL, bbox_w REAL NOT NULL,
+			bbox_h REAL NOT NULL, det_score REAL NOT NULL, vector BLOB NOT NULL,
+			person_id INTEGER, assigned_by TEXT, created_at INTEGER,
+			FOREIGN KEY (media_path) REFERENCES media(path))`,
+		`CREATE TABLE face_scan (
+			media_path TEXT NOT NULL, model TEXT NOT NULL,
+			face_count INTEGER NOT NULL DEFAULT 0, scanned_at INTEGER,
+			PRIMARY KEY (media_path, model),
+			FOREIGN KEY (media_path) REFERENCES media(path))`,
+		`CREATE TABLE person (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE,
+			cover_face_id INTEGER, created_at INTEGER,
+			FOREIGN KEY (cover_face_id) REFERENCES face(id))`,
+		`INSERT INTO media (path) VALUES ('/lib/a.jpg')`,
+		`INSERT INTO media_tag_by_category VALUES ('/lib/a.jpg', 'test', 'category')`,
+		`INSERT INTO media_embedding VALUES ('/lib/a.jpg', 'siglip2', 2, x'0001', 0)`,
+		`INSERT INTO face (media_path, model, bbox_x, bbox_y, bbox_w, bbox_h, det_score, vector)
+			VALUES ('/lib/a.jpg', 'sface', 0, 0, 1, 1, 1, x'0001')`,
+		`INSERT INTO face_scan VALUES ('/lib/a.jpg', 'sface', 1, 0)`,
+		`INSERT INTO person (name, cover_face_id) VALUES ('Someone', 1)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("setup %q: %v", stmt, err)
+		}
+	}
+
+	// Sanity: enforcement really is on for this connection.
+	var fk int
+	if err := db.QueryRow("PRAGMA foreign_keys").Scan(&fk); err != nil || fk != 1 {
+		t.Fatalf("foreign_keys pragma = %d (err %v), want 1", fk, err)
+	}
+
+	result, err := RemoveItemsFromDB(context.Background(), db, []string{"/lib/a.jpg"})
+	if err != nil {
+		t.Fatalf("RemoveItemsFromDB() error = %v", err)
+	}
+	if result.MediaItemsRemoved != 1 || result.TagsRemoved != 1 {
+		t.Errorf("removed %d media / %d tags, want 1 / 1", result.MediaItemsRemoved, result.TagsRemoved)
+	}
+
+	for _, table := range []string{"media", "media_tag_by_category", "media_embedding", "face", "face_scan"} {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if count != 0 {
+			t.Errorf("%s has %d rows after removal, want 0", table, count)
+		}
+	}
+	// The person survives with its cover cleared, rather than being deleted.
+	var cover sql.NullInt64
+	if err := db.QueryRow("SELECT cover_face_id FROM person WHERE name = 'Someone'").Scan(&cover); err != nil {
+		t.Fatalf("read person: %v", err)
+	}
+	if cover.Valid {
+		t.Errorf("cover_face_id = %d, want NULL", cover.Int64)
+	}
+}
+
+// TestRemoveItemsFromDBStreamCancelKeepsCommittedWork asserts that cancelling
+// mid-run keeps every committed batch removed and reports the partial counts —
+// the property that lets the remove job be paused and resumed instead of
+// restarted.
+func TestRemoveItemsFromDBStreamCancelKeepsCommittedWork(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	const n = 1200
+	paths := make([]string, n)
+	for i := range paths {
+		paths[i] = fmt.Sprintf("/lib/file%04d.jpg", i)
+		if _, err := db.Exec("INSERT INTO media (path) VALUES (?)", paths[i]); err != nil {
+			t.Fatalf("Failed to insert test media: %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	calls := 0
+	result, err := RemoveItemsFromDBStream(ctx, db, paths, func(b RemovalBatch) {
+		calls++
+		cancel() // stop after the first committed batch
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if calls != 1 {
+		t.Errorf("got %d batch callbacks after cancel, want 1", calls)
+	}
+	if result.MediaItemsRemoved != 500 {
+		t.Errorf("MediaItemsRemoved = %d, want 500", result.MediaItemsRemoved)
+	}
+
+	var remaining int
+	if err := db.QueryRow("SELECT COUNT(*) FROM media").Scan(&remaining); err != nil {
+		t.Fatalf("count remaining: %v", err)
+	}
+	if remaining != n-500 {
+		t.Errorf("%d media rows remain, want %d (committed batch must survive cancellation)", remaining, n-500)
 	}
 }
 

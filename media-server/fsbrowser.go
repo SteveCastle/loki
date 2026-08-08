@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/stevecastle/shrike/media"
 	"github.com/stevecastle/shrike/storage"
 )
 
@@ -227,10 +228,20 @@ func insertBulkMediaPaths(db *sql.DB, files []fsScanFile) {
 	}
 	defer stmt.Close()
 
+	inserted := int64(0)
 	for _, f := range files {
-		stmt.Exec(f.Path, f.Size)
+		if res, err := stmt.Exec(f.Path, f.Size); err == nil {
+			if n, err := res.RowsAffected(); err == nil {
+				inserted += n
+			}
+		}
 	}
 	tx.Commit()
+	// New media rows enter the swipe pool (the sampler universe is the media
+	// table); only bother when this browse actually changed something.
+	if inserted > 0 {
+		media.InvalidateRandomSampleCache()
+	}
 }
 
 // isMediaFile is kept for use by other files in the main package (e.g., thumbnail.go).

@@ -183,6 +183,12 @@ export default function CommandPaletteSearch({
             data: { key, index, patch },
           })
         }
+        onSetBlendMode={(key, mode) =>
+          libraryService.send({
+            type: 'SET_BLEND_MODE',
+            data: { key, mode },
+          })
+        }
         onClearText={clearText}
         onClearAll={() => {
           libraryService.send({ type: 'CLEAR_QUERY' });

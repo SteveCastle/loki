@@ -47,6 +47,7 @@ func maybeHandleSwipeSimilar(w http.ResponseWriter, r *http.Request, deps *Depen
 			limit = parsed
 		}
 	}
+	orientation := media.NormalizeOrientation(r.URL.Query().Get("orientation"))
 
 	modelID := tasks.ActiveEmbedModel().ID
 	need := offset + limit + 1 // +1 so hasMore needs no extra query
@@ -68,7 +69,9 @@ func maybeHandleSwipeSimilar(w http.ResponseWriter, r *http.Request, deps *Depen
 				paths = append(paths, h.Path)
 			}
 		}
-		ranked, err = media.FilterExistingMediaPaths(deps.DB, paths)
+		// Orphan + orientation filtering happens on the full ranked prefix,
+		// before the page slice below, so offsets index a stable sequence.
+		ranked, err = media.FilterSwipePaths(deps.DB, paths, orientation)
 		if err != nil {
 			log.Printf("swipe similar orphan filter failed: %v", err)
 			http.Error(w, "Error fetching media items", http.StatusInternalServerError)

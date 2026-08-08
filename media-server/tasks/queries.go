@@ -10,6 +10,7 @@ import (
 
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
+	"github.com/stevecastle/shrike/mediaext"
 )
 
 // extractQueryFromJob checks args and input for a query string.
@@ -157,19 +158,12 @@ func parseInputPaths(raw string) []string {
 	return paths
 }
 
-// isMediaFile checks if a file is a supported media file based on its
-// extension. The audio set mirrors the client's FileTypes.Audio so
-// transcript jobs can target audio libraries; image/video mirror
-// media/search.go's extensionsForFiletype.
+// isMediaFile is the gate every per-item task passes its input through
+// (filterMediaPaths, below). It used to keep its own extension switch, which
+// omitted .jfif — so those files were ingested by the browser and then dropped
+// here, invisible to embedding, tagging, faces and descriptions alike.
 func isMediaFile(path string) bool {
-	ext := strings.ToLower(filepath.Ext(path))
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff",
-		".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv", ".m4v",
-		".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus", ".wma", ".aiff", ".ape":
-		return true
-	}
-	return false
+	return mediaext.IsMedia(path)
 }
 
 // filterMediaPaths drops non-media paths from a query result. Library scans

@@ -101,12 +101,16 @@ type pageBudget struct {
 const maxRoundsPerPage = 6
 
 // Page returns the feed slice [offset, offset+limit) for sessionID,
-// generating further batches as needed. override (may be nil) mutates a copy
-// of the tuning for this request only — the per-request experimentation
-// hook. hasMore is false only once the library is exhausted for this session.
-// Honors ctx cancellation between expensive steps so an abandoned request
-// (client navigated away) stops consuming the library scan promptly.
-func (e *Engine) Page(ctx context.Context, sessionID string, offset, limit int, override func(*Tuning)) ([]string, bool, error) {
+// generating further batches as needed. orientation ("" = both) restricts the
+// feed to portrait/landscape items; callers MUST key sessionID by orientation
+// (the handler does) — a session's generated sequence is filtered as it is
+// built, so mixing orientations under one session would corrupt offsets.
+// override (may be nil) mutates a copy of the tuning for this request only —
+// the per-request experimentation hook. hasMore is false only once the
+// library is exhausted for this session. Honors ctx cancellation between
+// expensive steps so an abandoned request (client navigated away) stops
+// consuming the library scan promptly.
+func (e *Engine) Page(ctx context.Context, sessionID string, offset, limit int, orientation string, override func(*Tuning)) ([]string, bool, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -133,11 +137,16 @@ func (e *Engine) Page(ctx context.Context, sessionID string, offset, limit int, 
 			return nil, false, err
 		}
 		rounds++
-		added, err := e.generate(ctx, s, p, t, b)
+		// Exhaustion is judged on what the lanes DREW, not what survived the
+		// orientation filter: a batch can legitimately append zero items
+		// (every candidate was the wrong orientation) while deeper candidates
+		// still exist — ending the session there would truncate the feed.
+		// When the lanes themselves come up empty, the library is done.
+		_, drew, err := e.generate(ctx, s, p, t, b, orientation)
 		if err != nil {
 			return nil, false, err
 		}
-		if added == 0 {
+		if drew == 0 {
 			s.exhausted = true
 		}
 	}
@@ -165,6 +174,19 @@ func (e *Engine) Page(ctx context.Context, sessionID string, offset, limit int, 
 func (e *Engine) InvalidateProfile() {
 	e.mu.Lock()
 	e.profile = nil
+	e.mu.Unlock()
+}
+
+// Reset points the engine at a new database and drops everything cached from
+// the old one: the taste profile and every session feed are old-library
+// paths, and the old *sql.DB handle is closed right after a DB hot-swap —
+// keeping it would fail every feed query until restart. Waits for an
+// in-flight Page call (which holds e.mu throughout) to drain first.
+func (e *Engine) Reset(db *sql.DB) {
+	e.mu.Lock()
+	e.db = db
+	e.profile = nil
+	e.sessions = make(map[string]*session)
 	e.mu.Unlock()
 }
 
@@ -363,9 +385,10 @@ func (e *Engine) session(id string, t Tuning) *session {
 // ---------------------------------------------------------------------------
 
 // generate produces one batch: lane candidates in tuned proportions,
-// shuffled together, orphan-filtered, appended to the session feed. Returns
-// how many items were actually appended.
-func (e *Engine) generate(ctx context.Context, s *session, p *profile, t Tuning, b *pageBudget) (int, error) {
+// shuffled together, orphan- and orientation-filtered, appended to the
+// session feed. Returns how many items were appended and how many candidates
+// the lanes drew before filtering (the caller's exhaustion signal).
+func (e *Engine) generate(ctx context.Context, s *session, p *profile, t Tuning, b *pageBudget, orientation string) (int, int, error) {
 	weights := []float64{t.ExploitWeight, t.FreshWeight, t.BridgeWeight, t.WildcardWeight}
 	// Lanes without data forfeit their share.
 	if len(p.clusters) == 0 {
@@ -391,12 +414,12 @@ func (e *Engine) generate(ctx context.Context, s *session, p *profile, t Tuning,
 	picked = append(picked, e.drawFresh(s, p, t, b, counts[1])...)
 	bridged, err := e.drawBridge(s, p, t, b, counts[2])
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	picked = append(picked, bridged...)
 
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	// Wildcard also absorbs any shortfall from starved lanes, keeping
@@ -408,7 +431,7 @@ func (e *Engine) generate(ctx context.Context, s *session, p *profile, t Tuning,
 	}
 	wild, err := e.drawWildcard(ctx, s, p, t, wildWant)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	picked = append(picked, wild...)
 
@@ -416,12 +439,12 @@ func (e *Engine) generate(ctx context.Context, s *session, p *profile, t Tuning,
 	// instead of arriving in blocks.
 	s.rng.Shuffle(len(picked), func(i, j int) { picked[i], picked[j] = picked[j], picked[i] })
 
-	existing, err := media.FilterExistingMediaPaths(e.db, picked)
+	existing, err := media.FilterSwipePaths(e.db, picked, orientation)
 	if err != nil {
-		return 0, fmt.Errorf("feed: orphan filter: %w", err)
+		return 0, 0, fmt.Errorf("feed: orphan filter: %w", err)
 	}
 	s.feed = append(s.feed, existing...)
-	return len(existing), nil
+	return len(existing), len(picked), nil
 }
 
 // apportion splits n into integer lane counts proportional to weights

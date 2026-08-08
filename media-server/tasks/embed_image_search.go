@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/embedindex"
 	"github.com/stevecastle/shrike/embedvec"
 )
 
@@ -78,8 +79,56 @@ type QueryTerm struct {
 // otherwise the active embed model is used (matching plain similar: search).
 // allow restricts the results to a path subset; nil = whole library.
 func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit int, allow PathSet) ([]SimilarHit, error) {
+	m, vecs, weights, err := compositeVectors(ctx, db, terms)
+	if err != nil {
+		return nil, err
+	}
+	combined, err := embedvec.Combine(vecs, weights)
+	if err != nil {
+		return nil, err
+	}
+	return searchByVectorWithin(db, m.ID, combined, limit, allow)
+}
+
+// SearchBySharedConcept scores candidates against ALL positive terms at once
+// ("must match all") instead of blending them into one centroid vector: the
+// blend rewards a candidate extremely similar to one example as much as one
+// moderately similar to every example, so picking five football images can
+// surface more of ONE image's grassy park rather than more footballs. Shared
+// scoring (embedvec.SharedQuery) attenuates the directions the examples
+// disagree on and penalizes score dispersion across them, zeroing in on what
+// the examples have in common. Negative-weight terms keep their steer-away
+// semantics as score penalties. Term resolution (models, embedding, weights)
+// matches SearchByComposite exactly.
+func SearchBySharedConcept(ctx context.Context, db *sql.DB, terms []QueryTerm, limit int, allow PathSet) ([]SimilarHit, error) {
+	m, vecs, weights, err := compositeVectors(ctx, db, terms)
+	if err != nil {
+		return nil, err
+	}
+	var spec embedindex.SharedSpec
+	for i, w := range weights {
+		switch {
+		case w > 0:
+			spec.Pos = append(spec.Pos, vecs[i])
+			spec.PosW = append(spec.PosW, w)
+		case w < 0:
+			spec.Neg = append(spec.Neg, vecs[i])
+			spec.NegW = append(spec.NegW, -w)
+		}
+	}
+	if len(spec.Pos) == 0 {
+		return nil, fmt.Errorf("shared-concept query has no positive terms")
+	}
+	return searchSharedWithin(db, m.ID, spec, limit, allow)
+}
+
+// compositeVectors resolves each query term to a vector in one shared
+// embedding space: with any text term present all terms are embedded with the
+// multimodal text-search model; otherwise the active embed model is used
+// (matching plain similar: search).
+func compositeVectors(ctx context.Context, db *sql.DB, terms []QueryTerm) (EmbedModel, [][]float32, []float32, error) {
 	if len(terms) == 0 {
-		return nil, fmt.Errorf("composite query has no terms")
+		return EmbedModel{}, nil, nil, fmt.Errorf("composite query has no terms")
 	}
 	m := ActiveEmbedModel()
 	for _, t := range terms {
@@ -106,16 +155,12 @@ func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit
 			err = fmt.Errorf("unknown query term kind %q", t.Kind)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("composite term (%s %q): %w", t.Kind, truncateForLog(t.Value), err)
+			return EmbedModel{}, nil, nil, fmt.Errorf("composite term (%s %q): %w", t.Kind, truncateForLog(t.Value), err)
 		}
 		vecs = append(vecs, vec)
 		weights = append(weights, t.Weight)
 	}
-	combined, err := embedvec.Combine(vecs, weights)
-	if err != nil {
-		return nil, err
-	}
-	return searchByVectorWithin(db, m.ID, combined, limit, allow)
+	return m, vecs, weights, nil
 }
 
 func truncateForLog(s string) string {

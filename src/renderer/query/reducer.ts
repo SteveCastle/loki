@@ -216,6 +216,25 @@ export function updateBlendNode(
   };
 }
 
+// Set how the composite at `key` is scored: 'blend' (centroid average) or
+// 'shared' (must match every positive component). 'blend' is the default, so
+// selecting it removes the field to keep predicates canonical.
+export function setPredicateBlendMode(
+  q: Query,
+  key: string,
+  mode: 'blend' | 'shared'
+): Query {
+  return {
+    predicates: q.predicates.map((x) => {
+      if (predicateKey(x) !== key) return x;
+      if (mode === 'shared') return { ...x, blendMode: 'shared' };
+      const next: Predicate = { ...x };
+      delete next.blendMode;
+      return next;
+    }),
+  };
+}
+
 // Patch a predicate's blend fields (text / textWeight) in place, keyed by
 // predicateKey (which ignores blend fields, so the chip identity is stable
 // while its blend is edited). Clearing the text drops the whole blend.

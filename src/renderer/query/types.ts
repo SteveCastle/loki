@@ -13,7 +13,8 @@ export type PredicateType =
   | 'visual'
   | 'clip'
   | 'face'
-  | 'faces';
+  | 'faces'
+  | 'orientation';
 
 // One extra component of a composite similarity query, merged with the
 // predicate's base value into a single query vector server-side:
@@ -42,6 +43,9 @@ export interface Predicate {
   // 'faces' = face-presence filter; value 'ungrouped' = media holding at
   //   least one detected face not assigned to any person yet (the People
   //   panel's Ungrouped pool).
+  // 'orientation' = dimension filter on media.width vs media.height; value
+  //   'landscape' | 'portrait' | 'square'. Items without known dimensions
+  //   never match an include and are kept by an exclude.
   value: string;
   // Per-predicate include (false) / exclude (true).
   exclude: boolean;
@@ -60,6 +64,13 @@ export interface Predicate {
   // chip popover manages these (add/remove text, stack images, negative
   // toggles) — a visual (text) chip composes exactly like an image chip.
   nodes?: BlendNode[];
+  // How a multi-node composite is scored server-side:
+  //   'blend' (or undefined) = one combined centroid vector — ranks by the
+  //     AVERAGE similarity to the components (historical behavior).
+  //   'shared' = must-match-all — ranks by similarity to EVERY positive
+  //     component at once, zeroing in on what they have in common (five
+  //     football photos surface footballs, not one photo's grassy park).
+  blendMode?: 'blend' | 'shared';
 }
 
 export interface Query {

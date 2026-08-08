@@ -41,6 +41,10 @@ interface QueryInputProps {
     index: number,
     patch: Partial<Pick<BlendNode, 'weight' | 'negative'>>
   ) => void;
+  // Composite scoring mode: 'blend' averages the components into one query
+  // vector; 'shared' requires candidates to match EVERY positive component
+  // (zeroes in on what the components have in common).
+  onSetBlendMode?: (key: string, mode: 'blend' | 'shared') => void;
   onClearAll: () => void; // clear chips + text (resets the library)
   onClearText: () => void; // clear only the typed text (no-op on the library)
   onFocus?: () => void;
@@ -93,6 +97,7 @@ const TYPE_GLYPH: Record<Predicate['type'], string> = {
   clip: 'clip:', // never shown — clip chips render a thumbnail instead
   face: 'face:', // never shown — face chips render a thumbnail instead
   faces: 'faces:',
+  orientation: 'orientation:',
 };
 
 // Icons + labels for the three tag-filtering behaviours, mirroring the toggle
@@ -230,6 +235,7 @@ export default function QueryInput({
   onAddBlendNode,
   onRemoveBlendNode,
   onUpdateBlendNode,
+  onSetBlendMode,
   onClearAll,
   onClearText,
   onFocus,
@@ -862,6 +868,34 @@ export default function QueryInput({
                       </span>
                     );
                   })}
+                  {effNodes.length > 0 && onSetBlendMode && (
+                    <span
+                      className="query-blend-mode"
+                      role="group"
+                      aria-label="How components combine"
+                    >
+                      <button
+                        type="button"
+                        className={`query-blend-mode-btn${
+                          p.blendMode !== 'shared' ? ' active' : ''
+                        }`}
+                        title="Blend: rank by AVERAGE similarity to the components (one combined query)"
+                        onClick={() => onSetBlendMode(key, 'blend')}
+                      >
+                        Blend
+                      </button>
+                      <button
+                        type="button"
+                        className={`query-blend-mode-btn${
+                          p.blendMode === 'shared' ? ' active' : ''
+                        }`}
+                        title="Match all: results must resemble EVERY component — zeroes in on what they share"
+                        onClick={() => onSetBlendMode(key, 'shared')}
+                      >
+                        Match all
+                      </button>
+                    </span>
+                  )}
                   <input
                     className="query-chip-blend-input"
                     type="text"

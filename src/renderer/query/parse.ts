@@ -34,6 +34,7 @@ const PREFIXES: Array<{ prefix: string; type: PredicateType }> = [
   // adjacent so nobody reorders them apart.
   { prefix: 'faces:', type: 'faces' },
   { prefix: 'face:', type: 'face' },
+  { prefix: 'orientation:', type: 'orientation' },
 ];
 
 // Strip surrounding quotes that survived tokenization of a prefixed value
@@ -85,6 +86,7 @@ const TYPE_PREFIX: Record<PredicateType, string> = {
   clip: 'clip:',
   face: 'face:',
   faces: 'faces:',
+  orientation: 'orientation:',
 };
 
 export function serializePredicate(p: Predicate): string {

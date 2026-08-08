@@ -2,6 +2,7 @@ package media
 
 import (
 	"fmt"
+	"github.com/stevecastle/shrike/mediaext"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -351,6 +352,14 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 			args[i] = "%" + ext
 		}
 		return "(" + strings.Join(clauses, " OR ") + ")", args
+	case "orientation":
+		// orientation:landscape / orientation:portrait / orientation:square —
+		// classify by the stored media dimensions. Items with missing or
+		// zero width/height have no known orientation and match nothing.
+		if cmp := orientationComparator(val); cmp != "" {
+			return "(m.width > 0 AND m.height > 0 AND m.width " + cmp + " m.height)", nil
+		}
+		return "1=0", nil
 	case "size":
 		if strings.EqualFold(val, "null") && op == "=" {
 			return "m.size IS NULL", nil
@@ -542,23 +551,55 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 			}
 		}
 		return false
+	case "orientation":
+		if !item.Width.Valid || !item.Height.Valid || item.Width.Int64 <= 0 || item.Height.Int64 <= 0 {
+			return false
+		}
+		switch orientationComparator(n.Value) {
+		case ">":
+			return item.Width.Int64 > item.Height.Int64
+		case "<":
+			return item.Width.Int64 < item.Height.Int64
+		case "=":
+			return item.Width.Int64 == item.Height.Int64
+		}
+		return false
 	default:
 		return true
 	}
 }
 
+// orientationComparator maps an orientation: query value to the width-vs-height
+// comparison that defines it. Unknown values return "" (matches nothing).
+func orientationComparator(val string) string {
+	switch strings.ToLower(val) {
+	case "landscape":
+		return ">"
+	case "portrait":
+		return "<"
+	case "square":
+		return "="
+	default:
+		return ""
+	}
+}
+
 // extensionsForFiletype maps a filetype: query value to the path extensions it
-// covers. The video and audio sets mirror what the transcript task can process;
-// the image set mirrors tasks' isMediaFile. Unknown values return nil (matches
-// nothing).
+// covers, from the one shared classification in mediaext. Keeping a private
+// copy here is what made `filetype:image` quietly exclude .jfif while the
+// thumbnailer happily rendered it. Unknown values return nil (match nothing).
+// Exported so other packages can assert their own extension gates agree with
+// what a filetype: query will actually select.
+func ExtensionsForFiletype(val string) []string { return extensionsForFiletype(val) }
+
 func extensionsForFiletype(val string) []string {
 	switch strings.ToLower(val) {
 	case "video":
-		return []string{".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv"}
+		return mediaext.VideoExts()
 	case "audio":
-		return []string{".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus", ".wma", ".aiff", ".ape"}
+		return mediaext.AudioExts()
 	case "image":
-		return []string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff"}
+		return mediaext.ImageExts()
 	default:
 		return nil
 	}

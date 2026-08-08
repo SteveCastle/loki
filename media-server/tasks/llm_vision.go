@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/stevecastle/shrike/appconfig"
+	"github.com/stevecastle/shrike/mediaext"
 )
 
 // Inference provider identifiers. Persisted in Config.InferenceProvider and
@@ -621,19 +622,10 @@ func looksLikeNoImageResponse(content string) bool {
 	return false
 }
 
+// mimeFromExt types the bytes handed to a vision model. An unlisted extension
+// used to fall through to application/octet-stream, which is how .jfif images
+// reached the model as an opaque blob and came back described as if no image
+// had been supplied.
 func mimeFromExt(path string) string {
-	switch strings.ToLower(strings.TrimPrefix(filepath.Ext(path), ".")) {
-	case "jpg", "jpeg":
-		return "image/jpeg"
-	case "png":
-		return "image/png"
-	case "webp":
-		return "image/webp"
-	case "gif":
-		return "image/gif"
-	case "bmp":
-		return "image/bmp"
-	default:
-		return "application/octet-stream"
-	}
+	return mediaext.MimeType(path)
 }

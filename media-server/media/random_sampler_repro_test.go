@@ -57,9 +57,10 @@ func TestSamplerQueryPathsSorted(t *testing.T) {
 		}
 	}
 
-	// A dangling tag (no media row) must be excluded from the universe — leaving
-	// it in makes swipe pages return fewer items than the window they consume,
-	// which drifts the client's offset and re-serves items.
+	// A dangling tag (no media row) must be excluded from the universe — the
+	// universe is the media table itself, so a tag row alone contributes
+	// nothing. Leaving such a path in would make swipe pages return fewer
+	// items than the window they consume, drifting the client's offset.
 	if _, err := db.Exec(
 		`INSERT INTO media_tag_by_category (media_path, tag_label, category_label) VALUES ('/m/orphan.jpg', 'x', 'c')`,
 	); err != nil {
@@ -67,7 +68,7 @@ func TestSamplerQueryPathsSorted(t *testing.T) {
 	}
 
 	s := &randomSampler{}
-	got, err := s.queryPaths(db)
+	got, _, err := s.queryPaths(db)
 	if err != nil {
 		t.Fatalf("queryPaths: %v", err)
 	}
@@ -105,9 +106,9 @@ func TestSamplerShuffleStableForSameInput(t *testing.T) {
 	b := &randomSampler{paths: append([]string(nil), paths...)}
 
 	const seed = int64(12345)
-	pageA, _ := a.sample(seed, 0, 30)
-	pageB1, _ := b.sample(seed, 0, 30)
-	pageB2, _ := b.sample(seed, 30, 30)
+	pageA, _ := a.sample(seed, 0, 30, "")
+	pageB1, _ := b.sample(seed, 0, 30, "")
+	pageB2, _ := b.sample(seed, 30, 30, "")
 
 	for i := range pageA {
 		if pageA[i] != pageB1[i] {
@@ -186,7 +187,7 @@ func TestSamplerStaleCacheSurvivesBackgroundFailure(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	got, total := s.sample(42, 0, 10)
+	got, total := s.sample(42, 0, 10, "")
 	if total != 2 || len(got) != 2 {
 		t.Fatalf("stale snapshot must still be sampleable after background build fails; got total=%d len=%d", total, len(got))
 	}
@@ -200,11 +201,11 @@ func TestSamplerResetDropsCache(t *testing.T) {
 	s := &randomSampler{
 		paths: []string{"/old/a.jpg", "/old/b.jpg"},
 	}
-	if got, total := s.sample(1, 0, 10); total != 2 || len(got) != 2 {
+	if got, total := s.sample(1, 0, 10, ""); total != 2 || len(got) != 2 {
 		t.Fatalf("precondition: sampler should hold 2 paths; got total=%d len=%d", total, len(got))
 	}
 	s.Reset()
-	if got, total := s.sample(1, 0, 10); total != 0 || len(got) != 0 {
+	if got, total := s.sample(1, 0, 10, ""); total != 0 || len(got) != 0 {
 		t.Fatalf("after Reset, sampler must hold zero paths so old-DB paths can't leak; got total=%d len=%d", total, len(got))
 	}
 }

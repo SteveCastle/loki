@@ -30,6 +30,9 @@ interface SuggestionSectionsProps {
 
 const SECTION_CAP = 8;
 
+// Fixed values for the orientation: predicate (media.width vs media.height).
+const ORIENTATION_VALUES = ['landscape', 'portrait', 'square'];
+
 // Distinct-media counts stop counting here. Counting DISTINCT media_path is a
 // per-row table walk in SQLite, and the huge autotag "Suggested" bucket
 // (hundreds of thousands of items) took 20+ seconds per keystroke, stalling
@@ -90,9 +93,21 @@ export default function SuggestionSections({
     .filter((c) => c.label.toLowerCase().includes(term))
     .slice(0, SECTION_CAP);
 
+  // 2. Orientation — fixed values matched on the value itself or the
+  // "orientation" keyword, so typing "land", "port", "sq", or "orien" all
+  // surface the relevant rows. Uses the live `text`: no data behind it, so
+  // there's nothing to debounce.
+  const liveTerm = text.toLowerCase();
+  const matchedOrientations = liveTerm
+    ? ORIENTATION_VALUES.filter(
+        (v) => v.startsWith(liveTerm) || 'orientation'.startsWith(liveTerm)
+      )
+    : [];
+
   // Row keys for highlight matching + navigation. These also prefix the rows
   // below so the rendered DOM order matches the reported item order exactly.
   const CAT_KEY = (label: string) => `cat:${label}`;
+  const ORIENT_KEY = (value: string) => `orient:${value}`;
   const PATH_ADD_KEY = 'path:add';
   const DESC_ADD_KEY = 'desc:add';
   const HASH_ADD_KEY = 'hash:add';
@@ -103,6 +118,10 @@ export default function SuggestionSections({
     ...matchedCategories.map((c) => ({
       key: CAT_KEY(c.label),
       predicate: { type: 'category', value: c.label, exclude: false } as Predicate,
+    })),
+    ...matchedOrientations.map((v) => ({
+      key: ORIENT_KEY(v),
+      predicate: { type: 'orientation', value: v, exclude: false } as Predicate,
     })),
     {
       key: PATH_ADD_KEY,
@@ -152,6 +171,25 @@ export default function SuggestionSections({
               <span className="suggestion-prefix">in:</span>
               <span className="suggestion-value">{c.label}</span>
               <CategoryCount label={c.label} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {matchedOrientations.length > 0 && (
+        <div className="suggestion-section">
+          <div className="suggestion-section-label">Orientation</div>
+          {matchedOrientations.map((v) => (
+            <div
+              key={v}
+              className={rowClass(ORIENT_KEY(v))}
+              onMouseEnter={() => onHighlightKey?.(ORIENT_KEY(v))}
+              onClick={() =>
+                onAdd({ type: 'orientation', value: v, exclude: false })
+              }
+            >
+              <span className="suggestion-prefix">orientation:</span>
+              <span className="suggestion-value">{v}</span>
             </div>
           ))}
         </div>

@@ -9,6 +9,8 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/media"
+	"github.com/stevecastle/shrike/mediaext"
 )
 
 // ingestLocalTask scans local directories for media files and adds them to the database
@@ -154,15 +156,7 @@ func ensureMediaTableSchema(db *sql.DB) error {
 // scanMediaFiles scans the directory (recursively if specified) for media files
 func scanMediaFiles(dir string, recursive bool) ([]string, error) {
 	var files []string
-	isMedia := func(path string) bool {
-		ext := strings.ToLower(filepath.Ext(path))
-		switch ext {
-		case ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic", ".tif", ".tiff",
-			".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv":
-			return true
-		}
-		return false
-	}
+	isMedia := mediaext.IsMedia
 	walkFn := func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -220,6 +214,13 @@ func insertMediaRecord(db *sql.DB, path string, size int64) error {
 	stmt := `INSERT INTO media (path, size) VALUES (?, ?)
 		ON CONFLICT(path) DO UPDATE SET size = excluded.size
 		WHERE excluded.size > 0 AND (media.size IS NULL OR media.size = 0)`
-	_, err := db.Exec(stmt, path, size)
+	res, err := db.Exec(stmt, path, size)
+	if err == nil {
+		// A new media row enters the swipe pool (the sampler universe is the
+		// media table). Cheap flag set; skipped for no-op upserts.
+		if n, raErr := res.RowsAffected(); raErr == nil && n > 0 {
+			media.InvalidateRandomSampleCache()
+		}
+	}
 	return err
 }

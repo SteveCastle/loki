@@ -11,14 +11,16 @@ import (
 	"os"
 
 	"github.com/stevecastle/shrike/appconfig"
+	"github.com/stevecastle/shrike/media"
+	"github.com/stevecastle/shrike/mediaext"
 )
 
+// The per-item ops classify their inputs by extension; the lists live in
+// mediaext so they cannot drift from the ingest, query and thumbnail sides.
 var (
-	imageExts = []string{".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".tif", ".tiff", ".heic"}
-	videoExts = []string{".mp4", ".mov", ".avi", ".mkv", ".webm", ".wmv"}
-	// audioExts mirrors isMediaFile's audio set (queries.go) — everything
-	// faster-whisper can decode through ffmpeg, so all of it is transcribable.
-	audioExts = []string{".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".opus", ".wma", ".aiff", ".ape"}
+	imageExts = mediaext.ImageExts()
+	videoExts = mediaext.VideoExts()
+	audioExts = mediaext.AudioExts()
 )
 
 // registerBuiltinItemOps installs the built-in per-item operations. Called at
@@ -53,7 +55,7 @@ func registerBuiltinItemOps() {
 		ID:          "dimensions",
 		Name:        "Dimensions",
 		Concurrency: func() int { return 4 },
-		Applies:     extAppliesFn(append(append([]string{}, imageExts...), ".mp4", ".mov", ".avi", ".mkv", ".webm")...),
+		Applies:     extAppliesFn(append(append([]string{}, imageExts...), videoExts...)...),
 		Prepare:     prepareDimensionsOp,
 	})
 
@@ -179,6 +181,9 @@ func prepareDimensionsOp(run *ItemRun) (*ItemProcessor, error) {
 					if _, err := db.Exec(`UPDATE media SET width = ?, height = ? WHERE path = ?`, width, height, path); err != nil {
 						return err
 					}
+					// The swipe sampler caches an orientation class per path;
+					// fresh dimensions may reclassify this item.
+					media.InvalidateRandomSampleCache()
 					notifyProgress(ProgressDimensions, 1)
 					return nil
 				},

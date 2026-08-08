@@ -303,6 +303,7 @@ async function boot() {
   // picture to eyeball, so renderCompAudio is the only way to see it.
   window.studio = {
     timeline, assets, onModelChange,
+    importFiles, addAssetAt, setBinOpen,
     renderCompAudio, mixCompAudio, audioEntries, audioChains,
   };
   requestAnimationFrame(tick);
@@ -1478,6 +1479,7 @@ function onModelChange({ structural = false, transient = false } = {}) {
   refreshDropHint();
   timeline.render();
   renderInspector();
+  renderMediaBin();          // clip counts on the cards track the model
   scheduleSave();
 }
 
@@ -1509,6 +1511,7 @@ function afterModelReplace(what) {
   refreshDropHint();
   timeline.render();
   renderInspector();
+  renderMediaBin();
   scheduleSave();
   setStatus(what);
 }
@@ -1555,6 +1558,7 @@ const timelineHost = {
   onModelChange,
   onSelect: () => { focusIsFallback = false; renderInspector(); },
   addMediaAt: (files, t, trackIdx) => importFiles(files, { t, trackIdx }),
+  addAssetAt: (assetId, t, trackIdx) => addAssetAt(assetId, t, trackIdx),
   setTrimPreview: (t) => {
     trimPreviewT = t;
     const badge = $('trim-badge');
@@ -1688,71 +1692,132 @@ async function createAsset(file, id = null) {
   return asset;
 }
 
-async function importFiles(files, { t = null, trackIdx = null } = {}) {
+/** An already-imported asset that is plausibly the same file — the
+ * re-import guard that keeps one source from piling up in the bin. */
+function findExistingAsset(file) {
+  for (const a of assets.values())
+    if (a.kind !== 'shape' && a.name === file.name && a.file?.size === file.size)
+      return a;
+  return null;
+}
+
+/** The very first media item defines the comp size; anything after that
+ * is scaled to fit inside the existing frame. */
+async function maybeAdoptCompSize(asset) {
+  const noMediaYet = !comp.tracks.some((tr) => tr.clips.some((c) => c.kind === 'media'));
+  if (noMediaYet && asset.w) {
+    comp.width = asset.w;
+    comp.height = asset.h;
+    await applyCompSize();
+  }
+}
+
+/** Build a clip for `asset` and place it on a track (a new one when
+ * trackIdx is null). Timed sources land at `at` with their source length.
+ * Stills span the whole comp with `imageFull` (the import default) and
+ * otherwise land at `at` with a starter duration, like a drag from the
+ * bin onto a specific spot. Returns the new clip. */
+function placeAssetClip(asset, at, trackIdx = null, { imageFull = false } = {}) {
+  let clip;
+  if (asset.kind === 'audio') {
+    const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
+    clip = newAudioClip(asset, quantize(at, comp.fps), dur);
+  } else if (asset.kind === 'video') {
+    const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
+    clip = newMediaClip(comp, asset, quantize(at, comp.fps), dur);
+  } else if (imageFull) {
+    clip = newMediaClip(comp, asset, 0, Math.max(1 / comp.fps, comp.dur));
+  } else {
+    // Stills placed deliberately (bin drag) — animated GIFs keep their
+    // loop length, plain images get the default starter duration.
+    const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
+    clip = newMediaClip(comp, asset, quantize(at, comp.fps), dur);
+  }
+  if (clip.kind === 'media' && asset.w && (asset.w !== comp.width || asset.h !== comp.height)) {
+    const fit = Math.round(Math.min(comp.width / asset.w, comp.height / asset.h) * 10000) / 100;
+    clip.props.scaleX.v = fit;
+    clip.props.scaleY.v = fit;
+  }
+
+  let track = trackIdx != null ? comp.tracks[trackIdx] : null;
+  if (!track) {
+    track = newTrack(clip.name);
+    // Audio has no place in the visual stacking order, so its tracks
+    // gather at the bottom (DAW-style) instead of covering the picture.
+    if (clip.kind === 'audio') comp.tracks.push(track);
+    else comp.tracks.unshift(track);
+  }
+  track.clips.push(clip);
+  if (comp._autoSize) comp.dur = Math.max(comp.dur, clipEnd(clip));
+  return clip;
+}
+
+async function importFiles(files, { t = null, trackIdx = null, binOnly = false } = {}) {
   const media = [...files].filter((f) =>
     f.type.startsWith('video/') || f.type.startsWith('image/') || f.type.startsWith('audio/')
     || VIDEO_EXTS.test(f.name) || GIF_EXT.test(f.name) || AUDIO_EXTS.test(f.name));
   if (!media.length) return;
   let at = t ?? tCur;
+  let reused = 0;
   history.begin(comp);
   for (const file of media) {
-    let asset;
-    setStatus(`importing ${file.name}…`);
-    try {
-      asset = await createAsset(file);
-    } catch (e) {
-      setStatus(`import failed: ${e.message}`);
-      continue;
+    // The same file imported again reuses the existing asset — new clips
+    // keep pointing at one copy of the media instead of stacking duplicates.
+    let asset = findExistingAsset(file);
+    if (asset) {
+      reused++;
+    } else {
+      setStatus(`importing ${file.name}…`);
+      try {
+        asset = await createAsset(file);
+      } catch (e) {
+        setStatus(`import failed: ${e.message}`);
+        continue;
+      }
+      idbSet(`asset:${asset.id}`, file).catch(() => {});
+      if (asset.kind === 'video') ensureScrubProxy(asset);   // background build
     }
-    idbSet(`asset:${asset.id}`, file).catch(() => {});
-    if (asset.kind === 'video') ensureScrubProxy(asset);   // background build
+    if (binOnly) continue;               // into the media bin, no clip
 
-    // The very first media item defines the comp size; anything after that
-    // is scaled to fit inside the existing frame.
-    const noMediaYet = !comp.tracks.some((tr) => tr.clips.some((c) => c.kind === 'media'));
-    if (noMediaYet && asset.w) {
-      comp.width = asset.w;
-      comp.height = asset.h;
-      await applyCompSize();
-    }
-
+    await maybeAdoptCompSize(asset);
     // Videos and audio land at the playhead with their source length;
     // images fill the whole timeline by default (trim down as needed).
-    let clip;
-    if (asset.kind === 'audio') {
-      const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
-      clip = newAudioClip(asset, quantize(at, comp.fps), dur);
-    } else if (asset.kind === 'video') {
-      const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
-      clip = newMediaClip(comp, asset, quantize(at, comp.fps), dur);
-    } else {
-      clip = newMediaClip(comp, asset, 0, Math.max(1 / comp.fps, comp.dur));
-    }
-    if (clip.kind === 'media' && asset.w && (asset.w !== comp.width || asset.h !== comp.height)) {
-      const fit = Math.round(Math.min(comp.width / asset.w, comp.height / asset.h) * 10000) / 100;
-      clip.props.scaleX.v = fit;
-      clip.props.scaleY.v = fit;
-    }
-
-    let track = trackIdx != null ? comp.tracks[trackIdx] : null;
-    if (!track) {
-      track = newTrack(clip.name);
-      // Audio has no place in the visual stacking order, so its tracks
-      // gather at the bottom (DAW-style) instead of covering the picture.
-      if (clip.kind === 'audio') comp.tracks.push(track);
-      else comp.tracks.unshift(track);
-    }
-    track.clips.push(clip);
-    if (comp._autoSize) comp.dur = Math.max(comp.dur, clipEnd(clip));
+    const clip = placeAssetClip(asset, at, trackIdx, { imageFull: true });
     // Only timed sources advance the drop cursor (images span the full comp).
     if (asset.kind === 'video' || asset.kind === 'audio') at = clipEnd(clip);
     timeline.selectClip(clip.id);
   }
   ensureDur(comp);
   history.commit(comp);
+  if (binOnly) {
+    renderMediaBin();
+    scheduleSave();                      // the bin's asset list rides the project payload
+    setStatus(`added ${media.length} item${media.length > 1 ? 's' : ''} to the media bin`);
+    return;
+  }
   onModelChange({ structural: true });
   timeline.zoomFit();
-  setStatus(`imported ${media.length} item${media.length > 1 ? 's' : ''}`);
+  setStatus(`imported ${media.length} item${media.length > 1 ? 's' : ''}`
+    + (reused ? ` (${reused} reused from the media bin)` : ''));
+}
+
+/** Place a clip for an already-imported asset — a media-bin drag onto the
+ * timeline, or a double-click on a bin card (lands at the playhead). */
+async function addAssetAt(assetId, t, trackIdx = null) {
+  const asset = assets.get(assetId);
+  if (!asset?.ready) {
+    setStatus('that media is still loading — try again in a moment');
+    return null;
+  }
+  history.begin(comp);
+  await maybeAdoptCompSize(asset);
+  const clip = placeAssetClip(asset, Math.max(0, t), trackIdx);
+  ensureDur(comp);
+  history.commit(comp);
+  onModelChange({ structural: true });
+  timeline.selectClip(clip.id);
+  setStatus(`added ${clip.name}`);
+  return clip;
 }
 
 $('file-input').addEventListener('change', (e) => {
@@ -1763,8 +1828,181 @@ $('file-input').addEventListener('change', (e) => {
 document.body.addEventListener('dragover', (e) => e.preventDefault());
 document.body.addEventListener('drop', (e) => {
   e.preventDefault();
+  // A bin card dropped on the preview (the timeline handles its own drops):
+  // a new clip for that asset at the playhead, on a track of its own.
+  const assetId = e.dataTransfer.getData('application/x-lowkey-asset');
+  if (assetId) { addAssetAt(assetId, tCur, null); return; }
   if (e.dataTransfer.files.length) importFiles([...e.dataTransfer.files]);
 });
+
+/* =====================================================================
+ * Media bin — one card per imported asset. A single import can back any
+ * number of clips: drag a card onto the timeline (or double-click it) to
+ * cut another clip from the same underlying media.
+ * =================================================================== */
+
+const BIN_OPEN_KEY = 'lowkey-studio.bin-open';
+const binEl = $('media-bin');
+const binListEl = $('media-bin-list');
+const binBtn = $('btn-media-bin');
+
+const binAssets = () => [...assets.values()].filter((a) => a.kind !== 'shape');
+
+function assetUseCount(assetId) {
+  let n = 0;
+  for (const track of comp.tracks)
+    for (const clip of track.clips)
+      if (clip.assetId === assetId) n++;
+  return n;
+}
+
+function setBinOpen(open) {
+  binEl.hidden = !open;
+  binBtn.classList.toggle('active', open);
+  try { localStorage.setItem(BIN_OPEN_KEY, open ? '1' : ''); } catch {}
+  if (open) renderMediaBin();
+}
+
+binBtn.addEventListener('click', () => setBinOpen(binEl.hidden));
+if (localStorage.getItem(BIN_OPEN_KEY) === '1') setBinOpen(true);
+
+// Files dropped (or picked) directly on the bin import WITHOUT touching the
+// timeline — organize first, place clips later.
+binEl.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+binEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (e.dataTransfer.files.length) importFiles([...e.dataTransfer.files], { binOnly: true });
+});
+$('bin-file-input').addEventListener('change', (e) => {
+  if (e.target.files.length) importFiles([...e.target.files], { binOnly: true });
+  e.target.value = '';
+});
+
+function renderMediaBin() {
+  if (binEl.hidden) return;
+  binListEl.textContent = '';
+  const list = binAssets();
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'bin-empty';
+    empty.textContent = 'nothing imported yet — drop files here, or use Import media';
+    binListEl.appendChild(empty);
+    return;
+  }
+  for (const asset of list) binListEl.appendChild(binCard(asset));
+}
+
+function binCard(asset) {
+  const card = document.createElement('div');
+  card.className = 'bin-card' + (asset.ready ? '' : ' loading');
+  card.draggable = !!asset.ready;
+  card.dataset.assetId = asset.id;
+  card.title = `${asset.name}\ndrag onto the timeline — double-click adds at the playhead`;
+
+  const thumb = document.createElement('div');
+  thumb.className = 'bin-thumb';
+  paintBinThumb(asset, thumb);
+  card.appendChild(thumb);
+
+  const name = document.createElement('div');
+  name.className = 'bin-name';
+  name.textContent = asset.name;
+  card.appendChild(name);
+
+  const uses = assetUseCount(asset.id);
+  const meta = document.createElement('div');
+  meta.className = 'bin-meta';
+  const bits = [asset.kind];
+  if (asset.duration != null) bits.push(`${(+asset.duration.toFixed(1))}s`);
+  else if (asset.w) bits.push(`${asset.w}×${asset.h}`);
+  bits.push(uses ? `${uses} clip${uses > 1 ? 's' : ''}` : 'unused');
+  meta.textContent = bits.join(' · ');
+  card.appendChild(meta);
+
+  const del = document.createElement('button');
+  del.className = 'bin-del';
+  del.textContent = '✕';
+  del.title = 'remove from the project';
+  del.addEventListener('click', (e) => {
+    e.stopPropagation();
+    requestRemoveAsset(asset, del);
+  });
+  card.appendChild(del);
+
+  card.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('application/x-lowkey-asset', asset.id);
+    e.dataTransfer.effectAllowed = 'copy';
+  });
+  card.addEventListener('dblclick', () => addAssetAt(asset.id, tCur, null));
+  return card;
+}
+
+/** Fill a card's thumbnail box: stills and GIFs from their bitmap, videos
+ * from the media element's current frame (waiting for first data if
+ * needed), audio from its waveform peaks. Falls back to a kind glyph. */
+function paintBinThumb(asset, holder) {
+  if (asset.kind === 'audio') {
+    const img = document.createElement('img');
+    img.alt = '';
+    if (asset.waveform) img.src = asset.waveform;
+    else buildWaveform(asset).then((url) => { if (url) img.src = url; }).catch(() => {});
+    holder.textContent = '';
+    holder.appendChild(img);
+    return;
+  }
+  const paint = () => {
+    const src = asset.bitmap ?? asset.frames?.[0]?.bitmap
+      ?? (asset.kind === 'video' && asset.el?.readyState >= 2 ? asset.el : null);
+    if (!src || !asset.w) return false;
+    const W = 200, H = 64;
+    const cv = document.createElement('canvas');
+    cv.width = W;
+    cv.height = H;
+    const ctx = cv.getContext('2d');
+    const s = Math.min(W / asset.w, H / asset.h);
+    ctx.drawImage(src, (W - asset.w * s) / 2, (H - asset.h * s) / 2, asset.w * s, asset.h * s);
+    holder.textContent = '';
+    holder.appendChild(cv);
+    return true;
+  };
+  if (!paint()) {
+    holder.textContent = asset.kind === 'video' ? '🎞' : '🖼';
+    if (asset.kind === 'video' && asset.el)
+      asset.el.addEventListener('loadeddata', paint, { once: true });
+  }
+}
+
+function requestRemoveAsset(asset, anchor) {
+  const uses = assetUseCount(asset.id);
+  if (!uses) { removeAsset(asset); return; }
+  const r = anchor.getBoundingClientRect();
+  showMenu(r.left, r.bottom + 4, [
+    {
+      label: `Remove "${asset.name}" and its ${uses} clip${uses > 1 ? 's' : ''}`,
+      danger: true,
+      action: () => removeAsset(asset),
+    },
+    { label: 'Keep it', action: () => {} },
+  ]);
+}
+
+/** Drop an asset from the project: its clips, its runtime handles, and its
+ * stored blobs. Blobs are shared across saved projects by asset id, so
+ * another project still referencing this media will report it missing on
+ * load — same recovery as any lost blob: re-import. */
+function removeAsset(asset) {
+  history.begin(comp);
+  for (const track of comp.tracks)
+    track.clips = track.clips.filter((c) => c.assetId !== asset.id);
+  history.commit(comp);
+  disposeAsset(asset);
+  assets.delete(asset.id);
+  idbDelete(`asset:${asset.id}`).catch(() => {});
+  idbDelete(proxyKey(asset)).catch(() => {});
+  onModelChange({ structural: true });
+  setStatus(`removed ${asset.name}`);
+}
 
 /* =====================================================================
  * Audio — one WebAudio mixer so playback and recordings hear every
@@ -2444,19 +2682,22 @@ function saveProject() {
   }
 }
 
+/** Release one asset's runtime handles (element, proxy, bitmaps, texture). */
+function disposeAsset(a) {
+  if (a.el) { a.el.pause(); a.el.remove(); }
+  if (a.proxyEl) {
+    a.proxyEl.pause();
+    try { URL.revokeObjectURL(a.proxyEl.src); } catch {}
+    a.proxyEl.remove();
+  }
+  for (const f of a.frames ?? []) f.bitmap.close();
+  a.texture?.destroy();
+  try { URL.revokeObjectURL(a.url); } catch {}
+}
+
 /** Drop every runtime handle for the current project's media assets. */
 function unloadAssets() {
-  for (const a of assets.values()) {
-    if (a.el) { a.el.pause(); a.el.remove(); }
-    if (a.proxyEl) {
-      a.proxyEl.pause();
-      try { URL.revokeObjectURL(a.proxyEl.src); } catch {}
-      a.proxyEl.remove();
-    }
-    for (const f of a.frames ?? []) f.bitmap.close();
-    a.texture?.destroy();
-    try { URL.revokeObjectURL(a.url); } catch {}
-  }
+  for (const a of assets.values()) disposeAsset(a);
   assets.clear();
 }
 
@@ -2486,14 +2727,12 @@ async function applyProjectData(data) {
   // Shape clips regenerate their textures from the model — no stored blobs.
   reconcileShapeAssets();
 
-  const ids = new Set();
-  for (const track of comp.tracks)
-    for (const clip of track.clips)
-      if (hasSource(clip)) ids.add(clip.assetId);
   // Restore assets in parallel; a missing or unloadable one must not block
-  // the app — its clips simply render as offline until re-imported.
+  // the app — its clips simply render as offline until re-imported. Every
+  // asset the project carries comes back, clips or not: the media bin
+  // holds imports that haven't been placed yet.
   await Promise.allSettled((data.assets ?? [])
-    .filter((meta) => ids.has(meta.id) && meta.kind !== 'shape')
+    .filter((meta) => meta.kind !== 'shape')
     .map(async (meta) => {
       const file = await idbGet(`asset:${meta.id}`);
       if (!file) throw new Error(`missing media blob for ${meta.name}`);
@@ -2512,6 +2751,7 @@ async function applyProjectData(data) {
   timeline?.zoomFit();
   timeline?.render();
   renderInspector();
+  renderMediaBin();
 }
 
 async function restoreProject() {
@@ -6701,6 +6941,68 @@ function finishExport() {
   exportBtn.textContent = 'Record';
   exportBtn.classList.remove('recording');
 }
+
+/* ---- audio-only export ----------------------------------------------
+ * The same offline mix the WebM render muxes in, written out on its own.
+ * WAV rather than Opus: it needs no encoder support, and an audio-only
+ * export exists to be dropped into something else. */
+
+function audioBufferToWav(buf) {
+  const ch = buf.numberOfChannels;
+  const bytes = buf.length * ch * 2;   // interleaved 16-bit PCM
+  const out = new ArrayBuffer(44 + bytes);
+  const view = new DataView(out);
+  const str = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  str(0, 'RIFF');
+  view.setUint32(4, 36 + bytes, true);
+  str(8, 'WAVEfmt ');
+  view.setUint32(16, 16, true);                        // fmt chunk size
+  view.setUint16(20, 1, true);                         // PCM
+  view.setUint16(22, ch, true);
+  view.setUint32(24, buf.sampleRate, true);
+  view.setUint32(28, buf.sampleRate * ch * 2, true);   // byte rate
+  view.setUint16(32, ch * 2, true);                    // block align
+  view.setUint16(34, 16, true);                        // bits per sample
+  str(36, 'data');
+  view.setUint32(40, bytes, true);
+  const chans = Array.from({ length: ch }, (_, c) => buf.getChannelData(c));
+  let off = 44;
+  for (let i = 0; i < buf.length; i++)
+    for (let c = 0; c < ch; c++) {
+      const v = clamp(chans[c][i], -1, 1);
+      view.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      off += 2;
+    }
+  return new Blob([out], { type: 'audio/wav' });
+}
+
+const audioExportBtn = $('btn-export-audio');
+
+audioExportBtn.addEventListener('click', async () => {
+  if (offlineJob || recorder || audioExportBtn.disabled) return;
+  audioExportBtn.disabled = true;
+  setStatus('mixing audio…');
+  const started = performance.now();
+  try {
+    // Driven volumes are sampled from the analysis data, same as the
+    // video export — without this a fresh audio driver bakes as flat.
+    await syncAudioDrive();
+    const buf = await renderCompAudio();
+    if (!buf) {
+      setStatus('nothing to export — the comp has no audible audio');
+      return;
+    }
+    const outName = `${exportBaseName()}.wav`;
+    saveBlob(audioBufferToWav(buf), outName);
+    const secs = ((performance.now() - started) / 1000).toFixed(1);
+    setStatus(`saved ${outName} — ${comp.dur}s of audio in ${secs}s`);
+  } catch (e) {
+    console.error('slangfx: audio export failed:', e);
+    setStatus(`audio export failed: ${e.message ?? e}`);
+  } finally {
+    audioExportBtn.disabled = false;
+  }
+});
 
 /* ---- offline (faster-than-real-time) render ------------------------- */
 

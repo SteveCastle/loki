@@ -36,6 +36,7 @@ export function queryStateKey(q: Query): string {
       p.text ?? '',
       p.textWeight ?? null,
       (p.nodes ?? []).map((n) => [n.kind, n.value, n.weight ?? 1, !!n.negative]),
+      p.blendMode ?? 'blend',
     ])
   );
 }

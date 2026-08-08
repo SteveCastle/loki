@@ -27,6 +27,7 @@ import (
 	"github.com/stevecastle/shrike/appconfig"
 	"github.com/stevecastle/shrike/deps"
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/transcribe"
 )
@@ -167,11 +168,12 @@ func probeVideoDuration(ctx context.Context, videoPath string) float64 {
 }
 
 func describeFileWithOllama(ctx context.Context, q *jobqueue.Queue, jobID, mediaPath, model, customPrompt string) (string, error) {
-	ext := strings.ToLower(filepath.Ext(mediaPath))
 	var tempImagePath string
 	var cleanupPaths []string
 	source := "image"
-	if ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp" || ext == ".webp" {
+	// Bytes the model reads directly; everything else (animated gif, tiff,
+	// heic, avif, any video) gets an ffmpeg frame extracted first.
+	if mediaext.IsDirectVisionImage(mediaPath) {
 		tempImagePath = mediaPath
 	} else {
 		screenshotPath, err := extractVideoFrame(ctx, mediaPath, "")

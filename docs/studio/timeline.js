@@ -24,6 +24,7 @@
  *   onModelChange({structural})   model mutated (app re-renders + saves)
  *   onSelect()                    selection changed
  *   addMediaAt(files,t,trackIdx)  drag-dropped files
+ *   addAssetAt(assetId,t,trackIdx) an asset dragged out of the media bin
  *   status(msg)
  */
 
@@ -56,6 +57,15 @@ export function fmtTimecode(t, fps) {
   const mm = Math.floor(s / 60);
   const ss = s % 60;
   return `${mm}:${String(ss).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+}
+
+/* Wheel deltas arrive in pixels, lines, or pages depending on the browser
+ * (Firefox reports lines for a mouse wheel). Native scrolling handles that
+ * itself; scrolling by hand has to normalize first. */
+function wheelPixels(e, pageH) {
+  if (e.deltaMode === 1) return e.deltaY * TRACK_H;
+  if (e.deltaMode === 2) return e.deltaY * pageH;
+  return e.deltaY;
 }
 
 function parseTimecode(text, fps) {
@@ -281,6 +291,19 @@ export class Timeline {
       this._setZoom(this.pps * (e.deltaY < 0 ? 1 + 0.25 * k : 1 / (1 + 0.25 * k)), t, e.clientX);
     }, { passive: false });
 
+    /* The lanes hijack the wheel for zoom, so the layer-name column is the
+     * plain vertical scroller for comps taller than the panel: wheel
+     * anywhere over the heads moves the track list, and the lanes follow
+     * through the shared scroll handler (which re-syncs the transform). */
+    this.headsEl.addEventListener('wheel', (e) => {
+      const max = this.scrollEl.scrollHeight - this.scrollEl.clientHeight;
+      if (max <= 0) return;
+      const dy = wheelPixels(e, this.scrollEl.clientHeight);
+      if (!dy) return;
+      e.preventDefault();
+      this.scrollEl.scrollTop = clamp(this.scrollEl.scrollTop + dy, 0, max);
+    }, { passive: false });
+
     this._bindNav();
 
     // Ruler scrubbing.
@@ -294,14 +317,18 @@ export class Timeline {
     });
     this.ruler.addEventListener('pointerup', () => { this._scrubbing = false; });
 
-    // Drag-drop media straight onto the timeline at the drop position.
+    // Drag-drop media straight onto the timeline at the drop position —
+    // OS files, or an already-imported asset dragged out of the media bin.
     this.scrollEl.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
     this.scrollEl.addEventListener('drop', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (!e.dataTransfer.files.length) return;
       const t = Math.max(0, this._timeAtClientX(e.clientX));
-      this.host.addMediaAt([...e.dataTransfer.files], this._snapTime(t), this._trackIndexAtClientY(e.clientY));
+      const assetId = e.dataTransfer.getData('application/x-lowkey-asset');
+      if (assetId)
+        this.host.addAssetAt(assetId, this._snapTime(t), this._trackIndexAtClientY(e.clientY));
+      else if (e.dataTransfer.files.length)
+        this.host.addMediaAt([...e.dataTransfer.files], this._snapTime(t), this._trackIndexAtClientY(e.clientY));
     });
 
     // Click empty space clears selection.
@@ -964,7 +991,9 @@ export class Timeline {
     el.addEventListener('pointerdown', (e) => this._clipPointerDown(e, el, track, clip, trackIdx));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      this._select(clip.id, false);
+      // Right-clicking inside a shift-selection keeps it: the menu carries
+      // selection-wide actions (stagger, delete) that need the whole set.
+      if (!this.selClips.has(clip.id)) this._select(clip.id, false);
       this._clipMenu(e.clientX, e.clientY, clip);
     });
     el.addEventListener('dblclick', () => {
@@ -1001,7 +1030,12 @@ export class Timeline {
 
   _clipMenu(x, y, clip) {
     const comp = this.host.comp();
+    const sel = this.selClips.has(clip.id) ? this._selectionInOrder() : [];
     const items = [
+      ...(sel.length > 1 ? [{
+        label: `Stagger ${sel.length} clips`,
+        action: () => this.staggerSelection(),
+      }, '-'] : []),
       { label: 'Split at playhead', action: () => this.splitAtPlayhead() },
       {
         label: 'Duplicate',
@@ -1079,11 +1113,48 @@ export class Timeline {
       });
     }
     items.push('-', {
-      label: 'Delete',
+      label: sel.length > 1 ? `Delete ${sel.length} clips` : 'Delete',
       danger: true,
-      action: () => { this.selClips = new Set([clip.id]); this.deleteSelection(); },
+      action: () => {
+        if (sel.length < 2) this.selClips = new Set([clip.id]);
+        this.deleteSelection();
+      },
     });
     showMenu(x, y, items);
+  }
+
+  /** Selected clips in visual order: top track first, then left to right.
+   * Track index is the primary key, so it is resolved from comp.tracks here
+   * rather than trusting the Set's (click-order) iteration. */
+  _selectionInOrder() {
+    const comp = this.host.comp();
+    const out = [];
+    comp.tracks.forEach((track, trackIdx) => {
+      for (const clip of track.clips)
+        if (this.selClips.has(clip.id)) out.push({ clip, trackIdx });
+    });
+    return out.sort((a, b) => a.trackIdx - b.trackIdx || a.clip.start - b.clip.start);
+  }
+
+  /** Re-time the selected clips to play back to back in visual order, each
+   * starting where the previous one ends. Clips keep their track and their
+   * duration — only `start` moves — and the chain is anchored to the
+   * earliest start in the selection, so the group's leading edge holds. */
+  staggerSelection() {
+    const comp = this.host.comp();
+    const sel = this._selectionInOrder();
+    if (sel.length < 2) return;
+    const base = quantize(Math.min(...sel.map(({ clip }) => clip.start)), comp.fps);
+    this.host.history.record(comp, () => {
+      let t = base;
+      for (const { clip } of sel) {
+        clip.start = t;
+        t = quantize(t + clip.dur, comp.fps);
+      }
+      ensureDur(comp);
+    });
+    this.host.onModelChange({ structural: true });
+    this.host.status(`${sel.length} clips staggered from ${fmtTimecode(base, comp.fps)}`);
   }
 
   _select(clipId, additive) {

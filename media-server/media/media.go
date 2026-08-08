@@ -293,13 +293,57 @@ func GetTags(db *sql.DB, mediaPaths []string) (map[string][]MediaTag, error) {
 // The randomization is seeded per-session to maintain consistency during scrolling
 // This function is designed for the TikTok-like swipe view
 // Only items with at least one tag are included
-func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int64) ([]MediaItem, bool, error) {
+// OrientationPortrait / OrientationLandscape are the accepted values for the
+// swipe orientation restriction. Portrait means height ≥ width and landscape
+// width ≥ height (square items pass both); items with unknown or zero
+// dimensions match neither restricted pool. The empty string means "both".
+const (
+	OrientationPortrait  = "portrait"
+	OrientationLandscape = "landscape"
+)
+
+// NormalizeOrientation maps a raw query-param value onto the accepted
+// orientation restrictions; anything unrecognized (including "both") becomes
+// the unrestricted empty string.
+func NormalizeOrientation(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case OrientationPortrait:
+		return OrientationPortrait
+	case OrientationLandscape:
+		return OrientationLandscape
+	default:
+		return ""
+	}
+}
+
+// swipeOrientationSQL returns a WHERE fragment restricting a media row (whose
+// columns are reachable via colPrefix, e.g. "m.") to the given orientation,
+// or "" when unrestricted. Mirrors classifyOrientation/classMatchesOrientation
+// so the SQL-filtered swipe paths agree with the sampler's cached classes.
+func swipeOrientationSQL(orientation, colPrefix string) string {
+	var cmp string
+	switch orientation {
+	case OrientationPortrait:
+		cmp = "<="
+	case OrientationLandscape:
+		cmp = ">="
+	default:
+		return ""
+	}
+	w := colPrefix + "width"
+	h := colPrefix + "height"
+	return "(" + w + " > 0 AND " + h + " > 0 AND " + w + " " + cmp + " " + h + ")"
+}
+
+func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int64, orientation string) ([]MediaItem, bool, error) {
+	orientation = NormalizeOrientation(orientation)
+
 	// Fast path: no search filter (the dominant swipe case). Use the
 	// in-memory sampler — see random_sampler.go. ORDER BY RANDOM() over the
-	// full tagged set scaled to ~7 seconds on a real library; the sampler
+	// full media table scaled to ~7 seconds on a real library; the sampler
 	// path is essentially constant time after a one-time cache build.
 	if strings.TrimSpace(searchQuery) == "" {
-		return getRandomItemsFromSampler(db, offset, limit, seed)
+		return getRandomItemsFromSampler(db, offset, limit, seed, orientation)
 	}
 
 	// Use a deterministic but shuffled ordering based on a hash of the path
@@ -335,7 +379,7 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 	// media table with a correlated EXISTS per row. Downstream shuffle/paginate
 	// is shared with the generic path so behaviour is identical.
 	if labels, kind := extractTagFilter(rootNode); kind != tagFilterNone {
-		allPaths, err := getTaggedPathsByLabels(db, labels, kind == tagFilterAnd)
+		allPaths, err := getTaggedPathsByLabels(db, labels, kind == tagFilterAnd, orientation)
 		if err != nil {
 			return nil, false, err
 		}
@@ -358,12 +402,14 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 		}
 	}
 
-	// Always require items to have at least one tag
-	hasTagsFilter := `EXISTS (SELECT 1 FROM media_tag_by_category mtbc WHERE mtbc.media_path = m.path)`
-	if whereClause == "" {
-		whereClause = "WHERE " + hasTagsFilter
-	} else {
-		whereClause = whereClause + " AND " + hasTagsFilter
+	// The swipe pool is the whole media table now (untagged items included),
+	// so the only universal restriction is the optional orientation one.
+	if orient := swipeOrientationSQL(orientation, "m."); orient != "" {
+		if whereClause == "" {
+			whereClause = "WHERE " + orient
+		} else {
+			whereClause = whereClause + " AND " + orient
+		}
 	}
 
 	// If there are exists conditions, we need to implement existence-aware pagination
@@ -426,7 +472,7 @@ func GetRandomItems(db *sql.DB, offset, limit int, searchQuery string, seed int6
 // EXISTS per row — the swipe filter only needs tag_label. With intersect=false
 // (union) it returns paths having *any* of the labels; with intersect=true it
 // returns only paths having *all* of them.
-func getTaggedPathsByLabels(db *sql.DB, labels []string, intersect bool) ([]string, error) {
+func getTaggedPathsByLabels(db *sql.DB, labels []string, intersect bool, orientation string) ([]string, error) {
 	// De-duplicate labels (and drop empties) so the IN-list and the
 	// intersection HAVING count are correct.
 	seen := make(map[string]struct{}, len(labels))
@@ -461,15 +507,23 @@ func getTaggedPathsByLabels(db *sql.DB, labels []string, intersect bool) ([]stri
 	// re-serving the same items — the "swipe loops over the same set" bug, acute
 	// for high-orphan tags. Constraining the universe to paths with a media row
 	// keeps the 1:1 path→item mapping the client's offset assumes.
+	// The optional orientation restriction rides inside the same EXISTS —
+	// applied here, before the shuffle, so the filtered universe is stable
+	// per (labels, orientation) and offsets can't drift.
+	mediaExists := `EXISTS (SELECT 1 FROM media m WHERE m.path = media_path`
+	if orient := swipeOrientationSQL(orientation, "m."); orient != "" {
+		mediaExists += ` AND ` + orient
+	}
+	mediaExists += `)`
 	var query string
 	if intersect && len(uniq) > 1 {
 		query = `SELECT media_path FROM media_tag_by_category WHERE tag_label IN (` +
-			placeholders + `) AND EXISTS (SELECT 1 FROM media m WHERE m.path = media_path)` +
+			placeholders + `) AND ` + mediaExists +
 			` GROUP BY media_path HAVING COUNT(DISTINCT tag_label) = ? ORDER BY media_path`
 		args = append(args, len(uniq))
 	} else {
 		query = `SELECT DISTINCT media_path FROM media_tag_by_category WHERE tag_label IN (` +
-			placeholders + `) AND EXISTS (SELECT 1 FROM media m WHERE m.path = media_path)` +
+			placeholders + `) AND ` + mediaExists +
 			` ORDER BY media_path`
 	}
 
@@ -1127,9 +1181,42 @@ func SetMediaRemovalHook(fn func(paths []string)) {
 	mediaRemovalHook = fn
 }
 
+// RemovalBatch describes one committed batch of a streaming removal. It is
+// handed to the RemoveItemsFromDBStream callback AFTER the batch's transaction
+// commits, so everything it reports is already durable — a caller may surface
+// it as progress without risk of it being rolled back.
+type RemovalBatch struct {
+	// Paths are the batch's paths, now deleted.
+	Paths []string
+	// Done is how many input paths have been processed so far (this batch
+	// included); Total is the size of the whole run.
+	Done  int
+	Total int
+	// MediaItemsRemoved / TagsRemoved are running totals for the run, not
+	// per-batch counts.
+	MediaItemsRemoved int64
+	TagsRemoved       int64
+}
+
 // RemoveItemsFromDB removes media items and their associated tags from the database
 // This function is designed to be reusable across different parts of the application
 func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*RemovalResult, error) {
+	return RemoveItemsFromDBStream(ctx, db, paths, nil)
+}
+
+// RemoveItemsFromDBStream is RemoveItemsFromDB with per-batch reporting.
+//
+// The work has always been chunked into independently committed transactions
+// (one per batch of batchSize paths) — but with no way to observe it, a large
+// removal looked like a single hang from the outside even though rows were
+// disappearing the whole time. onBatch is invoked once per committed batch so
+// callers can stream progress; it is called on the calling goroutine with no
+// locks held and may be nil.
+//
+// The per-batch transaction is also what makes cancellation cheap: on ctx
+// cancellation everything committed so far stays removed and the partial
+// counts come back with the error, so the job resumes rather than restarts.
+func RemoveItemsFromDBStream(ctx context.Context, db *sql.DB, paths []string, onBatch func(RemovalBatch)) (*RemovalResult, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database connection not available")
 	}
@@ -1161,11 +1248,16 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 	totalTagsRemoved := int64(0)
 
 	for i := 0; i < len(validPaths); i += batchSize {
-		// Check if context was cancelled
+		// Check if context was cancelled. Batches committed before this point
+		// stay removed, so the swipe pool must be invalidated on the way out
+		// exactly as on the success path.
 		select {
 		case <-ctx.Done():
 			result.MediaItemsRemoved = totalMediaRemoved
 			result.TagsRemoved = totalTagsRemoved
+			if totalMediaRemoved > 0 || totalTagsRemoved > 0 {
+				InvalidateRandomSampleCache()
+			}
 			return result, ctx.Err()
 		default:
 		}
@@ -1186,6 +1278,23 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 			return result, err
 		}
 
+		// Every sidecar row keys off media.path, and the connection runs with
+		// foreign_keys=ON (see db_dsn.go). The statements below are ordered
+		// children-first so each one is legal on its own, but deferring
+		// enforcement to COMMIT makes the batch safe on DBs whose sidecar
+		// tables carry FK declarations the Go schema doesn't create (the
+		// Electron client's dream-x.sqlite does) — otherwise one out-of-order
+		// statement aborts the whole batch with "FOREIGN KEY constraint
+		// failed". Per-transaction, and issued on tx so it binds to this
+		// transaction's connection (a db-level PRAGMA would be a no-op here).
+		if _, err := tx.ExecContext(ctx, "PRAGMA defer_foreign_keys = ON"); err != nil {
+			tx.Rollback()
+			result.Errors = append(result.Errors, fmt.Errorf("failed to defer foreign keys for batch: %w", err))
+			result.MediaItemsRemoved = totalMediaRemoved
+			result.TagsRemoved = totalTagsRemoved
+			return result, err
+		}
+
 		// Build parameterized query for this batch
 		placeholders := make([]string, len(batch))
 		args := make([]interface{}, len(batch))
@@ -1193,69 +1302,43 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 			placeholders[j] = "?"
 			args[j] = path
 		}
+		in := strings.Join(placeholders, ",")
 
-		// First, remove related records from media_tag_by_category table
-		tagQuery := fmt.Sprintf(`
-			DELETE FROM media_tag_by_category
-			WHERE media_path IN (%s)
-		`, strings.Join(placeholders, ","))
-
-		tagResult, err := tx.ExecContext(ctx, tagQuery, args...)
-		if err != nil {
-			tx.Rollback()
-			result.Errors = append(result.Errors, fmt.Errorf("failed to remove media tags for batch: %w", err))
-			result.MediaItemsRemoved = totalMediaRemoved
-			result.TagsRemoved = totalTagsRemoved
-			return result, err
+		// Sidecar rows first: tags, embeddings (visual-similarity), then face
+		// rows + scan markers (face-identity). Person covers pointing at the
+		// doomed faces are cleared before the faces go so they don't dangle
+		// (GetPeople falls back to the person's best face). The removal hook
+		// evicts both indexes once the batch commits.
+		type batchStmt struct {
+			label string
+			sql   string
+			count *int64 // nil when the statement's row count isn't reported
 		}
-
-		batchTagsRemoved, _ := tagResult.RowsAffected()
-		totalTagsRemoved += batchTagsRemoved
-
-		// Then remove the main media records
-		mediaQuery := fmt.Sprintf(`
-			DELETE FROM media
-			WHERE path IN (%s)
-		`, strings.Join(placeholders, ","))
-
-		mediaResult, err := tx.ExecContext(ctx, mediaQuery, args...)
-		if err != nil {
-			tx.Rollback()
-			result.Errors = append(result.Errors, fmt.Errorf("failed to remove media items for batch: %w", err))
-			result.MediaItemsRemoved = totalMediaRemoved
-			result.TagsRemoved = totalTagsRemoved
-			return result, err
+		var batchTagsRemoved, batchMediaRemoved int64
+		stmts := []batchStmt{
+			{"media tags", `DELETE FROM media_tag_by_category WHERE media_path IN (%s)`, &batchTagsRemoved},
+			{"embeddings", `DELETE FROM media_embedding WHERE media_path IN (%s)`, nil},
+			{"person covers", `UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (SELECT id FROM face WHERE media_path IN (%s))`, nil},
+			{"face rows", `DELETE FROM face WHERE media_path IN (%s)`, nil},
+			{"face scan markers", `DELETE FROM face_scan WHERE media_path IN (%s)`, nil},
+			// Parent last, so the delete is legal even without deferral.
+			{"media items", `DELETE FROM media WHERE path IN (%s)`, &batchMediaRemoved},
 		}
-
-		batchMediaRemoved, _ := mediaResult.RowsAffected()
-		totalMediaRemoved += batchMediaRemoved
-
-		// Remove embeddings for the same batch (visual-similarity sidecar table).
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM media_embedding WHERE media_path IN (%s)`, strings.Join(placeholders, ",")), args...); err != nil {
-			tx.Rollback()
-			result.Errors = append(result.Errors, fmt.Errorf("failed to remove embeddings for batch: %w", err))
-			result.MediaItemsRemoved = totalMediaRemoved
-			result.TagsRemoved = totalTagsRemoved
-			return result, err
-		}
-
-		// Remove face rows + scan markers (face-identity sidecar tables). The
-		// registered removal hook evicts them from the in-memory face index.
-		// Person covers pointing at the doomed faces are cleared first so they
-		// don't dangle (GetPeople falls back to the person's best face).
-		for _, stmt := range []string{
-			`UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (SELECT id FROM face WHERE media_path IN (%s))`,
-			`DELETE FROM face WHERE media_path IN (%s)`,
-			`DELETE FROM face_scan WHERE media_path IN (%s)`,
-		} {
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(stmt, strings.Join(placeholders, ",")), args...); err != nil {
+		for _, s := range stmts {
+			res, err := tx.ExecContext(ctx, fmt.Sprintf(s.sql, in), args...)
+			if err != nil {
 				tx.Rollback()
-				result.Errors = append(result.Errors, fmt.Errorf("failed to remove face rows for batch: %w", err))
+				result.Errors = append(result.Errors, fmt.Errorf("failed to remove %s for batch: %w", s.label, err))
 				result.MediaItemsRemoved = totalMediaRemoved
 				result.TagsRemoved = totalTagsRemoved
 				return result, err
 			}
+			if s.count != nil {
+				*s.count, _ = res.RowsAffected()
+			}
 		}
+		totalTagsRemoved += batchTagsRemoved
+		totalMediaRemoved += batchMediaRemoved
 
 		// Commit this batch
 		if err := tx.Commit(); err != nil {
@@ -1270,6 +1353,18 @@ func RemoveItemsFromDB(ctx context.Context, db *sql.DB, paths []string) (*Remova
 		// are harmless no-ops there.
 		if mediaRemovalHook != nil {
 			mediaRemovalHook(batch)
+		}
+
+		// Report the committed batch before starting the next one, so a caller
+		// rendering progress advances every batch instead of once at the end.
+		if onBatch != nil {
+			onBatch(RemovalBatch{
+				Paths:             batch,
+				Done:              end,
+				Total:             len(validPaths),
+				MediaItemsRemoved: totalMediaRemoved,
+				TagsRemoved:       totalTagsRemoved,
+			})
 		}
 	}
 
@@ -1534,6 +1629,7 @@ func SuggestFilters() []string {
 		"tagcount",
 		"exists",
 		"pathdir",
+		"orientation",
 	}
 }
 

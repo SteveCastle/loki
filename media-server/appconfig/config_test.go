@@ -833,6 +833,9 @@ func TestTranscriptionEnvOverrides(t *testing.T) {
 	t.Setenv("LOWKEY_TRANSCRIPTION_MODEL", "tiny")
 	t.Setenv("LOWKEY_TRANSCRIPTION_LANGUAGE", "de")
 	t.Setenv("LOWKEY_TRANSCRIPTION_VAD", "false")
+	t.Setenv("LOWKEY_TRANSCRIPTION_INITIAL_PROMPT", "Names: Lowkey.")
+	t.Setenv("LOWKEY_TRANSCRIPTION_HOTWORDS", "SigLIP")
+	t.Setenv("LOWKEY_TRANSCRIPTION_VOCAL_EXTRACT", "true")
 
 	c, _, err := Load()
 	if err != nil {
@@ -841,6 +844,10 @@ func TestTranscriptionEnvOverrides(t *testing.T) {
 	if c.TranscriptionProvider != "custom" || c.TranscriptionModel != "tiny" ||
 		c.TranscriptionLanguage != "de" || c.TranscriptionVADFilter {
 		t.Errorf("env overrides not applied: %+v", c)
+	}
+	if c.TranscriptionInitialPrompt != "Names: Lowkey." || c.TranscriptionHotwords != "SigLIP" ||
+		!c.TranscriptionVocalExtract {
+		t.Errorf("vocabulary env overrides not applied: %+v", c)
 	}
 }
 

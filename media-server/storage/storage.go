@@ -4,6 +4,8 @@ import (
 	"context"
 	"io"
 	"regexp"
+
+	"github.com/stevecastle/shrike/mediaext"
 )
 
 // Entry represents a file or directory returned by List.
@@ -53,11 +55,15 @@ type Backend interface {
 }
 
 // MediaExtRegex matches supported media file extensions (case-insensitive).
+// Built from mediaext so it cannot drift from the rest of the server: this
+// regex used to omit bmp, tif, avi and wmv, which the task-side list accepted,
+// so whether such a file joined the library depended on which code path found
+// it.
 var MediaExtRegex = regexp.MustCompile(
-	`(?i)\.(jpg|jpeg|jfif|webp|png|webm|mp4|mov|mpeg|gif|mkv|m4v|mp3|wav|flac|aac|ogg|m4a|opus|wma|aiff|ape)$`,
+	`(?i)\.(` + mediaext.AltPattern(mediaext.MediaExts()) + `)$`,
 )
 
 // IsMediaFile returns true if name has a supported media extension.
 func IsMediaFile(name string) bool {
-	return MediaExtRegex.MatchString(name)
+	return mediaext.IsMedia(name)
 }

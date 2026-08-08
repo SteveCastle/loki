@@ -1718,6 +1718,53 @@
                     </label>
                   </div>
                 </div>
+                <div class="field">
+                  <label class="label">Custom vocabulary (initial prompt)</label>
+                  <textarea
+                    id="transcription-initial-prompt"
+                    class="input"
+                    rows="3"
+                    placeholder="Names, jargon, and spellings the model should recognize, e.g.: The speakers discuss Lowkey, SigLIP, XState, and Purfview."
+                  >{{.Config.TranscriptionInitialPrompt}}</textarea>
+                  <small class="hint">
+                    Free text given to the model as context before decoding.
+                    Write it as natural prose containing the correct spellings
+                    of names and terms — it biases the transcript toward that
+                    vocabulary. Applied to every transcription job.
+                  </small>
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label class="label">Hotwords</label>
+                    <input
+                      id="transcription-hotwords"
+                      class="input"
+                      type="text"
+                      value="{{.Config.TranscriptionHotwords}}"
+                      placeholder="e.g. Lowkey, SigLIP, Purfview"
+                    />
+                    <small class="hint">
+                      Short list of words/phrases injected into every decoding
+                      window — stronger biasing than the prompt, best kept to
+                      a handful of terms. Windows/Linux (XXL build) only.
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">Vocal isolation</label>
+                    <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer">
+                      <input
+                        id="transcription-vocal-extract"
+                        type="checkbox"
+                        {{if .Config.TranscriptionVocalExtract}}checked{{end}}
+                      />
+                      <small class="hint">
+                        Strip background music/noise (MDX filter) before
+                        transcribing — slower, but much more accurate on
+                        music-heavy media. Windows/Linux (XXL build) only.
+                      </small>
+                    </label>
+                  </div>
+                </div>
                 <details style="margin-top:4px">
                   <summary class="label" style="cursor:pointer">Advanced (custom binary)</summary>
                   <div class="field" style="margin-top:6px">
@@ -2618,6 +2665,15 @@
             .value.trim(),
           transcriptionVadFilter: document.getElementById('transcription-vad')
             .checked,
+          transcriptionInitialPrompt: document
+            .getElementById('transcription-initial-prompt')
+            .value.trim(),
+          transcriptionHotwords: document
+            .getElementById('transcription-hotwords')
+            .value.trim(),
+          transcriptionVocalExtract: document.getElementById(
+            'transcription-vocal-extract'
+          ).checked,
           allowPublicAccess: document.getElementById('allow-public-access')
             .checked,
           defaultStartPath: document

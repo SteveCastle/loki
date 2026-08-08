@@ -104,6 +104,22 @@ func indexSearch(model string, query []float32, k int, allow PathSet) ([]embedin
 	return vectorIndex.SearchFiltered(query, k, allow), true
 }
 
+// indexSearchShared runs a locked shared-concept search for model, restricted
+// to allow when non-nil. ok is false when no index is installed or the index
+// holds a different model's vectors (caller brute-forces).
+func indexSearchShared(model string, spec embedindex.SharedSpec, k int, allow PathSet) ([]embedindex.SearchHit, bool, error) {
+	vectorIndexMu.Lock()
+	defer vectorIndexMu.Unlock()
+	if vectorIndex == nil {
+		return nil, false, nil
+	}
+	if vectorIndexModel != "" && vectorIndexModel != model {
+		return nil, false, nil
+	}
+	hits, err := vectorIndex.SearchShared(spec, k, allow)
+	return hits, true, err
+}
+
 // indexAdd inserts one vector into the active index under lock, but only when
 // the index holds the same model (or is a wildcard). No-op if no index.
 func indexAdd(model, path string, vec []float32) {
@@ -175,7 +191,10 @@ func BuildIndexFromDB(db *sql.DB, model string, onProgress IndexProgress) (embed
 	if err != nil {
 		return nil, err
 	}
-	idx := embedindex.New()
+	// Centered: media similarity is ranking-only, so it benefits from the
+	// hub-suppressing mean subtraction. Face indexes must NOT use this — their
+	// calibrated absolute thresholds assume plain cosine (embedindex.New).
+	idx := embedindex.NewCentered()
 	total := len(all)
 	if onProgress != nil {
 		onProgress(0, total) // start the bar (covers the empty-DB case too)
@@ -228,6 +247,81 @@ func searchByVectorWithin(db *sql.DB, model string, query []float32, limit int, 
 		// CosineSim (not raw dot) so legacy rows stored before the embed binary
 		// normalized its output still rank correctly.
 		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.CosineSim(query, e.Vec)})
+	}
+	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+	if limit > 0 && len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
+// searchSharedWithin runs a shared-concept ("must match all") multi-example
+// search via the installed index, or brute-force over all stored embeddings
+// when none matches the model. The brute-force path mirrors the centered
+// index: above embedindex.MinCenterCount vectors it subtracts the library
+// mean before scoring, so rankings don't depend on whether the index happened
+// to be installed.
+func searchSharedWithin(db *sql.DB, model string, spec embedindex.SharedSpec, limit int, allow PathSet) ([]SimilarHit, error) {
+	if raw, ok, err := indexSearchShared(model, spec, limit, allow); ok {
+		if err != nil {
+			return nil, err
+		}
+		hits := make([]SimilarHit, 0, len(raw))
+		for _, h := range raw {
+			hits = append(hits, SimilarHit{Path: h.Path, Score: h.Score})
+		}
+		return hits, nil
+	}
+	all, err := media.LoadAllEmbeddings(db, model)
+	if err != nil {
+		return nil, err
+	}
+	// Normalize once (legacy rows may predate normalized embed output), then
+	// center when the library is big enough for the mean to be meaningful.
+	vecs := make([][]float32, len(all))
+	for i, e := range all {
+		vecs[i] = embedvec.Normalize(e.Vec)
+	}
+	var mu []float32
+	if len(vecs) >= embedindex.MinCenterCount {
+		mu = make([]float32, len(vecs[0]))
+		for _, v := range vecs {
+			for d, s := range v {
+				mu[d] += s / float32(len(vecs))
+			}
+		}
+	}
+	center := func(v []float32) []float32 {
+		if mu == nil || len(v) != len(mu) {
+			return v
+		}
+		c := make([]float32, len(v))
+		for d := range v {
+			c[d] = v[d] - mu[d]
+		}
+		return embedvec.Normalize(c)
+	}
+	prep := func(vs [][]float32) [][]float32 {
+		out := make([][]float32, len(vs))
+		for i, v := range vs {
+			out[i] = center(embedvec.Normalize(v))
+		}
+		return out
+	}
+	sq, err := embedvec.NewSharedQuery(prep(spec.Pos), spec.PosW, prep(spec.Neg), spec.NegW,
+		embedvec.DefaultSharedBeta, embedvec.DefaultSharedLambda)
+	if err != nil {
+		return nil, err
+	}
+	score := sq.Scorer()
+	hits := make([]SimilarHit, 0, len(all))
+	for i, e := range all {
+		if allow != nil {
+			if _, ok := allow[e.Path]; !ok {
+				continue
+			}
+		}
+		hits = append(hits, SimilarHit{Path: e.Path, Score: score(center(vecs[i]))})
 	}
 	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 	if limit > 0 && len(hits) > limit {

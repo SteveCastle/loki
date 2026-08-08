@@ -79,11 +79,13 @@
         Import media…
         <input type="file" id="file-input" accept="video/*,image/*,audio/*" multiple hidden>
       </label>
+      <button id="btn-media-bin" class="btn" title="media bin — every imported file; drag one onto the timeline as many times as you like">🗀 Media</button>
       <button id="btn-settings" class="btn" title="composition settings — size, frame rate, duration">⚙ Comp</button>
       <button id="btn-crop" class="btn" title="crop & straighten — reframe the comp and rotate its contents">⧉ Crop</button>
       <button id="btn-export-png" class="btn" title="Export the current frame as a PNG">Screenshot</button>
       <button id="btn-export-webm" class="btn" title="Record the comp to WebM in real time as it plays — captures the audio mix">Record</button>
       <button id="btn-export-webm-fast" class="btn" title="Render the comp to WebM offline, as fast as possible — frame-exact, no dropped frames, audio mixed offline">Render</button>
+      <button id="btn-export-audio" class="btn" title="Export the audio mix on its own as a WAV — same offline mix the video export uses, no picture">Audio</button>
       <button id="btn-save-back" class="btn" hidden>💾 Save</button>
     </div>
     <div class="toolbar audio">
@@ -93,9 +95,20 @@
   </header>
 
   <main>
+    <aside id="media-bin" hidden>
+      <div class="bin-head">
+        <h2>Media</h2>
+        <label class="btn bin-import" title="import into the bin only — no clip is added to the timeline">
+          ＋
+          <input type="file" id="bin-file-input" accept="video/*,image/*,audio/*" multiple hidden>
+        </label>
+      </div>
+      <div id="media-bin-list"></div>
+      <div class="bin-hint">drag onto the timeline — one import, as many clips as you like</div>
+    </aside>
     <section id="preview-wrap">
       <div id="trim-badge" hidden>✂ cut preview</div>
-      <div id="drop-hint">drop videos / images / audio here<br><small>they become clips on the timeline</small></div>
+      <div id="drop-hint">drop videos / images / audio here<br><small>they become clips on the timeline — and collect under 🗀 Media for reuse</small></div>
       <div id="viewer" class="size-fit">
         <div id="canvas-stack">
           <div id="canvas-inner">

@@ -97,6 +97,38 @@ func TestBuildMediaQueryFacesUngrouped(t *testing.T) {
 	}
 }
 
+func TestBuildMediaQueryOrientation(t *testing.T) {
+	// orientation: compares the stored dimensions; zero/missing width or
+	// height means no known orientation and never matches an include.
+	cases := map[string]string{
+		"landscape": "media.width > media.height",
+		"portrait":  "media.width < media.height",
+		"square":    "media.width = media.height",
+	}
+	for val, want := range cases {
+		sql, params := BuildMediaQuery([]Predicate{{Type: "orientation", Value: val}}, "AND")
+		if !strings.Contains(sql, "(media.width > 0 AND media.height > 0 AND "+want+")") {
+			t.Fatalf("orientation:%s expected %q in: %q", val, want, sql)
+		}
+		if len(params) != 0 {
+			t.Fatalf("expected no params, got %v", params)
+		}
+	}
+
+	// Excluded form negates the whole clause so unknown-dimension items are
+	// kept, not hidden.
+	sql, _ := BuildMediaQuery([]Predicate{{Type: "orientation", Value: "landscape", Exclude: true}}, "AND")
+	if !strings.Contains(sql, "(NOT (media.width > 0 AND media.height > 0 AND media.width > media.height))") {
+		t.Fatalf("expected negated orientation clause: %q", sql)
+	}
+
+	// Unknown values match nothing — never everything.
+	sql, _ = BuildMediaQuery([]Predicate{{Type: "orientation", Value: "diagonal"}}, "AND")
+	if !strings.Contains(sql, "1=0") {
+		t.Fatalf("unknown orientation value must match nothing: %q", sql)
+	}
+}
+
 func TestBuildMediaQueryOrSetUsesInLookup(t *testing.T) {
 	// OR-set of include-tags drives from an indexed tag_label IN, not a scan.
 	sql, params := BuildMediaQuery([]Predicate{

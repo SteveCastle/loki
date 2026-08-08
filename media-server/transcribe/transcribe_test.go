@@ -66,10 +66,13 @@ func TestActiveFallsBackToDefault(t *testing.T) {
 
 func TestFromConfigBuildsRequest(t *testing.T) {
 	withConfig(t, appconfig.Config{
-		TranscriptionProvider:  "whisper-cli",
-		TranscriptionModel:     "small",
-		TranscriptionLanguage:  "ja",
-		TranscriptionVADFilter: true,
+		TranscriptionProvider:      "whisper-cli",
+		TranscriptionModel:         "small",
+		TranscriptionLanguage:      "ja",
+		TranscriptionVADFilter:     true,
+		TranscriptionInitialPrompt: "  Names: Lowkey, SigLIP.  ",
+		TranscriptionHotwords:      " Purfview ",
+		TranscriptionVocalExtract:  true,
 	})
 	p, req, err := FromConfig("/media/clip.mp4", nil)
 	if err != nil {
@@ -80,6 +83,9 @@ func TestFromConfigBuildsRequest(t *testing.T) {
 	}
 	if req.Model != "small" || req.Language != "ja" || !req.VADFilter || req.MediaPath != "/media/clip.mp4" {
 		t.Errorf("request = %+v", req)
+	}
+	if req.InitialPrompt != "Names: Lowkey, SigLIP." || req.Hotwords != "Purfview" || !req.VocalExtract {
+		t.Errorf("vocabulary fields = %+v", req)
 	}
 }
 
@@ -106,6 +112,26 @@ func TestWhisperBuildArgs(t *testing.T) {
 	// No VAD, auto-detect language, default model (platform-aware).
 	args = w.buildArgs(Request{MediaPath: "b.mkv"})
 	want = []string{"--beep_off", "--output_format=vtt", "--output_dir=source", "--model", w.DefaultModel(), "b.mkv"}
+	if !slices.Equal(args, want) {
+		t.Errorf("args = %v\nwant  %v", args, want)
+	}
+
+	// Custom vocabulary: initial prompt everywhere; hotwords and vocal
+	// extraction only where the XXL build runs (the macOS legacy build
+	// rejects unknown flags).
+	args = w.buildArgs(Request{
+		MediaPath:     "c.mp4",
+		Model:         "medium",
+		InitialPrompt: "Names: Lowkey, SigLIP.",
+		Hotwords:      "Purfview",
+		VocalExtract:  true,
+	})
+	want = []string{"--beep_off", "--output_format=vtt", "--output_dir=source", "--model", "medium",
+		"--initial_prompt", "Names: Lowkey, SigLIP."}
+	if xxlPlatform() {
+		want = append(want, "--hotwords", "Purfview", "--ff_vocal_extract", "mdx_kim2")
+	}
+	want = append(want, "c.mp4")
 	if !slices.Equal(args, want) {
 		t.Errorf("args = %v\nwant  %v", args, want)
 	}

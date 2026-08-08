@@ -604,6 +604,25 @@
   cursor: default;
 }
 
+/* ── Job scope (this file / selection vs. the whole current view) ── */
+
+.context-scope-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ctx-hairline);
+}
+
+/* Matches .generate-label so the two toggle rows read as siblings. */
+.scope-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+
 /* ── Selection actions (discrete multi-selection targets) ── */
 
 .context-palette-merge {

@@ -1054,6 +1054,37 @@ func (q *Queue) RegisterOutputFile(id string, path string, source ...string) err
 	return nil
 }
 
+// RegisterOutputFiles appends many output paths in a SINGLE job save.
+//
+// Use it whenever the count scales with the job's item count. Calling
+// RegisterOutputFile in a loop is quadratic: every call re-serializes the
+// whole (growing) OutputFiles array and rewrites the entire job row, so a
+// 100k-item job spends far longer persisting its output list than doing the
+// work it lists — and it does so on the shared SQLite connection, stalling the
+// rest of the server. Sources are recorded as empty (no per-output origin).
+func (q *Queue) RegisterOutputFiles(id string, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, exists := q.Jobs[id]
+	if !exists {
+		return errors.New("job not found")
+	}
+
+	job.OutputFiles = append(job.OutputFiles, paths...)
+	job.SourceFiles = append(job.SourceFiles, make([]string, len(paths))...)
+
+	if err := q.saveJobToDB(job); err != nil {
+		log.Printf("Failed to save job output files to database: %v", err)
+	}
+
+	return nil
+}
+
 // CompleteJob marks the specified job as completed if it is currently InProgress.
 // Returns an error if the job does not exist, or if it's not in a valid state to be completed.
 func (q *Queue) CompleteJob(id string) error {

@@ -152,6 +152,10 @@ const (
 type treemapCacheEntry struct {
 	root    *pathTreeNode
 	builtAt time.Time
+	// db is the handle the tree was aggregated from. A DB hot-swap replaces
+	// deps.DB, so a mismatch means the entry counts the OLD library — treat
+	// it as expired regardless of age.
+	db *sql.DB
 }
 
 type treemapAPI struct {
@@ -170,10 +174,11 @@ func newTreemapAPI(deps *Dependencies) *treemapAPI {
 func (a *treemapAPI) tree(metric string) (*pathTreeNode, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if e, ok := a.trees[metric]; ok && time.Since(e.builtAt) < treemapCacheTTL {
+	db := a.deps.DB
+	if e, ok := a.trees[metric]; ok && e.db == db && time.Since(e.builtAt) < treemapCacheTTL {
 		return e.root, nil
 	}
-	root, err := buildPathTree(a.deps.DB, metric)
+	root, err := buildPathTree(db, metric)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +192,7 @@ func (a *treemapAPI) tree(metric string) (*pathTreeNode, error) {
 		}
 		delete(a.trees, oldest)
 	}
-	a.trees[metric] = treemapCacheEntry{root: root, builtAt: time.Now()}
+	a.trees[metric] = treemapCacheEntry{root: root, builtAt: time.Now(), db: db}
 	return root, nil
 }
 

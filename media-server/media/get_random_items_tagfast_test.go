@@ -113,7 +113,7 @@ func TestGetRandomItemsTagUnionAndIntersection(t *testing.T) {
 	}
 
 	// Union: A or B -> m1, m2, m3.
-	union, _, err := GetRandomItems(db, 0, 50, `tag:"A" OR tag:"B"`, 7)
+	union, _, err := GetRandomItems(db, 0, 50, `tag:"A" OR tag:"B"`, 7, "")
 	if err != nil {
 		t.Fatalf("union: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestGetRandomItemsTagUnionAndIntersection(t *testing.T) {
 	}
 
 	// Intersection: A and B -> only m1.
-	inter, _, err := GetRandomItems(db, 0, 50, `tag:"A" AND tag:"B"`, 7)
+	inter, _, err := GetRandomItems(db, 0, 50, `tag:"A" AND tag:"B"`, 7, "")
 	if err != nil {
 		t.Fatalf("intersection: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestGetRandomItemsTagUnionAndIntersection(t *testing.T) {
 	}
 
 	// Single tag -> m1, m2.
-	single, _, err := GetRandomItems(db, 0, 50, `tag:"A"`, 7)
+	single, _, err := GetRandomItems(db, 0, 50, `tag:"A"`, 7, "")
 	if err != nil {
 		t.Fatalf("single: %v", err)
 	}

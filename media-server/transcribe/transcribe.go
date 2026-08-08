@@ -25,6 +25,15 @@ type Request struct {
 	// VADFilter trims non-speech before transcribing, which reduces
 	// hallucinations during silent stretches.
 	VADFilter bool
+	// InitialPrompt is free text fed to the decoder as context — names,
+	// jargon, and preferred spellings (a custom vocabulary list).
+	InitialPrompt string
+	// Hotwords are hint words/phrases injected into every decoding window.
+	// Stronger biasing than InitialPrompt; provider support varies.
+	Hotwords string
+	// VocalExtract isolates vocals from background music/noise before
+	// transcribing. Provider support varies.
+	VocalExtract bool
 	// Log receives human-readable progress lines. May be nil.
 	Log func(string)
 }
@@ -120,10 +129,13 @@ func FromConfig(mediaPath string, logFn func(string)) (Provider, Request, error)
 		model = p.DefaultModel()
 	}
 	return p, Request{
-		MediaPath: mediaPath,
-		Model:     model,
-		Language:  strings.TrimSpace(cfg.TranscriptionLanguage),
-		VADFilter: cfg.TranscriptionVADFilter,
-		Log:       logFn,
+		MediaPath:     mediaPath,
+		Model:         model,
+		Language:      strings.TrimSpace(cfg.TranscriptionLanguage),
+		VADFilter:     cfg.TranscriptionVADFilter,
+		InitialPrompt: strings.TrimSpace(cfg.TranscriptionInitialPrompt),
+		Hotwords:      strings.TrimSpace(cfg.TranscriptionHotwords),
+		VocalExtract:  cfg.TranscriptionVocalExtract,
+		Log:           logFn,
 	}, nil
 }

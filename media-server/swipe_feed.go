@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,15 +14,20 @@ import (
 )
 
 var (
-	feedEngineOnce sync.Once
-	feedEngine     *feed.Engine
+	feedEngineMu sync.Mutex
+	feedEngine   *feed.Engine
 )
 
 // swipeFeedEngine lazily wires the For-You feed engine: vector search comes
 // from the tasks package (ANN index / exact scan), tuning is re-read from
 // config on every page so edits to the "swipeFeed" section apply live.
+// The search closure reads deps.DB at call time (deps is the process-global
+// dependency struct), so it follows a DB hot-swap on its own; only the
+// engine's own db field needs resetSwipeFeedEngine.
 func swipeFeedEngine(deps *Dependencies) *feed.Engine {
-	feedEngineOnce.Do(func() {
+	feedEngineMu.Lock()
+	defer feedEngineMu.Unlock()
+	if feedEngine == nil {
 		feedEngine = feed.NewEngine(
 			deps.DB,
 			func() string { return tasks.ActiveEmbedModel().ID },
@@ -38,8 +44,20 @@ func swipeFeedEngine(deps *Dependencies) *feed.Engine {
 			},
 			func() feed.Tuning { return appconfig.Get().SwipeFeed },
 		)
-	})
+	}
 	return feedEngine
+}
+
+// resetSwipeFeedEngine re-points the feed engine at newDB after a database
+// swap (see Engine.Reset). No-op when the engine was never built — the first
+// /swipe/api?mode=feed request constructs it against the then-current
+// deps.DB anyway.
+func resetSwipeFeedEngine(newDB *sql.DB) {
+	feedEngineMu.Lock()
+	defer feedEngineMu.Unlock()
+	if feedEngine != nil {
+		feedEngine.Reset(newDB)
+	}
 }
 
 // maybeHandleSwipeFeed serves /swipe/api requests with mode=feed: the
@@ -69,6 +87,13 @@ func handleSwipeFeed(w http.ResponseWriter, r *http.Request, deps *Dependencies,
 	session := q.Get("session")
 	if session == "" {
 		session = "default"
+	}
+	// A session's generated feed is orientation-filtered as it's built, so
+	// each orientation must own its own server-side sequence — otherwise
+	// toggling mid-session would slice offsets out of a mixed feed.
+	orientation := media.NormalizeOrientation(q.Get("orientation"))
+	if orientation != "" {
+		session = session + "|" + orientation
 	}
 	offset := 0
 	if s := q.Get("offset"); s != "" {
@@ -110,7 +135,7 @@ func handleSwipeFeed(w http.ResponseWriter, r *http.Request, deps *Dependencies,
 		}
 	}
 
-	paths, hasMore, err := engine.Page(r.Context(), session, offset, limit, override)
+	paths, hasMore, err := engine.Page(r.Context(), session, offset, limit, orientation, override)
 	if err != nil {
 		// A canceled context is the client navigating away mid-request —
 		// routine, not an error worth logging loudly.

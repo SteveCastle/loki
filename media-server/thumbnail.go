@@ -17,6 +17,7 @@ import (
 	"time"
 
 	depspkg "github.com/stevecastle/shrike/deps"
+	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/storage"
 )
@@ -150,23 +151,20 @@ var cacheSizes = map[string]int{
 	"thumbnail_path_100":  100,
 }
 
-var imageExtensions = map[string]bool{
-	".jpg": true, ".jpeg": true, ".png": true, ".bmp": true,
-	".svg": true, ".jfif": true, ".pjpeg": true, ".pjp": true, ".webp": true,
-}
-
-var videoExtensions = map[string]bool{
-	".mp4": true, ".webm": true, ".ogg": true, ".mkv": true,
-	".mov": true, ".m4v": true, ".gif": true,
+// frameGrabExtensions are the formats a thumbnail must be extracted FROM
+// rather than resized: animated containers, plus .gif, which mediaext
+// classifies as an image everywhere else but which needs a frame grab here.
+var frameGrabExtensions = map[string]bool{
+	".gif": true, ".ogg": true,
 }
 
 func getFileType(filePath string) string {
 	ext := strings.ToLower(filepath.Ext(filePath))
-	if imageExtensions[ext] {
-		return "image"
-	}
-	if videoExtensions[ext] {
+	if frameGrabExtensions[ext] || mediaext.IsVideo(filePath) {
 		return "video"
+	}
+	if mediaext.IsImage(filePath) {
+		return "image"
 	}
 	return "other"
 }

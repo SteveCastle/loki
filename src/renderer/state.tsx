@@ -27,6 +27,7 @@ import {
   addBlendNode,
   removeBlendNode,
   updateBlendNode,
+  setPredicateBlendMode,
   tagsFromQuery,
 } from './query/reducer';
 import { parseQuery } from './query/parse';
@@ -34,6 +35,7 @@ import {
   pushQueryHistory,
   type QueryHistoryEntry,
 } from './query/history';
+import { getFileType, FileTypes } from '../file-types';
 import { cursorAfterRemoval, libraryWithout } from './library-cursor';
 import { extendSelection } from './context-selection';
 import { movedPath, moveRange } from './media-path';
@@ -431,6 +433,17 @@ const setDB = assign<LibraryState, AnyEventObject>({
 
 const hasInitialFile = (context: LibraryState) => !!context.initialFile;
 const missingDb = (context: LibraryState) => !context.dbPath;
+
+// initialFile is whatever the user opened: a media file, a directory, or an
+// archive. Only a media file is itself a library item — a directory/archive is
+// a container whose contents stream in, and seeding the library with it put a
+// blank, unrenderable entry under the cursor for the whole scan.
+const isMediaPath = (p: string): boolean => {
+  const ft = getFileType(p);
+  return (
+    ft === FileTypes.Image || ft === FileTypes.Video || ft === FileTypes.Audio
+  );
+};
 
 // These guards now use the session store cache (sync read from in-memory cache)
 const hasPersistedLibrary = (_context: LibraryState): boolean => {
@@ -870,6 +883,19 @@ const queryMutationOn = {
         event.data.key,
         event.data.index,
         event.data.patch
+      );
+      return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+    }),
+  },
+  // Toggle a composite chip between centroid blending and shared-concept
+  // (must-match-all) scoring — server-side semantics, so re-run the query.
+  SET_BLEND_MODE: {
+    target: 'runningQuery',
+    actions: assign<LibraryState, AnyEventObject>((context, event) => {
+      const q = setPredicateBlendMode(
+        context.query,
+        event.data.key,
+        event.data.mode
       );
       return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
     }),
@@ -1749,13 +1775,25 @@ export const libraryMachine = createMachine(
           loadingFromFS: {
             entry: [
               assign<LibraryState, AnyEventObject>({
-                library: (context) => [{ path: context.initialFile, mtimeMs: 0 }],
+                // Opening a single media file seeds it so the viewer paints it
+                // immediately; opening a directory/archive starts EMPTY so the
+                // cursor lands on the first streamed-in file instead of a blank
+                // item standing for the container itself.
+                library: (context) =>
+                  isMediaPath(context.initialFile)
+                    ? [{ path: context.initialFile, mtimeMs: 0 }]
+                    : [],
                 libraryLoadId: () => newLoadId(),
                 cursor: 0,
                 dbQuery: () => ({ tags: [] }),
                 query: () => ({ predicates: [] }),
                 streaming: () => true,
-                pinnedPath: (context) => context.initialFile,
+                // No pin for a container load: a null pin means "follow the
+                // item at the cursor", which keeps the view on the first file
+                // that streamed in rather than chasing a path that will never
+                // appear in the results.
+                pinnedPath: (context) =>
+                  isMediaPath(context.initialFile) ? context.initialFile : null,
                 savedSortByDuringStreaming: (context) => context.settings.sortBy,
                 userMovedCursorDuringStreaming: () => false,
                 settings: (context) => ({
@@ -2365,6 +2403,27 @@ export const libraryMachine = createMachine(
                   }),
                 }),
               },
+              // Mirrors loadedFromDB's handler — battle votes are legal in
+              // FS-loaded libraries too, and without this the returned
+              // ratings were silently dropped.
+              UPDATE_MEDIA_ELO: {
+                actions: assign<LibraryState, AnyEventObject>({
+                  library: (context, event) => {
+                    const { path, elo, battles } = event;
+                    const library = [...context.library];
+                    for (const item of library) {
+                      if (item.path === path) {
+                        item.elo = elo;
+                        if (battles !== undefined) {
+                          item.battles = battles;
+                        }
+                      }
+                    }
+                    return library;
+                  },
+                  libraryLoadId: () => newLoadId(),
+                }),
+              },
             },
             states: {
               idle: {
@@ -2799,11 +2858,18 @@ export const libraryMachine = createMachine(
                     console.log('UPDATE_MEDIA_ELO', context, event);
                     const { path, elo, battles } = event;
                     const library = [...context.library];
-                    const item = library.find((item) => item.path === path);
-                    if (item) {
-                      item.elo = elo;
-                      if (battles !== undefined) {
-                        item.battles = battles;
+                    // A tag query can surface the same file more than once
+                    // (one entry per tag instance, e.g. timestamped and
+                    // untimestamped) — the rating is per file, so every
+                    // entry with this path gets it, or the missed duplicate
+                    // stays "unranked" forever and battle sort pins it at
+                    // position 0 as the eternal anchor.
+                    for (const item of library) {
+                      if (item.path === path) {
+                        item.elo = elo;
+                        if (battles !== undefined) {
+                          item.battles = battles;
+                        }
                       }
                     }
                     return library;

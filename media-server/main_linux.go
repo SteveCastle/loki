@@ -34,6 +34,7 @@ import (
 	"github.com/stevecastle/shrike/deps/models"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
+	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
 	"github.com/stevecastle/shrike/renderer"
 	"github.com/stevecastle/shrike/runners"
@@ -161,12 +162,12 @@ func switchDatabase(newDBPath string) error {
 	deps.DB = newDB
 	deps.Queue = newQueue
 
-	// Random-sampler cache is per-DB. Reset (not Invalidate) so old-DB
-	// paths can't leak into IN-list lookups against the new DB during the
-	// rebuild window. Warm asynchronously so the first /swipe/api request
-	// after the swap stays fast.
-	media.ResetRandomSampleCache()
-	media.WarmRandomSampleCache(newDB)
+	// Drop every piece of in-memory state derived from the old database and
+	// schedule rebuilds against the new one: vector indexes (similarity +
+	// faces), home-page stats, the swipe random-sampler and For-You feed
+	// engine, pending CLI auth codes, and SPA session state. See
+	// resetDBDerivedState (db_state_reset.go, shared by all platform mains).
+	resetDBDerivedState(newDB)
 
 	// Start new runners for the new queue
 	log.Println("Starting new runners for new queue...")
@@ -961,8 +962,9 @@ func swipeAPIHandler(deps *Dependencies) http.HandlerFunc {
 				seed = parsed
 			}
 		}
+		orientation := media.NormalizeOrientation(r.URL.Query().Get("orientation"))
 
-		items, hasMore, err := media.GetRandomItems(deps.DB, offset, limit, searchQuery, seed)
+		items, hasMore, err := media.GetRandomItems(deps.DB, offset, limit, searchQuery, seed, orientation)
 		if err != nil {
 			log.Printf("Error fetching random media items: %v", err)
 			http.Error(w, "Error fetching media items", http.StatusInternalServerError)
@@ -1300,11 +1302,16 @@ type updateConfigRequest struct {
 	TranscriptionModel     string                   `json:"transcriptionModel"`
 	TranscriptionLanguage  *string                  `json:"transcriptionLanguage"`
 	TranscriptionVADFilter *bool                    `json:"transcriptionVadFilter"`
-	AllowPublicAccess      *bool                    `json:"allowPublicAccess"`
-	DefaultStartPath       *string                  `json:"defaultStartPath"`
-	FasterWhisperPath      string                   `json:"fasterWhisperPath"`
-	DiscordToken           string                   `json:"discordToken"`
-	Roots                  []appconfig.StorageRoot  `json:"roots"`
+	// Pointers so clearing the prompt/hotwords or unchecking vocal
+	// extraction persists, while partial POSTs leave them alone.
+	TranscriptionInitialPrompt *string                 `json:"transcriptionInitialPrompt"`
+	TranscriptionHotwords      *string                 `json:"transcriptionHotwords"`
+	TranscriptionVocalExtract  *bool                   `json:"transcriptionVocalExtract"`
+	AllowPublicAccess          *bool                   `json:"allowPublicAccess"`
+	DefaultStartPath           *string                 `json:"defaultStartPath"`
+	FasterWhisperPath          string                  `json:"fasterWhisperPath"`
+	DiscordToken               string                  `json:"discordToken"`
+	Roots                      []appconfig.StorageRoot `json:"roots"`
 }
 
 // -----------------------------------------------------------------------------
@@ -1632,6 +1639,15 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if req.TranscriptionVADFilter != nil {
 				newCfg.TranscriptionVADFilter = *req.TranscriptionVADFilter
 			}
+			if req.TranscriptionInitialPrompt != nil {
+				newCfg.TranscriptionInitialPrompt = strings.TrimSpace(*req.TranscriptionInitialPrompt)
+			}
+			if req.TranscriptionHotwords != nil {
+				newCfg.TranscriptionHotwords = strings.TrimSpace(*req.TranscriptionHotwords)
+			}
+			if req.TranscriptionVocalExtract != nil {
+				newCfg.TranscriptionVocalExtract = *req.TranscriptionVocalExtract
+			}
 			if req.AllowPublicAccess != nil {
 				newCfg.AllowPublicAccess = *req.AllowPublicAccess
 			}
@@ -1680,8 +1696,11 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			// the new model in the background. Vectors are model-keyed in the DB
 			// (no re-inference needed); this just reloads the stored vectors for
 			// the now-active model. Done off the request goroutine because a
-			// large library can take a while to load.
-			if newCfg.EmbeddingModel != oldEmbeddingModel {
+			// large library can take a while to load. Skipped when the DB also
+			// changed — switchDatabase already rebuilds both indexes from the
+			// new database under the newly-saved config, and a second
+			// full-library load would just race it.
+			if newCfg.EmbeddingModel != oldEmbeddingModel && !dbChanged {
 				go func(db *sql.DB) {
 					model, n, err := tasks.RebuildActiveIndex(db, nil)
 					if err != nil {
@@ -1694,7 +1713,7 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 
 			// Same for the face index when the active recognizer changed. Face
 			// vectors are model-keyed too, so this just reloads stored vectors.
-			if newCfg.FaceModel != oldFaceModel {
+			if newCfg.FaceModel != oldFaceModel && !dbChanged {
 				go func(db *sql.DB) {
 					model, n, err := tasks.RebuildActiveFaceIndex(db, nil)
 					if err != nil {
@@ -1973,46 +1992,11 @@ func proxyRemoteMedia(w http.ResponseWriter, r *http.Request, remoteURL string) 
 	}
 }
 
-// getContentType returns the appropriate MIME type for a file extension
+// getContentType returns the Content-Type for a file extension. The table
+// lives in mediaext so a format the library accepts is never served as an
+// opaque download because one platform's switch forgot it.
 func getContentType(ext string) string {
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".gif":
-		return "image/gif"
-	case ".webp":
-		return "image/webp"
-	case ".bmp":
-		return "image/bmp"
-	case ".svg":
-		return "image/svg+xml"
-	case ".tiff":
-		return "image/tiff"
-	case ".ico":
-		return "image/x-icon"
-	case ".mp4":
-		return "video/mp4"
-	case ".webm":
-		return "video/webm"
-	case ".ogg":
-		return "video/ogg"
-	case ".avi":
-		return "video/x-msvideo"
-	case ".mov":
-		return "video/quicktime"
-	case ".wmv":
-		return "video/x-ms-wmv"
-	case ".flv":
-		return "video/x-flv"
-	case ".mkv":
-		return "video/x-matroska"
-	case ".m4v":
-		return "video/x-m4v"
-	default:
-		return "application/octet-stream"
-	}
+	return mediaext.MimeType("x" + ext)
 }
 
 // openPathHandler opens a local file or directory in the OS default application

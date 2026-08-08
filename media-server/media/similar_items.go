@@ -19,9 +19,19 @@ const filterChunkSize = 500
 // mode as the swipe tag-sampler orphan bug — so ranked candidates must be
 // filtered before slicing a page out of them.
 func FilterExistingMediaPaths(db *sql.DB, paths []string) ([]string, error) {
+	return FilterSwipePaths(db, paths, "")
+}
+
+// FilterSwipePaths is FilterExistingMediaPaths plus the optional swipe
+// orientation restriction ("" = none), in one query. Like the existence
+// check, the restriction MUST be applied to a candidate stream before pages
+// are sliced out of it — dropping wrong-orientation items after slicing
+// would shift every later offset.
+func FilterSwipePaths(db *sql.DB, paths []string, orientation string) ([]string, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
+	orientCond := swipeOrientationSQL(NormalizeOrientation(orientation), "")
 
 	exists := make(map[string]struct{}, len(paths))
 	for start := 0; start < len(paths); start += filterChunkSize {
@@ -34,6 +44,9 @@ func FilterExistingMediaPaths(db *sql.DB, paths []string) ([]string, error) {
 		placeholders := strings.Repeat("?,", len(chunk))
 		placeholders = placeholders[:len(placeholders)-1]
 		query := `SELECT path FROM media WHERE path IN (` + placeholders + `)`
+		if orientCond != "" {
+			query += ` AND ` + orientCond
+		}
 		args := make([]interface{}, len(chunk))
 		for i, p := range chunk {
 			args[i] = p

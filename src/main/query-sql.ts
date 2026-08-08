@@ -65,6 +65,19 @@ function clauseFor(p: Predicate, params: string[]): string {
       }
       return p.exclude ? '(1=1)' : '(1=0)';
     }
+    case 'orientation': {
+      // orientation:landscape / portrait / square — compares the stored media
+      // dimensions. Items with missing or zero width/height have no known
+      // orientation: they never match an include, and an exclude keeps them
+      // (excluding "landscape" should not hide unscanned items). Unknown
+      // values match nothing. Mirror of media_query.go.
+      const cmp = { landscape: '>', portrait: '<', square: '=' }[
+        p.value.toLowerCase()
+      ];
+      if (!cmp) return p.exclude ? '(1=1)' : '(1=0)';
+      const oriented = `(media.width > 0 AND media.height > 0 AND media.width ${cmp} media.height)`;
+      return p.exclude ? `(NOT ${oriented})` : oriented;
+    }
     case 'similar':
     case 'visual':
     case 'clip':

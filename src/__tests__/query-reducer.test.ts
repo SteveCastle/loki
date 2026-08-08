@@ -1,5 +1,5 @@
 // src/__tests__/query-reducer.test.ts
-import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, updatePredicateBlend, tagsFromQuery, addPredicateWithMode, addOrMergeSimilarityPredicate, addBlendNode, removeBlendNode, updateBlendNode, effectiveBlendNodes, groupSimilarPredicate } from '../renderer/query/reducer';
+import { addPredicate, removePredicate, toggleExclude, applyTagClick, setPredicateJoin, updatePredicateBlend, tagsFromQuery, addPredicateWithMode, addOrMergeSimilarityPredicate, addBlendNode, removeBlendNode, updateBlendNode, setPredicateBlendMode, effectiveBlendNodes, groupSimilarPredicate } from '../renderer/query/reducer';
 import type { Query } from '../renderer/query/types';
 
 const q = (preds: Query['predicates']): Query => ({ predicates: preds });
@@ -404,5 +404,35 @@ describe('composing from a visual (text) base', () => {
     expect(
       addOrMergeSimilarityPredicate(start, group, 'EXCLUSIVE').predicates
     ).toEqual([group]);
+  });
+
+  describe('setPredicateBlendMode', () => {
+    it('sets shared mode on the keyed chip only', () => {
+      const start = q([
+        { type: 'similar', value: 'a.jpg', exclude: false, nodes: [{ kind: 'image', value: 'b.jpg' }] },
+        { type: 'tag', value: 'x', exclude: false },
+      ]);
+      const next = setPredicateBlendMode(start, 'similar:a.jpg', 'shared');
+      expect(next.predicates[0].blendMode).toBe('shared');
+      expect(next.predicates[1].blendMode).toBeUndefined();
+    });
+
+    it('selecting blend removes the field (canonical default)', () => {
+      const start = q([
+        { type: 'similar', value: 'a.jpg', exclude: false, blendMode: 'shared' },
+      ]);
+      const next = setPredicateBlendMode(start, 'similar:a.jpg', 'blend');
+      expect('blendMode' in next.predicates[0]).toBe(false);
+    });
+
+    it('survives node edits (chip key ignores blend fields)', () => {
+      let query = q([
+        { type: 'similar', value: 'a.jpg', exclude: false, nodes: [{ kind: 'image', value: 'b.jpg' }] },
+      ]);
+      query = setPredicateBlendMode(query, 'similar:a.jpg', 'shared');
+      query = addBlendNode(query, 'similar:a.jpg', { kind: 'text', value: 'night', weight: 0.5 });
+      query = updateBlendNode(query, 'similar:a.jpg', 0, { negative: true });
+      expect(query.predicates[0].blendMode).toBe('shared');
+    });
   });
 });

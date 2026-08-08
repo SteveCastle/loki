@@ -57,6 +57,19 @@ const STUDIO_MEDIA_RE =
 // via the panel-wide toggle and applied to whichever chip is clicked.
 type GenMode = 'missing' | 'all';
 
+// What the palette's jobs act on.
+//
+// `selection` is the discrete right-clicked file (plus anything shift/ctrl-
+// clicked into it) and is submitted as an explicit path list. `library` widens
+// to the whole current library view and is submitted as a base64 query — the
+// only form that can address more media than the client has loaded, and the
+// only way to run a job over an entire tag/filter/directory at once.
+//
+// Before the multi-select palette, item right-clicks implicitly targeted the
+// library whenever the item wasn't under the cursor; now every item right-click
+// targets that file, so this toggle is how the library-wide scope is reached.
+type Scope = 'selection' | 'library';
+
 type MetadataType = {
   label: string;
   // The per-item operation(s) this chip contributes. Chips multi-select:
@@ -583,8 +596,15 @@ export default function ContextPalette() {
   // (unlike the mode, which deliberately snaps back to `missing`).
   const [selectedTypes, setSelectedTypes] =
     useState<string[]>(loadSelectedTypes);
+  // Job scope. Resets to the narrow `selection` on every open for the same
+  // reason genMode does — a sticky library-wide scope would silently turn the
+  // next single-file right-click into a whole-library job.
+  const [scope, setScope] = useState<Scope>('selection');
   useEffect(() => {
-    if (display) setGenMode('missing');
+    if (display) {
+      setGenMode('missing');
+      setScope('selection');
+    }
   }, [display]);
   useEffect(() => {
     try {
@@ -766,22 +786,36 @@ export default function ContextPalette() {
     settings: { filteringMode, recursive },
   };
   const items = filter(libraryLoadId, textFilter, library, filters, sortBy);
+  // The scope toggle only exists for file targets — tag/category/library
+  // contexts are already queries covering more than one item. Scope only
+  // changes what a JOB runs on, so it's hidden when no job can be launched
+  // (find-similar and merge always act on the discrete selection).
+  const canScopeToLibrary =
+    target.type === 'file' && !!serverAvailable && !!authToken;
+  const libraryScope = canScopeToLibrary && scope === 'library';
+  // Widening to library scope re-targets everything the palette submits at the
+  // current view, exactly as if the palette had been opened from the panel
+  // background, and sets the discrete selection aside.
+  const effectiveTarget: ContextTarget = libraryScope
+    ? { type: 'library' }
+    : target;
   // Explicit multi-selection wins over the single-file/query context: tasks
   // run on these paths, passed as ONE quoted newline-joined token (newline is
   // the path-list separator — commas are valid path characters).
-  const hasSelection = selection.length > 0;
-  const multiSelection = selection.length > 1;
+  const hasSelection = !libraryScope && selection.length > 0;
+  const multiSelection = !libraryScope && selection.length > 1;
+  const libraryLabel = buildLabel({ type: 'library' }, libraryCtx);
   const itemCount = hasSelection
     ? selection.length
-    : target.type === 'file'
+    : effectiveTarget.type === 'file'
     ? 1
     : items.length;
   const contextLabel = multiSelection
     ? `${selection.length} files selected`
-    : buildLabel(target, libraryCtx);
-  const queryString = buildQuery(target, libraryCtx);
+    : buildLabel(effectiveTarget, libraryCtx);
+  const queryString = buildQuery(effectiveTarget, libraryCtx);
   const isFolderContext =
-    target.type === 'library' &&
+    effectiveTarget.type === 'library' &&
     !(currentStateType === 'db' && dbQuery.tags.length > 0);
   const encodeQuery64 = (q: string) =>
     btoa(
@@ -1172,9 +1206,9 @@ export default function ContextPalette() {
             <span className="context-count" title={selection.join('\n')}>
               {itemCount} files
             </span>
-          ) : target.type === 'library' ? (
+          ) : effectiveTarget.type === 'library' ? (
             <span className="context-count">{itemCount} items</span>
-          ) : target.type === 'file' ? (
+          ) : effectiveTarget.type === 'file' ? (
             <span className="context-count">1 file</span>
           ) : null}
           {isElectron &&
@@ -1264,6 +1298,40 @@ export default function ContextPalette() {
             )}
         </div>
       </div>
+
+      {canScopeToLibrary && (
+        <div className="context-scope-row">
+          <span className="scope-label">Apply to</span>
+          <div className="mode-toggle" role="radiogroup" aria-label="Job scope">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={!libraryScope}
+              className={`mode-opt${!libraryScope ? ' active' : ''}`}
+              onClick={() => setScope('selection')}
+              title={
+                selection.length > 1
+                  ? `Run on the ${selection.length} selected files`
+                  : 'Run on this file only'
+              }
+            >
+              {selection.length > 1
+                ? `${selection.length} selected`
+                : 'This file'}
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={libraryScope}
+              className={`mode-opt${libraryScope ? ' active' : ''}`}
+              onClick={() => setScope('library')}
+              title={`Run on everything in the current view as a query — ${libraryLabel} (${items.length} items)`}
+            >
+              Entire library
+            </button>
+          </div>
+        </div>
+      )}
 
       {multiSelection && (isElectron || (serverAvailable && authToken)) && (
         <div className="context-palette-merge">

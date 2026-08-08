@@ -65,6 +65,45 @@ describe('buildMediaQuery', () => {
     expect(bogus.sql).toContain('1=0');
   });
 
+  it('compiles orientation:landscape/portrait/square from width vs height', () => {
+    const landscape = buildMediaQuery(
+      [{ type: 'orientation', value: 'landscape', exclude: false }],
+      'AND'
+    );
+    expect(landscape.sql).toContain(
+      '(media.width > 0 AND media.height > 0 AND media.width > media.height)'
+    );
+    expect(landscape.params).toEqual([]);
+
+    const portrait = buildMediaQuery(
+      [{ type: 'orientation', value: 'portrait', exclude: false }],
+      'AND'
+    );
+    expect(portrait.sql).toContain('media.width < media.height');
+
+    const square = buildMediaQuery(
+      [{ type: 'orientation', value: 'square', exclude: false }],
+      'AND'
+    );
+    expect(square.sql).toContain('media.width = media.height');
+
+    // Exclude wraps in NOT so unknown-dimension items are kept, not hidden.
+    const excluded = buildMediaQuery(
+      [{ type: 'orientation', value: 'landscape', exclude: true }],
+      'AND'
+    );
+    expect(excluded.sql).toContain(
+      '(NOT (media.width > 0 AND media.height > 0 AND media.width > media.height))'
+    );
+
+    // Unknown values match nothing — never everything.
+    const bogus = buildMediaQuery(
+      [{ type: 'orientation', value: 'diagonal', exclude: false }],
+      'AND'
+    );
+    expect(bogus.sql).toContain('1=0');
+  });
+
   it('drives a single category from the indexed category table (DISTINCT, no media scan)', () => {
     const { sql, params } = buildMediaQuery([{ type: 'category', value: 'Studio', exclude: false }], 'AND');
     expect(sql).toContain('SELECT DISTINCT media_path FROM media_tag_by_category WHERE category_label = ?');

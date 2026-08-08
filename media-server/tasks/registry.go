@@ -69,6 +69,7 @@ func init() {
 	RegisterTask("metadata", "Generate Metadata (Legacy)", metadataOptions, metadataTask)
 	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
 	RegisterTask("move", "Move Media Files", moveOptions, moveTask)
+	RegisterTask("split-dir", "Split Directory into Subfolders", splitDirOptions, splitDirTask)
 	RegisterTask("ingest", "Ingest Media Files", ingestOptions, ingestTask)
 	RegisterTask("lora-dataset", "Create LoRA Dataset", loraDatasetOptions, loraDatasetTask)
 

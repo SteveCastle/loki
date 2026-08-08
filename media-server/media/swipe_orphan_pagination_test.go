@@ -66,7 +66,7 @@ func TestSwipeFilterPaginationSkipsOrphansNoRepeats(t *testing.T) {
 	seen := map[string]int{}
 	offset := 0
 	for iter := 0; iter < 100; iter++ {
-		items, hasMore, err := GetRandomItems(db, offset, limit, `tag:"loop"`, seed)
+		items, hasMore, err := GetRandomItems(db, offset, limit, `tag:"loop"`, seed, "")
 		if err != nil {
 			t.Fatalf("page at offset %d: %v", offset, err)
 		}

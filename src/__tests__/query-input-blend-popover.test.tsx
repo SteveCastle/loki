@@ -136,4 +136,45 @@ describe('similarity chip blend popover', () => {
     fireEvent.pointerDown(document.body);
     expect(popover(container)).toBeNull();
   });
+
+  it('renders the Blend / Match all toggle only when onSetBlendMode is wired, and reports the picked mode', () => {
+    // Without the handler: no toggle (older embedding hosts stay unchanged).
+    const { container, unmount } = renderInput(makeQuery(0.5));
+    fireEvent.mouseEnter(container.querySelector('.query-chip-wrap') as HTMLElement);
+    expect(container.querySelector('.query-blend-mode')).toBeNull();
+    unmount();
+
+    const onSetBlendMode = jest.fn();
+    const query = makeQuery(0.5);
+    const props = {
+      query,
+      textValue: '',
+      onTextChange: noop,
+      onSubmitText: noop,
+      onRemovePredicate: noop,
+      onToggleExclude: noop,
+      onSetPredicateJoin: noop,
+      onAddBlendNode: noop,
+      onRemoveBlendNode: noop,
+      onUpdateBlendNode: noop,
+      onSetBlendMode,
+      onClearAll: noop,
+      onClearText: noop,
+      history: [],
+      onApplyHistory: noop,
+      baseLabel: 'pictures',
+      onApplyBase: noop,
+    };
+    const { container: c } = render(<QueryInput {...props} />);
+    fireEvent.mouseEnter(c.querySelector('.query-chip-wrap') as HTMLElement);
+
+    const buttons = c.querySelectorAll('.query-blend-mode-btn');
+    expect(buttons).toHaveLength(2);
+    // blendMode undefined → Blend is the active default.
+    expect(buttons[0].className).toContain('active');
+    expect(buttons[1].className).not.toContain('active');
+
+    fireEvent.click(buttons[1]);
+    expect(onSetBlendMode).toHaveBeenCalledWith('similar:C:/media/a.jpg', 'shared');
+  });
 });

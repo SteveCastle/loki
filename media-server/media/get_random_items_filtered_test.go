@@ -46,11 +46,11 @@ func TestGetRandomItemsFilteredPaginationNoRepeats(t *testing.T) {
 	const pageSize = 25
 	const seed int64 = 42
 
-	page1, _, err := GetRandomItems(db, 0, pageSize, `tag:"swipe"`, seed)
+	page1, _, err := GetRandomItems(db, 0, pageSize, `tag:"swipe"`, seed, "")
 	if err != nil {
 		t.Fatalf("page1: %v", err)
 	}
-	page2, _, err := GetRandomItems(db, pageSize, pageSize, `tag:"swipe"`, seed)
+	page2, _, err := GetRandomItems(db, pageSize, pageSize, `tag:"swipe"`, seed, "")
 	if err != nil {
 		t.Fatalf("page2: %v", err)
 	}
@@ -112,11 +112,11 @@ func TestGetRandomItemsFilteredSeedDeterministic(t *testing.T) {
 	// IN-list returns everything and order can come back in PK order by
 	// accident, masking non-determinism.
 	const pageSize = 10
-	first, _, err := GetRandomItems(db, 0, pageSize, `tag:"swipe"`, 1234)
+	first, _, err := GetRandomItems(db, 0, pageSize, `tag:"swipe"`, 1234, "")
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	second, _, err := GetRandomItems(db, 0, pageSize, `tag:"swipe"`, 1234)
+	second, _, err := GetRandomItems(db, 0, pageSize, `tag:"swipe"`, 1234, "")
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}

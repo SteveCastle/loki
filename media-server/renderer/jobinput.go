@@ -2,6 +2,7 @@ package renderer
 
 import (
 	"encoding/base64"
+	"github.com/stevecastle/shrike/mediaext"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -26,7 +27,10 @@ type JobInputView struct {
 var (
 	query64Re = regexp.MustCompile(`--query64(?:=|\s+)(\S+)`)
 	driveRe   = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
-	mediaExt  = regexp.MustCompile(`(?i)\.(mp4|mkv|avi|mov|m4v|webm|wmv|mp3|wav|flac|aac|ogg|m4a|opus|jpg|jpeg|jfif|webp|avif|png|gif|bmp|tiff?|vtt|srt|ass)$`)
+	// Media, plus the subtitle/transcript sidecars that legitimately appear in
+	// a job's input list (ffmpeg and HLS steps chain off them).
+	mediaExt = regexp.MustCompile(
+		`(?i)\.(` + mediaext.AltPattern(mediaext.MediaExts()) + `|vtt|srt|ass)$`)
 )
 
 // jobInputView is the template function that produces the human-readable view.

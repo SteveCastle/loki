@@ -120,6 +120,24 @@ func (w *whisperCLI) buildArgs(req Request) []string {
 	if req.Language != "" {
 		args = append(args, "--language", req.Language)
 	}
+	// Custom vocabulary: --initial_prompt biases decoding toward the given
+	// names/jargon/spellings, and the CLI's --reprompt default (true)
+	// carries it into every window, not just the first.
+	if p := strings.TrimSpace(req.InitialPrompt); p != "" {
+		args = append(args, "--initial_prompt", p)
+	}
+	// XXL-only flags: the macOS legacy build (r186) predates them and
+	// argparse would reject the whole invocation.
+	if xxlPlatform() {
+		if h := strings.TrimSpace(req.Hotwords); h != "" {
+			args = append(args, "--hotwords", h)
+		}
+		// MDX Kim_Vocal_2 vocal isolation strips background music/noise
+		// before transcribing — big accuracy win on music-heavy media.
+		if req.VocalExtract {
+			args = append(args, "--ff_vocal_extract", "mdx_kim2")
+		}
+	}
 	return append(args, req.MediaPath)
 }
 
