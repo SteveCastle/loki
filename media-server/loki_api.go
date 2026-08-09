@@ -1662,10 +1662,22 @@ func lokiCategoriesHandler(deps *Dependencies) http.HandlerFunc {
 func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		category := r.URL.Query().Get("category")
+		// Comma-separated categories to leave out. The command palette passes
+		// "Suggested", the autotagger's catch-all bucket, which on a real
+		// library is ~97% of the tag table — filtering it here keeps those rows
+		// off the wire entirely. Mirrors the excludeCategories arg on the
+		// Electron IPC handler (src/main/taxonomy.ts).
+		var exclude []string
+		for _, c := range strings.Split(r.URL.Query().Get("excludeCategory"), ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				exclude = append(exclude, c)
+			}
+		}
 
 		var rows *sql.Rows
 		var err error
-		if category != "" {
+		switch {
+		case category != "":
 			rows, err = deps.DB.Query(`
 				SELECT label,
 				       COALESCE(category_label, '') AS category_label,
@@ -1673,7 +1685,16 @@ func lokiTaxonomyTagsHandler(deps *Dependencies) http.HandlerFunc {
 				FROM tag
 				WHERE category_label = ?
 				ORDER BY weight`, category)
-		} else {
+		case len(exclude) > 0:
+			rows, err = deps.DB.Query(`
+				SELECT label,
+				       COALESCE(category_label, '') AS category_label,
+				       COALESCE(weight, 0) AS weight
+				FROM tag
+				WHERE category_label IS NULL
+				   OR category_label NOT IN (`+placeholders(len(exclude))+`)
+				ORDER BY category_label, weight`, toArgs(exclude)...)
+		default:
 			rows, err = deps.DB.Query(`
 				SELECT label,
 				       COALESCE(category_label, '') AS category_label,
