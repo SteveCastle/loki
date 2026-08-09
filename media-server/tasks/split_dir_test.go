@@ -770,6 +770,189 @@ func TestSplitDirPruneMissingKeepsCaseVariantMatches(t *testing.T) {
 	}
 }
 
+// keep-recent turns the directory into an archive whose root is the working
+// folder: freshly saved files stay put, settled ones get filed away.
+func TestSplitDirKeepRecentLeavesTheCurrentPeriodInPlace(t *testing.T) {
+	db := newSplitDB(t)
+	dir := t.TempDir()
+	now := time.Now()
+
+	// Two files in the working window, one long settled.
+	fresh := seedSplitItem(t, db, dir, "fresh.jpg")
+	alsoFresh := seedSplitItem(t, db, dir, "also-fresh.jpg")
+	old := seedSplitItem(t, db, dir, "old.jpg")
+	settled := now.AddDate(0, -6, 0)
+	if err := os.Chtimes(old, settled, settled); err != nil {
+		t.Fatal(err)
+	}
+
+	runSplitDir(t, db, []string{"--target", dir, "--mode", "date", "--granularity", "month", "--keep-recent", "1"})
+
+	for _, p := range []string{fresh, alsoFresh} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s should have stayed in the working directory: %v", filepath.Base(p), err)
+		}
+	}
+	to := filepath.Join(dir, settled.Format("2006-01"), "old.jpg")
+	if _, err := os.Stat(to); err != nil {
+		t.Errorf("settled file was not filed away to %s: %v", to, err)
+	}
+	assertMovedInLibrary(t, db, old, to)
+}
+
+func TestSplitDirKeepRecentCoversMultiplePeriods(t *testing.T) {
+	db := newSplitDB(t)
+	dir := t.TempDir()
+	now := time.Now()
+
+	// Dated mid-month so a run near a month boundary can't drift a file into
+	// the wrong bucket.
+	lastMonth := time.Date(now.Year(), now.Month(), 15, 12, 0, 0, 0, time.Local).AddDate(0, -1, 0)
+	older := lastMonth.AddDate(0, -3, 0)
+
+	recent := seedSplitItem(t, db, dir, "recent.jpg")
+	previous := seedSplitItem(t, db, dir, "previous.jpg")
+	if err := os.Chtimes(previous, lastMonth, lastMonth); err != nil {
+		t.Fatal(err)
+	}
+	ancient := seedSplitItem(t, db, dir, "ancient.jpg")
+	if err := os.Chtimes(ancient, older, older); err != nil {
+		t.Fatal(err)
+	}
+
+	runSplitDir(t, db, []string{"--target", dir, "--mode", "date", "--granularity", "month", "--keep-recent", "2"})
+
+	for _, p := range []string{recent, previous} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s should have stayed (within the 2-month window): %v", filepath.Base(p), err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, older.Format("2006-01"), "ancient.jpg")); err != nil {
+		t.Errorf("file outside the window was not filed: %v", err)
+	}
+}
+
+// A sidecar inherits its primary's bucket, so holding the primary back must
+// hold the sidecar back too — otherwise the transcript is archived while its
+// video stays in the working folder.
+func TestSplitDirKeepRecentHoldsSidecarsWithTheirPrimary(t *testing.T) {
+	db := newSplitDB(t)
+	dir := t.TempDir()
+
+	seedSplitItem(t, db, dir, "today.mp4")
+	for _, s := range []string{"today.mp4.vtt", "today.srt"} {
+		p := filepath.Join(dir, s)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// Sidecars written long before the video they describe: only the
+		// inherited bucket can keep them together.
+		old := time.Now().AddDate(0, -8, 0)
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	runSplitDir(t, db, []string{"--target", dir, "--mode", "date", "--granularity", "month", "--keep-recent", "1"})
+
+	for _, s := range []string{"today.mp4", "today.mp4.vtt", "today.srt"} {
+		if _, err := os.Stat(filepath.Join(dir, s)); err != nil {
+			t.Errorf("%s was separated from its primary and filed away: %v", s, err)
+		}
+	}
+}
+
+// A file dated in the future is newer than the working window, not older.
+func TestSplitDirKeepRecentHoldsFutureDatedFiles(t *testing.T) {
+	db := newSplitDB(t)
+	dir := t.TempDir()
+
+	future := seedSplitItem(t, db, dir, "postdated.jpg")
+	when := time.Now().AddDate(0, 3, 0)
+	if err := os.Chtimes(future, when, when); err != nil {
+		t.Fatal(err)
+	}
+
+	runSplitDir(t, db, []string{"--target", dir, "--mode", "date", "--granularity", "month", "--keep-recent", "1"})
+
+	if _, err := os.Stat(future); err != nil {
+		t.Errorf("a future-dated file should stay in the working directory: %v", err)
+	}
+}
+
+func TestRecentBucketCutoff(t *testing.T) {
+	cases := []struct {
+		now         time.Time
+		granularity string
+		keep        int
+		want        string
+	}{
+		{time.Date(2026, 8, 8, 10, 0, 0, 0, time.Local), "month", 1, "2026-08"},
+		{time.Date(2026, 8, 8, 10, 0, 0, 0, time.Local), "month", 2, "2026-07"},
+		{time.Date(2026, 8, 8, 10, 0, 0, 0, time.Local), "month", 3, "2026-06"},
+		// Month stepping from a 31st: AddDate(0,-1,0) would overflow March 31
+		// back to March 3 and skip February entirely.
+		{time.Date(2026, 3, 31, 10, 0, 0, 0, time.Local), "month", 2, "2026-02"},
+		{time.Date(2026, 3, 31, 10, 0, 0, 0, time.Local), "month", 3, "2026-01"},
+		{time.Date(2026, 5, 31, 10, 0, 0, 0, time.Local), "month", 4, "2026-02"},
+		// Crossing a year boundary.
+		{time.Date(2026, 1, 15, 10, 0, 0, 0, time.Local), "month", 2, "2025-12"},
+		{time.Date(2026, 1, 15, 10, 0, 0, 0, time.Local), "year", 1, "2026"},
+		{time.Date(2026, 1, 15, 10, 0, 0, 0, time.Local), "year", 3, "2024"},
+		{time.Date(2026, 8, 8, 10, 0, 0, 0, time.Local), "day", 1, "2026-08-08"},
+		{time.Date(2026, 8, 8, 10, 0, 0, 0, time.Local), "day", 3, "2026-08-06"},
+		{time.Date(2026, 3, 1, 10, 0, 0, 0, time.Local), "day", 2, "2026-02-28"},
+		// keep < 1 is treated as the current period rather than the future.
+		{time.Date(2026, 8, 8, 10, 0, 0, 0, time.Local), "month", 0, "2026-08"},
+	}
+	for _, tc := range cases {
+		if got := recentBucketCutoff(tc.now, tc.granularity, tc.keep); got != tc.want {
+			t.Errorf("recentBucketCutoff(%s, %s, %d) = %q, want %q",
+				tc.now.Format("2006-01-02"), tc.granularity, tc.keep, got, tc.want)
+		}
+	}
+}
+
+func TestPartitionRecent(t *testing.T) {
+	files := []splitFile{
+		{Name: "a", Bucket: "2026-06"},
+		{Name: "b", Bucket: "2026-07"},
+		{Name: "c", Bucket: "2026-08"},
+		{Name: "d", Bucket: "2026-09"}, // future
+	}
+	toFile, held := partitionRecent(files, "2026-07")
+	if held != 3 {
+		t.Errorf("held = %d, want 3 (July, August and the future-dated one)", held)
+	}
+	if len(toFile) != 1 || toFile[0].Name != "a" {
+		t.Errorf("toFile = %+v, want only the June file", toFile)
+	}
+}
+
+// Alphabetical buckets have no recency; ignoring the flag would archive the
+// working files it was asked to protect.
+func TestSplitDirKeepRecentRequiresDateMode(t *testing.T) {
+	db := newSplitDB(t)
+	dir := t.TempDir()
+	src := seedSplitItem(t, db, dir, "apple.jpg")
+
+	q := jobqueue.NewQueueWithDB(db)
+	if _, err := q.AddJob("", "split-dir",
+		[]string{"--target", dir, "--mode", "alpha", "--keep-recent", "1"}, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	j, err := q.ClaimJob()
+	if err != nil || j == nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if err := splitDirTask(j, q, nil); err == nil {
+		t.Fatal("expected an error for --keep-recent with alphabetical mode")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("the rejected run moved files anyway: %v", err)
+	}
+}
+
 func TestSplitDirRejectsBadInput(t *testing.T) {
 	cases := []struct {
 		name string
@@ -807,7 +990,7 @@ func TestSplitDirIsRegistered(t *testing.T) {
 		names = append(names, o.Name)
 	}
 	sort.Strings(names)
-	want := []string{"dry-run", "granularity", "max-per-dir", "mode", "prune-missing", "scope", "target"}
+	want := []string{"dry-run", "granularity", "keep-recent", "max-per-dir", "mode", "prune-missing", "scope", "target"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Errorf("options = %v, want %v", names, want)
 	}

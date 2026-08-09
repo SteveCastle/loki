@@ -43,6 +43,8 @@ var splitDirOptions = []TaskOption{
 		Description: "Cap each subfolder at this many files, overflowing into numbered siblings (A_1, A_2). 0 = no cap"},
 	{Name: "scope", Label: "Files To Move", Type: "enum", Choices: []string{"all", "library"}, Default: "all",
 		Description: "all: every file in the directory. library: only files the media library knows about, plus their sidecars — leaves unrelated files (installers, archives, stray downloads) where they are"},
+	{Name: "keep-recent", Label: "Keep Recent Periods In Place", Type: "number", Default: 0.0,
+		Description: "Date mode only: leave the N most recent periods where they are, so the directory stays a working folder and only settled files get filed away. 1 with month granularity keeps the current month. 0 files everything"},
 	{Name: "prune-missing", Label: "Prune Missing Files", Type: "bool",
 		Description: "Delete library rows for files in this directory that no longer exist on disk (tags, embeddings, faces, battle log and all)"},
 	{Name: "dry-run", Label: "Dry Run", Type: "bool",
@@ -73,6 +75,8 @@ func splitDirTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	mode, _ := opts["mode"].(string)
 	granularity, _ := opts["granularity"].(string)
 	maxPerDirF, _ := opts["max-per-dir"].(float64)
+	keepRecentF, _ := opts["keep-recent"].(float64)
+	keepRecent := int(keepRecentF)
 	scope, _ := opts["scope"].(string)
 	pruneMissing, _ := opts["prune-missing"].(bool)
 	dryRun, _ := opts["dry-run"].(bool)
@@ -115,6 +119,16 @@ func splitDirTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 	if maxPerDir < 0 {
 		maxPerDir = 0
+	}
+	if keepRecent < 0 {
+		keepRecent = 0
+	}
+	if keepRecent > 0 && mode != "date" {
+		// There is no "recent" in alphabetical order, and silently ignoring the
+		// flag would archive the working files it was meant to protect.
+		q.PushJobStdout(j.ID, "Error: --keep-recent needs --mode date (alphabetical buckets have no recency)")
+		q.ErrorJob(j.ID)
+		return fmt.Errorf("--keep-recent requires mode=date")
 	}
 
 	absTarget, err := filepath.Abs(targetDir)
@@ -207,6 +221,21 @@ func splitDirTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 
 	assignSplitBuckets(files, mode, granularity)
+
+	if keepRecent > 0 {
+		cutoff := recentBucketCutoff(time.Now(), granularity, keepRecent)
+		kept, held := partitionRecent(files, cutoff)
+		q.PushJobStdout(j.ID, fmt.Sprintf(
+			"Keeping the %d most recent %s period(s) in place: %d file(s) at or after %s stay in the directory",
+			keepRecent, granularity, held, cutoff))
+		files = kept
+		if len(files) == 0 {
+			q.PushJobStdout(j.ID, "Nothing older than the working window — nothing to file away")
+			q.CompleteJob(j.ID)
+			return nil
+		}
+	}
+
 	// Subfolders that already exist count against the cap, so pausing and
 	// resuming (or re-running to sweep newly-added files) keeps honoring it
 	// instead of refilling a folder that is already at its limit.
@@ -639,6 +668,54 @@ func alphaBucket(name string) string {
 		return "0-9"
 	}
 	return "#"
+}
+
+// recentBucketCutoff returns the oldest bucket key that still counts as "the
+// working window": keep=1 is the period containing now, keep=2 adds the one
+// before it, and so on.
+//
+// Recency is measured against the CLOCK, not against the newest file present.
+// The directory is a working folder — if nothing has been saved for three
+// months, those three-month-old files have settled and belong in the archive.
+// Anchoring to the newest file instead would keep them in place forever purely
+// because nothing newer arrived.
+func recentBucketCutoff(now time.Time, granularity string, keep int) string {
+	if keep < 1 {
+		keep = 1
+	}
+	back := keep - 1
+	switch granularity {
+	case "year":
+		return dateBucket(now.AddDate(-back, 0, 0), granularity)
+	case "day":
+		return dateBucket(now.AddDate(0, 0, -back), granularity)
+	default:
+		// Step a month at a time: AddDate(0,-n,0) from the 31st lands on a
+		// short month's overflow (March 31 - 1 month = March 3), which would
+		// silently skip February.
+		t := now
+		for range back {
+			t = t.AddDate(0, 0, -t.Day()) // last day of the previous month
+		}
+		return dateBucket(t, granularity)
+	}
+}
+
+// partitionRecent splits files into the ones to file away and a count of those
+// left in place. Bucket keys are zero-padded and sort lexicographically, so a
+// string compare orders them by date — and a file dated in the future (clock
+// skew, or a deliberately post-dated mtime) compares above the cutoff and
+// stays put, which is the right answer for a working directory.
+func partitionRecent(files []splitFile, cutoff string) (toFile []splitFile, held int) {
+	toFile = make([]splitFile, 0, len(files))
+	for _, f := range files {
+		if f.Bucket >= cutoff {
+			held++
+			continue
+		}
+		toFile = append(toFile, f)
+	}
+	return toFile, held
 }
 
 // dateBucket names the folder for a modification time. The formats sort

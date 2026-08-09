@@ -546,7 +546,7 @@ Tasks register themselves in `tasks/registry.go`'s `init()`. The current catalog
 | `autotag`                    | Auto Tag (ONNX)            | ML image tagging against the existing tag set            |
 | `hls`                        | HLS Transcode              | Build the 480p / 720p / 1080p HLS ladder for a video     |
 | `move`                       | Move Media Files           | Move files on disk and update DB paths                   |
-| `split-dir`                  | Split Directory into Subfolders | Fan an oversized folder out into alphabetical or dated subfolders, re-pointing every DB reference |
+| `split-dir`                  | Split Directory into Subfolders | Fan an oversized folder out into alphabetical or dated subfolders, re-pointing every DB reference. `--keep-recent N` leaves the current period in place so the root stays a working folder |
 | `remove`                     | Remove Media               | Delete entries from the database                         |
 | `cleanup`                    | CleanUp                    | Remove orphaned database entries                         |
 | `save`                       | Save File                  | Copy/persist a file with metadata                        |
