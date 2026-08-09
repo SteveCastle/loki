@@ -465,7 +465,7 @@ const VersionInfo: React.FC = React.memo(() => {
   // process to ask) fall back to the version webpack baked in from
   // package.json — a hand-typed constant here goes stale every release.
   const currentVersion =
-    result?.currentVersion || process.env.PACKAGE_VERSION || '2.25.0';
+    result?.currentVersion || process.env.PACKAGE_VERSION || '2.26.0';
 
   return (
     <div className="versionContainer">
