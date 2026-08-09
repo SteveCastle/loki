@@ -296,6 +296,11 @@
       "category": "glitch"
     },
     {
+      "name": "camera-shake",
+      "path": "shaders/motion/camera-shake/camera-shake.slangp",
+      "category": "motion"
+    },
+    {
       "name": "motion-bloom",
       "path": "shaders/motion/motion-bloom/motion-bloom.slangp",
       "category": "motion"

@@ -1256,6 +1256,11 @@ body.mask-editing #mask-overlay {
   word-break: break-word;
   flex: none;
 }
+/* Long jobs draw their progress along the bottom of the status line. */
+#status.busy {
+  background: linear-gradient(var(--accent), var(--accent)) left bottom / var(--p, 0%) 2px no-repeat;
+  transition: background-size 0.12s linear;
+}
 
 /* ==================================================================== */
 /* Timeline                                                             */
@@ -1861,12 +1866,35 @@ body.mask-editing #mask-overlay {
   color: var(--accent);
 }
 .ctx-item.danger { color: #e58784; }
+.ctx-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ctx-item.disabled:hover { background: none; }
 .ctx-item.has-trail {
   display: flex;
   align-items: center;
   gap: 7px;
 }
 .ctx-item.has-trail .ctx-label { flex: 1; }
+/* Two-line row: what it does, then why you'd pick it. */
+.ctx-item.has-detail {
+  align-items: flex-start;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.ctx-item.has-detail .ctx-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 290px;
+}
+.ctx-title { font-weight: 600; }
+.ctx-detail {
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
 .ctx-ico {
   display: flex;
   align-items: center;

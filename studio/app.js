@@ -49,11 +49,12 @@ import {
   DRIVER_WAVES, DRIVER_BANDS, DRIVER_FOLLOWS, DRIVER_MODES,
   newDriver, applyDriver,
 } from './driver.js';
-import { analyzeMix, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
+import { analyzeMixAsync, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
 import { AUDIO_EFFECTS, audioEffectDef, controlTargets } from './audio-fx.js';
 import { responseWidget } from './audio-widgets.js';
 import { LAYER_ICONS, clipIcon, shapeIconCanvas } from './icons.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
+import { Muxer as MP4Muxer, ArrayBufferTarget as MP4Target } from './vendor/mp4-muxer.mjs';
 import { Timeline, fmtTimecode, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 
@@ -76,7 +77,14 @@ const DEFAULT_VIDEO_DUR = 4;   // fallback when a video reports no duration
 const APP_HOST = new URLSearchParams(location.search).get('app') === '1';
 if (APP_HOST) document.body.classList.add('app-host');
 
-function setStatus(msg) { statusEl.textContent = msg; }
+/** Status line. Pass `frac` (0..1) for a job that takes long enough to
+ * want watching — the line grows a fill along its bottom edge. Any plain
+ * setStatus afterwards clears it. */
+function setStatus(msg, frac = null) {
+  statusEl.textContent = msg;
+  statusEl.classList.toggle('busy', frac != null);
+  if (frac != null) statusEl.style.setProperty('--p', `${(clamp(frac, 0, 1) * 100).toFixed(1)}%`);
+}
 
 /* =====================================================================
  * Custom (hand-written) shader plumbing — virtual files served to the
@@ -406,8 +414,35 @@ const audioDrive = {
   key: '',           // arrangement fingerprint the current data was built for
   data: null,        // { fps, frames, bands } from analyzeMix
   beats: new Map(),  // `${band}|${sensitivity}` -> ascending beat times
+  progress: null,    // { text, frac } while an analysis is running
 };
 let audioDriveJob = null;
+
+/* Decoding and filtering a full song is seconds of work, and it is the one
+ * thing standing between attaching an audio driver and seeing it move — so
+ * it reports where it has got to, in the status line and in every open
+ * driver panel. */
+function setAudioDriveProgress(text, frac) {
+  audioDrive.progress = text ? { text, frac } : null;
+  if (text) setStatus(text, frac);
+  refreshDriverHints();
+}
+
+/** The line under an audio driver's controls: what the analysis is doing
+ * right now, or what this driver is listening to once it is done. */
+function driverHintText() {
+  if (audioDrive.progress) return audioDrive.progress.text;
+  if (audioDrive.data) return 'audio drivers hear every video track — muted “beat tracks” too';
+  return compHasAudioDrivers() && audioEntries(true).length
+    ? 'analyzing audio…'
+    : 'no video clips with audio in the comp — this driver reads 0';
+}
+
+/* Panels are built once and left open while the analysis runs behind them,
+ * so the hint is refreshed in place rather than re-rendered. */
+function refreshDriverHints() {
+  for (const el of document.querySelectorAll('.drv-hint')) el.textContent = driverHintText();
+}
 
 /** Clips whose audio participates in the mix — video clips and audio
  * clips alike. Drivers analyze all of them; the audible export path
@@ -458,18 +493,40 @@ function syncAudioDrive() {
   const key = audioDriveKey();
   if (key === audioDrive.key) return audioDriveJob;
   audioDrive.key = key;   // claim first so concurrent calls dedupe
-  setStatus('analyzing audio for drivers…');
+  /* Report only while this job is still the current one — a newer edit
+   * owns the readout the moment it claims the key. */
+  const report = (text, frac) => {
+    if (audioDrive.key === key) setAudioDriveProgress(text, frac);
+  };
+  report('analyzing audio for drivers…', 0);
   audioDriveJob = (async () => {
     // Analysis mixes with BASE values (evalProp, not drivenEval): a driver
     // on Volume — or on a filter cutoff — must not feed back into its own
     // input signal.
-    const mix = await mixCompAudio(DRIVE_SR, audioEntries(true), 1, { driven: false });
+    const mix = await mixCompAudio(DRIVE_SR, audioEntries(true), 1, {
+      driven: false,
+      // Decoding is the first third of the wait and the only part that
+      // can name what it is chewing on.
+      onStage: (s) => report(s.phase === 'decode'
+        ? `analyzing audio — decoding ${s.name} (${s.done + 1}/${s.total})`
+        : 'analyzing audio — mixing tracks…', s.phase === 'decode' ? 0.3 * (s.done / s.total) : 0.35),
+    });
     if (audioDrive.key !== key) return;   // superseded by a newer edit
-    audioDrive.data = mix ? analyzeMix(mix.getChannelData(0), DRIVE_SR, comp.fps) : null;
+    audioDrive.data = mix
+      ? await analyzeMixAsync(mix.getChannelData(0), DRIVE_SR, comp.fps, {
+        onProgress: ({ frac }) => report(`analyzing audio — ${Math.round(frac * 100)}%`, 0.4 + 0.6 * frac),
+        yieldTo: nextTask,
+      })
+      : null;
+    if (audioDrive.key !== key) return;
     audioDrive.beats.clear();
+    setAudioDriveProgress(null);
     setStatus(mix ? 'audio analysis ready — drivers are live'
       : 'no audio in the comp — audio drivers read 0');
-  })().catch((e) => console.warn('slangfx: audio analysis failed:', e));
+  })().catch((e) => {
+    if (audioDrive.key === key) setAudioDriveProgress(null);
+    console.warn('slangfx: audio analysis failed:', e);
+  });
   return audioDriveJob;
 }
 
@@ -6281,11 +6338,7 @@ function driverPanel(clip, def) {
   if (d.source === 'audio') {
     const hint = document.createElement('div');
     hint.className = 'drv-hint';
-    hint.textContent = audioDrive.data
-      ? 'audio drivers hear every video track — muted “beat tracks” too'
-      : (compHasAudioDrivers() && audioEntries(true).length
-        ? 'analyzing audio…'
-        : 'no video clips with audio in the comp — this driver reads 0');
+    hint.textContent = driverHintText();
     panel.appendChild(hint);
   }
 
@@ -6827,14 +6880,18 @@ function maskSourceSelect(clip, ctx, node, { allowInput }) {
 }
 
 /* =====================================================================
- * Export — current frame PNG, or render the whole comp to WebM.
+ * Export — current frame as PNG, or the whole comp as MP4 / WebM.
  *
- * Two WebM modes, both kept on purpose:
+ * Two capture modes, both kept on purpose:
  *   Record — plays the comp once in real time via MediaRecorder,
  *            capturing the live audio mix (good for perf-y captures).
  *   Render — offline loop: seeks every source frame-exactly, renders as
  *            fast as the GPU/encoder allow via WebCodecs, so it can beat
- *            real time and never drops or stutters. Video only.
+ *            real time and never drops or stutters. The audio mix is
+ *            rendered offline too and muxed in.
+ *
+ * Container and codecs live in VIDEO_FORMATS further down; the render loop
+ * itself does not care which one it is feeding.
  * =================================================================== */
 
 function saveBlob(blob, name) {
@@ -6890,36 +6947,110 @@ function exportBaseName() {
   return safeFileBase(projectName) || humanSlug();
 }
 
-$('btn-export-png').addEventListener('click', async () => {
-  if (!fx?.inputTexture || offlineJob) return;
+/* ---- the export menu -------------------------------------------------
+ * Screenshot / Render / Record / Audio are all exports, so one button owns
+ * them all. While a capture is running that same button is its stop — the
+ * menu can't be opened until the job ends, which also keeps the exports
+ * from being started on top of each other. */
+
+const exportBtn = $('btn-export');
+const EXPORT_LABEL = '⤓ Export ▾';
+
+/** @param {string|null} label  busy label, or null for "idle, opens the menu" */
+function setExportBusy(label) {
+  exportBtn.textContent = label ?? EXPORT_LABEL;
+  exportBtn.classList.toggle('recording', !!label);
+}
+
+exportBtn.addEventListener('click', async (e) => {
+  if (recorder) { finishExport(); pause(); return; }
+  if (offlineJob) { offlineJob.cancel = true; return; }
+  // Before any await — the event's currentTarget is gone by the time the
+  // codec probes resolve.
+  const r = e.currentTarget.getBoundingClientRect();
+  const ready = !!fx?.inputTexture;
+  const { width, height, fps } = comp;
+  /* Ask the browser what it can actually encode at this comp size rather
+   * than offering a format and failing halfway through a render. */
+  const [mp4, webm] = await Promise.all([
+    supportedCodec(VIDEO_FORMATS.mp4, width, height, fps),
+    supportedCodec(VIDEO_FORMATS.webm, width, height, fps),
+  ]);
+  const noCodecs = 'Needs WebCodecs — use Chrome or Edge. Record works here instead.';
+  showMenu(r.left, r.bottom + 4, [
+    {
+      label: 'Screenshot · PNG',
+      detail: 'The frame under the playhead, exactly as the preview shows it.',
+      disabled: !ready,
+      action: exportFrame,
+    },
+    '-',
+    {
+      label: 'Render video · MP4',
+      detail: mp4
+        ? 'H.264 + AAC, rendered offline and frame-exact. The one to hand to an editor, a phone or an upload.'
+        : `This browser will not encode H.264 at ${width}×${height} — render WebM instead.`,
+      disabled: !ready || !mp4,
+      action: () => runOfflineRender({ format: 'mp4' }),
+    },
+    {
+      label: 'Render video · WebM',
+      detail: webm
+        ? 'VP9 + Opus, rendered offline and frame-exact. Smaller files, but not every editor opens them.'
+        : noCodecs,
+      disabled: !ready || !webm,
+      action: () => runOfflineRender({ format: 'webm' }),
+    },
+    '-',
+    {
+      label: `Record video · ${recordMime(true).fmt.label}`,
+      detail: 'Plays the comp and captures it live with its audio. Works in any browser, but can drop frames.',
+      disabled: !ready,
+      action: startRecording,
+    },
+    '-',
+    {
+      label: 'Audio only · WAV',
+      detail: 'The mix on its own, no picture — the same offline mix the render uses.',
+      disabled: audioExporting,
+      action: exportAudio,
+    },
+  ]);
+});
+
+async function exportFrame() {
   const blob = await fx.exportPNG();
   const frame = String(Math.round(tCur * comp.fps)).padStart(5, '0');
   saveBlob(blob, `${exportBaseName()}-${frame}.png`);
   setStatus('frame exported');
-});
+}
 
-const exportBtn = $('btn-export-webm');
+/* MediaRecorder picks the container itself, so ask for the same H.264/AAC
+ * MP4 the render writes and fall back through to VP9/WebM. Only the first
+ * supported entry is used; `recordMime` reports which, for the file name. */
+function recordMime(withAudio) {
+  const candidates = withAudio
+    ? ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
+    : ['video/mp4;codecs=avc1.640028', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+  const mime = candidates.find((m) => MediaRecorder.isTypeSupported(m)) ?? '';
+  const fmt = mime.startsWith('video/mp4') ? VIDEO_FORMATS.mp4 : VIDEO_FORMATS.webm;
+  return { mime, fmt };
+}
 
-exportBtn.addEventListener('click', () => {
-  if (offlineJob) return;
-  if (recorder) { finishExport(); pause(); return; }
-  if (!fx?.inputTexture) return;
+function startRecording() {
   ensureAudio();
   const stream = canvas.captureStream(comp.fps);
   if (recordDest)
     for (const t of recordDest.stream.getAudioTracks()) stream.addTrack(t);
 
-  const withAudio = stream.getAudioTracks().length > 0;
-  const mime = withAudio && MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-    ? 'video/webm;codecs=vp9,opus'
-    : 'video/webm;codecs=vp9';
-  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12_000_000 });
+  const { mime, fmt } = recordMime(stream.getAudioTracks().length > 0);
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: EXPORT_BITRATE });
   const chunks = [];
   // Named from the comp as it stands now, not as it stands when you stop.
-  const outName = `${exportBaseName()}.webm`;
+  const outName = `${exportBaseName()}.${fmt.ext}`;
   recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   recorder.onstop = () => {
-    saveBlob(new Blob(chunks, { type: 'video/webm' }), outName);
+    saveBlob(new Blob(chunks, { type: fmt.mime }), outName);
     setStatus(`recording saved as ${outName}`);
   };
   exportMode = true;
@@ -6927,10 +7058,9 @@ exportBtn.addEventListener('click', () => {
   setTime(0);
   recorder.start();
   play();
-  exportBtn.textContent = '■ Stop';
-  exportBtn.classList.add('recording');
-  setStatus('recording comp to WebM…');
-});
+  setExportBusy('■ Stop recording');
+  setStatus(`recording comp to ${fmt.label}…`);
+}
 
 function finishExport() {
   exportMode = false;
@@ -6938,12 +7068,11 @@ function finishExport() {
     recorder.stop();
     recorder = null;
   }
-  exportBtn.textContent = 'Record';
-  exportBtn.classList.remove('recording');
+  setExportBusy(null);
 }
 
 /* ---- audio-only export ----------------------------------------------
- * The same offline mix the WebM render muxes in, written out on its own.
+ * The same offline mix a video render muxes in, written out on its own.
  * WAV rather than Opus: it needs no encoder support, and an audio-only
  * export exists to be dropped into something else. */
 
@@ -6976,18 +7105,18 @@ function audioBufferToWav(buf) {
   return new Blob([out], { type: 'audio/wav' });
 }
 
-const audioExportBtn = $('btn-export-audio');
+let audioExporting = false;   // the mix runs off-button; guard re-entry
 
-audioExportBtn.addEventListener('click', async () => {
-  if (offlineJob || recorder || audioExportBtn.disabled) return;
-  audioExportBtn.disabled = true;
+async function exportAudio() {
+  if (audioExporting) return;
+  audioExporting = true;
   setStatus('mixing audio…');
   const started = performance.now();
   try {
     // Driven volumes are sampled from the analysis data, same as the
     // video export — without this a fresh audio driver bakes as flat.
     await syncAudioDrive();
-    const buf = await renderCompAudio();
+    const buf = await renderCompAudio({ onStage: mixStageStatus('mixing audio') });
     if (!buf) {
       setStatus('nothing to export — the comp has no audible audio');
       return;
@@ -7000,24 +7129,13 @@ audioExportBtn.addEventListener('click', async () => {
     console.error('slangfx: audio export failed:', e);
     setStatus(`audio export failed: ${e.message ?? e}`);
   } finally {
-    audioExportBtn.disabled = false;
+    audioExporting = false;
   }
-});
+}
 
 /* ---- offline (faster-than-real-time) render ------------------------- */
 
-const fastBtn = $('btn-export-webm-fast');
 let offlineJob = null;   // { cancel, error } while an offline render runs
-
-fastBtn.addEventListener('click', () => {
-  if (offlineJob) { offlineJob.cancel = true; return; }
-  if (!fx?.inputTexture || recorder) return;
-  if (typeof VideoEncoder === 'undefined') {
-    setStatus('offline render needs WebCodecs (Chrome/Edge) — use Record instead');
-    return;
-  }
-  runOfflineRender();
-});
 
 /* Edit-and-save: offline render, then PUT the result back to the host's
  * save url (which overwrites the original file, transcoding as needed). */
@@ -7034,19 +7152,23 @@ saveBackBtn.addEventListener('click', () => {
   runOfflineRender({ saveBack: comp._saveBack });
 });
 
-async function runOfflineRender({ saveBack = null } = {}) {
+async function runOfflineRender({ saveBack = null, format = 'webm' } = {}) {
   pause();
   // Audio drivers must have their envelopes before frames render — the
   // export samples the same precomputed data as the preview.
   await syncAudioDrive();
   const job = (offlineJob = { cancel: false, error: null });
   const tRestore = tCur;
-  const btn = saveBack ? saveBackBtn : fastBtn;
-  btn.textContent = '■ Cancel';
-  btn.classList.add('recording');
+  // Whichever button started it becomes its cancel.
+  if (saveBack) {
+    saveBackBtn.textContent = '■ Cancel';
+    saveBackBtn.classList.add('recording');
+  } else {
+    setExportBusy('■ Cancel render');
+  }
   const started = performance.now();
   try {
-    const blob = await renderCompOffline(job);
+    const blob = await renderCompOffline(job, format);
     if (!blob) {
       setStatus('render cancelled');
     } else if (saveBack) {
@@ -7058,7 +7180,7 @@ async function runOfflineRender({ saveBack = null } = {}) {
       setStatus(`saved to ${saveBack.name} — ${comp.dur}s comp in ${secs}s`
         + (job.hasAudio ? '' : ' (comp has no audio)'));
     } else {
-      const outName = `${exportBaseName()}.webm`;
+      const outName = `${exportBaseName()}.${(VIDEO_FORMATS[format] ?? VIDEO_FORMATS.webm).ext}`;
       saveBlob(blob, outName);
       const secs = ((performance.now() - started) / 1000).toFixed(1);
       setStatus(`saved ${outName} — ${comp.dur}s comp in ${secs}s`
@@ -7069,8 +7191,7 @@ async function runOfflineRender({ saveBack = null } = {}) {
     setStatus(`${saveBack ? 'save' : 'render'} failed: ${e.message ?? e}`);
   } finally {
     offlineJob = null;
-    fastBtn.textContent = 'Render';
-    fastBtn.classList.remove('recording');
+    setExportBusy(null);
     saveBackBtn.textContent = '💾 Save';
     saveBackBtn.classList.remove('recording');
     setTime(tRestore);
@@ -7173,9 +7294,16 @@ async function decodeAssetAudio(asset) {
  * analysis (every clip, BASE values — a driver must never feed back into
  * the signal it listens to). Returns null when no entry has decodable
  * audio. */
-async function mixCompAudio(sampleRate, entries, channels, { driven = true } = {}) {
+async function mixCompAudio(sampleRate, entries, channels, { driven = true, onStage = null } = {}) {
   if (!entries.length) return null;
-  for (const { asset } of entries) await decodeAssetAudio(asset);
+  // One decode per asset however many clips use it — and the slow part of
+  // the whole mix the first time a song is touched, so it is worth naming.
+  const sources = [...new Set(entries.map((e) => e.asset))];
+  for (let i = 0; i < sources.length; i++) {
+    onStage?.({ phase: 'decode', done: i, total: sources.length, name: sources[i].name });
+    await decodeAssetAudio(sources[i]);
+  }
+  onStage?.({ phase: 'mix', done: sources.length, total: sources.length });
   if (!entries.some(({ asset }) => asset._audioBuf)) return null;
 
   const ctx = new OfflineAudioContext(channels, Math.max(1, Math.ceil(comp.dur * sampleRate)), sampleRate);
@@ -7245,21 +7373,99 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true } = {
 /* The export mix: audible clips only, driven volume included. Preview-only
  * master volume/mute is deliberately NOT baked — a muted preview should
  * not produce a silent export. */
-async function renderCompAudio() {
-  return mixCompAudio(AUDIO_SR, audioEntries(false), 2, { driven: true });
+async function renderCompAudio({ onStage = null } = {}) {
+  return mixCompAudio(AUDIO_SR, audioEntries(false), 2, { driven: true, onStage });
 }
 
-/** Encode a rendered AudioBuffer to Opus chunks straight into the muxer. */
-async function encodeAudioTrack(muxer, buf, job) {
+/** Shared decode/mix readout for the export paths, which hit the same
+ * first-touch decode as the driver analysis. */
+function mixStageStatus(what) {
+  return (s) => setStatus(s.phase === 'decode'
+    ? `${what} — decoding ${s.name} (${s.done + 1}/${s.total})`
+    : `${what}…`);
+}
+
+/* ---- output formats --------------------------------------------------
+ * H.264/AAC in MP4 is what editors, phones and every social upload accept;
+ * VP9/Opus in WebM is smaller and native to the browser. Both run through
+ * the same render loop — only the muxer and the codec strings differ. */
+
+const EXPORT_BITRATE = 12_000_000;
+
+/** Lowest H.264 level that covers this frame size and rate. The level is
+ * computed rather than fixed because configure() rejects an under-spec one
+ * outright instead of clamping: baseline 3.1 cannot do 1080p at all. */
+function avcCodec(w, h, fps) {
+  const mbs = Math.ceil(w / 16) * Math.ceil(h / 16);
+  const mbps = mbs * Math.max(1, fps);
+  // [level_idc, MaxFS (macroblocks), MaxMBPS (macroblocks/s)] — Annex A.
+  const LEVELS = [
+    [0x1e, 1620, 40500], [0x1f, 3600, 108000], [0x20, 5120, 216000],
+    [0x28, 8192, 245760], [0x2a, 8704, 522240], [0x32, 22080, 589824],
+    [0x33, 36864, 983040], [0x34, 36864, 2073600],
+    [0x3c, 139264, 4177920], [0x3d, 139264, 8355840], [0x3e, 139264, 16711680],
+  ];
+  const level = LEVELS.find(([, maxFs, maxMbps]) => mbs <= maxFs && mbps <= maxMbps);
+  // High profile (0x64), no constraint flags set.
+  return `avc1.6400${(level ? level[0] : 0x3e).toString(16)}`;
+}
+
+const VIDEO_FORMATS = {
+  mp4: {
+    label: 'MP4', ext: 'mp4', mime: 'video/mp4',
+    codec: (w, h, fps) => avcCodec(w, h, fps),
+    // The WebCodecs default is already AVCC, which is what the muxer wants
+    // (annex-b chunks would be written straight through and unplayable).
+    encoderExtra: { avc: { format: 'avc' } },
+    audio: { codec: 'mp4a.40.2', bitrate: 192_000, track: 'aac' },
+    makeMuxer: (video, audio) => new MP4Muxer({
+      target: new MP4Target(),
+      // Metadata at the front: some players will not scrub a file whose
+      // moov sits at the end, and the whole render is in memory anyway.
+      fastStart: 'in-memory',
+      video: { codec: 'avc', width: video.width, height: video.height, frameRate: video.fps },
+      ...(audio ? { audio: { codec: 'aac', numberOfChannels: audio.channels, sampleRate: audio.sampleRate } } : {}),
+    }),
+  },
+  webm: {
+    label: 'WebM', ext: 'webm', mime: 'video/webm',
+    codec: () => 'vp09.00.10.08',   // VP9 profile 0 level 1.0 8-bit
+    fallbackCodec: 'vp8',
+    audio: { codec: 'opus', bitrate: 128_000, track: 'A_OPUS' },
+    makeMuxer: (video, audio) => new WebMMuxer({
+      target: new ArrayBufferTarget(),
+      video: { codec: video.codec === 'vp8' ? 'V_VP8' : 'V_VP9', width: video.width, height: video.height, frameRate: video.fps },
+      ...(audio ? { audio: { codec: 'A_OPUS', numberOfChannels: audio.channels, sampleRate: audio.sampleRate } } : {}),
+    }),
+  },
+};
+
+/** The video codec this format will actually use here, or null if the
+ * browser cannot encode it at this size — checked before the menu offers
+ * it, so a format is never handed over and then refused mid-render. */
+async function supportedCodec(fmt, width, height, fps) {
+  if (typeof VideoEncoder === 'undefined') return null;
+  const config = { width, height, bitrate: EXPORT_BITRATE, framerate: fps };
+  for (const codec of [fmt.codec(width, height, fps), fmt.fallbackCodec].filter(Boolean)) {
+    try {
+      if ((await VideoEncoder.isConfigSupported({ codec, ...config })).supported) return codec;
+    } catch { /* malformed codec string for this browser — try the next */ }
+  }
+  return null;
+}
+
+/** Encode a rendered AudioBuffer straight into the muxer, in whichever
+ * codec the container wants. */
+async function encodeAudioTrack(muxer, buf, job, audioFmt) {
   const enc = new AudioEncoder({
     output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
     error: (e) => { job.error = e; job.cancel = true; },
   });
   enc.configure({
-    codec: 'opus',
+    codec: audioFmt.codec,
     sampleRate: buf.sampleRate,
     numberOfChannels: buf.numberOfChannels,
-    bitrate: 128_000,
+    bitrate: audioFmt.bitrate,
   });
   const CH = buf.numberOfChannels;
   const CHUNK = 9600;   // 200ms at 48k
@@ -7285,41 +7491,40 @@ async function encodeAudioTrack(muxer, buf, job) {
   enc.close();
 }
 
-async function renderCompOffline(job) {
+async function renderCompOffline(job, formatId = 'webm') {
   const { width, height, fps } = comp;
+  const fmt = VIDEO_FORMATS[formatId] ?? VIDEO_FORMATS.webm;
   const totalFrames = Math.max(1, Math.round(comp.dur * fps));
   const frameUs = 1e6 / fps;
+
+  const codec = await supportedCodec(fmt, width, height, fps);
+  if (!codec) throw new Error(`this browser cannot encode ${fmt.label} at ${width}×${height}`);
 
   setStatus('rendering audio…');
   let audioBuf = null;
   if (typeof AudioEncoder !== 'undefined') {
     try {
-      audioBuf = await renderCompAudio();
+      audioBuf = await renderCompAudio({ onStage: mixStageStatus('rendering audio') });
     } catch (e) {
       console.warn('slangfx: offline audio mix failed, rendering video only:', e);
     }
   }
 
-  let codec = 'vp09.00.10.08';   // VP9 profile 0 level 1.0 8-bit
-  const config = { width, height, bitrate: 12_000_000, framerate: fps };
-  if (!(await VideoEncoder.isConfigSupported({ codec, ...config })).supported)
-    codec = 'vp8';
-  const muxer = new WebMMuxer({
-    target: new ArrayBufferTarget(),
-    video: { codec: codec === 'vp8' ? 'V_VP8' : 'V_VP9', width, height, frameRate: fps },
-    ...(audioBuf ? {
-      audio: { codec: 'A_OPUS', numberOfChannels: audioBuf.numberOfChannels, sampleRate: audioBuf.sampleRate },
-    } : {}),
-  });
+  const muxer = fmt.makeMuxer(
+    { codec, width, height, fps },
+    audioBuf && { channels: audioBuf.numberOfChannels, sampleRate: audioBuf.sampleRate },
+  );
   if (audioBuf) {
-    await encodeAudioTrack(muxer, audioBuf, job);
+    await encodeAudioTrack(muxer, audioBuf, job, fmt.audio);
     if (job.error) throw job.error;
   }
   const encoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => { job.error = e; job.cancel = true; },
   });
-  encoder.configure({ codec, ...config });
+  encoder.configure({
+    codec, width, height, bitrate: EXPORT_BITRATE, framerate: fps, ...(fmt.encoderExtra ?? {}),
+  });
   job.hasAudio = !!audioBuf;
 
   for (let f = 0; f < totalFrames && !job.cancel; f++) {
@@ -7349,7 +7554,7 @@ async function renderCompOffline(job) {
     while (encoder.encodeQueueSize > 8)
       await new Promise((r) => encoder.addEventListener('dequeue', r, { once: true }));
     if (f % 8 === 0) {
-      setStatus(`rendering frame ${f + 1}/${totalFrames}…`);
+      setStatus(`rendering ${fmt.label} — frame ${f + 1}/${totalFrames}…`, (f + 1) / totalFrames);
       timeline.updatePlayhead();
       await nextTask();   // let the UI paint
     }
@@ -7360,7 +7565,7 @@ async function renderCompOffline(job) {
   await encoder.flush();
   encoder.close();
   muxer.finalize();
-  return new Blob([muxer.target.buffer], { type: 'video/webm' });
+  return new Blob([muxer.target.buffer], { type: fmt.mime });
 }
 
 boot();

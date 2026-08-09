@@ -38,21 +38,17 @@ function biquad(kind, sr, f0, q = 0.7071) {
   };
 }
 
-/** Run samples through a chain of biquads (direct form 1), new array. */
-function filterChain(samples, chain) {
-  let cur = samples;
-  for (const c of chain) {
-    const out = new Float32Array(cur.length);
-    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-    for (let i = 0; i < cur.length; i++) {
-      const x = cur[i];
-      const y = c.b0 * x + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2;
-      out[i] = y;
-      x2 = x1; x1 = x; y2 = y1; y1 = y;
-    }
-    cur = out;
+/** Run samples through one biquad over [from, to) — direct form 1, carrying
+ * the filter state in `s` so a pass can be cut into slices. */
+function filterSlice(src, dst, c, s, from, to) {
+  let { x1, x2, y1, y2 } = s;
+  for (let i = from; i < to; i++) {
+    const x = src[i];
+    const y = c.b0 * x + c.b1 * x1 + c.b2 * x2 - c.a1 * y1 - c.a2 * y2;
+    dst[i] = y;
+    x2 = x1; x1 = x; y2 = y1; y1 = y;
   }
-  return cur;
+  s.x1 = x1; s.x2 = x2; s.y1 = y1; s.y2 = y2;
 }
 
 /** Per-comp-frame RMS of samples, normalized so the loudest frame is 1. */
@@ -73,11 +69,15 @@ function frameEnvelope(samples, sr, fps, frames) {
   return env;
 }
 
-/**
- * Analyze a mono mixdown.
- * @returns {{fps, frames, bands: {level,bass,mid,treble: Float32Array}}}
- */
-export function analyzeMix(samples, sr, fps) {
+/* A four-minute track is five million samples and five filter passes over
+ * them, which is long enough that doing it in one go would freeze the UI —
+ * including any progress readout meant to describe it. Both entry points
+ * below drive this stepper, which does one slice per `next()` and reports
+ * how far along it is; the sync one drains it, the async one lets the page
+ * breathe in between. */
+const SLICE = 1 << 18;   // ~262k samples — a few ms of work
+
+function* analyzeSteps(samples, sr, fps) {
   const frames = Math.max(1, Math.ceil((samples.length / sr) * fps));
   const chains = {
     level: [],
@@ -85,10 +85,65 @@ export function analyzeMix(samples, sr, fps) {
     mid: [biquad('hp', sr, 200), biquad('lp', sr, 2000)],
     treble: [biquad('hp', sr, 4000)],
   };
+  // One unit per filter pass, plus one for each band's envelope.
+  let total = 0;
+  for (const chain of Object.values(chains)) total += chain.length + 1;
+  let done = 0;
+
   const bands = {};
-  for (const [name, chain] of Object.entries(chains))
-    bands[name] = frameEnvelope(chain.length ? filterChain(samples, chain) : samples, sr, fps, frames);
+  for (const [name, chain] of Object.entries(chains)) {
+    let cur = samples;
+    for (const c of chain) {
+      const out = new Float32Array(cur.length);
+      const s = { x1: 0, x2: 0, y1: 0, y2: 0 };
+      for (let at = 0; at < cur.length; at += SLICE) {
+        const end = Math.min(at + SLICE, cur.length);
+        filterSlice(cur, out, c, s, at, end);
+        yield { frac: (done + end / cur.length) / total, band: name };
+      }
+      cur = out;
+      done++;
+    }
+    bands[name] = frameEnvelope(cur, sr, fps, frames);
+    done++;
+    yield { frac: done / total, band: name };
+  }
   return { fps, frames, bands };
+}
+
+/**
+ * Analyze a mono mixdown, all at once.
+ * @returns {{fps, frames, bands: {level,bass,mid,treble: Float32Array}}}
+ */
+export function analyzeMix(samples, sr, fps) {
+  const steps = analyzeSteps(samples, sr, fps);
+  let r = steps.next();
+  while (!r.done) r = steps.next();
+  return r.value;
+}
+
+/**
+ * The same analysis, spread over several frames so the page stays alive
+ * and can show how far along it is.
+ * @param {(p: {frac: number, band: string}) => void} [onProgress]
+ * @param {() => Promise<void>} yieldTo  hands the frame back — inject the
+ *        caller's macrotask yield rather than a timer, which the browser
+ *        throttles to ~1/s in a background tab (exports await this).
+ */
+export async function analyzeMixAsync(samples, sr, fps, { onProgress, yieldTo } = {}) {
+  const steps = analyzeSteps(samples, sr, fps);
+  let painted = performance.now();
+  for (;;) {
+    const r = steps.next();
+    if (r.done) return r.value;
+    onProgress?.(r.value);
+    // Roughly one repaint's worth of work between breaths — often enough
+    // that the readout moves, rarely enough that it costs nothing.
+    if (yieldTo && performance.now() - painted > 50) {
+      await yieldTo();
+      painted = performance.now();
+    }
+  }
 }
 
 /**

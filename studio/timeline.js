@@ -97,12 +97,14 @@ export function showMenu(x, y, items, { above = false } = {}) {
       continue;
     }
     const row = document.createElement('div');
-    row.className = 'ctx-item' + (it.checked ? ' checked' : '') + (it.danger ? ' danger' : '');
+    row.className = 'ctx-item' + (it.checked ? ' checked' : '') + (it.danger ? ' danger' : '')
+      + (it.disabled ? ' disabled' : '');
     row.addEventListener('pointerdown', (e) => e.stopPropagation());
-    row.addEventListener('click', () => { closeMenu(); it.action(); });
-    if (it.icon || it.trailing) {
-      // Structured row: optional leading icon (inline SVG string) and an
-      // optional secondary action button at the right edge (e.g. delete).
+    row.addEventListener('click', () => { if (it.disabled) return; closeMenu(); it.action(); });
+    if (it.icon || it.trailing || it.detail) {
+      // Structured row: optional leading icon (inline SVG string), an
+      // optional description line under the label, and an optional secondary
+      // action button at the right edge (e.g. delete).
       row.classList.add('has-trail');
       if (it.icon) {
         const ico = document.createElement('span');
@@ -112,7 +114,18 @@ export function showMenu(x, y, items, { above = false } = {}) {
       }
       const lab = document.createElement('span');
       lab.className = 'ctx-label';
-      lab.textContent = it.label;
+      if (it.detail) {
+        row.classList.add('has-detail');
+        const title = document.createElement('span');
+        title.className = 'ctx-title';
+        title.textContent = it.label;
+        const det = document.createElement('span');
+        det.className = 'ctx-detail';
+        det.textContent = it.detail;
+        lab.append(title, det);
+      } else {
+        lab.textContent = it.label;
+      }
       row.appendChild(lab);
       if (it.trailing) {
         const btn = document.createElement('button');

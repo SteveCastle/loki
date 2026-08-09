@@ -1,0 +1,22 @@
+shaders = 1
+
+shader0        = camera-shake.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "hit;idle;thrust;shake;roll;punch;rate;rough;bias;response;blur;cover;soften"
+hit      = 0.0
+idle     = 0.15
+thrust   = 2.0
+shake    = 1.0
+roll     = 0.4
+punch    = 1.0
+rate     = 6.0
+rough    = 0.45
+bias     = 0.65
+response = 1.0
+blur     = 0.6
+cover    = 1.0
+soften   = 1.5
