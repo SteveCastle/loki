@@ -3299,6 +3299,11 @@ const GlobalStateProviderInner = (props: Props) => {
   // libraryMachine's context was captured when this module loaded — before
   // initAccess() resolved — so inject the real canWrite at interpret time
   // (Inner only mounts after the provider awaited initAccess()).
+  // Marked individually: a 5.6s renderer block was observed in the field
+  // between providers-ready and the machine's first IPC, and these are the only
+  // three things that happen in that window. withContext re-walks the whole
+  // machine config, and starting the interpreter runs the initial transitions
+  // synchronously — so if either is ever the cost, this says which.
   const machineWithAccess = React.useMemo(
     () =>
       libraryMachine.withContext({
@@ -3307,7 +3312,9 @@ const GlobalStateProviderInner = (props: Props) => {
       }),
     []
   );
+  markStartup('machine-created');
   const libraryService = useInterpret(machineWithAccess);
+  markStartup('machine-started');
 
   React.useEffect(() => {
     const offBatch = on(
@@ -3372,6 +3379,9 @@ export const GlobalStateProvider = (props: Props) => {
       accessReady = true;
       markStartup('providers-ready');
       setIsReady(true);
+      // Separates "the state update was slow to commit" from "what runs after
+      // the commit was slow" — the two halves of the window above.
+      markStartup('providers-committed');
     });
   }, []);
 

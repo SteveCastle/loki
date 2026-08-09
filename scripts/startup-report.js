@@ -258,6 +258,19 @@ function printLaunch(launch) {
     }
   }
 
+  // Paired with the long tasks above: a big stall here that doesn't line up
+  // with real work between two marks means the renderer was starved by the
+  // machine, not busy. See the comment in src/renderer/startup-marks.ts.
+  const rl = summary?.loopStalls;
+  if (rl?.count) {
+    console.log(
+      `\n-- renderer event-loop stalls: ${rl.count}, ${ms(rl.totalMs)} total --`
+    );
+    for (const s of rl.worst) {
+      console.log(`  at ${String(s.atMs).padStart(6)}ms  stalled ${ms(s.stallMs)}`);
+    }
+  }
+
   if (stalls?.count) {
     console.log(
       `\n-- main-process event-loop stalls: ${stalls.count}, ${ms(

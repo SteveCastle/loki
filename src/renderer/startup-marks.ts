@@ -103,6 +103,39 @@ function stopLongTaskObserver(): void {
   taskObserver = null;
 }
 
+// ---- Renderer event-loop stalls -------------------------------------------
+
+// Mirrors the main process's sampler (src/main/startup-trace.ts). Long tasks
+// alone can't tell apart "the renderer computed something for 5 seconds" from
+// "the OS descheduled the renderer for 5 seconds" — both surface as one long
+// task. This sampler pairs with them: a stall that shows up here AND lands
+// between two marks with no real work between them is the machine being
+// starved (heavy GPU/RAM load elsewhere), not the app doing something slow.
+const RENDER_SAMPLE_MS = 25;
+const RENDER_STALL_MS = 40;
+
+let loopSampler: ReturnType<typeof setInterval> | null = null;
+let loopStalls: { atMs: number; stallMs: number }[] = [];
+
+function startLoopSampler(): void {
+  if (loopSampler) return;
+  let expected = Date.now() + RENDER_SAMPLE_MS;
+  loopSampler = setInterval(() => {
+    const t = Date.now();
+    const late = t - expected;
+    expected = t + RENDER_SAMPLE_MS;
+    if (late >= RENDER_STALL_MS) {
+      loopStalls.push({ atMs: Math.round(now()), stallMs: Math.round(late) });
+    }
+  }, RENDER_SAMPLE_MS);
+}
+
+function stopLoopSampler(): void {
+  if (!loopSampler) return;
+  clearInterval(loopSampler);
+  loopSampler = null;
+}
+
 // ---- Resource timing ------------------------------------------------------
 
 interface ResourceFacts {
@@ -192,6 +225,7 @@ export function summariseStartup(reason: string): void {
   if (!isElectron || summarised) return;
   summarised = true;
   stopLongTaskObserver();
+  stopLoopSampler();
 
   const at = (name: string): number =>
     timeline.find((m) => m.name === name)?.at ?? -1;
@@ -235,8 +269,17 @@ export function summariseStartup(reason: string): void {
           .sort((a, b) => a.atMs - b.atMs),
       },
       serverCalls: serverCallFacts(),
+      loopStalls: {
+        count: loopStalls.length,
+        totalMs: loopStalls.reduce((s, x) => s + x.stallMs, 0),
+        worst: [...loopStalls]
+          .sort((a, b) => b.stallMs - a.stallMs)
+          .slice(0, 10)
+          .sort((a, b) => a.atMs - b.atMs),
+      },
     },
   });
+  loopStalls = [];
   longTasks = [];
 
   // Let the main process close out its own sampling against the same launch.
@@ -255,5 +298,6 @@ export function summariseStartup(reason: string): void {
 export function beginStartupTrace(): void {
   if (!isElectron) return;
   startLongTaskObserver();
+  startLoopSampler();
   markStartup('bundle-start', undefined, bundleStartAt);
 }
