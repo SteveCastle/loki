@@ -25,6 +25,7 @@
  *   onSelect()                    selection changed
  *   addMediaAt(files,t,trackIdx)  drag-dropped files
  *   addAssetAt(assetId,t,trackIdx) an asset dragged out of the media bin
+ *   retime(clips)                 open the speed / duration dialog
  *   status(msg)
  */
 
@@ -32,6 +33,7 @@ import {
   clipEnd, splitClip, uid, ensureDur, removeEmptyTracks,
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
   eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
+  clipRate, clipSourceSpan, retimeClip,
 } from './comp.js';
 import { clipIcon } from './icons.js';
 
@@ -48,6 +50,9 @@ const fmtNum = (v) => {
   if (!Number.isFinite(n)) return '0';
   return Math.abs(n) >= 100 ? n.toFixed(1).replace(/\.0$/, '') : (+n.toFixed(3)).toString();
 };
+
+/** A clip's speed as a percentage — 100% is footage at its native rate. */
+export const fmtSpeed = (rate) => `${+(rate * 100).toFixed(2)}%`;
 
 export function fmtTimecode(t, fps) {
   if (!Number.isFinite(t)) return '-:--:--';
@@ -977,9 +982,12 @@ export class Timeline {
     label.className = 'tl-clip-name';
     const visualFx = effects.filter((e) => !isAudioEffect(e)).length;
     const audioFx = effects.length - visualFx;
-    label.textContent = clip.name + (effects.length ? ` · ${effects.length} fx` : '');
+    const rate = clipRate(clip);
+    label.textContent = clip.name + (effects.length ? ` · ${effects.length} fx` : '')
+      + (rate !== 1 ? ` · ${fmtSpeed(rate)}` : '');
     label.title = [
       clip.name,
+      rate !== 1 ? `${fmtSpeed(rate)} speed` : null,
       visualFx ? `${visualFx} visual effect${visualFx > 1 ? 's' : ''}` : null,
       audioFx ? `${audioFx} audio effect${audioFx > 1 ? 's' : ''}` : null,
     ].filter(Boolean).join(' · ');
@@ -1025,7 +1033,9 @@ export class Timeline {
   _paintWaveform(el, clip) {
     const asset = this.host.assetOf(clip.assetId);
     if (!asset?.waveform || !(asset.duration > 0)) return;
-    const perSec = this._timeToX(1);
+    // Retiming squeezes the source into fewer (or more) clip pixels, so the
+    // whole mapping is in CLIP seconds: one source second is 1/rate of them.
+    const perSec = this._timeToX(1) / clipRate(clip);
     const w = asset.duration * perSec;
     if (!(w > 0.5)) return;
     el.style.backgroundImage = `url(${asset.waveform})`;
@@ -1115,6 +1125,26 @@ export class Timeline {
             (hasSource(clip) ? ' (loops past its source length)' : ''));
         },
       },
+      // Retiming is the other way to change a clip's length: instead of
+      // showing more or less of the source, it plays the same source over
+      // a different span of the comp.
+      {
+        label: sel.length > 1 ? `Retime ${sel.length} clips…` : 'Retime — speed / duration…',
+        detail: sel.length > 1 ? null
+          : `${fmtSpeed(clipRate(clip))} · ${fmtTimecode(clip.dur, comp.fps)}`,
+        action: () => this.host.retime?.(sel.length > 1 ? sel.map((s) => s.clip) : [clip]),
+      },
+      ...(clipRate(clip) !== 1 ? [{
+        label: 'Reset speed to 100%',
+        action: () => {
+          this.host.history.record(comp, () => {
+            retimeClip(clip, Math.max(1 / comp.fps, quantize(clipSourceSpan(clip), comp.fps)));
+            ensureDur(comp);
+          });
+          this.host.onModelChange({ structural: true });
+          this.host.status(`${clip.name} back to 100% · ${fmtTimecode(clip.dur, comp.fps)}`);
+        },
+      }] : []),
     ];
     if (clip.kind === 'fx') {
       items.push({
@@ -1260,12 +1290,15 @@ export class Timeline {
           comp.tracks[targetIdx].clips.push(clip);
         }
       } else if (mode === 'trim-l') {
+        // A retimed clip eats `rate` seconds of source per second of
+        // timeline, so the left edge runs out of source that much sooner.
+        const rate = clipRate(clip);
         let ns = this._snapTime(orig.start + dxT, { excludeClip: clip });
-        ns = clamp(ns, orig.start - orig.in, orig.start + orig.dur - minDur);
+        ns = clamp(ns, orig.start - orig.in / rate, orig.start + orig.dur - minDur);
         const d = ns - orig.start;
         clip.start = ns;
         clip.dur = orig.dur - d;
-        if (hasSource(clip)) clip.in = orig.in + d;
+        if (hasSource(clip)) clip.in = orig.in + d * rate;
         // Keys stay put in comp time: shift clip-relative times by -d.
         this._shiftKeys(clip, -d, orig);
       } else {

@@ -43,6 +43,7 @@ import {
   allClipsBottomUp,
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
+  clipRate, srcTime, clipSourceSpan, retimeClip,
 } from './comp.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
 import {
@@ -55,7 +56,7 @@ import { responseWidget } from './audio-widgets.js';
 import { LAYER_ICONS, clipIcon, shapeIconCanvas } from './icons.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
 import { Muxer as MP4Muxer, ArrayBufferTarget as MP4Target } from './vendor/mp4-muxer.mjs';
-import { Timeline, fmtTimecode, showMenu } from './timeline.js';
+import { Timeline, fmtTimecode, fmtSpeed, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 
 const $ = (id) => document.getElementById(id);
@@ -465,7 +466,7 @@ function audioDriveKey() {
   const parts = [comp.dur, comp.fps];
   for (const { clip, asset } of audioEntries(true)) {
     const vol = clip.props.volume;
-    parts.push(asset.id, clip.start, clip.dur, clip.in,
+    parts.push(asset.id, clip.start, clip.dur, clip.in, clipRate(clip),
       vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '',
       // Effects colour the mix the analysis hears, so they belong in its
       // fingerprint: adding a reverb has to re-derive the envelopes.
@@ -591,9 +592,14 @@ function syncMedia(t, activeMedia, activeAudio = []) {
       el.volume = clamp((audioState.volume ?? 1) * clipVol, 0, 1);
     }
     // Source time, wrapped so clips longer than their source loop.
-    const src = clip.in + (t - clip.start);
+    const src = srcTime(clip, t);
     const len = asset.duration ?? 0;
     const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+    // A retimed clip plays its element fast or slow; the drift correction
+    // below then keeps it locked to the comp clock. Browsers accept
+    // 0.0625–16 and throw outside it, so the rate is clamped.
+    const rate = clamp(clipRate(clip), 0.0625, 16);
+    if (el.playbackRate !== rate) el.playbackRate = rate;
     let proxyScrub = false;
     if (playing) {
       if (el.paused) {
@@ -652,7 +658,7 @@ function syncMedia(t, activeMedia, activeAudio = []) {
 /* A GIF is a pre-decoded frame strip, not a <video>: pick the loop frame
  * for the clip's local time, upload only when it changes. */
 function syncGifFrame(asset, clip, t) {
-  const src = clip.in + (t - clip.start);
+  const src = srcTime(clip, t);
   const len = asset.duration || 1;
   const local = ((src % len) + len) % len;
   let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
@@ -1622,6 +1628,7 @@ const timelineHost = {
     if (badge) badge.hidden = t == null;
   },
   status: setStatus,
+  retime: (clips) => openRetimeDialog(clips),
   undo: appUndo,
   redo: appRedo,
   addLayerMenu: (anchor) => showAddLayerMenu(anchor),
@@ -2499,6 +2506,18 @@ const SIZE_PRESETS = [
   { name: 'Phone', w: 1080, h: 1920, kind: 'phone', ratio: '9:16' },
 ];
 
+/** A width/height ratio as "16:9" when it reduces to something a human
+ * recognises, and as "2.37:1" when it doesn't. */
+function ratioLabel(r) {
+  if (!(r > 0) || !Number.isFinite(r)) return '';
+  for (let b = 1; b <= 40; b++) {
+    const a = r * b;
+    if (Math.abs(a - Math.round(a)) < 0.004 && Math.round(a) <= 40)
+      return `${Math.round(a)}:${b}`;
+  }
+  return `${r.toFixed(2)}:1`;
+}
+
 $('btn-settings').addEventListener('click', () => {
   const old = document.querySelector('.modal-wrap');
   if (old) { old.remove(); return; }
@@ -2520,6 +2539,10 @@ $('btn-settings').addEventListener('click', () => {
       <div class="size-presets">${presetCards}</div>
       <label>Width <input id="cs-w" type="number" min="16" max="7680" step="2" value="${comp.width}"></label>
       <label>Height <input id="cs-h" type="number" min="16" max="4320" step="2" value="${comp.height}"></label>
+      <label class="cs-lock" title="hold the frame's shape — typing one side rescales the other">
+        <span>🔗 Lock aspect ratio <b id="cs-ratio"></b></span>
+        <input id="cs-link" type="checkbox" checked>
+      </label>
       <label>Frame rate <select id="cs-fps">
         ${[24, 25, 30, 48, 50, 60].map((f) => `<option value="${f}" ${f === comp.fps ? 'selected' : ''}>${f} fps</option>`).join('')}
       </select></label>
@@ -2538,26 +2561,55 @@ $('btn-settings').addEventListener('click', () => {
 
   const wInput = wrap.querySelector('#cs-w');
   const hInput = wrap.querySelector('#cs-h');
+  const linkBox = wrap.querySelector('#cs-link');
+  const ratioEl = wrap.querySelector('#cs-ratio');
   const syncActivePreset = () => {
     for (const card of wrap.querySelectorAll('.size-preset'))
       card.classList.toggle('active',
         card.dataset.w === wInput.value && card.dataset.h === hInput.value);
   };
+  /* Aspect lock. The ratio is CAPTURED (when the dialog opens, when the box
+   * is ticked, or when a preset / Match sets both sides) rather than
+   * recomputed from the fields each keystroke: the partner side rounds to an
+   * even number — encoders reject odd dimensions — and re-deriving from a
+   * rounded value would let the shape creep as you scrub the spinner. */
+  let ratio = comp.width / comp.height;
+  const evenDim = (v, max) => clamp(Math.round(v / 2) * 2, 16, max);
+  const showRatio = () => {
+    ratioEl.textContent = linkBox.checked
+      ? ratioLabel(ratio)
+      : ratioLabel((parseFloat(wInput.value) || 0) / (parseFloat(hInput.value) || 1));
+  };
+  /** Both sides at once (presets, Match): the new shape becomes the lock. */
+  const setSize = (w, h) => {
+    wInput.value = String(w);
+    hInput.value = String(h);
+    ratio = w / h;
+    syncActivePreset();
+    showRatio();
+  };
+  const linkFrom = (src, dst, max, toDst) => {
+    const v = parseFloat(src.value);
+    if (linkBox.checked && v > 0) dst.value = String(evenDim(toDst(v), max));
+    syncActivePreset();
+    showRatio();
+  };
   for (const card of wrap.querySelectorAll('.size-preset'))
-    card.addEventListener('click', () => {
-      wInput.value = card.dataset.w;
-      hInput.value = card.dataset.h;
-      syncActivePreset();
-    });
-  wInput.addEventListener('input', syncActivePreset);
-  hInput.addEventListener('input', syncActivePreset);
-  wrap.querySelector('#cs-match').addEventListener('click', syncActivePreset);
+    card.addEventListener('click', () => setSize(+card.dataset.w, +card.dataset.h));
+  wInput.addEventListener('input', () => linkFrom(wInput, hInput, 4320, (w) => w / ratio));
+  hInput.addEventListener('input', () => linkFrom(hInput, wInput, 7680, (h) => h * ratio));
+  linkBox.addEventListener('change', () => {
+    // Ticking the box adopts whatever shape is on screen right now.
+    const w = parseFloat(wInput.value), h = parseFloat(hInput.value);
+    if (linkBox.checked && w > 0 && h > 0) ratio = w / h;
+    showRatio();
+  });
   syncActivePreset();
+  showRatio();
   wrap.querySelector('#cs-match').addEventListener('click', () => {
     const first = [...assets.values()].find((a) => a.ready);
     if (!first) return;
-    wrap.querySelector('#cs-w').value = first.w;
-    wrap.querySelector('#cs-h').value = first.h;
+    setSize(first.w, first.h);
   });
   // Fit to contents applies immediately: besides resizing, every media
   // clip shifts so the box lands centered — Apply can't express that.
@@ -2587,6 +2639,117 @@ $('btn-settings').addEventListener('click', () => {
     setStatus(`comp: ${w}×${h} @ ${fps} fps, ${comp.dur}s`);
   });
 });
+
+/* ---- retime ----------------------------------------------------------
+ * Stretch or compress clips in time. Speed and duration are two views of
+ * the same edit — the clip keeps the footage it plays and the span it
+ * plays over changes — so the dialog keeps both fields in sync and applies
+ * whichever one was touched last. That distinction only bites on a
+ * multi-selection: a speed applies proportionally to each clip, a duration
+ * sets every clip to the same length. */
+const RETIME_PRESETS = [
+  ['¼×', 0.25], ['½×', 0.5], ['1×', 1], ['2×', 2], ['4×', 4],
+];
+
+function openRetimeDialog(clips) {
+  const list = clips.filter(Boolean);
+  if (!list.length) return;
+  document.querySelector('.modal-wrap')?.remove();
+  const primary = list[0];
+  const minDur = 1 / comp.fps;
+  const span = clipSourceSpan(primary);
+  const many = list.length > 1;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-wrap';
+  wrap.innerHTML = `
+    <div class="modal">
+      <h3>Retime ${many ? `${list.length} clips` : primary.name}</h3>
+      <div class="retime-presets">${RETIME_PRESETS.map(([label, r]) =>
+    `<button type="button" class="btn retime-preset" data-rate="${r}">${label}</button>`).join('')}</div>
+      <label>Speed <span class="retime-field"><input id="rt-speed" type="number" min="1" max="10000" step="1"> %</span></label>
+      <label>Duration <span class="retime-field"><input id="rt-dur" type="number" min="${minDur.toFixed(4)}" max="7200" step="0.05"> s</span></label>
+      <p class="retime-hint"></p>
+      <label class="retime-check"><span>Stretch keyframes &amp; oscillators</span>
+        <input id="rt-anim" type="checkbox" checked></label>
+      <div class="modal-actions">
+        <span style="flex:1"></span>
+        <button class="btn" id="rt-cancel">Cancel</button>
+        <button class="btn" id="rt-apply">Apply</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  const speedInput = wrap.querySelector('#rt-speed');
+  const durInput = wrap.querySelector('#rt-dur');
+  const hint = wrap.querySelector('.retime-hint');
+  let mode = 'speed';
+
+  const readSpeed = () => clamp(parseFloat(speedInput.value) / 100 || 1, 0.01, 100);
+  const readDur = () => Math.max(minDur, parseFloat(durInput.value) || minDur);
+  /** The length `clip` ends up with under the current field values. */
+  const targetDur = (clip) => (mode === 'speed'
+    ? Math.max(minDur, quantize(clipSourceSpan(clip) / readSpeed(), comp.fps))
+    : Math.max(minDur, quantize(readDur(), comp.fps)));
+
+  const refreshHint = () => {
+    const dur = targetDur(primary);
+    const parts = [`${many ? 'first clip: ' : ''}${fmtTimecode(dur, comp.fps)}`];
+    if (hasSource(primary)) parts.push(`plays ${span.toFixed(2)}s of source`);
+    if (clipEnd(primary) - primary.dur + dur > comp.dur) parts.push('extends the comp');
+    hint.textContent = parts.join(' · ');
+  };
+  const setFields = (speed, dur) => {
+    speedInput.value = String(+(speed * 100).toFixed(2));
+    durInput.value = String(+dur.toFixed(3));
+    refreshHint();
+  };
+  setFields(clipRate(primary), primary.dur);
+
+  speedInput.addEventListener('input', () => {
+    mode = 'speed';
+    durInput.value = String(+(span / readSpeed()).toFixed(3));
+    refreshHint();
+  });
+  durInput.addEventListener('input', () => {
+    mode = 'dur';
+    speedInput.value = String(+((span / readDur()) * 100).toFixed(2));
+    refreshHint();
+  });
+  for (const btn of wrap.querySelectorAll('.retime-preset'))
+    btn.addEventListener('click', () => {
+      mode = 'speed';
+      setFields(+btn.dataset.rate, span / +btn.dataset.rate);
+    });
+
+  const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); };
+  const apply = () => {
+    const scaleAnim = wrap.querySelector('#rt-anim').checked;
+    const durs = list.map(targetDur);
+    close();
+    history.record(comp, () => {
+      list.forEach((clip, i) => retimeClip(clip, durs[i], { scaleAnim }));
+      ensureDur(comp);
+    });
+    setTime(Math.min(tCur, lastFrame(comp)));
+    onModelChange({ structural: true });
+    setStatus(many
+      ? `retimed ${list.length} clips`
+      : `${primary.name}: ${fmtSpeed(clipRate(primary))} speed · ${fmtTimecode(primary.dur, comp.fps)}`);
+  };
+  const onKey = (e) => {
+    if (e.key !== 'Escape' && e.key !== 'Enter') return;
+    e.stopPropagation();
+    if (e.key === 'Escape') close();
+    else apply();
+  };
+  document.addEventListener('keydown', onKey);
+  wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) close(); });
+  wrap.querySelector('#rt-cancel').addEventListener('click', close);
+  wrap.querySelector('#rt-apply').addEventListener('click', apply);
+  speedInput.focus();
+  speedInput.select();
+}
 
 /* =====================================================================
  * Project persistence — comp JSON in localStorage, media blobs in idb.
@@ -3353,7 +3516,7 @@ function prepareNodeSources(nodes, t, getEncoder) {
       // Hidden-track sources never go through syncMedia — chase the comp
       // clock with paused seeks (the offline exporter seeks exactly).
       const el = asset.el;
-      const src = clip.in + (t - clip.start);
+      const src = srcTime(clip, t);
       const len = asset.duration ?? 0;
       const desired = len > 0.02 ? ((src % len) + len) % len : 0;
       if (!el.seeking && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
@@ -7218,7 +7381,7 @@ function seekMediaExact(t, activeMedia) {
     if (!asset?.ready || asset.kind !== 'video') continue;
     const el = asset.el;
     if (!el.paused) el.pause();
-    const src = clip.in + (t - clip.start);
+    const src = srcTime(clip, t);
     const len = asset.duration ?? 0;
     const desired = len > 0.02 ? ((src % len) + len) % len : 0;
     if (Math.abs(el.currentTime - desired) < 1e-4) continue;
@@ -7315,6 +7478,9 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;   // clips longer than their source wrap, like syncMedia
+    // Retiming resamples, pitch and all — the same thing the preview's
+    // element playbackRate does, so the export matches what was auditioned.
+    src.playbackRate.value = clipRate(clip);
     const gain = ctx.createGain();
     const start = clip.start;
     const len = Math.min(clipEnd(clip), comp.dur) - start;

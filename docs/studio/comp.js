@@ -234,6 +234,44 @@ export const hasSource = (clip) => clip.kind === 'media' || clip.kind === 'audio
 
 export const propsForKind = (kind) => (kind === 'audio' ? AUDIO_PROPS : MEDIA_PROPS);
 
+/* ---- retiming --------------------------------------------------------
+ * A source clip plays its footage at `rate` source-seconds per comp-second:
+ * 2 is double speed (and half the length for the same content), 0.5 is slow
+ * motion. Absent or nonsense means 1, so older projects load unchanged.
+ * Adjustment layers have no source to speed up — retiming one is purely a
+ * duration change (plus its animation, see retimeClip). */
+export const clipRate = (clip) =>
+  (hasSource(clip) && Number.isFinite(clip?.rate) && clip.rate > 0 ? clip.rate : 1);
+
+/** Source-file time for a source clip at COMP time t, before loop wrapping.
+ * The ONE place the trim offset and the speed meet. */
+export const srcTime = (clip, t) => clip.in + (t - clip.start) * clipRate(clip);
+
+/** How much source a clip consumes, in source seconds. Retiming holds this
+ * constant: the same footage, played over a different span of the comp. */
+export const clipSourceSpan = (clip) => clip.dur * clipRate(clip);
+
+/**
+ * Re-time a clip to `newDur` seconds. The clip keeps its start and — for
+ * source clips — the exact stretch of footage it plays, because the speed
+ * absorbs the change: stretching to 2× the length halves the rate.
+ * `scaleAnim` carries the clip's animation along, so a slowed clip's
+ * keyframes and oscillators slow with the picture instead of finishing
+ * early (audio drivers read comp time and are deliberately left alone).
+ */
+export function retimeClip(clip, newDur, { scaleAnim = true } = {}) {
+  const factor = newDur / clip.dur;
+  if (!(factor > 0) || !Number.isFinite(factor)) return;
+  if (hasSource(clip)) clip.rate = clipRate(clip) / factor;
+  clip.dur = newDur;
+  if (!scaleAnim) return;
+  eachClipProp(clip, (p) => {
+    for (const k of p.keys) k.t *= factor;
+    if (p.driver && p.driver.source !== 'audio' && p.driver.freq)
+      p.driver.freq /= factor;
+  });
+}
+
 /** Upgrade older projects in place (e.g. uniform `scale` → scaleX/scaleY). */
 export function migrateComp(comp) {
   for (const track of comp.tracks ?? [])
@@ -297,6 +335,7 @@ export function newMediaClip(comp, asset, start, dur) {
     start,
     dur,
     in: 0,                       // trim offset into the source (seconds)
+    rate: 1,                     // source seconds per comp second (retiming)
     props,
     effects: [],                 // processed before this clip composites
     mask: null,
@@ -316,6 +355,7 @@ export function newAudioClip(asset, start, dur) {
     start,
     dur,
     in: 0,
+    rate: 1,
     props,
     effects: [],                 // audio effects process this clip's sound
     mask: null,                  // unused; keeps the clip shape uniform
@@ -368,7 +408,9 @@ export function splitClip(clip, t) {
   right.start = t;
   right.dur = clip.dur - offset;
   clip.dur = offset;
-  if (hasSource(clip)) right.in = clip.in + offset;
+  // The cut lands `offset` comp-seconds in, which is offset × rate of
+  // SOURCE for a retimed clip; both halves keep the speed.
+  if (hasSource(clip)) right.in = clip.in + offset * clipRate(clip);
   reidEffects(right);   // the halves' effects are independent from here on
   // Re-anchor the right half's keys to its new start, and advance any
   // oscillator driver's phase so the waveform is continuous across the cut
