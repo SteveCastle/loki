@@ -117,7 +117,8 @@ const configuration: webpack.Configuration = {
         test: /\.(png|jpg|jpeg|gif)$/i,
         type: 'asset/resource',
       },
-      // SVG
+      // SVG — inlined as data URIs, matching the production config. See the
+      // comment there for why (30 icons became 30 separate requests).
       {
         test: /\.svg$/,
         use: [
@@ -133,7 +134,7 @@ const configuration: webpack.Configuration = {
               ref: true,
             },
           },
-          'file-loader',
+          { loader: 'url-loader', options: { limit: true } },
         ],
       },
     ],

@@ -45,4 +45,42 @@ describe('tag-search-service', () => {
       done();
     });
   });
+
+  // The service holds ONE index per scope, not one shared index. The command
+  // palette ('curated') and the taxonomy sidebar ('all') must not see each
+  // other's data — if they collapsed back into one index, the palette would
+  // silently go back to fuzzy-matching all ~189K tags per keystroke.
+  it('keeps each scope indexed separately', (done) => {
+    const curated = TAGS.filter((t) => t.category !== 'Suggested');
+    indexTags([...TAGS], 'all');
+    indexTags(curated, 'curated');
+
+    searchTags(
+      'blo',
+      10,
+      (curatedItems) => {
+        // 'blonde_hair' is a Suggested tag: present in 'all', absent here.
+        expect(curatedItems.some((t) => t.label === 'blonde_hair')).toBe(false);
+        searchTags(
+          'blo',
+          10,
+          (allItems) => {
+            expect(allItems.some((t) => t.label === 'blonde_hair')).toBe(true);
+            done();
+          },
+          'all'
+        );
+      },
+      'curated'
+    );
+  });
+
+  it('tracks the idempotency guard per scope', () => {
+    const ref = [...TAGS];
+    expect(indexTags(ref, 'all')).toBe(true);
+    expect(indexTags(ref, 'all')).toBe(false);
+    // Same reference, different scope: must still index, or the second scope
+    // would be left searching whatever the first one happened to load.
+    expect(indexTags(ref, 'curated')).toBe(true);
+  });
 });

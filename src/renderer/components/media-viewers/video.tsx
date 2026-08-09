@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { ScaleModeOption, clampVolume } from 'settings';
 import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
-import Hls from 'hls.js';
+import type HlsType from 'hls.js';
 import { mediaUrl, hlsUrl, fetchMediaPreview as platformFetchMediaPreview, findSubtitle } from '../../platform';
 import { toVttString, vttBlobUrl } from './subtitle-loader';
 import { useVisibilityLoader } from '../../hooks/useVisibilityLoader';
@@ -365,7 +365,7 @@ export function Video({
     }
   }, [playbackRate, settable, path]);
 
-  const hlsRef = useRef<Hls | null>(null);
+  const hlsRef = useRef<HlsType | null>(null);
   const [hlsFailed, setHlsFailed] = useState(false);
   const [hlsReady, setHlsReady] = useState(false);
   const [hlsGenerating, setHlsGenerating] = useState(false);
@@ -477,33 +477,56 @@ export function Video({
   };
 
   // Once HLS is ready and the <video> element is mounted, attach hls.js.
+  //
+  // hls.js is loaded on demand, not imported at the top of this file. It is by
+  // far the largest dependency in the renderer (~2.5MB of source), and it is
+  // dead weight for almost every launch: HLS playback only exists in web mode
+  // against the media server (hlsUrl is null in Electron) and is opt-in even
+  // there. Statically imported, every cold start paid to parse and evaluate it
+  // before the app could paint the file the user opened.
   useEffect(() => {
     if (!hlsReady || !mediaRef?.current || !hlsManifestUrl.current) return;
 
     const video = mediaRef.current;
     const url = hlsManifestUrl.current;
+    let cancelled = false;
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: true });
-      hlsRef.current = hls;
-      hls.loadSource(url);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        video.play().catch(() => {});
-      });
-      hls.on(Hls.Events.ERROR, (_event, errData) => {
-        if (errData.fatal) {
-          console.log('hls.js fatal error:', errData.type, errData.details);
-          hls.destroy();
-          hlsRef.current = null;
-          setHlsFailed(true);
-        }
-      });
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native HLS (Safari/WebKit): no library needed.
       video.src = url;
+      return undefined;
     }
 
+    import('hls.js')
+      .then(({ default: Hls }) => {
+        if (cancelled || !Hls.isSupported()) return;
+        const hls: HlsType = new Hls({ enableWorker: true });
+        hlsRef.current = hls;
+        hls.loadSource(url);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => {});
+        });
+        hls.on(Hls.Events.ERROR, (_event, errData) => {
+          if (errData.fatal) {
+            console.log('hls.js fatal error:', errData.type, errData.details);
+            hls.destroy();
+            hlsRef.current = null;
+            setHlsFailed(true);
+          }
+        });
+        // Unmounted while the chunk was in flight — tear down immediately.
+        if (cancelled) {
+          hls.destroy();
+          hlsRef.current = null;
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setHlsFailed(true);
+      });
+
     return () => {
+      cancelled = true;
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;

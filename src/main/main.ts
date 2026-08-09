@@ -11,8 +11,6 @@ import {
   net,
   IpcMainInvokeEvent,
 } from 'electron';
-import { autoUpdater } from 'electron-updater';
-import log from 'electron-log';
 import invariant from 'tiny-invariant';
 import Store from 'electron-store';
 import MenuBuilder from './menu';
@@ -25,7 +23,17 @@ import { cleanupArchives } from './archives';
 import { registerSubtitleHandlers } from './subtitles';
 import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
+import { isValidFilePath } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
+import {
+  mark,
+  getBootId,
+  appVersion,
+  startLoopLagSampler,
+  finishLaunchTrace,
+  traceMediaRead,
+  describeLaunch,
+} from './startup-trace';
 
 import type { Database } from './database';
 
@@ -72,22 +80,38 @@ app.commandLine.appendSwitch('enable-blink-features', 'AudioVideoTracks');
 let db: Database | null = null;
 let macPath = '';
 
-class AppUpdater {
-  constructor() {
+// Launch-path timing lives in startup-trace.ts; see the header there for what
+// is measured and why. Start the event-loop sampler immediately: the stalls
+// worth catching happen during module loading and DB init, before any window
+// exists.
+const markLaunch = (name: string, data?: Record<string, unknown>) =>
+  mark(name, data);
+startLoopLagSampler();
+
+// Imported on use, not at module load. electron-updater drags in ~580KB of
+// dependencies (js-yaml, semver, fs-extra, builder-util-runtime, sax,
+// electron-log) — about a third of the main bundle — and every byte of it was
+// being parsed before the app could create a window, for a check that
+// deliberately doesn't run until 1.5s after first paint. Nothing on the path to
+// showing the user their file needs any of it.
+async function checkForUpdatesInBackground() {
+  try {
+    const [{ autoUpdater }, { default: log }] = await Promise.all([
+      import('electron-updater'),
+      import('electron-log'),
+    ]);
     log.transports.file.level = 'info';
     autoUpdater.logger = log;
     // checkForUpdatesAndNotify rejects when the release has no update manifest
-    // (e.g. a 404 on latest.yml for a build published without one). That
-    // rejection is fire-and-forget here, so without this catch it surfaces as a
-    // main-process unhandledRejection on every launch. Swallow it: a failed
-    // update check is non-fatal and shouldn't pollute the error log.
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-      logEvent({
-        level: 'warn',
-        scope: 'main:autoUpdater',
-        message: 'update check failed',
-        error: err,
-      });
+    // (e.g. a 404 on latest.yml for a build published without one). Swallow it:
+    // a failed update check is non-fatal and shouldn't pollute the error log.
+    await autoUpdater.checkForUpdatesAndNotify();
+  } catch (err) {
+    logEvent({
+      level: 'warn',
+      scope: 'main:autoUpdater',
+      message: 'update check failed',
+      error: err,
     });
   }
 }
@@ -118,6 +142,31 @@ ipcMain.handle('get-main-args', () => {
 
 ipcMain.handle('get-mac-path', () => {
   return macPath;
+});
+
+// Boot args in ONE synchronous call. The preload used to assemble
+// window.appArgs from three sequential `invoke`s, which (a) cost three IPC
+// round trips on the critical path and (b) raced the renderer bundle: appArgs
+// is read at module-eval time, so a late reply meant `initialFile` came up
+// empty and the file the user double-clicked never opened. sendSync runs
+// before the page's own scripts, so the value is always there in time.
+ipcMain.on('get-boot-args', (event) => {
+  event.returnValue = {
+    argv: process.argv,
+    macPath,
+    appUserData: app.getPath('userData'),
+    // Lets the renderer's startup marks join the main process's timeline.
+    bootId: getBootId(),
+    appVersion: appVersion(),
+  };
+});
+
+// The renderer reports when the user can actually see their media (or that it
+// gave up waiting), which is the only true end of the launch. `args` is the
+// array the preload's sendMessage wraps around its payload.
+ipcMain.on('startup-first-media', (_event, args) => {
+  const reason = Array.isArray(args) ? args[0]?.reason : undefined;
+  finishLaunchTrace(typeof reason === 'string' ? reason : 'first-media');
 });
 
 ipcMain.handle('capture-region', async (_event, [rect]) => {
@@ -200,28 +249,58 @@ const store = new Store();
 registerSessionStoreHandlers();
 registerSubtitleHandlers();
 setupSessionStoreLifecycle();
+// These are SYNCHRONOUS from the renderer (sendSync), and the batched one runs
+// before the state machine exists — getInitialContext is built from it. A throw
+// here (electron-store re-parses config.json on access, so a file truncated by
+// a crash or a force-quit mid-write throws "Unexpected end of JSON input")
+// leaves returnValue unset, which silently hands the renderer `undefined` for
+// every setting INCLUDING dbPath — and the app then boots a different database
+// with no visible error. Log loudly rather than fail quietly.
+const storeReadFailed = (scope: string, err: unknown) => {
+  logEvent({
+    scope: `ipc:${scope}`,
+    message:
+      'reading config.json failed — settings will fall back to defaults ' +
+      '(is the file truncated?)',
+    error: err,
+  });
+};
+
 ipcMain.on('electron-store-get', async (event, key, defaultValue) => {
-  event.returnValue = store.get(key, defaultValue);
+  try {
+    event.returnValue = store.get(key, defaultValue);
+  } catch (err) {
+    storeReadFailed('electron-store-get', err);
+    event.returnValue = defaultValue;
+  }
 });
 ipcMain.on('electron-store-set', async (event, key, val) => {
-  store.set(key, val);
+  try {
+    store.set(key, val);
+  } catch (err) {
+    storeReadFailed('electron-store-set', err);
+  }
 });
 
 // Batched synchronous get to reduce startup IPC roundtrips
 ipcMain.on('electron-store-get-many', async (event, keyDefaultPairs) => {
+  const pairs: [string, any][] = Array.isArray(keyDefaultPairs)
+    ? keyDefaultPairs
+    : [];
+  const result: { [key: string]: any } = {};
   try {
-    const pairs: [string, any][] = Array.isArray(keyDefaultPairs)
-      ? keyDefaultPairs
-      : [];
-    const result: { [key: string]: any } = {};
     for (const [k, def] of pairs) {
       result[k] = store.get(k, def);
     }
-    event.returnValue = result;
   } catch (err) {
-    console.error('electron-store-get-many error', err);
-    event.returnValue = {};
+    // Fall back to the defaults the renderer asked for rather than an empty
+    // object: `undefined` settings are worse than the documented defaults.
+    for (const [k, def] of pairs) {
+      if (!(k in result)) result[k] = def;
+    }
+    storeReadFailed('electron-store-get-many', err);
   }
+  event.returnValue = result;
 });
 
 ipcMain.handle('get-user-data-path', async () => {
@@ -298,9 +377,11 @@ ipcMain.handle('load-db', async (event, args) => {
 
   const dir = path.dirname(dbPath);
   await fs.promises.mkdir(dir, { recursive: true });
+  markLaunch('load-db-invoked');
   // Lazy import database implementation to reduce cold-start cost
   const dbModule = await import('./database');
   const { retryAsync, isDatabaseLockedError } = await import('./db-retry');
+  markLaunch('db-module-loaded');
 
   // The Go media-server can hold a write lock on the same dream.sqlite while
   // the app starts. busy_timeout (set in Database) waits each attempt out;
@@ -419,6 +500,7 @@ ipcMain.handle('load-db', async (event, args) => {
       import('./metadata'),
       import('./load-files'),
     ]);
+  markLaunch('handler-modules-loaded');
 
   // Register Media Events
   ipcMain.handle('load-files', loadFilesModule.loadFiles(db));
@@ -653,6 +735,7 @@ const createWindow = async () => {
     return path.join(RESOURCES_PATH, ...paths);
   };
 
+  markLaunch('creating-window');
   mainWindow = new BrowserWindow({
     show: false,
     width: 1024,
@@ -660,7 +743,15 @@ const createWindow = async () => {
     fullscreen: true,
     frame: false,
     titleBarStyle: 'hidden',
-    icon: getAssetPath('icon.png'),
+    // A 256px icon, NOT assets/icon.png. That file is 1849x1850 (it exists at
+    // that size because electron-builder needs a large source to generate .icns
+    // / .ico at package time), and BrowserWindow decodes and rescales whatever
+    // it is handed SYNCHRONOUSLY: measured at ~180ms of blocked main process on
+    // every single launch — a quarter of the time to first media, and blocking
+    // exactly when the preload's media read and the renderer's first IPC need
+    // the main process. At 256px the same work is a couple of milliseconds and
+    // the window/taskbar icon looks identical.
+    icon: getAssetPath('icon-window.png'),
     webPreferences: {
       webSecurity: true,
       nodeIntegration: true,
@@ -671,9 +762,17 @@ const createWindow = async () => {
     },
   });
 
+  markLaunch('window-created', { packaged: app.isPackaged });
+  // What this launch was asked to open — a file (and how big, on which root),
+  // a directory, or nothing. Without it the timings can't be compared.
+  describeLaunch(isValidFilePath(process.argv[1]) ? process.argv[1] : macPath);
   mainWindow.loadURL(resolveHtmlPath(`index.html`));
+  markLaunch('load-url-called');
+
+  mainWindow.webContents.on('did-finish-load', () => markLaunch('did-finish-load'));
 
   mainWindow.on('ready-to-show', () => {
+    markLaunch('ready-to-show');
     if (!mainWindow) {
       throw new Error('"mainWindow" is not defined');
     }
@@ -684,8 +783,7 @@ const createWindow = async () => {
     }
     // Defer auto updates until after first paint
     setTimeout(() => {
-      // eslint-disable-next-line
-      new AppUpdater();
+      checkForUpdatesInBackground();
     }, 1500);
   });
 
@@ -723,6 +821,7 @@ const createWindow = async () => {
 
   const menuBuilder = new MenuBuilder(mainWindow);
   menuBuilder.buildMenu();
+  markLaunch('menu-built');
 
   // Open urls in the user's browser
   mainWindow.webContents.setWindowOpenHandler((edata) => {
@@ -791,11 +890,17 @@ app.on('ready', async () => {
       }
       filePath = path.normalize(filePath);
 
+      // Times the opening reads only (see traceMediaRead) — this is the actual
+      // delivery of the bytes the user is waiting to see.
+      const trace = traceMediaRead(filePath, !!request.headers.get('Range'));
+
       // Get file info
       let stats: fs.Stats;
       try {
         stats = await fs.promises.stat(filePath);
+        trace.stat(true, stats.size);
       } catch {
+        trace.stat(false);
         return new Response('Not Found', { status: 404 });
       }
 
@@ -812,6 +917,8 @@ app.on('ready', async () => {
           const end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
 
           if (start >= fileSize) {
+            trace.responding(416);
+            trace.done('error', 0);
             return new Response('Range Not Satisfiable', {
               status: 416,
               headers: { 'Content-Range': `bytes */${fileSize}` },
@@ -822,14 +929,26 @@ app.on('ready', async () => {
           const chunkSize = clampedEnd - start + 1;
 
           const stream = fs.createReadStream(filePath, { start, end: clampedEnd });
+          let sent = 0;
+          trace.responding(206, { chunkSize });
           return new Response(
             new ReadableStream({
               start(controller) {
-                stream.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
-                stream.on('end', () => controller.close());
-                stream.on('error', (e) => controller.error(e));
+                stream.on('data', (chunk: Buffer) => {
+                  sent += chunk.length;
+                  controller.enqueue(new Uint8Array(chunk));
+                });
+                stream.on('end', () => {
+                  trace.done('end', sent);
+                  controller.close();
+                });
+                stream.on('error', (e) => {
+                  trace.done('error', sent);
+                  controller.error(e);
+                });
               },
               cancel() {
+                trace.done('cancel', sent);
                 stream.destroy();
               },
             }),
@@ -850,18 +969,34 @@ app.on('ready', async () => {
       const etag = `"${stats.mtimeMs.toString(36)}-${fileSize.toString(36)}"`;
       const ifNoneMatch = request.headers.get('If-None-Match');
       if (ifNoneMatch === etag) {
+        // Revalidation hit: Chromium already holds the bytes. Worth seeing —
+        // it's how the preload's warm-up pays off on the real <img>.
+        trace.responding(304);
+        trace.done('end', 0);
         return new Response(null, { status: 304 });
       }
 
       const stream = fs.createReadStream(filePath);
+      let sent = 0;
+      trace.responding(200);
       return new Response(
         new ReadableStream({
           start(controller) {
-            stream.on('data', (chunk: Buffer) => controller.enqueue(new Uint8Array(chunk)));
-            stream.on('end', () => controller.close());
-            stream.on('error', (e) => controller.error(e));
+            stream.on('data', (chunk: Buffer) => {
+              sent += chunk.length;
+              controller.enqueue(new Uint8Array(chunk));
+            });
+            stream.on('end', () => {
+              trace.done('end', sent);
+              controller.close();
+            });
+            stream.on('error', (e) => {
+              trace.done('error', sent);
+              controller.error(e);
+            });
           },
           cancel() {
+            trace.done('cancel', sent);
             stream.destroy();
           },
         }),
@@ -910,6 +1045,7 @@ app.on('window-all-closed', () => {
 app
   .whenReady()
   .then(() => {
+    markLaunch('app-ready');
     createWindow();
     app.on('activate', () => {
       // On macOS it's common to re-create a window in the app when the

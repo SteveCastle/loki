@@ -1,19 +1,25 @@
-import { render, waitFor } from '@testing-library/react';
+import { act, render, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Regression test for the startup handler-registration race.
+// Two things gate the startup all-tags fetch, and this covers both.
 //
-// Bug: useWarmTagSearch fired its `load-all-tags` IPC fetch with `enabled: true`
-// the moment it mounted. The hook mounts during app boot, before the main
-// process finishes `load-db` and registers the taxonomy IPC handlers, so the
-// fetch failed with "No handler registered for 'load-all-tags'" on essentially
-// every launch (visible as renderer:invoke:load-all-tags failures in
-// app-log.jsonl). React Query retried after the DB became ready, so it was
-// benign — but it logged an error every time.
+// 1. The handler-registration race. useWarmTagSearch used to fire its
+//    `load-all-tags` IPC fetch with `enabled: true` the moment it mounted. The
+//    hook mounts during app boot, before the main process finishes `load-db`
+//    and registers the taxonomy IPC handlers, so the fetch failed with "No
+//    handler registered for 'load-all-tags'" on essentially every launch. It is
+//    now gated on `initSessionId`, which the state machine only assigns once it
+//    reaches its post-DB `init` state.
 //
-// The fix gates the fetch on `initSessionId`, which the state machine only
-// assigns once it reaches its post-DB `init` state. Empty id (pre-DB) => no
-// fetch; real id (post-DB, handlers registered) => fetch.
+// 2. The startup critical path. Even with handlers registered, this fetch is
+//    the whole tag table (~190K rows: ~0.5s of SQLite plus a structured clone
+//    across IPC and again into the search worker). Running it while the user is
+//    waiting to see the file they opened blocked the main process — which also
+//    serves gsm:// media bytes — and starved the shared SQLite connection. It
+//    now additionally waits for the first media paint (see first-paint.ts).
+//
+// So: DB not ready => no fetch. DB ready but nothing painted yet => no fetch.
+// Both => fetch.
 
 let mockInitSessionId = '';
 const mockInvoke = jest.fn(async (..._args: any[]) => [] as unknown[]);
@@ -42,6 +48,10 @@ jest.mock('../renderer/search/tag-search-service', () => ({
   indexTags: (...args: any[]) => mockIndexTags(...args),
 }));
 
+import {
+  notifyFirstMediaPainted,
+  resetFirstPaintForTests,
+} from '../renderer/first-paint';
 import { useWarmTagSearch } from '../renderer/hooks/useWarmTagSearch';
 
 function Harness() {
@@ -63,6 +73,7 @@ function renderHarness() {
 beforeEach(() => {
   mockInvoke.mockClear();
   mockIndexTags.mockClear();
+  resetFirstPaintForTests();
 });
 
 describe('useWarmTagSearch startup gating', () => {
@@ -70,16 +81,47 @@ describe('useWarmTagSearch startup gating', () => {
     mockInitSessionId = '';
     renderHarness();
 
-    // Give React Query a tick to (not) schedule the disabled query.
-    await new Promise((r) => setTimeout(r, 0));
+    // Paint, then give React Query a tick to (not) schedule the disabled query.
+    await act(async () => {
+      notifyFirstMediaPainted();
+      await new Promise((r) => setTimeout(r, 0));
+    });
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('fetches all-tags once the DB is ready (initSessionId set)', async () => {
+  it('does not fetch all-tags while the opened media is still loading', async () => {
     mockInitSessionId = 'session-123';
     renderHarness();
 
-    await waitFor(() => expect(mockInvoke).toHaveBeenCalledTimes(1));
-    expect(mockInvoke).toHaveBeenCalledWith('load-all-tags', []);
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('fetches tags once the DB is ready and the media has painted', async () => {
+    mockInitSessionId = 'session-123';
+    renderHarness();
+    // The paint releases the gate via an idle callback, so let that timer land
+    // inside act() rather than leaving React to warn about the late update.
+    await act(async () => {
+      notifyFirstMediaPainted();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // The CURATED scope, not the whole table. What gets warmed at startup is
+    // what the command palette searches, and the palette skips the autotagger's
+    // "Suggested" bucket — ~183K of ~189K tags. Warming the full set here would
+    // put all of that back on the startup path for a surface that never shows
+    // it; the taxonomy sidebar fetches the complete set lazily on focus instead.
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('load-all-tags', [['Suggested']])
+    );
+    // Categories ride the same idle window: it is the last thing the palette
+    // waits on to be fully ready, and asking at open time queues it behind the
+    // still-busy main process (~194ms measured on a first open).
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('load-categories', [])
+    );
   });
 });

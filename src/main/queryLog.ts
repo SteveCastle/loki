@@ -25,9 +25,29 @@ function resolveLogPath(): string {
   return cachedLogPath;
 }
 
+// One line per query adds up fast — this file was found at 128MB in the field,
+// where it is neither readable nor shippable. Roll once at startup: the current
+// log becomes query-log.1.jsonl (replacing any previous roll) and logging
+// continues in a fresh file, so at most two generations ever exist on disk.
+const MAX_LOG_BYTES = 16 * 1024 * 1024;
+
+function rotateIfOversized(logPath: string): void {
+  try {
+    const { size } = fs.statSync(logPath);
+    if (size < MAX_LOG_BYTES) return;
+    const rolled = logPath.replace(/\.jsonl$/, '.1.jsonl');
+    fs.rmSync(rolled, { force: true });
+    fs.renameSync(logPath, rolled);
+  } catch {
+    // No file yet, or the rename lost a race with another process. Either way
+    // logging continues against whatever is there.
+  }
+}
+
 function getStream(): fs.WriteStream | null {
   if (stream) return stream;
   try {
+    rotateIfOversized(resolveLogPath());
     stream = fs.createWriteStream(resolveLogPath(), { flags: 'a' });
     stream.on('error', (e) => {
       console.error('[queryLog] write stream error', e);

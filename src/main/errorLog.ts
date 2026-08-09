@@ -31,9 +31,26 @@ function resolveLogPath(): string {
   return cachedLogPath;
 }
 
+// Same one-generation roll as query-log.jsonl: this file is meant to be read
+// (and shipped back) after a hang, which an unbounded append log isn't.
+const MAX_LOG_BYTES = 8 * 1024 * 1024;
+
+function rotateIfOversized(logPath: string): void {
+  try {
+    const { size } = fs.statSync(logPath);
+    if (size < MAX_LOG_BYTES) return;
+    const rolled = logPath.replace(/\.jsonl$/, '.1.jsonl');
+    fs.rmSync(rolled, { force: true });
+    fs.renameSync(logPath, rolled);
+  } catch {
+    // No file yet, or the rename lost a race. Logging continues regardless.
+  }
+}
+
 function getStream(): fs.WriteStream | null {
   if (stream) return stream;
   try {
+    rotateIfOversized(resolveLogPath());
     stream = fs.createWriteStream(resolveLogPath(), { flags: 'a' });
     stream.on('error', (e) => {
       // eslint-disable-next-line no-console

@@ -3,6 +3,7 @@ import { GlobalStateContext } from '../../state';
 import Layout from './layout';
 import useFileDrop from '../../hooks/useFileDrop';
 import { useWarmTagSearch } from '../../hooks/useWarmTagSearch';
+import { beginPaletteOpen } from '../../palette-trace';
 
 export function Panels() {
   const { libraryService } = useContext(GlobalStateContext);
@@ -25,6 +26,9 @@ export function Panels() {
               target: { type: 'library' },
             });
           } else {
+            // Before the send, so the trace covers the machine transition and
+            // React's re-render — not just the palette's own render.
+            beginPaletteOpen();
             libraryService.send('SHOW_COMMAND_PALETTE', {
               position: { x: e.clientX, y: e.clientY },
             });

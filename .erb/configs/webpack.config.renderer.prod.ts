@@ -84,6 +84,18 @@ const configuration: webpack.Configuration = {
         type: 'asset/resource',
       },
       // SVG
+      //
+      // url-loader, NOT file-loader: the icons are inlined as data URIs rather
+      // than emitted as separate files. Every icon is an `<img src={…}>`, so
+      // file-loader turned the app's 30 icons into 30 individual file://
+      // requests for 14.6KB of total content — visible as icons popping in one
+      // by one when a surface like the command palette first opens. Inlined,
+      // they arrive with the bundle and render in the first paint. Base64
+      // inflates 14.6KB to ~20KB in the JS, which is a fraction of a percent of
+      // the bundle and is paid once instead of per request.
+      //
+      // `limit: false` inlines regardless of size. Keep an eye on it if a large
+      // SVG is ever added here — that one would be better as asset/resource.
       {
         test: /\.svg$/,
         use: [
@@ -99,7 +111,7 @@ const configuration: webpack.Configuration = {
               ref: true,
             },
           },
-          'file-loader',
+          { loader: 'url-loader', options: { limit: true } },
         ],
       },
     ],

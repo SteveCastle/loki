@@ -24,6 +24,8 @@ import { useAfterPaint } from '../../hooks/useAfterPaint';
 import QueryInput from '../query-input/QueryInput';
 import CommandPaletteResults from './command-palette-results';
 import type { SuggestionItem } from '../taxonomy/suggestion-sections';
+import type { TagScope } from '../../search/tag-scopes';
+import { markPalette } from '../../palette-trace';
 
 interface CommandPaletteSearchProps {
   // InterpreterFrom<typeof libraryMachine>; typed loosely to match the rest of
@@ -31,11 +33,19 @@ interface CommandPaletteSearchProps {
   libraryService: any;
   // The media item under the cursor; the apply-tag button assigns to its path.
   currentItem?: { path?: string } | null;
+  // Which slice of the tag table the type-ahead searches. Defaults to
+  // 'curated': the palette skips the autotagger's "Suggested" bucket, which is
+  // ~183K of ~189K tags. Loading and Fuse-indexing those was what made this
+  // surface laggy, and the palette never surfaced them prominently anyway (it
+  // already sorted them last). The taxonomy sidebar passes nothing and gets the
+  // complete set. See ../../search/tag-scopes.
+  tagScope?: TagScope;
 }
 
 export default function CommandPaletteSearch({
   libraryService,
   currentItem,
+  tagScope = 'curated',
 }: CommandPaletteSearchProps) {
   const query = useSelector(libraryService, (s: any) => s.context.query);
   const filteringMode = useSelector(
@@ -78,6 +88,7 @@ export default function CommandPaletteSearch({
   // practice, but the palette must never swallow one if it does).
   const afterPaint = useAfterPaint();
   const engineMounted = afterPaint || resultsActive;
+  if (engineMounted) markPalette('engine-mounted');
 
   const clearText = () => setText('');
 
@@ -243,6 +254,7 @@ export default function CommandPaletteSearch({
           onHighlightKey={highlightByKey}
           onNavItemsChange={setNavItems}
           onCommit={commitPredicate}
+          tagScope={tagScope}
         />
       )}
     </div>

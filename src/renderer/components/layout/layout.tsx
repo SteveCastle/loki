@@ -21,6 +21,46 @@ import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
 import RegionSelect from '../controls/region-select';
 
+// Persisted panel layout, read through an in-memory cache.
+//
+// react-resizable-panels reads this via useSyncExternalStore, which React calls
+// on EVERY render pass of the panel tree — and `store.get` is
+// `ipcRenderer.sendSync`, a blocking round trip to the main process. So every
+// re-render of the layout (opening the command palette, for one) fired several
+// synchronous IPCs. That is free while the main process is idle and brutal
+// while it isn't: measured at 223ms of blocked renderer during the first
+// palette open of a session, when main is still finishing startup work. It is
+// also why only the FIRST open felt slow.
+//
+// This process is the only writer, so the cache can never go stale: setItem
+// updates it in lockstep. One IPC per key per session instead of one per render.
+const layoutCache = new Map<string, string | null>();
+
+const electronPanelStorage = {
+  getItem(name: string): string | null {
+    if (layoutCache.has(name)) return layoutCache.get(name) ?? null;
+    let value: string | null = null;
+    try {
+      const stored = store.get(name, '') as string;
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        value = JSON.stringify(parsed[name] || null);
+      }
+    } catch (error) {
+      console.error(error);
+      value = null;
+    }
+    layoutCache.set(name, value);
+    return value;
+  },
+  setItem(name: string, value: string): void {
+    const encoded = JSON.stringify({ [name]: JSON.parse(value) });
+    // Cache the shape getItem returns, not the raw wrapper.
+    layoutCache.set(name, JSON.stringify(JSON.parse(value) || null));
+    store.set(name, encoded);
+  },
+};
+
 function VerticalHandle() {
   return (
     <PanelResizeHandle className="handle vertical">
@@ -42,6 +82,12 @@ function CollapsiblePanel({
   renderId,
   ...props
 }: PanelProps & { imperativeRef: React.RefObject<PanelImperativeHandle | null>; renderId: number }) {
+  // Starts OPEN, deliberately. Defaulting to collapsed for zero-default panels
+  // (the metadata panel) saved one wasted mount per launch, but it made
+  // "collapsed" the failure mode: if imperativeRef isn't registered when the
+  // effect below runs, or isCollapsed() throws, the panel never opens and a
+  // restored layout silently loses it. Starting open means the worst case is a
+  // panel that flashes and closes, not one the user can't get back.
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -123,28 +169,7 @@ const Layout = () => {
     (state) => state.context.settings.libraryLayout
   );
 
-  const electronStorage = useMemo(
-    () => ({
-      getItem(name: string) {
-        try {
-          const stored = store.get(name, '') as string;
-          if (!stored) return null;
-          const parsed = JSON.parse(stored);
-          return JSON.stringify(parsed[name] || null);
-        } catch (error) {
-          console.error(error);
-          return null;
-        }
-      },
-      setItem(name: string, value: string) {
-        const encoded = JSON.stringify({
-          [name]: JSON.parse(value),
-        });
-        store.set(name, encoded);
-      },
-    }),
-    []
-  );
+  const electronStorage = useMemo(() => electronPanelStorage, []);
 
   const mainGroupLayout = useDefaultLayout({
     id: 'main-group',

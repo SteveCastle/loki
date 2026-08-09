@@ -15,6 +15,7 @@ import { GlobalStateContext } from '../../state';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { useAfterPaint } from '../../hooks/useAfterPaint';
 import { absorbNextClick } from '../../absorb-next-click';
+import { markPalette } from '../../palette-trace';
 import filter from '../../filter';
 
 // Child Components
@@ -811,6 +812,9 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
   React.useEffect(() => {
     if (!display || !positionReady) return undefined;
     const raf = requestAnimationFrame(() => {
+      // This callback runs after the frame the palette became visible in, so
+      // it is the closest thing to "the user can see it".
+      markPalette('painted');
       const input = paletteRef.current?.querySelector<HTMLInputElement>(
         '.commandPaletteSearch input'
       );
@@ -893,6 +897,12 @@ const CommandPalette: React.FC<CommandPaletteProps> = () => {
   if (!display) {
     return null;
   }
+
+  // Open-path instrumentation (see ../../palette-trace). `render` is this
+  // subtree being built; `position-ready` is after it has been measured and
+  // clamped to the viewport, which is when it stops being visibility:hidden.
+  markPalette('render');
+  if (positionReady) markPalette('position-ready');
 
   const style: React.CSSProperties = positionReady
     ? {

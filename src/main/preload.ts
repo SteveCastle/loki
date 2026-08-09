@@ -79,7 +79,8 @@ export type Channels =
   | 'log-event'
   | 'find-subtitle'
   | 'open-studio'
-  | 'studio-media-saved';
+  | 'studio-media-saved'
+  | 'startup-first-media';
 
 // Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
 // <userData>/app-log.jsonl alongside main-process errors.
@@ -386,19 +387,117 @@ contextBridge.exposeInMainWorld('electron', {
   },
 });
 
+// Media types worth pulling into Chromium's cache before the renderer boots
+// (see warmInitialMedia). Videos are excluded on purpose: the <video> element
+// range-requests what it needs, and prefetching a multi-GB file would fight it
+// for bandwidth instead of helping.
+const WARMABLE_IMAGE_RE = /\.(jpe?g|jfif|pjpe?g|pjp|png|gif|webp|avif|bmp|svg)$/i;
+
+// Kick off the fetch for the file the user opened *before* the renderer bundle
+// has even parsed. The gsm:// handler lives in the main process, which is busy
+// with DB init and the directory scan by the time React mounts, so starting the
+// read here overlaps disk I/O + decode with the whole boot sequence. The <img>
+// React renders later hits a warm cache entry instead of a cold file read.
+function warmInitialMedia(filePath: string, bootId: string) {
+  const trace = (outcome: string, data?: Record<string, unknown>) =>
+    ipcRenderer.send('log-event', {
+      level: 'info',
+      scope: 'startup',
+      message: 'media-warm',
+      data: {
+        bootId,
+        outcome,
+        at: Math.round(performance.now()),
+        ...(data ?? {}),
+      },
+    });
+
+  if (!filePath) return trace('no-file');
+  if (!WARMABLE_IMAGE_RE.test(filePath)) return trace('not-warmable');
+  try {
+    const href = url.format({ protocol: 'gsm', pathname: filePath });
+    const started = performance.now();
+    // A detached Image() — not fetch() — because it populates the renderer's
+    // *decoded* image cache, which is exactly what the <img> React mounts later
+    // reads from. It never enters the document, so it renders nothing itself.
+    // Failures are irrelevant: the real element re-requests and surfaces its
+    // own error state.
+    const warm = new Image();
+    // Both outcomes are logged: the whole point of this optimisation is that
+    // the decode finishes before React mounts the real element, and the only
+    // way to know whether it did is to record when it landed.
+    warm.onload = () =>
+      trace('loaded', {
+        elapsedMs: Math.round(performance.now() - started),
+        width: warm.naturalWidth,
+        height: warm.naturalHeight,
+      });
+    warm.onerror = () =>
+      trace('failed', { elapsedMs: Math.round(performance.now() - started) });
+    warm.src = href;
+    trace('started');
+  } catch (err) {
+    // Never let a warm-up break startup — but do say so, otherwise a silently
+    // dead optimisation looks exactly like a working one.
+    trace('threw', { error: String((err as Error)?.message ?? err) });
+  }
+}
+
 // Get the electron main process args from ipc and expose to mainWorld.
-async function loadMainArgs() {
-  const mainProcessArgs = await ipcRenderer.invoke('get-main-args');
-  const appUserData = await ipcRenderer.invoke('get-user-data-path');
-  const macPath = await ipcRenderer.invoke('get-mac-path');
-  const filePath = isValidFilePath(mainProcessArgs[1])
-    ? mainProcessArgs[1]
-    : macPath;
+//
+// Synchronous by design: the renderer reads `window.appArgs` at module-eval
+// time (see platform.ts / getInitialContext), so an async exposure raced the
+// bundle — losing that race meant the double-clicked file silently didn't open.
+// One sendSync at document-start costs ~1ms and removes the race entirely.
+function loadMainArgs() {
+  let argv: string[] = process.argv;
+  let macPath = '';
+  let appUserData = '';
+  let bootId = 'unknown';
+  let appVersion = 'unknown';
+  const askedAt = performance.now();
+  try {
+    const boot = ipcRenderer.sendSync('get-boot-args') as {
+      argv: string[];
+      macPath: string;
+      appUserData: string;
+      bootId: string;
+      appVersion: string;
+    };
+    argv = boot?.argv ?? process.argv;
+    macPath = boot?.macPath ?? '';
+    appUserData = boot?.appUserData ?? '';
+    bootId = boot?.bootId ?? 'unknown';
+    appVersion = boot?.appVersion ?? 'unknown';
+  } catch {
+    // Fall through with defaults; the renderer's own error paths cover it.
+  }
+  const filePath = isValidFilePath(argv[1]) ? argv[1] : macPath;
   contextBridge.exposeInMainWorld('appArgs', {
     filePath,
     appUserData,
     dbPath: path.join(appUserData, 'dream.sqlite'),
     allArgs: process.argv,
+    // Carried through so the renderer's marks join the main process timeline.
+    bootId,
+    appVersion,
   });
+  // The earliest timestamp anything in the renderer process can take, and the
+  // cost of the one synchronous IPC the preload makes.
+  ipcRenderer.send('log-event', {
+    level: 'info',
+    scope: 'startup',
+    message: 'preload',
+    data: {
+      bootId,
+      at: Math.round(performance.now()),
+      bootArgsMs: Math.round(performance.now() - askedAt),
+      resolvedFile: filePath,
+      // If this is false on a launch that was supposed to open a file, the
+      // argv plumbing is broken and nothing downstream will make sense.
+      hasFile: !!filePath,
+    },
+  });
+  warmInitialMedia(filePath, bootId);
 }
 loadMainArgs();

@@ -20,6 +20,9 @@ import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import { displayTagLabel } from '../../tag-display';
 import type { TagConcept } from '../../hooks/useTagSearch';
+import { DEFAULT_TAG_SCOPE, type TagScope } from '../../search/tag-scopes';
+import { isWarm } from '../../search/tag-search-service';
+import { markPalette, endPaletteOpen } from '../../palette-trace';
 import SuggestionSections from '../taxonomy/suggestion-sections';
 import type { SuggestionItem } from '../taxonomy/suggestion-sections';
 import TagPlusIcon from '../icons/tag-plus-icon';
@@ -55,6 +58,10 @@ interface CommandPaletteResultsProps {
   // Report the ordered navigable rows (tags first, then suggestions).
   onNavItemsChange: (items: SuggestionItem[]) => void;
   onCommit: (predicate: Predicate) => void;
+  // Which slice of the tag table to fetch and fuzzy-search. See
+  // ../../search/tag-scopes: 'curated' skips the autotagger's "Suggested"
+  // bucket, which is ~97% of the table and the reason the palette used to lag.
+  tagScope?: TagScope;
 }
 
 export default function CommandPaletteResults({
@@ -66,6 +73,7 @@ export default function CommandPaletteResults({
   onHighlightKey,
   onNavItemsChange,
   onCommit,
+  tagScope = DEFAULT_TAG_SCOPE,
 }: CommandPaletteResultsProps) {
   const queryClient = useQueryClient();
   const applyTagPreview = useSelector(
@@ -77,13 +85,38 @@ export default function CommandPaletteResults({
     (s: any) => s.context.initSessionId
   );
 
-  const { results: tagResults } = useTagSearch(text, active && text.length > 0);
+  const { results: tagResults } = useTagSearch(
+    text,
+    active && text.length > 0,
+    tagScope
+  );
 
   const { data: categories } = useQuery<CategoryLite[], Error>(
     ['taxonomy', 'categories', initSessionId],
     loadCategories,
     { staleTime: Infinity, cacheTime: Infinity }
   );
+
+  // The palette is "ready entirely" once its engine has its data: the
+  // categories list resolved and the fuzzy index for this scope is built. Both
+  // are one-time per session, which is exactly why the FIRST open is the slow
+  // one — see ../../palette-trace.
+  useEffect(() => {
+    markPalette('results-mounted');
+  }, []);
+  useEffect(() => {
+    if (categories) markPalette('categories-ready');
+  }, [categories]);
+  useEffect(() => {
+    if (!categories) return;
+    // Whether the fuzzy index for this scope already exists. It is normally
+    // warmed at startup, so on a healthy session this is true before the user
+    // ever right-clicks; if it is false here, the first keystroke will pay for
+    // the fetch + index build and THAT is the lag being felt.
+    if (isWarm(tagScope)) markPalette('index-warm');
+    markPalette('data-ready');
+    endPaletteOpen(isWarm(tagScope) ? 'ready' : 'ready-index-cold');
+  }, [categories, tagScope]);
 
   // Apply a tag to the current media item (an assignment) — distinct from
   // clicking the row, which adds the tag to the search query.

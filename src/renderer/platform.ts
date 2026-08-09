@@ -248,7 +248,14 @@ function channelToEndpoint(channel: string): EndpointMapping | null {
     'load-all-tags': {
       url: '/api/taxonomy/tags',
       method: 'GET',
-      argsToBody: () => null,
+      // args[0] is an optional list of categories to leave out (the command
+      // palette excludes "Suggested"). Sent comma-separated so the server can
+      // filter in SQL; a server that ignores it just returns everything and the
+      // client-side applyScope pass trims it. See search/tag-scopes.ts.
+      argsToBody: (args) => {
+        const exclude = Array.isArray(args?.[0]) ? (args[0] as string[]) : [];
+        return exclude.length ? { excludeCategory: exclude.join(',') } : null;
+      },
     },
     // Full detail for one tag (description included). The all-tags list is
     // deliberately thin, so anything needing a description asks per tag.
@@ -398,6 +405,10 @@ export let appArgs: {
   dbPath?: string;
   filePath?: string;
   appUserData?: string;
+  /** Set by the Electron preload; joins renderer startup marks to the main
+   * process timeline in app-log.jsonl. Absent in web mode. */
+  bootId?: string;
+  appVersion?: string;
 };
 
 export let store: {

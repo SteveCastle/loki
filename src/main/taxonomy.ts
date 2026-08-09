@@ -75,23 +75,45 @@ const loadCategoryTags =
 // `get-tag`. Keep this SELECT in sync with the server's
 // /api/taxonomy/tags handler (media-server/loki_api.go), which returns the
 // same three fields.
-const loadAllTags = (db: Database) => async () => {
-  try {
-    const rows = await db.all(
-      `SELECT label, category_label, weight
-         FROM tag
-         ORDER BY category_label, weight`
+// UNORDERED, and aliased in SQL rather than remapped in JS — both for cost, at
+// 190K rows. The ORDER BY had no index behind it, so every call sorted the
+// whole table through a temp b-tree; no consumer depends on that order (the
+// search index ranks by Fuse score, and the sidebar's per-category lists come
+// from `load-category-tags`, which still sorts). Aliasing category_label in the
+// query also drops a 190K-object `.map()` that ran on the main process's event
+// loop — the same loop that serves gsm:// media reads.
+//
+// args[0] is an optional list of categories to leave out. The command palette
+// passes ["Suggested"], which is 97% of the table (183,548 of 189,122) — doing
+// that filter HERE means those rows are never read, never crammed through IPC,
+// and never Fuse-indexed. See src/renderer/search/tag-scopes.ts.
+type LoadAllTagsInput = [string[]?] | undefined;
+const loadAllTags =
+  (db: Database) =>
+  async (_: IpcMainInvokeEvent, args?: LoadAllTagsInput) => {
+    const requested = args?.[0];
+    const exclude = (Array.isArray(requested) ? requested : []).filter(
+      (c): c is string => typeof c === 'string' && c.length > 0
     );
-    return rows.map((row) => ({
-      label: row.label,
-      category: row.category_label,
-      weight: row.weight,
-    }));
-  } catch (e) {
-    console.log(e);
-    return [];
-  }
-};
+    try {
+      if (exclude.length === 0) {
+        return await db.all(
+          `SELECT label, category_label AS category, weight FROM tag`
+        );
+      }
+      const placeholders = exclude.map(() => '?').join(', ');
+      return await db.all(
+        `SELECT label, category_label AS category, weight
+           FROM tag
+          WHERE category_label IS NULL
+             OR category_label NOT IN (${placeholders})`,
+        exclude
+      );
+    } catch (e) {
+      console.log(e);
+      return [];
+    }
+  };
 
 type GetTagInput = [string];
 

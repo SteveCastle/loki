@@ -30,20 +30,68 @@ async function makeDb(): Promise<Database> {
   await db.run(
     `INSERT INTO tag (label, category_label, weight) VALUES ('sunset', 'Subject', 1)`
   );
+  // The autotagger's catch-all bucket. On a real library this is ~97% of the
+  // table (183,548 of 189,122), which is why the command palette excludes it.
+  await db.run(
+    `INSERT INTO tag (label, category_label, weight) VALUES ('1girl', 'Suggested', 0)`
+  );
+  await db.run(
+    `INSERT INTO tag (label, category_label, weight) VALUES ('outdoors', 'Suggested', 0)`
+  );
+  // A tag with no category at all — must survive an exclusion filter, since
+  // NULL NOT IN (...) is NULL in SQL, not true.
+  await db.run(`INSERT INTO tag (label, weight) VALUES ('orphan', 2)`);
   return db;
 }
+
+const labelsOf = (rows: Record<string, unknown>[]) =>
+  rows.map((r) => r.label).sort();
 
 describe('loadAllTags payload', () => {
   it('returns only label, category and weight', async () => {
     const db = await makeDb();
-    const rows = (await loadAllTags(db)()) as Record<string, unknown>[];
+    const rows = (await loadAllTags(db)({} as any)) as Record<
+      string,
+      unknown
+    >[];
 
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(5);
     for (const row of rows) {
       expect(Object.keys(row).sort()).toEqual(['category', 'label', 'weight']);
     }
-    // Ordered by category then weight, as the search index expects.
-    expect(rows.map((r) => r.label)).toEqual(['moody', 'sunset']);
+    await db.close();
+  });
+
+  it('excludes the requested categories, keeping uncategorised tags', async () => {
+    const db = await makeDb();
+    const rows = (await loadAllTags(db)({} as any, [
+      ['Suggested'],
+    ])) as Record<string, unknown>[];
+
+    // 'orphan' has a NULL category: `NULL NOT IN ('Suggested')` evaluates to
+    // NULL (not true), so without an explicit IS NULL branch it would vanish.
+    expect(labelsOf(rows)).toEqual(['moody', 'orphan', 'sunset']);
+    await db.close();
+  });
+
+  it('excludes several categories at once', async () => {
+    const db = await makeDb();
+    const rows = (await loadAllTags(db)({} as any, [
+      ['Suggested', 'Subject'],
+    ])) as Record<string, unknown>[];
+
+    expect(labelsOf(rows)).toEqual(['moody', 'orphan']);
+    await db.close();
+  });
+
+  it('ignores an empty or malformed exclusion list', async () => {
+    const db = await makeDb();
+    expect(
+      labelsOf((await loadAllTags(db)({} as any, [[]])) as any[])
+    ).toHaveLength(5);
+    expect(
+      labelsOf((await loadAllTags(db)({} as any, [['', null as any]])) as any[])
+    ).toHaveLength(5);
     await db.close();
   });
 });

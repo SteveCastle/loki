@@ -56,6 +56,9 @@ jest.mock('../renderer/search/tag-search-service', () => ({
   indexTags: jest.fn(),
   searchTags: (_q: string, _limit: number, cb: (items: unknown[]) => void) =>
     cb([]),
+  // The results subtree reports whether the scope's index exists so a cold
+  // index can be told apart from a warm one in the open trace.
+  isWarm: () => true,
 }));
 
 import CommandPaletteSearch from '../renderer/components/controls/command-palette-search';

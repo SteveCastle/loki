@@ -64,6 +64,9 @@ declare global {
       allArgs: string[];
       appUserData: string;
       dbPath: string;
+      /** Joins the renderer's startup marks to the main process timeline. */
+      bootId?: string;
+      appVersion?: string;
     };
     electron: {
       userHome: string;

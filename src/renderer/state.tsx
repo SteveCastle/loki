@@ -36,6 +36,7 @@ import {
   type QueryHistoryEntry,
 } from './query/history';
 import { getFileType, FileTypes } from '../file-types';
+import { markStartup } from './startup-marks';
 import { cursorAfterRemoval, libraryWithout } from './library-cursor';
 import { extendSelection } from './context-selection';
 import { movedPath, moveRange } from './media-path';
@@ -591,10 +592,20 @@ const getInitialContext = (): LibraryState => {
     ['authToken', null],
   ] as [string, any][]);
 
+  const initialFile = appArgs?.filePath || '';
+
   return {
-    initialFile: appArgs?.filePath || '',
+    initialFile,
     dbPath: batched['dbPath'] as string,
-    library: [],
+    // Seed the opened file into the library up front so the viewer can paint it
+    // on the FIRST render — before load-db, before the directory scan. The
+    // machine reaches `loadingFromFS` only after the DB round trip, and its
+    // entry seeds this exact same value; doing it here just stops the media
+    // element waiting on work it doesn't depend on. A directory/archive seeds
+    // nothing, matching loadingFromFS (see isMediaPath).
+    library: isMediaPath(initialFile)
+      ? [{ path: initialFile, mtimeMs: 0 }]
+      : [],
     libraryLoadId: '',
     initSessionId: '',
     textFilter: '',
@@ -1737,6 +1748,10 @@ export const libraryMachine = createMachine(
             ],
           },
           selecting: {
+            // A native dialog means the clock is now measuring the USER, not
+            // the app. Marked so a launch that sat on the picker can't be read
+            // as a slow one (a 3.3s "gap" here was somebody choosing a file).
+            entry: () => markStartup('waiting-on-file-picker'),
             invoke: {
               src: (context, event) => {
                 const currentFile = context.initialFile;
@@ -1755,6 +1770,7 @@ export const libraryMachine = createMachine(
             },
           },
           selectingDirectory: {
+            entry: () => markStartup('waiting-on-folder-picker'),
             invoke: {
               src: (context, event) => {
                 const currentFile = context.initialFile;
@@ -3348,9 +3364,13 @@ export const GlobalStateProvider = (props: Props) => {
   // populated cache and the correct canWrite (no hidden-then-shown
   // flicker for public visitors).
   React.useEffect(() => {
-    if (sessionStoreReady && accessReady) return;
+    if (sessionStoreReady && accessReady) {
+      markStartup('providers-ready');
+      return;
+    }
     Promise.all([initializeSessionStore(), initAccess()]).then(() => {
       accessReady = true;
+      markStartup('providers-ready');
       setIsReady(true);
     });
   }, []);

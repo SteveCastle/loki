@@ -27,7 +27,11 @@ import Category from './category';
 import SuggestionSections from './suggestion-sections';
 import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
-import { useTagSearch } from '../../hooks/useTagSearch';
+import {
+  useTagSearch,
+  loadTagsForScope,
+  tagScopeQueryKey,
+} from '../../hooks/useTagSearch';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
 import { useFilterHistory } from '../../hooks/useFilterHistory';
@@ -66,9 +70,16 @@ async function loadCategoryTags(categoryLabel: string): Promise<Concept[]> {
   return (result as Concept[]) ?? [];
 }
 
+// The sidebar deliberately searches EVERYTHING, machine-suggested tags
+// included — it is the surface for exploring the whole taxonomy, and the cost
+// is paid lazily (the query below is gated on the search input gaining focus).
+// The command palette uses the 'curated' scope instead. Shared loader + key
+// with useTagSearch so the sidebar's fetch and its type-ahead index are one
+// request, not two.
+const SIDEBAR_TAG_SCOPE = 'all' as const;
+
 async function loadAllTags(): Promise<Concept[]> {
-  const result = await invoke('load-all-tags', []);
-  return (result as Concept[]) ?? [];
+  return (await loadTagsForScope(SIDEBAR_TAG_SCOPE)) as Concept[];
 }
 
 export default function Taxonomy() {
@@ -213,7 +224,7 @@ export default function Taxonomy() {
   const { data: allTagsData, isFetching: isFetchingAllTags } = useQuery<
     Concept[],
     Error
-  >(['taxonomy', 'all-tags', initSessionId], loadAllTags, {
+  >(tagScopeQueryKey(SIDEBAR_TAG_SCOPE, initSessionId), loadAllTags, {
     enabled: (searchFocused || !!tagFilterInput) && !!initSessionId,
     staleTime: Infinity,
   });
@@ -271,11 +282,16 @@ export default function Taxonomy() {
     }
   }
 
-  // Tag search now runs through the shared, pre-warmed singleton index (one
-  // worker for the whole app) via useTagSearch. We pass the already-debounced
-  // tagFilter; the hook debounces again (harmless) and returns ranked,
-  // pre-capped matches across all categories.
-  const { results: searchResults } = useTagSearch(tagFilter, !!tagFilter);
+  // Tag search runs through the shared singleton worker via useTagSearch. We
+  // pass the already-debounced tagFilter; the hook debounces again (harmless)
+  // and returns ranked, pre-capped matches. Explicitly the 'all' scope: the
+  // sidebar searches the complete taxonomy, machine-suggested tags included,
+  // unlike the command palette.
+  const { results: searchResults } = useTagSearch(
+    tagFilter,
+    !!tagFilter,
+    SIDEBAR_TAG_SCOPE
+  );
 
   // People list (shared cache) so search results can tell which People
   // matches resolve to an actual person — those render as person cards; the

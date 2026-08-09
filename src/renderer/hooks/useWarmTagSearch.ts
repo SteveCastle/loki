@@ -1,24 +1,23 @@
-// useWarmTagSearch — builds the shared tag-search index at app startup.
+// useWarmTagSearch — builds the command palette's tag-search index in the
+// background, once the app has finished the work the user is actually waiting on.
 //
-// Mounted once near the app root (after the library DB is available) so the
-// full all-tags list is fetched eagerly and pushed into the shared singleton
-// index. By the time the user opens the taxonomy sidebar or the command
-// palette, the index is already warm and the first search is instant.
-import { useContext, useEffect } from 'react';
+// Mounted once near the app root. It warms the CURATED scope only: that is what
+// the palette — the app's most frequently opened surface — searches, and it is
+// ~5.6K tags instead of the ~189K in the full set. The taxonomy sidebar's
+// complete index is deliberately NOT warmed here; the sidebar fetches it lazily
+// when its search input gains focus, so the cost lands on the surface that needs
+// it rather than on every launch.
+import { useContext, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../state';
 import { invoke } from '../platform';
 import { indexTags, type TagConcept } from '../search/tag-search-service';
+import { loadTagsForScope, tagScopeQueryKey } from './useTagSearch';
+import { onIdleAfterFirstPaint } from '../first-paint';
 
-// Deliberately thin rows: label + category + weight (see loadAllTags in
-// src/main/taxonomy.ts and the /api/taxonomy/tags handler). This is the whole
-// tag table on both hops — IPC/HTTP and then the worker's postMessage — so
-// don't add fields here; fetch per-tag detail with `get-tag` instead.
-async function loadAllTags(): Promise<TagConcept[]> {
-  const result = await invoke('load-all-tags', []);
-  return (result as TagConcept[]) ?? [];
-}
+// What the palette searches. See ../search/tag-scopes.
+const WARM_SCOPE = 'curated' as const;
 
 export function useWarmTagSearch(): void {
   const { libraryService } = useContext(GlobalStateContext);
@@ -27,27 +26,51 @@ export function useWarmTagSearch(): void {
     (state) => state.context.initSessionId
   );
 
-  // Same key + loader as useTagSearch / taxonomy so this primes the shared
-  // cache. Gated on initSessionId (assigned only once the machine reaches its
-  // post-DB `init` state) so the fetch never races ahead of the load-db handler
+  // Held off the startup critical path. Even at the curated scope this is a DB
+  // query, an IPC clone and a Fuse build, and none of it is on the path to
+  // showing the user the file they opened. Nothing on screen needs it: it only
+  // makes the FIRST type-ahead instant, and the user cannot type before the app
+  // has painted.
+  const [warmable, setWarmable] = useState(false);
+  useEffect(() => onIdleAfterFirstPaint(() => setWarmable(true)), []);
+
+  // Same key + loader as useTagSearch so this primes the shared cache. Also
+  // gated on initSessionId (assigned only once the machine reaches its post-DB
+  // `init` state) so the fetch never races ahead of the load-db handler
   // registration — firing earlier just yields a guaranteed "No handler
   // registered for 'load-all-tags'" rejection on every launch. staleTime:
   // Infinity means it then runs at most once per session (re-keyed on
   // initSessionId).
   const { data: allTagsData } = useQuery<TagConcept[], Error>(
-    ['taxonomy', 'all-tags', initSessionId],
-    loadAllTags,
-    { enabled: !!initSessionId, staleTime: Infinity }
+    tagScopeQueryKey(WARM_SCOPE, initSessionId),
+    () => loadTagsForScope(WARM_SCOPE),
+    { enabled: !!initSessionId && warmable, staleTime: Infinity }
   );
 
   // Build the shared index ahead of first use, off the RAW React Query array so
-  // the same reference is shared with every other consumer (taxonomy, palette).
-  // That shared reference is what lets indexTags clone the library to the worker
-  // exactly once — here at startup — instead of again on each surface's first
-  // search. The defensive label filter lives inside indexTags.
+  // the same reference is shared with every other consumer of this scope. That
+  // shared reference is what lets indexTags clone to the worker exactly once —
+  // here at startup — instead of again on the palette's first search.
   useEffect(() => {
-    if (allTagsData) indexTags(allTagsData);
+    if (allTagsData) indexTags(allTagsData, WARM_SCOPE);
   }, [allTagsData]);
+
+  // The categories list, on the same idle window and under the SAME query key
+  // the palette uses. It is a trivial query (a couple of dozen rows) but it is
+  // the last thing the palette waits on to be fully ready, and asking for it
+  // at open time means queueing behind whatever the main process is still
+  // doing — measured at ~194ms on a first open. Prefetching costs nothing here
+  // and makes it a cache hit later.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!initSessionId || !warmable) return;
+    queryClient.prefetchQuery({
+      queryKey: ['taxonomy', 'categories', initSessionId],
+      queryFn: async () => (await invoke('load-categories', [])) ?? [],
+      staleTime: Infinity,
+      cacheTime: Infinity,
+    });
+  }, [initSessionId, warmable, queryClient]);
 }
 
 export default useWarmTagSearch;

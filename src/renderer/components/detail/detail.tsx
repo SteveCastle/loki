@@ -16,6 +16,9 @@ import useTagDrop from 'renderer/hooks/useTagDrop';
 import Tags from '../metadata/tags';
 import BattleMode from '../elo/BattleMode';
 import DescriptionOverlay from './description-overlay';
+import { notifyFirstMediaPainted } from '../../first-paint';
+import { markStartup } from '../../startup-marks';
+import { beginPaletteOpen } from '../../palette-trace';
 
 function resizeToCover(
   parentWidth: number,
@@ -361,6 +364,10 @@ export function Detail({ offset = 0 }: { offset?: number }) {
   const handleLoad = () => {
     const media = mediaRef.current;
 
+    // The user can see their media — background startup work (tag index,
+    // taxonomy warm-up) is allowed to start now, and not a moment before.
+    notifyFirstMediaPainted();
+
     handleResize();
 
     if (media instanceof HTMLVideoElement) {
@@ -415,6 +422,11 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     return null;
   }
 
+  // The media element is about to exist with its src set. Splits the launch
+  // into "how long until we asked for the bytes" and "how long the bytes took"
+  // — two very different problems with very different fixes.
+  markStartup('media-mounted', { path: item.path });
+
   // Use effect that registers a counter that fires a empty function every 1 second.
 
   return (
@@ -438,6 +450,7 @@ export function Detail({ offset = 0 }: { offset?: number }) {
               target: item ? { type: 'file', path: item.path } : { type: 'library' },
             });
           } else {
+            beginPaletteOpen();
             libraryService.send('SHOW_COMMAND_PALETTE', {
               position: { x: e.clientX, y: e.clientY },
             });
