@@ -1492,7 +1492,7 @@ function setPropValueLive(clip, key, v, tRel = null) {
 
 function setPropValue(clip, key, v) {
   history.record(comp, () => setPropValueLive(clip, key, v));
-  onModelChange({ structural: false });
+  onModelChange({ structural: false, propKey: key });
 }
 
 function toggleAnim(clip, key) {
@@ -1529,7 +1529,12 @@ function toggleKey(clip, key) {
 
 /* ---- model change fan-out ------------------------------------------ */
 
-function onModelChange({ structural = false, transient = false } = {}) {
+/** `propKey` marks the change as one property's value — a slider let go of,
+ * a number typed in. Those can't restructure the panel, so the inspector
+ * updates that row in place rather than rebuilding: a rebuild costs the
+ * scroll position and the keyboard focus of whatever the user is in the
+ * middle of adjusting. */
+function onModelChange({ structural = false, transient = false, propKey = null } = {}) {
   ensureDur(comp);
   markChainDirty();
   if (transient) return;
@@ -1541,7 +1546,8 @@ function onModelChange({ structural = false, transient = false } = {}) {
   syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   refreshDropHint();
   timeline.render();
-  renderInspector();
+  if (propKey) syncInspProp(propKey);
+  else renderInspector();
   renderMediaBin();          // clip counts on the cards track the model
   scheduleSave();
 }
@@ -5783,6 +5789,14 @@ function ensureFocusedLayer() {
   return fallback;
 }
 
+/* Rebuilding drops the scroll offset along with the old nodes, which snaps
+ * the controls the user was working in out of sight — a long effect stack is
+ * mostly below the fold. Value edits don't come through here at all any more
+ * (see onModelChange), but adding an effect or twirling one open still does,
+ * so the offset carries across while the same layer stays in focus; a
+ * different layer is a new panel and starts at the top. */
+let inspScrollClipId = null;
+
 function renderInspector() {
   if (!timeline) return;
   inspLive.length = 0;
@@ -5790,6 +5804,8 @@ function renderInspector() {
   inspRows.clear();
   const clip = ensureFocusedLayer();
   syncAddPlaceholder();
+  const keepScroll = clip && clip.id === inspScrollClipId ? inspectorEl.scrollTop : 0;
+  inspScrollClipId = clip?.id ?? null;
   inspectorEl.replaceChildren();
 
   if (!clip) {
@@ -5904,6 +5920,11 @@ function renderInspector() {
   // — and rAF can't be trusted to get there (it doesn't run at all while
   // the window is occluded), so paint them synchronously now.
   refreshInspWidgets();
+
+  // Put the view back (the browser clamps to the rebuilt content's height,
+  // so a panel that shrank — a section folded, an effect removed — lands as
+  // far down as it can rather than jumping).
+  inspectorEl.scrollTop = keepScroll;
 }
 
 /* ---- inspector sections ----------------------------------------------
@@ -6260,13 +6281,27 @@ function sliderScale(def) {
 
 /* Live handles on the rows of the current render, so a widget dragging a
  * value can move the matching slider without a full re-render. */
-const inspRows = new Map();   // propKey -> {slider, num, scale}
+const inspRows = new Map();   // propKey -> {clip, slider, num, scale, keyBtn}
 
 function syncInspRow(key, v) {
   const r = inspRows.get(key);
   if (!r) return;
   r.slider.value = String(r.scale.toPos(v));
   if (document.activeElement !== r.num) r.num.value = fmtVal(v);
+}
+
+/* One property's value changed — the panel's structure didn't, so bring the
+ * row itself up to date instead of rebuilding around it. Nothing else in the
+ * inspector reads a value: only the row's own slider, number box, and the ◆
+ * that says whether the playhead sits on a keyframe. */
+function syncInspProp(key) {
+  const r = inspRows.get(key);
+  if (!r) return;   // edited from the timeline, on a layer that isn't in focus
+  syncInspRow(key, valueAt(r.clip, key));
+  const prop = getProp(r.clip, key);
+  r.keyBtn.classList.toggle('at-key',
+    !!(prop?.anim && keyNear(prop, relTime(r.clip), 0.5 / comp.fps)));
+  refreshInspWidgets();
 }
 
 function paramRow(clip, def) {
@@ -6302,7 +6337,6 @@ function paramRow(clip, def) {
   const v0 = valueAt(clip, def.key);
   slider.value = String(scale.toPos(v0));
   num.value = fmtVal(v0);
-  inspRows.set(def.key, { slider, num, scale });
 
   const binding = { clip, key: def.key, slider, num, scale, dragging: false };
   if (anim) inspLive.push(binding);
@@ -6323,7 +6357,7 @@ function paramRow(clip, def) {
     if (!binding.dragging) return;
     binding.dragging = false;
     history.commit(comp);
-    onModelChange({ structural: false });
+    onModelChange({ structural: false, propKey: def.key });
   };
   slider.addEventListener('pointerup', commitSlider);
   slider.addEventListener('pointercancel', commitSlider);
@@ -6348,6 +6382,8 @@ function paramRow(clip, def) {
   keyBtn.classList.toggle('at-key', !!atKey);
   keyBtn.title = 'add / remove keyframe at playhead';
   keyBtn.addEventListener('click', () => toggleKey(clip, def.key));
+
+  inspRows.set(def.key, { clip, slider, num, scale, keyBtn });
 
   const drv = document.createElement('button');
   drv.className = 'tl-mini drv-toggle' + (prop?.driver?.enabled ? ' on' : '');
