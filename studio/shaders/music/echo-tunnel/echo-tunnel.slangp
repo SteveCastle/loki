@@ -1,0 +1,32 @@
+shaders = 2
+
+# Pass 0 — the corridor itself, in its own float buffer. Self-feedback
+# (PassFeedback0) is the accumulator; keeping it out of the composite is
+# what stops the picture from being re-printed every frame.
+shader0            = echo-accum.slang
+filter_linear0     = true
+scale_type0        = source
+scale0             = 1.0
+wrap_mode0         = clamp_to_edge
+float_framebuffer0 = true
+
+# Pass 1 — screen the corridor back over the clean Original.
+shader1        = echo-tunnel.slang
+filter_linear1 = true
+scale_type1    = source
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;flow;kick;spin;decay;print;thresh;hue;glow"
+amount = 1.0
+bass   = 0.0
+mids   = 0.0
+air    = 0.0
+flow   = 1.6
+kick   = 1.2
+spin   = 0.6
+decay  = 0.93
+print  = 0.90
+thresh = 0.45
+hue    = 4.0
+glow   = 1.0

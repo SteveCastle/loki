@@ -1,0 +1,21 @@
+shaders = 1
+
+shader0        = liquid-pulse.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;scale;speed;warp;swirl;ripple;sheen;hue;chroma"
+amount = 1.0
+bass   = 0.0
+mids   = 0.0
+air    = 0.0
+scale  = 2.4
+speed  = 0.30
+warp   = 2.5
+swirl  = 35.0
+ripple = 1.0
+sheen  = 0.7
+hue    = 0.5
+chroma = 0.35

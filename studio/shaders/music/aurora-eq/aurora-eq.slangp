@@ -1,0 +1,21 @@
+shaders = 1
+
+shader0        = aurora-eq.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;height;spread;detail;flow;edge;hue;glow;mirror"
+amount = 1.0
+bass   = 0.0
+mids   = 0.0
+air    = 0.0
+height = 0.55
+spread = 1.0
+detail = 6.0
+flow   = 0.35
+edge   = 1.0
+hue    = 0.5
+glow   = 1.0
+mirror = 0.0

@@ -1,0 +1,21 @@
+shaders = 1
+
+shader0        = starfield.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;speed;surge;spin;twist;density;size;streak;glow"
+amount  = 1.0
+bass    = 0.0
+mids    = 0.0
+air     = 0.0
+speed   = 0.12
+surge   = 0.35
+spin    = 1.0
+twist   = 12.0
+density = 6.0
+size    = 0.45
+streak  = 1.0
+glow    = 1.0

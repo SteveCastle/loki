@@ -1,0 +1,22 @@
+shaders = 1
+
+shader0        = spark-shower.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;count;speed;gravity;cone;size;trail;glow;cx;cy"
+amount  = 1.0
+bass    = 0.0
+mids    = 0.0
+air     = 0.0
+count   = 20.0
+speed   = 0.9
+gravity = 0.6
+cone    = 0.55
+size    = 1.1
+trail   = 1.0
+glow    = 1.0
+cx      = 0.5
+cy      = 0.9

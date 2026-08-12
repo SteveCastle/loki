@@ -1,0 +1,21 @@
+shaders = 1
+
+shader0        = pulse-rings.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;spread;width;warp;glow;chroma;cx;cy;fade"
+amount = 1.0
+bass   = 0.0
+mids   = 0.0
+air    = 0.0
+spread = 1.0
+width  = 0.12
+warp   = 4.0
+glow   = 1.0
+chroma = 0.35
+cx     = 0.5
+cy     = 0.5
+fade   = 0.6

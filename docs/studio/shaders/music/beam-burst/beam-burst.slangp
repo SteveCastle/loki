@@ -1,0 +1,22 @@
+shaders = 1
+
+shader0        = beam-burst.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;reach;burst;rays;spin;thresh;disperse;glow;cx;cy"
+amount   = 1.0
+bass     = 0.0
+mids     = 0.0
+air      = 0.0
+reach    = 0.45
+burst    = 0.55
+rays     = 0.0
+spin     = 30.0
+thresh   = 0.62
+disperse = 0.45
+glow     = 1.0
+cx       = 0.5
+cy       = 0.5

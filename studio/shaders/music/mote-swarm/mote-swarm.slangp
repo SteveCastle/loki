@@ -1,0 +1,20 @@
+shaders = 1
+
+shader0        = mote-swarm.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;bass;mids;air;density;size;drift;scatter;swirl;hue;glow"
+amount  = 1.0
+bass    = 0.0
+mids    = 0.0
+air     = 0.0
+density = 6.0
+size    = 0.9
+drift   = 0.35
+scatter = 0.30
+swirl   = 25.0
+hue     = 0.55
+glow    = 1.0

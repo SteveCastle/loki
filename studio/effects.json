@@ -33,6 +33,10 @@
       "label": "Tempo-synced"
     },
     {
+      "id": "music",
+      "label": "Music visualisers"
+    },
+    {
       "id": "glitch",
       "label": "Glitch & analog"
     },
@@ -114,6 +118,46 @@
       "name": "beat-strobe",
       "path": "shaders/beat/beat-strobe/beat-strobe.slangp",
       "category": "beat"
+    },
+    {
+      "name": "pulse-rings",
+      "path": "shaders/music/pulse-rings/pulse-rings.slangp",
+      "category": "music"
+    },
+    {
+      "name": "spark-shower",
+      "path": "shaders/music/spark-shower/spark-shower.slangp",
+      "category": "music"
+    },
+    {
+      "name": "starfield",
+      "path": "shaders/music/starfield/starfield.slangp",
+      "category": "music"
+    },
+    {
+      "name": "mote-swarm",
+      "path": "shaders/music/mote-swarm/mote-swarm.slangp",
+      "category": "music"
+    },
+    {
+      "name": "echo-tunnel",
+      "path": "shaders/music/echo-tunnel/echo-tunnel.slangp",
+      "category": "music"
+    },
+    {
+      "name": "aurora-eq",
+      "path": "shaders/music/aurora-eq/aurora-eq.slangp",
+      "category": "music"
+    },
+    {
+      "name": "beam-burst",
+      "path": "shaders/music/beam-burst/beam-burst.slangp",
+      "category": "music"
+    },
+    {
+      "name": "liquid-pulse",
+      "path": "shaders/music/liquid-pulse/liquid-pulse.slangp",
+      "category": "music"
     },
     {
       "name": "bloom",
