@@ -1066,6 +1066,41 @@ body.mask-editing #mask-overlay {
 }
 .mask-foot .btn { margin-left: auto; }
 
+/* AI roto: prompt-picking mode shares #mask-overlay with painting, but
+ * clicks land on the canvas stack (capture handler), not the overlay. */
+body.roto-editing #mask-overlay {
+  display: block;
+  pointer-events: none;
+  opacity: 0.6;
+}
+body.roto-editing #canvas-stack { cursor: crosshair; }
+body.roto-editing #gizmo { display: none; }
+/* Analysis monitor: the overlay becomes an opaque, PAINTABLE viewer
+ * showing each frame + mask as it lands — brush on it to correct the
+ * track mid-flight (the preview behind it is frozen anyway). */
+body.roto-analyzing #mask-overlay {
+  display: block;
+  pointer-events: auto;
+  cursor: crosshair;
+  opacity: 1;
+}
+body.roto-analyzing #gizmo { display: none; }
+.mn-roto-query {
+  flex: 1 1 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 3px 6px;
+}
+.mn-roto-query::placeholder { color: var(--dim); }
+.mn-roto-status {
+  flex-basis: 100%;
+  color: var(--dim);
+  font-size: 11px;
+}
+
 .overlay-controls {
   display: flex;
   flex-wrap: wrap;

@@ -9,6 +9,10 @@ This directory is the **source of truth** for the studio app in the loki
 monorepo. The published copy lives at `docs/studio/` (served by GitHub
 Pages as the *Studio* tab of the docs site).
 
+**[ARCHITECTURE.md](ARCHITECTURE.md)** is the technical tour: what each
+module owns, what happens in a frame, how the shader engine and the mask,
+driver and export paths fit together.
+
 ## Effects, layers, and scope
 
 Every clip — media or fx — owns an ordered **effect stack** (`clip.effects`).
