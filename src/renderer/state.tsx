@@ -2228,6 +2228,12 @@ export const libraryMachine = createMachine(
                       return context.cursor;
                     },
                     libraryLoadId: () => newLoadId(),
+                    // Deleting one item is an in-place edit of the current
+                    // view, not a navigation: hand the list the outgoing
+                    // loadId so it keeps the user's scroll position instead
+                    // of jumping to the top (same contract as
+                    // DELETED_ASSIGNMENT).
+                    preserveScrollFromLoadId: (context) => context.libraryLoadId,
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
@@ -2279,6 +2285,8 @@ export const libraryMachine = createMachine(
                       return cur;
                     },
                     libraryLoadId: () => newLoadId(),
+                    // In-place removal — keep the list where it is.
+                    preserveScrollFromLoadId: (context) => context.libraryLoadId,
                   }),
                 ],
               },
@@ -2295,6 +2303,8 @@ export const libraryMachine = createMachine(
                         event.data.path
                       ),
                     libraryLoadId: () => newLoadId(),
+                    // In-place removal — keep the list where it is.
+                    preserveScrollFromLoadId: (context) => context.libraryLoadId,
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
@@ -2924,6 +2934,12 @@ export const libraryMachine = createMachine(
                       return context.cursor;
                     },
                     libraryLoadId: () => newLoadId(),
+                    // Deleting one item is an in-place edit of the current
+                    // view, not a navigation: hand the list the outgoing
+                    // loadId so it keeps the user's scroll position instead
+                    // of jumping to the top (same contract as
+                    // DELETED_ASSIGNMENT).
+                    preserveScrollFromLoadId: (context) => context.libraryLoadId,
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
@@ -2975,6 +2991,8 @@ export const libraryMachine = createMachine(
                       return cur;
                     },
                     libraryLoadId: () => newLoadId(),
+                    // In-place removal — keep the list where it is.
+                    preserveScrollFromLoadId: (context) => context.libraryLoadId,
                   }),
                 ],
               },
@@ -2991,6 +3009,8 @@ export const libraryMachine = createMachine(
                         event.data.path
                       ),
                     libraryLoadId: () => newLoadId(),
+                    // In-place removal — keep the list where it is.
+                    preserveScrollFromLoadId: (context) => context.libraryLoadId,
                   }),
                   assign<LibraryState, AnyEventObject>({
                     toasts: (context, event) => {
