@@ -41,13 +41,16 @@ import type { Database } from './database';
 // them to <userData>/app-log.jsonl so field hangs/crashes can be diagnosed.
 installGlobalErrorHandlers();
 
-// One instance only. Every instance shares the same userData dir, and the
-// first instance's storage service holds the profile's Local Storage leveldb
-// EXCLUSIVELY for its whole lifetime — a second instance can't open it, so its
-// renderer's first localStorage read blocks ~5.6s in Chromium's locked-file
-// retry loop (stalling first media behind it) and then falls back to
-// in-memory storage whose writes are silently lost. A double-clicked file now
-// forwards to the running instance via 'second-instance' below.
+// One PROCESS only — but as many windows as the user wants. Every process
+// shares the same userData dir, and the first process's storage service holds
+// the profile's Local Storage leveldb EXCLUSIVELY for its whole lifetime — a
+// second process can't open it, so its renderer's first localStorage read
+// blocked ~5.6s in Chromium's locked-file retry loop (stalling first media
+// behind it) and then fell back to in-memory storage whose writes were
+// silently lost. (Two processes also fight over dream.sqlite, config.json,
+// and session.json.) So a second launch quits itself and the running process
+// opens a NEW WINDOW for it instead — same one-window-per-open UX, one
+// storage service.
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
@@ -60,16 +63,11 @@ app.on('second-instance', (_event, argv) => {
   logEvent({
     level: 'info',
     scope: 'main:second-instance',
-    message: 'second launch forwarded to running instance',
+    message: 'second launch opens a new window in the running instance',
     data: { forwardedPath },
   });
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
-  if (forwardedPath) {
-    mainWindow.webContents.send('open-path', forwardedPath);
-  }
+  // A launch can race our own startup; whenReady is settled in the common case.
+  app.whenReady().then(() => createWindow({ launchFile: forwardedPath }));
 });
 
 // Register custom protocol schemes as privileged (must be done before app ready)
@@ -147,7 +145,22 @@ async function checkForUpdatesInBackground() {
   }
 }
 
+// The FIRST window. Windows opened later (a second launch, macOS open-file)
+// are tracked only by the OS; window-scoped IPC must resolve the sender's
+// window, never assume this one.
 let mainWindow: BrowserWindow | null = null;
+
+// Launch file per secondary window, keyed by webContents id. An entry exists
+// for EVERY secondary window — '' means "opened with nothing" — so
+// get-boot-args can tell them apart from the primary window, whose file comes
+// from process.argv/macPath.
+const windowLaunchFiles = new Map<number, string>();
+
+// The window an IPC request came from. Frameless windows drive their own
+// chrome (close/minimize/fullscreen) over IPC, so acting on `mainWindow` here
+// would let window B's buttons operate window A.
+const senderWindow = (event: { sender: Electron.WebContents }) =>
+  BrowserWindow.fromWebContents(event.sender);
 
 // Persist renderer-side errors and load failures to the same app-log.jsonl as
 // main-process errors. The renderer forwards window.onerror, unhandled
@@ -182,26 +195,38 @@ ipcMain.handle('get-mac-path', () => {
 // empty and the file the user double-clicked never opened. sendSync runs
 // before the page's own scripts, so the value is always there in time.
 ipcMain.on('get-boot-args', (event) => {
+  // Secondary windows (a forwarded second launch, macOS open-file) have their
+  // own launch file — possibly '' for "opened with nothing", which must NOT
+  // fall back to the primary launch's argv. `undefined` means primary.
+  const launchFile = windowLaunchFiles.get(event.sender.id);
   event.returnValue = {
     argv: process.argv,
     macPath,
     appUserData: app.getPath('userData'),
     // Lets the renderer's startup marks join the main process's timeline.
-    bootId: getBootId(),
+    // Secondary windows get a derived id so their marks can't garble the real
+    // launch's merged report.
+    bootId:
+      launchFile === undefined
+        ? getBootId()
+        : `${getBootId()}-w${event.sender.id}`,
     appVersion: appVersion(),
+    launchFile,
   };
 });
 
 // The renderer reports when the user can actually see their media (or that it
 // gave up waiting), which is the only true end of the launch. `args` is the
 // array the preload's sendMessage wraps around its payload.
-ipcMain.on('startup-first-media', (_event, args) => {
+ipcMain.on('startup-first-media', (event, args) => {
+  // Only the primary window's first media ends THE launch trace; a window
+  // opened mid-session reporting in must not append a second trace-end.
+  if (windowLaunchFiles.has(event.sender.id)) return;
   const reason = Array.isArray(args) ? args[0]?.reason : undefined;
   finishLaunchTrace(typeof reason === 'string' ? reason : 'first-media');
 });
 
-ipcMain.handle('capture-region', async (_event, [rect]) => {
-  if (!mainWindow) return null;
+ipcMain.handle('capture-region', async (event, [rect]) => {
   // rect is in renderer CSS pixels; capturePage expects the same space.
   const r = {
     x: Math.round(rect.x),
@@ -210,28 +235,36 @@ ipcMain.handle('capture-region', async (_event, [rect]) => {
     height: Math.round(rect.height),
   };
   if (r.width <= 0 || r.height <= 0) return null;
-  const image = await mainWindow.webContents.capturePage(r);
+  const image = await event.sender.capturePage(r);
   return image.toPNG(); // Buffer; serialized to the renderer as a Uint8Array
 });
 
 // Window Controls
-ipcMain.on('shutdown', async () => {
-  // Shutdown the app.
-  app.quit();
+ipcMain.on('shutdown', async (event) => {
+  // The close button closes ITS window; the app quits with the last one
+  // (window-all-closed handles non-darwin; quitting explicitly here keeps the
+  // historical close-button-quits behavior on macOS too).
+  const win = senderWindow(event);
+  if (win && BrowserWindow.getAllWindows().length > 1) {
+    win.close();
+  } else {
+    app.quit();
+  }
 });
 
-ipcMain.on('minimize', async () => {
+ipcMain.on('minimize', async (event) => {
+  const win = senderWindow(event);
   if (os.platform() === 'darwin') {
-    if (mainWindow?.isFullScreen()) {
-      mainWindow.once('leave-full-screen', function () {
-        mainWindow?.minimize();
+    if (win?.isFullScreen()) {
+      win.once('leave-full-screen', function () {
+        win?.minimize();
       });
-      mainWindow?.setFullScreen(false);
+      win?.setFullScreen(false);
     } else {
-      mainWindow?.minimize();
+      win?.minimize();
     }
   } else {
-    mainWindow?.minimize();
+    win?.minimize();
   }
 });
 
@@ -250,26 +283,27 @@ ipcMain.on('open-studio', async (_event, args) => {
   openStudioWindow(Array.isArray(args) ? args.filter((p) => typeof p === 'string') : []);
 });
 
-ipcMain.on('toggle-fullscreen', async () => {
-  // Shutdown the app.
-  mainWindow?.setFullScreen(!mainWindow?.isFullScreen());
+ipcMain.on('toggle-fullscreen', async (event) => {
+  const win = senderWindow(event);
+  win?.setFullScreen(!win?.isFullScreen());
 });
 
 ipcMain.on('set-always-on-top', async (event, args) => {
+  const win = senderWindow(event);
   const alwaysOnTop = args[0];
-  const wasFullScreen = mainWindow?.isFullScreen();
-  const wasFocused = mainWindow?.isFocused();
+  const wasFullScreen = win?.isFullScreen();
+  const wasFocused = win?.isFocused();
 
   console.log(
     `Setting always-on-top to: ${alwaysOnTop}, fullscreen: ${wasFullScreen}`
   );
 
   // Always apply the setting, even in fullscreen mode
-  mainWindow?.setAlwaysOnTop(alwaysOnTop);
+  win?.setAlwaysOnTop(alwaysOnTop);
 
   // If the window was focused before and we're enabling always-on-top, ensure it stays focused
   if (wasFocused && alwaysOnTop) {
-    mainWindow?.focus();
+    win?.focus();
   }
 });
 
@@ -638,10 +672,11 @@ ipcMain.handle('load-db', async (event, args) => {
 type SelectDBInput = [string | undefined];
 ipcMain.handle(
   'select-db',
-  async (_: IpcMainInvokeEvent, args: SelectDBInput) => {
-    invariant(mainWindow, 'mainWindow is not defined');
+  async (event: IpcMainInvokeEvent, args: SelectDBInput) => {
+    const win = senderWindow(event) ?? mainWindow;
+    invariant(win, 'no window to parent the dialog to');
     const defaultPath = args[0];
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       properties: ['openFile', 'promptToCreate', 'dontAddToRecent'],
       defaultPath,
       filters: [{ name: 'Lowkey Media Database', extensions: ['sqlite'] }],
@@ -660,10 +695,11 @@ ipcMain.handle(
 type SelectFileInput = [string | undefined];
 ipcMain.handle(
   'select-file',
-  async (_: IpcMainInvokeEvent, args: SelectFileInput) => {
-    invariant(mainWindow, 'mainWindow is not defined');
+  async (event: IpcMainInvokeEvent, args: SelectFileInput) => {
+    const win = senderWindow(event) ?? mainWindow;
+    invariant(win, 'no window to parent the dialog to');
     const defaultPath = args[0];
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       properties: ['openFile'],
       defaultPath,
       filters: [
@@ -724,10 +760,11 @@ ipcMain.handle(
 type SelectDirectoryInput = [string | undefined];
 ipcMain.handle(
   'select-directory',
-  async (_: IpcMainInvokeEvent, args: SelectDirectoryInput) => {
-    invariant(mainWindow, 'mainWindow is not defined');
+  async (event: IpcMainInvokeEvent, args: SelectDirectoryInput) => {
+    const win = senderWindow(event) ?? mainWindow;
+    invariant(win, 'no window to parent the dialog to');
     const defaultPath = args[0];
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       properties: ['openDirectory'],
       defaultPath,
     });
@@ -753,10 +790,16 @@ if (isDebug) {
   app.commandLine.appendSwitch('inspect');
 }
 
-const createWindow = async () => {
+// Opens an app window. The first window of the process is the PRIMARY: it
+// owns the launch trace and reads its file from process.argv/macPath. Later
+// calls (a forwarded second launch, macOS open-file) open SECONDARY windows
+// whose launch file — including '' for "nothing" — arrives via
+// `options.launchFile` and reaches the renderer through get-boot-args.
+const createWindow = async (options?: { launchFile?: string }) => {
   if (isDebug) {
     // await installExtensions();
   }
+  const primary = mainWindow === null;
 
   const RESOURCES_PATH = app.isPackaged
     ? path.join(process.resourcesPath, 'assets')
@@ -766,8 +809,10 @@ const createWindow = async () => {
     return path.join(RESOURCES_PATH, ...paths);
   };
 
-  markLaunch('creating-window');
-  mainWindow = new BrowserWindow({
+  // Launch-trace marks describe THE launch; a window opened mid-session
+  // logging them would append stale marks to a finished trace.
+  if (primary) markLaunch('creating-window');
+  const win = new BrowserWindow({
     show: false,
     width: 1024,
     height: 728,
@@ -793,37 +838,45 @@ const createWindow = async () => {
     },
   });
 
-  markLaunch('window-created', { packaged: app.isPackaged });
-  // What this launch was asked to open — a file (and how big, on which root),
-  // a directory, or nothing. Without it the timings can't be compared.
-  describeLaunch(isValidFilePath(process.argv[1]) ? process.argv[1] : macPath);
-  mainWindow.loadURL(resolveHtmlPath(`index.html`));
-  markLaunch('load-url-called');
+  if (primary) {
+    mainWindow = win;
+    markLaunch('window-created', { packaged: app.isPackaged });
+    // What this launch was asked to open — a file (and how big, on which root),
+    // a directory, or nothing. Without it the timings can't be compared.
+    describeLaunch(isValidFilePath(process.argv[1]) ? process.argv[1] : macPath);
+  } else {
+    windowLaunchFiles.set(win.webContents.id, options?.launchFile ?? '');
+  }
+  const wcId = win.webContents.id;
+  win.loadURL(resolveHtmlPath(`index.html`));
+  if (primary) markLaunch('load-url-called');
 
-  mainWindow.webContents.on('did-finish-load', () => markLaunch('did-finish-load'));
+  if (primary) {
+    win.webContents.on('did-finish-load', () => markLaunch('did-finish-load'));
+  }
 
-  mainWindow.on('ready-to-show', () => {
-    markLaunch('ready-to-show');
-    if (!mainWindow) {
-      throw new Error('"mainWindow" is not defined');
-    }
+  win.on('ready-to-show', () => {
+    if (primary) markLaunch('ready-to-show');
     if (process.env.START_MINIMIZED) {
-      mainWindow.minimize();
+      win.minimize();
     } else {
-      mainWindow.show();
+      win.show();
     }
-    // Defer auto updates until after first paint
-    setTimeout(() => {
-      checkForUpdatesInBackground();
-    }, 1500);
+    // Defer auto updates until after first paint (once per process)
+    if (primary) {
+      setTimeout(() => {
+        checkForUpdatesInBackground();
+      }, 1500);
+    }
   });
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  win.on('closed', () => {
+    windowLaunchFiles.delete(wcId);
+    if (mainWindow === win) mainWindow = null;
   });
 
   // Handle fullscreen state changes to keep always-on-top in sync
-  mainWindow.on('leave-full-screen', () => {
+  win.on('leave-full-screen', () => {
     // Re-apply always-on-top setting when exiting fullscreen
     // Use a small delay to ensure the window has fully transitioned out of fullscreen
     setTimeout(() => {
@@ -831,7 +884,7 @@ const createWindow = async () => {
       console.log('Exiting fullscreen, alwaysOnTop setting:', alwaysOnTop);
 
       // Always re-apply the setting to ensure sync, whether true or false
-      mainWindow?.setAlwaysOnTop(alwaysOnTop);
+      if (!win.isDestroyed()) win.setAlwaysOnTop(alwaysOnTop);
       console.log(
         `Applied always-on-top: ${alwaysOnTop} after exiting fullscreen`
       );
@@ -839,33 +892,36 @@ const createWindow = async () => {
       // Ensure window stays focused if always-on-top was enabled
       if (alwaysOnTop) {
         setTimeout(() => {
-          mainWindow?.focus();
+          if (!win.isDestroyed()) win.focus();
         }, 50);
       }
     }, 200);
   });
 
-  mainWindow.on('enter-full-screen', () => {
+  win.on('enter-full-screen', () => {
     // When entering fullscreen, the always-on-top state might be overridden
     // but we don't need to do anything special here as fullscreen takes precedence
   });
 
-  const menuBuilder = new MenuBuilder(mainWindow);
+  // Every window gets a builder (it also wires the dev context menu for that
+  // window); the application menu itself is global and its actions target the
+  // focused window (see MenuBuilder).
+  const menuBuilder = new MenuBuilder(win);
   menuBuilder.buildMenu();
-  markLaunch('menu-built');
+  if (primary) markLaunch('menu-built');
 
   // Open urls in the user's browser
-  mainWindow.webContents.setWindowOpenHandler((edata) => {
+  win.webContents.setWindowOpenHandler((edata) => {
     shell.openExternal(edata.url);
     return { action: 'deny' };
   });
 
-  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+  win.webContents.on('render-process-gone', (_event, details) => {
     console.error(
       `Renderer process gone: reason=${details.reason}, exitCode=${details.exitCode}`
     );
     if (details.reason === 'crashed' || details.reason === 'oom') {
-      mainWindow?.reload();
+      if (!win.isDestroyed()) win.reload();
     }
   });
 
@@ -880,11 +936,10 @@ app.on('open-file', (event, path) => {
   console.log('OPEN FILE:', path);
   macPath = path;
   // A Finder open while the app is already running lands here (macOS never
-  // spawns a second instance for it) — forward it like 'second-instance' does.
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
-    mainWindow.webContents.send('open-path', path);
+  // spawns a second instance for it) — open a new window for it, same as a
+  // forwarded second launch. Before ready, macPath feeds the primary boot.
+  if (app.isReady() && BrowserWindow.getAllWindows().length > 0) {
+    createWindow({ launchFile: path });
   }
 });
 

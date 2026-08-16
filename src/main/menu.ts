@@ -18,6 +18,13 @@ export default class MenuBuilder {
     this.mainWindow = mainWindow;
   }
 
+  // The application menu is GLOBAL (last builder wins), but there can be
+  // several app windows: menu actions and accelerators must act on the window
+  // the user is in, not whichever window built the menu most recently.
+  private target(): BrowserWindow {
+    return BrowserWindow.getFocusedWindow() ?? this.mainWindow;
+  }
+
   buildMenu(): Menu {
     if (
       process.env.NODE_ENV === 'development' ||
@@ -107,21 +114,22 @@ export default class MenuBuilder {
           label: 'Reload',
           accelerator: 'Command+R',
           click: () => {
-            this.mainWindow.webContents.reload();
+            this.target().webContents.reload();
           },
         },
         {
           label: 'Toggle Full Screen',
           accelerator: 'Ctrl+Command+F',
           click: () => {
-            this.mainWindow.setFullScreen(!this.mainWindow.isFullScreen());
+            const win = this.target();
+            win.setFullScreen(!win.isFullScreen());
           },
         },
         {
           label: 'Toggle Developer Tools',
           accelerator: 'Alt+Command+I',
           click: () => {
-            this.mainWindow.webContents.toggleDevTools();
+            this.target().webContents.toggleDevTools();
           },
         },
       ],
@@ -133,7 +141,8 @@ export default class MenuBuilder {
           label: 'Toggle Full Screen',
           accelerator: 'Ctrl+Command+F',
           click: () => {
-            this.mainWindow.setFullScreen(!this.mainWindow.isFullScreen());
+            const win = this.target();
+            win.setFullScreen(!win.isFullScreen());
           },
         },
       ],
@@ -205,7 +214,7 @@ export default class MenuBuilder {
             label: '&Close',
             accelerator: 'Ctrl+W',
             click: () => {
-              this.mainWindow.close();
+              this.target().close();
             },
           },
         ],
@@ -220,23 +229,22 @@ export default class MenuBuilder {
                   label: '&Reload',
                   accelerator: 'Ctrl+R',
                   click: () => {
-                    this.mainWindow.webContents.reload();
+                    this.target().webContents.reload();
                   },
                 },
                 {
                   label: 'Toggle &Full Screen',
                   accelerator: 'F11',
                   click: () => {
-                    this.mainWindow.setFullScreen(
-                      !this.mainWindow.isFullScreen()
-                    );
+                    const win = this.target();
+                    win.setFullScreen(!win.isFullScreen());
                   },
                 },
                 {
                   label: 'Toggle &Developer Tools',
                   accelerator: 'Alt+Ctrl+I',
                   click: () => {
-                    this.mainWindow.webContents.toggleDevTools();
+                    this.target().webContents.toggleDevTools();
                   },
                 },
               ]
@@ -245,9 +253,8 @@ export default class MenuBuilder {
                   label: 'Toggle &Full Screen',
                   accelerator: 'F11',
                   click: () => {
-                    this.mainWindow.setFullScreen(
-                      !this.mainWindow.isFullScreen()
-                    );
+                    const win = this.target();
+                    win.setFullScreen(!win.isFullScreen());
                   },
                 },
               ],

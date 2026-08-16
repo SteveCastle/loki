@@ -80,7 +80,6 @@ export type Channels =
   | 'find-subtitle'
   | 'open-studio'
   | 'studio-media-saved'
-  | 'open-path'
   | 'startup-first-media';
 
 // Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to
@@ -456,6 +455,7 @@ function loadMainArgs() {
   let appUserData = '';
   let bootId = 'unknown';
   let appVersion = 'unknown';
+  let launchFile: string | undefined;
   const askedAt = performance.now();
   try {
     const boot = ipcRenderer.sendSync('get-boot-args') as {
@@ -464,16 +464,25 @@ function loadMainArgs() {
       appUserData: string;
       bootId: string;
       appVersion: string;
+      // Set (possibly '') for secondary windows — a forwarded second launch
+      // or macOS open-file — whose file must NOT come from process argv.
+      launchFile?: string;
     };
     argv = boot?.argv ?? process.argv;
     macPath = boot?.macPath ?? '';
     appUserData = boot?.appUserData ?? '';
     bootId = boot?.bootId ?? 'unknown';
     appVersion = boot?.appVersion ?? 'unknown';
+    launchFile = boot?.launchFile;
   } catch {
     // Fall through with defaults; the renderer's own error paths cover it.
   }
-  const filePath = isValidFilePath(argv[1]) ? argv[1] : macPath;
+  const filePath =
+    typeof launchFile === 'string'
+      ? launchFile
+      : isValidFilePath(argv[1])
+      ? argv[1]
+      : macPath;
   contextBridge.exposeInMainWorld('appArgs', {
     filePath,
     appUserData,

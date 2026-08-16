@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import { Database } from './database';
 import { retryAsync, isDatabaseLockedError } from './db-retry';
 import type Store from 'electron-store';
-import { IpcMainInvokeEvent, dialog } from 'electron';
+import { IpcMainInvokeEvent, dialog, BrowserWindow } from 'electron';
 
 import { asyncCreateThumbnail } from './image-processing';
 import { getFileType } from '../file-types';
@@ -485,13 +485,16 @@ const loadTagsByMediaPath =
 type SelectNewPathInput = [string, boolean];
 const selectNewPath =
   (mainWindow: Electron.BrowserWindow | null) =>
-  async (_: IpcMainInvokeEvent, args: SelectNewPathInput) => {
-    if (!mainWindow) {
+  async (event: IpcMainInvokeEvent, args: SelectNewPathInput) => {
+    // Parent the dialog to the window that asked (there may be several);
+    // the registration-time window is only a fallback.
+    const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    if (!win) {
       return null;
     }
     const targetPath = args[0];
     const updateAll = args[1];
-    const result = await dialog.showOpenDialog(mainWindow, {
+    const result = await dialog.showOpenDialog(win, {
       defaultPath: targetPath,
       properties: ['openFile'],
       filters: [

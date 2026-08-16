@@ -3350,19 +3350,9 @@ const GlobalStateProviderInner = (props: Props) => {
     const offDone = on('load-files-done', () => {
       libraryService.send({ type: 'LOAD_FILES_DONE' });
     });
-    // A file double-clicked while the app is running arrives here (the
-    // single-instance lock forwards the second launch's argument; macOS
-    // 'open-file' takes the same route). Same event as drag-drop.
-    const offOpenPath = on('open-path', (...args: unknown[]) => {
-      const p = args[0];
-      if (typeof p === 'string' && p) {
-        libraryService.send('SET_FILE', { path: p });
-      }
-    });
     return () => {
       if (typeof offBatch === 'function') offBatch();
       if (typeof offDone === 'function') offDone();
-      if (typeof offOpenPath === 'function') offOpenPath();
     };
   }, [libraryService]);
 
