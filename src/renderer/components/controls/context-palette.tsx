@@ -875,9 +875,28 @@ export default function ContextPalette() {
   // deleted from disk with all their database references erased. In Electron
   // this runs against the local library over IPC; in web mode it hits the
   // synchronous /api/media/merge-metadata endpoint.
+  //
+  // Two-click confirm (the media-error / People-panel pattern): the first
+  // click arms the button, the second runs the merge. Deleting files is not
+  // undoable, and this button sits one row under the header of a palette
+  // that opens on every right-click.
   const [merging, setMerging] = useState(false);
+  const [mergeArmed, setMergeArmed] = useState(false);
+  // Disarm on every palette open, and whenever the selection changes — a
+  // confirm click must never land on a different set than the one that was
+  // armed. (The palette stays mounted while hidden, so armed state would
+  // otherwise survive into the next right-click.)
+  useEffect(() => {
+    setMergeArmed(false);
+  }, [display, selection]);
   const handleMergeSelection = async () => {
     if (selection.length < 2 || merging) return;
+    if (!mergeArmed) {
+      setMergeArmed(true);
+      window.setTimeout(() => setMergeArmed(false), 4000);
+      return;
+    }
+    setMergeArmed(false);
     setMerging(true);
     try {
       const result = (await invoke('merge-item-metadata', [selection])) as {
@@ -940,15 +959,22 @@ export default function ContextPalette() {
     }
   };
 
-  // Electron-only: hand the right-clicked file to Lowkey Studio. The main
-  // process opens (or reuses) the studio window with the file auto-imported.
-  // Playback pauses first — the viewer keeps running behind the studio
-  // window, and its audio bleeding into an editing session is never wanted.
+  // Electron-only: hand the right-clicked file — or the whole multi-selection
+  // — to Lowkey Studio. The main process opens (or reuses) the studio window
+  // with every path auto-imported (each becomes an ?import= entry the studio
+  // feeds through its normal import pipeline). Non-importable files in the
+  // selection are dropped rather than blocking the launch. Playback pauses
+  // first — the viewer keeps running behind the studio window, and its audio
+  // bleeding into an editing session is never wanted.
+  const studioPaths = (hasSelection ? selection : [similarTargetPath]).filter(
+    (p) => !!p && STUDIO_MEDIA_RE.test(p)
+  );
   const handleOpenInStudio = () => {
+    if (studioPaths.length === 0) return;
     if (libraryService.getSnapshot().context.videoPlayer.playing) {
       libraryService.send('TOGGLE_PLAY_PAUSE');
     }
-    send('open-studio', [similarTargetPath]);
+    send('open-studio', studioPaths);
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
@@ -1211,14 +1237,20 @@ export default function ContextPalette() {
           ) : effectiveTarget.type === 'file' ? (
             <span className="context-count">1 file</span>
           ) : null}
-          {isElectron &&
-            similarTargetPath &&
-            STUDIO_MEDIA_RE.test(similarTargetPath) && (
+          {isElectron && studioPaths.length > 0 && (
               <button
                 className="find-similar-btn"
                 onClick={handleOpenInStudio}
-                title="Open in Studio"
-                aria-label="Open in Studio"
+                title={
+                  studioPaths.length > 1
+                    ? `Open ${studioPaths.length} items in Studio`
+                    : 'Open in Studio'
+                }
+                aria-label={
+                  studioPaths.length > 1
+                    ? `Open ${studioPaths.length} items in Studio`
+                    : 'Open in Studio'
+                }
               >
                 <svg
                   width="14"
@@ -1338,13 +1370,23 @@ export default function ContextPalette() {
           <span className="action-group-title">Selection</span>
           <button
             type="button"
-            className="merge-selection-btn"
+            className={`merge-selection-btn${mergeArmed ? ' danger' : ''}`}
             onClick={handleMergeSelection}
             disabled={merging}
-            title="Copy tags, embeddings, and the transcript onto the first-selected item, then delete the other files"
+            title={
+              mergeArmed
+                ? `Click again to merge — the other ${selection.length - 1} file${
+                    selection.length - 1 === 1 ? '' : 's'
+                  } will be deleted from disk`
+                : 'Copy tags, embeddings, and the transcript onto the first-selected item, then delete the other files. Asks to confirm.'
+            }
           >
             {merging
               ? 'Merging…'
+              : mergeArmed
+              ? `Confirm — deletes ${selection.length - 1} file${
+                  selection.length - 1 === 1 ? '' : 's'
+                }`
               : `Merge ${selection.length} items into first`}
           </button>
           <span className="merge-selection-note">

@@ -307,17 +307,22 @@ let studioWindow: BrowserWindow | null = null;
 // /launch-media route, so the studio fetches the bytes and imports them
 // through its normal File pipeline (see collectLaunchImports in studio/app.js).
 export function openStudioWindow(mediaPaths: string[]) {
-  const entries = mediaPaths.filter(Boolean).map((p) => {
+  const paths = mediaPaths.filter(Boolean);
+  // Edit-and-save only applies to a single-file launch. A multi-item launch
+  // is a compositing session over the group; wiring "Save" to overwrite the
+  // first selected file with the composite would be surprising at best.
+  const savable = paths.length === 1;
+  const entries = paths.map((p) => {
     const entry: { url: string; name: string; saveUrl?: string; saveName?: string } = {
       url: `/launch-media?path=${encodeURIComponent(p)}`,
       name: path.basename(p),
     };
     // Edit-and-save target: videos save back over the original; images save a
     // video next to the original (same basename, .mp4).
-    if (SAVABLE_VIDEO_RE.test(p)) {
+    if (savable && SAVABLE_VIDEO_RE.test(p)) {
       entry.saveUrl = `/save-media?path=${encodeURIComponent(p)}`;
       savablePaths.add(path.normalize(p));
-    } else if (SAVABLE_IMAGE_RE.test(p)) {
+    } else if (savable && SAVABLE_IMAGE_RE.test(p)) {
       const derived = p.replace(/\.[^.\\/]+$/, '.mp4');
       entry.saveUrl = `/save-media?path=${encodeURIComponent(derived)}`;
       entry.saveName = path.basename(derived);

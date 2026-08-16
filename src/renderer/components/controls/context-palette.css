@@ -655,6 +655,20 @@
   cursor: default;
 }
 
+/* Armed state of the two-click merge confirm — same red the People panel's
+   destructive confirmations use. */
+.merge-selection-btn.danger {
+  background: rgba(255, 120, 160, 0.12);
+  border-color: rgba(255, 120, 160, 0.5);
+  color: rgb(255, 120, 160);
+}
+
+.merge-selection-btn.danger:hover:not(:disabled) {
+  background: rgb(255, 120, 160);
+  border-color: rgb(255, 120, 160);
+  color: white;
+}
+
 .merge-selection-note {
   font-size: 11px;
   opacity: 0.55;
