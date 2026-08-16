@@ -29,6 +29,14 @@
 // the query item itself, but no longer comparable to plain-cosine thresholds —
 // consumers that gate on absolute cosine values (the face-identity indexes and
 // their calibrated thresholds) must keep using New().
+//
+// Centering is only valid when the query comes from the SAME distribution as
+// the stored vectors, i.e. image→image search. A CROSS-MODAL query (a SigLIP
+// text vector) does not: image and text embeddings sit in two separate cones
+// (the "modality gap"), so the library's image mean is roughly orthogonal to a
+// text vector. Subtracting it leaves the ranking dominated by ‖v−mu‖ — how
+// ATYPICAL each image is — instead of by how well it matches the text, which
+// measures worse than random. Such queries must pass ScorePlain; see Scoring.
 package embedindex
 
 import (
@@ -51,6 +59,22 @@ type SearchHit struct {
 	Path  string
 	Score float32 // cosine similarity: higher is more similar (1.0 = identical)
 }
+
+// Scoring selects how a query is compared against the stored vectors.
+type Scoring int
+
+const (
+	// ScoreDefault uses the index's own scoring: centered cosine on a
+	// NewCentered index, plain cosine on a New one. Correct for image→image
+	// search, where query and candidates share a distribution.
+	ScoreDefault Scoring = iota
+	// ScorePlain forces plain cosine, bypassing mean-centering even on a
+	// centered index. REQUIRED for cross-modal queries — any query vector with
+	// a text-encoder component — because the stored mean is an image mean (see
+	// the package comment). Plain cosine is also what SigLIP's contrastive
+	// objective calibrates, so it is the model's native image↔text score.
+	ScorePlain
+)
 
 // SharedSpec is the input to SearchShared: a shared-concept ("must match all")
 // query over several positive example vectors, optionally steered away from
@@ -79,10 +103,15 @@ type VectorIndex interface {
 	// restriction). Only allowed vectors are scored, so a narrow allow set
 	// costs less than a full scan, not more.
 	SearchFiltered(query []float32, k int, allow map[string]struct{}) []SearchHit
+	// SearchScored is SearchFiltered with an explicit scoring mode; pass
+	// ScorePlain for cross-modal (text) queries.
+	SearchScored(query []float32, k int, allow map[string]struct{}, s Scoring) []SearchHit
 	// SearchShared ranks candidates by similarity to ALL of the spec's
 	// positive examples at once (see embedvec.SharedQuery) instead of to
 	// their average, restricted to allow when non-nil.
 	SearchShared(spec SharedSpec, k int, allow map[string]struct{}) ([]SearchHit, error)
+	// SearchSharedScored is SearchShared with an explicit scoring mode.
+	SearchSharedScored(spec SharedSpec, k int, allow map[string]struct{}, s Scoring) ([]SearchHit, error)
 	// Len returns the number of vectors in the index.
 	Len() int
 }
@@ -238,13 +267,23 @@ func (x *exactIndex) maybeRecenter() {
 	x.nCentered = n
 }
 
+// centerFor reports the center to score against under s: the library mean when
+// centering is live and s allows it, nil (plain cosine) otherwise.
+func (x *exactIndex) centerFor(s Scoring) []float32 {
+	if s == ScorePlain {
+		return nil
+	}
+	return x.mu
+}
+
 // singleScorer returns a per-worker scorer factory for one query vector:
-// plain cosine when centering is dormant, centered cosine otherwise —
-// (⟨qc,v⟩ − ⟨qc,mu⟩)/‖v−mu‖ with qc = normalize(q−mu), algebraically equal to
-// cos(qc, v−mu) so no per-candidate vector pass is needed.
-func (x *exactIndex) singleScorer(query []float32) func() func(slot int) float32 {
+// plain cosine when centering is dormant or s is ScorePlain, centered cosine
+// otherwise — (⟨qc,v⟩ − ⟨qc,mu⟩)/‖v−mu‖ with qc = normalize(q−mu),
+// algebraically equal to cos(qc, v−mu) so no per-candidate vector pass is
+// needed.
+func (x *exactIndex) singleScorer(query []float32, s Scoring) func() func(slot int) float32 {
 	q := embedvec.Normalize(query)
-	if x.mu == nil || len(q) != len(x.mu) {
+	if mu := x.centerFor(s); mu == nil || len(q) != len(mu) {
 		return func() func(int) float32 {
 			return func(i int) float32 { return embedvec.Cosine(q, x.vecs[i]) }
 		}
@@ -267,22 +306,25 @@ func (x *exactIndex) singleScorer(query []float32) func() func(slot int) float32
 }
 
 func (x *exactIndex) Search(query []float32, k int) []SearchHit {
-	x.maybeRecenter()
-	return x.scanTopK(nil, k, x.singleScorer(query))
+	return x.SearchScored(query, k, nil, ScoreDefault)
 }
 
 // SearchFiltered scans only the vectors whose path is in allow, so the cost is
 // O(|allow|·dim) rather than O(N·dim).
 func (x *exactIndex) SearchFiltered(query []float32, k int, allow map[string]struct{}) []SearchHit {
-	if allow == nil {
-		return x.Search(query, k)
-	}
+	return x.SearchScored(query, k, allow, ScoreDefault)
+}
+
+func (x *exactIndex) SearchScored(query []float32, k int, allow map[string]struct{}, s Scoring) []SearchHit {
 	x.maybeRecenter()
-	slots := x.collectSlots(allow)
-	if len(slots) == 0 {
-		return nil
+	var slots []int
+	if allow != nil {
+		slots = x.collectSlots(allow)
+		if len(slots) == 0 {
+			return nil
+		}
 	}
-	return x.scanTopK(slots, k, x.singleScorer(query))
+	return x.scanTopK(slots, k, x.singleScorer(query, s))
 }
 
 // SearchShared ranks candidates against every positive example at once with
@@ -290,17 +332,22 @@ func (x *exactIndex) SearchFiltered(query []float32, k int, allow map[string]str
 // with the examples' variation subspace attenuated, aggregated as weighted
 // mean − λ·std, minus weighted negative-term cosines.
 func (x *exactIndex) SearchShared(spec SharedSpec, k int, allow map[string]struct{}) ([]SearchHit, error) {
+	return x.SearchSharedScored(spec, k, allow, ScoreDefault)
+}
+
+func (x *exactIndex) SearchSharedScored(spec SharedSpec, k int, allow map[string]struct{}, s Scoring) ([]SearchHit, error) {
 	x.maybeRecenter()
+	mu := x.centerFor(s)
 	// Move the query vectors into scoring space: normalized, and centered when
 	// centering is active (candidates are centered per-slot in the scorer).
 	prep := func(vs [][]float32) [][]float32 {
 		out := make([][]float32, len(vs))
 		for i, v := range vs {
 			n := embedvec.Normalize(v)
-			if x.mu != nil && len(n) == len(x.mu) {
+			if mu != nil && len(n) == len(mu) {
 				c := make([]float32, len(n))
 				for d := range n {
-					c[d] = n[d] - x.mu[d]
+					c[d] = n[d] - mu[d]
 				}
 				n = embedvec.Normalize(c)
 			}
@@ -326,7 +373,7 @@ func (x *exactIndex) SearchShared(spec SharedSpec, k int, allow map[string]struc
 	}
 	newScorer := func() func(int) float32 {
 		score := sq.Scorer()
-		if x.mu == nil {
+		if mu == nil {
 			return func(i int) float32 { return score(x.vecs[i]) }
 		}
 		scratch := make([]float32, dim)
@@ -338,7 +385,7 @@ func (x *exactIndex) SearchShared(spec SharedSpec, k int, allow map[string]struc
 			inv := 1 / cn
 			v := x.vecs[i]
 			for d := range v {
-				scratch[d] = (v[d] - x.mu[d]) * inv
+				scratch[d] = (v[d] - mu[d]) * inv
 			}
 			return score(scratch)
 		}

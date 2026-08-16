@@ -3,6 +3,7 @@ package tasks
 import (
 	"testing"
 
+	"github.com/stevecastle/shrike/embedindex"
 	"github.com/stevecastle/shrike/media"
 )
 
@@ -33,7 +34,7 @@ func TestIndexRenamePathMovesTheVectorToTheNewPath(t *testing.T) {
 	}
 	IndexRenamePath(db, from, to)
 
-	hits, ok := indexSearch(model, []float32{1, 0, 0}, 5, nil)
+	hits, ok := indexSearch(model, []float32{1, 0, 0}, 5, nil, embedindex.ScoreDefault)
 	if !ok {
 		t.Fatal("no index installed")
 	}

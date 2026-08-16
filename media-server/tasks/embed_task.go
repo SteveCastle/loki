@@ -92,7 +92,7 @@ func IndexSize() int {
 // indexSearch runs a locked ANN search for model, restricted to allow when
 // non-nil. ok is false when no index is installed or the index holds a
 // different model's vectors (caller brute-forces).
-func indexSearch(model string, query []float32, k int, allow PathSet) ([]embedindex.SearchHit, bool) {
+func indexSearch(model string, query []float32, k int, allow PathSet, s embedindex.Scoring) ([]embedindex.SearchHit, bool) {
 	vectorIndexMu.Lock()
 	defer vectorIndexMu.Unlock()
 	if vectorIndex == nil {
@@ -101,13 +101,13 @@ func indexSearch(model string, query []float32, k int, allow PathSet) ([]embedin
 	if vectorIndexModel != "" && vectorIndexModel != model {
 		return nil, false
 	}
-	return vectorIndex.SearchFiltered(query, k, allow), true
+	return vectorIndex.SearchScored(query, k, allow, s), true
 }
 
 // indexSearchShared runs a locked shared-concept search for model, restricted
 // to allow when non-nil. ok is false when no index is installed or the index
 // holds a different model's vectors (caller brute-forces).
-func indexSearchShared(model string, spec embedindex.SharedSpec, k int, allow PathSet) ([]embedindex.SearchHit, bool, error) {
+func indexSearchShared(model string, spec embedindex.SharedSpec, k int, allow PathSet, s embedindex.Scoring) ([]embedindex.SearchHit, bool, error) {
 	vectorIndexMu.Lock()
 	defer vectorIndexMu.Unlock()
 	if vectorIndex == nil {
@@ -116,7 +116,7 @@ func indexSearchShared(model string, spec embedindex.SharedSpec, k int, allow Pa
 	if vectorIndexModel != "" && vectorIndexModel != model {
 		return nil, false, nil
 	}
-	hits, err := vectorIndex.SearchShared(spec, k, allow)
+	hits, err := vectorIndex.SearchSharedScored(spec, k, allow, s)
 	return hits, true, err
 }
 
@@ -224,9 +224,22 @@ func SearchByVector(db *sql.DB, model string, query []float32, limit int) ([]Sim
 }
 
 // searchByVectorWithin is SearchByVector restricted to allow (nil = whole
-// library).
+// library), scored the installed index's way. Use it for image queries; text
+// and blended queries must use searchByVectorCrossModal.
 func searchByVectorWithin(db *sql.DB, model string, query []float32, limit int, allow PathSet) ([]SimilarHit, error) {
-	if raw, ok := indexSearch(model, query, limit, allow); ok {
+	return searchByVectorScored(db, model, query, limit, allow, embedindex.ScoreDefault)
+}
+
+// searchByVectorCrossModal is searchByVectorWithin for a query vector carrying
+// a TEXT-encoder component. Such a vector is not drawn from the stored image
+// distribution, so the library mean must not be subtracted from it — see
+// embedindex.ScorePlain.
+func searchByVectorCrossModal(db *sql.DB, model string, query []float32, limit int, allow PathSet) ([]SimilarHit, error) {
+	return searchByVectorScored(db, model, query, limit, allow, embedindex.ScorePlain)
+}
+
+func searchByVectorScored(db *sql.DB, model string, query []float32, limit int, allow PathSet, s embedindex.Scoring) ([]SimilarHit, error) {
+	if raw, ok := indexSearch(model, query, limit, allow, s); ok {
 		hits := make([]SimilarHit, 0, len(raw))
 		for _, h := range raw {
 			hits = append(hits, SimilarHit{Path: h.Path, Score: h.Score})
@@ -237,6 +250,10 @@ func searchByVectorWithin(db *sql.DB, model string, query []float32, limit int, 
 	if err != nil {
 		return nil, err
 	}
+	// The fallback always scores plain cosine — which is exactly right for
+	// ScorePlain, and (unlike searchSharedWithin) does NOT mirror the centered
+	// index for ScoreDefault. Image rankings therefore shift slightly while no
+	// index is installed; see the note in searchSharedWithin.
 	hits := make([]SimilarHit, 0, len(all))
 	for _, e := range all {
 		if allow != nil {
@@ -248,21 +265,68 @@ func searchByVectorWithin(db *sql.DB, model string, query []float32, limit int, 
 		// normalized its output still rank correctly.
 		hits = append(hits, SimilarHit{Path: e.Path, Score: embedvec.CosineSim(query, e.Vec)})
 	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+	sortSimilar(hits)
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
 	return hits, nil
 }
 
+// sortSimilar orders hits the same way embedindex does — score descending,
+// path ascending on ties — so the brute-force fallback and the installed index
+// return identical result orders, not just identical scores.
+func sortSimilar(hits []SimilarHit) {
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].Score != hits[j].Score {
+			return hits[i].Score > hits[j].Score
+		}
+		return hits[i].Path < hits[j].Path
+	})
+}
+
+// libraryCenter returns the mean of the already-normalized vecs, or nil when
+// there are fewer than embedindex.MinCenterCount of them — the same gate the
+// centered index applies, below which the mean is a statistic of almost
+// nothing.
+func libraryCenter(vecs [][]float32) []float32 {
+	if len(vecs) < embedindex.MinCenterCount || len(vecs[0]) == 0 {
+		return nil
+	}
+	mu := make([]float32, len(vecs[0]))
+	for _, v := range vecs {
+		if len(v) != len(mu) {
+			continue
+		}
+		for d, s := range v {
+			mu[d] += s / float32(len(vecs))
+		}
+	}
+	return mu
+}
+
+// centerBy returns normalize(v − mu), the unit vector v moved into centered
+// scoring space. v is returned unchanged when its dimensionality doesn't match.
+func centerBy(v, mu []float32) []float32 {
+	if len(v) != len(mu) {
+		return v
+	}
+	c := make([]float32, len(v))
+	for d := range v {
+		c[d] = v[d] - mu[d]
+	}
+	return embedvec.Normalize(c)
+}
+
 // searchSharedWithin runs a shared-concept ("must match all") multi-example
 // search via the installed index, or brute-force over all stored embeddings
-// when none matches the model. The brute-force path mirrors the centered
-// index: above embedindex.MinCenterCount vectors it subtracts the library
-// mean before scoring, so rankings don't depend on whether the index happened
-// to be installed.
-func searchSharedWithin(db *sql.DB, model string, spec embedindex.SharedSpec, limit int, allow PathSet) ([]SimilarHit, error) {
-	if raw, ok, err := indexSearchShared(model, spec, limit, allow); ok {
+// when none matches the model. For an image-only query the brute-force path
+// mirrors the centered index: above embedindex.MinCenterCount vectors it
+// subtracts the library mean before scoring, so rankings don't depend on
+// whether the index happened to be installed. (searchByVectorScored's fallback
+// does NOT do this — the two disagree on that point.) A cross-modal query
+// (ScorePlain) is never centered on either path.
+func searchSharedWithin(db *sql.DB, model string, spec embedindex.SharedSpec, limit int, allow PathSet, s embedindex.Scoring) ([]SimilarHit, error) {
+	if raw, ok, err := indexSearchShared(model, spec, limit, allow, s); ok {
 		if err != nil {
 			return nil, err
 		}
@@ -277,29 +341,21 @@ func searchSharedWithin(db *sql.DB, model string, spec embedindex.SharedSpec, li
 		return nil, err
 	}
 	// Normalize once (legacy rows may predate normalized embed output), then
-	// center when the library is big enough for the mean to be meaningful.
+	// center when the library is big enough for the mean to be meaningful and
+	// the query isn't cross-modal.
 	vecs := make([][]float32, len(all))
 	for i, e := range all {
 		vecs[i] = embedvec.Normalize(e.Vec)
 	}
 	var mu []float32
-	if len(vecs) >= embedindex.MinCenterCount {
-		mu = make([]float32, len(vecs[0]))
-		for _, v := range vecs {
-			for d, s := range v {
-				mu[d] += s / float32(len(vecs))
-			}
-		}
+	if s != embedindex.ScorePlain {
+		mu = libraryCenter(vecs)
 	}
 	center := func(v []float32) []float32 {
-		if mu == nil || len(v) != len(mu) {
+		if mu == nil {
 			return v
 		}
-		c := make([]float32, len(v))
-		for d := range v {
-			c[d] = v[d] - mu[d]
-		}
-		return embedvec.Normalize(c)
+		return centerBy(v, mu)
 	}
 	prep := func(vs [][]float32) [][]float32 {
 		out := make([][]float32, len(vs))
@@ -323,7 +379,7 @@ func searchSharedWithin(db *sql.DB, model string, spec embedindex.SharedSpec, li
 		}
 		hits = append(hits, SimilarHit{Path: e.Path, Score: score(center(vecs[i]))})
 	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
+	sortSimilar(hits)
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -562,7 +618,7 @@ func SearchByText(ctx context.Context, db *sql.DB, text string, limit int, allow
 	if err != nil {
 		return nil, err
 	}
-	return searchByVectorWithin(db, m.ID, vec, limit, allow)
+	return searchByVectorCrossModal(db, m.ID, vec, limit, allow)
 }
 
 // embedModelOverrideFromJob returns an explicit `--model=<id>` (or `--model

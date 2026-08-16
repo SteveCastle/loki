@@ -79,7 +79,7 @@ type QueryTerm struct {
 // otherwise the active embed model is used (matching plain similar: search).
 // allow restricts the results to a path subset; nil = whole library.
 func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit int, allow PathSet) ([]SimilarHit, error) {
-	m, vecs, weights, err := compositeVectors(ctx, db, terms)
+	m, vecs, weights, hasText, err := compositeVectors(ctx, db, terms)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +87,7 @@ func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit
 	if err != nil {
 		return nil, err
 	}
-	return searchByVectorWithin(db, m.ID, combined, limit, allow)
+	return searchByVectorScored(db, m.ID, combined, limit, allow, scoringFor(hasText))
 }
 
 // SearchBySharedConcept scores candidates against ALL positive terms at once
@@ -101,7 +101,7 @@ func SearchByComposite(ctx context.Context, db *sql.DB, terms []QueryTerm, limit
 // semantics as score penalties. Term resolution (models, embedding, weights)
 // matches SearchByComposite exactly.
 func SearchBySharedConcept(ctx context.Context, db *sql.DB, terms []QueryTerm, limit int, allow PathSet) ([]SimilarHit, error) {
-	m, vecs, weights, err := compositeVectors(ctx, db, terms)
+	m, vecs, weights, hasText, err := compositeVectors(ctx, db, terms)
 	if err != nil {
 		return nil, err
 	}
@@ -119,21 +119,34 @@ func SearchBySharedConcept(ctx context.Context, db *sql.DB, terms []QueryTerm, l
 	if len(spec.Pos) == 0 {
 		return nil, fmt.Errorf("shared-concept query has no positive terms")
 	}
-	return searchSharedWithin(db, m.ID, spec, limit, allow)
+	return searchSharedWithin(db, m.ID, spec, limit, allow, scoringFor(hasText))
+}
+
+// scoringFor picks the index scoring mode for a query: any text-encoder
+// component makes it cross-modal, which must not be mean-centered against the
+// library's image mean (see embedindex.ScorePlain).
+func scoringFor(hasText bool) embedindex.Scoring {
+	if hasText {
+		return embedindex.ScorePlain
+	}
+	return embedindex.ScoreDefault
 }
 
 // compositeVectors resolves each query term to a vector in one shared
 // embedding space: with any text term present all terms are embedded with the
 // multimodal text-search model; otherwise the active embed model is used
-// (matching plain similar: search).
-func compositeVectors(ctx context.Context, db *sql.DB, terms []QueryTerm) (EmbedModel, [][]float32, []float32, error) {
+// (matching plain similar: search). The bool reports whether any term was
+// text, which makes the resulting query cross-modal (see scoringFor).
+func compositeVectors(ctx context.Context, db *sql.DB, terms []QueryTerm) (EmbedModel, [][]float32, []float32, bool, error) {
 	if len(terms) == 0 {
-		return EmbedModel{}, nil, nil, fmt.Errorf("composite query has no terms")
+		return EmbedModel{}, nil, nil, false, fmt.Errorf("composite query has no terms")
 	}
 	m := ActiveEmbedModel()
+	hasText := false
 	for _, t := range terms {
 		if t.Kind == "text" {
 			m = TextSearchModel()
+			hasText = true
 			break
 		}
 	}
@@ -155,12 +168,12 @@ func compositeVectors(ctx context.Context, db *sql.DB, terms []QueryTerm) (Embed
 			err = fmt.Errorf("unknown query term kind %q", t.Kind)
 		}
 		if err != nil {
-			return EmbedModel{}, nil, nil, fmt.Errorf("composite term (%s %q): %w", t.Kind, truncateForLog(t.Value), err)
+			return EmbedModel{}, nil, nil, false, fmt.Errorf("composite term (%s %q): %w", t.Kind, truncateForLog(t.Value), err)
 		}
 		vecs = append(vecs, vec)
 		weights = append(weights, t.Weight)
 	}
-	return m, vecs, weights, nil
+	return m, vecs, weights, hasText, nil
 }
 
 func truncateForLog(s string) string {
@@ -189,7 +202,8 @@ func SearchByPathAndText(ctx context.Context, db *sql.DB, path, text string, tex
 	if err != nil {
 		return nil, err
 	}
-	return searchByVectorWithin(db, m.ID, blended, limit, allow)
+	// Cross-modal: the blend carries a text component even at low textWeight.
+	return searchByVectorCrossModal(db, m.ID, blended, limit, allow)
 }
 
 // SearchByImageAndText is SearchByPathAndText for raw image bytes (a captured
@@ -207,5 +221,5 @@ func SearchByImageAndText(ctx context.Context, db *sql.DB, image []byte, text st
 	if err != nil {
 		return nil, err
 	}
-	return searchByVectorWithin(db, m.ID, blended, limit, allow)
+	return searchByVectorCrossModal(db, m.ID, blended, limit, allow)
 }

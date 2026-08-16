@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stevecastle/shrike/embedindex"
 	"github.com/stevecastle/shrike/jobqueue"
 	"github.com/stevecastle/shrike/media"
 )
@@ -503,7 +504,7 @@ func TestSplitDirReKeysTheLiveVectorIndex(t *testing.T) {
 
 	runSplitDir(t, db, []string{"--target", dir, "--mode", "alpha"})
 
-	hits, ok := indexSearch(model, []float32{1, 0, 0}, 5, nil)
+	hits, ok := indexSearch(model, []float32{1, 0, 0}, 5, nil, embedindex.ScoreDefault)
 	if !ok {
 		t.Fatal("no index installed")
 	}
