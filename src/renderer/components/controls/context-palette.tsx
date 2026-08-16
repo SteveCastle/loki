@@ -18,6 +18,7 @@ import {
   send,
 } from '../../platform';
 import { subscribeStream, streamConnected } from '../../stream-bus';
+import { onIdleAfterFirstPaint } from '../../first-paint';
 import { displayTagLabel } from '../../tag-display';
 import type { Predicate } from '../../query/types';
 import useOnClickOutside from '../../hooks/useOnClickOutside';
@@ -594,8 +595,26 @@ export default function ContextPalette() {
   // the picked set is a preference ("these are the ops I generate"), and
   // nothing launches without an explicit Run click, so stickiness is safe
   // (unlike the mode, which deliberately snaps back to `missing`).
+  //
+  // NOT hydrated in the initializer: this component mounts in the app's very
+  // first render, and the session's first localStorage access synchronously
+  // loads the profile's storage database — measured at 5.6s of blocked
+  // renderer when the leveldb couldn't be opened cleanly. Nothing may touch
+  // localStorage before the user's media is on screen.
   const [selectedTypes, setSelectedTypes] =
-    useState<string[]>(loadSelectedTypes);
+    useState<string[]>(EMPTY_SELECTION);
+  const selectionHydrated = useRef(false);
+  useEffect(
+    () =>
+      onIdleAfterFirstPaint(() => {
+        const stored = loadSelectedTypes();
+        selectionHydrated.current = true;
+        // If the user already toggled chips before hydration, their live
+        // choice wins over the stored one.
+        setSelectedTypes((prev) => (prev === EMPTY_SELECTION ? stored : prev));
+      }),
+    []
+  );
   // Job scope. Resets to the narrow `selection` on every open for the same
   // reason genMode does — a sticky library-wide scope would silently turn the
   // next single-file right-click into a whole-library job.
@@ -607,6 +626,10 @@ export default function ContextPalette() {
     }
   }, [display]);
   useEffect(() => {
+    // Never write before the deferred hydration above has run: the mount-time
+    // pass would clobber the stored selection with the empty default (and
+    // writing is a localStorage touch of its own).
+    if (!selectionHydrated.current) return;
     try {
       localStorage.setItem(
         SELECTED_TYPES_STORAGE_KEY,

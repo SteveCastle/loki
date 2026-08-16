@@ -23,7 +23,7 @@ import { cleanupArchives } from './archives';
 import { registerSubtitleHandlers } from './subtitles';
 import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
-import { isValidFilePath } from './file-handling';
+import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
 import {
   mark,
@@ -40,6 +40,37 @@ import type { Database } from './database';
 // Prevent hard crashes from unhandled errors in the main process, and persist
 // them to <userData>/app-log.jsonl so field hangs/crashes can be diagnosed.
 installGlobalErrorHandlers();
+
+// One instance only. Every instance shares the same userData dir, and the
+// first instance's storage service holds the profile's Local Storage leveldb
+// EXCLUSIVELY for its whole lifetime — a second instance can't open it, so its
+// renderer's first localStorage read blocks ~5.6s in Chromium's locked-file
+// retry loop (stalling first media behind it) and then falls back to
+// in-memory storage whose writes are silently lost. A double-clicked file now
+// forwards to the running instance via 'second-instance' below.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', (_event, argv) => {
+  // Skip the exe (packaged) or the exe + app path (dev), same as the boot
+  // path's process.argv handling.
+  const forwardedPath = filePathFromArgv(argv, app.isPackaged ? 1 : 2);
+  logEvent({
+    level: 'info',
+    scope: 'main:second-instance',
+    message: 'second launch forwarded to running instance',
+    data: { forwardedPath },
+  });
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  if (forwardedPath) {
+    mainWindow.webContents.send('open-path', forwardedPath);
+  }
+});
 
 // Register custom protocol schemes as privileged (must be done before app ready)
 protocol.registerSchemesAsPrivileged([
@@ -848,6 +879,13 @@ app.on('open-file', (event, path) => {
   event.preventDefault();
   console.log('OPEN FILE:', path);
   macPath = path;
+  // A Finder open while the app is already running lands here (macOS never
+  // spawns a second instance for it) — forward it like 'second-instance' does.
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.send('open-path', path);
+  }
 });
 
 const gsmMimeTypes: Record<string, string> = {
@@ -1045,6 +1083,9 @@ app.on('window-all-closed', () => {
 app
   .whenReady()
   .then(() => {
+    // Belt over the app.quit() above: a losing instance must never open a
+    // window even if 'ready' sneaks in before the quit is processed.
+    if (!gotSingleInstanceLock) return;
     markLaunch('app-ready');
     createWindow();
     app.on('activate', () => {

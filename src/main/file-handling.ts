@@ -29,6 +29,26 @@ export function isValidFilePath(filePath: string) {
   }
 }
 
+// What a second instance was asked to open. Its argv arrives with Chromium
+// switches mixed in, so scan from the END (the user's file follows the exe and
+// any dev-mode app path) for the last switch-free argument that names a real
+// file or directory. `startIndex` skips the exe (packaged: 1) or the exe plus
+// the app path (dev: 2), mirroring how the boot path reads process.argv.
+export function filePathFromArgv(argv: string[], startIndex: number): string {
+  const fs = require('fs');
+  for (let i = argv.length - 1; i >= startIndex; i--) {
+    const arg = argv[i];
+    if (typeof arg !== 'string' || arg === '' || arg.startsWith('-')) continue;
+    if (!isValidFilePath(arg)) continue;
+    try {
+      if (fs.existsSync(arg)) return arg;
+    } catch {
+      // treat unreadable candidates as non-matches
+    }
+  }
+  return '';
+}
+
 export async function deleteFile(filePath: string) {
   try {
     const fs = require('fs').promises;

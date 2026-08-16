@@ -80,6 +80,7 @@ export type Channels =
   | 'find-subtitle'
   | 'open-studio'
   | 'studio-media-saved'
+  | 'open-path'
   | 'startup-first-media';
 
 // Renderer -> main error/diagnostics channel. Fire-and-forget; persisted to

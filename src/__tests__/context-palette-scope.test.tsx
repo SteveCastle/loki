@@ -91,6 +91,16 @@ jest.mock('../renderer/stream-bus', () => ({
   streamConnected: () => true, // server reads as available without a probe
 }));
 
+jest.mock('../renderer/first-paint', () => ({
+  __esModule: true,
+  // In prod the chip-selection hydration waits for first paint; tests hydrate
+  // synchronously so the localStorage seeding in beforeEach is visible at mount.
+  onIdleAfterFirstPaint: (cb: () => void) => {
+    cb();
+    return () => undefined;
+  },
+}));
+
 jest.mock('@rehooks/component-size', () => ({
   __esModule: true,
   default: () => ({ width: 300, height: 200 }),
