@@ -482,35 +482,44 @@
   filter: brightness(0) invert(1);
 }
 
-/* Dropdown */
-.query-input-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0.5rem;
-  right: 0.5rem;
-  background: #2d2d31;
-  border: 1px solid #3e3e42;
-  border-radius: 2px;
-  z-index: 1000;
-  max-height: 300px;
-  overflow-y: auto;
-}
+/* Session filter-state history (QueryHistorySection). Rendered IN-FLOW as one
+   more type-ahead section inside a host's results surface (palette results /
+   sidebar suggestions pane) — never as an overlay. */
 
-.query-input-section-header {
+/* Collapsible header (command palette): the section label doubles as the
+   expand/collapse toggle. Inherits the host's .suggestion-section-label look;
+   this only resets the button chrome and adds the caret/count affordances. */
+.query-history-toggle {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0.4rem 0.5rem;
-  color: #888;
-  font-size: 11px;
-  text-transform: uppercase;
-  user-select: none;
+  gap: 5px;
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
-.query-input-section-hint {
-  color: #5c5c62;
-  font-size: 10px;
-  text-transform: none;
+/* Hover feedback via filter: the hosts' .suggestion-section-label rules own
+   `color` at higher specificity, so a color override here would never win. */
+.query-history-toggle:hover {
+  filter: brightness(1.6);
+}
+
+.query-history-caret {
+  flex-shrink: 0;
+  font-size: 9px;
+}
+
+.query-history-toggle-count {
+  padding: 0 5px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Filter-state history rows: a read-only miniature of the chip bar on the
@@ -518,14 +527,26 @@
 .query-history-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* Narrow hosts (the sidebar's suggestions pane): let the meta block drop
+     onto its own line instead of colliding with the chip strip. */
+  flex-wrap: wrap;
+  gap: 2px 8px;
   padding: 0.35rem 0.5rem;
+  border-radius: 4px;
   cursor: pointer;
 }
 
-.query-history-row:hover,
-.query-history-row.highlighted {
+.query-history-row:hover {
   background: #3e3e42;
+}
+
+/* Keyboard-navigation highlight — matches the suggestion-row highlight used
+   by the rest of the type-ahead results so the moving accent reads as one
+   list across tags, suggestions, and history. */
+.query-history-row.highlighted,
+.query-history-base.highlighted {
+  background: rgba(95, 169, 120, 0.16);
+  box-shadow: inset 2px 0 0 #5fa978;
 }
 
 .query-history-row.current {
@@ -537,7 +558,10 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 3px;
-  flex: 1 1 0;
+  /* The 140px basis is the wrap threshold: once the pane can't fit the chip
+     strip at ~140px beside the meta block, the meta wraps below instead of
+     the two overlapping. */
+  flex: 1 1 140px;
   min-width: 0;
 }
 
@@ -549,7 +573,8 @@
   padding: 1px 6px;
   border-radius: 9px;
   font-size: 11px;
-  max-width: 160px;
+  /* Cap long values, but never wider than the pane itself. */
+  max-width: min(160px, 100%);
   background: #2b3a4a;
   color: #cfe3f5;
   border: 1px solid #3d5a78;
@@ -624,8 +649,11 @@
 .query-history-meta {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
-  flex-shrink: 0;
+  /* Pushed to the right edge — of the chip line when there's room, of its
+     own line once the row wraps. */
   margin-left: auto;
 }
 
@@ -656,15 +684,18 @@
 .query-history-base {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* Same narrow-pane behaviour as the history rows: the meta block wraps
+     under the label instead of colliding with it. */
+  flex-wrap: wrap;
+  gap: 2px 8px;
   padding: 0.4rem 0.5rem;
   margin-top: 2px;
   border-top: 1px solid #3e3e42;
+  border-radius: 0 0 4px 4px;
   cursor: pointer;
 }
 
-.query-history-base:hover,
-.query-history-base.highlighted {
+.query-history-base:hover {
   background: #3e3e42;
 }
 
@@ -689,7 +720,8 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  flex: 1 1 0;
+  /* Wrap threshold beside the meta block, mirroring .query-history-chips. */
+  flex: 1 1 110px;
 }
 
 .query-history-base-label {

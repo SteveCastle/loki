@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import type { Predicate } from '../../query/types';
+import type { QueryHistoryEntry } from '../../query/history';
 import { getNextFilterMode } from '../../../settings';
 import { useFilterHistory } from '../../hooks/useFilterHistory';
 import { useMeaningMode } from '../../hooks/useMeaningMode';
@@ -59,7 +60,8 @@ export default function CommandPaletteSearch({
 
   const currentPath = currentItem?.path;
 
-  // Session filter-state history + base row for the QueryInput dropdown.
+  // Session filter-state history + base row, rendered as a section of the
+  // results surface below (QueryHistorySection inside CommandPaletteResults).
   const filterHistory = useFilterHistory(libraryService);
 
   const [text, setText] = useState('');
@@ -93,16 +95,19 @@ export default function CommandPaletteSearch({
   const clearText = () => setText('');
 
   // Clamp the stored index to the live list — the result count changes as the
-  // user types and as async suggestions arrive.
+  // user types and as async suggestions arrive. A negative index means "no
+  // highlight": the resting state while nothing is typed, so opening the
+  // palette doesn't arm Enter on a history row the user never chose.
   const safeIndex =
-    navItems.length === 0
+    navItems.length === 0 || highlightIndex < 0
       ? -1
-      : Math.min(Math.max(highlightIndex, 0), navItems.length - 1);
+      : Math.min(highlightIndex, navItems.length - 1);
   const highlightedKey = safeIndex >= 0 ? navItems[safeIndex].key : null;
 
-  // Snap the highlight back to the top result whenever the query text changes.
+  // Snap the highlight back to the top result whenever the query text changes;
+  // with no text there is no top result to arm (only the history section).
   useEffect(() => {
-    setHighlightIndex(0);
+    setHighlightIndex(text ? 0 : -1);
   }, [text]);
 
   // Commit a chosen result: add it to the query, then clear the typed text.
@@ -120,11 +125,38 @@ export default function CommandPaletteSearch({
     [libraryService, join]
   );
 
+  // Commit whichever navigable row is chosen: history rows carry an action
+  // (re-apply that filter state), every other row carries a predicate.
+  const commitItem = useCallback(
+    (item: SuggestionItem) => {
+      if (item.action) item.action();
+      else if (item.predicate) commitPredicate(item.predicate);
+    },
+    [commitPredicate]
+  );
+
+  // Applying a history entry (or the base row) replaces the whole query, so
+  // any typed text is stale — clear it alongside.
+  const applyHistoryEntry = useCallback(
+    (entry: QueryHistoryEntry) => {
+      filterHistory.onApplyHistory(entry);
+      setText('');
+    },
+    [filterHistory.onApplyHistory]
+  );
+
+  const applyBase = useCallback(() => {
+    filterHistory.onApplyBase();
+    setText('');
+  }, [filterHistory.onApplyBase]);
+
   const moveHighlight = (delta: 1 | -1) => {
     if (navItems.length === 0) return;
     setHighlightIndex((prev) => {
-      const base = prev < 0 ? 0 : prev;
-      return (base + delta + navItems.length) % navItems.length;
+      // From the no-highlight resting state, ArrowDown enters at the top and
+      // ArrowUp at the bottom.
+      if (prev < 0) return delta === 1 ? 0 : navItems.length - 1;
+      return (prev + delta + navItems.length) % navItems.length;
     });
   };
 
@@ -143,11 +175,6 @@ export default function CommandPaletteSearch({
         query={query}
         textValue={text}
         onTextChange={setText}
-        history={filterHistory.history}
-        onApplyHistory={filterHistory.onApplyHistory}
-        baseLabel={filterHistory.baseLabel}
-        baseCount={filterHistory.baseCount}
-        onApplyBase={filterHistory.onApplyBase}
         filteringMode={filteringMode}
         onCycleFilterMode={() =>
           libraryService.send({
@@ -159,7 +186,7 @@ export default function CommandPaletteSearch({
           // Fallback for the brief window before results populate (when
           // resultNavCount is still 0): commit the top row if there is one.
           const top = navItems[0];
-          if (top) commitPredicate(top.predicate);
+          if (top) commitItem(top);
         }}
         onRemovePredicate={(key) =>
           libraryService.send({ type: 'REMOVE_PREDICATE', data: { key } })
@@ -227,7 +254,7 @@ export default function CommandPaletteSearch({
         resultNavCount={navItems.length}
         onResultNavMove={moveHighlight}
         onResultNavSubmit={() => {
-          if (safeIndex >= 0) commitPredicate(navItems[safeIndex].predicate);
+          if (safeIndex >= 0) commitItem(navItems[safeIndex]);
         }}
       />
 
@@ -255,6 +282,13 @@ export default function CommandPaletteSearch({
           onNavItemsChange={setNavItems}
           onCommit={commitPredicate}
           tagScope={tagScope}
+          historyActive={!meaningMode}
+          query={query}
+          history={filterHistory.history}
+          onApplyHistory={applyHistoryEntry}
+          baseLabel={filterHistory.baseLabel}
+          baseCount={filterHistory.baseCount}
+          onApplyBase={applyBase}
         />
       )}
     </div>

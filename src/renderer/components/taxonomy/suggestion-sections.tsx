@@ -11,10 +11,13 @@ interface CategoryLite {
 }
 
 // One navigable suggestion row: a stable key (unique across the whole results
-// surface) plus the predicate it commits when chosen.
+// surface) plus what choosing it does — either the predicate it commits, or,
+// for rows that aren't predicates (the session filter-state history), an
+// action to run instead.
 export interface SuggestionItem {
   key: string;
-  predicate: Predicate;
+  predicate?: Predicate;
+  action?: () => void;
 }
 
 interface SuggestionSectionsProps {
@@ -144,7 +147,7 @@ export default function SuggestionSections({
   const onItemsChangeRef = useRef(onItemsChange);
   onItemsChangeRef.current = onItemsChange;
   const itemsSignature = items
-    .map((i) => `${i.key}=${i.predicate.value}`)
+    .map((i) => `${i.key}=${i.predicate?.value ?? ''}`)
     .join('|');
   useEffect(() => {
     onItemsChangeRef.current?.(items);

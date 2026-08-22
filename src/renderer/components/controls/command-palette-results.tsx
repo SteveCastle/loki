@@ -15,7 +15,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Predicate } from '../../query/types';
+import type { Predicate, Query } from '../../query/types';
+import type { QueryHistoryEntry } from '../../query/history';
+import QueryHistorySection from '../query-input/query-history-section';
 import { invoke } from '../../platform';
 import { useTagSearch } from '../../hooks/useTagSearch';
 import { displayTagLabel } from '../../tag-display';
@@ -62,6 +64,17 @@ interface CommandPaletteResultsProps {
   // ../../search/tag-scopes: 'curated' skips the autotagger's "Suggested"
   // bucket, which is ~97% of the table and the reason the palette used to lag.
   tagScope?: TagScope;
+  // Session filter-state history, shown as one more section of this results
+  // surface (below the type-ahead rows; alone when nothing is typed yet). See
+  // QueryHistorySection. `historyActive` is false while "search by meaning"
+  // is on — the section is irrelevant to semantic search, like the rest.
+  historyActive: boolean;
+  query: Query;
+  history: QueryHistoryEntry[];
+  onApplyHistory: (entry: QueryHistoryEntry) => void;
+  baseLabel: string;
+  baseCount?: number;
+  onApplyBase: () => void;
 }
 
 export default function CommandPaletteResults({
@@ -74,6 +87,13 @@ export default function CommandPaletteResults({
   onNavItemsChange,
   onCommit,
   tagScope = DEFAULT_TAG_SCOPE,
+  historyActive,
+  query,
+  history,
+  onApplyHistory,
+  baseLabel,
+  baseCount,
+  onApplyBase,
 }: CommandPaletteResultsProps) {
   const queryClient = useQueryClient();
   const applyTagPreview = useSelector(
@@ -173,19 +193,26 @@ export default function CommandPaletteResults({
     [sortedTags]
   );
 
-  // Ordered suggestion rows reported up by SuggestionSections.
+  // Ordered suggestion rows reported up by SuggestionSections, and history
+  // rows reported up by QueryHistorySection.
   const [suggestionItems, setSuggestionItems] = useState<SuggestionItem[]>([]);
+  const [historyItems, setHistoryItems] = useState<SuggestionItem[]>([]);
 
   // The full, ordered set the keyboard moves through: tags first (in render
-  // order), then the suggestion rows.
+  // order), then the suggestion rows, then the session-filter history rows.
   const navItems: SuggestionItem[] = useMemo(() => {
-    if (!active) return [];
-    const tagItems: SuggestionItem[] = cappedTags.map((t) => ({
-      key: `tag:${t.label}`,
-      predicate: { type: 'tag', value: t.label, exclude: false },
-    }));
-    return [...tagItems, ...suggestionItems];
-  }, [active, cappedTags, suggestionItems]);
+    const tagItems: SuggestionItem[] = active
+      ? cappedTags.map((t) => ({
+          key: `tag:${t.label}`,
+          predicate: { type: 'tag', value: t.label, exclude: false },
+        }))
+      : [];
+    return [
+      ...tagItems,
+      ...(active ? suggestionItems : []),
+      ...(historyActive ? historyItems : []),
+    ];
+  }, [active, cappedTags, suggestionItems, historyActive, historyItems]);
 
   useEffect(() => {
     onNavItemsChange(navItems);
@@ -201,14 +228,15 @@ export default function CommandPaletteResults({
     [onNavItemsChange]
   );
 
-  // Warming only (nothing typed, or "search by meaning" is on): the hooks above
-  // still run — priming the categories cache and the shared tag index — but
-  // there is nothing to draw.
-  if (!active) return null;
+  // Warming only ("search by meaning" is on): the hooks above still run —
+  // priming the categories cache and the shared tag index — but there is
+  // nothing to draw. With history active the surface always renders: the
+  // session-filter section shows on its own before anything is typed.
+  if (!active && !historyActive) return null;
 
   return (
     <div className="commandPaletteSearchResults">
-      {cappedTags.length > 0 && (
+      {active && cappedTags.length > 0 && (
         <div className="suggestion-section">
           <div className="suggestion-section-label">Tags</div>
           {cappedTags.map((t) => {
@@ -255,14 +283,34 @@ export default function CommandPaletteResults({
         </div>
       )}
 
-      <SuggestionSections
-        text={text}
-        categories={categories ?? []}
-        onAdd={(predicate) => onCommit(predicate)}
-        onItemsChange={setSuggestionItems}
-        highlightedKey={highlightedKey}
-        onHighlightKey={onHighlightKey}
-      />
+      {active && (
+        <SuggestionSections
+          text={text}
+          categories={categories ?? []}
+          onAdd={(predicate) => onCommit(predicate)}
+          onItemsChange={setSuggestionItems}
+          highlightedKey={highlightedKey}
+          onHighlightKey={onHighlightKey}
+        />
+      )}
+
+      {historyActive && (
+        <QueryHistorySection
+          // Collapsed by default: the floating palette is tight on vertical
+          // space, and the history is a secondary surface here.
+          collapsible
+          query={query}
+          text={text}
+          history={history}
+          onApplyHistory={onApplyHistory}
+          baseLabel={baseLabel}
+          baseCount={baseCount}
+          onApplyBase={onApplyBase}
+          highlightedKey={highlightedKey}
+          onHighlightKey={onHighlightKey}
+          onItemsChange={setHistoryItems}
+        />
+      )}
     </div>
   );
 }

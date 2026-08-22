@@ -12,10 +12,6 @@ const baseProps = {
   onSetPredicateJoin: () => {},
   onClearAll: () => {},
   onClearText: () => {},
-  history: [],
-  onApplyHistory: () => {},
-  baseLabel: 'pictures',
-  onApplyBase: () => {},
 };
 
 describe('QueryInput filtering-mode toggle', () => {

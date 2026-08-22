@@ -19,10 +19,6 @@ function renderInput(query: Query, textValue: string) {
       onSetPredicateJoin={() => {}}
       onClearAll={onClearAll}
       onClearText={onClearText}
-      history={[]}
-      onApplyHistory={() => {}}
-      baseLabel="pictures"
-      onApplyBase={() => {}}
     />
   );
   const clearButton = utils.container.querySelector(

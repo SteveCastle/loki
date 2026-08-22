@@ -27,6 +27,7 @@ import Category from './category';
 import SuggestionSections from './suggestion-sections';
 import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
+import QueryHistorySection from '../query-input/query-history-section';
 import {
   useTagSearch,
   loadTagsForScope,
@@ -99,7 +100,8 @@ export default function Taxonomy() {
 
   // The unified query (chips) shown in QueryInput.
   const query = useSelector(libraryService, (state) => state.context.query);
-  // Session filter-state history + base row for the QueryInput dropdown.
+  // Session filter-state history + base row, rendered as one more section of
+  // the suggestions pane while searching (QueryHistorySection).
   const filterHistory = useFilterHistory(libraryService);
   // View-only public visitors: no tag/category/person creation and no
   // apply-tag toggles; browsing, search, and reset stay.
@@ -334,11 +336,6 @@ export default function Taxonomy() {
             query={query}
             textValue={tagFilterInput}
             onTextChange={setTagFilterInput}
-            history={filterHistory.history}
-            onApplyHistory={filterHistory.onApplyHistory}
-            baseLabel={filterHistory.baseLabel}
-            baseCount={filterHistory.baseCount}
-            onApplyBase={filterHistory.onApplyBase}
             filteringMode={filteringMode}
             onCycleFilterMode={() =>
               libraryService.send({
@@ -758,6 +755,30 @@ export default function Taxonomy() {
                           },
                         })
                       }
+                    />
+                    {/* Session filter-state history, in-flow with the other
+                        type-ahead sections (it used to be a dropdown that
+                        covered the updating results). Applying an entry (or
+                        the base row) replaces the whole query, so the typed
+                        text is cleared alongside. */}
+                    <QueryHistorySection
+                      query={query}
+                      text={tagFilter}
+                      history={filterHistory.history}
+                      onApplyHistory={(entry) => {
+                        filterHistory.onApplyHistory(entry);
+                        setTagFilterInput('');
+                        setTagFilter('');
+                        debouncedSetTagFilter.current.cancel();
+                      }}
+                      baseLabel={filterHistory.baseLabel}
+                      baseCount={filterHistory.baseCount}
+                      onApplyBase={() => {
+                        filterHistory.onApplyBase();
+                        setTagFilterInput('');
+                        setTagFilter('');
+                        debouncedSetTagFilter.current.cancel();
+                      }}
                     />
                   </div>
                 )}

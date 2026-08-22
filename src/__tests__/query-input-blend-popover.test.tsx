@@ -58,10 +58,6 @@ function renderInput(query: Query) {
     onUpdateBlendNode: noop,
     onClearAll: noop,
     onClearText: noop,
-    history: [],
-    onApplyHistory: noop,
-    baseLabel: 'pictures',
-    onApplyBase: noop,
   };
   const utils = render(<QueryInput {...props} />);
   return {
@@ -160,10 +156,6 @@ describe('similarity chip blend popover', () => {
       onSetBlendMode,
       onClearAll: noop,
       onClearText: noop,
-      history: [],
-      onApplyHistory: noop,
-      baseLabel: 'pictures',
-      onApplyBase: noop,
     };
     const { container: c } = render(<QueryInput {...props} />);
     fireEvent.mouseEnter(c.querySelector('.query-chip-wrap') as HTMLElement);
