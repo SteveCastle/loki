@@ -102,18 +102,39 @@ export default function Transcript() {
 
   const currentMatchCueIndex = matches[matchIndex];
 
-  // Scroll a cue element into the middle of the panel's viewport.
-  const centerCueElement = (el: HTMLElement) => {
+  // The search bar is position:sticky and floats over the top of the
+  // scroll container, so the top of the *visible* area is its bottom
+  // edge, not the container's. Every programmatic scroll-to-cue must
+  // offset by this or the cue lands hidden underneath the bar.
+  const stickyHeaderHeight = () => {
+    const container = scrollRef.current;
+    const header = container?.querySelector('.transcript-search');
+    if (!container || !header) return 0;
+    return Math.max(
+      0,
+      header.getBoundingClientRect().bottom -
+        container.getBoundingClientRect().top
+    );
+  };
+
+  // Scroll a cue element to the top of the panel's visible area, just
+  // below the sticky search bar (plus a small gap so the card border
+  // isn't flush against it).
+  const CUE_SCROLL_GAP = 4;
+  const scrollCueToVisibleTop = (el: HTMLElement) => {
     const container = scrollRef.current;
     if (!container) return;
     const containerRect = container.getBoundingClientRect();
     const elRect = el.getBoundingClientRect();
     const target =
-      container.scrollTop + (elRect.top - containerRect.top) - container.clientHeight / 2 + el.clientHeight / 2;
-    container.scrollTo({ top: target, behavior: 'smooth' });
+      container.scrollTop +
+      (elRect.top - containerRect.top) -
+      stickyHeaderHeight() -
+      CUE_SCROLL_GAP;
+    container.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
   };
 
-  // Scroll the current match cue into the middle of the viewport. Uses a
+  // Scroll the current match cue to the top of the visible area. Uses a
   // data attribute lookup rather than per-cue refs so we don't have to
   // thread a ref array through the Cue component.
   //
@@ -126,7 +147,7 @@ export default function Transcript() {
     const el = scrollRef.current?.querySelector(
       `[data-cue-index="${currentMatchCueIndex}"]`
     ) as HTMLElement | null;
-    if (el) centerCueElement(el);
+    if (el) scrollCueToVisibleTop(el);
   }, [currentMatchCueIndex, searchQuery]);
 
   // Jump back to the cue at the current playback time. The active cue
@@ -155,7 +176,7 @@ export default function Transcript() {
         `[data-cue-index="${index}"]`
       ) as HTMLElement | null;
     }
-    if (el) centerCueElement(el);
+    if (el) scrollCueToVisibleTop(el);
   };
 
   const goNext = () => {
@@ -190,11 +211,13 @@ export default function Transcript() {
   if (!path) {
     return null;
   }
-  // function to setScroll top smoothly
+  // Follow-mode scroll from Cue: it passes the cue's offsetTop, which is
+  // relative to the container top — shift it down past the sticky bar so
+  // the cue lands at the top of the visible area instead of under it.
   function setScrollTop(scrollTop: number) {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({
-        top: scrollTop,
+        top: Math.max(0, scrollTop - stickyHeaderHeight() - CUE_SCROLL_GAP),
         behavior: 'auto',
       });
     }
