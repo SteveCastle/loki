@@ -25,6 +25,7 @@ import useOnClickOutside from '../../hooks/useOnClickOutside';
 import { absorbNextClick } from '../../absorb-next-click';
 import filter from '../../filter';
 import LoginWidget from './login-widget';
+import SelectionTags from './selection-tags';
 import {
   getDirFromInitialFile,
   buildLibraryPathQuery,
@@ -98,6 +99,12 @@ const METADATA_TYPES: MetadataType[] = [
 
 // The chip selection persists across palette opens and app restarts.
 const SELECTED_TYPES_STORAGE_KEY = 'loki.contextPalette.selectedTypes';
+
+// SelectionTags fetches per-item tags for the whole working set to compute
+// the shared-tag intersection — one request per path. Fine for a hand-picked
+// selection; a library-scope working set needs a ceiling or a broad view
+// floods the request pool (renderer socket starvation).
+const SELECTION_TAGS_MAX = 500;
 
 // Stable empty array so the selection selector never re-renders on identity
 // when a pre-selection machine snapshot lacks the field.
@@ -204,6 +211,7 @@ const JOB_TITLES: Record<string, string> = {
   embed: 'Visual Embedding',
   faces: 'Face Scan',
   'faces-cluster': 'Face Clustering',
+  dedupe: 'Deduplicate',
 };
 
 function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
@@ -577,6 +585,10 @@ export default function ContextPalette() {
     libraryService,
     (state) => state.context.authToken
   );
+  const applyTagPreview = useSelector(
+    libraryService,
+    (state) => state.context.settings.applyTagPreview
+  );
 
   // Narrow the right-clicked file path; empty string when the target is not a file.
   const similarTargetPath = target.type === 'file' ? target.path : '';
@@ -836,6 +848,16 @@ export default function ContextPalette() {
   const contextLabel = multiSelection
     ? `${selection.length} files selected`
     : buildLabel(effectiveTarget, libraryCtx);
+  // The paths the multi-item "Selection" actions (Merge, selection tags)
+  // operate on: the discrete multi-selection normally; with scope widened to
+  // the library, the whole filtered view — the query-selected media the
+  // toggle names. Those actions take explicit path lists, so the client-side
+  // view IS the query result here.
+  const selectionScopePaths = libraryScope
+    ? items.map((i) => i.path)
+    : selection;
+  const multiItemActions =
+    (multiSelection || libraryScope) && selectionScopePaths.length > 1;
   const queryString = buildQuery(effectiveTarget, libraryCtx);
   const isFolderContext =
     effectiveTarget.type === 'library' &&
@@ -905,15 +927,15 @@ export default function ContextPalette() {
   // that opens on every right-click.
   const [merging, setMerging] = useState(false);
   const [mergeArmed, setMergeArmed] = useState(false);
-  // Disarm on every palette open, and whenever the selection changes — a
-  // confirm click must never land on a different set than the one that was
-  // armed. (The palette stays mounted while hidden, so armed state would
-  // otherwise survive into the next right-click.)
+  // Disarm on every palette open, and whenever the selection or scope
+  // changes — a confirm click must never land on a different set than the one
+  // that was armed. (The palette stays mounted while hidden, so armed state
+  // would otherwise survive into the next right-click.)
   useEffect(() => {
     setMergeArmed(false);
-  }, [display, selection]);
+  }, [display, selection, scope]);
   const handleMergeSelection = async () => {
-    if (selection.length < 2 || merging) return;
+    if (selectionScopePaths.length < 2 || merging) return;
     if (!mergeArmed) {
       setMergeArmed(true);
       window.setTimeout(() => setMergeArmed(false), 4000);
@@ -922,7 +944,9 @@ export default function ContextPalette() {
     setMergeArmed(false);
     setMerging(true);
     try {
-      const result = (await invoke('merge-item-metadata', [selection])) as {
+      const result = (await invoke('merge-item-metadata', [
+        selectionScopePaths,
+      ])) as {
         target: string;
         tags: number;
         embeddings: number;
@@ -959,7 +983,7 @@ export default function ContextPalette() {
         type: 'ADD_TOAST',
         data: {
           type: result.failed?.length ? 'info' : 'success',
-          title: `Merged ${selection.length} items into ${targetName}`,
+          title: `Merged ${selectionScopePaths.length} items into ${targetName}`,
           message: `Copied ${parts.join(', ')}; ${
             result.deleted?.length ?? 0
           } file${
@@ -979,6 +1003,63 @@ export default function ContextPalette() {
       });
     } finally {
       setMerging(false);
+    }
+  };
+
+  // Dedupe: find byte-identical files in the current context and collapse
+  // each duplicate group server-side (the `dedupe` task) — tags, embeddings,
+  // and transcripts consolidate onto one surviving copy, the redundant files
+  // are deleted from disk with their database references erased, and
+  // zero-byte files go too. The discrete multi-selection submits as a path
+  // list; any wider context (library view, tag, category) submits as the
+  // base64 query, exactly like the generate jobs. A single file has nothing
+  // to deduplicate against, so the action hides for that context.
+  //
+  // Deleting files is not undoable, so it shares Merge's two-click arm.
+  const [dedupeArmed, setDedupeArmed] = useState(false);
+  useEffect(() => {
+    setDedupeArmed(false);
+  }, [display, selection, scope]);
+  const canDedupe =
+    !!serverAvailable &&
+    !!authToken &&
+    (multiSelection || effectiveTarget.type !== 'file');
+  const handleDedupe = async () => {
+    if (!dedupeArmed) {
+      setDedupeArmed(true);
+      window.setTimeout(() => setDedupeArmed(false), 4000);
+      return;
+    }
+    setDedupeArmed(false);
+    // Same tail contract as the generate jobs: the job target must be the
+    // LAST token (the server takes the final token as the job input).
+    const targetTail = hasSelection
+      ? `"${selection.join('\n')}"`
+      : `--query64=${query64}`;
+    try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(`${mediaServerBase}/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ input: `dedupe ${targetTail}` }),
+        signal: AbortSignal.timeout(10000),
+        redirect: 'error',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Job toast (and the library reload on completion) arrive via the SSE
+      // stream in ToastSystem.
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Create Job',
+          message: 'Could not communicate with job service',
+        },
+      });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
     }
   };
 
@@ -1388,9 +1469,11 @@ export default function ContextPalette() {
         </div>
       )}
 
-      {multiSelection && (isElectron || (serverAvailable && authToken)) && (
+      {multiItemActions && (isElectron || (serverAvailable && authToken)) && (
         <div className="context-palette-merge">
-          <span className="action-group-title">Selection</span>
+          <span className="action-group-title">
+            {libraryScope ? 'Entire library' : 'Selection'}
+          </span>
           <button
             type="button"
             className={`merge-selection-btn${mergeArmed ? ' danger' : ''}`}
@@ -1398,24 +1481,69 @@ export default function ContextPalette() {
             disabled={merging}
             title={
               mergeArmed
-                ? `Click again to merge — the other ${selection.length - 1} file${
-                    selection.length - 1 === 1 ? '' : 's'
+                ? `Click again to merge — the other ${
+                    selectionScopePaths.length - 1
+                  } file${
+                    selectionScopePaths.length - 1 === 1 ? '' : 's'
                   } will be deleted from disk`
-                : 'Copy tags, embeddings, and the transcript onto the first-selected item, then delete the other files. Asks to confirm.'
+                : `Copy tags, embeddings, and the transcript onto the first ${
+                    libraryScope ? 'item in the view' : 'selected item'
+                  }, then delete the other files. Asks to confirm.`
             }
           >
             {merging
               ? 'Merging…'
               : mergeArmed
-              ? `Confirm — deletes ${selection.length - 1} file${
-                  selection.length - 1 === 1 ? '' : 's'
+              ? `Confirm — deletes ${selectionScopePaths.length - 1} file${
+                  selectionScopePaths.length - 1 === 1 ? '' : 's'
                 }`
-              : `Merge ${selection.length} items into first`}
+              : `Merge ${selectionScopePaths.length} items into first`}
           </button>
           <span className="merge-selection-note">
-            keeps “{(selection[0] || '').split(/[\\/]/).pop()}” — the other{' '}
-            {selection.length - 1} file
-            {selection.length - 1 === 1 ? '' : 's'} will be deleted
+            keeps “{(selectionScopePaths[0] || '').split(/[\\/]/).pop()}” — the
+            other {selectionScopePaths.length - 1} file
+            {selectionScopePaths.length - 1 === 1 ? '' : 's'} will be deleted
+          </span>
+          {selectionScopePaths.length <= SELECTION_TAGS_MAX ? (
+            <SelectionTags
+              selection={selectionScopePaths}
+              active={display && multiItemActions}
+              applyTagPreview={applyTagPreview}
+              authToken={authToken}
+              libraryService={libraryService}
+            />
+          ) : (
+            <span className="merge-selection-note">
+              too many items for shared-tag editing (max {SELECTION_TAGS_MAX})
+              — narrow the view, or use tag drag-and-drop with Ctrl held
+            </span>
+          )}
+        </div>
+      )}
+
+      {canDedupe && (
+        <div className="context-palette-merge">
+          <span className="action-group-title">Cleanup</span>
+          <button
+            type="button"
+            className={`merge-selection-btn${dedupeArmed ? ' danger' : ''}`}
+            onClick={handleDedupe}
+            title={
+              dedupeArmed
+                ? 'Click again to start — redundant copies and zero-byte files will be deleted from disk'
+                : 'Find byte-identical duplicates, merge their tags, embeddings, and transcripts onto one copy, and delete the rest (zero-byte files too). Asks to confirm.'
+            }
+          >
+            {dedupeArmed
+              ? 'Confirm — deletes duplicate files'
+              : multiSelection
+              ? `Dedupe ${selection.length} selected files`
+              : 'Dedupe duplicates'}
+          </button>
+          <span className="merge-selection-note">
+            {multiSelection
+              ? 'exact copies among the selection merge into one'
+              : `runs over ${contextLabel}`}
           </span>
         </div>
       )}

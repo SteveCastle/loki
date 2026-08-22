@@ -583,8 +583,23 @@ export const refreshLibrary =
       const stats = await fsPromises.lstat(initialFile);
       folderPath = stats.isDirectory() ? initialFile : path.dirname(initialFile);
     } catch (e) {
-      console.log('[refresh] error getting folder path:', e);
-      return { added: [], removed: [] };
+      // The file this view was opened from may itself be gone by now — a
+      // dedupe or merge deletes files the library still lists, and the opener
+      // is as deletable as any other item. The FOLDER is what a refresh is
+      // about, so fall back to the file's directory before giving up.
+      folderPath = path.dirname(initialFile);
+      try {
+        const stats = await fsPromises.lstat(folderPath);
+        if (!stats.isDirectory()) {
+          throw new Error(`not a directory: ${folderPath}`);
+        }
+      } catch (dirErr) {
+        // The whole folder is unreachable. That stats exactly like an
+        // unplugged drive, and reporting every file as removed would let one
+        // refresh purge a library that still exists — so report no changes.
+        console.log('[refresh] folder unreachable, skipping:', dirErr);
+        return { added: [], removed: [] };
+      }
     }
 
     // Build a set of current paths for fast lookup (case-insensitive on Windows)

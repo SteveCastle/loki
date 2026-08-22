@@ -84,6 +84,8 @@ const getJobTitle = (job: JobRunnerJob): string => {
       return job.input.includes('--reset')
         ? 'Rebuilding Face Groups'
         : 'Grouping Faces into People';
+    case 'assign-person':
+      return 'Assigning Person';
     case 'describe':
       return 'Generating Descriptions';
     case 'transcribe':
@@ -94,6 +96,8 @@ const getJobTitle = (job: JobRunnerJob): string => {
       return 'Reading Dimensions';
     case 'process':
       return 'Processing Media';
+    case 'dedupe':
+      return 'Removing Duplicates';
     case 'metadata':
       switch (parseFlag(job.input, 'type')) {
         case 'description':
@@ -126,6 +130,8 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return job.input.includes('--reset')
         ? 'Regrouping the unnamed clusters from scratch — named people are kept.'
         : 'Matching new faces to your people; nothing already grouped is moved.';
+    case 'assign-person':
+      return 'Assigning this person’s face across the selected items.';
     case 'describe':
       return 'Writing AI descriptions of your media.';
     case 'transcribe':
@@ -136,6 +142,8 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return 'Reading the width & height of your media.';
     case 'process':
       return 'Applying multiple operations to each file in one pass.';
+    case 'dedupe':
+      return 'Finding exact duplicates, merging their metadata, and deleting the copies.';
     case 'metadata':
       switch (parseFlag(job.input, 'type')) {
         case 'description':
@@ -485,6 +493,33 @@ export function ToastSystem() {
         if (job.command === 'autotag' || job.command === 'process') {
           queryClient.invalidateQueries(['tags-by-path']);
           queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+        }
+
+        if (job.command === 'assign-person') {
+          // Assignments sync People-category tag rows; the People grid itself
+          // refreshes via the job's people-updated broadcasts.
+          queryClient.invalidateQueries(['tags-by-path']);
+          queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+          queryClient.invalidateQueries(['metadata']);
+        }
+
+        if (job.command === 'dedupe') {
+          // Dedupe deleted duplicate files from disk and consolidated their
+          // rows — the set of available media itself changed, so re-query the
+          // current view (same reload as media-created) and drop every cache
+          // that could still name a deleted path or miss merged metadata.
+          queryClient.invalidateQueries(['media']);
+          queryClient.invalidateQueries(['tags-by-path']);
+          queryClient.invalidateQueries({ queryKey: ['taxonomy'] });
+          queryClient.invalidateQueries(['metadata']);
+          queryClient.invalidateQueries(['embeddings']);
+          queryClient.invalidateQueries(['transcript']);
+          const snapshot = libraryService.getSnapshot();
+          if (snapshot.matches({ library: 'loadedFromDB' })) {
+            libraryService.send({ type: 'SORTED_WEIGHTS' });
+          } else if (snapshot.matches({ library: 'loadedFromFS' })) {
+            libraryService.send('REFRESH_LIBRARY');
+          }
         }
 
         // Auto-remove completed jobs after 3 seconds to show completion state briefly

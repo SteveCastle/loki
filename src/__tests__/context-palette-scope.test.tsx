@@ -224,8 +224,9 @@ describe('context palette scope toggle', () => {
     expect(decodeQuery64(input)).toBe('tag:"cats"');
     expect(input).not.toContain('C:/media/b.jpg');
 
-    // Merge acts on the discrete selection, so it has no meaning library-wide.
-    expect(screen.queryByText(/^Merge /)).toBeNull();
+    // The multi-item actions widen with the scope: Merge now targets the
+    // whole filtered view (3 items), not the 2-file selection it set aside.
+    expect(screen.getByText('Merge 3 items into first')).toBeTruthy();
   });
 
   it('falls back to a path query for a filesystem directory view', async () => {

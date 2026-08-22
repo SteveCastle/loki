@@ -2640,6 +2640,20 @@ export const libraryMachine = createMachine(
                           library: updatedLibrary,
                           libraryLoadId: newLoadId(),
                           cursor: newCursor,
+                          // Restoring the base view (previousLibrary) is a
+                          // deliberate in-memory swap — instant, no disk scan.
+                          // That cache must therefore not resurrect files a
+                          // disk check just pruned: fold what refresh learned
+                          // into the snapshot too, so restore stays fast AND
+                          // honest.
+                          previousLibrary:
+                            context.previousLibrary.length > 0
+                              ? updatedLibrary
+                              : context.previousLibrary,
+                          previousCursor:
+                            context.previousLibrary.length > 0
+                              ? newCursor
+                              : context.previousCursor,
                           toasts: [...context.toasts, newToast],
                         };
                       }),
