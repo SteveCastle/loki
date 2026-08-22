@@ -78,7 +78,6 @@ function TagListRow({
 
   type DropProps = {
     isOver: boolean;
-    isAbove: boolean;
     isSelf: boolean;
   };
   const [isAbove, setIsAbove] = React.useState(false);
@@ -86,13 +85,14 @@ function TagListRow({
     () => ({
       accept: ['TAG'],
       canDrop: () => !disableReorder,
+      // isAbove lives in hover-driven state, not collect — see tag.tsx.
       collect: (monitor) => ({
         isOver: monitor.isOver(),
-        isAbove: getIsAbove(monitor, ref),
         isSelf: monitor.getItem()?.label === tag.label,
       }),
       hover: (_item: Concept, monitor) => {
-        setIsAbove(getIsAbove(monitor, ref));
+        const next = getIsAbove(monitor, ref);
+        setIsAbove((prev) => (prev === next ? prev : next));
       },
       drop: (droppedTag: Concept, monitor) => {
         async function updateWeight() {

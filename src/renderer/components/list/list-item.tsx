@@ -190,15 +190,13 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
     },
     [onDimensionsLoaded, item.path, item.timeStamp]
   );
+  // No collect: nothing here consumes drag state, and collecting the client
+  // offset would re-render this item on every dragover while it is dragged.
   const [, drag] = useDrag(
     () => ({
       type: 'MEDIA',
       item: item,
       canDrag,
-      collect: (monitor) => ({
-        isDragging: monitor.isDragging(),
-        offset: monitor.getClientOffset(),
-      }),
     }),
     [item, canDrag]
   );

@@ -10,8 +10,14 @@
 //   dwell — after HOLD_DELAY of continuous scrolling in one direction, speed
 //     accelerates up to MAX_BOOST× over RAMP_MS, so long lists don't take
 //     forever. Any pause, direction flip, or drag end resets the boost.
+//
+// Fully imperative: the previous version collected monitor.getClientOffset()
+// through useDragLayer, which re-rendered the calling component on every
+// dragover event of EVERY drag type (tag drags included). Now the monitor is
+// read inside a rAF loop that only runs while an accepted drag is in flight,
+// and React never re-renders for it.
 import { RefObject, useEffect, useRef } from 'react';
-import { useDragLayer } from 'react-dnd';
+import { useDragDropManager } from 'react-dnd';
 
 // Distance from the container edge (px) where scrolling kicks in.
 const EDGE_ZONE = 72;
@@ -27,39 +33,40 @@ export default function useDragAutoScroll(
   ref: RefObject<HTMLElement | null>,
   acceptTypes: string[]
 ) {
-  const { isDragging, offset, type } = useDragLayer((monitor) => ({
-    isDragging: monitor.isDragging(),
-    offset: monitor.getClientOffset(),
-    type: monitor.getItemType(),
-  }));
+  // Callers pass a fresh array literal each render; keep the latest without
+  // re-subscribing.
+  const acceptRef = useRef(acceptTypes);
+  acceptRef.current = acceptTypes;
 
-  // Dwell state lives in a ref because the effect below restarts on every
-  // dragover (offset change) — the boost must survive those restarts and
-  // only reset when scrolling actually stops or reverses.
-  const dwell = useRef<{ dir: -1 | 0 | 1; since: number }>({
-    dir: 0,
-    since: 0,
-  });
-
-  const active =
-    isDragging &&
-    offset != null &&
-    typeof type === 'string' &&
-    acceptTypes.includes(type);
-  const x = active ? offset.x : null;
-  const y = active ? offset.y : null;
-
+  const manager = useDragDropManager();
   useEffect(() => {
-    if (x == null || y == null) {
-      // Drag ended (or left our types): drop any accumulated boost.
-      dwell.current = { dir: 0, since: 0 };
-      return undefined;
-    }
-    const el = ref.current;
-    if (!el) return undefined;
+    const monitor = manager.getMonitor();
+    let frameId = 0;
+    const dwell: { dir: -1 | 0 | 1; since: number } = { dir: 0, since: 0 };
 
-    let frameId: number;
+    const active = () => {
+      const type = monitor.getItemType();
+      return (
+        monitor.isDragging() &&
+        typeof type === 'string' &&
+        acceptRef.current.includes(type)
+      );
+    };
+
+    // The loop self-perpetuates while the drag is active, so scrolling keeps
+    // going with the last known pointer position even when HTML5 drag stops
+    // emitting dragover events (pointer held still at an edge).
     const step = (now: number) => {
+      frameId = 0;
+      const el = ref.current;
+      const offset = monitor.getClientOffset();
+      if (!el || !offset || !active()) {
+        // Drag ended (or left our types): drop any accumulated boost.
+        dwell.dir = 0;
+        dwell.since = 0;
+        return;
+      }
+      const { x, y } = offset;
       const rect = el.getBoundingClientRect();
       // Only react while the pointer is over this container (with a little
       // vertical slack so overshooting an edge keeps scrolling at full speed)
@@ -84,10 +91,14 @@ export default function useDragAutoScroll(
       }
 
       if (dir === 0) {
-        dwell.current = { dir: 0, since: 0 };
+        dwell.dir = 0;
+        dwell.since = 0;
       } else {
-        if (dwell.current.dir !== dir) dwell.current = { dir, since: now };
-        const held = now - dwell.current.since - HOLD_DELAY;
+        if (dwell.dir !== dir) {
+          dwell.dir = dir;
+          dwell.since = now;
+        }
+        const held = now - dwell.since - HOLD_DELAY;
         const boost =
           1 + Math.min(1, Math.max(0, held / RAMP_MS)) * (MAX_BOOST - 1);
         // Quadratic proximity: slow, controllable entry into the zone.
@@ -95,10 +106,16 @@ export default function useDragAutoScroll(
       }
       frameId = requestAnimationFrame(step);
     };
-    frameId = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(frameId);
-    // The rAF loop keeps scrolling with the last known pointer position even
-    // when HTML5 drag stops emitting dragover events (pointer held still at
-    // an edge) — each new offset just restarts the loop.
-  }, [x, y, ref]);
+
+    const sync = () => {
+      if (active() && !frameId) frameId = requestAnimationFrame(step);
+    };
+    const unsubState = monitor.subscribeToStateChange(sync);
+    const unsubOffset = monitor.subscribeToOffsetChange(sync);
+    return () => {
+      unsubState();
+      unsubOffset();
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [manager, ref]);
 }

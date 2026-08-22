@@ -1,5 +1,5 @@
-import React, { useContext } from 'react';
-import { useDragLayer } from 'react-dnd';
+import React, { useContext, useLayoutEffect, useRef } from 'react';
+import { useDragDropManager, useDragLayer } from 'react-dnd';
 import { useSelector } from '@xstate/react';
 import { getFileType } from 'file-types';
 import { GlobalStateContext } from '../../state';
@@ -73,36 +73,70 @@ function PersonChip({
   );
 }
 
+// Follows the cursor without going through React. Offset updates arrive on
+// every dragover event; collecting them via useDragLayer would re-render the
+// layer (and reconcile the chip subtree) per mousemove, which reads as drag
+// jank. Instead the chip renders once per drag and a monitor subscription
+// writes the transform straight to the anchor element, coalesced to one
+// write per animation frame. The anchor starts visibility:hidden (see CSS)
+// so it never flashes at 0,0 before the first position write.
+function ChipFollower({ children }: { children: React.ReactNode }) {
+  const manager = useDragDropManager();
+  const anchorRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const monitor = manager.getMonitor();
+    let frameId = 0;
+    const position = () => {
+      frameId = 0;
+      const el = anchorRef.current;
+      const offset = monitor.getClientOffset();
+      if (!el || !offset) return;
+      el.style.transform = `translate3d(${offset.x}px, ${offset.y}px, 0)`;
+      el.style.visibility = 'visible';
+    };
+    position();
+    const unsubscribe = monitor.subscribeToOffsetChange(() => {
+      if (!frameId) frameId = requestAnimationFrame(position);
+    });
+    return () => {
+      unsubscribe();
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [manager]);
+
+  return (
+    <div className="drag-chip-layer" aria-hidden="true">
+      <div className="drag-chip-anchor" ref={anchorRef}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function DragChipLayer() {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (s) => s.context.authToken);
-  const { itemType, item, offset, isDragging } = useDragLayer((monitor) => ({
+  // Deliberately does NOT collect the cursor offset — everything collected
+  // here is stable for the duration of a drag, so this component only
+  // renders at drag start/end. ChipFollower tracks the cursor imperatively.
+  const { itemType, item, isDragging } = useDragLayer((monitor) => ({
     item: monitor.getItem(),
     itemType: monitor.getItemType(),
-    offset: monitor.getClientOffset(),
     isDragging: monitor.isDragging(),
   }));
 
-  if (
-    !isDragging ||
-    !offset ||
-    (itemType !== 'TAG' && itemType !== 'PERSON')
-  ) {
+  if (!isDragging || (itemType !== 'TAG' && itemType !== 'PERSON')) {
     return null;
   }
 
   return (
-    <div className="drag-chip-layer" aria-hidden="true">
-      <div
-        className="drag-chip-anchor"
-        style={{ transform: `translate(${offset.x}px, ${offset.y}px)` }}
-      >
-        {itemType === 'TAG' ? (
-          <TagChip tag={item as TagItem} />
-        ) : (
-          <PersonChip person={item as PersonItem} authToken={authToken} />
-        )}
-      </div>
-    </div>
+    <ChipFollower>
+      {itemType === 'TAG' ? (
+        <TagChip tag={item as TagItem} />
+      ) : (
+        <PersonChip person={item as PersonItem} authToken={authToken} />
+      )}
+    </ChipFollower>
   );
 }

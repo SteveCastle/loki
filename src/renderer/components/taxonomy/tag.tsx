@@ -108,7 +108,6 @@ export default function Tag({
 
   type DropProps = {
     isOver: boolean;
-    isLeft: boolean;
     isSelf: boolean;
     itemType: string | symbol | null | undefined;
   };
@@ -117,16 +116,18 @@ export default function Tag({
     () => ({
       accept: ['TAG', NativeTypes.FILE],
       canDrop: () => !disableReorder,
+      // isLeft deliberately lives in hover-driven state, not collect —
+      // collect re-runs on drag store changes and a getBoundingClientRect
+      // there is a forced layout read on a hot path.
       collect: (monitor) => ({
         isOver: monitor.isOver(),
-        isLeft: getIsLeft(monitor, ref),
         isSelf: monitor.getItem()?.label === tag.label,
         itemType: monitor.getItemType(),
       }),
       hover: (item: Concept, monitor) => {
-        // Calculate isLeft value.
-        const isLeft = getIsLeft(monitor, ref);
-        setIsLeft(isLeft);
+        const nextIsLeft = getIsLeft(monitor, ref);
+        // Functional update so an unchanged side skips the re-render.
+        setIsLeft((prev) => (prev === nextIsLeft ? prev : nextIsLeft));
       },
       drop: (droppedTag: Concept, monitor) => {
         async function updateWeight() {

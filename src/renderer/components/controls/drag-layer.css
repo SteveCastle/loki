@@ -9,12 +9,14 @@
   z-index: 10000;
 }
 
-/* Repositioned every frame via an inline translate to the cursor.
-   will-change keeps the per-frame movement on the compositor. */
+/* Repositioned imperatively (drag-layer.tsx ChipFollower writes a translate3d
+   per frame). will-change keeps the per-frame movement on the compositor.
+   Hidden until the first position write so the chip never flashes at 0,0. */
 .drag-chip-anchor {
   position: absolute;
   top: 0;
   left: 0;
+  visibility: hidden;
   will-change: transform;
 }
 
@@ -28,11 +30,13 @@
   max-width: 260px;
   margin: 14px 0 0 12px;
   padding: 4px 14px 4px 5px;
-  background: rgba(32, 29, 34, 0.92);
+  /* No backdrop-filter here: blurring the backdrop of an element that moves
+     every frame forces a backdrop resample per frame and drops drag frames.
+     A near-opaque background reads the same without the cost. */
+  background: rgba(30, 27, 32, 0.97);
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 26px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(8px);
   transform: rotate(2.5deg);
   transform-origin: top left;
   animation: drag-chip-pop 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.35);

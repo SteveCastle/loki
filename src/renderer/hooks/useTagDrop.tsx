@@ -72,6 +72,10 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
         itemType: monitor.getItemType(),
       }),
       hover: (_droppedItem, monitor) => {
+        // isLeft only drives the MEDIA-reorder insert indicator. Skip the
+        // getBoundingClientRect read for tag/person drags — hover fires on
+        // every dragover event, and forced layout reads there add up.
+        if (monitor.getItemType() !== 'MEDIA') return;
         const nextIsLeft = getIsLeft(monitor, containerRef);
         setIsLeft((prev) => (prev !== nextIsLeft ? nextIsLeft : prev));
       },
@@ -210,9 +214,79 @@ export default function useTagDrop(item: Item, location: 'DETAIL' | 'LIST') {
           queryClient.invalidateQueries({ queryKey: ['metadata'] });
           queryClient.invalidateQueries({ queryKey: ['tags-by-path'] });
         }
+        // Ctrl held at drop time — the same widen-to-library gesture tag
+        // drops use (applyTagToAll) — assigns the person across EVERY item in
+        // the current filtered view instead of just the drop target. That has
+        // to be a server job (`assign-person` task): items without stored
+        // face vectors are scanned on the fly, seconds per item, so a
+        // synchronous request per file would starve the socket pool. Progress
+        // and completion arrive via the job toast; ToastSystem refreshes
+        // tags/people when it finishes.
+        async function assignPersonToLibrary(
+          person: DroppedPerson,
+          paths: string[]
+        ) {
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: {
+              type: 'info',
+              title: `Assigning ${person.name} across ${paths.length} items`,
+              message:
+                'Running as a background job — items without face data are scanned on the way.',
+              durationMs: 3500,
+            },
+          });
+          const headers: HeadersInit = { 'Content-Type': 'application/json' };
+          if (ctx.authToken) {
+            headers['Authorization'] = `Bearer ${ctx.authToken}`;
+          }
+          const res = await fetch(`${mediaServerBase}/create`, {
+            method: 'POST',
+            headers,
+            credentials: 'include',
+            body: JSON.stringify({
+              input: `assign-person --person-id=${person.id} "${paths.join(
+                '\n'
+              )}"`,
+            }),
+            signal: AbortSignal.timeout(10000),
+            redirect: 'error',
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        }
+
         if (monitor.getItemType() === 'PERSON' && item.path) {
           const person = droppedItem as DroppedPerson;
           const isNew = person.id === 0;
+          // The New-group chip stays single-item even with Ctrl held —
+          // minting one new person per library item is never what a drop
+          // means; assign the rest by ctrl+dropping the new card afterwards.
+          if (applyTagToAll && !isNew) {
+            const activeLibrary: Item[] = filter(
+              ctx.libraryLoadId,
+              ctx.textFilter,
+              ctx.library,
+              ctx.settings.filters,
+              ctx.settings.sortBy
+            );
+            const targetPaths = activeLibrary.map((i: Item) => i.path);
+            if (targetPaths.length > 1) {
+              assignPersonToLibrary(person, targetPaths).catch((err) => {
+                libraryService.send({
+                  type: 'ADD_TOAST',
+                  data: {
+                    type: 'error',
+                    title: `Could not start assigning ${person.name}`,
+                    message:
+                      err instanceof Error
+                        ? err.message
+                        : 'Could not communicate with job service',
+                  },
+                });
+              });
+              return;
+            }
+          }
           // Scanning on the fly (video frame + ONNX) can take a few seconds —
           // acknowledge the drop immediately so it doesn't feel dead.
           libraryService.send({

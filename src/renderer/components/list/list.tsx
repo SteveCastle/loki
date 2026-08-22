@@ -9,12 +9,92 @@ import {
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useDragLayer } from 'react-dnd';
+import { useDragDropManager } from 'react-dnd';
 import filter from '../../filter';
 import { ListItem } from './list-item';
 import { PERFORMANCE_CONSTANTS } from '../../constants/performance';
 import './list-item.css';
 import './list.css';
+
+function mapRange(
+  value: number,
+  low1: number,
+  high1: number,
+  low2: number,
+  high2: number
+) {
+  return low2 + ((high2 - low2) * (value - low1)) / (high1 - low1);
+}
+
+// Speed ramps from 0 at the edge-zone boundary to MIN/MAX at the very
+// top/bottom of the container (negative scrolls up).
+function getEdgeScrollSpeed(yOffset: number, containerHeight: number) {
+  const threshold = PERFORMANCE_CONSTANTS.SCROLL_SPEED_THRESHOLD;
+  const minSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MIN;
+  const maxSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MAX;
+
+  if (yOffset < threshold) {
+    return mapRange(yOffset, 0, threshold, minSpeed, 0);
+  }
+  if (yOffset > containerHeight - threshold && yOffset < containerHeight) {
+    return mapRange(
+      yOffset,
+      containerHeight - threshold,
+      containerHeight,
+      0,
+      maxSpeed
+    );
+  }
+  return 0;
+}
+
+// Auto-scrolls the grid while a MEDIA reorder drag hovers near its top or
+// bottom edge. Fully imperative on purpose: the earlier version collected
+// monitor.getClientOffset() through useDragLayer at the grid level, which
+// re-rendered the entire virtualized grid on EVERY dragover event of every
+// drag type — the main source of drag jank. Here the monitor is read inside
+// a rAF loop that only runs while a MEDIA drag is in flight, and React is
+// never involved.
+function useMediaDragAutoScroll(
+  parentRef: { current: HTMLDivElement | null },
+  onScrolled?: (scrollTop: number) => void
+) {
+  const manager = useDragDropManager();
+  useEffect(() => {
+    const monitor = manager.getMonitor();
+    let frameId = 0;
+
+    const active = () =>
+      monitor.isDragging() && monitor.getItemType() === 'MEDIA';
+
+    // The loop self-perpetuates while the drag is active so scrolling
+    // continues when the pointer is held still at an edge (HTML5 dnd stops
+    // emitting dragover events for a stationary pointer).
+    const step = () => {
+      frameId = 0;
+      const el = parentRef.current;
+      const offset = monitor.getClientOffset();
+      if (!el || !offset || !active()) return;
+      const speed = getEdgeScrollSpeed(offset.y, el.clientHeight);
+      if (speed !== 0) {
+        el.scrollBy(0, speed);
+        onScrolled?.(el.scrollTop);
+      }
+      frameId = requestAnimationFrame(step);
+    };
+
+    const sync = () => {
+      if (active() && !frameId) frameId = requestAnimationFrame(step);
+    };
+    const unsubState = monitor.subscribeToStateChange(sync);
+    const unsubOffset = monitor.subscribeToOffsetChange(sync);
+    return () => {
+      unsubState();
+      unsubOffset();
+      if (frameId) cancelAnimationFrame(frameId);
+    };
+  }, [manager, parentRef, onScrolled]);
+}
 
 export function List() {
   const [initialLoad, setInitialLoad] = useState(true);
@@ -277,77 +357,7 @@ function VirtualGrid({
   }, [scrollToCursorEventId, libraryService]);
 
   // Auto-scroll while dragging near edges
-  const { isDragging, offset, type } = useDragLayer((monitor) => ({
-    isDragging: monitor.isDragging(),
-    offset: monitor.getClientOffset(),
-    type: monitor.getItemType(),
-  }));
-
-  const mapRange = useCallback(
-    (
-      value: number,
-      low1: number,
-      high1: number,
-      low2: number,
-      high2: number
-    ) => {
-      return low2 + ((high2 - low2) * (value - low1)) / (high1 - low1);
-    },
-    []
-  );
-
-  const getScrollSpeed = useCallback(
-    (yOffset: number, containerHeight: number) => {
-      let scrollSpeed = 0;
-      const threshold = PERFORMANCE_CONSTANTS.SCROLL_SPEED_THRESHOLD;
-      const minSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MIN;
-      const maxSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MAX;
-
-      if (yOffset < threshold) {
-        scrollSpeed = mapRange(yOffset, 0, threshold, minSpeed, 0);
-      } else if (
-        yOffset > containerHeight - threshold &&
-        yOffset < containerHeight
-      ) {
-        scrollSpeed = mapRange(
-          yOffset,
-          containerHeight - threshold,
-          containerHeight,
-          0,
-          maxSpeed
-        );
-      }
-
-      return scrollSpeed;
-    },
-    [mapRange]
-  );
-
-  useEffect(() => {
-    let animationFrameId: number;
-    const containerHeight = parentRef.current?.clientHeight;
-
-    const scroll = () => {
-      if (
-        isDragging &&
-        type === 'MEDIA' &&
-        offset &&
-        parentRef.current &&
-        containerHeight
-      ) {
-        const mousePosition = offset.y;
-        const scrollSpeed = getScrollSpeed(mousePosition, containerHeight);
-        parentRef.current.scrollBy(0, scrollSpeed);
-        animationFrameId = requestAnimationFrame(scroll);
-      } else {
-        cancelAnimationFrame(animationFrameId);
-      }
-    };
-
-    animationFrameId = requestAnimationFrame(scroll);
-
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [isDragging, offset, type, getScrollSpeed]);
+  useMediaDragAutoScroll(parentRef);
 
   return (
     <div className="List" ref={parentRef} onScroll={onScroll}>
@@ -608,79 +618,10 @@ function MasonryGrid({
     cursor,
   ]);
 
-  // Auto-scroll logic (copied from VirtualGrid)
-  const { isDragging, offset, type } = useDragLayer((monitor) => ({
-    isDragging: monitor.isDragging(),
-    offset: monitor.getClientOffset(),
-    type: monitor.getItemType(),
-  }));
-
-  const mapRange = useCallback(
-    (
-      value: number,
-      low1: number,
-      high1: number,
-      low2: number,
-      high2: number
-    ) => {
-      return low2 + ((high2 - low2) * (value - low1)) / (high1 - low1);
-    },
-    []
-  );
-
-  const getScrollSpeed = useCallback(
-    (yOffset: number, containerHeight: number) => {
-      let scrollSpeed = 0;
-      const threshold = PERFORMANCE_CONSTANTS.SCROLL_SPEED_THRESHOLD;
-      const minSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MIN;
-      const maxSpeed = PERFORMANCE_CONSTANTS.SCROLL_SPEED_RANGE.MAX;
-
-      if (yOffset < threshold) {
-        scrollSpeed = mapRange(yOffset, 0, threshold, minSpeed, 0);
-      } else if (
-        yOffset > containerHeight - threshold &&
-        yOffset < containerHeight
-      ) {
-        scrollSpeed = mapRange(
-          yOffset,
-          containerHeight - threshold,
-          containerHeight,
-          0,
-          maxSpeed
-        );
-      }
-
-      return scrollSpeed;
-    },
-    [mapRange]
-  );
-
-  useEffect(() => {
-    let animationFrameId: number;
-    const containerHeight = parentRef.current?.clientHeight;
-
-    const scroll = () => {
-      if (
-        isDragging &&
-        type === 'MEDIA' &&
-        offset &&
-        parentRef.current &&
-        containerHeight
-      ) {
-        const mousePosition = offset.y;
-        const scrollSpeed = getScrollSpeed(mousePosition, containerHeight);
-        parentRef.current.scrollBy(0, scrollSpeed);
-        setScrollTop(parentRef.current.scrollTop); // Update state to trigger render
-        animationFrameId = requestAnimationFrame(scroll);
-      } else {
-        cancelAnimationFrame(animationFrameId);
-      }
-    };
-
-    animationFrameId = requestAnimationFrame(scroll);
-
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [isDragging, offset, type, getScrollSpeed]);
+  // Auto-scroll while dragging near edges (same hook as VirtualGrid).
+  // setScrollTop keeps this layout's manual virtualization rendering rows
+  // that scroll into view mid-drag.
+  useMediaDragAutoScroll(parentRef, setScrollTop);
 
   return (
     <div className="List" ref={parentRef} onScroll={handleScrollLocal}>
