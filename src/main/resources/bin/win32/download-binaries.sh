@@ -5,6 +5,13 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FFMPEG_URL="https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+# gyan.dev intermittently serves GitHub Actions runner IPs an HTML block page
+# WITH HTTP 200, so curl can't detect it by status — it broke the v2.28.2 and
+# v2.29.0 release runs back to back. BtbN's auto-published GitHub build is the
+# fallback: same GPL ffmpeg family, and github.com is always reachable from
+# Actions. Both zips unpack as ffmpeg-*/bin/*.exe, so the copy globs below
+# work for either source.
+FFMPEG_FALLBACK_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
 # RARLAB ships UnRAR for Windows as a self-extracting console SFX. The
 # unversioned URL always points at the latest build; rarlab does not
 # publish stable versioned URLs for this particular SFX. We run it with
@@ -19,8 +26,17 @@ TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
 
 # --- FFmpeg ---
-echo "Downloading FFmpeg from: $FFMPEG_URL"
-curl -L "$FFMPEG_URL" -o "$TEMP_DIR/ffmpeg.zip"
+# Success means "downloaded AND is a real zip" — the block-page failure mode
+# returns 200 with HTML, so integrity comes from unzip -t, not the HTTP code.
+fetch_ffmpeg() {
+  echo "Downloading FFmpeg from: $1"
+  curl -fL --retry 3 --retry-delay 5 "$1" -o "$TEMP_DIR/ffmpeg.zip" &&
+    unzip -tq "$TEMP_DIR/ffmpeg.zip" >/dev/null
+}
+if ! fetch_ffmpeg "$FFMPEG_URL"; then
+  echo "Primary FFmpeg source failed or served a non-zip; trying fallback..."
+  fetch_ffmpeg "$FFMPEG_FALLBACK_URL"
+fi
 echo "Extracting FFmpeg..."
 unzip -q "$TEMP_DIR/ffmpeg.zip" -d "$TEMP_DIR"
 cp "$TEMP_DIR"/ffmpeg-*/bin/ffmpeg.exe "$SCRIPT_DIR/"
