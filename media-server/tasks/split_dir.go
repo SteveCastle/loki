@@ -69,7 +69,7 @@ type splitFile struct {
 func splitDirTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	ctx := j.Ctx
 
-	tokens := splitDirTokens(j)
+	tokens := dirTaskTokens(j)
 	opts := ParseOptions(&jobqueue.Job{Arguments: tokens}, splitDirOptions)
 	targetDir, _ := opts["target"].(string)
 	mode, _ := opts["mode"].(string)
@@ -362,15 +362,16 @@ func splitDirTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	return nil
 }
 
-// splitDirTokens is the job's option tokens, arguments and input together.
+// dirTaskTokens is the job's option tokens, arguments and input together —
+// shared by the directory-shaped tasks (split-dir, dedupe).
 //
 // /create splits a typed command line at the LAST token and stores that one as
 // the job's Input — a convention that fits per-item tasks, whose final token is
-// the query or path list. This task's final token is just as likely to be
+// the query or path list. These tasks' final token is just as likely to be
 // "--mode=date" or the value of a preceding flag, so both halves are read back
 // as one list. Input lines are taken whole (never re-split on spaces): /create
 // has already handled quoting, and a workflow hands paths down one per line.
-func splitDirTokens(j *jobqueue.Job) []string {
+func dirTaskTokens(j *jobqueue.Job) []string {
 	tokens := append([]string{}, j.Arguments...)
 	for line := range strings.SplitSeq(j.Input, "\n") {
 		if line = strings.TrimSpace(line); line != "" {

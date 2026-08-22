@@ -657,7 +657,7 @@
       function clearNonRunningJobs() {
         if (
           !confirm(
-            'Are you sure you want to clear all non-running jobs? This action cannot be undone.'
+            'Clear all finished jobs (completed, cancelled, error)? Running, pending, and paused jobs are kept. This action cannot be undone.'
           )
         ) {
           return;

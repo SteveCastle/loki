@@ -458,7 +458,7 @@ func TestRemoveJobNotFound(t *testing.T) {
 	}
 }
 
-func TestClearNonRunningJobs(t *testing.T) {
+func TestClearFinishedJobs(t *testing.T) {
 	db, _ := sql.Open("sqlite", ":memory:")
 	defer db.Close()
 	q := NewQueueWithDB(db)
@@ -467,7 +467,9 @@ func TestClearNonRunningJobs(t *testing.T) {
 	pendingID, _ := q.AddJob("", "test", nil, "", nil)
 	runningID, _ := q.AddJob("", "test", nil, "", nil)
 	completedID, _ := q.AddJob("", "test", nil, "", nil)
+	cancelledID, _ := q.AddJob("", "test", nil, "", nil)
 	errorID, _ := q.AddJob("", "test", nil, "", nil)
+	pausedID, _ := q.AddJob("", "test", nil, "", nil)
 
 	// Set states
 	q.ClaimJob() // Claims first pending job (pendingID or runningID depending on order)
@@ -477,21 +479,35 @@ func TestClearNonRunningJobs(t *testing.T) {
 	q2.Jobs[pendingID].State = StatePending
 	q2.Jobs[runningID].State = StateInProgress
 	q2.Jobs[completedID].State = StateCompleted
+	q2.Jobs[cancelledID].State = StateCancelled
 	q2.Jobs[errorID].State = StateError
+	q2.Jobs[pausedID].State = StatePaused
 
-	clearedCount, err := q2.ClearNonRunningJobs()
+	clearedCount, err := q2.ClearFinishedJobs()
 	if err != nil {
-		t.Fatalf("ClearNonRunningJobs() error = %v", err)
+		t.Fatalf("ClearFinishedJobs() error = %v", err)
 	}
 
-	// Should clear 3 jobs (pending, completed, error) but not running
+	// Only terminal states go: completed, cancelled, error.
 	if clearedCount != 3 {
-		t.Errorf("ClearNonRunningJobs() cleared %d; want 3", clearedCount)
+		t.Errorf("ClearFinishedJobs() cleared %d; want 3", clearedCount)
 	}
 
-	// Running job should still exist
-	if q2.GetJob(runningID) == nil {
-		t.Error("Running job should not be cleared")
+	// Running, pending, and paused jobs all represent work the user still
+	// expects to happen — none of them may be swept away by Clear All.
+	for name, id := range map[string]string{
+		"running": runningID, "pending": pendingID, "paused": pausedID,
+	} {
+		if q2.GetJob(id) == nil {
+			t.Errorf("%s job should not be cleared", name)
+		}
+	}
+	for name, id := range map[string]string{
+		"completed": completedID, "cancelled": cancelledID, "error": errorID,
+	} {
+		if q2.GetJob(id) != nil {
+			t.Errorf("%s job should be cleared", name)
+		}
 	}
 }
 

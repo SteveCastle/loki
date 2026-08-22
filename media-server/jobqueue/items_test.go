@@ -160,12 +160,23 @@ func TestPathIndexRemoveAndClear(t *testing.T) {
 		t.Fatalf("removed job still indexed: %v", pathIndexIDs(got))
 	}
 
+	// Clear All only sweeps finished jobs, so finish this one first.
 	id2, _ := q.AddJob("", "hash", nil, p, nil)
-	if _, err := q.ClearNonRunningJobs(); err != nil {
+	q.Jobs[id2].State = StateCompleted
+	if _, err := q.ClearFinishedJobs(); err != nil {
 		t.Fatal(err)
 	}
 	if got := q.GetJobsForPath(p); len(got) != 0 {
 		t.Fatalf("cleared job %s still indexed: %v", id2, pathIndexIDs(got))
+	}
+
+	// A pending job survives Clear All — and stays indexed.
+	id3, _ := q.AddJob("", "hash", nil, p, nil)
+	if _, err := q.ClearFinishedJobs(); err != nil {
+		t.Fatal(err)
+	}
+	if got := q.GetJobsForPath(p); len(got) != 1 {
+		t.Fatalf("pending job %s should survive clear, index = %v", id3, pathIndexIDs(got))
 	}
 }
 

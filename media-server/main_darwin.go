@@ -501,7 +501,7 @@ func clearNonRunningJobsHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		clearedCount, err := deps.Queue.ClearNonRunningJobs()
+		clearedCount, err := deps.Queue.ClearFinishedJobs()
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -510,7 +510,7 @@ func clearNonRunningJobsHandler(deps *Dependencies) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"cleared_count": clearedCount,
-			"message":       fmt.Sprintf("Cleared %d non-running jobs", clearedCount),
+			"message":       fmt.Sprintf("Cleared %d finished jobs", clearedCount),
 		})
 	}
 }

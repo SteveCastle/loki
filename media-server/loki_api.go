@@ -1265,13 +1265,9 @@ func lokiMediaMoveHandler(deps *Dependencies) http.HandlerFunc {
 // lokiMediaMergeMetadataHandler consolidates a multi-selection into its FIRST
 // path — the synchronous "Merge" action behind the viewer's context-palette
 // selection (mirrored by mergeItemMetadata in the Electron main process; keep
-// the two in step). Metadata merge is additive: tag rows and per-model
-// embedding rows the target lacks are copied in (the target's own rows always
-// win), an empty transcript is filled from the first source that has one, and
-// that source's .vtt sidecar is moved next to the target. The sources are
-// then DELETED — local file removed (plus leftover sidecar) and every
-// database reference erased. s3:// sources and files that fail to delete keep
-// their rows and are reported in `failed`.
+// the two in step). The actual work — additive tag/embedding/transcript merge,
+// .vtt sidecar move, then deleting the sources and erasing their database
+// references — lives in media.MergeInto, shared with the dedupe task.
 //
 // POST /api/media/merge-metadata {paths: [target, source, ...]}
 func lokiMediaMergeMetadataHandler(deps *Dependencies) http.HandlerFunc {
@@ -1301,194 +1297,18 @@ func lokiMediaMergeMetadataHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
-		tx, err := deps.DB.BeginTx(r.Context(), nil)
+		res, err := media.MergeInto(r.Context(), deps.DB, target, sources)
 		if err != nil {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		defer tx.Rollback()
-
-		countRows := func(query string) (int64, error) {
-			var n int64
-			err := tx.QueryRow(query, target).Scan(&n)
-			return n, err
+		if res.FacesRemoved > 0 {
+			// The sources' faces were in someone's group — open People views
+			// are now showing stale counts.
+			broadcastPeopleChanged()
 		}
-
-		tagsBefore, err := countRows(`SELECT COUNT(*) FROM media_tag_by_category WHERE media_path = ?`)
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, src := range sources {
-			// NOT EXISTS with IS-comparison rather than ON CONFLICT: the PK
-			// includes time_stamp and SQLite treats NULL PK values as
-			// distinct, so conflict resolution alone would duplicate
-			// NULL-timestamp tag rows.
-			if _, err := tx.Exec(
-				`INSERT INTO media_tag_by_category
-				   (media_path, tag_label, category_label, weight, time_stamp, created_at)
-				 SELECT ?1, s.tag_label, s.category_label, s.weight, s.time_stamp, s.created_at
-				 FROM media_tag_by_category s
-				 WHERE s.media_path = ?2
-				   AND NOT EXISTS (
-				     SELECT 1 FROM media_tag_by_category t
-				     WHERE t.media_path = ?1
-				       AND t.tag_label = s.tag_label
-				       AND t.category_label IS s.category_label
-				       AND t.time_stamp IS s.time_stamp
-				   )`,
-				target, src,
-			); err != nil {
-				httpError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-		tagsAfter, err := countRows(`SELECT COUNT(*) FROM media_tag_by_category WHERE media_path = ?`)
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		embBefore, err := countRows(`SELECT COUNT(*) FROM media_embedding WHERE media_path = ?`)
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for _, src := range sources {
-			// PK (media_path, model): the target's existing per-model vectors
-			// win; earlier sources win over later ones for models it lacks.
-			if _, err := tx.Exec(
-				`INSERT OR IGNORE INTO media_embedding
-				   (media_path, model, dim, vector, created_at)
-				 SELECT ?, model, dim, vector, created_at
-				 FROM media_embedding WHERE media_path = ?`,
-				target, src,
-			); err != nil {
-				httpError(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-		embAfter, err := countRows(`SELECT COUNT(*) FROM media_embedding WHERE media_path = ?`)
-		if err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Transcript: fill only when the target has none — never overwrite.
-		transcriptFilled := false
-		var targetTranscript sql.NullString
-		if err := tx.QueryRow(
-			`SELECT transcript FROM media WHERE path = ?`, target,
-		).Scan(&targetTranscript); err != nil && err != sql.ErrNoRows {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if !targetTranscript.Valid || targetTranscript.String == "" {
-			for _, src := range sources {
-				var t sql.NullString
-				err := tx.QueryRow(`SELECT transcript FROM media WHERE path = ?`, src).Scan(&t)
-				if err == sql.ErrNoRows {
-					continue
-				}
-				if err != nil {
-					httpError(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-				if t.Valid && t.String != "" {
-					if _, err := tx.Exec(
-						`UPDATE media SET transcript = ? WHERE path = ?`, t.String, target,
-					); err != nil {
-						httpError(w, err.Error(), http.StatusInternalServerError)
-						return
-					}
-					transcriptFilled = true
-					break
-				}
-			}
-		}
-
-		if err := tx.Commit(); err != nil {
-			httpError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		// Transcript sidecar file: when the target has no .vtt of its own,
-		// move the first source's sidecar next to the target — before the
-		// sources are deleted below, so the file is never lost.
-		transcriptFile := ""
-		if findVttSidecar(target) == "" {
-			for _, src := range sources {
-				srcVtt := findVttSidecar(src)
-				if srcVtt == "" {
-					continue
-				}
-				destVtt := vttCandidates(target)[0]
-				if err := os.Rename(srcVtt, destVtt); err == nil {
-					transcriptFilled = true
-					transcriptFile = destVtt
-				}
-				break
-			}
-		}
-
-		// Delete the merged-away sources: local file plus leftover sidecar,
-		// then every database reference. s3:// objects are not deleted here
-		// (no local file to remove) — they keep their rows and are reported
-		// as failed so nothing silently orphans.
-		var deleted, failed []string
-		for _, src := range sources {
-			if strings.HasPrefix(src, "s3://") {
-				failed = append(failed, src)
-				continue
-			}
-			if err := os.Remove(src); err != nil && !os.IsNotExist(err) {
-				failed = append(failed, src)
-				continue
-			}
-			if leftover := findVttSidecar(src); leftover != "" {
-				_ = os.Remove(leftover)
-			}
-			if _, err := eraseMediaReferences(r.Context(), deps, src); err != nil {
-				failed = append(failed, src)
-				continue
-			}
-			deleted = append(deleted, src)
-		}
-
-		writeJSON(w, map[string]any{
-			"target":         target,
-			"sources":        sources,
-			"tags":           tagsAfter - tagsBefore,
-			"embeddings":     embAfter - embBefore,
-			"transcript":     transcriptFilled,
-			"transcriptFile": transcriptFile,
-			"deleted":        deleted,
-			"failed":         failed,
-		})
+		writeJSON(w, res)
 	}
-}
-
-// Transcript sidecars live next to the media file: `<base>.vtt` (extension
-// replaced — the transcribe convention) or `<path>.vtt` (appended). Mirrors
-// the Electron viewer's transcript.ts.
-func vttCandidates(mediaPath string) []string {
-	ext := filepath.Ext(mediaPath)
-	if ext == "" {
-		return []string{mediaPath + ".vtt"}
-	}
-	return []string{strings.TrimSuffix(mediaPath, ext) + ".vtt", mediaPath + ".vtt"}
-}
-
-func findVttSidecar(mediaPath string) string {
-	if strings.HasPrefix(mediaPath, "s3://") {
-		return ""
-	}
-	for _, c := range vttCandidates(mediaPath) {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return c
-		}
-	}
-	return ""
 }
 
 func lokiMediaForgetHandler(deps *Dependencies) http.HandlerFunc {

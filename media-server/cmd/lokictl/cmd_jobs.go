@@ -148,7 +148,7 @@ func init() {
 	register(command{group: "job", name: "remove", args: "<id>",
 		summary: "Remove a job from the queue (POST /job/{id}/remove)", run: jobAction("remove")})
 	register(command{group: "job", name: "clear", args: "--yes",
-		summary: "Clear all non-running jobs (POST /jobs/clear)", run: cmdJobClear})
+		summary: "Clear all finished jobs — running/pending/paused are kept (POST /jobs/clear)", run: cmdJobClear})
 }
 
 // splitControlFlags separates lokictl's own flags from task tokens: any of
@@ -390,7 +390,7 @@ func cmdJobCopy(a *App, args []string) int {
 
 func cmdJobClear(a *App, args []string) int {
 	if !hasYesFlag(args) {
-		return a.Usage(nil, "job clear removes ALL non-running jobs — re-run with --yes to confirm")
+		return a.Usage(nil, "job clear removes ALL finished jobs (completed/cancelled/error) — re-run with --yes to confirm")
 	}
 	var out any
 	if err := a.Client.DoJSON("POST", "/jobs/clear", nil, &out); err != nil {

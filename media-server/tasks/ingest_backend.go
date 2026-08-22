@@ -109,25 +109,54 @@ func ingestBackendTaskWithOptions(j *jobqueue.Job, q *jobqueue.Queue, _ *sync.Mu
 		return nil
 	}
 
+	batch := newMediaInsertBatch(q.Db)
+	defer batch.Discard()
+	_ = q.SetJobProgress(j.ID, 0, len(newFiles))
+
 	var insertedFiles []string
 	for i, f := range newFiles {
 		select {
 		case <-ctx.Done():
+			_, _ = batch.Flush()
+			if len(insertedFiles) > 0 {
+				_ = q.RegisterOutputFiles(j.ID, insertedFiles)
+			}
 			q.PushJobStdout(j.ID, "Task was canceled")
 			_ = q.CancelJob(j.ID)
 			return ctx.Err()
 		default:
 		}
 
-		if err := insertMediaRecord(q.Db, f.Path, f.Size); err != nil {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Warning: failed to insert %s: %v", f.Path, err))
-			continue
+		if err := batch.Add(f.Path, f.Size); err != nil {
+			_, _ = batch.Flush()
+			q.PushJobStdout(j.ID, fmt.Sprintf("Error inserting %s: %v", f.Path, err))
+			if len(insertedFiles) > 0 {
+				_ = q.RegisterOutputFiles(j.ID, insertedFiles)
+			}
+			q.ErrorJob(j.ID)
+			return err
 		}
 		insertedFiles = append(insertedFiles, f.Path)
-		q.RegisterOutputFile(j.ID, f.Path)
-		if (i+1)%100 == 0 || i == len(newFiles)-1 {
-			q.PushJobStdout(j.ID, fmt.Sprintf("Progress: %d/%d files ingested", i+1, len(newFiles)))
+		// Progress only moves at flush points: while the batch transaction is
+		// open it holds the SQLite write lock, so the progress UPDATE (a
+		// separate connection) would stall against our own transaction.
+		if batch.pending >= mediaInsertBatchSize {
+			if _, err := batch.Flush(); err != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("Error writing to database: %v", err))
+				q.ErrorJob(j.ID)
+				return err
+			}
+			_ = q.SetJobProgress(j.ID, i+1, len(newFiles))
 		}
+	}
+	if _, err := batch.Flush(); err != nil {
+		q.PushJobStdout(j.ID, fmt.Sprintf("Error writing to database: %v", err))
+		q.ErrorJob(j.ID)
+		return err
+	}
+	_ = q.SetJobProgress(j.ID, len(newFiles), len(newFiles))
+	if len(insertedFiles) > 0 {
+		_ = q.RegisterOutputFiles(j.ID, insertedFiles)
 	}
 
 	q.PushJobStdout(j.ID, fmt.Sprintf("Ingestion completed: %d files added to database", len(insertedFiles)))

@@ -1242,20 +1242,23 @@ func (q *Queue) RemoveJob(id string) error {
 	return nil
 }
 
-// ClearNonRunningJobs removes all jobs that are not currently running (StateInProgress).
-// This includes jobs in states: Pending, Completed, Cancelled, and Error.
+// ClearFinishedJobs removes every job that has reached a terminal state:
+// Completed, Cancelled, and Error. Jobs that still represent work the user
+// expects to happen are kept — running (InProgress), waiting to run
+// (Pending), and Paused — so clearing the history can never silently drop a
+// queued or suspended job.
 // Returns the number of jobs cleared and any error that occurred.
-func (q *Queue) ClearNonRunningJobs() (int, error) {
+func (q *Queue) ClearFinishedJobs() (int, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	var clearedCount int
 	var jobsToRemove []string
 
-	// Collect IDs of jobs to remove (not currently running)
+	// Collect IDs of jobs to remove (terminal states only)
 	for _, jobID := range q.JobOrder {
-		job := q.Jobs[jobID]
-		if job.State != StateInProgress {
+		switch q.Jobs[jobID].State {
+		case StateCompleted, StateCancelled, StateError:
 			jobsToRemove = append(jobsToRemove, jobID)
 		}
 	}

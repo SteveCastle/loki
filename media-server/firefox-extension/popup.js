@@ -481,7 +481,7 @@ function refreshJobs() {
   fetchJobs();
 }
 
-// Clear all non-running jobs
+// Clear all finished jobs (running, pending, and paused jobs are kept)
 async function clearAllJobs() {
   try {
     const response = await authFetch(`${API_BASE}/jobs/clear`, {

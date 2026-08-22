@@ -64,12 +64,14 @@ func init() {
 	RegisterTask("process", "Process Media (Combined Ops)", processTaskOptions(), processTask)
 	RegisterTask("faces", "Detect Faces (ONNX)", itemOpTaskOptions("faces"), makeItemOpTaskFn("faces"))
 	RegisterTask("faces-cluster", "Cluster Faces into People", nil, facesClusterTask)
+	RegisterTask("assign-person", "Assign Person to Media", assignPersonOptions, assignPersonTask)
 
 	// Legacy alias: maps --type onto the split-out ops above.
 	RegisterTask("metadata", "Generate Metadata (Legacy)", metadataOptions, metadataTask)
 	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
 	RegisterTask("move", "Move Media Files", moveOptions, moveTask)
 	RegisterTask("split-dir", "Split Directory into Subfolders", splitDirOptions, splitDirTask)
+	RegisterTask("dedupe", "Deduplicate Directory", dedupeOptions, dedupeTask)
 	RegisterTask("ingest", "Ingest Media Files", ingestOptions, ingestTask)
 	RegisterTask("lora-dataset", "Create LoRA Dataset", loraDatasetOptions, loraDatasetTask)
 
@@ -98,6 +100,10 @@ func init() {
 	// shares the bucket so a scan and a recluster never run concurrently.
 	RegisterHostResolver("faces", func(string) string { return HostBucketFaces })
 	RegisterHostResolver("faces-cluster", func(string) string { return HostBucketFaces })
+	// Bulk person assignment scans unscanned items on the fly (same ONNX
+	// pipeline as a face scan), so it shares the faces bucket rather than
+	// racing a scan or recluster.
+	RegisterHostResolver("assign-person", func(string) string { return HostBucketFaces })
 	RegisterHostResolver("ingest", urlHostResolver)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)

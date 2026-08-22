@@ -581,7 +581,7 @@ func mediaAssignPersonHandler(deps *Dependencies) http.HandlerFunc {
 			httpError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		best := pickFaceForPerson(faces, personFaces)
+		best := tasks.PickFaceForPerson(faces, personFaces)
 
 		if err := media.AssignFace(deps.DB, best.ID, req.PersonID, "user"); err != nil {
 			httpError(w, err.Error(), userErrorStatus(err))
@@ -651,37 +651,6 @@ func mediaRejectPersonHandler(deps *Dependencies) http.HandlerFunc {
 		}
 		writeJSON(w, map[string]any{"personId": personID, "rejectedFaceIds": ids})
 	}
-}
-
-// pickFaceForPerson chooses which of a media item's faces to assign: the one
-// most similar to the person's existing faces when the person has any
-// (comparing only same-dimension vectors, i.e. the same recognizer), else the
-// largest face in the item.
-func pickFaceForPerson(faces, personFaces []media.Face) media.Face {
-	best := faces[0]
-	if len(personFaces) > 0 {
-		var bestScore float32 = -2
-		matched := false
-		for _, f := range faces {
-			for _, pf := range personFaces {
-				if len(f.Vec) != len(pf.Vec) {
-					continue
-				}
-				if sc := embedvec.CosineSim(f.Vec, pf.Vec); sc > bestScore {
-					bestScore, best, matched = sc, f, true
-				}
-			}
-		}
-		if matched {
-			return best
-		}
-	}
-	for _, f := range faces[1:] {
-		if f.W*f.H > best.W*best.H {
-			best = f
-		}
-	}
-	return best
 }
 
 func faceAssignHandler(deps *Dependencies) http.HandlerFunc {

@@ -792,7 +792,7 @@
           <li><strong>Cancel</strong> - Stop a running job</li>
           <li><strong>Copy</strong> - Duplicate a job configuration</li>
           <li><strong>Remove</strong> - Delete a job from the queue</li>
-          <li><strong>Clear</strong> - Remove all non-running jobs</li>
+          <li><strong>Clear</strong> - Remove all finished jobs (running, pending, and paused jobs are kept)</li>
         </ul>
 
         <h3 id="tasks">Available Tasks</h3>
@@ -1140,7 +1140,7 @@
           <tr><td>POST</td><td><code>/job/{id}/cancel</code></td><td>Cancel a running job</td></tr>
           <tr><td>POST</td><td><code>/job/{id}/copy</code></td><td>Copy job configuration</td></tr>
           <tr><td>POST</td><td><code>/job/{id}/remove</code></td><td>Remove a job</td></tr>
-          <tr><td>POST</td><td><code>/jobs/clear</code></td><td>Clear non-running jobs</td></tr>
+          <tr><td>POST</td><td><code>/jobs/clear</code></td><td>Clear finished jobs</td></tr>
         </table>
         <h4>Media Operations</h4>
         <table class="api-table">

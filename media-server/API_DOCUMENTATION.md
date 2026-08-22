@@ -104,14 +104,15 @@ The system supports the following built-in tasks:
 - Removes job from queue and database
 - **Response**: `200 OK` with message "Job removed successfully"
 
-#### Clear Non-Running Jobs
+#### Clear Finished Jobs
 - **POST** `/jobs/clear`
-- Removes all jobs except those currently in progress
+- Removes all jobs in a terminal state (completed, cancelled, error). Jobs that
+  are running, pending, or paused are kept.
 - **Response**: 
   ```json
   {
     "cleared_count": 5,
-    "message": "Cleared 5 non-running jobs"
+    "message": "Cleared 5 finished jobs"
   }
   ```
 

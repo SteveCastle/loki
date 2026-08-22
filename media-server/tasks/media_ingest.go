@@ -92,62 +92,64 @@ func parseTagArg(value string) (label, category string) {
 	return label, category
 }
 
-// queueFollowUpTasks creates follow-up tasks for each ingested file based on options
+// queueFollowUpTasks creates follow-up tasks for each ingested file based on
+// options. Per-file success lines are deliberately NOT pushed to stdout —
+// every PushJobStdout rewrites the whole job row, which is quadratic over a
+// large ingest — so progress goes through the job progress bar and one
+// summary line per task type; only failures get individual lines.
 func queueFollowUpTasks(q *jobqueue.Queue, jobID string, files []string, opts IngestOptions) {
 	if len(files) == 0 {
 		return
 	}
 
-	for _, filePath := range files {
-		// Queue transcript metadata task
-		if opts.Transcript {
-			_, err := q.AddJob("", "metadata", []string{"-t", "transcript", "-a", "all"}, filePath, nil)
-			if err != nil {
-				q.PushJobStdout(jobID, "Warning: failed to queue transcript task for "+filePath+": "+err.Error())
-			} else {
-				q.PushJobStdout(jobID, "Queued transcript task for: "+filePath)
-			}
+	type followUp struct {
+		enabled bool
+		name    string
+		task    string
+		args    []string
+	}
+	all := []followUp{
+		{opts.Transcript, "transcript", "metadata", []string{"-t", "transcript", "-a", "all"}},
+		{opts.Description, "description", "metadata", []string{"-t", "description", "-a", "all"}},
+		{opts.FileMeta, "file metadata", "metadata", []string{"-t", "hash,dimensions", "-a", "all"}},
+		{opts.AutoTag, "autotag", "autotag", nil},
+	}
+	var active []followUp
+	for _, fu := range all {
+		if fu.enabled {
+			active = append(active, fu)
 		}
+	}
+	if len(active) == 0 {
+		return
+	}
 
-		// Queue description metadata task
-		if opts.Description {
-			_, err := q.AddJob("", "metadata", []string{"-t", "description", "-a", "all"}, filePath, nil)
-			if err != nil {
-				q.PushJobStdout(jobID, "Warning: failed to queue description task for "+filePath+": "+err.Error())
+	total := len(files) * len(active)
+	q.PushJobStdout(jobID, fmt.Sprintf("Queueing %d follow-up task(s)...", total))
+	_ = q.SetJobProgress(jobID, 0, total)
+	done := 0
+	for _, fu := range active {
+		queued := 0
+		for _, filePath := range files {
+			if _, err := q.AddJob("", fu.task, fu.args, filePath, nil); err != nil {
+				q.PushJobStdout(jobID, "Warning: failed to queue "+fu.name+" task for "+filePath+": "+err.Error())
 			} else {
-				q.PushJobStdout(jobID, "Queued description task for: "+filePath)
+				queued++
 			}
+			done++
+			_ = q.SetJobProgress(jobID, done, total)
 		}
-
-		// Queue file metadata (hash, dimensions) task
-		if opts.FileMeta {
-			_, err := q.AddJob("", "metadata", []string{"-t", "hash,dimensions", "-a", "all"}, filePath, nil)
-			if err != nil {
-				q.PushJobStdout(jobID, "Warning: failed to queue file metadata task for "+filePath+": "+err.Error())
-			} else {
-				q.PushJobStdout(jobID, "Queued file metadata task for: "+filePath)
-			}
-		}
-
-		// Queue ONNX autotag task
-		if opts.AutoTag {
-			_, err := q.AddJob("", "autotag", nil, filePath, nil)
-			if err != nil {
-				q.PushJobStdout(jobID, "Warning: failed to queue autotag task for "+filePath+": "+err.Error())
-			} else {
-				q.PushJobStdout(jobID, "Queued autotag task for: "+filePath)
-			}
-		}
+		q.PushJobStdout(jobID, fmt.Sprintf("Queued %s task for %d file(s)", fu.name, queued))
 	}
 }
 
 // ingestTask is the main dispatcher for media ingestion
 // It routes to the appropriate handler based on input type:
-// - Local file paths: scans directories for media files
-// - YouTube URLs: uses yt-dlp to download
-// - URLs matching a registered native extractor: downloaded in Go with no
-//   external dependency (see ingest_media.go)
-// - Other HTTP URLs: uses gallery-dl to download
+//   - Local file paths: scans directories for media files
+//   - YouTube URLs: uses yt-dlp to download
+//   - URLs matching a registered native extractor: downloaded in Go with no
+//     external dependency (see ingest_media.go)
+//   - Other HTTP URLs: uses gallery-dl to download
 //
 // Supported arguments:
 //   - -r, --recursive: Scan directories recursively (local only)
@@ -188,15 +190,21 @@ func ingestTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 }
 
-// applyIngestTags resolves tag categories and applies tags to every ingested file
+// applyIngestTags resolves tag categories and applies tags to every ingested
+// file, reporting per-file progress through the job progress bar.
 func applyIngestTags(db *sql.DB, jobID string, q *jobqueue.Queue, files []string, tags []TagInfo) {
 	resolved := resolveTagCategories(db, tags)
-	for _, filePath := range files {
+	if len(resolved) > 0 && len(files) > 0 {
+		q.PushJobStdout(jobID, fmt.Sprintf("Applying %d tag(s) to %d file(s)...", len(resolved), len(files)))
+		_ = q.SetJobProgress(jobID, 0, len(files))
+	}
+	for i, filePath := range files {
 		for _, tag := range resolved {
 			if err := media.AddTag(db, filePath, tag.Label, tag.Category); err != nil {
 				q.PushJobStdout(jobID, fmt.Sprintf("Warning: failed to add tag %s:%s to %s: %v", tag.Label, tag.Category, filePath, err))
 			}
 		}
+		_ = q.SetJobProgress(jobID, i+1, len(files))
 	}
 	q.PushJobStdout(jobID, fmt.Sprintf("Applied %d tag(s) to %d file(s)", len(resolved), len(files)))
 }
