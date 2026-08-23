@@ -42,7 +42,7 @@ position. Both are called out where they appear.
 | `audio-fx.js` | 427 | The Web Audio effect catalogue (reverb, EQ, filters, …). |
 | `audio-widgets.js` | 323 | Draggable response-curve widgets for audio effects. |
 | `shader-editor.js` | 155 | Zero-dependency slang code editor (textarea over a highlighted `<pre>`). |
-| `roto.js` | 250 | AI rotoscoping model layer: SAM-family encoder/decoder via onnxruntime-web, loaded from CDN on demand and cached. Stateless per call; the temporal story lives in app.js. |
+| `roto.js` | 250 | AI rotoscoping model layer: BiRefNet (dichotomous segmentation / matting) via onnxruntime-web, loaded from CDN on demand and cached. Stateless per call; the temporal story lives in app.js. |
 | `engine/` | 2.4k | **slangfx-web** — the WebGPU multi-pass shader engine. Vendored from the [slangfx](https://github.com/SteveCastle/slangfx) repo. |
 | `shaders/` | — | The bundled `.slangp` presets, one directory per effect. Also vendored. |
 | `effects.json` | — | The manifest the add-effect picker reads: categories + preset paths. |
@@ -284,72 +284,57 @@ ordered nodes, each blending in with `add` / `subtract` / `multiply` /
 * **paint** — a canvas you brush on
 * **key** — a chroma key over the layer's input or another clip
 * **layer** — another clip's alpha or luma used as a matte
-* **roto** — an AI-tracked object mask, one stored frame per comp frame
+* **roto** — an AI subject matte, one stored frame per comp frame
 
 Everything reduces to "a texture per frame", which is the contract that
 let the roto node land without pipeline changes.
 
 ### The roto node
 
-The workflow is *pick, then analyze*: `＋Roto` enters a prompt mode where
-clicks on the preview mark the object (Alt-click marks background), a live
-single-frame mask previews the pick, and **Analyze** walks the clip frame
-by frame — encoder + decoder per frame, each frame steered by points
-tracked out of the previous frame's mask plus its low-res logits as the
-decoder's mask prior (`mask_input`). Frames carrying user prompts re-anchor
-the track, so drift is corrected by scrubbing there and clicking again.
+The model is **BiRefNet** (dichotomous image segmentation / matting): it
+takes NO prompts — feed it a frame and it returns a soft alpha matte of
+the most *salient* subject. The whole UI is designed around that: `＋Roto`
+enters a subject-framing mode that immediately previews the auto matte on
+the current frame, green-tinted. If the auto pick is right (it usually is
+for a clear subject), just hit **Analyze**. If the frame holds several
+candidates — or the subject is small — drag a **box** around it: the model
+then runs on that crop, which both *selects* the subject (whatever
+dominates the box is what's salient) and buys a small subject the model's
+full 1024² resolution.
 
-Tracking robustness rests on four legs, all cheap and in-browser: a SAD
-template match measures the object's translation between frames so points,
-prior, and boxes ride its motion instead of landing on its trail; the
-**multi-mask** decoder returns 4 part/whole candidates and the one most
-consistent with the previous frame's mask wins (stops interpretation
-flip-flop); an implausible area jump triggers a retry with the previous
-footprint as a box prompt, then a hold of the previous mask (one bad
-decode must not poison the chain); and masks keep SAM's SOFT edge — logits
-ramp to feathered alpha rather than a hard threshold (a hard contour turns
-sub-pixel wobble into popping), with the uncertain boundary band
-temporally blended against the previous frame's motion-shifted logits.
+**Analyze** walks the clip front to back, one independent BiRefNet pass
+per frame. The only temporal state is the box itself: each frame the box
+eases toward the padded bbox of the matte it just produced, so it follows
+a moving subject with no tracker — and because the box only frames the
+model's *view*, one odd frame can nudge it but never poison the chain the
+way prompt-propagation could. An empty matte holds the box in place until
+the subject comes back. `node.region` (the authored box) is never mutated;
+the follow is analysis-local.
 
-The pick can also be *textual*: type "the girl in the red dress" in the
-node's query box (Enter previews it on the current frame). During Analyze
-the query is re-detected on EVERY frame — OWLv2 (zero-shot detection via
-transformers.js, WebGPU fp16) turns it into a box prompt for the SAM
-decoder, preferring the candidate that overlaps the previous frame's mask
-so the track stays on the same instance among lookalikes. Frames where
-detection misses fall back to tracked points; user clicks still re-anchor
-and refine. Query and clicks compose — either alone is enough to Analyze.
-
-Guidance is *painted*, not just clicked: a drag lays down a stroke of
-labeled points (sampled every few source pixels, capped per stroke and per
-frame), and each preview feeds its low-res logits back as the next
-decode's `mask_input` — SAM's own iterative-refinement loop — so
-successive strokes refine the mask instead of restarting it.
-
-The analyzed sequence is a durable draft, not a one-shot: in Pick mode you
-can scrub anywhere in the track and paint corrections — each finished
-stroke re-decodes THAT frame (seeded by its stored mask, so negatives-only
-cleanup works) and bakes the repair back into the sequence in place
+The analyzed sequence is a durable draft, not a one-shot: in Subject mode
+you can scrub to a frame the matte got wrong, drag a corrective box there,
+and that frame is re-matted and baked back into the sequence in place
 (IndexedDB write debounced). Only Clear, a source change, or a *completed*
-re-analysis discards masks; a cancelled re-analysis merges — frames the
+re-analysis discards mattes; a cancelled re-analysis merges — frames the
 new walk reached are replaced, the rest keep the previous pass.
 
 While Analyze runs, the mask overlay becomes an opaque monitor showing
-each frame as it's segmented (green mask tint, yellow detection box) — and
-it is itself paintable: press and the walk pauses, brush positive or
-negative guidance over the frame on screen, release and the walk rewinds
-to that frame, re-decodes with the new anchor, and continues. Cancel keeps
-the frames already finished.
+each frame as it's matted (green matte tint, yellow subject box). Cancel
+keeps the frames already finished — reframe and re-analyze from there.
 
 Mechanics worth knowing:
 
-* **Model layer** (`roto.js`): MobileSAM in samexporter's export format —
-  encoder wants HWC float RGB with the long side resized to exactly 1024
-  (aspect preserved, no padding by the caller), point coords live in that
-  resized space, and `orig_im_size` doubles as "give me the mask at this
-  resolution". onnxruntime-web (WebGPU EP, wasm fallback) and both `.onnx`
-  files load from CDN/HF URLs on first use and land in the Cache API;
-  override the URLs via `localStorage['lowkey-studio.roto-config']`.
+* **Model layer** (`roto.js`): the onnx-community BiRefNet_lite export —
+  input `[1, 3, 1024, 1024]` float32, squish-resized (aspect NOT
+  preserved; that matches training), ImageNet mean/std; output logits →
+  sigmoid → per-pixel alpha. fp16 weights on the WebGPU EP (wasm
+  fallback), float32 graph I/O; `segmentFrame` self-corrects once if an
+  export demands half-float tensors. The `.onnx` loads from a HF URL on
+  first use and lands in the Cache API; override URL/tensor names via
+  `localStorage['lowkey-studio.roto-config']` — BiRefNet general / HR /
+  matting exports share the same contract, so swapping variants is just a
+  URL. The matte is genuinely soft: treat probabilities as alpha, never
+  threshold them for display.
 * **Masks live in SOURCE space, keyed by SOURCE time** (`seq.src0` +
   `seq.srcStep`), so trims, moves and retimes after analysis still find
   the right frame. Each tick the frame's PNG (IndexedDB `roto:<nodeId>`,

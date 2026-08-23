@@ -1,9 +1,12 @@
 ﻿import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import crypto from 'crypto';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { app, BrowserWindow, protocol, shell } from 'electron';
+import { app, BrowserWindow, net, protocol, shell } from 'electron';
 
 const execFileP = promisify(execFile);
 
@@ -12,7 +15,7 @@ const execFileP = promisify(execFile);
 // secure origin — file:// doesn't qualify — so the studio is served through
 // a privileged custom scheme instead of pointing a window at the filesystem.
 //
-// One origin (`studio://app`), three routes:
+// One origin (`studio://app`), four routes:
 //   studio://app/<file>              → static file from the studio directory
 //   studio://app/launch-media?path=… → streams a local media file; same origin,
 //                                      so the studio's boot importer can fetch()
@@ -23,6 +26,12 @@ const execFileP = promisify(execFile);
 //                                      the bundled ffmpeg when the original
 //                                      isn't .webm). Restricted to paths that
 //                                      were launched into the studio.
+//   studio://app/dep-cache?url=…     → download-once proxy for the studio's ML
+//                                      weights (BiRefNet is >100 MB). Renderer
+//                                      storage on custom-scheme origins is
+//                                      best-effort — Chromium evicts it — so
+//                                      the model kept re-downloading; this
+//                                      caches on disk under userData instead.
 
 const studioRoot = () =>
   app.isPackaged
@@ -131,6 +140,89 @@ async function serveLaunchMedia(mediaPath: string | null): Promise<Response> {
   const ext = path.extname(filePath).toLowerCase();
   const contentType = mediaMimeTypes[ext] || 'application/octet-stream';
   return streamFile(filePath, stats.size, contentType);
+}
+
+// ---- dep-cache: durable disk cache for the studio's model downloads ----
+
+const depCacheDir = () => path.join(app.getPath('userData'), 'studio-deps');
+
+// A crash mid-download leaves a .part-* file behind; sweep them once per run.
+let depCacheSwept = false;
+
+function sweepPartials() {
+  if (depCacheSwept) return;
+  depCacheSwept = true;
+  fs.promises
+    .readdir(depCacheDir())
+    .then((names) =>
+      names
+        .filter((n) => n.includes('.part-'))
+        .forEach((n) =>
+          fs.promises.unlink(path.join(depCacheDir(), n)).catch(() => undefined)
+        )
+    )
+    .catch(() => undefined);
+}
+
+/**
+ * Serve `url` from the disk cache, downloading it once if needed. The first
+ * download streams straight through to the renderer (progress UI keeps
+ * working) while a tee writes the bytes to disk; the file only takes its
+ * final name after a complete download, so a cancelled one can't poison the
+ * cache. Concurrent first-downloads aren't deduped — the studio's model
+ * loader is a singleton promise, so it never issues two at once.
+ */
+async function serveDepCache(rawUrl: string | null): Promise<Response> {
+  if (!rawUrl) return new Response('Bad Request', { status: 400 });
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return new Response('Bad Request', { status: 400 });
+  }
+  if (url.protocol !== 'https:') {
+    return new Response('Forbidden', { status: 403 });
+  }
+  sweepPartials();
+  const key =
+    crypto.createHash('sha256').update(rawUrl).digest('hex') +
+    path.extname(url.pathname);
+  const cached = path.join(depCacheDir(), key);
+  try {
+    const stats = await fs.promises.stat(cached);
+    return streamFile(cached, stats.size, 'application/octet-stream');
+  } catch {
+    /* not cached yet — download below */
+  }
+
+  const upstream = await net.fetch(rawUrl);
+  if (!upstream.ok || !upstream.body) {
+    return new Response('Bad Gateway', { status: 502 });
+  }
+  await fs.promises.mkdir(depCacheDir(), { recursive: true });
+  const partial = `${cached}.part-${process.pid}-${Date.now()}`;
+  const [toClient, toDisk] = upstream.body.tee();
+  pipeline(
+    Readable.fromWeb(toDisk as import('stream/web').ReadableStream),
+    fs.createWriteStream(partial)
+  )
+    .then(() =>
+      // A racing download may have landed first — its bytes are the same.
+      fs.promises.rename(partial, cached).catch(() => undefined)
+    )
+    .catch((err) => {
+      console.error('studio dep-cache download failed:', err);
+      fs.promises.unlink(partial).catch(() => undefined);
+    });
+  const length = upstream.headers.get('Content-Length');
+  return new Response(toClient, {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      // Forwarded so the renderer's download progress bar works.
+      ...(length ? { 'Content-Length': length } : {}),
+    },
+  });
 }
 
 const jsonResponse = (status: number, body: object) =>
@@ -265,6 +357,10 @@ export function registerStudioProtocol() {
 
       if (url.pathname === '/launch-media') {
         return await serveLaunchMedia(url.searchParams.get('path'));
+      }
+
+      if (url.pathname === '/dep-cache') {
+        return await serveDepCache(url.searchParams.get('url'));
       }
 
       if (url.pathname === '/save-media') {
