@@ -346,6 +346,14 @@
         text-transform: uppercase;
       }
 
+      /* Right-side header buttons (text search + filter) as one group so
+         the space-between header keeps the logo near center. */
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
       .swipe-counter {
         font-size: 12px;
         color: var(--text-dim);
@@ -645,6 +653,58 @@
 
       .filter-modal.show {
         display: flex;
+      }
+
+      /* Text vector search: one input over a dimmed backdrop; the query
+         ranks the whole library by SigLIP text→image similarity
+         (mode=text). */
+      .text-search-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.85);
+        z-index: 150;
+        display: none;
+        align-items: flex-start;
+        justify-content: center;
+        padding: calc(80px + var(--safe-top)) 20px 20px;
+      }
+
+      .text-search-modal.show {
+        display: flex;
+      }
+
+      .text-search-box {
+        width: 100%;
+        max-width: 420px;
+        display: flex;
+        gap: 8px;
+      }
+
+      .text-search-input {
+        flex: 1;
+        min-width: 0;
+        padding: 12px 16px;
+        border-radius: 24px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: var(--text);
+        font-size: 16px; /* ≥16px so iOS doesn't zoom the page on focus */
+        outline: none;
+      }
+
+      .text-search-input:focus {
+        border-color: var(--accent);
+      }
+
+      .text-search-go {
+        padding: 12px 18px;
+        border-radius: 24px;
+        border: none;
+        background: var(--accent);
+        color: #000;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
       }
 
       .filter-header {
@@ -1426,7 +1486,10 @@
       <div class="swipe-header">
         <a href="/media" class="header-btn" title="Back to browser">←</a>
         <span class="swipe-logo">Swipe</span>
-        <button class="header-btn" id="filterBtn" title="Filter">⚙</button>
+        <div class="header-actions">
+          <button class="header-btn" id="textBtn" title="Search by description">🔍</button>
+          <button class="header-btn" id="filterBtn" title="Filter">⚙</button>
+        </div>
       </div>
 
       <div class="progress-bar">
@@ -1440,6 +1503,9 @@
         <button class="action-btn" id="feedBtn" title="For You feed">✨</button>
         <button class="action-btn" id="similarBtn" title="More like this">
           ≈
+        </button>
+        <button class="action-btn" id="faceBtn" title="More of this face">
+          👤
         </button>
         <button
           class="action-btn"
@@ -1567,6 +1633,20 @@
     </div>
 
     <!-- Quick Tag Menu (Long Press) -->
+    <!-- Text vector search modal (mode=text) -->
+    <div class="text-search-modal" id="textSearchModal">
+      <div class="text-search-box">
+        <input
+          class="text-search-input"
+          id="textSearchInput"
+          type="search"
+          placeholder="Describe it — “red dress on a beach”"
+          autocomplete="off"
+        />
+        <button class="text-search-go" id="textSearchGo">Go</button>
+      </div>
+    </div>
+
     <div class="tag-menu-overlay" id="tagMenuOverlay"></div>
     <div class="tag-menu" id="tagMenu">
       <div class="tag-menu-handle"></div>
@@ -1616,6 +1696,26 @@
       // a few seconds server-side (the profile is eventually consistent).
       let feedMode = false;
 
+      // Text vector search mode: the library ranked by SigLIP text→image
+      // similarity to a typed description (mode=text). Same stash contract
+      // as the other ranked modes.
+      let textMode = false;
+      let textQuery = null;
+
+      // Face mode: items ranked by face similarity to the largest face in
+      // an anchor item (mode=face). Anchors and hops like similar mode.
+      let faceMode = false;
+      let faceAnchor = null;
+
+      // Body of the last failed /swipe/api response — the ranked modes
+      // surface it ("no face found in the query image", "text model not
+      // installed") instead of a generic empty-state toast.
+      let lastLoadError = null;
+
+      function inRankedMode() {
+        return similarMode || feedMode || textMode || faceMode;
+      }
+
       // Request cancellation
       let fetchController = null;
 
@@ -1650,6 +1750,11 @@
       const CAN_WRITE = {{if .CanWrite}}true{{else}}false{{end}};
       const similarBtn = document.getElementById('similarBtn');
       const feedBtn = document.getElementById('feedBtn');
+      const faceBtn = document.getElementById('faceBtn');
+      const textBtn = document.getElementById('textBtn');
+      const textSearchModal = document.getElementById('textSearchModal');
+      const textSearchInput = document.getElementById('textSearchInput');
+      const textSearchGo = document.getElementById('textSearchGo');
       const randomBtn = document.getElementById('randomBtn');
       const openBtn = document.getElementById('openBtn');
       const fitBtn = document.getElementById('fitBtn');
@@ -2064,6 +2169,7 @@
         } else {
           if (isLoading || !hasMore) return;
           isLoading = true;
+          lastLoadError = null; // only the latest foreground attempt counts
         }
 
         const controller = new AbortController();
@@ -2091,6 +2197,21 @@
               offset: Math.max(0, items.length - 1),
               limit: limit,
             });
+          } else if (faceMode) {
+            // Same anchor-at-index-0 contract as similar mode.
+            params = new URLSearchParams({
+              mode: 'face',
+              anchor: faceAnchor,
+              offset: Math.max(0, items.length - 1),
+              limit: limit,
+            });
+          } else if (textMode) {
+            params = new URLSearchParams({
+              mode: 'text',
+              q: textQuery,
+              offset: items.length,
+              limit: limit,
+            });
           } else {
             params = new URLSearchParams({
               offset: items.length,
@@ -2115,6 +2236,9 @@
           hasMore = data.has_more;
         } catch (err) {
           if (err.name === 'AbortError') return;
+          // Keep the server's message for the ranked modes' empty-state
+          // toast ("no face found…", "text model not installed…").
+          lastLoadError = String(err.message || err).slice(0, 140);
           console.error('Failed to load items:', err);
         } finally {
           if (fetchController === controller) {
@@ -2479,12 +2603,42 @@
         similarBtn.title = similarMode
           ? 'Search from this image'
           : 'More like this';
-        randomBtn.style.display = similarMode || feedMode ? 'flex' : 'none';
+        randomBtn.style.display = inRankedMode() ? 'flex' : 'none';
       }
 
       function updateFeedButton() {
         feedBtn.classList.toggle('active', feedMode);
         feedBtn.title = feedMode ? 'For You feed (active)' : 'For You feed';
+      }
+
+      function updateFaceButton() {
+        faceBtn.classList.toggle('active', faceMode);
+        faceBtn.title = faceMode
+          ? 'Search from this face'
+          : 'More of this face';
+      }
+
+      function updateTextButton() {
+        textBtn.classList.toggle('active', textMode);
+      }
+
+      function updateModeButtons() {
+        updateSimilarButton();
+        updateFeedButton();
+        updateFaceButton();
+        updateTextButton();
+      }
+
+      // Drop every ranked-mode flag; each enter function then raises its
+      // own. Keeps the four modes mutually exclusive by construction.
+      function clearRankedModes() {
+        similarMode = false;
+        similarAnchor = null;
+        feedMode = false;
+        textMode = false;
+        textQuery = null;
+        faceMode = false;
+        faceAnchor = null;
       }
 
       function abortPendingLoads() {
@@ -2504,14 +2658,13 @@
         // or anchor can't append items into the new stack.
         abortPendingLoads();
 
+        clearRankedModes();
         similarMode = true;
         similarAnchor = anchorItem.path;
-        feedMode = false;
         items = [anchorItem];
         currentIndex = 0;
         hasMore = true;
-        updateSimilarButton();
-        updateFeedButton();
+        updateModeButtons();
         renderItems();
         updateProgress();
 
@@ -2536,9 +2689,10 @@
         if (items.length === 0 || currentIndex >= items.length) return;
         const anchorItem = items[currentIndex];
         // Stash the shuffle so "back to shuffle" restores this exact spot,
-        // no matter how many hops happen in between. When coming from feed
-        // mode the stash already holds the pre-feed shuffle — keep it.
-        if (!feedMode) {
+        // no matter how many hops happen in between. When coming from
+        // another ranked mode the stash already holds the pre-mode
+        // shuffle — keep it.
+        if (!inRankedMode()) {
           randomStash = { items, currentIndex, hasMore };
         }
         anchorSimilarTo(anchorItem, 'Showing more like this');
@@ -2556,14 +2710,11 @@
         anchorSimilarTo(anchorItem, 'Hopped — similar to this image');
       }
 
-      // Leave similar/feed mode and restore the stashed shuffle position.
+      // Leave any ranked mode and restore the stashed shuffle position.
       function exitToShuffle() {
         abortPendingLoads();
-        similarMode = false;
-        similarAnchor = null;
-        feedMode = false;
-        updateSimilarButton();
-        updateFeedButton();
+        clearRankedModes();
+        updateModeButtons();
 
         if (randomStash) {
           items = randomStash.items;
@@ -2603,19 +2754,17 @@
           return;
         }
         abortPendingLoads();
-        // Keep the pre-mode shuffle spot; entering feed from similar mode
-        // keeps the stash similar mode already saved.
-        if (!similarMode) {
+        // Keep the pre-mode shuffle spot; entering feed from another
+        // ranked mode keeps the stash that mode already saved.
+        if (!inRankedMode()) {
           randomStash = { items, currentIndex, hasMore };
         }
-        similarMode = false;
-        similarAnchor = null;
+        clearRankedModes();
         feedMode = true;
         items = [];
         currentIndex = 0;
         hasMore = true;
-        updateSimilarButton();
-        updateFeedButton();
+        updateModeButtons();
         renderItems();
         updateProgress();
 
@@ -2632,6 +2781,130 @@
         updateProgress();
         updateLikeButton();
         showTagToast('For You — your likes shape this feed');
+      }
+
+      // --- Face mode (same-person ranking) ---
+      // The 👤 button anchors the feed on the largest face in the current
+      // item; the server ranks everything with a stored face by similarity
+      // to it. Like ≈, pressing it again hops: re-anchor on the face in
+      // whatever item is on screen. The first anchor on an unscanned item
+      // runs a face scan server-side, so allow it a beat.
+      async function anchorFaceTo(anchorItem, toastMsg) {
+        abortPendingLoads();
+
+        clearRankedModes();
+        faceMode = true;
+        faceAnchor = anchorItem.path;
+        items = [anchorItem];
+        currentIndex = 0;
+        hasMore = true;
+        updateModeButtons();
+        renderItems();
+        updateProgress();
+        showTagToast('Finding this face…');
+
+        await loadMore(30);
+        // Bail if the user exited face mode or hopped again mid-fetch.
+        if (!faceMode || faceAnchor !== anchorItem.path) return;
+
+        if (items.length <= 1) {
+          // No face in the anchor, no other faces stored, or the face
+          // models aren't installed — the server said which.
+          showTagToast(lastLoadError || 'No matching faces found');
+          exitToShuffle();
+          return;
+        }
+        renderItems();
+        if (toastMsg) showTagToast(toastMsg);
+      }
+
+      function enterFaceMode() {
+        if (items.length === 0 || currentIndex >= items.length) return;
+        const anchorItem = items[currentIndex];
+        if (!inRankedMode()) {
+          randomStash = { items, currentIndex, hasMore };
+        }
+        anchorFaceTo(anchorItem, 'Showing more of this face');
+      }
+
+      function hopFace() {
+        if (items.length === 0 || currentIndex >= items.length) return;
+        const anchorItem = items[currentIndex];
+        if (anchorItem.path === faceAnchor) {
+          showTagToast('Already searching from this face');
+          return;
+        }
+        // randomStash is left untouched: hops chain, but "back to shuffle"
+        // still returns to the pre-mode position.
+        anchorFaceTo(anchorItem, 'Hopped — same face as this');
+      }
+
+      function onFaceButton() {
+        if (faceMode) {
+          hopFace();
+        } else {
+          enterFaceMode();
+        }
+      }
+
+      // --- Text search mode (describe what you want to see) ---
+      function openTextSearch() {
+        textSearchModal.classList.add('show');
+        textSearchInput.value = textQuery || '';
+        // Focus after the modal paints; select so a new query overtypes.
+        setTimeout(() => {
+          textSearchInput.focus();
+          textSearchInput.select();
+        }, 50);
+      }
+
+      function closeTextSearch() {
+        textSearchModal.classList.remove('show');
+        textSearchInput.blur();
+      }
+
+      async function enterTextMode(query) {
+        closeTextSearch();
+        if (textMode && query === textQuery) {
+          showTagToast('Already showing these results');
+          return;
+        }
+        abortPendingLoads();
+        if (!inRankedMode()) {
+          randomStash = { items, currentIndex, hasMore };
+        }
+        clearRankedModes();
+        textMode = true;
+        textQuery = query;
+        items = [];
+        currentIndex = 0;
+        hasMore = true;
+        updateModeButtons();
+        renderItems();
+        updateProgress();
+        // The first page encodes the text server-side (an ONNX run);
+        // later pages reuse the cached vector.
+        showTagToast(`Searching “${query}”…`);
+
+        await loadMore(30);
+        // Bail if the user exited text mode or searched again mid-fetch.
+        if (!textMode || textQuery !== query) return;
+
+        if (items.length === 0) {
+          showTagToast(lastLoadError || 'No matches found');
+          exitToShuffle();
+          return;
+        }
+        renderItems();
+        updateProgress();
+        updateLikeButton();
+        showTagToast(`“${query}” — best matches first`);
+      }
+
+      function submitTextSearch() {
+        const query = textSearchInput.value.trim();
+        if (!query) return;
+        enterTextMode(query);
       }
 
       // Open current item in browser
@@ -2853,6 +3126,7 @@
           e.target.closest('.swipe-actions') ||
           e.target.closest('.swipe-header') ||
           e.target.closest('.filter-modal') ||
+          e.target.closest('.text-search-modal') ||
           e.target.closest('.install-prompt') ||
           e.target.closest('.tag-menu') ||
           e.target.closest('.tag-menu-overlay')
@@ -3736,9 +4010,24 @@
       likeBtn.addEventListener('click', toggleLike);
       similarBtn.addEventListener('click', onSimilarButton);
       feedBtn.addEventListener('click', enterFeedMode);
+      faceBtn.addEventListener('click', onFaceButton);
       randomBtn.addEventListener('click', exitToShuffle);
       openBtn.addEventListener('click', openInBrowser);
       fitBtn.addEventListener('click', toggleFitMode);
+
+      // Text vector search: 🔍 opens the query box; Enter or Go runs it,
+      // Escape or a backdrop tap dismisses. Keystrokes must not reach the
+      // app-level shortcut handlers.
+      textBtn.addEventListener('click', openTextSearch);
+      textSearchGo.addEventListener('click', submitTextSearch);
+      textSearchInput.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') submitTextSearch();
+        if (e.key === 'Escape') closeTextSearch();
+      });
+      textSearchModal.addEventListener('click', (e) => {
+        if (e.target === textSearchModal) closeTextSearch();
+      });
 
       // Utility functions
       function isVideoFile(path) {
@@ -3815,6 +4104,7 @@
           e.target.closest('.swipe-actions') ||
           e.target.closest('.swipe-header') ||
           e.target.closest('.filter-modal') ||
+          e.target.closest('.text-search-modal') ||
           e.target.closest('.video-scrubber') ||
           e.target.closest('.install-prompt') ||
           e.target.closest('.tag-menu') ||
@@ -3843,7 +4133,12 @@
       container.addEventListener(
         'wheel',
         (e) => {
-          if (e.target.closest('.filter-modal') || e.target.closest('.tag-menu')) return;
+          if (
+            e.target.closest('.filter-modal') ||
+            e.target.closest('.text-search-modal') ||
+            e.target.closest('.tag-menu')
+          )
+            return;
           e.preventDefault();
 
           clearTimeout(wheelTimeout);

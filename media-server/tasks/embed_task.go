@@ -621,6 +621,15 @@ func SearchByText(ctx context.Context, db *sql.DB, text string, limit int, allow
 	return searchByVectorCrossModal(db, m.ID, vec, limit, allow)
 }
 
+// SearchByTextVector matches an already-encoded text-query vector (from
+// TextQueryVector) against modelID's image embeddings. Cross-modal, so the
+// scoring is plain cosine — never mean-centered (see embedindex.ScorePlain).
+// Lets paginating callers (the swipe text mode) cache the text vector
+// instead of re-running the text-encoder subprocess for every page.
+func SearchByTextVector(db *sql.DB, modelID string, vec []float32, limit int, allow PathSet) ([]SimilarHit, error) {
+	return searchByVectorCrossModal(db, modelID, vec, limit, allow)
+}
+
 // embedModelOverrideFromJob returns an explicit `--model=<id>` (or `--model
 // <id>`) from the job arguments when present. Lets an embed job target a model
 // other than the configured active one (background migration).

@@ -934,6 +934,15 @@ func swipeAPIHandler(deps *Dependencies) http.HandlerFunc {
 			return
 		}
 
+		// Text vector search and face similarity ranking. Shared across
+		// platform builds.
+		if maybeHandleSwipeTextSearch(w, r, deps) {
+			return
+		}
+		if maybeHandleSwipeFace(w, r, deps) {
+			return
+		}
+
 		// Parse query parameters
 		offsetStr := r.URL.Query().Get("offset")
 		limitStr := r.URL.Query().Get("limit")
