@@ -18,6 +18,7 @@ import {
   spacerHeight,
   rowShift,
   wheelDeltaPx,
+  cursorScrollTarget,
 } from './scroll-compression';
 import { useDragDropManager } from 'react-dnd';
 import filter from '../../filter';
@@ -420,20 +421,39 @@ function VirtualGrid({
   // Use refs to avoid effect re-running on every render
   const cursorRef = useRef(cursor);
   const columnsRef = useRef(columns);
+  const heightRef = useRef(height);
+  const listLengthRef = useRef(listLength);
   const rowVirtualizerRef = useRef(rowVirtualizer);
   cursorRef.current = cursor;
   columnsRef.current = columns;
+  heightRef.current = height;
+  listLengthRef.current = listLength;
   rowVirtualizerRef.current = rowVirtualizer;
 
   useEffect(() => {
     if (!scrollToCursorEventId) return;
 
     const currentCursor = cursorRef.current;
-    if (currentCursor != null) {
-      const scrollTarget = Math.floor(currentCursor / columnsRef.current) || 0;
-      rowVirtualizerRef.current.scrollToIndex(scrollTarget, {
-        align: 'auto',
-      });
+    const el = parentRef.current;
+    if (currentCursor != null && el) {
+      const row = Math.floor(currentCursor / columnsRef.current) || 0;
+      // NOT rowVirtualizer.scrollToIndex: it clamps its virtual target
+      // against the element's real scrollHeight (element space), so past
+      // the compressed cap every jump would land at the cap instead of
+      // the row. Rows are fixed-height, so the jump is computed here in
+      // virtual space and converted once at the element boundary.
+      const k = scaleRef.current;
+      const rowHeight = heightRef.current;
+      const target = cursorScrollTarget(
+        row * rowHeight,
+        rowHeight,
+        el.clientHeight,
+        el.scrollTop * k,
+        listLengthRef.current * rowHeight
+      );
+      if (target != null) {
+        el.scrollTop = target / k;
+      }
     }
 
     // Clear the event after processing to prevent duplicate scroll on remount

@@ -85,6 +85,33 @@ export function rowShift(scrollTop: number, scale: number): number {
   return scrollTop * (scale - 1);
 }
 
+/**
+ * Virtual-space scroll target that brings a row into view with 'auto'
+ * alignment: rows above the viewport align to its top, rows below align
+ * to its bottom, rows already fully visible need no scroll (null).
+ *
+ * This exists because TanStack's scrollToIndex clamps its VIRTUAL target
+ * against the element's real scrollHeight (getMaxScrollOffset reads the
+ * DOM) — beyond the compressed cap every programmatic jump would land at
+ * the cap instead of the row.
+ */
+export function cursorScrollTarget(
+  rowStart: number,
+  rowSize: number,
+  viewport: number,
+  virtualOffset: number,
+  totalVirtual: number
+): number | null {
+  let target: number | null = null;
+  if (rowStart < virtualOffset) {
+    target = rowStart;
+  } else if (rowStart + rowSize > virtualOffset + viewport) {
+    target = rowStart + rowSize - viewport;
+  }
+  if (target == null) return null;
+  return Math.max(0, Math.min(totalVirtual - viewport, target));
+}
+
 /** Normalize a wheel event's deltaY to pixels. */
 export function wheelDeltaPx(
   deltaY: number,

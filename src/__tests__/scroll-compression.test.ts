@@ -6,6 +6,7 @@ import {
   virtualToElement,
   rowShift,
   wheelDeltaPx,
+  cursorScrollTarget,
 } from '../renderer/components/list/scroll-compression';
 
 const VIEWPORT = 1080;
@@ -85,6 +86,60 @@ describe('scroll compression', () => {
       expect(v).toBeGreaterThan(prev);
       prev = v;
     }
+  });
+
+  it('cursor jumps reach any row, including past the element cap', () => {
+    // TanStack's scrollToIndex clamps against the element's scrollHeight,
+    // which is why cursor jumps kept cutting off at the cap — this is the
+    // replacement math.
+    const rowHeight = 800;
+    const rows = 329_000;
+    const total = rows * rowHeight;
+    const k = compressionScale(total, VIEWPORT);
+
+    // Row already fully visible → no scroll.
+    expect(cursorScrollTarget(1600, rowHeight, VIEWPORT, 1600, total)).toBe(
+      null
+    );
+    // Row above the viewport → align to its start.
+    expect(cursorScrollTarget(1600, rowHeight, VIEWPORT, 40_000, total)).toBe(
+      1600
+    );
+    // Row below the viewport → align to its end.
+    expect(cursorScrollTarget(80_000, rowHeight, VIEWPORT, 0, total)).toBe(
+      80_000 + rowHeight - VIEWPORT
+    );
+
+    // The row that used to be unreachable (deep past the old ~33.5M cap):
+    const row = 250_000;
+    const target = cursorScrollTarget(
+      row * rowHeight,
+      rowHeight,
+      VIEWPORT,
+      0,
+      total
+    );
+    expect(target).toBe(row * rowHeight + rowHeight - VIEWPORT);
+    // …and its element-space scrollTop is reachable (≤ spacer − viewport).
+    const scrollTop = virtualToElement(target as number, k);
+    expect(scrollTop).toBeLessThanOrEqual(MAX_SCROLL_HEIGHT - VIEWPORT);
+    // Round-trip: the element lands the viewport on that exact row.
+    const backToVirtual = elementToVirtual(scrollTop, k);
+    expect(backToVirtual + VIEWPORT).toBeCloseTo((row + 1) * rowHeight, 3);
+
+    // The LAST row maps exactly to the element's maximum scrollTop.
+    const lastTarget = cursorScrollTarget(
+      (rows - 1) * rowHeight,
+      rowHeight,
+      VIEWPORT,
+      0,
+      total
+    );
+    expect(lastTarget).toBe(total - VIEWPORT);
+    expect(virtualToElement(lastTarget as number, k)).toBeCloseTo(
+      MAX_SCROLL_HEIGHT - VIEWPORT,
+      6
+    );
   });
 
   it('normalizes wheel deltas per deltaMode', () => {
