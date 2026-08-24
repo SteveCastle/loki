@@ -8,7 +8,17 @@ import {
 } from 'react';
 import { useSelector } from '@xstate/react';
 import { GlobalStateContext } from '../../state';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import {
+  useVirtualizer,
+  observeElementOffset,
+  elementScroll,
+} from '@tanstack/react-virtual';
+import {
+  compressionScale,
+  spacerHeight,
+  rowShift,
+  wheelDeltaPx,
+} from './scroll-compression';
 import { useDragDropManager } from 'react-dnd';
 import filter from '../../filter';
 import { ListItem } from './list-item';
@@ -284,12 +294,83 @@ function VirtualGrid({
     () => Math.ceil(items.length / columns),
     [items.length, columns]
   );
+
+  // Scroll-space compression (see scroll-compression.ts): the browser
+  // clamps element heights around 17.9–33.5M px, so a huge list's spacer
+  // can't be as tall as the content. The virtualizer runs entirely in
+  // VIRTUAL space — the stock offset observer and scroller are wrapped to
+  // multiply/divide by `scale` at the element boundary. Under the cap the
+  // scale is exactly 1 and both wrappers are the identity.
+  const [viewport, setViewport] = useState(0);
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return undefined;
+    const measure = () => setViewport(el.clientHeight);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const totalVirtual = listLength * height;
+  const scale = compressionScale(totalVirtual, viewport);
+  // The virtualizer subscribes its offset observer once per scroll element,
+  // so the wrappers must read the CURRENT scale through a ref.
+  const scaleRef = useRef(scale);
+  scaleRef.current = scale;
+
   const rowVirtualizer = useVirtualizer({
     count: listLength,
     getScrollElement: () => parentRef.current,
     estimateSize: () => height,
     overscan,
+    observeElementOffset: (instance, cb) =>
+      observeElementOffset(instance, (offset, isScrolling) =>
+        cb(offset * scaleRef.current, isScrolling)
+      ),
+    scrollToFn: (offset, { adjustments = 0, behavior }, instance) =>
+      elementScroll(
+        (offset + adjustments) / scaleRef.current,
+        { behavior },
+        instance
+      ),
   });
+
+  // Every visible row is pulled up by the same delta, which keeps exact
+  // on-screen spacing while the scrollbar spans compressed space. Zero
+  // whenever scale === 1. Derived from the element's LIVE scrollTop — the
+  // virtualizer only notifies React when the visible range changes, which
+  // is too coarse for the shift — so compressed mode forces a re-render on
+  // every scroll event below.
+  const shift = rowShift(parentRef.current?.scrollTop ?? 0, scale);
+
+  const [, bumpShiftTick] = useState(0);
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return undefined;
+    const onScroll = () => {
+      if (scaleRef.current > 1) bumpShiftTick((t) => t + 1);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Wheel input stays 1:1 in VIRTUAL pixels while compressed: a raw wheel
+  // tick applied natively would move the content `scale`× too fast, so the
+  // delta is divided down before it hits scrollTop (scrollTop is a double —
+  // sub-pixel steps accumulate fine). Uncompressed scrolling stays native.
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return undefined;
+    const onWheel = (e: WheelEvent) => {
+      const k = scaleRef.current;
+      if (k <= 1 || e.ctrlKey) return; // native scroll / pinch-zoom
+      e.preventDefault();
+      const dy = wheelDeltaPx(e.deltaY, e.deltaMode, el.clientHeight);
+      el.scrollTop += dy / k;
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   // Recalculate measurements when row height changes
   useEffect(() => {
@@ -302,7 +383,10 @@ function VirtualGrid({
     if (!parentRef.current) return;
 
     if (!didInitialScrollRef.current && shouldDoInitialScroll) {
-      rowVirtualizer.scrollToOffset(initialScrollOffset);
+      // The persisted position is the element's raw scrollTop (see
+      // handleScroll), so restore it in ELEMENT space — scrollToOffset
+      // expects virtual offsets once compression is active.
+      parentRef.current.scrollTop = initialScrollOffset;
       didInitialScrollRef.current = true;
       onDidInitialScroll();
     }
@@ -364,7 +448,10 @@ function VirtualGrid({
       <div
         className="ListContainer"
         style={{
-          height: `${rowVirtualizer.getTotalSize()}px`,
+          // Clamped so the element never exceeds the browser's layout
+          // coordinate limit; content beyond it is reachable through the
+          // compressed mapping above.
+          height: `${spacerHeight(rowVirtualizer.getTotalSize())}px`,
           position: 'relative',
           width: '100%',
         }}
@@ -375,7 +462,7 @@ function VirtualGrid({
             key={virtualItem.key}
             style={{
               height: `${virtualItem.size}px`,
-              transform: `translateY(${virtualItem.start}px)`,
+              transform: `translateY(${virtualItem.start - shift}px)`,
               gridAutoFlow: 'column',
             }}
           >
