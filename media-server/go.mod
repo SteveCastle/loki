@@ -17,9 +17,9 @@ require (
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/yalue/onnxruntime_go v1.21.0
-	golang.org/x/crypto v0.46.0
+	golang.org/x/crypto v0.52.0
 	golang.org/x/image v0.31.0
-	golang.org/x/sys v0.43.0
+	golang.org/x/sys v0.45.0
 	modernc.org/sqlite v1.38.0
 )
 
