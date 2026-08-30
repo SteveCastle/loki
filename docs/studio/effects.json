@@ -55,6 +55,16 @@
   ],
   "effects": [
     {
+      "name": "contrast",
+      "path": "shaders/adjust/contrast/contrast.slangp",
+      "category": "adjust"
+    },
+    {
+      "name": "curves",
+      "path": "shaders/adjust/curves/curves.slangp",
+      "category": "adjust"
+    },
+    {
       "name": "exposure",
       "path": "shaders/adjust/exposure/exposure.slangp",
       "category": "adjust"
@@ -185,6 +195,11 @@
       "category": "blur-bloom"
     },
     {
+      "name": "camcorder",
+      "path": "shaders/crt/camcorder/camcorder.slangp",
+      "category": "crt"
+    },
+    {
       "name": "crt-tv",
       "path": "shaders/crt/crt-tv/crt-tv.slangp",
       "category": "crt"
@@ -197,6 +212,11 @@
     {
       "name": "eink",
       "path": "shaders/crt/eink/eink.slangp",
+      "category": "crt"
+    },
+    {
+      "name": "film-projector",
+      "path": "shaders/crt/film-projector/film-projector.slangp",
       "category": "crt"
     },
     {
@@ -235,6 +255,11 @@
       "category": "crt"
     },
     {
+      "name": "rear-projection",
+      "path": "shaders/crt/rear-projection/rear-projection.slangp",
+      "category": "crt"
+    },
+    {
       "name": "scrambled-crt",
       "path": "shaders/crt/scrambled-crt/scrambled-crt.slangp",
       "category": "crt"
@@ -247,6 +272,16 @@
     {
       "name": "soft-crt",
       "path": "shaders/crt/soft-crt/soft-crt.slangp",
+      "category": "crt"
+    },
+    {
+      "name": "stn-lcd",
+      "path": "shaders/crt/stn-lcd/stn-lcd.slangp",
+      "category": "crt"
+    },
+    {
+      "name": "teletext",
+      "path": "shaders/crt/teletext/teletext.slangp",
       "category": "crt"
     },
     {
@@ -310,6 +345,11 @@
       "category": "dither"
     },
     {
+      "name": "broadcast-breakup",
+      "path": "shaders/glitch/broadcast-breakup/broadcast-breakup.slangp",
+      "category": "glitch"
+    },
+    {
       "name": "chroma-shift",
       "path": "shaders/glitch/chroma-shift/chroma-shift.slangp",
       "category": "glitch"
@@ -325,13 +365,28 @@
       "category": "glitch"
     },
     {
+      "name": "dead-panel",
+      "path": "shaders/glitch/dead-panel/dead-panel.slangp",
+      "category": "glitch"
+    },
+    {
       "name": "feedback-echo",
       "path": "shaders/glitch/feedback-echo/feedback-echo.slangp",
       "category": "glitch"
     },
     {
+      "name": "magnet-warp",
+      "path": "shaders/glitch/magnet-warp/magnet-warp.slangp",
+      "category": "glitch"
+    },
+    {
       "name": "pixelsort",
       "path": "shaders/glitch/pixelsort/pixelsort.slangp",
+      "category": "glitch"
+    },
+    {
+      "name": "rf-ghost",
+      "path": "shaders/glitch/rf-ghost/rf-ghost.slangp",
       "category": "glitch"
     },
     {

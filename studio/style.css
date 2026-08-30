@@ -652,6 +652,22 @@ body.has-media #canvas-stack { display: block; }
 #gizmo[hidden] { display: none; }
 body.mask-editing #gizmo { display: none; }
 
+/* Selected tracker null: a display-only crosshair (its motion is baked
+   keyframes — edited in the inspector, not dragged). Ring + axis lines
+   drawn with gradients so it needs no extra DOM. */
+#track-null {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  border: 1.5px solid #ffd24a;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+  background:
+    linear-gradient(#ffd24a, #ffd24a) center/1.5px 100% no-repeat,
+    linear-gradient(#ffd24a, #ffd24a) center/100% 1.5px no-repeat !important;
+}
+#track-null[hidden] { display: none; }
+
 .gz-h {
   position: absolute;
   width: 11px;
@@ -747,6 +763,7 @@ body.mask-editing #mask-overlay {
 .insp-kind.fx { color: #c0a6ff; }
 .insp-kind.media { color: var(--accent); }
 .insp-kind.audio { color: #6fd3bd; }
+.insp-kind.track { color: #ffd24a; }
 .insp-name {
   flex: 1;
   min-width: 0;
@@ -1066,8 +1083,8 @@ body.mask-editing #mask-overlay {
 }
 .mask-foot .btn { margin-left: auto; }
 
-/* AI roto: subject-framing mode shares #mask-overlay with painting, but
- * the box drag lands on the canvas stack (capture handler), not the
+/* AI roto: pick mode shares #mask-overlay with painting, but the box drag
+ * / prompt strokes land on the canvas stack (capture handler), not the
  * overlay. */
 body.roto-editing #mask-overlay {
   display: block;
@@ -1077,14 +1094,30 @@ body.roto-editing #mask-overlay {
 body.roto-editing #canvas-stack { cursor: crosshair; }
 body.roto-editing #gizmo { display: none; }
 /* Analysis monitor: the overlay becomes an opaque viewer showing each
- * frame + matte as it lands (display only — BiRefNet takes no guidance;
- * Cancel keeps finished frames, then reframe and re-analyze). */
+ * frame + matte as it lands. The auto engine's monitor is display only
+ * (BiRefNet takes no guidance; Cancel keeps finished frames, then reframe
+ * and re-analyze); the SAM engine adds roto-monitor-paint and the monitor
+ * becomes PAINTABLE — brush corrections mid-flight. */
 body.roto-analyzing #mask-overlay {
   display: block;
   pointer-events: none;
   opacity: 1;
 }
+body.roto-analyzing.roto-monitor-paint #mask-overlay {
+  pointer-events: auto;
+  cursor: crosshair;
+}
 body.roto-analyzing #gizmo { display: none; }
+.mn-roto-query {
+  flex: 1 1 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 3px 6px;
+}
+.mn-roto-query::placeholder { color: var(--dim); }
 .mn-roto-status {
   flex-basis: 100%;
   color: var(--dim);
@@ -1736,6 +1769,13 @@ body.roto-analyzing #gizmo { display: none; }
   border-color: #43a047;
   color: #dff2e8;
 }
+/* Tracker null: the motion-track anchor — amber, like the tracking chrome
+   (subject box / detection box) in the roto tools. */
+.tl-clip.track {
+  background: linear-gradient(180deg, #6e5a24, #52431b);
+  border-color: #b3902e;
+  color: #f7ecce;
+}
 /* Audio: flat fill so the waveform image (set inline, which would knock
    out a gradient) still has something to sit on. */
 .tl-clip.audio {
@@ -2092,6 +2132,18 @@ body.roto-analyzing #gizmo { display: none; }
 }
 .modal label.retime-check { justify-content: flex-start; gap: 8px; cursor: pointer; }
 .modal label.retime-check input { width: auto; accent-color: var(--accent); }
+
+/* Loop finder: candidate seams, one row each. */
+.loop-modal { max-width: 480px; }
+.loop-cands { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 2px; }
+.loop-cand { display: flex; align-items: center; gap: 8px; }
+.loop-cand-main {
+  flex: 1;
+  font-size: 12px;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.loop-cand-main em { color: var(--dim); font-style: normal; font-size: 11px; }
 
 .modal .confirm-msg {
   color: var(--dim);

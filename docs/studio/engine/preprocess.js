@@ -238,6 +238,7 @@ export function preprocessSlang(flatSrc) {
   let target = header;
   let sawStage = false;
   const params = [];
+  const matteIgnore = new Set();
   let formatPragma = null;
 
   for (const line of text.split('\n')) {
@@ -268,6 +269,16 @@ export function preprocessSlang(flatSrc) {
         target.push('');
         continue;
       }
+      if (kind === 'matte_ignore') {
+        // Params that are purely colorimetric (invert, tint, dim...): the
+        // media-clip matte chain forces them to 0 so they can't corrupt
+        // the white coverage silhouette. Names are post-rename, same as
+        // #pragma parameter (the reserved-word rewrite ran on the whole
+        // source, this line included).
+        for (const n of args.split(/[;,\s]+/)) if (n) matteIgnore.add(n);
+        target.push('');
+        continue;
+      }
       if (kind === 'name') { target.push(''); continue; }
       // Unknown pragma: keep (GLSL ignores unknown pragmas).
     }
@@ -276,6 +287,8 @@ export function preprocessSlang(flatSrc) {
 
   if (!sawStage || vert.length === 0 || frag.length === 0)
     throw new Error('slang source is missing #pragma stage vertex or fragment');
+
+  for (const p of params) if (matteIgnore.has(p.name)) p.matteIgnore = true;
 
   return {
     vertexGlsl: vert.join('\n'),

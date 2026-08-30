@@ -1,0 +1,18 @@
+shaders = 1
+
+shader0        = curves.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;blacks;shadows;mids;highlights;whites;r_gamma;g_gamma;b_gamma"
+amount     = 1.0
+blacks     = 0.0
+shadows    = 0.0
+mids       = 0.0
+highlights = 0.0
+whites     = 0.0
+r_gamma    = 1.0
+g_gamma    = 1.0
+b_gamma    = 1.0

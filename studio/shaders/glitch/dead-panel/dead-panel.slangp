@@ -1,0 +1,21 @@
+shaders = 1
+
+shader0        = dead-panel.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;pos_x;pos_y;cracks;crack_len;jag;blotch;fringe;dead_lines;flicker;tear;seed"
+amount     = 1.0
+pos_x      = 0.68
+pos_y      = 0.30
+cracks     = 7.0
+crack_len  = 0.55
+jag        = 0.5
+blotch     = 0.10
+fringe     = 0.6
+dead_lines = 0.5
+flicker    = 0.4
+tear       = 0.4
+seed       = 5.0

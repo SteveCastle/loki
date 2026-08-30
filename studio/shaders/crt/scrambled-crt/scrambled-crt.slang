@@ -39,6 +39,7 @@ layout(push_constant) uniform Push
     float instability;
     float jitter;
     float vroll_freq;
+    float vroll_speed;
     float agc_pump;
     float detune_walk;
     float detune_range;
@@ -64,6 +65,7 @@ layout(push_constant) uniform Push
 #pragma parameter instability     "Scramble: intensity swing"    1.0 0.0  2.0  0.05
 #pragma parameter jitter          "Scramble: per-line jitter"    0.7 0.0  2.0  0.05
 #pragma parameter vroll_freq      "Scramble: V-sync drops/sec"   0.4 0.0  4.0  0.05
+#pragma parameter vroll_speed     "Scramble: V-hold roll (rolls/s)" 0.0 -3.0 3.0 0.05
 #pragma parameter agc_pump        "Scramble: AGC pumping"        0.5 0.0  1.5  0.05
 #pragma parameter detune_walk     "Tune: drift speed"               0.25 0.0  3.0  0.01
 #pragma parameter detune_range    "Tune: drift range (cap)"         0.35 0.0  1.0  0.01
@@ -265,21 +267,41 @@ void main()
      * its own random Y, with a smooth narrow band envelope. */
     float tear_x = 0.0;
     float tear_static = 0.0;     /* used later to drive coupled static */
+    float tear_on = step(0.01, params.tear_freq);   /* 0 really means none */
     for (int b = 0; b < 4; ++b) {
-        float ts   = floor(t_sec * (params.tear_freq + float(b) * 0.7));
+        /* Multiplicative per-band rates: the bands stay desynced at any
+         * frequency, and the slider scales all of them down to zero. */
+        float ts   = floor(t_sec * params.tear_freq * (1.0 + float(b) * 0.28));
         float ty   = hash1(ts * (1.7 + float(b) * 0.31));
-        float tamp = (hash1(ts * 2.3 + float(b)) - 0.5) * 0.7;
+        float tamp = (hash1(ts * 2.3 + float(b)) - 0.5) * 0.7 * tear_on;
         float tband = smoothstep(0.045, 0.0, abs(scuv.y - ty));
         tear_x      += tamp * tband;
-        tear_static += tband;    /* unsigned, for static coupling */
+        tear_static += tband * tear_on;    /* unsigned, for static coupling */
     }
 
-    /* Vertical sync drops: occasionally the picture rolls vertically by a
+    /* Vertical sync drops: occasionally the picture jumps vertically by a
      * random fraction for a few frames. Not every frame — gated. */
     float vr_seed = floor(t_sec * (params.vroll_freq + 0.001));
     float vr_gate = step(0.62, hash1(vr_seed * 7.31));
     float vr_amount = vr_gate * (hash1(vr_seed * 13.7) - 0.5) * 0.4;
-    scuv.y = fract(scuv.y + vr_amount * params.scramble_amount * macro * clarity);
+    float drop_off = vr_amount * params.scramble_amount * macro * clarity;
+
+    /* Vertical hold roll: the picture travels continuously up (positive)
+     * or down (negative), wrapping around, with a slight phase wobble —
+     * a free-running vertical oscillator never rolls perfectly evenly.
+     * Independent of scramble amount: a set can hold sync on everything
+     * else and still have its V-hold off. */
+    float roll_off = (t_sec + 0.15 * (vnoise(t_sec * 0.9) - 0.5))
+                   * params.vroll_speed;
+
+    scuv.y = fract(scuv.y + roll_off + drop_off);
+
+    /* The blanking bar rides the wrap seam whenever the picture is off
+     * vertical lock — rolling continuously or mid sync-drop. */
+    float roll_active = max(clamp(abs(params.vroll_speed) * 6.0, 0.0, 1.0),
+                            smoothstep(0.005, 0.03, abs(drop_off)));
+    float seam_d   = min(scuv.y, 1.0 - scuv.y);
+    float roll_bar = (1.0 - smoothstep(0.015, 0.05, seam_d)) * roll_active;
 
     /* Combine into final horizontal displacement. */
     float scramble_x = (base + kick + tear_x) * intensity;
@@ -298,6 +320,11 @@ void main()
                     resolution.y / 800.0, resolution).y + 0.02;
     col.b = tsample(backbuffer, vec2(x + scuv.x - 0.0015, scuv.y + 0.0000),
                     resolution.y / 800.0, resolution).z + 0.02;
+
+    /* Vertical blanking interval: the dark bar between fields, visible
+     * only because the picture is rolling through it. Darken the raster
+     * before the CRT model so scanlines/mask/ghosting play over it. */
+    col *= 1.0 - 0.82 * roll_bar;
 
     /* ───────────────── Scramble: chroma I/Q artifacts ─────────────────────
      * Real cable scrambling didn't smear color sideways like a continuous
@@ -373,10 +400,10 @@ void main()
     vig = 1.3 * pow(vig, 0.5);
     col *= vig;
 
-    time *= params.scanroll;
-
-    /* Scanlines */
-    float scans = clamp(0.35 + 0.18 * sin(6.0 * time - curved_uv.y * resolution.y * 1.5),
+    /* Scanlines. scanroll only stops the scanline crawl — noise, snow and
+     * flicker below keep animating on the untouched `time`. */
+    float scan_t = time * params.scanroll;
+    float scans = clamp(0.35 + 0.18 * sin(6.0 * scan_t - curved_uv.y * resolution.y * 1.5),
                         0.0, 1.0);
     float s = pow(scans, 0.9);
     col = col * vec3(s);

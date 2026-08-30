@@ -33,7 +33,7 @@ import {
   clipEnd, splitClip, uid, ensureDur, removeEmptyTracks,
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
   eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
-  clipRate, clipSourceSpan, retimeClip,
+  clipRate, clipReversed, clipLoopSpan, clipSourceSpan, retimeClip,
 } from './comp.js';
 import { clipIcon } from './icons.js';
 
@@ -983,11 +983,15 @@ export class Timeline {
     const visualFx = effects.filter((e) => !isAudioEffect(e)).length;
     const audioFx = effects.length - visualFx;
     const rate = clipRate(clip);
+    const rev = clipReversed(clip);
+    const lspan = clipLoopSpan(clip);
     label.textContent = clip.name + (effects.length ? ` · ${effects.length} fx` : '')
-      + (rate !== 1 ? ` · ${fmtSpeed(rate)}` : '');
+      + (rate !== 1 ? ` · ${fmtSpeed(rate)}` : '') + (rev ? ' · ◀' : '') + (lspan ? ' · ⟳' : '');
     label.title = [
       clip.name,
       rate !== 1 ? `${fmtSpeed(rate)} speed` : null,
+      rev ? 'plays in reverse' : null,
+      lspan ? `cycles a ${lspan.toFixed(2)}s loop` : null,
       visualFx ? `${visualFx} visual effect${visualFx > 1 ? 's' : ''}` : null,
       audioFx ? `${audioFx} audio effect${audioFx > 1 ? 's' : ''}` : null,
     ].filter(Boolean).join(' · ');
@@ -1053,6 +1057,7 @@ export class Timeline {
 
   _clipMenu(x, y, clip) {
     const comp = this.host.comp();
+    const asset = this.host.assetOf(clip.assetId);
     const sel = this.selClips.has(clip.id) ? this._selectionInOrder() : [];
     const items = [
       ...(sel.length > 1 ? [{
@@ -1131,7 +1136,7 @@ export class Timeline {
       {
         label: sel.length > 1 ? `Retime ${sel.length} clips…` : 'Retime — speed / duration…',
         detail: sel.length > 1 ? null
-          : `${fmtSpeed(clipRate(clip))} · ${fmtTimecode(clip.dur, comp.fps)}`,
+          : `${fmtSpeed(clipRate(clip))}${clipReversed(clip) ? ' ◀' : ''} · ${fmtTimecode(clip.dur, comp.fps)}`,
         action: () => this.host.retime?.(sel.length > 1 ? sel.map((s) => s.clip) : [clip]),
       },
       ...(clipRate(clip) !== 1 ? [{
@@ -1143,6 +1148,21 @@ export class Timeline {
           });
           this.host.onModelChange({ structural: true });
           this.host.status(`${clip.name} back to 100% · ${fmtTimecode(clip.dur, comp.fps)}`);
+        },
+      }] : []),
+      // The loop finder trims the clip to footage that cycles invisibly —
+      // the automated version of an editor hunting for two matching frames.
+      ...(clip.kind === 'media' && (asset?.kind === 'video' || asset?.kind === 'gif') ? [{
+        label: 'Find seamless loop…',
+        detail: clipLoopSpan(clip) ? `cycling ${clipLoopSpan(clip).toFixed(2)}s` : null,
+        action: () => this.host.findLoop?.(clip),
+      }] : []),
+      ...(clipLoopSpan(clip) ? [{
+        label: 'Clear loop region',
+        action: () => {
+          this.host.history.record(comp, () => { delete clip.loopSpan; });
+          this.host.onModelChange({ structural: true });
+          this.host.status(`${clip.name} plays straight through again`);
         },
       }] : []),
     ];
@@ -1292,20 +1312,37 @@ export class Timeline {
       } else if (mode === 'trim-l') {
         // A retimed clip eats `rate` seconds of source per second of
         // timeline, so the left edge runs out of source that much sooner.
+        // A REVERSED clip's left edge is the far end of its footage:
+        // srcTime anchors on the clip end, so `in` stays put and pulling
+        // left reaches deeper (looping past the source, like a forward
+        // clip's right edge does). A LOOP-CYCLED clip never runs out and
+        // its `in` IS the loop point — both edges leave it alone.
         const rate = clipRate(clip);
+        const rev = clipReversed(clip);
+        const looped = clipLoopSpan(clip) > 0;
         let ns = this._snapTime(orig.start + dxT, { excludeClip: clip });
-        ns = clamp(ns, orig.start - orig.in / rate, orig.start + orig.dur - minDur);
+        ns = clamp(ns, rev || looped ? 0 : orig.start - orig.in / rate,
+          orig.start + orig.dur - minDur);
         const d = ns - orig.start;
         clip.start = ns;
         clip.dur = orig.dur - d;
-        if (hasSource(clip)) clip.in = orig.in + d * rate;
+        if (hasSource(clip) && !rev && !looped) clip.in = orig.in + d * rate;
         // Keys stay put in comp time: shift clip-relative times by -d.
         this._shiftKeys(clip, -d, orig);
       } else {
         // Right trim stops at the comp end; videos longer than their
-        // source loop, so no source-length clamp.
-        const ne = this._snapTime(orig.start + orig.dur + dxT, { excludeClip: clip });
+        // source loop, so no source-length clamp. On a REVERSED clip the
+        // right edge is where the footage runs down to `in`, so this edge
+        // slides `in` instead: shortening drops the EARLIEST source, and
+        // extending runs out of it once `in` reaches 0 — unless the clip
+        // cycles a loop region, which repeats forever and keeps `in`.
+        const rate = clipRate(clip);
+        const rev = clipReversed(clip);
+        const looped = clipLoopSpan(clip) > 0;
+        let ne = this._snapTime(orig.start + orig.dur + dxT, { excludeClip: clip });
+        if (rev && !looped) ne = Math.min(ne, orig.start + orig.dur + orig.in / rate);
         clip.dur = clamp(ne - orig.start, minDur, Math.max(minDur, comp.dur - orig.start));
+        if (hasSource(clip) && rev && !looped) clip.in = orig.in - (clip.dur - orig.dur) * rate;
       }
       // While trimming, preview the frame at the cut point so you can see
       // exactly where the clip will start / end when released.

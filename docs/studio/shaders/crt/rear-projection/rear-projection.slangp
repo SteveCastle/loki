@@ -1,0 +1,17 @@
+shaders = 1
+
+shader0        = rear-projection.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;converge;softness;bloom;hotspot;lenticular;scanline;warmth"
+amount     = 1.0
+converge   = 5.0
+softness   = 0.6
+bloom      = 0.5
+hotspot    = 0.6
+lenticular = 0.4
+scanline   = 0.25
+warmth     = 0.35

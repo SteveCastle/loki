@@ -1,0 +1,32 @@
+# stn-lcd — mid-90s passive-matrix laptop panel: slow smearing pixels,
+# washed-out blue-gray picture, column crosstalk, dual-scan seam, backlight
+# bleed and the cell grid.
+shaders = 2
+
+# Pass 0 — pixel response at panel resolution. Self-feedback holds the
+# previous panel state so moving content drags the classic STN smear.
+shader0            = stn-response.slang
+alias0             = StnCells
+filter_linear0     = false
+scale_type0        = source
+scale0             = 1.0
+wrap_mode0         = clamp_to_edge
+
+# Pass 1 — the panel itself, at viewport resolution.
+shader1        = stn-panel.slang
+filter_linear1 = false
+scale_type1    = viewport
+scale1         = 1.0
+wrap_mode1     = clamp_to_edge
+
+parameters = "res_x;persistence;amount;crosstalk;seam;washout;tint;angle_shade;bleed;grid"
+res_x       = 320.0
+persistence = 0.65
+amount      = 1.0
+crosstalk   = 0.5
+seam        = 0.5
+washout     = 0.55
+tint        = 0.5
+angle_shade = 0.4
+bleed       = 0.4
+grid        = 0.5

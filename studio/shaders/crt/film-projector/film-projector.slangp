@@ -1,0 +1,21 @@
+shaders = 1
+
+shader0        = film-projector.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;fps;weave;flicker;grain;scratches;dust;splice;warmth;vignette;speed;seed"
+amount    = 1.0
+fps       = 18.0
+weave     = 0.5
+flicker   = 0.4
+grain     = 0.4
+scratches = 0.5
+dust      = 0.5
+splice    = 0.35
+warmth    = 0.5
+vignette  = 0.5
+speed     = 1.0
+seed      = 13.0

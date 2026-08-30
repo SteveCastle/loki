@@ -42,7 +42,8 @@ position. Both are called out where they appear.
 | `audio-fx.js` | 427 | The Web Audio effect catalogue (reverb, EQ, filters, …). |
 | `audio-widgets.js` | 323 | Draggable response-curve widgets for audio effects. |
 | `shader-editor.js` | 155 | Zero-dependency slang code editor (textarea over a highlighted `<pre>`). |
-| `roto.js` | 250 | AI rotoscoping model layer: BiRefNet (dichotomous segmentation / matting) via onnxruntime-web, loaded from CDN on demand and cached. Stateless per call; the temporal story lives in app.js. |
+| `roto.js` | 250 | AI rotoscoping, auto engine: BiRefNet (dichotomous segmentation / matting) via onnxruntime-web, loaded from CDN on demand and cached. Stateless per call; the temporal story lives in app.js. |
+| `roto-sam.js` | 530 | AI rotoscoping, prompt engine: MobileSAM encoder/decoder + OWL-ViT text detection via onnxruntime-web / transformers.js, for cutting out a SPECIFIC object with clicks, strokes, or a text query. Same on-demand CDN + Cache API story. |
 | `engine/` | 2.4k | **slangfx-web** — the WebGPU multi-pass shader engine. Vendored from the [slangfx](https://github.com/SteveCastle/slangfx) repo. |
 | `shaders/` | — | The bundled `.slangp` presets, one directory per effect. Also vendored. |
 | `effects.json` | — | The manifest the add-effect picker reads: categories + preset paths. |
@@ -111,13 +112,39 @@ inspector rows and the timeline lanes.
 
 ```js
 clipRate(clip)          // playback speed: source seconds per comp second
-srcTime(clip, t)        // clip.in + (t - clip.start) * rate
+clipReversed(clip)      // direction flag — rate stays a positive magnitude
+clipLoopSpan(clip)      // loop region: source seconds cycled from clip.in
+srcTime(clip, t)        // clip.in + (t - clip.start) * rate, anchored on
+                        // the far end when reversed, folded into the loop
+                        // region when one is set
+loopSrc(src, len)       // wrap into the asset; an exact landing on `len`
+                        // (a reversed full-source clip's first frame) is
+                        // the last sample, not a wrap to frame 0
 ```
 
-`srcTime` is the **one** trim×speed mapping. Every path that touches source
-media — preview sync, export seeking, splitting, trimming, waveforms —
-goes through it. Retiming a clip (`retimeClip`) rescales keyframe times so
-animation stretches with the clip.
+`srcTime` is the **one** trim×speed×direction×loop mapping. Every path
+that touches source media — preview sync, export seeking, splitting,
+trimming, waveforms — goes through it. Retiming a clip (`retimeClip`)
+rescales keyframe times so animation stretches with the clip; reversing
+flips only the source direction (animation stays in comp time). Because no
+browser plays media backwards, a reversed clip is chase-seeked during
+playback (through the scrub proxy when available) and its audio is silent
+live — the offline mix plays a sample-reversed buffer, so exports carry it.
+
+`clip.loopSpan` makes a clip cycle a source region instead of running on
+through the whole file: stretch the clip and the region repeats, in
+preview (free-run + drift reseek at the seam — invisible when the seam is
+good, which is the point) and in the export mix (`loopStart`/`loopEnd` on
+the buffer source). It is written by the **seamless-loop finder**
+(right-click a video/gif clip → *Find seamless loop…*): frames are
+downsampled to tiny RGB thumbnails and every candidate seam `(i, j)` is
+scored by SAD(i, j) + SAD(i+1, j+1) — the successor term carries MOTION
+across the cut, not just the pose — normalized against the clip's median
+frame-to-frame change (1.00× = as smooth as ordinary playback). Among
+invisible seams the longest loop wins; the chosen cut is re-searched at
+frame granularity before it is applied. Cycle phase is anchored to
+`clip.start` (no phase field), so splitting a looped clip restarts the
+cycle on the right half, and trims never move `in` on a looped clip.
 
 ### Undo
 
@@ -291,16 +318,30 @@ let the roto node land without pipeline changes.
 
 ### The roto node
 
-The model is **BiRefNet** (dichotomous image segmentation / matting): it
-takes NO prompts — feed it a frame and it returns a soft alpha matte of
-the most *salient* subject. The whole UI is designed around that: `＋Roto`
-enters a subject-framing mode that immediately previews the auto matte on
-the current frame, green-tinted. If the auto pick is right (it usually is
-for a clear subject), just hit **Analyze**. If the frame holds several
-candidates — or the subject is small — drag a **box** around it: the model
-then runs on that crop, which both *selects* the subject (whatever
-dominates the box is what's salient) and buys a small subject the model's
-full 1024² resolution.
+A roto node runs on one of **two switchable engines** (per-node
+`engine` field, a select in the inspector). Both produce the identical
+stored artifact — a per-frame PNG matte sequence in source space — so
+storage, playback, compositing and export are engine-agnostic, and the
+analyzed sequence even survives an engine switch (Re-analyze replaces it
+with the new engine's output).
+
+* **Auto subject** (`'auto'`, BiRefNet, `roto.js`) — no prompts; mattes
+  the most *salient* subject, optionally framed by a box. The default.
+* **Pick object** (`'sam'`, MobileSAM + OWL-ViT, `roto-sam.js`) — cuts
+  out the *specific* object you click/paint or describe in text, and
+  tracks it across frames.
+
+#### Auto engine (BiRefNet)
+
+The model takes NO prompts — feed it a frame and it returns a soft alpha
+matte of the most *salient* subject. The UI is designed around that:
+`＋Roto` enters a subject-framing mode that immediately previews the auto
+matte on the current frame, green-tinted. If the auto pick is right (it
+usually is for a clear subject), just hit **Analyze**. If the frame holds
+several candidates — or the subject is small — drag a **box** around it:
+the model then runs on that crop, which both *selects* the subject
+(whatever dominates the box is what's salient) and buys a small subject
+the model's full 1024² resolution.
 
 **Analyze** walks the clip front to back, one independent BiRefNet pass
 per frame. The only temporal state is the box itself: each frame the box
@@ -322,9 +363,85 @@ While Analyze runs, the mask overlay becomes an opaque monitor showing
 each frame as it's matted (green matte tint, yellow subject box). Cancel
 keeps the frames already finished — reframe and re-analyze from there.
 
+#### Prompt engine (SAM)
+
+BiRefNet cannot be told *which* subject — its graph has one image input
+and no prompt encoder; the crop box is the only steer it supports. When
+the shot needs a specific object among several (the second dancer, one
+car in traffic), switch the node to **Pick object**. Guidance is either
+painted — a click drops a labeled point, a drag paints a stroke of them
+(Alt / right button = background), stored as per-source-time prompt
+groups on `node.prompts` — or a **text query** (`node.query`, OWL-ViT
+zero-shot detection) that is re-found on every analyzed frame, or both.
+The pick preview runs SAM's decoder live as you paint, seeding each
+decode with the previous one's low-res logits (SAM's intended
+iterative-refine loop).
+
+**Analyze** here is a *tracked* walk, not independent frames: forward
+from the earliest prompt frame then backward to the start. Between
+anchor frames the decoder is steered by points tracked out of the
+previous frame's mask plus its low-res logits as a prior, with
+SAD-based motion compensation, a mask-area sanity ladder (an implausible
+jump retries with a box prompt, then holds the last mask), multi-mask
+candidate selection by IoU against the previous frame, and boundary
+hysteresis. The analysis monitor is **paintable**: brush a correction on
+the frame on screen and the walk rewinds there, re-anchors, and
+continues. Touch-ups after analysis work like the auto engine's — paint
+on an analyzed frame and it re-bakes in place.
+
+When an analyzed track loses the subject partway through, **Track from
+here** re-walks only `[current frame, end]`: the blob array is pre-filled
+from the stored pass so every earlier frame survives verbatim (a cancel
+keeps the old tail too, since untouched slots already hold old masks).
+The walk is seeded to *continue* the track — an anchor painted on the
+start frame dominates; otherwise the frame's own stored mask supplies
+tracked points + the logit prior, as if the original walk were resuming.
+It refuses when the stored grid no longer matches (retimed/retrimmed
+clip → full Re-analyze). The intended loop: scrub to the bad frame,
+paint corrective points (any frame's points are an anchor, not just the
+first), Track from here.
+
+#### Motion tracking (tracker nulls)
+
+The SAM walk doubles as a **motion tracker**: every analyzed frame also
+yields one sample — the mask's alpha-weighted centroid, principal-axis
+angle (image second moments) and bounding box, in SOURCE space, keyed by
+source time exactly like the masks (`node.track`, persisted with the
+node). **⌖ Tracker** bakes those samples into a `kind: 'track'` clip — a
+**tracker null**: a layer that renders nothing and exists only to carry a
+transform. Baking walks comp frames, looks samples up by source time
+(so a moved/trimmed/retimed clip still bakes correctly), maps each
+through the source clip's live transform, and writes plain keyframes:
+x/y absolute comp px, rotation = the principal axis unwrapped mod 180°
+and zeroed at the track's start, scaleX/scaleY = uniform bounding-box
+scale (100% = first frame). Re-analyzing auto-rebakes an existing
+tracker (`node.trackClipId`).
+
+Tracking is **its own workflow, not a mask**: the inspector's **Track**
+section on media clips creates a `trackOnly` SAM roto node — same
+machinery (pick, Analyze, Track from here, text query), but the node
+never composes a matte (`prepareRotoNode` bails, the Mask section
+filters it out), so the clip's pixels are untouched. The mask-section
+roto row *also* offers ⌖ Tracker, so a clip you matted gives you its
+motion for free.
+
+Other layers reference a tracker through the **driver system**: any
+property's `~` driver with `source: 'track'` reads one channel (X / Y /
+Rotation / Scale) of the null's baked keyframes at comp time —
+`replace` + absolute pins a layer onto the tracked object; `add` +
+motion (Δ from track start) makes a layer ride the movement on top of
+its own keyframes. The lookup is `evalProp` on the null's props — base
+keyframes only, never the null's own driver — which is what makes
+reference cycles impossible. Deleting the null makes its drivers read 0,
+like audio drivers with no audio.
+
 Mechanics worth knowing:
 
-* **Model layer** (`roto.js`): the onnx-community BiRefNet_lite export —
+* **One inference at a time, ever**: every model call from either engine
+  (BiRefNet, SAM encoder/decoder, the text detector) chains through app.js's
+  `rotoRun` promise gate — onnxruntime-web sessions deadlock the main
+  thread on concurrent `run()`.
+* **Auto model layer** (`roto.js`): the onnx-community BiRefNet_lite export —
   input `[1, 3, 1024, 1024]` float32, squish-resized (aspect NOT
   preserved; that matches training), ImageNet mean/std; output logits →
   sigmoid → per-pixel alpha. fp16 weights on the WebGPU EP (wasm
@@ -335,6 +452,15 @@ Mechanics worth knowing:
   matting exports share the same contract, so swapping variants is just a
   URL. The matte is genuinely soft: treat probabilities as alpha, never
   threshold them for display.
+* **Prompt model layer** (`roto-sam.js`): MobileSAM in samexporter's
+  encoder/decoder split (encoder: long side 1024, HWC float32 RGB 0-255 →
+  `[1, 256, 64, 64]` embedding; multi-mask decoder: points/box prompts +
+  a 256² low-res logit prior). Point coords live in resized-image space;
+  prompts persist in *source-pixel* space and scale at decode. OWL-ViT
+  (base-patch32 via transformers.js, fp16 WebGPU) turns a text query into
+  a box prompt per frame. All URLs override via
+  `localStorage['lowkey-studio.roto-sam-config']` (its own key — the two
+  engines need different ort-web builds, so they must not share `ortUrl`).
 * **Masks live in SOURCE space, keyed by SOURCE time** (`seq.src0` +
   `seq.srcStep`), so trims, moves and retimes after analysis still find
   the right frame. Each tick the frame's PNG (IndexedDB `roto:<nodeId>`,

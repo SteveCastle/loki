@@ -1,0 +1,19 @@
+shaders = 1
+
+shader0        = teletext.slang
+filter_linear0 = true
+scale_type0    = viewport
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;cols;rows;level;bg_level;reception;flash;scanline;speed;seed"
+amount    = 1.0
+cols      = 40.0
+rows      = 24.0
+level     = 0.35
+bg_level  = 0.75
+reception = 0.15
+flash     = 0.1
+scanline  = 0.4
+speed     = 1.0
+seed      = 17.0

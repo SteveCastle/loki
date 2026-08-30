@@ -1,0 +1,23 @@
+shaders = 1
+
+shader0        = rf-ghost.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;ghosts;ghost_sep;ghost_strength;ghost_invert;hum;hum_speed;herring;herring_freq;snow;fade;jitter;speed;seed"
+amount         = 1.0
+ghosts         = 2.0
+ghost_sep      = 0.045
+ghost_strength = 0.45
+ghost_invert   = 0.35
+hum            = 0.5
+hum_speed      = 0.12
+herring        = 0.35
+herring_freq   = 180.0
+snow           = 0.25
+fade           = 0.5
+jitter         = 0.3
+speed          = 1.0
+seed           = 9.0

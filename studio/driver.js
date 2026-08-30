@@ -5,10 +5,14 @@
  * keyframed base, from one of two input sources:
  *
  *   osc    a deterministic waveform of CLIP-RELATIVE time — sin, triangle,
- *          saw, square, pulse, bounce, or smooth value-noise. freq is in
- *          cycles per second, so frame-locked patterns fall out naturally
+ *          saw, square, pulse, bounce, smooth value-noise, or one of the
+ *          random behaviors (stepped sample-and-hold, multi-octave drift,
+ *          on/off flicker, sparse decaying sparks). freq is in cycles per
+ *          second, so frame-locked patterns fall out naturally
  *          (freq = fps/N repeats every N frames) and moving a clip carries
- *          its motion along, exactly like keyframes.
+ *          its motion along, exactly like keyframes. The randoms are
+ *          hash-based, never Math.random — scrubbing, playback and the
+ *          offline exporter all see the same values.
  *
  *   audio  a per-frame envelope of the comp's audio mix in a frequency
  *          band (full mix / bass / mids / treble), either followed
@@ -38,6 +42,10 @@ export const DRIVER_WAVES = [
   ['pulse', 'Pulse'],
   ['bounce', 'Bounce'],
   ['noise', 'Noise'],
+  ['steps', 'Random steps'],
+  ['drift', 'Noise drift'],
+  ['flicker', 'Flicker'],
+  ['sparks', 'Sparks'],
 ];
 
 export const DRIVER_BANDS = [
@@ -58,6 +66,23 @@ export const DRIVER_MODES = [
   ['replace', 'Replace'],
 ];
 
+/* A third source, 'track', reads a channel of a tracker-null layer's
+ * BAKED keyframes (motion tracking, app.js's bakeTrackerLayer) at COMP
+ * time. Resolved by an injected lookup like audio — the comp lives with
+ * the caller. Reading base keyframes only (never the target's own driver)
+ * is what makes reference cycles impossible. */
+export const DRIVER_TRACK_CHANNELS = [
+  ['x', 'Position X'],
+  ['y', 'Position Y'],
+  ['rot', 'Rotation'],
+  ['scale', 'Scale'],
+];
+
+export const DRIVER_TRACK_REFS = [
+  ['abs', 'Absolute'],
+  ['delta', 'Motion (Δ from start)'],
+];
+
 const frac = (x) => x - Math.floor(x);
 
 /* Deterministic per-integer hash in [-1, 1] (classic sin-hash). Reproducible
@@ -65,9 +90,9 @@ const frac = (x) => x - Math.floor(x);
 const hash = (i) => frac(Math.sin(i * 127.1 + 311.7) * 43758.5453123) * 2 - 1;
 
 /** Waveform value for a driver at clip-relative time t (seconds).
- * sin/triangle/saw/square/noise span [-1, 1]; pulse is 0/1 and bounce is
- * 0..1 (one hop per cycle) — one-sided on purpose, so "kick up on the
- * pulse" needs no offset fiddling. */
+ * sin/triangle/saw/square/noise/steps/drift span [-1, 1]; pulse and
+ * flicker are 0/1, bounce and sparks are 0..1 — one-sided on purpose, so
+ * "kick up on the pulse" needs no offset fiddling. */
 export function waveSignal(d, t) {
   const ph = t * (+d.freq || 0) + (+d.phase || 0);
   const w = +d.width > 0 && +d.width < 1 ? +d.width : 0.5;
@@ -83,6 +108,32 @@ export function waveSignal(d, t) {
       const u = frac(ph);
       const s = u * u * (3 - 2 * u);
       return hash(i) * (1 - s) + hash(i + 1) * s;
+    }
+    case 'steps':
+      // Sample & hold: a fresh random level each cycle, held flat.
+      return hash(Math.floor(ph));
+    case 'drift': {
+      // Three octaves of the smooth noise — organic wander with texture.
+      let v = 0, a = 0.6, p = ph;
+      for (let k = 0; k < 3; k++) {
+        const i = Math.floor(p), u = frac(p), s = u * u * (3 - 2 * u);
+        v += a * (hash(i + k * 57) * (1 - s) + hash(i + 1 + k * 57) * s);
+        p *= 2.17;
+        a *= 0.5;
+      }
+      return v;
+    }
+    case 'flicker':
+      // Random telegraph: each cycle is fully on or off — width sets the
+      // on-probability. The faulty-fluorescent wave.
+      return hash(Math.floor(ph)) * 0.5 + 0.5 < w ? 1 : 0;
+    case 'sparks': {
+      // Sparse impulses: width of the cycles fire a spark of random
+      // height that decays within the cycle. Lightning / arcing / glitch.
+      const i = Math.floor(ph);
+      const on = hash(i) * 0.5 + 0.5 < w ? 1 : 0;
+      const h = hash(i + 917) * 0.5 + 0.5;
+      return on * (0.4 + 0.6 * h) * Math.exp(-frac(ph) * 6);
     }
     default: return Math.sin(2 * Math.PI * ph);   // 'sin'
   }
@@ -111,9 +162,13 @@ export function newDriver(def = {}) {
  * @param {object} d          prop.driver (enabled checked by the caller)
  * @param {number} tClip      clip-relative seconds (osc time base)
  * @param {(d)=>number} audioSignal  resolves an audio driver to 0..1
+ * @param {(d)=>number} trackSignal  resolves a tracker-channel driver
+ *                                   (property units; 0 when unresolvable)
  */
-export function applyDriver(base, d, tClip, audioSignal) {
-  const sig = d.source === 'audio' ? audioSignal(d) : waveSignal(d, tClip);
+export function applyDriver(base, d, tClip, audioSignal, trackSignal = () => 0) {
+  const sig = d.source === 'audio' ? audioSignal(d)
+    : d.source === 'track' ? trackSignal(d)
+      : waveSignal(d, tClip);
   const delta = (+d.offset || 0) + (+d.amount || 0) * sig;
   switch (d.mode) {
     case 'replace': return delta;

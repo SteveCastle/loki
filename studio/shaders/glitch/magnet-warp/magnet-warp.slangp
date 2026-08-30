@@ -1,0 +1,21 @@
+shaders = 1
+
+shader0        = magnet-warp.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;pos_x;pos_y;radius;pinch;swirl;purity;beam_split;wobble;degauss;speed;seed"
+amount     = 1.0
+pos_x      = 0.35
+pos_y      = 0.40
+radius     = 0.35
+pinch      = 0.35
+swirl      = 1.6
+purity     = 0.7
+beam_split = 0.5
+wobble     = 0.4
+degauss    = 0.5
+speed      = 1.0
+seed       = 3.0

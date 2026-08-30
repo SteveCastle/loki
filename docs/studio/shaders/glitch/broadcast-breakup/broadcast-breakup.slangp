@@ -1,0 +1,20 @@
+shaders = 1
+
+shader0        = broadcast-breakup.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;error_rate;dropout;hold;garbage;block_px;chroma_error;slice_drift;crush;speed;seed"
+amount       = 1.0
+error_rate   = 4.0
+dropout      = 0.55
+hold         = 0.15
+garbage      = 0.35
+block_px     = 16.0
+chroma_error = 0.75
+slice_drift  = 1.5
+crush        = 0.6
+speed        = 1.0
+seed         = 23.0

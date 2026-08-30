@@ -28,7 +28,7 @@ frametexture_linear = true
 frametexture_wrap_mode = clamp_to_border
 
 # Tunable defaults (override here or pass via --params).
-parameters = "scramble_amount;scramble_freq;scramble_speed;chroma_break;hum_strength;static_strength;tear_freq;instability;jitter;vroll_freq;agc_pump;detune_walk;detune_range;lock_freq;lock_chance;lock_depth;lock_jitter;curvature;vignette;ghosting;wiggle_toggle"
+parameters = "scramble_amount;scramble_freq;scramble_speed;chroma_break;hum_strength;static_strength;tear_freq;instability;jitter;vroll_freq;vroll_speed;agc_pump;detune_walk;detune_range;lock_freq;lock_chance;lock_depth;lock_jitter;curvature;vignette;ghosting;wiggle_toggle"
 scramble_amount  = 0.50
 scramble_freq    = 32.0
 scramble_speed   = 2.0
@@ -39,6 +39,7 @@ tear_freq        = 2.5
 instability      = 1.0
 jitter           = 0.85
 vroll_freq       = 0.4
+vroll_speed      = 0.0
 agc_pump         = 0.6
 detune_walk      = 0.25
 detune_range     = 0.35

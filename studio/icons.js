@@ -53,6 +53,12 @@ export const LAYER_ICONS = {
     <rect x="2" y="2.2" width="8" height="8" rx="1.4"/>
     <circle cx="10.4" cy="10.2" r="3.6"/>`),
 
+  /* Tracker null: a crosshair — the motion-track anchor. */
+  track: svg(`
+    <circle cx="8" cy="8" r="4.2"/>
+    <path d="M8 1.6 V4.4 M8 11.6 V14.4 M1.6 8 H4.4 M11.6 8 H14.4"/>
+    <circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none"/>`),
+
   /* Import: something arriving into a tray. */
   import: svg(`
     <path d="M8 2.4 V9.6 M5.2 6.9 L8 9.7 L10.8 6.9"/>
@@ -62,6 +68,7 @@ export const LAYER_ICONS = {
 /** The icon for a clip, given the asset behind it (may be null/offline). */
 export function clipIcon(clip, asset) {
   if (clip.kind === 'fx') return LAYER_ICONS.fx;
+  if (clip.kind === 'track') return LAYER_ICONS.track;
   if (clip.kind === 'audio') return LAYER_ICONS.audio;
   if (Array.isArray(clip.shapes) && clip.shapes.length) return LAYER_ICONS.shape;
   if (asset?.kind === 'audio') return LAYER_ICONS.audio;

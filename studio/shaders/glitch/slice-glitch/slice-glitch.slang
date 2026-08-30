@@ -37,6 +37,9 @@ layout(push_constant) uniform Push
 #pragma parameter speed        "Slice: speed"              1.0  0.0  4.0   0.05
 #pragma parameter seed         "Slice: seed"               11.0 0.0 64.0   1.0
 
+/* Colour-only: inverting the white coverage matte would read as holes. */
+#pragma matte_ignore block_invert
+
 layout(std140, set = 0, binding = 0) uniform UBO { mat4 MVP; } global;
 
 #pragma stage vertex

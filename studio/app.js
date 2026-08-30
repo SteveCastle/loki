@@ -43,11 +43,13 @@ import {
   allClipsBottomUp,
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
-  clipRate, srcTime, clipSourceSpan, retimeClip,
+  clipRate, clipReversed, clipLoopSpan, srcTime, clipSourceSpan, retimeClip, loopSrc,
+  newTrackClip,
 } from './comp.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
 import {
   DRIVER_WAVES, DRIVER_BANDS, DRIVER_FOLLOWS, DRIVER_MODES,
+  DRIVER_TRACK_CHANNELS, DRIVER_TRACK_REFS,
   newDriver, applyDriver,
 } from './driver.js';
 import { analyzeMixAsync, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
@@ -59,6 +61,7 @@ import { Muxer as MP4Muxer, ArrayBufferTarget as MP4Target } from './vendor/mp4-
 import { Timeline, fmtTimecode, fmtSpeed, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 import * as roto from './roto.js';
+import * as rotoSam from './roto-sam.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -372,6 +375,8 @@ function tick() {
   if (!fx?.inputTexture) return;
   if (offlineJob) return;   // the offline render loop owns the pipeline
   if (rotoJob) return;      // roto analysis owns the media elements' seek position
+  if (loopJob?.busy) return;   // ...as does the loop finder's sampling walk
+                               // (its candidate preview plays normally)
 
   if (playing) {
     tCur = clock.t + (performance.now() - clock.perf) / 1000;
@@ -480,6 +485,7 @@ function audioDriveKey() {
   for (const { clip, asset } of audioEntries(true)) {
     const vol = clip.props.volume;
     parts.push(asset.id, clip.start, clip.dur, clip.in, clipRate(clip),
+      clipReversed(clip) ? 'rev' : 'fwd', clipLoopSpan(clip),
       vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '',
       // Effects colour the mix the analysis hears, so they belong in its
       // fingerprint: adding a reverb has to re-derive the envelopes.
@@ -562,13 +568,29 @@ function audioSignal(d, t) {
   return sampleLevel(env, data.fps, t, d.release == null ? 0.25 : +d.release || 0);
 }
 
+/** Resolve a 'track' driver: a channel of a tracker null's BAKED keyframes
+ * at COMP time t, in that channel's own units (px / ° / %). Reads
+ * evalProp — base keys only, never the tracker's own driver — so a chain
+ * of references can never recurse. 'delta' subtracts the track's first
+ * value, turning the channel into pure motion for 'add' mode; 'abs' is
+ * the raw value, for pinning a layer onto the object with 'replace'.
+ * Unresolvable (deleted tracker, wrong kind) reads 0, like audio. */
+function trackSignal(d, t) {
+  const clip = d.trackClipId ? findClip(comp, d.trackClipId)?.clip : null;
+  if (!clip || clip.kind !== 'track') return 0;
+  const prop = clip.props[d.channel === 'scale' ? 'scaleX' : d.channel] ?? clip.props.x;
+  const v = evalProp(prop, t - clip.start);
+  return d.trackRef === 'delta' ? v - evalProp(prop, 0) : v;
+}
+
 /** evalProp + the prop's driver (if enabled). tc is clip-relative (the
- * oscillator time base), tComp absolute (the audio timeline). */
+ * oscillator time base), tComp absolute (the audio/tracker timeline). */
 function drivenEval(prop, tc, tComp) {
   const base = evalProp(prop, tc);
   const d = prop?.driver;
   if (!d?.enabled) return base;
-  return applyDriver(base, d, tc, (drv) => audioSignal(drv, tComp));
+  return applyDriver(base, d, tc,
+    (drv) => audioSignal(drv, tComp), (drv) => trackSignal(drv, tComp));
 }
 
 /* ---- media sync ---------------------------------------------------- */
@@ -607,14 +629,19 @@ function syncMedia(t, activeMedia, activeAudio = []) {
     // Source time, wrapped so clips longer than their source loop.
     const src = srcTime(clip, t);
     const len = asset.duration ?? 0;
-    const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+    const desired = loopSrc(src, len);
     // A retimed clip plays its element fast or slow; the drift correction
     // below then keeps it locked to the comp clock. Browsers accept
     // 0.0625–16 and throw outside it, so the rate is clamped.
     const rate = clamp(clipRate(clip), 0.0625, 16);
     if (el.playbackRate !== rate) el.playbackRate = rate;
+    // No browser plays media backwards: while the transport runs, a
+    // reversed clip stays paused and chases the comp clock with seeks,
+    // exactly like scrubbing (its audio is silent in the preview — the
+    // export mix plays a reversed buffer and is the real thing).
+    const rev = clipReversed(clip);
     let proxyScrub = false;
-    if (playing) {
+    if (playing && !rev) {
       if (el.paused) {
         el.currentTime = desired;
         el.play().catch(() => {});
@@ -626,9 +653,12 @@ function syncMedia(t, activeMedia, activeAudio = []) {
       }
     } else if (asset.kind === 'audio') {
       // Nothing to show for sound: park the element on the scrub position
-      // so hitting play starts from the right sample.
+      // so hitting play starts from the right sample. (A reversed clip
+      // lands here while playing too — parked, not chased: seeking an
+      // audio element every tick buys nothing audible.)
       if (!el.paused) el.pause();
-      if (Math.abs(el.currentTime - desired) > 0.5 / comp.fps) el.currentTime = desired;
+      if (!playing && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
+        el.currentTime = desired;
     } else {
       if (!el.paused) el.pause();
       if (!asset._seekedHook) {
@@ -640,8 +670,11 @@ function syncMedia(t, activeMedia, activeAudio = []) {
           if (asset.ready && el.readyState >= 2) uploadVideoFrame(asset);
         });
       }
-      const scrubbing = isScrubbing();
-      const proxyOk = scrubbing && proxiesEnabled;
+      // Reversed playback chases the same way a scrub does — and wants
+      // the proxy for the same reason: full-res long-GOP seeks can't keep
+      // frame pace.
+      const chasing = isScrubbing() || (playing && rev);
+      const proxyOk = chasing && proxiesEnabled;
       if (proxyOk) ensureScrubProxy(asset);
       if (proxyOk && asset.proxyEl?.readyState >= 2) {
         // Scrub against the all-intra proxy — its seeks land in
@@ -654,7 +687,7 @@ function syncMedia(t, activeMedia, activeAudio = []) {
         // Latest-wins: while scrubbing, retargeting mid-seek cancels the
         // stale seek instead of queueing behind it.
         const tgt = asset._seekTarget;
-        if ((scrubbing || !el.seeking) && (tgt == null || Math.abs(tgt - desired) > 0.5 / comp.fps)) {
+        if ((chasing || !el.seeking) && (tgt == null || Math.abs(tgt - desired) > 0.5 / comp.fps)) {
           asset._seekTarget = desired;
           el.currentTime = desired;
         }
@@ -673,7 +706,7 @@ function syncMedia(t, activeMedia, activeAudio = []) {
 function syncGifFrame(asset, clip, t) {
   const src = srcTime(clip, t);
   const len = asset.duration || 1;
-  const local = ((src % len) + len) % len;
+  const local = loopSrc(src, len);
   let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
   if (idx < 0) idx = asset.frames.length - 1;
   if (idx !== asset._frameIdx) {
@@ -763,7 +796,9 @@ function attachScrubProxy(asset, blob) {
   el.preload = 'auto';
   el.src = URL.createObjectURL(blob);
   el.addEventListener('seeked', () => {
-    if (asset.ready && el.readyState >= 2 && isScrubbing())
+    // `playing` covers reversed-clip playback — the only thing that seeks
+    // the proxy while the transport runs.
+    if (asset.ready && el.readyState >= 2 && (isScrubbing() || playing))
       uploadVideoFrame(asset, el, true);
   });
   $('media-pool').appendChild(el);
@@ -973,7 +1008,8 @@ function compositeFrame(t) {
   fxOverlays = new Map();
   let curFx = null;           // nearest effect below the media being placed
   for (const { track, clip } of activeClips(comp, t)) {
-    if (track.hidden || clip.kind === 'audio') continue;
+    // Tracker nulls never composite — they only carry a transform.
+    if (track.hidden || clip.kind === 'audio' || clip.kind === 'track') continue;
     if (clip.kind === 'fx') {
       // Broken / still-compiling effects are skipped by the engine, so
       // media above them merges down to the previous working adjustment
@@ -1294,7 +1330,7 @@ function prepareMediaFx(t, activeMedia) {
 
     applyParamsFor(chain, t);
     chain.render(null, t);
-    applyParamsFor(matte, t);
+    applyParamsFor(matte, t, /* isMatte */ true);
     matte.render(null, t);
 
     const view = chain.finalView;
@@ -1306,7 +1342,7 @@ function prepareMediaFx(t, activeMedia) {
   }
 }
 
-function applyParamsFor(engine, t) {
+function applyParamsFor(engine, t, isMatte = false) {
   for (const layer of engine.layers) {
     const rt = layer.runtime;
     if (!rt) continue;
@@ -1317,6 +1353,11 @@ function applyParamsFor(engine, t) {
     for (const meta of rt.paramMeta) {
       const prop = effect.params?.[meta.name];
       let v = prop ? drivenEval(prop, tc, t) : meta.default;
+      // The matte chain measures where pixels went, not what colour they
+      // became: params a shader declares `#pragma matte_ignore` (invert,
+      // tint, dim — anything purely colorimetric) are forced off so they
+      // can't punch holes in the white coverage silhouette.
+      if (isMatte && meta.matteIgnore) v = 0;
       if (meta.max > meta.min) v = clamp(v, meta.min, meta.max);
       rt.paramValues.set(meta.name, v);
     }
@@ -1467,6 +1508,9 @@ function propDefs(clip) {
     // Volume only makes sense (and sound) for video assets.
     const video = assets.get(clip.assetId)?.kind === 'video';
     for (const d of mediaPropDefs()) if (video || d.key !== 'volume') defs.push(d);
+  } else if (clip.kind === 'track') {
+    // A null has no picture: no opacity, no volume — just the transform.
+    defs.push(...mediaPropDefs().filter((d) => d.key !== 'opacity' && d.key !== 'volume'));
   } else if (clip.kind === 'audio') {
     defs.push(...audioClipPropDefs());
   }
@@ -1658,6 +1702,7 @@ const timelineHost = {
   },
   status: setStatus,
   retime: (clips) => openRetimeDialog(clips),
+  findLoop: (clip) => openLoopFinder(clip),
   undo: appUndo,
   redo: appRedo,
   addLayerMenu: (anchor) => showAddLayerMenu(anchor),
@@ -2699,6 +2744,9 @@ function openRetimeDialog(clips) {
       <label>Speed <span class="retime-field"><input id="rt-speed" type="number" min="1" max="10000" step="1"> %</span></label>
       <label>Duration <span class="retime-field"><input id="rt-dur" type="number" min="${minDur.toFixed(4)}" max="7200" step="0.05"> s</span></label>
       <p class="retime-hint"></p>
+      ${list.some(hasSource) ? `
+      <label class="retime-check"><span>Play in reverse</span>
+        <input id="rt-rev" type="checkbox"${clipReversed(primary) ? ' checked' : ''}></label>` : ''}
       <label class="retime-check"><span>Stretch keyframes &amp; oscillators</span>
         <input id="rt-anim" type="checkbox" checked></label>
       <div class="modal-actions">
@@ -2711,6 +2759,7 @@ function openRetimeDialog(clips) {
 
   const speedInput = wrap.querySelector('#rt-speed');
   const durInput = wrap.querySelector('#rt-dur');
+  const revInput = wrap.querySelector('#rt-rev');
   const hint = wrap.querySelector('.retime-hint');
   let mode = 'speed';
 
@@ -2724,7 +2773,10 @@ function openRetimeDialog(clips) {
   const refreshHint = () => {
     const dur = targetDur(primary);
     const parts = [`${many ? 'first clip: ' : ''}${fmtTimecode(dur, comp.fps)}`];
-    if (hasSource(primary)) parts.push(`plays ${span.toFixed(2)}s of source`);
+    if (hasSource(primary)) parts.push(clipLoopSpan(primary)
+      ? `cycles a ${clipLoopSpan(primary).toFixed(2)}s loop`
+      : `plays ${span.toFixed(2)}s of source`);
+    if (revInput?.checked) parts.push('reversed — audio audible in export only');
     if (clipEnd(primary) - primary.dur + dur > comp.dur) parts.push('extends the comp');
     hint.textContent = parts.join(' · ');
   };
@@ -2745,6 +2797,7 @@ function openRetimeDialog(clips) {
     speedInput.value = String(+((span / readDur()) * 100).toFixed(2));
     refreshHint();
   });
+  revInput?.addEventListener('change', refreshHint);
   for (const btn of wrap.querySelectorAll('.retime-preset'))
     btn.addEventListener('click', () => {
       mode = 'speed';
@@ -2754,17 +2807,26 @@ function openRetimeDialog(clips) {
   const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey); };
   const apply = () => {
     const scaleAnim = wrap.querySelector('#rt-anim').checked;
+    const rev = revInput?.checked ?? null;
     const durs = list.map(targetDur);
     close();
     history.record(comp, () => {
-      list.forEach((clip, i) => retimeClip(clip, durs[i], { scaleAnim }));
+      list.forEach((clip, i) => {
+        retimeClip(clip, durs[i], { scaleAnim });
+        // Direction is speed's sibling edit; absent stays absent so older
+        // projects' clips don't all sprout a `reversed: false`.
+        if (rev != null && hasSource(clip)) {
+          if (rev) clip.reversed = true;
+          else delete clip.reversed;
+        }
+      });
       ensureDur(comp);
     });
     setTime(Math.min(tCur, lastFrame(comp)));
     onModelChange({ structural: true });
     setStatus(many
       ? `retimed ${list.length} clips`
-      : `${primary.name}: ${fmtSpeed(clipRate(primary))} speed · ${fmtTimecode(primary.dur, comp.fps)}`);
+      : `${primary.name}: ${fmtSpeed(clipRate(primary))}${clipReversed(primary) ? ' reversed' : ''} speed · ${fmtTimecode(primary.dur, comp.fps)}`);
   };
   const onKey = (e) => {
     if (e.key !== 'Escape' && e.key !== 'Enter') return;
@@ -2778,6 +2840,338 @@ function openRetimeDialog(clips) {
   wrap.querySelector('#rt-apply').addEventListener('click', apply);
   speedInput.focus();
   speedInput.select();
+}
+
+/* =====================================================================
+ * Seamless-loop finder — the human editor's loop trick, automated.
+ *
+ * An editor loops a shot by hunting for two moments where both the
+ * PICTURE and the MOTION match, cutting between them, and letting the
+ * cut cycle. This does the same: frames become tiny RGB thumbnails, and
+ * every candidate seam (i, j) is scored by how different the pair is
+ * PLUS how different their successors are — the successor term is what
+ * carries motion across the cut instead of just matching a pose. Scores
+ * read against the clip's own median frame-to-frame change, so 1.00× is
+ * literally "as smooth as ordinary playback". Among seams that pass as
+ * invisible the LONGEST loop wins — a perfect two-frame match is still
+ * a stutter. Applying sets clip.in + clip.loopSpan; the clip then
+ * cycles that region for however long it is stretched, preview and
+ * export alike.
+ * =================================================================== */
+
+const LOOP_FEAT_W = 32;          // thumbnail size: enough for composition,
+const LOOP_FEAT_H = 18;          // blind to compression noise
+const LOOP_MAX_SAMPLES = 300;    // coarse cap — ≤10s clips are frame-exact
+const LOOP_MIN_SRC = 0.4;        // shortest loop worth offering (source s)
+const LOOP_GOOD = 1.25;          // seams at/below this read as invisible
+
+let loopJob = null;   // { cancel } while a finder walk owns the seeks
+
+function seekElExact(el, t) {
+  return new Promise((resolve) => {
+    const guard = setTimeout(done, 1000);   // stuck-seek guard
+    function done() { clearTimeout(guard); el.removeEventListener('seeked', done); resolve(); }
+    el.addEventListener('seeked', done);
+    el.currentTime = t;
+  });
+}
+
+/** The element the finder samples: the all-intra scrub proxy when it can
+ * be had (seeks land in milliseconds — a 300-frame walk takes seconds,
+ * not minutes, on long-GOP sources), else the asset's own element. */
+async function loopAnalysisElement(asset) {
+  if (proxiesEnabled) {
+    ensureScrubProxy(asset);
+    await proxyQueue.catch(() => {});
+    const p = asset.proxyEl;
+    if (p) {
+      if (p.readyState < 1) await new Promise((res) => {
+        const timer = setTimeout(res, 3000);
+        p.addEventListener('loadedmetadata', () => { clearTimeout(timer); res(); }, { once: true });
+      });
+      if (p.readyState >= 1) return p;
+    }
+  }
+  return asset.el;
+}
+
+/** Downsampled RGB per source time; null when the job is cancelled. */
+async function sampleLoopFeatures(asset, times, onProgress) {
+  const canvas = new OffscreenCanvas(LOOP_FEAT_W, LOOP_FEAT_H);
+  const c2d = canvas.getContext('2d', { willReadFrequently: true });
+  let el = null;
+  if (asset.kind === 'video') {
+    el = await loopAnalysisElement(asset);
+    if (!el.paused) el.pause();
+  }
+  const out = new Array(times.length);
+  for (let k = 0; k < times.length; k++) {
+    if (loopJob?.cancel) return null;
+    let handle;
+    if (asset.kind === 'gif') {
+      const local = loopSrc(times[k], asset.duration || 1);
+      let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
+      if (idx < 0) idx = asset.frames.length - 1;
+      handle = asset.frames[idx].bitmap;
+    } else {
+      const dur = Number.isFinite(el.duration) ? el.duration : (asset.duration ?? 0);
+      const t = clamp(times[k], 0, Math.max(0, dur - 1 / 60));
+      if (Math.abs(el.currentTime - t) > 1e-4 || el.readyState < 2) await seekElExact(el, t);
+      handle = el;
+    }
+    try {
+      c2d.drawImage(handle, 0, 0, LOOP_FEAT_W, LOOP_FEAT_H);
+    } catch { /* frame not ready — keep the previous canvas contents */ }
+    const d = c2d.getImageData(0, 0, LOOP_FEAT_W, LOOP_FEAT_H).data;
+    const f = new Uint8Array(LOOP_FEAT_W * LOOP_FEAT_H * 3);
+    for (let p = 0, q = 0; q < f.length; p += 4) { f[q++] = d[p]; f[q++] = d[p + 1]; f[q++] = d[p + 2]; }
+    out[k] = f;
+    onProgress?.(k + 1, times.length);
+    if ((k & 7) === 7) await nextTask();   // keep the modal painting
+  }
+  return out;
+}
+
+function sadRGB(a, b) {
+  let s = 0;
+  for (let k = 0; k < a.length; k++) { const d = a[k] - b[k]; s += d < 0 ? -d : d; }
+  return s;
+}
+
+/** Score every (i, j) seam and keep a diverse handful, best first. */
+async function scoreLoopSeams(feats, step, minLoopSrc, onProgress) {
+  const N = feats.length;
+  const consec = [];
+  for (let k = 0; k + 1 < N; k++) consec.push(sadRGB(feats[k], feats[k + 1]));
+  consec.sort((x, y) => x - y);
+  // Median inter-frame change; floored so a locked-off shot (≈0 motion)
+  // doesn't blow the ratio up — under a luma level per pixel nothing shows.
+  const base = Math.max(consec[consec.length >> 1] || 0, feats[0].length);
+  const minGap = Math.max(2, Math.round(minLoopSrc / step));
+  const pairs = [];
+  for (let i = 0; i + 1 < N; i++) {
+    for (let j = i + minGap; j + 1 < N; j++)
+      pairs.push({
+        i, j,
+        r: (sadRGB(feats[i], feats[j]) + sadRGB(feats[i + 1], feats[j + 1])) / (2 * base),
+      });
+    onProgress?.(i + 1, N);
+    if ((i & 15) === 15) await nextTask();
+  }
+  pairs.sort((a, b) => a.r - b.r);
+  // Near-duplicate seams (a frame either side of a better one) add nothing.
+  const rad = Math.max(2, Math.round(N * 0.04));
+  const picked = [];
+  for (const p of pairs) {
+    if (picked.length >= 12) break;
+    if (picked.some((q) => Math.abs(q.i - p.i) < rad && Math.abs(q.j - p.j) < rad)) continue;
+    picked.push(p);
+  }
+  // The editor's rule: among invisible seams take the LONGEST loop; only
+  // when nothing passes fall back to "least visible".
+  picked.sort((a, b) => {
+    const ga = a.r <= LOOP_GOOD;
+    if (ga !== (b.r <= LOOP_GOOD)) return ga ? -1 : 1;
+    return ga ? (b.j - b.i) - (a.j - a.i) : a.r - b.r;
+  });
+  return { picked: picked.slice(0, 5), base };
+}
+
+/** Re-search a coarse candidate at frame granularity: fine grids around
+ * both ends, best pair wins. Returns { ta, tb, r } or null on cancel. */
+async function refineLoopSeam(asset, cand, step, base, range, minLoopSrc, onProgress) {
+  const fine = Math.max(1 / comp.fps, (2 * step) / 24);
+  const grid = (t0) => {
+    const ts = [];
+    for (let t = Math.max(range[0], t0 - step); t <= Math.min(range[1], t0 + step) + 1e-9; t += fine)
+      ts.push(t);
+    ts.push(ts[ts.length - 1] + fine);   // successor sample for the motion term
+    return ts;
+  };
+  const gridA = grid(cand.ta);
+  const gridB = grid(cand.tb);
+  const total = gridA.length + gridB.length;
+  const A = await sampleLoopFeatures(asset, gridA, (d) => onProgress?.(d, total));
+  if (!A) return null;
+  const B = await sampleLoopFeatures(asset, gridB, (d) => onProgress?.(gridA.length + d, total));
+  if (!B) return null;
+  let best = null;
+  for (let u = 0; u + 1 < A.length; u++)
+    for (let v = 0; v + 1 < B.length; v++) {
+      if (gridB[v] - gridA[u] < minLoopSrc) continue;
+      const r = (sadRGB(A[u], B[v]) + sadRGB(A[u + 1], B[v + 1])) / (2 * base);
+      if (!best || r < best.r) best = { ta: gridA[u], tb: gridB[v], r };
+    }
+  return best ?? cand;
+}
+
+const loopSeamWord = (r) => (r <= LOOP_GOOD ? 'invisible' : r <= 2.5 ? 'subtle' : 'visible');
+
+async function openLoopFinder(clip) {
+  if (rotoJob || offlineJob || loopJob) {
+    setStatus('another job is running — finish or cancel it first');
+    return;
+  }
+  const asset = assets.get(clip.assetId);
+  if (!asset?.ready || (asset.kind !== 'video' && asset.kind !== 'gif')) {
+    setStatus('loop finder: needs a video or gif clip');
+    return;
+  }
+  const srcLen = asset.duration || 0;
+  const rate = clipRate(clip);
+  const range = [clamp(clip.in, 0, srcLen), clamp(clip.in + clipSourceSpan(clip), 0, srcLen)];
+  if (range[1] - range[0] < LOOP_MIN_SRC * 3) {
+    setStatus('loop finder: clip is too short to loop');
+    return;
+  }
+  pause();
+  document.querySelector('.modal-wrap')?.remove();
+
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-wrap';
+  wrap.innerHTML = `
+    <div class="modal loop-modal">
+      <h3>Find seamless loop — ${clip.name}</h3>
+      <p class="retime-hint" id="lf-status">analyzing…</p>
+      <div class="loop-cands" id="lf-cands"></div>
+      <div class="modal-actions">
+        <span class="retime-hint" id="lf-note" style="flex:1"></span>
+        <button class="btn" id="lf-cancel">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const statusEl = wrap.querySelector('#lf-status');
+  const candsEl = wrap.querySelector('#lf-cands');
+  const prog = (text) => { statusEl.textContent = text; };
+
+  const job = (loopJob = { cancel: false });
+  let snapshot = null;       // preview restore
+  let touched = false;       // model was mutated (preview or apply)
+
+  const restorePreview = () => {
+    if (!snapshot) return;
+    pause();
+    clip.in = snapshot.in;
+    if (snapshot.loopSpan === undefined) delete clip.loopSpan;
+    else clip.loopSpan = snapshot.loopSpan;
+    clip.dur = snapshot.dur;
+    comp.dur = snapshot.compDur;
+    setTime(Math.min(snapshot.t, lastFrame(comp)));
+    snapshot = null;
+  };
+  const close = () => {
+    job.cancel = true;
+    loopJob = null;
+    restorePreview();
+    wrap.remove();
+    document.removeEventListener('keydown', onKey);
+    if (touched) onModelChange({ structural: true });
+  };
+  const onKey = (e) => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    close();
+  };
+  document.addEventListener('keydown', onKey);
+  wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) close(); });
+  wrap.querySelector('#lf-cancel').addEventListener('click', close);
+
+  /** Audition a candidate in place: cycle the clip and drop the playhead
+   * just ahead of the seam so it crosses within a second. */
+  const preview = (ta, tb) => {
+    snapshot ??= { in: clip.in, loopSpan: clip.loopSpan, dur: clip.dur, compDur: comp.dur, t: tCur };
+    touched = true;
+    clip.in = ta;
+    clip.loopSpan = tb - ta;
+    const cycle = (tb - ta) / rate;
+    // Long enough to cross the seam a couple of times, whatever dur was.
+    clip.dur = Math.max(snapshot.dur, Math.min(cycle * 2.5, 7200));
+    ensureDur(comp);
+    onModelChange({ structural: false, transient: true });
+    timeline.render();
+    const seam = clipReversed(clip)
+      ? clip.start + (((clip.dur * rate) % (tb - ta)) || (tb - ta)) / rate
+      : clip.start + cycle;
+    setTime(clamp(seam - Math.min(0.8, cycle / 2), clip.start, lastFrame(comp)));
+    play();
+  };
+
+  const apply = async (cand, step, base, minLoopSrc, btn) => {
+    restorePreview();
+    let final = cand;
+    if (asset.kind === 'video' && step > 1.05 / comp.fps) {
+      btn.disabled = true;
+      job.busy = true;
+      const fine = await refineLoopSeam(asset, cand, step, base, range, minLoopSrc,
+        (d, t) => prog(`refining the cut to frame precision — ${d}/${t}…`))
+        .finally(() => { job.busy = false; });
+      if (job.cancel) return;
+      if (fine) final = fine;
+    }
+    touched = true;
+    const span = final.tb - final.ta;
+    // End the clip exactly on a cycle boundary: whole loops read as
+    // seamless, a partial tail ends mid-motion. Nearest multiple of the
+    // clip's current length, never less than one full cycle.
+    const cycle = span / rate;
+    const cycles = Math.max(1, Math.round(clip.dur / cycle));
+    history.record(comp, () => {
+      clip.in = final.ta;
+      clip.loopSpan = span;
+      clip.dur = cycles * cycle;
+      ensureDur(comp);
+    });
+    close();
+    setTime(clamp(clip.start, 0, lastFrame(comp)));
+    setStatus(`${clip.name}: cycles a ${span.toFixed(2)}s loop (seam ${loopSeamWord(final.r)}, `
+      + `${final.r.toFixed(2)}×) — sized to ${cycles} ${cycles === 1 ? 'cycle' : 'cycles'}, `
+      + `stretch the clip to repeat more`);
+  };
+
+  try {
+    // Coarse pass over the footage the clip can reach, capped for speed.
+    const N = Math.min(LOOP_MAX_SAMPLES,
+      Math.max(24, Math.round((range[1] - range[0]) * comp.fps) + 1));
+    const step = (range[1] - range[0]) / (N - 1);
+    const times = Array.from({ length: N }, (_, k) => range[0] + k * step);
+    job.busy = true;   // parks tick() — syncMedia must not fight the walk's seeks
+    const feats = await sampleLoopFeatures(asset, times,
+      (d, t) => prog(`sampling frames ${d}/${t}…`))
+      .finally(() => { job.busy = false; });
+    if (!feats || job.cancel) return;
+    const minLoopSrc = Math.max(LOOP_MIN_SRC, 3 * step);
+    prog('scoring seams…');
+    const { picked, base } = await scoreLoopSeams(feats, step, minLoopSrc,
+      (d, t) => prog(`scoring seams ${d}/${t}…`));
+    if (job.cancel) return;
+    if (!picked.length) {
+      prog('no workable seam — the footage never revisits itself');
+      return;
+    }
+
+    prog('best seams found — 1.00× = as smooth as normal playback');
+    wrap.querySelector('#lf-note').textContent =
+      asset.kind === 'video' && step > 1.05 / comp.fps
+        ? 'the chosen cut is refined to frame precision on use' : '';
+    for (const p of picked) {
+      const ta = times[p.i];
+      const tb = times[p.j];
+      const row = document.createElement('div');
+      row.className = 'loop-cand';
+      row.innerHTML = `
+        <span class="loop-cand-main">${fmtTimecode((tb - ta) / rate, comp.fps)} loop
+          <em>· seam ${loopSeamWord(p.r)} (${p.r.toFixed(2)}×) · from ${fmtTimecode(ta, comp.fps)}</em></span>
+        <button class="btn" data-act="preview">Preview</button>
+        <button class="btn" data-act="use">Use</button>`;
+      row.querySelector('[data-act="preview"]').addEventListener('click', () => preview(ta, tb));
+      row.querySelector('[data-act="use"]').addEventListener('click', (e) =>
+        apply({ ta, tb, r: p.r }, step, base, minLoopSrc, e.currentTarget));
+      candsEl.appendChild(row);
+    }
+  } catch (e) {
+    console.error('loop finder failed:', e);
+    prog(`analysis failed — ${e.message}`);
+  }
 }
 
 /* =====================================================================
@@ -2853,8 +3247,16 @@ function serializeMaskState(m) {
         out.channel = n.channel;
       } else if (n.kind === 'roto') {
         out.sourceClipId = n.sourceClipId ?? null;
+        out.engine = n.engine ?? 'auto';
         out.region = n.region ? [...n.region] : null;
+        out.query = n.query ?? null;
+        out.prompts = (n.prompts ?? []).map((g) => ({ t: g.t, points: g.points.map((p) => ({ ...p })) }));
         out.seq = n.seq ? { ...n.seq } : null;
+        out.track = n.track
+          ? { ...n.track, samples: n.track.samples.map((s) => (s ? [...s] : null)) }
+          : null;
+        out.trackClipId = n.trackClipId ?? null;
+        out.trackOnly = !!n.trackOnly;
       }
       return out;
     }),
@@ -3397,11 +3799,14 @@ function newMaskNode(kind) {
   // adding one reads as "remove this color" (green screen) rather than
   // blanking the layer until a color is picked.
   if (kind === 'key') return { ...base, invert: true, keyColor: '#00b140', similarity: 0.18, smoothness: 0.1, sourceClipId: null };
-  // AI roto: region = optional normalized [x0, y0, x1, y1] subject box in
-  // source space (null = whole frame). BiRefNet takes no prompts — the box
-  // just frames ONE subject (and buys small subjects full model res);
-  // seq = analyzed matte sequence metadata (frames in idb).
-  if (kind === 'roto') return { ...base, sourceClipId: null, channel: 'alpha', region: null, seq: null };
+  // AI roto: engine = 'auto' (BiRefNet — no prompts; region = optional
+  // normalized [x0, y0, x1, y1] subject box that frames ONE subject and
+  // buys small subjects full model res) or 'sam' (MobileSAM — pick a
+  // SPECIFIC object: prompts = [{ t: srcTime sec, points: [{x, y, label}]
+  // }] in source-pixel space, query = optional text description re-detected
+  // per frame). seq = analyzed matte sequence metadata (frames in idb),
+  // identical for both engines.
+  if (kind === 'roto') return { ...base, sourceClipId: null, channel: 'alpha', engine: 'auto', region: null, query: null, prompts: [], seq: null };
   return { ...base, sourceClipId: null, channel: 'alpha' };   // 'layer'
 }
 
@@ -3437,6 +3842,12 @@ function prepareMaskNode(node) {
   if (node.sourceClipId) ensureMatteTarget(node);
   else node.view = null;
   if ((node.kind === 'layer' || node.kind === 'roto') && !node.channel) node.channel = 'alpha';
+  if (node.kind === 'roto') {
+    // Pre-engine-split projects: SAM-era nodes carry prompts/query, the
+    // BiRefNet interregnum carries region — infer the engine they used.
+    node.engine ??= (node.prompts?.length || node.query) ? 'sam' : 'auto';
+    node.prompts ??= [];
+  }
 }
 
 /* ---- media clip masks ------------------------------------------------
@@ -3560,9 +3971,7 @@ function prepareNodeSources(nodes, t, getEncoder) {
       // Hidden-track sources never go through syncMedia — chase the comp
       // clock with paused seeks (the offline exporter seeks exactly).
       const el = asset.el;
-      const src = srcTime(clip, t);
-      const len = asset.duration ?? 0;
-      const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+      const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
       if (!el.seeking && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
         el.currentTime = desired;
       if (el.readyState >= 2) uploadVideoFrame(asset);
@@ -3601,8 +4010,13 @@ function prepareMasks(t) {
 
 /* ---- AI roto nodes ---------------------------------------------------
  * A roto node is an analyzed MASK SEQUENCE: per comp frame, a soft alpha
- * matte of the subject in a media clip, produced by BiRefNet (roto.js)
- * and stored as PNG blobs in IndexedDB under roto:<nodeId>.
+ * matte of a subject in a media clip, stored as PNG blobs in IndexedDB
+ * under roto:<nodeId>. Two engines produce that sequence and the user
+ * switches per node: 'auto' (BiRefNet, roto.js) mattes the most SALIENT
+ * subject with no prompts; 'sam' (MobileSAM + OWL-ViT, roto-sam.js)
+ * segments the SPECIFIC object picked with clicks/strokes or a text query
+ * and tracks it. Everything downstream of analysis — storage, playback
+ * lookup, compositing, export — is engine-agnostic.
  * Masks live in SOURCE space and are keyed by SOURCE time, so trims, moves
  * and speed changes after analysis still find the right frame; each tick
  * the frame's mask is drawn through the compositor with the source clip's
@@ -3653,7 +4067,7 @@ async function rotoBlobsFor(node) {
 function rotoFrameIndex(node, clip, t) {
   const seq = node.seq;
   if (!seq?.count) return -1;
-  if (seq.count === 1 || !(seq.srcStep > 1e-9)) return 0;
+  if (seq.count === 1 || !(Math.abs(seq.srcStep) > 1e-9)) return 0;
   return clamp(Math.round((srcTime(clip, t) - seq.src0) / seq.srcStep), 0, seq.count - 1);
 }
 
@@ -3688,7 +4102,10 @@ function rotoPresentedTime(asset) {
 function rotoFrameIndexLive(node, clip, asset, t) {
   const idx = rotoFrameIndex(node, clip, t);
   const seq = node.seq;
-  if (!playing || idx < 0 || asset.kind !== 'video' || !(seq.srcStep > 1e-9)) return idx;
+  // A reversed clip never free-runs — playback chases it with exact seeks —
+  // so the clock index already matches the presented frame.
+  if (!playing || idx < 0 || asset.kind !== 'video' || clipReversed(clip)
+    || !(seq.srcStep > 1e-9)) return idx;
   const el = asset.el;
   if (!el || el.readyState < 2) return idx;
   // Fall back to the clock-position only until the first presentation lands.
@@ -3766,6 +4183,9 @@ function ensureRotoTex(node, seq) {
  * mask bitmap and draw it into the comp-space matte target with the source
  * clip's live transform. */
 function prepareRotoNode(node, t, getEncoder) {
+  // Motion-track-only nodes exist for their samples, never as a matte:
+  // inactive means the mask stack ignores them and the clip stays uncut.
+  if (node.trackOnly) { node.active = false; return; }
   const hit = node.sourceClipId ? findClip(comp, node.sourceClipId) : null;
   const clip = hit?.clip;
   const asset = clip && assets.get(clip.assetId);
@@ -3803,7 +4223,7 @@ function rotoNodesAt(t) {
   const out = [];
   for (const maskState of clipMasks.values())
     for (const node of maskState?.nodes ?? []) {
-      if (node.kind !== 'roto' || node.enabled === false || !node.seq?.count || !node.sourceClipId) continue;
+      if (node.kind !== 'roto' || node.trackOnly || node.enabled === false || !node.seq?.count || !node.sourceClipId) continue;
       const hit = findClip(comp, node.sourceClipId);
       if (hit && t >= hit.clip.start && t < clipEnd(hit.clip)) out.push({ node, clip: hit.clip });
     }
@@ -3881,9 +4301,7 @@ async function rotoSeekSource(asset, clip, t) {
   if (asset.kind !== 'video') return;
   const el = asset.el;
   if (!el.paused) el.pause();
-  const len = asset.duration ?? 0;
-  const src = srcTime(clip, t);
-  const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+  const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
   if (Math.abs(el.currentTime - desired) < 1e-4 && el.readyState >= 2) return;
   await new Promise((resolve) => {
     // The timeout is a stuck-seek guard, same as seekMediaExact's.
@@ -3902,9 +4320,7 @@ async function rotoSeekSource(asset, clip, t) {
  * bitmap, or still). Videos must already be seeked. */
 function rotoSourceHandle(asset, clip, t) {
   if (asset.kind === 'gif') {
-    const stime = srcTime(clip, t);
-    const len = asset.duration || 1;
-    const local = ((stime % len) + len) % len;
+    const local = loopSrc(srcTime(clip, t), asset.duration || 1);
     let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
     if (idx < 0) idx = asset.frames.length - 1;
     return asset.frames[idx].bitmap;
@@ -3928,14 +4344,19 @@ function rotoDrawRegion(asset, clip, t, rect) {
 /* One inference at a time, EVER. onnxruntime-web sessions do not tolerate
  * concurrent run() — hitting Analyze while the subject preview was still
  * inferring re-entered the threaded wasm and deadlocked the main thread
- * (frozen app). Every model call chains through this gate, so the second
- * caller just waits out the first (<1 s) instead of racing it. */
+ * (frozen app). Every model call (BOTH engines — BiRefNet, SAM enc/dec,
+ * the text detector) chains through this gate, so the second caller just
+ * waits out the first (<1 s) instead of racing it. */
 let rotoRunChain = Promise.resolve();
 
-function rotoSegment(rt, img) {
-  const run = rotoRunChain.then(() => roto.segmentFrame(rt, img));
+function rotoRun(fn) {
+  const run = rotoRunChain.then(fn);
   rotoRunChain = run.catch(() => {});   // a failed run must not jam the gate
   return run;
+}
+
+function rotoSegment(rt, img) {
+  return rotoRun(() => roto.segmentFrame(rt, img));
 }
 
 /** Live monitor painted into the mask overlay while an analysis runs: the
@@ -3983,16 +4404,27 @@ function drawRotoAnalysisMonitor(asset, clip, t, stage, roi) {
   }
 }
 
-/**
- * Matte the subject across the source clip. Walks comp frames over the
- * clip's extent front to back; every frame is an INDEPENDENT BiRefNet
- * pass on the subject box's crop (whole frame when no box), and the box
- * then follows the matte — the only temporal state, and it only frames
- * the model's view, so one odd frame can't poison the chain.
- */
+/** Which engine a roto node runs on ('auto' = BiRefNet unless set). */
+function rotoEngine(node) {
+  return node.engine === 'sam' ? 'sam' : 'auto';
+}
+
 async function analyzeRotoNode(ownerClip, ctx, node) {
+  if (rotoEngine(node) === 'sam') return analyzeRotoSamNode(ownerClip, ctx, node);
+  return analyzeRotoAutoNode(ownerClip, ctx, node);
+}
+
+/**
+ * Auto engine: matte the subject across the source clip. Walks comp
+ * frames over the clip's extent front to back; every frame is an
+ * INDEPENDENT BiRefNet pass on the subject box's crop (whole frame when
+ * no box), and the box then follows the matte — the only temporal state,
+ * and it only frames the model's view, so one odd frame can't poison the
+ * chain.
+ */
+async function analyzeRotoAutoNode(ownerClip, ctx, node) {
   if (rotoJob?.nodeId === node.id) { rotoJob.cancel = true; return; }
-  if (rotoJob || offlineJob) { setStatus('another job is running — finish or cancel it first'); return; }
+  if (rotoJob || offlineJob || loopJob) { setStatus('another job is running — finish or cancel it first'); return; }
   const hit = node.sourceClipId ? findClip(comp, node.sourceClipId) : null;
   const clip = hit?.clip;
   const asset = clip && assets.get(clip.assetId);
@@ -4014,7 +4446,8 @@ async function analyzeRotoNode(ownerClip, ctx, node) {
     const t1 = Math.min(clipEnd(clip), comp.dur);
     const f0 = Math.max(0, Math.ceil(t0 * fps - 1e-6));
     const fN = Math.max(f0, Math.ceil(t1 * fps - 1e-6) - 1);
-    const srcStep = clipRate(clip) / fps;
+    // Signed: a reversed clip's walk descends through the source.
+    const srcStep = srcTime(clip, (f0 + 1) / fps) - srcTime(clip, f0 / fps);
     const src0 = srcTime(clip, f0 / fps);
     const still = asset.kind !== 'video' && asset.kind !== 'gif';
     const total = still ? 1 : fN - f0 + 1;
@@ -4063,7 +4496,7 @@ async function analyzeRotoNode(ownerClip, ctx, node) {
       const old = node.seq;
       if (job.cancel && old
           && old.count === newSeq.count && old.w === newSeq.w && old.h === newSeq.h
-          && Math.abs(old.src0 - newSeq.src0) <= (newSeq.srcStep || 1e-3) / 2
+          && Math.abs(old.src0 - newSeq.src0) <= (Math.abs(newSeq.srcStep) || 1e-3) / 2
           && Math.abs((old.srcStep ?? 0) - newSeq.srcStep) < 1e-9) {
         const oldBlobs = await rotoBlobsFor(node).catch(() => null);
         if (oldBlobs) {
@@ -4143,7 +4576,9 @@ function startRotoEdit(clip, node) {
   rotoOverlayT = tCur;
   if (viewer.classList.contains('size-cover')) setViewMode('fit');   // cover crops the frame
   document.body.classList.add('roto-editing');
-  setStatus('roto: previewing the matte — drag a box to frame ONE subject (optional), Esc when done');
+  setStatus(rotoEngine(node) === 'sam'
+    ? 'roto: click or paint over the object — Alt / right button paints background, Esc when done'
+    : 'roto: previewing the matte — drag a box to frame ONE subject (optional), Esc when done');
   renderInspector();
   updateRotoOverlay();
 }
@@ -4195,7 +4630,7 @@ let rotoCommitPending = null;   // { nodeId, t } — a finished box drag wants i
 function rotoSeqIndexExact(node, clip, t) {
   const seq = node.seq;
   if (!seq?.count) return -1;
-  if (seq.count === 1 || !(seq.srcStep > 1e-9)) return 0;
+  if (seq.count === 1 || !(Math.abs(seq.srcStep) > 1e-9)) return 0;
   const idx = Math.round((srcTime(clip, t) - seq.src0) / seq.srcStep);
   return idx >= 0 && idx < seq.count ? idx : -1;
 }
@@ -4240,11 +4675,19 @@ function rotoPreviewKey(info, t) {
   return `${info.asset.id}:${srcTime(info.clip, t).toFixed(4)}:${r ? r.map((v) => v.toFixed(3)).join(',') : 'full'}`;
 }
 
-/** Redraw the subject overlay: the box immediately, then the model's live
- * matte preview, green-tinted. BiRefNet needs no prompt, so the preview
- * ALWAYS runs — entering the mode shows the auto matte right away; the
- * last matte is cached per (frame, box) so redraws are instant. */
+/** Redraw the pick/subject overlay for whichever engine the node runs. */
 async function updateRotoOverlay() {
+  const info = rotoEditContext();
+  if (!info) return;
+  if (rotoEngine(info.node) === 'sam') return updateRotoSamOverlay();
+  return updateRotoAutoOverlay();
+}
+
+/** Auto engine: the box immediately, then the model's live matte preview,
+ * green-tinted. BiRefNet needs no prompt, so the preview ALWAYS runs —
+ * entering the mode shows the auto matte right away; the last matte is
+ * cached per (frame, box) so redraws are instant. */
+async function updateRotoAutoOverlay() {
   const info = rotoEditContext();
   if (!info) return;
   const t = tCur;
@@ -4299,26 +4742,62 @@ async function updateRotoOverlay() {
   }
 }
 
-/* Subject framing: drag a box around the subject (source space, through
- * the clip's live transform). Capture phase so the drag wins over the
- * gizmo / pan, like the eyedropper above. A sub-8-px drag is a click —
- * ignored, so a stray click never nukes the box. */
-let rotoBoxDrag = null;   // { info, start: [sx, sy], region } during a drag
+/* Pointer interaction in pick mode, per engine. Auto: drag a box around
+ * the subject (source space, through the clip's live transform); a
+ * sub-8-px drag is a click — ignored, so a stray click never nukes the
+ * box. Sam: a click drops one labeled point, a drag paints a stroke of
+ * them (positive by default, Alt/right-button = negative) with the live
+ * mask preview chasing the brush. Capture phase so the pick wins over the
+ * gizmo / pan, like the eyedropper above. */
+let rotoBoxDrag = null;   // { info, start: [sx, sy], region } during a box drag (auto)
+let rotoStroke = null;    // { info, group, label, last: [sx, sy], added } during a paint drag (sam)
 
-function rotoPickSource(e, info) {
+function rotoPickSource(e, info, { clampToMedia = true } = {}) {
   const rect = canvas.getBoundingClientRect();
   const cx = (e.clientX - rect.left) / rect.width * comp.width;
   const cy = (e.clientY - rect.top) / rect.height * comp.height;
   const [sxp, syp] = compToSource(info.clip, tCur, cx, cy);
-  // Clamp instead of rejecting — a box may start or end past the media edge.
-  return [clamp(sxp, 0, info.asset.w), clamp(syp, 0, info.asset.h)];
+  // Box mode clamps — a box may start or end past the media edge. Point
+  // prompts reject instead: a point off the media means nothing to SAM.
+  if (clampToMedia) return [clamp(sxp, 0, info.asset.w), clamp(syp, 0, info.asset.h)];
+  return (sxp < 0 || syp < 0 || sxp >= info.asset.w || syp >= info.asset.h) ? null : [sxp, syp];
 }
 
 canvasStack.addEventListener('pointerdown', (e) => {
   if (!rotoEdit || pickState) return;
-  if (e.button !== 0) return;
   const info = rotoEditContext();
   if (!info) return;
+  if (rotoEngine(info.node) === 'sam') {
+    if (e.button !== 0 && e.button !== 2) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const p = rotoPickSource(e, info, { clampToMedia: false });
+    if (!p) return;
+    const g = rotoPromptGroupAt(info, tCur, true);
+    if (g.points.length >= ROTO_GROUP_CAP) {
+      setStatus('roto: this frame is full of guidance — Clear frame first');
+      return;
+    }
+    const label = (e.button === 2 || e.altKey) ? 0 : 1;
+    // A double-click or click jitter must not stack duplicate prompts on
+    // the same spot — repeats add nothing and bias the decoder. The click
+    // still opens a stroke, so a drag from an existing point paints on.
+    const dupR = rotoStrokeStep(info.asset) / 2;
+    if (g.points.some((q) => q.label === label
+        && (q.x - p[0]) ** 2 + (q.y - p[1]) ** 2 < dupR * dupR)) {
+      rotoStroke = { info, group: g, label, last: p, added: 0 };
+      try { canvasStack.setPointerCapture(e.pointerId); } catch {}
+      return;
+    }
+    g.points.push({ x: Math.round(p[0]), y: Math.round(p[1]), label });
+    rotoStroke = { info, group: g, label, last: p, added: 1 };
+    try { canvasStack.setPointerCapture(e.pointerId); } catch {}
+    scheduleSave();
+    renderInspector();   // the first point enables Analyze/Clear — buttons must recompute
+    updateRotoOverlay();
+    return;
+  }
+  if (e.button !== 0) return;
   e.stopPropagation();
   e.preventDefault();
   rotoBoxDrag = { info, start: rotoPickSource(e, info), region: null };
@@ -4326,7 +4805,23 @@ canvasStack.addEventListener('pointerdown', (e) => {
 }, true);
 
 canvasStack.addEventListener('pointermove', (e) => {
-  if (!rotoBoxDrag || !rotoEdit) return;
+  if (!rotoEdit) return;
+  if (rotoStroke) {
+    e.stopPropagation();
+    const { info, group, label } = rotoStroke;
+    if (rotoStroke.added >= ROTO_STROKE_CAP || group.points.length >= ROTO_GROUP_CAP) return;
+    const p = rotoPickSource(e, info, { clampToMedia: false });
+    if (!p) return;
+    const step = rotoStrokeStep(info.asset);
+    const [lx, ly] = rotoStroke.last;
+    if ((p[0] - lx) ** 2 + (p[1] - ly) ** 2 < step * step) return;
+    group.points.push({ x: Math.round(p[0]), y: Math.round(p[1]), label });
+    rotoStroke.added++;
+    rotoStroke.last = p;
+    updateRotoOverlay();   // serialized inside — the preview chases the brush, latest wins
+    return;
+  }
+  if (!rotoBoxDrag) return;
   e.stopPropagation();
   const { info, start } = rotoBoxDrag;
   const p = rotoPickSource(e, info);
@@ -4340,6 +4835,18 @@ canvasStack.addEventListener('pointermove', (e) => {
 }, true);
 
 const endRotoStroke = (e) => {
+  if (rotoStroke) {
+    const { info } = rotoStroke;
+    rotoStroke = null;
+    e.stopPropagation();
+    // Painting on an already-analyzed frame repairs it IN PLACE — the
+    // release bakes this frame's refined mask back into the sequence.
+    if (info.node.seq?.count) rotoCommitPending = { nodeId: info.node.id, t: tCur };
+    scheduleSave();
+    renderInspector();
+    updateRotoOverlay();
+    return;
+  }
   if (!rotoBoxDrag) return;
   const { info, region } = rotoBoxDrag;
   rotoBoxDrag = null;
@@ -4367,12 +4874,874 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && rotoEdit) stopRotoEdit();
 });
 
+/** In-place refresh of every visible roto row's status line (a full
+ * renderInspector would blow away focus mid-interaction). */
+function refreshRotoRows(node) {
+  for (const el of document.querySelectorAll(`.mn-roto-status[data-node="${node.id}"]`))
+    el.textContent = rotoStatusText(node);
+}
+
 function rotoStatusText(node) {
   if (!node.sourceClipId) return 'choose a source layer';
-  if (rotoJob?.nodeId === node.id) return 'matting…';
+  if (rotoJob?.nodeId === node.id) return rotoEngine(node) === 'sam' ? 'analyzing…' : 'matting…';
+  if (rotoEngine(node) === 'sam') {
+    const groups = (node.prompts ?? []).filter((g) => g.points.length);
+    const nPts = groups.reduce((a, g) => a + g.points.length, 0);
+    const query = node.query?.trim();
+    const parts = [];
+    if (query) parts.push(`“${query}”`);
+    if (nPts) parts.push(`${nPts} point${nPts === 1 ? '' : 's'} on ${groups.length} frame${groups.length === 1 ? '' : 's'}`);
+    if (!parts.length) parts.push('describe the object, or click it');
+    if (node.seq?.count) parts.push(`${node.seq.count} frame${node.seq.count === 1 ? '' : 's'} tracked`);
+    return parts.join(' · ');
+  }
   const parts = [node.region ? 'subject boxed' : 'whole frame — auto subject'];
   if (node.seq?.count) parts.push(`${node.seq.count} frame${node.seq.count === 1 ? '' : 's'} matted`);
   return parts.join(' · ');
+}
+
+/* ---- SAM prompt engine (roto-sam.js) ---------------------------------
+ * The 'sam' engine segments a SPECIFIC object instead of the most salient
+ * one: guidance is clicks/strokes of labeled points (per source-time
+ * prompt group on node.prompts) and/or a text query (node.query) that an
+ * open-vocabulary detector re-finds on every frame. Analysis walks the
+ * clip forward from the earliest prompt then backward, steering SAM's
+ * decoder frame to frame with tracked points + the previous frame's
+ * low-res logits, with motion compensation and an area sanity ladder.
+ * The output lands in the SAME node.seq / idb PNG contract as the auto
+ * engine — everything downstream is shared. */
+
+let rotoEmbCache = null;      // { key, emb, lowRes } — last preview embedding
+let rotoSamScratch = null;    // SAM analysis canvas (rw × rh, aspect kept)
+let rotoSamScratchCtx = null;
+
+/** SAM works on the aspect-preserved frame, long side 1024 (s = source px
+ * → model px); sw/sh are the shared stored-matte dims. */
+function rotoAnalysisDims(asset) {
+  const s = rotoSam.ROTO_INPUT_LONG / Math.max(asset.w, asset.h);
+  const { sw, sh } = rotoStoreDims(asset);
+  return {
+    s,
+    rw: Math.max(1, Math.round(asset.w * s)),
+    rh: Math.max(1, Math.round(asset.h * s)),
+    sw, sh,
+  };
+}
+
+/** Draw the RAW source frame (no transform, no effects) at rw×rh and read
+ * it back for the model. Videos must already be seeked. */
+function rotoDrawSamSource(asset, clip, t, rw, rh) {
+  rotoSamScratch ??= new OffscreenCanvas(1, 1);
+  if (rotoSamScratch.width !== rw || rotoSamScratch.height !== rh) {
+    rotoSamScratch.width = rw;
+    rotoSamScratch.height = rh;
+    rotoSamScratchCtx = null;
+  }
+  rotoSamScratchCtx ??= rotoSamScratch.getContext('2d', { willReadFrequently: true });
+  rotoSamScratchCtx.drawImage(rotoSourceHandle(asset, clip, t), 0, 0, rw, rh);
+  return rotoSamScratchCtx.getImageData(0, 0, rw, rh);
+}
+
+/** The prompt group at a SOURCE time (half-frame tolerance). */
+function rotoGroupAtSrc(node, src, tol, create) {
+  node.prompts ??= [];
+  let g = node.prompts.find((p) => Math.abs(p.t - src) <= tol);
+  if (!g && create) {
+    g = { t: src, points: [] };
+    node.prompts.push(g);
+    node.prompts.sort((a, b) => a.t - b.t);
+  }
+  return g ?? null;
+}
+
+/** The prompt group at comp time t. Stills collapse to one group. */
+function rotoPromptGroupAt(info, t, create) {
+  const { node, clip, asset } = info;
+  const still = asset.kind !== 'video' && asset.kind !== 'gif';
+  const src = still ? 0 : srcTime(clip, t);
+  const tol = Math.max(1e-4, clipRate(clip) / comp.fps / 2);
+  return rotoGroupAtSrc(node, src, tol, create);
+}
+
+// Guidance is painted as strokes of labeled points — a drag samples one
+// every few source pixels. Caps keep a scribble from flooding the decoder.
+const ROTO_STROKE_CAP = 24;   // points one drag may add
+const ROTO_GROUP_CAP = 64;    // points one frame may hold
+
+function rotoStrokeStep(asset) { return Math.max(8, asset.w / 80); }
+
+function drawRotoPoints(octx, d, asset, group) {
+  const th = d.rot * Math.PI / 180;
+  const c = Math.cos(th);
+  const sn = Math.sin(th);
+  // Painted strokes carry many points — shrink the dots so they read as a
+  // stroke rather than a wall of markers.
+  const dense = (group?.points.length ?? 0) > 8;
+  const r = Math.max(dense ? 2.5 : 4, comp.width / (dense ? 380 : 220));
+  for (const p of group?.points ?? []) {
+    const lx = (p.x - asset.w / 2) * d.scaleX;
+    const ly = (p.y - asset.h / 2) * d.scaleY;
+    const px = d.x + c * lx - sn * ly;
+    const py = d.y + sn * lx + c * ly;
+    octx.beginPath();
+    octx.arc(px, py, r, 0, Math.PI * 2);
+    octx.fillStyle = p.label ? '#37d67a' : '#e5484d';
+    octx.fill();
+    octx.lineWidth = Math.max(1.5, r / 4);
+    octx.strokeStyle = '#000';
+    octx.stroke();
+  }
+}
+
+/** Centroid, principal-axis angle and bounding box of one store-space
+ * soft mask, in SOURCE pixels/degrees — one motion-track sample
+ * [cx, cy, angleDeg, bboxW, bboxH]. Alpha-weighted moments; the angle is
+ * the mask's principal axis (defined mod 180° — the bake unwraps it).
+ * Null when the mask is near-empty. Store space keeps the source aspect,
+ * so one uniform factor maps back and the angle survives unchanged. */
+function rotoMaskMoments(mask, w, h, asset) {
+  let m00 = 0;
+  let mx = 0;
+  let my = 0;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const a = mask[y * w + x];
+      if (!a) continue;
+      m00 += a;
+      mx += a * x;
+      my += a * y;
+      if (a >= 128) {
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+  if (m00 < 255 * 20 || x1 < x0) return null;   // ~20 solid px minimum
+  const cx = mx / m00;
+  const cy = my / m00;
+  let u20 = 0;
+  let u02 = 0;
+  let u11 = 0;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const a = mask[y * w + x];
+      if (!a) continue;
+      const dx = x - cx;
+      const dy = y - cy;
+      u20 += a * dx * dx;
+      u02 += a * dy * dy;
+      u11 += a * dx * dy;
+    }
+  const angle = 0.5 * Math.atan2(2 * u11, u20 - u02) * 180 / Math.PI;
+  const k = asset.w / w;
+  return [cx * k, cy * k, angle, (x1 - x0 + 1) * k, (y1 - y0 + 1) * k];
+}
+
+/** SAM analysis monitor: the frame just segmented, its mask tinted green,
+ * and the detector's box. Unlike the auto monitor this one is PAINTABLE —
+ * brush on it to correct the track mid-flight. */
+let rotoMonitorStage = null;
+
+function drawRotoSamMonitor(img, mask, mw, mh, box, fi) {
+  maskOverlay.width = comp.width;
+  maskOverlay.height = comp.height;
+  const octx = maskOverlay.getContext('2d');
+  rotoMonitorStage ??= new OffscreenCanvas(1, 1);
+  if (rotoMonitorStage.width !== img.width || rotoMonitorStage.height !== img.height) {
+    rotoMonitorStage.width = img.width;
+    rotoMonitorStage.height = img.height;
+  }
+  rotoMonitorStage.getContext('2d').putImageData(img, 0, 0);
+  const k = Math.min(comp.width / img.width, comp.height / img.height);
+  const dw = img.width * k;
+  const dh = img.height * k;
+  const dx = (comp.width - dw) / 2;
+  const dy = (comp.height - dh) / 2;
+  octx.fillStyle = '#000';
+  octx.fillRect(0, 0, comp.width, comp.height);
+  octx.drawImage(rotoMonitorStage, dx, dy, dw, dh);
+  if (mask) {
+    const tint = rotoSam.maskToCanvas(mask, mw, mh);
+    const tctx = tint.getContext('2d');
+    tctx.globalCompositeOperation = 'source-in';
+    tctx.fillStyle = '#37d67a';
+    tctx.fillRect(0, 0, mw, mh);
+    octx.globalAlpha = 0.45;
+    octx.drawImage(tint, dx, dy, dw, dh);
+    octx.globalAlpha = 1;
+  }
+  if (box) {   // box is in the frame's own (resized) pixel space
+    octx.lineWidth = 2;
+    octx.strokeStyle = '#ffd24a';
+    octx.strokeRect(dx + box[0] * k, dy + box[1] * k, (box[2] - box[0]) * k, (box[3] - box[1]) * k);
+  }
+  // Where clicks on the monitor land, and which frame they belong to.
+  if (rotoJob) rotoJob.monitorFit = { dx, dy, k, iw: img.width, ih: img.height, fi };
+}
+
+/* ---- correcting the track WHILE it analyzes --------------------------
+ * The SAM monitor is paintable: press and the walk pauses, drag positive
+ * (or Alt/right = negative) guidance over the frame on screen, release
+ * and the walk rewinds to that frame, re-decodes with the new anchor,
+ * and continues — so a mask that grabs a lamp post is fixed the moment
+ * it happens, not after a full pass. (Gated on job.ctx, which only the
+ * SAM engine sets — the auto monitor is display-only.) */
+
+let rotoMonitorStroke = null;   // { imgPts, label, fi } during a monitor drag
+
+function rotoMonitorImgPoint(e) {
+  const fit = rotoJob?.monitorFit;
+  if (!fit) return null;
+  const rect = maskOverlay.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width * maskOverlay.width;
+  const y = (e.clientY - rect.top) / rect.height * maskOverlay.height;
+  const ix = (x - fit.dx) / fit.k;
+  const iy = (y - fit.dy) / fit.k;
+  return ix >= 0 && iy >= 0 && ix < fit.iw && iy < fit.ih ? [ix, iy] : null;
+}
+
+function rotoMonitorDot(p, label) {
+  const fit = rotoJob?.monitorFit;
+  if (!fit) return;
+  const octx = maskOverlay.getContext('2d');
+  octx.beginPath();
+  octx.arc(fit.dx + p[0] * fit.k, fit.dy + p[1] * fit.k, Math.max(3, maskOverlay.width / 300), 0, Math.PI * 2);
+  octx.fillStyle = label ? '#37d67a' : '#e5484d';
+  octx.fill();
+  octx.lineWidth = 1.5;
+  octx.strokeStyle = '#000';
+  octx.stroke();
+}
+
+maskOverlay.addEventListener('pointerdown', (e) => {
+  const job = rotoJob;
+  if (!job?.ctx || !job.monitorFit || (e.button !== 0 && e.button !== 2)) return;
+  const p = rotoMonitorImgPoint(e);
+  if (!p) return;
+  e.stopPropagation();
+  e.preventDefault();
+  job.hold = true;   // frames stop advancing while the brush is down
+  rotoMonitorStroke = {
+    label: (e.button === 2 || e.altKey) ? 0 : 1,
+    imgPts: [p],
+    fi: job.monitorFit.fi,
+  };
+  try { maskOverlay.setPointerCapture(e.pointerId); } catch {}
+  rotoMonitorDot(p, rotoMonitorStroke.label);
+});
+
+maskOverlay.addEventListener('pointermove', (e) => {
+  if (!rotoMonitorStroke || !rotoJob) return;
+  const p = rotoMonitorImgPoint(e);
+  if (!p) return;
+  const pts = rotoMonitorStroke.imgPts;
+  if (pts.length >= ROTO_STROKE_CAP) return;
+  const [lx, ly] = pts[pts.length - 1];
+  if ((p[0] - lx) ** 2 + (p[1] - ly) ** 2 < 100) return;   // ≥10 monitor px apart
+  pts.push(p);
+  rotoMonitorDot(p, rotoMonitorStroke.label);
+});
+
+const endRotoMonitorStroke = () => {
+  const job = rotoJob;
+  const stroke = rotoMonitorStroke;
+  rotoMonitorStroke = null;
+  if (!job) return;
+  if (stroke && job.ctx) {
+    const { node, s, src0, srcStep, still, tol } = job.ctx;
+    const src = still ? 0 : src0 + stroke.fi * srcStep;
+    const g = rotoGroupAtSrc(node, src, tol, true);
+    for (const [ix, iy] of stroke.imgPts) {
+      if (g.points.length >= ROTO_GROUP_CAP) break;
+      g.points.push({ x: Math.round(ix / s), y: Math.round(iy / s), label: stroke.label });
+    }
+    job.correction = { fi: stroke.fi, group: g };
+    scheduleSave();
+    refreshRotoRows(node);
+  }
+  job.hold = false;
+  job.release?.();
+  job.release = null;
+};
+maskOverlay.addEventListener('pointerup', endRotoMonitorStroke);
+maskOverlay.addEventListener('pointercancel', endRotoMonitorStroke);
+
+/**
+ * SAM engine: track the picked object across the source clip. Walks comp
+ * frames over the clip's extent: forward from the earliest prompt frame
+ * to the end, then backward to the start. Each frame runs encoder +
+ * decoder; between anchors the decoder is steered by points tracked out
+ * of the previous frame's mask plus its low-res logits as a prior (SAM's
+ * iterative-refine input). Frames carrying user prompts re-anchor the
+ * track exactly there.
+ */
+async function analyzeRotoSamNode(ownerClip, ctx, node, opts = {}) {
+  if (rotoJob?.nodeId === node.id) { rotoJob.cancel = true; return; }
+  if (rotoJob || offlineJob || loopJob) { setStatus('another job is running — finish or cancel it first'); return; }
+  const hit = node.sourceClipId ? findClip(comp, node.sourceClipId) : null;
+  const clip = hit?.clip;
+  const asset = clip && assets.get(clip.assetId);
+  if (!clip || !asset?.ready) { setStatus('roto: choose a source layer first'); return; }
+  // Track-from-here: re-walk only [current frame, end] and keep every
+  // earlier frame's analyzed mask — the cheap way to clean up a track
+  // that lost the subject partway through.
+  const fromHere = !!opts.fromHere && !!node.seq?.count;
+  const prompts = (node.prompts ?? []).filter((g) => g.points.some((p) => p.label));
+  const query = node.query?.trim() || null;
+  if (!prompts.length && !query && !fromHere) {
+    setStatus('roto: pick the object (✎ Pick) or describe it in the text box first');
+    return;
+  }
+  pause();
+  stopRotoEdit();
+  const tRestore = tCur;
+  const job = (rotoJob = { cancel: false, nodeId: node.id });
+  renderInspector();   // swap the row's Analyze button to Cancel
+  document.body.classList.add('roto-analyzing');   // shows the monitor overlay
+  document.body.classList.add('roto-monitor-paint');   // …and makes it paintable
+  try {
+    const rt = await rotoSam.loadRoto(setStatus);
+    const dt = query ? await rotoSam.loadDetector(setStatus) : null;
+    const { s, rw, rh, sw, sh } = rotoAnalysisDims(asset);
+    const fps = comp.fps;
+    const t0 = clip.start;
+    const t1 = Math.min(clipEnd(clip), comp.dur);
+    const f0 = Math.max(0, Math.ceil(t0 * fps - 1e-6));
+    const fN = Math.max(f0, Math.ceil(t1 * fps - 1e-6) - 1);
+    // Signed: a reversed clip's walk descends through the source.
+    const srcStep = srcTime(clip, (f0 + 1) / fps) - srcTime(clip, f0 / fps);
+    const src0 = srcTime(clip, f0 / fps);
+    const still = asset.kind !== 'video' && asset.kind !== 'gif';
+    const total = still ? 1 : fN - f0 + 1;
+
+    // Snap prompt groups to frame indices; later groups win a collision.
+    const anchors = new Map();
+    for (const g of prompts) {
+      const fi = (still || !(Math.abs(srcStep) > 1e-9)) ? 0
+        : clamp(Math.round((g.t - src0) / srcStep), 0, total - 1);
+      anchors.set(fi, g);
+    }
+    // With a text query alone there is no anchor — start at the front.
+    const first = anchors.size ? Math.min(...anchors.keys()) : 0;
+    const vw = Math.round(rw / 4);   // valid low-res grid extent
+    const vh = Math.round(rh / 4);
+    // Track-from-here pre-fills the blob array from the stored pass, so
+    // frames before fStart survive verbatim (and a cancel keeps the old
+    // tail too). Needs the stored grid to still match — a retimed or
+    // retrimmed clip must re-analyze in full.
+    let fStart = 0;
+    let oldPass = null;
+    if (fromHere) {
+      const old = node.seq;
+      const gridOk = old.count === total && old.w === sw && old.h === sh
+        && Math.abs(old.src0 - src0) <= (Math.abs(srcStep) || 1e-3) / 2
+        && Math.abs((old.srcStep ?? 0) - (still ? 0 : srcStep)) < 1e-9;
+      oldPass = gridOk ? await rotoBlobsFor(node).catch(() => null) : null;
+      if (!oldPass) {
+        setStatus('roto: the clip’s timing changed since analysis — Re-analyze the whole clip');
+        return;
+      }
+      // Same snapping as the prompt anchors, so a group painted on this
+      // frame lands exactly on the walk's starting index.
+      fStart = (still || !(Math.abs(srcStep) > 1e-9)) ? 0
+        : clamp(Math.round((srcTime(clip, opts.fromT ?? tRestore) - src0) / srcStep), 0, total - 1);
+    }
+    const blobs = oldPass ? oldPass.slice() : new Array(total).fill(null);
+    // Motion-track samples ride the same grid as the masks — captured here
+    // because the raw mask arrays only exist during the walk. Same
+    // prefill/merge story as the blobs.
+    const oldTrack = node.track && node.track.count === total
+      && Math.abs(node.track.src0 - src0) <= (Math.abs(srcStep) || 1e-3) / 2
+      && Math.abs((node.track.srcStep ?? 0) - (still ? 0 : srcStep)) < 1e-9
+      ? node.track.samples : null;
+    const samples = (fromHere && oldTrack) ? oldTrack.slice() : new Array(total).fill(null);
+    const emptyMask = new Uint8ClampedArray(sw * sh);
+    // Everything the monitor's correction handlers need to map a painted
+    // stroke back into a prompt group on the right frame.
+    job.ctx = {
+      node, s, src0, srcStep, still,
+      tol: Math.max(1e-4, Math.abs(srcStep) / 2 || 1e-4),
+    };
+    let done = 0;
+    let misses = 0;
+
+    const kStore = sw / rw;   // resized-1024 px → stored-mask px
+    const seg = async (from, to, dir, init = {}) => {
+      let pts = init.pts ?? null;
+      let labs = init.labs ?? null;
+      let prior = init.prior ?? null;   // previous frame's chosen low-res logits
+      let prevBox = null;     // last mask footprint, for detection stickiness
+      let prevImg = null;     // last frame's pixels, for motion estimation
+      let prevArea = 0;       // last accepted mask area (sanity ladder)
+      let prevStore = null;   // last store-res logits (boundary hysteresis)
+      for (let fi = from; ; fi += dir) {
+        if (job.cancel) return;
+        // Brush down on the monitor: wait it out (event-driven, no spin).
+        if (job.hold) await new Promise((r) => { job.release = r; });
+        if (job.cancel) return;
+        // A painted correction re-anchors its frame and rewinds the walk
+        // there. The prior is from a frame at most a couple ahead — close
+        // enough, and the new anchor points dominate the decode anyway.
+        if (job.correction) {
+          const { fi: cfi, group } = job.correction;
+          job.correction = null;
+          anchors.set(cfi, group);
+          fi = cfi;
+        }
+        const t = (f0 + fi) / fps;
+        // The playhead follows the walk (and rewinds with corrections) so
+        // the timeline shows where the analysis is. tick() is parked while
+        // rotoJob is set, so nothing fights over tCur.
+        tCur = t;
+        timeline.updatePlayhead();
+        if (!still) await rotoSeekSource(asset, clip, t);
+        const img = rotoDrawSamSource(asset, clip, t, rw, rh);
+
+        // Motion compensation: every prompt (points, prior, boxes)
+        // describes where the object WAS — measure how far it moved and
+        // carry them along, or fast motion walks out from under its own
+        // guidance and the track drifts onto the trail.
+        let dx = 0;
+        let dy = 0;
+        if (prevImg && prior) {
+          const bb = rotoSam.lowResBbox(prior, vw, vh);
+          if (bb) [dx, dy] = rotoSam.estimateShift(prevImg, img, bb);
+          if (dx || dy) {
+            prior = rotoSam.shiftGrid(prior, Math.round(dx / 4), Math.round(dy / 4));
+            if (pts) pts = pts.map(([x, y]) => [x + dx, y + dy]);
+            if (prevBox) prevBox = [prevBox[0] + dx, prevBox[1] + dy, prevBox[2] + dx, prevBox[3] + dy];
+          }
+        }
+        const dxs = Math.round(dx * kStore);
+        const dys = Math.round(dy * kStore);
+
+        const emb = await rotoRun(() => rotoSam.encodeFrame(rt, img));
+        // Text query: re-detect on EVERY frame, preferring the candidate
+        // overlapping the previous frame's (motion-shifted) mask so the
+        // track stays on the same instance among lookalikes.
+        let box = null;
+        if (dt) {
+          const dets = await rotoRun(() => rotoSam.detectQuery(dt, img, query));
+          let bestScore = 0;
+          for (const cand of dets) {
+            const sc = prevBox ? cand.score * (0.3 + 0.7 * rotoSam.boxIoU(cand.box, prevBox)) : cand.score;
+            if (sc > bestScore) { bestScore = sc; box = cand.box; }
+          }
+          if (!box) misses++;
+        }
+        const anchor = anchors.get(fi);
+        if (anchor) {
+          pts = anchor.points.map((p) => [p.x * s, p.y * s]);
+          labs = anchor.points.map((p) => p.label);
+        }
+        // A fresh detection replaces tracked points (the box is the better
+        // signal); user anchor points always ride along. Tracked points
+        // carry the frames where detection misses.
+        const usePts = anchor || !box ? pts : null;
+        let res = null;
+        if (usePts?.length || box) {
+          // prevLow = the shifted prior: the multi-mask candidate most
+          // consistent with last frame wins, not the decoder's favourite —
+          // that's what stops part/whole flip-flopping.
+          const dec = (o) => rotoRun(() => rotoSam.decodeMask(rt, emb,
+            { prior, prevLow: prior, outW: sw, outH: sh, ...o }));
+          res = await dec({ points: usePts, labels: usePts ? labs : null, box });
+          // Sanity ladder, pure-tracking frames only (anchors and
+          // detections are authoritative): an implausible area jump is a
+          // failed decode, not the object teleporting.
+          if (!anchor && !box && prevArea > 300
+              && (res.area < prevArea * 0.3 || res.area > prevArea * 3)) {
+            const pb = rotoSam.lowResBbox(prior, vw, vh);
+            const res2 = pb
+              ? await dec({ box: [pb[0] - 8, pb[1] - 8, pb[2] + 8, pb[3] + 8] })
+              : null;
+            if (res2 && res2.area >= prevArea * 0.3 && res2.area <= prevArea * 3) {
+              res = res2;
+            } else if (blobs[fi - dir]) {
+              // Hold last frame's mask; prompts stay motion-shifted so the
+              // track can re-acquire when the scene settles. (prevStore's
+              // offset goes slightly stale across a hold — hysteresis is a
+              // nicety, holds are rare.)
+              blobs[fi] = blobs[fi - dir];
+              samples[fi] = samples[fi - dir];
+              prevImg = img;
+              drawRotoSamMonitor(img, null, sw, sh, null, fi);
+              done++;
+              setStatus(`roto: analyzing ${Math.min(done, total)}/${total} — paint mistakes on the monitor (Alt = not the object)`,
+                Math.min(1, done / total));
+              await nextTask();
+              if (fi === to) return;
+              continue;
+            }
+          }
+          // Steady the boundary against last frame's shifted logits —
+          // the mask keeps SAM's soft edge, but its wobble is damped.
+          const hy = rotoSam.temporalSoftMask(res.logits, prevStore, sw, sh, dxs, dys);
+          res.mask = hy.mask;
+          prevArea = res.area;
+          prevStore = res.logits;
+          prior = res.lowRes;
+          prevBox = rotoSam.lowResBbox(res.lowRes, vw, vh) ?? prevBox;
+          // Steer the NEXT frame from this mask — unless it re-anchors, or
+          // the object vanished (then keep the last good points and prior
+          // so it can be picked back up when it reappears).
+          if (!anchors.has(fi + dir)) {
+            const tracked = rotoSam.trackPoints(res.lowRes, vw, vh);
+            if (tracked.length) {
+              pts = tracked;
+              labs = tracked.map(() => 1);
+            }
+          }
+        }
+        prevImg = img;
+        blobs[fi] = await rotoSam.maskToCanvas(res ? res.mask : emptyMask, sw, sh).convertToBlob({ type: 'image/png' });
+        samples[fi] = res ? rotoMaskMoments(res.mask, sw, sh, asset) : null;
+        drawRotoSamMonitor(img, res?.mask ?? null, sw, sh, box, fi);
+        done++;
+        setStatus(`roto: analyzing ${Math.min(done, total)}/${total} — paint mistakes on the monitor (Alt = not the object)`,
+          Math.min(1, done / total));
+        await nextTask();   // let the UI paint the monitor (never setTimeout)
+        if (fi === to) return;
+      }
+    };
+    if (fromHere) {
+      // Seed the walk so it CONTINUES the track instead of restarting
+      // blind: an anchor painted on the start frame dominates anyway;
+      // otherwise steer from that frame's own stored mask (tracked points
+      // + logit prior), exactly as if the original walk were resuming.
+      let init = {};
+      if (!anchors.has(fStart)) {
+        const prior0 = await rotoStoredPriorAt(node, fStart, asset);
+        const seedPts = prior0 ? rotoSam.trackPoints(prior0, vw, vh) : [];
+        if (seedPts.length) {
+          init = { pts: seedPts, labs: seedPts.map(() => 1), prior: prior0 };
+        } else if (!query) {
+          // Nothing to continue from (empty/missing mask here) and no
+          // detector to re-acquire with — an unguided walk would just
+          // blank the tail.
+          setStatus('roto: no subject on this frame to continue from — paint a point on it first');
+          return;
+        }
+      }
+      await seg(fStart, total - 1, +1, init);
+    } else {
+      await seg(first, total - 1, +1);
+      if (!job.cancel && first > 0) await seg(first, 0, -1);   // first is redone — cheap, keeps the code simple
+    }
+    // A correction painted at (or after) the walk's end still applies:
+    // re-walk from it to the tail until the user's brush goes quiet.
+    while (!job.cancel && (job.hold || job.correction)) {
+      if (job.hold) await new Promise((r) => { job.release = r; });
+      if (job.correction && !job.cancel) await seg(job.correction.fi, total - 1, +1);
+    }
+    if (query && misses && !job.cancel)
+      console.warn(`roto: “${query}” not detected on ${misses} of ${total} frames (tracked points carried those)`);
+
+    const doneCount = blobs.filter(Boolean).length;
+    let mergedOld = false;
+    if (doneCount) {
+      const newSeq = { src0, srcStep: still ? 0 : srcStep, count: total, w: sw, h: sh };
+      // A cancelled re-analysis must not discard the previous pass: where
+      // the timing grid still matches, every frame the new walk didn't
+      // reach keeps its old mask. Only a COMPLETED re-analysis (or Clear)
+      // replaces the whole sequence.
+      let out = blobs;
+      const old = node.seq;
+      if (job.cancel && old
+          && old.count === newSeq.count && old.w === newSeq.w && old.h === newSeq.h
+          && Math.abs(old.src0 - newSeq.src0) <= (Math.abs(newSeq.srcStep) || 1e-3) / 2
+          && Math.abs((old.srcStep ?? 0) - newSeq.srcStep) < 1e-9) {
+        const oldBlobs = await rotoBlobsFor(node).catch(() => null);
+        if (oldBlobs) {
+          out = blobs.map((b, i) => b ?? oldBlobs[i] ?? null);
+          mergedOld = true;
+        }
+      }
+      node.seq = newSeq;
+      resetRotoRuntime(node);
+      node._rotoBlobs = out;
+      // The motion track merges exactly like the blobs: prefilled for
+      // Track-from-here, old samples fill the frames a cancelled full
+      // walk never reached.
+      node.track = {
+        v: 1,
+        src0,
+        srcStep: still ? 0 : srcStep,
+        count: total,
+        samples: (job.cancel && oldTrack && !fromHere)
+          ? samples.map((s, i) => s ?? oldTrack[i] ?? null)
+          : samples,
+      };
+      await idbSet(rotoStoreKey(node), { v: 1, ...newSeq, blobs: out })
+        .catch((e) => console.warn('roto: idb save failed:', e));
+      ctx.structure();
+      scheduleSave();
+      // A tracker baked from this node earlier follows re-analysis
+      // automatically — the layer's keys refresh in place.
+      if (node.trackClipId && findClip(comp, node.trackClipId)?.clip.kind === 'track')
+        bakeTrackerLayer(node, { auto: true });
+    }
+    setStatus(fromHere
+      ? (job.cancel
+        ? `roto: cancelled — ${done} frame${done === 1 ? '' : 's'} re-tracked, the rest keep the previous pass`
+        : `roto: done — re-tracked ${done} frame${done === 1 ? '' : 's'} from frame ${fStart + 1}`)
+      : job.cancel
+        ? (mergedOld
+          ? `roto: cancelled — ${doneCount} redone frame${doneCount === 1 ? '' : 's'} kept, previous pass preserved for the rest`
+          : `roto: cancelled — ${doneCount} of ${total} frames kept`)
+        : `roto: done — ${doneCount} frames tracked`);
+  } catch (e) {
+    console.error('roto analysis failed:', e);
+    setStatus(`roto: failed — ${e.message}`);
+  } finally {
+    rotoJob = null;
+    document.body.classList.remove('roto-analyzing');
+    document.body.classList.remove('roto-monitor-paint');
+    maskOverlay.getContext('2d').clearRect(0, 0, maskOverlay.width, maskOverlay.height);
+    // Completed: back to where the user was parked. Cancelled: stay on the
+    // frame that made them cancel — that's where the cleanup starts.
+    if (!job.cancel) setTime(tRestore);
+    else timeline.updatePlayhead();
+    renderInspector();
+  }
+}
+
+/** Encoder pass for the pick preview, cached per (asset, source time) so
+ * adding points to the same frame only re-runs the (fast) decoder. */
+async function rotoPreviewEmb(rt, info, t, rw, rh) {
+  const key = `${info.asset.id}:${srcTime(info.clip, t).toFixed(4)}:${rw}`;
+  if (rotoEmbCache?.key === key) return rotoEmbCache.emb;
+  await rotoSeekSource(info.asset, info.clip, t);
+  const img = rotoDrawSamSource(info.asset, info.clip, t, rw, rh);
+  const emb = await rotoRun(() => rotoSam.encodeFrame(rt, img));
+  rotoEmbCache = { key, emb };
+  return emb;
+}
+
+/** The STORED mask of sequence frame `idx` as confident logits on the 256
+ * grid — the decoder's refinement-prior format. Used to seed touch-ups
+ * (refine the analysis instead of restarting from new strokes alone) and
+ * Track-from-here (continue the track from a frame's own mask). */
+async function rotoStoredPriorAt(node, idx, asset) {
+  if (idx < 0) return null;
+  const bm = await ensureRotoBitmap(node, idx).catch(() => null);
+  if (!bm) return null;
+  const { rw, rh } = rotoAnalysisDims(asset);
+  const c = new OffscreenCanvas(256, 256);
+  const cx = c.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(bm, 0, 0, Math.round(rw / 4), Math.round(rh / 4));   // valid region of SAM's padded grid
+  const d = cx.getImageData(0, 0, 256, 256).data;
+  const out = new Float32Array(256 * 256);
+  for (let i = 0; i < out.length; i++) out[i] = d[i * 4 + 3] > 127 ? 6 : -6;
+  return out;
+}
+
+async function rotoStoredPrior(info, t) {
+  return rotoStoredPriorAt(info.node, rotoSeqIndexExact(info.node, info.clip, t), info.asset);
+}
+
+/** SAM engine: redraw the pick overlay — prompt dots immediately, then
+ * (given a positive point, a query hit, or a stored mask to refine) the
+ * model's live mask preview, green-tinted. */
+async function updateRotoSamOverlay() {
+  const info = rotoEditContext();
+  if (!info) return;
+  const t = tCur;
+  const d = drawForClip(info.clip, t);
+  maskOverlay.width = comp.width;
+  maskOverlay.height = comp.height;
+  const octx = maskOverlay.getContext('2d');
+  octx.clearRect(0, 0, comp.width, comp.height);
+  if (!d) return;
+  const group = rotoPromptGroupAt(info, t, false);
+  drawRotoPoints(octx, d, info.asset, group);
+  const query = info.node.query?.trim() || null;
+  const hasPositive = !!group?.points.some((p) => p.label);
+  const hasAny = (group?.points.length ?? 0) > 0;
+  if (!hasAny && !query) { rotoCommitPending = null; return; }
+  if (rotoPreviewBusy) { rotoPreviewQueued = true; return; }
+  rotoPreviewBusy = true;
+  try {
+    const rt = await rotoSam.loadRoto(setStatus);
+    const { s, rw, rh, sw, sh } = rotoAnalysisDims(info.asset);
+    const emb = await rotoPreviewEmb(rt, info, t, rw, rh);
+    // First touch of an analyzed frame: seed the refinement prior from the
+    // STORED mask, so strokes refine the analysis instead of restarting —
+    // this is also what lets a negatives-only cleanup stroke work.
+    if (rotoEmbCache && rotoEmbCache.lowRes == null && info.node.seq?.count)
+      rotoEmbCache.lowRes = await rotoStoredPrior(info, t);
+    const prior = rotoEmbCache?.lowRes ?? null;
+    // Same frame the encoder just saw — the element is already positioned.
+    let box = null;
+    let boxScore = 0;
+    if (query) {
+      const dt = await rotoSam.loadDetector(setStatus);
+      const img = rotoDrawSamSource(info.asset, info.clip, t, rw, rh);
+      const best = (await rotoRun(() => rotoSam.detectQuery(dt, img, query)))[0];
+      if (best) { box = best.box; boxScore = best.score; }
+    }
+    if (!box && !hasAny) {
+      setStatus(`roto: “${query}” not found on this frame — try rewording, or click the object`);
+      return;
+    }
+    if (!box && !hasPositive && !prior) {
+      setStatus('roto: negative strokes alone need an analyzed frame — paint the object first');
+      return;
+    }
+    const res = await rotoRun(() => rotoSam.decodeMask(rt, emb, {
+      points: hasAny ? group.points.map((p) => [p.x * s, p.y * s]) : null,
+      labels: hasAny ? group.points.map((p) => p.label) : null,
+      box,
+      // SAM's intended refinement loop: each preview's low-res logits seed
+      // the next decode of the SAME frame, so successive strokes refine
+      // the mask instead of restarting it. Dropped on frame/query change.
+      // prevLow keeps the multi-mask head from flipping part/whole between
+      // strokes.
+      prior,
+      prevLow: prior,
+      outW: sw, outH: sh,
+    }));
+    if (rotoEmbCache) rotoEmbCache.lowRes = res.lowRes;
+    if (!rotoEdit) return;
+    const stage = rotoSam.maskToCanvas(res.mask, sw, sh);
+    octx.clearRect(0, 0, comp.width, comp.height);
+    drawRotoMatteTint(octx, d, info.asset, stage);
+    if (box) {
+      // Detection box, path built in source space, stroked in comp px.
+      octx.save();
+      octx.translate(d.x, d.y);
+      octx.rotate(d.rot * Math.PI / 180);
+      octx.scale(d.scaleX, d.scaleY);
+      octx.beginPath();
+      octx.rect(box[0] / s - info.asset.w / 2, box[1] / s - info.asset.h / 2,
+        (box[2] - box[0]) / s, (box[3] - box[1]) / s);
+      octx.restore();
+      octx.lineWidth = 2;
+      octx.strokeStyle = '#ffd24a';
+      octx.stroke();
+    }
+    drawRotoPoints(octx, d, info.asset, group);
+    setStatus(box
+      ? `roto: found “${query}” (${(boxScore * 100).toFixed(0)}%) — refine with clicks, or Analyze`
+      : `roto: preview ok (score ${res.score.toFixed(2)}) — add points to refine, or Analyze`);
+    // A finished stroke on an analyzed frame bakes the repair into the
+    // cached sequence (its own status message wins).
+    if (rotoCommitPending?.nodeId === info.node.id && Math.abs(rotoCommitPending.t - t) < 1e-6)
+      await commitRotoFrame(info, t, stage, sw, sh);
+    rotoCommitPending = null;
+  } catch (e) {
+    console.error('roto preview failed:', e);
+    setStatus(`roto: preview failed — ${e.message}`);
+  } finally {
+    rotoPreviewBusy = false;
+    if (rotoPreviewQueued) {
+      rotoPreviewQueued = false;
+      updateRotoOverlay();
+    }
+  }
+}
+
+/* ---- motion tracker → null layer -------------------------------------
+ * The SAM walk stores one sample per analyzed frame (node.track — mask
+ * centroid, principal-axis angle, bbox, in SOURCE space, keyed by source
+ * time exactly like the masks). Baking maps each comp frame's sample
+ * through the source clip's LIVE transform and writes real keyframes on a
+ * tracker-null clip — position absolute, rotation and bbox-scale relative
+ * to the track's first frame. Other layers reference the null through a
+ * prop driver with source 'track' (see trackSignal). */
+
+function bakeTrackerLayer(node, { auto = false } = {}) {
+  const hit = node.sourceClipId ? findClip(comp, node.sourceClipId) : null;
+  const clip = hit?.clip;
+  const asset = clip && assets.get(clip.assetId);
+  const tr = node.track;
+  if (!clip || !asset?.ready || !tr?.samples?.some(Boolean)) {
+    if (!auto) setStatus('roto: no motion samples yet — Analyze first');
+    return;
+  }
+  const fps = comp.fps;
+  const t0 = clip.start;
+  const t1 = Math.min(clipEnd(clip), comp.dur);
+  const f0 = Math.max(0, Math.ceil(t0 * fps - 1e-6));
+  const fN = Math.max(f0, Math.ceil(t1 * fps - 1e-6) - 1);
+  // Walk comp frames and look samples up BY SOURCE TIME, so a clip that
+  // was moved / trimmed / retimed after analysis still bakes correctly.
+  const keys = [];   // [t, x, y, rotRaw, size] in comp space
+  for (let f = f0; f <= fN; f++) {
+    const t = f / fps;
+    const src = srcTime(clip, t);
+    const idx = tr.count === 1 || !(Math.abs(tr.srcStep) > 1e-9) ? 0
+      : Math.round((src - tr.src0) / tr.srcStep);
+    const s = idx >= 0 && idx < tr.count ? tr.samples[idx] : null;
+    if (!s) continue;
+    const d = drawForClip(clip, t);
+    if (!d) continue;
+    const th = d.rot * Math.PI / 180;
+    const c = Math.cos(th);
+    const sn = Math.sin(th);
+    const lx = (s[0] - asset.w / 2) * d.scaleX;
+    const ly = (s[1] - asset.h / 2) * d.scaleY;
+    keys.push([
+      t,
+      d.x + c * lx - sn * ly,
+      d.y + sn * lx + c * ly,
+      s[2] + d.rot,
+      Math.sqrt(Math.max(1, s[3] * Math.abs(d.scaleX)) * Math.max(1, s[4] * Math.abs(d.scaleY))),
+    ]);
+  }
+  if (!keys.length) {
+    if (!auto) setStatus('roto: the analyzed range holds no usable samples — re-analyze');
+    return;
+  }
+  // The principal axis is only defined mod 180° — unwrap to the nearest
+  // continuation so rotation is continuous, then zero it at the track's
+  // start (an absolute axis angle means nothing to a transform).
+  let prev = keys[0][3];
+  let acc = 0;
+  for (const k of keys) {
+    let dl = k[3] - prev;
+    while (dl > 90) dl -= 180;
+    while (dl < -90) dl += 180;
+    prev = k[3];
+    acc += dl;
+    k[3] = acc;
+  }
+  const size0 = keys[0][4] || 1;
+  history.record(comp, () => {
+    let trk = node.trackClipId ? findClip(comp, node.trackClipId)?.clip : null;
+    if (trk?.kind !== 'track') trk = null;
+    const dur = Math.max(1 / fps, keys.at(-1)[0] - keys[0][0] + 1 / fps);
+    if (!trk) {
+      trk = newTrackClip(comp, `⌖ ${clip.name}`, keys[0][0], dur);
+      const track = newTrack(trk.name);
+      track.clips.push(trk);
+      comp.tracks.unshift(track);
+      node.trackClipId = trk.id;
+    } else {
+      trk.start = keys[0][0];
+      trk.dur = dur;
+    }
+    for (const [propKey, ki] of [['x', 1], ['y', 2], ['rot', 3]]) {
+      const p = trk.props[propKey];
+      p.keys = keys.map((k) => ({ t: k[0] - trk.start, v: k[ki], e: 'linear' }));
+      p.anim = true;
+      p.v = keys[0][ki];
+    }
+    for (const propKey of ['scaleX', 'scaleY']) {
+      const p = trk.props[propKey];
+      p.keys = keys.map((k) => ({ t: k[0] - trk.start, v: 100 * k[4] / size0, e: 'linear' }));
+      p.anim = true;
+      p.v = 100;
+    }
+    ensureDur(comp);
+  });
+  onModelChange({ structural: true });
+  scheduleSave();
+  const trkClip = findClip(comp, node.trackClipId)?.clip;
+  if (!auto && trkClip) timeline.selectClip(trkClip.id);
+  setStatus(`tracker ${auto ? 'updated' : 'created'} — ${keys.length} keys on “${trkClip?.name ?? 'tracker'}”; drive any transform with a ~ driver, source Tracker`);
 }
 
 /* ---- key-color eyedropper -------------------------------------------- */
@@ -4680,8 +6049,11 @@ function rescaleMasks() {
 /* =====================================================================
  * Transform gizmo — select a media clip, then drag it directly in the
  * player: body = move, edge handles = scale one axis, corner handles =
- * scale both (Shift = uniform). Writes keyframes at the playhead when a
- * property is animated (same policy as the sliders).
+ * scale both (Shift = uniform). Handles anchor at the opposite edge or
+ * corner so only the dragged side moves; Alt scales around the center.
+ * Arrow keys nudge the selection one comp px (Shift = 10). Writes
+ * keyframes at the playhead when a property is animated (same policy as
+ * the sliders).
  * =================================================================== */
 
 const gizmo = document.createElement('div');
@@ -4694,6 +6066,33 @@ for (const h of ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']) {
   gizmo.appendChild(el);
 }
 $('canvas-inner').appendChild(gizmo);
+
+/* A selected tracker null shows as a crosshair (display only — its motion
+ * is baked keyframes, edited in the inspector/timeline, not dragged). */
+const trackNullEl = document.createElement('div');
+trackNullEl.id = 'track-null';
+trackNullEl.hidden = true;
+$('canvas-inner').appendChild(trackNullEl);
+
+function updateTrackNull() {
+  const clip = timeline?.selectedClip;
+  const show = clip && clip.kind === 'track' && !focusIsFallback
+    && !trackOf(comp, clip)?.hidden
+    && tCur >= clip.start && tCur < clipEnd(clip);
+  if (!show) { trackNullEl.hidden = true; return; }
+  const tc = tCur - clip.start;
+  const d = canvasDisplayRect();
+  const innerR = $('canvas-inner').getBoundingClientRect();
+  const cx = d.left - innerR.left + evalProp(clip.props.x, tc) * d.s;
+  const cy = d.top - innerR.top + evalProp(clip.props.y, tc) * d.s;
+  const size = clamp(48 * (Math.abs(evalProp(clip.props.scaleX, tc)) / 100) * d.s, 14, 240);
+  trackNullEl.style.left = `${cx - size / 2}px`;
+  trackNullEl.style.top = `${cy - size / 2}px`;
+  trackNullEl.style.width = `${size}px`;
+  trackNullEl.style.height = `${size}px`;
+  trackNullEl.style.transform = `rotate(${evalProp(clip.props.rot, tc)}deg)`;
+  trackNullEl.hidden = false;
+}
 
 /* The inspector always keeps a layer in focus so the effect panel has a
  * target (see ensureFocusedLayer), which means "nothing selected" quietly
@@ -4729,6 +6128,7 @@ function canvasDisplayRect() {
 }
 
 function updateGizmo() {
+  updateTrackNull();
   // Crop owns the viewport while it's open; a transform gizmo on a clip
   // that's about to be re-placed would only be in the way.
   if (crop) { gizmo.hidden = true; return; }
@@ -4774,6 +6174,8 @@ gizmo.addEventListener('pointerdown', (e) => {
       px * Math.sin(-rot) + py * Math.cos(-rot),
     ];
   };
+  const startSX = evalProp(clip.props.scaleX, tc);
+  const startSY = evalProp(clip.props.scaleY, tc);
   gzDrag = {
     clip,
     d,
@@ -4783,8 +6185,14 @@ gizmo.addEventListener('pointerdown', (e) => {
     startClient: [e.clientX, e.clientY],
     startX,
     startY,
-    startSX: evalProp(clip.props.scaleX, tc),
-    startSY: evalProp(clip.props.scaleY, tc),
+    startSX,
+    startSY,
+    // Asset dims + start half-size in comp px, for anchored handle scaling.
+    aw: tgt.asset.w,
+    ah: tgt.asset.h,
+    hw0: tgt.asset.w * Math.abs(startSX) / 200,
+    hh0: tgt.asset.h * Math.abs(startSY) / 200,
+    movedXY: false,
     startLocal: toLocal(e.clientX, e.clientY),
     toLocal,
   };
@@ -4825,16 +6233,34 @@ function applyViewportSnap(g, nx, ny) {
   const W = comp.width, H = comp.height;
   const thresh = 8 / g.d.s;                 // ~8 screen px of magnetism
 
-  const bx = snapAxisTargets(nx, [
+  const xT = [
     { v: W / 2, line: W / 2 },              // center ↔ center
     { v: hw, line: 0 },                     // left edge ↔ frame left
     { v: W - hw, line: W },                 // right edge ↔ frame right
-  ], thresh);
-  const by = snapAxisTargets(ny, [
+  ];
+  const yT = [
     { v: H / 2, line: H / 2 },
     { v: hh, line: 0 },
     { v: H - hh, line: H },
-  ], thresh);
+  ];
+  // Other visible layers are magnets too: centers align, and either of the
+  // dragged box's edges can land flush against either of theirs.
+  for (const { track, clip } of activeClips(comp, tCur, 'media')) {
+    if (track.hidden || clip === g.clip) continue;
+    const b = clipBounds(clip, tCur);
+    if (!b) continue;
+    const ocx = (b.minX + b.maxX) / 2;
+    const ocy = (b.minY + b.maxY) / 2;
+    xT.push({ v: ocx, line: ocx });
+    yT.push({ v: ocy, line: ocy });
+    for (const edge of [b.minX, b.maxX])
+      xT.push({ v: edge + hw, line: edge }, { v: edge - hw, line: edge });
+    for (const edge of [b.minY, b.maxY])
+      yT.push({ v: edge + hh, line: edge }, { v: edge - hh, line: edge });
+  }
+
+  const bx = snapAxisTargets(nx, xT, thresh);
+  const by = snapAxisTargets(ny, yT, thresh);
 
   const innerR = $('canvas-inner').getBoundingClientRect();
   if (bx) {
@@ -4875,23 +6301,43 @@ gizmo.addEventListener('pointermove', (e) => {
     return;
   }
   const local = g.toLocal(e.clientX, e.clientY);
-  const factor = (axis) => {
-    const from = g.startLocal[axis];
-    if (Math.abs(from) < 1e-3) return 1;
-    return clamp(Math.abs(local[axis] / from), 0.005, 100);
-  };
   const doX = g.handle.includes('e') || g.handle.includes('w');
   const doY = g.handle.includes('n') || g.handle.includes('s');
-  let sx = doX ? g.startSX * factor(0) : g.startSX;
-  let sy = doY ? g.startSY * factor(1) : g.startSY;
+  // Anchor at the opposite corner/edge so only the dragged handle moves.
+  // Alt scales around the center (the old behaviour).
+  const ax = e.altKey || !doX ? 0 : (g.handle.includes('e') ? -1 : 1);
+  const ay = e.altKey || !doY ? 0 : (g.handle.includes('s') ? -1 : 1);
+  const anchor = [ax * g.hw0, ay * g.hh0];
+  const factor = (axis) => {
+    const from = g.startLocal[axis] - anchor[axis];
+    if (Math.abs(from) < 1e-3) return 1;
+    return clamp(Math.abs((local[axis] - anchor[axis]) / from), 0.005, 100);
+  };
+  let fX = doX ? factor(0) : 1;
+  let fY = doY ? factor(1) : 1;
   if (e.shiftKey && doX && doY) {
     // Uniform: follow the dominant axis.
-    const f = Math.abs(factor(0) - 1) >= Math.abs(factor(1) - 1) ? factor(0) : factor(1);
-    sx = g.startSX * f;
-    sy = g.startSY * f;
+    const f = Math.abs(fX - 1) >= Math.abs(fY - 1) ? fX : fY;
+    fX = fY = f;
   }
-  if (doX) live('scaleX', Math.round(sx * 100) / 100);
-  if (doY) live('scaleY', Math.round(sy * 100) / 100);
+  const sx = Math.round(g.startSX * fX * 100) / 100;
+  const sy = Math.round(g.startSY * fY * 100) / 100;
+  if (doX) live('scaleX', sx);
+  if (doY) live('scaleY', sy);
+  if (ax || ay) {
+    // Keep the anchor point fixed in comp space: as the box resizes, the
+    // center slides away from the anchor along the rotated local axes.
+    const lx = ax * (g.hw0 - g.aw * Math.abs(sx) / 200);
+    const ly = ay * (g.hh0 - g.ah * Math.abs(sy) / 200);
+    const c = Math.cos(g.rot), s = Math.sin(g.rot);
+    live('x', Math.round((g.startX + lx * c - ly * s) * 100) / 100);
+    live('y', Math.round((g.startY + lx * s + ly * c) * 100) / 100);
+    g.movedXY = true;
+  } else if (g.movedXY) {
+    // Alt toggled mid-drag: back to center-anchored, so restore the center.
+    live('x', g.startX);
+    live('y', g.startY);
+  }
 });
 
 function gzFinish() {
@@ -4904,6 +6350,41 @@ function gzFinish() {
 gizmo.addEventListener('pointerup', gzFinish);
 gizmo.addEventListener('pointercancel', gzFinish);
 gizmo.addEventListener('dblclick', (e) => e.stopPropagation());
+
+/* Arrow keys nudge the selected layer one comp pixel (Shift = 10) while it
+ * has viewport handles; with nothing selected they keep stepping frames
+ * (timeline.js). Capture phase so the nudge wins over that handler. One
+ * undo step per press-and-hold, committed on release. */
+let nudging = false;
+
+function commitNudge() {
+  if (!nudging) return;
+  nudging = false;
+  history.commit(comp);
+  onModelChange({ structural: false });
+}
+
+document.addEventListener('keydown', (e) => {
+  const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+  const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+  if ((!dx && !dy) || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.matches?.('input, textarea, select, [contenteditable]')) return;
+  const tgt = gizmoTarget();
+  if (!tgt) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const { clip } = tgt;
+  const step = e.shiftKey ? 10 : 1;
+  if (!nudging) { history.begin(comp); nudging = true; }
+  if (dx) setPropValueLive(clip, 'x', Math.round((valueAt(clip, 'x') + dx * step) * 100) / 100);
+  if (dy) setPropValueLive(clip, 'y', Math.round((valueAt(clip, 'y') + dy * step) * 100) / 100);
+  updateGizmo();
+}, true);
+
+document.addEventListener('keyup', (e) => {
+  if (e.key.startsWith('Arrow')) commitNudge();
+}, true);
+window.addEventListener('blur', commitNudge);
 
 /* ---- viewport selection --------------------------------------------- */
 
@@ -6703,6 +8184,8 @@ function renderInspector() {
         asset.duration ? `${asset.duration.toFixed(2)}s` : null,
       ].filter(Boolean).join(' · ') + (asset.ready ? '' : ' (loading…)')
       : `${clip.kind === 'audio' ? 'audio' : 'media'} offline — re-import the file`;
+  } else if (clip.kind === 'track') {
+    meta.textContent = 'tracker null · baked motion track — reference it from any transform via a ~ driver (source: Tracker)';
   } else {
     meta.textContent = 'adjustment layer · effects apply to everything below';
   }
@@ -6723,13 +8206,21 @@ function renderInspector() {
       addParamRow(body, clip, def);
     body.appendChild(blendRow(clip));
     inspectorEl.appendChild(sec);
+  } else if (clip.kind === 'track') {
+    // The baked track values, editable like any other keyframed props.
+    const { sec, body } = inspSection('transform', 'Transform', { hint: '⏱ animates' });
+    for (const def of propDefs(clip)) addParamRow(body, clip, def);
+    inspectorEl.appendChild(sec);
   }
 
+  /* -- motion tracking: its own workflow, independent of masking -- */
+  if (clip.kind === 'media') renderTrackSection(clip);
+
   /* -- mask (fx: gates the whole stack; media: cuts the clip's alpha) -- */
-  if (clip.kind !== 'audio') renderMaskSection(clip);
+  if (clip.kind !== 'audio' && clip.kind !== 'track') renderMaskSection(clip);
 
   /* -- the two effect chains -- */
-  renderEffectStack(clip);
+  if (clip.kind !== 'track') renderEffectStack(clip);
 
   // Curve widgets can only measure themselves once they're in the document
   // — and rAF can't be trusted to get there (it doesn't run at all while
@@ -7297,8 +8788,35 @@ function driverPanel(clip, def) {
     renderInspector();
   });
   top.appendChild(field(en, ' on'));
-  top.appendChild(selF('src', 'source',
-    [['osc', 'Oscillator'], ['audio', 'Audio']], { rerender: true }));
+  // Source select seeds track defaults on first switch: the headline use
+  // is "pin this prop to the tracked object", which is replace + absolute
+  // at 1:1 — the osc-sized amount default would scale coordinates.
+  const srcSel = document.createElement('select');
+  for (const [val, lab] of [['osc', 'Oscillator'], ['audio', 'Audio'], ['track', 'Tracker']]) {
+    const o = document.createElement('option');
+    o.value = val;
+    o.textContent = lab;
+    srcSel.appendChild(o);
+  }
+  srcSel.value = d.source;
+  srcSel.addEventListener('change', () => {
+    history.record(comp, () => {
+      d.source = srcSel.value;
+      if (d.source === 'track' && d.channel == null) {
+        d.trackClipId ??= allClipsBottomUp(comp, 'track').at(-1)?.id ?? null;
+        d.channel = ['x', 'y', 'rot'].includes(def.key) ? def.key
+          : def.key.startsWith('scale') ? 'scale' : 'x';
+        d.trackRef = 'abs';
+        d.mode = 'replace';
+        d.amount = 1;
+        d.offset = 0;
+      }
+    });
+    scheduleSave();
+    syncAudioDrive();
+    renderInspector();
+  });
+  top.appendChild(field('src', srcSel));
   top.appendChild(selF('mode', 'mode', DRIVER_MODES,
     { title: 'add: base + delta (property units)\nmultiply: base × (1 + delta %)\nreplace: ignore keyframes' }));
   const del = document.createElement('button');
@@ -7317,7 +8835,37 @@ function driverPanel(clip, def) {
   /* row 2: the source's own params */
   const srcRow = document.createElement('div');
   srcRow.className = 'drv-row';
-  if (d.source === 'audio') {
+  if (d.source === 'track') {
+    const trackers = allClipsBottomUp(comp, 'track');
+    const trkSel = document.createElement('select');
+    for (const c of trackers) {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.name;
+      trkSel.appendChild(o);
+    }
+    if (!trackers.some((c) => c.id === d.trackClipId)) {
+      const o = document.createElement('option');
+      o.value = '';
+      o.textContent = trackers.length ? '— choose —' : '(no trackers)';
+      trkSel.prepend(o);
+      trkSel.value = '';
+    } else {
+      trkSel.value = d.trackClipId;
+    }
+    trkSel.title = 'the tracker-null layer to read (SAM roto → ＋Tracker creates one)';
+    trkSel.addEventListener('change', () => {
+      history.record(comp, () => { d.trackClipId = trkSel.value || null; });
+      scheduleSave();
+    });
+    srcRow.appendChild(field('layer', trkSel));
+    srcRow.appendChild(selF('chan', 'channel', DRIVER_TRACK_CHANNELS,
+      { title: 'which tracked channel drives this property' }));
+    srcRow.appendChild(selF('ref', 'trackRef', DRIVER_TRACK_REFS, {
+      title: 'absolute: the tracker’s value itself (pin with replace)\n'
+        + 'motion: change since the track’s start (ride along with add)',
+    }));
+  } else if (d.source === 'audio') {
     srcRow.appendChild(selF('band', 'band', DRIVER_BANDS));
     srcRow.appendChild(selF('follow', 'follow', DRIVER_FOLLOWS, {
       rerender: true,
@@ -7335,8 +8883,11 @@ function driverPanel(clip, def) {
     srcRow.appendChild(selF('wave', 'wave', DRIVER_WAVES, { rerender: true }));
     srcRow.appendChild(numF('freq', 'freq', 0.1, 'cycles per second'));
     srcRow.appendChild(numF('phase', 'phase', 0.05, 'cycle offset (1 = one full cycle)'));
-    if (d.wave === 'square' || d.wave === 'pulse')
-      srcRow.appendChild(numF('width', 'width', 0.05, 'duty cycle 0..1'));
+    if (['square', 'pulse', 'flicker', 'sparks'].includes(d.wave))
+      srcRow.appendChild(numF('width', 'width', 0.05,
+        d.wave === 'flicker' ? 'chance each cycle is on (0..1)'
+          : d.wave === 'sparks' ? 'chance a spark fires each cycle (0..1)'
+            : 'duty cycle 0..1'));
   }
   panel.appendChild(srcRow);
 
@@ -7344,8 +8895,9 @@ function driverPanel(clip, def) {
   const mapRow = document.createElement('div');
   mapRow.className = 'drv-row';
   mapRow.appendChild(numF('amount', 'amount', def.step || 1,
-    d.mode === 'multiply' ? 'signal swing in percent of the base value'
-      : `signal swing in ${def.unit || 'property units'}`));
+    d.source === 'track' ? 'multiplier on the tracked channel (1 = as tracked)'
+      : d.mode === 'multiply' ? 'signal swing in percent of the base value'
+        : `signal swing in ${def.unit || 'property units'}`));
   mapRow.appendChild(numF('offset', 'offset', def.step || 1, 'constant added to the swing'));
   panel.appendChild(mapRow);
 
@@ -7353,6 +8905,13 @@ function driverPanel(clip, def) {
     const hint = document.createElement('div');
     hint.className = 'drv-hint';
     hint.textContent = driverHintText();
+    panel.appendChild(hint);
+  } else if (d.source === 'track') {
+    const hint = document.createElement('div');
+    hint.className = 'drv-hint';
+    hint.textContent = allClipsBottomUp(comp, 'track').length
+      ? 'replace + absolute pins this prop to the tracker; add + motion rides its movement on top of your own keyframes'
+      : 'no tracker layers yet — SAM roto (Pick object) → Analyze → ＋Tracker creates one';
     panel.appendChild(hint);
   }
 
@@ -7616,6 +9175,194 @@ function maskSourceOptions(selfId) {
   return out;
 }
 
+/** The SAM engine's working controls, shared by the mask-section roto row
+ * and the standalone Track section (same node machinery, two workflows). */
+function samRotoControls(clip, ctx, node) {
+  const editing = rotoEdit?.nodeId === node.id;
+  const running = rotoJob?.nodeId === node.id;
+
+  // Text guidance: re-detected on every analyzed frame, so it holds the
+  // object across the whole clip; clicks refine it where it drifts.
+  const q = document.createElement('input');
+  q.type = 'text';
+  q.className = 'mn-roto-query';
+  q.placeholder = 'find by text — “the girl in the red dress”';
+  q.value = node.query ?? '';
+  q.disabled = running;
+  q.title = 'describe the object; found again on every frame during Analyze. Enter previews on this frame.';
+  const commitQuery = () => {
+    const v = q.value.trim() || null;
+    if (v !== (node.query ?? null)) {
+      node.query = v;
+      if (rotoEmbCache) rotoEmbCache.lowRes = null;   // stale steering from the old query
+      scheduleSave();
+      return true;
+    }
+    return false;
+  };
+  q.addEventListener('keydown', (e) => {
+    e.stopPropagation();   // space/arrow app shortcuts must not fire while typing
+    if (e.key === 'Enter') {
+      commitQuery();
+      if (rotoEdit?.nodeId === node.id) updateRotoOverlay();
+      else startRotoEdit(clip, node);   // shows the overlay + runs the preview
+    }
+  });
+  q.onchange = () => { if (commitQuery()) renderInspector(); };
+
+  const pickBtn = document.createElement('button');
+  pickBtn.className = 'btn' + (editing ? ' active' : '');
+  pickBtn.textContent = editing ? 'Done' : '✎ Pick';
+  pickBtn.title = node.seq
+    ? 'touch up the analyzed track — scrub anywhere and paint corrections (Alt = background); each frame saves in place'
+    : 'click or paint the object in the preview (Alt = background); repeat on other frames to correct drift';
+  pickBtn.disabled = running || !node.sourceClipId;
+  pickBtn.onclick = () => (editing ? stopRotoEdit() : startRotoEdit(clip, node));
+
+  const anBtn = document.createElement('button');
+  anBtn.className = 'btn' + (running ? ' recording' : '');
+  anBtn.textContent = running ? '■ Cancel' : (node.seq ? 'Re-analyze' : 'Analyze');
+  anBtn.title = 'track the object across the whole clip';
+  anBtn.disabled = !running && !node.query?.trim()
+    && !(node.prompts ?? []).some((g) => g.points.some((p) => p.label));
+  anBtn.onclick = () => analyzeRotoNode(clip, ctx, node);
+
+  // The cheap drift fix: when the track loses the subject partway, scrub
+  // there, paint a corrective point (any frame's points become an
+  // anchor), and re-track just the tail.
+  const fromBtn = document.createElement('button');
+  fromBtn.className = 'btn';
+  fromBtn.textContent = 'Track from here ▸';
+  fromBtn.title = 'redo the track from the current frame to the END of the clip — frames before it '
+    + 'keep their analyzed masks. Scrub to where the track went wrong, paint corrective points '
+    + '(they anchor the walk), then hit this. Cancel keeps both the re-tracked frames and the old tail.';
+  fromBtn.disabled = running || !node.seq?.count;
+  fromBtn.onclick = () => analyzeRotoSamNode(clip, ctx, node, { fromHere: true, fromT: tCur });
+
+  // Motion tracking: bake the analyzed motion into a tracker-null layer
+  // other layers can reference from their transform drivers.
+  const hasTrkLayer = node.trackClipId
+    && findClip(comp, node.trackClipId)?.clip.kind === 'track';
+  const trkBtn = document.createElement('button');
+  trkBtn.className = 'btn';
+  trkBtn.textContent = hasTrkLayer ? '⌖ Update tracker' : '⌖ Tracker';
+  trkBtn.title = 'bake the tracked motion (position, rotation, bounding-box scale) into a tracker-null '
+    + 'layer. Reference it from any layer: open a transform property’s ~ driver, source: Tracker. '
+    + 'Re-analyzing auto-updates an existing tracker.';
+  trkBtn.disabled = running || !node.track?.samples?.some(Boolean);
+  trkBtn.onclick = () => bakeTrackerLayer(node);
+
+  const clearBtn = document.createElement('button');
+  clearBtn.className = 'btn';
+  clearBtn.textContent = 'Clear';
+  clearBtn.title = 'forget the painted guidance, the analyzed frames, and the motion samples';
+  clearBtn.disabled = running || (!(node.prompts ?? []).length && !node.seq);
+  clearBtn.onclick = () => {
+    stopRotoEdit();
+    node.prompts = [];
+    node.seq = null;
+    node.track = null;
+    if (rotoEmbCache) rotoEmbCache.lowRes = null;
+    deleteRotoStorage(node);
+    ctx.structure();
+    scheduleSave();
+    renderInspector();
+  };
+
+  // While picking: clear just the current frame's painted guidance.
+  let clrFrame = null;
+  if (editing) {
+    const hitS = node.sourceClipId ? findClip(comp, node.sourceClipId) : null;
+    const assetS = hitS && assets.get(hitS.clip.assetId);
+    const info = hitS && assetS?.ready ? { node, clip: hitS.clip, asset: assetS } : null;
+    const g = info ? rotoPromptGroupAt(info, tCur, false) : null;
+    clrFrame = document.createElement('button');
+    clrFrame.className = 'btn';
+    clrFrame.textContent = 'Clear frame';
+    clrFrame.title = 'remove the painted guidance on this frame only';
+    clrFrame.disabled = !g?.points.length;
+    clrFrame.onclick = () => {
+      node.prompts = (node.prompts ?? []).filter((p) => p !== g);
+      if (rotoEmbCache) rotoEmbCache.lowRes = null;
+      scheduleSave();
+      renderInspector();
+      updateRotoOverlay();
+    };
+  }
+
+  return { q, pickBtn, anBtn, fromBtn, trkBtn, clearBtn, clrFrame };
+}
+
+/* ---- motion-track section --------------------------------------------
+ * Motion tracking is its OWN workflow, not a mask. The section drives a
+ * hidden SAM roto node (trackOnly — never composes a matte, filtered out
+ * of the Mask section) purely to produce node.track samples and the baked
+ * tracker-null layer. */
+
+function trackNodeFor(clip) {
+  return clipMasks.get(clip.id)?.nodes?.find((n) => n.kind === 'roto' && n.trackOnly) ?? null;
+}
+
+function renderTrackSection(clip) {
+  const ctx = maskContextFor(clip);
+  const node = trackNodeFor(clip);
+  const actions = [];
+  if (!node) {
+    actions.push(secBtn('＋Track motion',
+      'pick an object with SAM and track its position, rotation and size across the clip '
+      + '(pure tracking — the clip is not masked)', () => {
+      collapsedSections.delete('trackmo');
+      const st = ctx.ensure();
+      const n = { ...newMaskNode('roto'), engine: 'sam', trackOnly: true, sourceClipId: clip.id };
+      prepareMaskNode(n);
+      st.nodes.push(n);
+      ctx.structure();
+      scheduleSave();
+      renderInspector();
+      startRotoEdit(clip, n);
+    }));
+  }
+  const tracked = node?.track?.samples?.filter(Boolean).length ?? 0;
+  const { sec, body, collapsed } = inspSection('trackmo', 'Track', {
+    count: tracked, actions,
+  });
+  if (collapsed) { inspectorEl.appendChild(sec); return; }
+
+  if (!node) {
+    const note = document.createElement('div');
+    note.className = 'insp-note';
+    note.textContent = 'no motion track — ＋Track motion picks an object and follows it; '
+      + '⌖ Tracker then bakes a null layer any transform can reference';
+    body.appendChild(note);
+  } else {
+    const running = rotoJob?.nodeId === node.id;
+    const c = samRotoControls(clip, ctx, node);
+    const del = document.createElement('button');
+    del.className = 'mn-del';
+    del.textContent = '✕';
+    del.title = 'remove the motion track (a baked tracker layer stays)';
+    del.disabled = running;
+    del.onclick = () => {
+      if (rotoEdit?.nodeId === node.id) stopRotoEdit();
+      if (rotoJob?.nodeId === node.id) rotoJob.cancel = true;
+      deleteRotoStorage(node);
+      const st = ctx.state();
+      if (st) st.nodes = st.nodes.filter((n) => n !== node);
+      ctx.structure();
+      scheduleSave();
+      renderInspector();
+    };
+    body.append(c.pickBtn, c.anBtn, c.fromBtn, c.trkBtn, c.clearBtn);
+    if (c.clrFrame) body.appendChild(c.clrFrame);
+    const status = document.createElement('div');
+    status.className = 'mn-roto-status';
+    status.dataset.node = node.id;
+    status.textContent = rotoStatusText(node);
+    body.append(c.q, status, del);
+  }
+  inspectorEl.appendChild(sec);
+}
+
 function renderMaskSection(clip) {
   const ctx = maskContextFor(clip);
   const state = ctx.state();
@@ -7634,10 +9381,14 @@ function renderMaskSection(clip) {
     if (kind === 'roto' && node.sourceClipId) startRotoEdit(clip, node);
   });
 
+  // Motion-track-only nodes live in the same stack but belong to the
+  // Track section — the Mask section pretends they don't exist.
+  const maskNodes = (state?.nodes ?? []).filter((n) => !n.trackOnly);
+
   // No hint in the header: three buttons already crowd it, and the
   // explanation reads better as a line in the empty body.
   const { sec, body, collapsed } = inspSection('mask', 'Mask', {
-    count: state?.nodes?.length ?? 0,
+    count: maskNodes.length,
     actions: [
       addNode('paint', '＋Paint', 'paint a mask by hand'),
       addNode('key', '＋Key', clip.kind === 'media'
@@ -7645,14 +9396,14 @@ function renderMaskSection(clip) {
         : 'chroma key — build the mask from a color'),
       addNode('layer', '＋Matte', "use another layer's alpha or luma as the mask"),
       addNode('roto', '＋Roto', clip.kind === 'media'
-        ? 'AI matte — cut the subject out of this clip automatically (BiRefNet)'
+        ? 'AI matte — cut a subject out of this clip: automatic (BiRefNet) or pick a specific object (SAM)'
         : 'AI matte — cut a subject out of a media clip; these effects follow it'),
     ],
   });
   if (collapsed) { inspectorEl.appendChild(sec); return; }
 
   const mc = body;
-  if (!state?.nodes?.length) {
+  if (!maskNodes.length) {
     const note = document.createElement('div');
     note.className = 'insp-note';
     note.textContent = clip.kind === 'fx'
@@ -7660,10 +9411,10 @@ function renderMaskSection(clip) {
       : 'no mask — paint, key a colour, or use another layer';
     mc.appendChild(note);
   }
-  for (const node of state?.nodes ?? [])
+  for (const node of maskNodes)
     mc.appendChild(maskNodeRow(clip, ctx, node));
 
-  if (state?.nodes?.length) {
+  if (maskNodes.length) {
     // Edge post passes — composed on the GPU each frame, so the sliders
     // just write the live maskState (no rebuild needed).
     const edge = document.createElement('div');
@@ -7865,6 +9616,7 @@ function maskNodeRow(clip, ctx, node) {
   } else if (node.kind === 'roto') {
     const editing = rotoEdit?.nodeId === node.id;
     const running = rotoJob?.nodeId === node.id;
+    const sam = rotoEngine(node) === 'sam';
 
     // Changing the source invalidates everything derived from the old one.
     const src = maskSourceSelect(clip, ctx, node, { allowInput: false });
@@ -7872,63 +9624,97 @@ function maskNodeRow(clip, ctx, node) {
     src.onchange = () => {
       stopRotoEdit();
       node.region = null;
+      node.prompts = [];
       node.seq = null;
       rotoPreviewCache = null;
+      rotoEmbCache = null;
       deleteRotoStorage(node);
       srcChanged();
       renderInspector();
     };
     src.disabled = running;
 
-    const subjBtn = document.createElement('button');
-    subjBtn.className = 'btn' + (editing ? ' active' : '');
-    subjBtn.textContent = editing ? 'Done' : '▢ Subject';
-    subjBtn.title = 'preview the matte on this frame — drag a box to frame ONE subject '
-      + '(optional: the model mattes the most salient thing it sees, and the box follows the subject during Analyze)';
-    subjBtn.disabled = running || !node.sourceClipId;
-    subjBtn.onclick = () => (editing ? stopRotoEdit() : startRotoEdit(clip, node));
-
-    const anBtn = document.createElement('button');
-    anBtn.className = 'btn' + (running ? ' recording' : '');
-    anBtn.textContent = running ? '■ Cancel' : (node.seq ? 'Re-analyze' : 'Analyze');
-    anBtn.title = 'matte the subject on every frame of the clip';
-    anBtn.disabled = !running && !node.sourceClipId;
-    anBtn.onclick = () => analyzeRotoNode(clip, ctx, node);
-
-    const fullBtn = document.createElement('button');
-    fullBtn.className = 'btn';
-    fullBtn.textContent = 'Full frame';
-    fullBtn.title = 'forget the subject box — matte whatever is most salient in the whole frame';
-    fullBtn.disabled = running || !node.region;
-    fullBtn.onclick = () => {
-      node.region = null;
-      rotoPreviewCache = null;
-      scheduleSave();
-      renderInspector();
-      if (rotoEdit?.nodeId === node.id) updateRotoOverlay();
-    };
-
-    const clearBtn = document.createElement('button');
-    clearBtn.className = 'btn';
-    clearBtn.textContent = 'Clear';
-    clearBtn.title = 'forget the subject box and the analyzed mattes';
-    clearBtn.disabled = running || (!node.region && !node.seq);
-    clearBtn.onclick = () => {
+    // Engine switch: BiRefNet auto matte vs SAM prompt-and-track. The
+    // analyzed sequence survives a switch (both engines write the same
+    // stored contract) — Re-analyze replaces it with the new engine's
+    // output; each engine's guidance (box vs prompts/query) is kept too.
+    const engSel = document.createElement('select');
+    for (const [v, l] of [['auto', 'Auto subject'], ['sam', 'Pick object']]) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = l;
+      engSel.appendChild(o);
+    }
+    engSel.value = sam ? 'sam' : 'auto';
+    engSel.title = 'Auto subject (BiRefNet): mattes the most salient thing, no prompts — box optional. '
+      + 'Pick object (SAM): cut out the SPECIFIC object you click, paint, or describe in text.';
+    engSel.disabled = running;
+    engSel.onchange = () => {
+      node.engine = engSel.value;
       stopRotoEdit();
-      node.region = null;
-      node.seq = null;
       rotoPreviewCache = null;
-      deleteRotoStorage(node);
-      ctx.structure();
+      rotoEmbCache = null;
       scheduleSave();
       renderInspector();
     };
 
     const status = document.createElement('div');
     status.className = 'mn-roto-status';
+    status.dataset.node = node.id;
     status.textContent = rotoStatusText(node);
 
-    body.append(src, subjBtn, anBtn, fullBtn, clearBtn, status);
+    if (sam) {
+      const c = samRotoControls(clip, ctx, node);
+      body.append(src, engSel, c.pickBtn, c.anBtn, c.fromBtn, c.trkBtn, c.clearBtn);
+      if (c.clrFrame) body.appendChild(c.clrFrame);
+      body.append(c.q, status);
+    } else {
+      const subjBtn = document.createElement('button');
+      subjBtn.className = 'btn' + (editing ? ' active' : '');
+      subjBtn.textContent = editing ? 'Done' : '▢ Subject';
+      subjBtn.title = 'preview the matte on this frame — drag a box to frame ONE subject '
+        + '(optional: the model mattes the most salient thing it sees, and the box follows the subject during Analyze)';
+      subjBtn.disabled = running || !node.sourceClipId;
+      subjBtn.onclick = () => (editing ? stopRotoEdit() : startRotoEdit(clip, node));
+
+      const anBtn = document.createElement('button');
+      anBtn.className = 'btn' + (running ? ' recording' : '');
+      anBtn.textContent = running ? '■ Cancel' : (node.seq ? 'Re-analyze' : 'Analyze');
+      anBtn.title = 'matte the subject on every frame of the clip';
+      anBtn.disabled = !running && !node.sourceClipId;
+      anBtn.onclick = () => analyzeRotoNode(clip, ctx, node);
+
+      const fullBtn = document.createElement('button');
+      fullBtn.className = 'btn';
+      fullBtn.textContent = 'Full frame';
+      fullBtn.title = 'forget the subject box — matte whatever is most salient in the whole frame';
+      fullBtn.disabled = running || !node.region;
+      fullBtn.onclick = () => {
+        node.region = null;
+        rotoPreviewCache = null;
+        scheduleSave();
+        renderInspector();
+        if (rotoEdit?.nodeId === node.id) updateRotoOverlay();
+      };
+
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'btn';
+      clearBtn.textContent = 'Clear';
+      clearBtn.title = 'forget the subject box and the analyzed mattes';
+      clearBtn.disabled = running || (!node.region && !node.seq);
+      clearBtn.onclick = () => {
+        stopRotoEdit();
+        node.region = null;
+        node.seq = null;
+        rotoPreviewCache = null;
+        deleteRotoStorage(node);
+        ctx.structure();
+        scheduleSave();
+        renderInspector();
+      };
+
+      body.append(src, engSel, subjBtn, anBtn, fullBtn, clearBtn, status);
+    }
   } else {   // layer matte
     const chanSel = document.createElement('select');
     for (const [v, l] of [['alpha', 'alpha'], ['luma', 'luma']]) {
@@ -8286,6 +10072,7 @@ saveBackBtn.addEventListener('click', () => {
 
 async function runOfflineRender({ saveBack = null, format = 'webm' } = {}) {
   if (rotoJob) { setStatus('finish or cancel the roto analysis first'); return null; }
+  if (loopJob) { setStatus('close the loop finder first'); return null; }
   pause();
   stopRotoEdit();
   // Audio drivers must have their envelopes before frames render — the
@@ -8352,9 +10139,7 @@ function seekMediaExact(t, activeMedia) {
     if (!asset?.ready || asset.kind !== 'video') continue;
     const el = asset.el;
     if (!el.paused) el.pause();
-    const src = srcTime(clip, t);
-    const len = asset.duration ?? 0;
-    const desired = len > 0.02 ? ((src % len) + len) % len : 0;
+    const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
     if (Math.abs(el.currentTime - desired) < 1e-4) continue;
     waits.push(new Promise((resolve) => {
       // Stuck-seek guard so one bad source can't stall the whole render.
@@ -8420,6 +10205,22 @@ async function decodeAssetAudio(asset) {
   return asset._audioBuf;
 }
 
+/** Sample-reversed copy of an asset's decoded audio, built once. Media
+ * elements can't play backwards, so a reversed clip is silent in the live
+ * preview — this buffer is how the offline mix makes it real. */
+function reversedAudioBuf(asset) {
+  if (asset._audioBufRev) return asset._audioBufRev;
+  const buf = asset._audioBuf;
+  const out = new AudioBuffer({
+    numberOfChannels: buf.numberOfChannels,
+    length: buf.length,
+    sampleRate: buf.sampleRate,
+  });
+  for (let c = 0; c < buf.numberOfChannels; c++)
+    out.getChannelData(c).set(buf.getChannelData(c).slice().reverse());
+  return (asset._audioBufRev = out);
+}
+
 /* Mix clip audio offline: each entry becomes a buffer source in an
  * OfflineAudioContext, with clip trim/looping matching syncMedia, the
  * clip's audio effect chain rebuilt node-for-node from the same catalogue
@@ -8446,8 +10247,9 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
   for (const { clip, asset } of entries) {
     const buf = asset._audioBuf;
     if (!buf) continue;
+    const rev = clipReversed(clip);
     const src = ctx.createBufferSource();
-    src.buffer = buf;
+    src.buffer = rev ? reversedAudioBuf(asset) : buf;
     src.loop = true;   // clips longer than their source wrap, like syncMedia
     // Retiming resamples, pitch and all — the same thing the preview's
     // element playbackRate does, so the export matches what was auditioned.
@@ -8497,8 +10299,25 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
     cur.connect(gain).connect(ctx.destination);
     bake(gain.gain, clip.props.volume, 100, (v) => clamp(v / 100, 0, 1));
 
-    const offset = buf.duration > 0.02
-      ? ((clip.in % buf.duration) + buf.duration) % buf.duration : 0;
+    // Where in the buffer comp-time `start` lands: the trim offset — mapped
+    // onto the flipped axis when the samples were reversed, so the clip
+    // opens on the far end of its footage just like the picture does.
+    const at0 = rev ? buf.duration - clip.in - clipSourceSpan(clip) : clip.in;
+    let offset = buf.duration > 0.02
+      ? ((at0 % buf.duration) + buf.duration) % buf.duration : 0;
+    // A loop-cycled clip repeats its region, not the whole file — exactly
+    // what loopStart/loopEnd express (they're buffer time, so playbackRate
+    // doesn't move them). Reversed clips enter their region mid-cycle,
+    // matching srcTime's phase anchor at the clip end.
+    const lspan = clipLoopSpan(clip);
+    if (lspan && buf.duration > 0.02) {
+      const region0 = clamp(rev ? buf.duration - clip.in - lspan : clip.in,
+        0, buf.duration);
+      const region1 = clamp(region0 + lspan, 0, buf.duration);
+      if (region1 - region0 > 0.01) { src.loopStart = region0; src.loopEnd = region1; }
+      const o0 = rev ? loopSrc(clip.dur * clipRate(clip), lspan) : 0;
+      offset = clamp(region0 + (rev ? lspan - o0 : 0), 0, Math.max(0, buf.duration - 1e-4));
+    }
     src.start(start, offset);
     // Reverb and delay tails are part of the clip's sound: the source
     // stops, the graph keeps ringing until the render ends.

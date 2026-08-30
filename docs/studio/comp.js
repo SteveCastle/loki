@@ -228,11 +228,22 @@ export const AUDIO_PROPS = [
   ['volume', 'Volume', () => 100, '%'],
 ];
 
+/** A tracker null renders nothing — it exists to CARRY a transform (baked
+ * from a motion track) that other layers reference through drivers. */
+export const TRACK_PROPS = [
+  ['x', 'Position X', (c) => c.width / 2, 'px'],
+  ['y', 'Position Y', (c) => c.height / 2, 'px'],
+  ['scaleX', 'Scale X', () => 100, '%'],
+  ['scaleY', 'Scale Y', () => 100, '%'],
+  ['rot', 'Rotation', () => 0, '°'],
+];
+
 /** Clips that own a source file on the timeline (and therefore a trim
  * offset), as opposed to adjustment layers. */
 export const hasSource = (clip) => clip.kind === 'media' || clip.kind === 'audio';
 
-export const propsForKind = (kind) => (kind === 'audio' ? AUDIO_PROPS : MEDIA_PROPS);
+export const propsForKind = (kind) => (kind === 'audio' ? AUDIO_PROPS
+  : kind === 'track' ? TRACK_PROPS : MEDIA_PROPS);
 
 /* ---- retiming --------------------------------------------------------
  * A source clip plays its footage at `rate` source-seconds per comp-second:
@@ -243,9 +254,40 @@ export const propsForKind = (kind) => (kind === 'audio' ? AUDIO_PROPS : MEDIA_PR
 export const clipRate = (clip) =>
   (hasSource(clip) && Number.isFinite(clip?.rate) && clip.rate > 0 ? clip.rate : 1);
 
-/** Source-file time for a source clip at COMP time t, before loop wrapping.
- * The ONE place the trim offset and the speed meet. */
-export const srcTime = (clip, t) => clip.in + (t - clip.start) * clipRate(clip);
+/** Reversed playback is a source-DIRECTION flag, orthogonal to speed:
+ * `rate` stays the positive magnitude. Only source clips can reverse. */
+export const clipReversed = (clip) => hasSource(clip) && clip.reversed === true;
+
+/** Loop region: source-seconds the clip cycles through (measured from
+ * `in`) once its duration outruns them. 0/absent is the classic model —
+ * the clip plays ALL its footage and wraps at the asset ends. Set by the
+ * seamless-loop finder; source time, so retiming leaves it alone. Cycle
+ * phase is anchored to clip.start (there is no phase field). */
+export const clipLoopSpan = (clip) =>
+  (hasSource(clip) && Number.isFinite(clip?.loopSpan) && clip.loopSpan > 0.02
+    ? clip.loopSpan : 0);
+
+/** Source-file time for a source clip at COMP time t, before asset-length
+ * wrapping. The ONE place trim, speed, direction and the loop region
+ * meet: a reversed clip anchors on the far end of its footage and runs
+ * back down toward `in`; a loop-cycled clip folds its offset into the
+ * region so the same span repeats however long the clip is stretched. */
+export const srcTime = (clip, t) => {
+  const o = (clipReversed(clip) ? clip.dur - (t - clip.start) : t - clip.start)
+    * clipRate(clip);
+  const span = clipLoopSpan(clip);
+  return clip.in + (span ? loopSrc(o, span) : o);
+};
+
+/** Loop a source time into the asset: [0, len]. A clip longer than its
+ * source wraps; `len` itself is a valid landing (the very last sample) —
+ * a reversed full-source clip's FIRST frame computes src = len exactly,
+ * which means the end of the footage, not a wrap back to frame 0. */
+export function loopSrc(src, len) {
+  if (!(len > 0.02)) return 0;
+  const m = ((src % len) + len) % len;
+  return m < 1e-6 && src >= len - 1e-6 ? len : m;
+}
 
 /** How much source a clip consumes, in source seconds. Retiming holds this
  * constant: the same footage, played over a different span of the comp. */
@@ -313,6 +355,11 @@ export function migrateComp(comp) {
         for (const [key, , def] of AUDIO_PROPS) clip.props[key] ??= newProp(def(comp));
         continue;
       }
+      if (clip.kind === 'track') {
+        clip.props ??= {};
+        for (const [key, , def] of TRACK_PROPS) clip.props[key] ??= newProp(def(comp));
+        continue;
+      }
       if (clip.kind !== 'media' || !clip.props) continue;
       if (clip.props.scale && !clip.props.scaleX) {
         clip.props.scaleX = clip.props.scale;
@@ -359,6 +406,24 @@ export function newAudioClip(asset, start, dur) {
     props,
     effects: [],                 // audio effects process this clip's sound
     mask: null,                  // unused; keeps the clip shape uniform
+  };
+}
+
+/** A tracker null: no picture, no sound — just a transform other layers
+ * can reference (via prop drivers). Its x/y/rot/scale carry BAKED
+ * keyframes written by the motion tracker. */
+export function newTrackClip(comp, name, start, dur) {
+  const props = {};
+  for (const [key, , def] of TRACK_PROPS) props[key] = newProp(def(comp));
+  return {
+    id: uid('clip'),
+    kind: 'track',
+    name,
+    start,
+    dur,
+    props,
+    effects: [],                 // unused; keeps the clip shape uniform
+    mask: null,
   };
 }
 
@@ -409,8 +474,16 @@ export function splitClip(clip, t) {
   right.dur = clip.dur - offset;
   clip.dur = offset;
   // The cut lands `offset` comp-seconds in, which is offset × rate of
-  // SOURCE for a retimed clip; both halves keep the speed.
-  if (hasSource(clip)) right.in = clip.in + offset * clipRate(clip);
+  // SOURCE for a retimed clip; both halves keep the speed. Forward, the
+  // right half starts deeper into the footage; REVERSED, the left half
+  // plays the later source, so IT moves up while the right keeps `in`.
+  // A LOOP-CYCLED clip keeps `in`/`loopSpan` on both halves: phase is
+  // anchored to clip.start, so the right half restarts its cycle at the
+  // cut (mid-cycle continuation would need a phase field).
+  if (hasSource(clip) && !clipLoopSpan(clip)) {
+    if (clipReversed(clip)) clip.in += right.dur * clipRate(clip);
+    else right.in = clip.in + offset * clipRate(clip);
+  }
   reidEffects(right);   // the halves' effects are independent from here on
   // Re-anchor the right half's keys to its new start, and advance any
   // oscillator driver's phase so the waveform is continuous across the cut

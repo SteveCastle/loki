@@ -1,0 +1,29 @@
+shaders = 1
+
+shader0        = camcorder.slang
+filter_linear0 = true
+scale_type0    = source
+scale0         = 1.0
+wrap_mode0     = clamp_to_edge
+
+parameters = "amount;sway;zoom;focus;soft;pump;bleed;fluor;grain;dropout;head;interlace;vig;osd;tc_start;date_m;date_d;date_y;speed;seed"
+amount    = 1.0
+sway      = 0.5
+zoom      = 0.06
+focus     = 0.5
+soft      = 0.35
+pump      = 0.5
+bleed     = 0.55
+fluor     = 0.65
+grain     = 0.35
+dropout   = 0.4
+head      = 0.6
+interlace = 0.4
+vig       = 0.35
+osd       = 1.0
+tc_start  = 0.0
+date_m    = 6.0
+date_d    = 14.0
+date_y    = 1994.0
+speed     = 1.0
+seed      = 7.0
