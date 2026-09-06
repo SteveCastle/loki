@@ -1,4 +1,5 @@
 .ListItem {
+  position: relative;
   height: 400px;
   width: 100%;
   filter: brightness(90%);
@@ -103,4 +104,31 @@
   pointer-events: none;
   line-height: 1.4;
   letter-spacing: 0.02em;
+}
+
+/* Touch-only "open full screen" control in the item's top-right corner.
+   Mice double-click the item for this; a finger can't reliably, so touch
+   devices get a button. Hidden for fine pointers so desktop is unchanged. */
+.ListItem .touch-open {
+  display: none;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1000;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (pointer: coarse) {
+  .ListItem .touch-open {
+    display: flex;
+  }
 }

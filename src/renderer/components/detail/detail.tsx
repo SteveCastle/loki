@@ -19,6 +19,8 @@ import DescriptionOverlay from './description-overlay';
 import { notifyFirstMediaPainted } from '../../first-paint';
 import { markStartup } from '../../startup-marks';
 import { beginPaletteOpen } from '../../palette-trace';
+import { attachTouchGestures } from './touch-gestures';
+import { useTransientControls } from './use-transient-controls';
 
 function resizeToCover(
   parentWidth: number,
@@ -226,6 +228,27 @@ export function Detail({ offset = 0 }: { offset?: number }) {
     // mounted — so the wheel listener never attached until an unrelated re-render
     // (e.g. toggling controlMode) happened to re-run it.
   }, [item?.path, settings.controlMode]);
+
+  // Touch: one finger pans (same scroll model as the mouse drag-pan above),
+  // two fingers pinch-zoom; the zoom lands in settings.scaleMode when the
+  // fingers lift. See touch-gestures.ts. Keyed on `item?.path` for the same
+  // mount-timing reason as the wheel listener.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null) {
+      return undefined;
+    }
+    return attachTouchGestures(
+      container,
+      () => mediaRef.current,
+      (scaleMode) =>
+        libraryService.send('CHANGE_SETTING', { data: { scaleMode } })
+    );
+  }, [item?.path]);
+
+  // Touch: a tap on the player shows the (hover-only) video controls for a
+  // few seconds.
+  const videoControls = useTransientControls(containerRef, item?.path);
 
   // Touchpad mode: clicks advance the cursor, so the native onDoubleClick
   // the mouse mode uses for the list/detail toggle can't be bound (it would
@@ -482,7 +505,11 @@ export function Detail({ offset = 0 }: { offset?: number }) {
       {!settings.showControls &&
         (getFileType(item.path) === 'video' ||
           getFileType(item.path) === 'audio') && (
-          <div className="videoControls">
+          <div
+            className={`videoControls${videoControls.visible ? ' visible' : ''}`}
+            onPointerDown={videoControls.keepAlive}
+            onPointerMove={videoControls.keepAlive}
+          >
             <VideoControls
               mediaRef={mediaRef as React.RefObject<HTMLMediaElement>}
             />

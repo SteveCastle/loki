@@ -260,6 +260,19 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
     [libraryService, idx, item.path]
   );
 
+  // Touch-only corner control (see list-item.css): opens this item
+  // full-screen, the way a double-click does with a mouse. Selects the item
+  // first so the expanded detail shows it, then asks Layout to collapse the
+  // list. Stops propagation so the item's own click doesn't also run.
+  const handleOpenFullscreen = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      libraryService.send('SET_CURSOR', { idx });
+      window.dispatchEvent(new Event('loki-open-detail'));
+    },
+    [libraryService, idx]
+  );
+
   const handleFilePathClick = useCallback(() => {
     libraryService.send('SET_FILE', { path: item.path });
   }, [libraryService, item.path]);
@@ -304,6 +317,25 @@ function ListItemComponent({ item, idx, height, onDimensionsLoaded }: Props) {
       onClick={handleClick}
       onContextMenu={handleContextMenu}
     >
+      <button
+        type="button"
+        className="touch-open"
+        aria-label="Open full screen"
+        onClick={handleOpenFullscreen}
+        // Don't let the press start a drag of the item.
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+          <path
+            d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
       <div className="inner">
         <GetPlayer
           path={item.path}

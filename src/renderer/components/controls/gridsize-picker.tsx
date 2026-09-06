@@ -55,8 +55,8 @@ export default function GridSizePicker() {
     <div
       className="GridSizePicker"
       style={{
-        gridTemplateRows: `repeat(${isStatic ? 16 : 8}, 12px)`,
-        gridTemplateColumns: `repeat(${isStatic ? 16 : 8}, 12px)`,
+        gridTemplateRows: `repeat(${isStatic ? 16 : 8}, var(--grid-cell))`,
+        gridTemplateColumns: `repeat(${isStatic ? 16 : 8}, var(--grid-cell))`,
       }}
       onMouseLeave={() => {
         setHoveredSize(false);

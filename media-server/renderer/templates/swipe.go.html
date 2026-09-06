@@ -239,26 +239,33 @@
         overflow: hidden;
       }
 
+      /* Full file path. Wraps (break-all so long directory names split) and
+         clamps to two lines, so the filename at the end stays visible. */
       .swipe-path {
         font-size: 10px;
         color: var(--text-dim);
         margin-top: 8px;
         opacity: 0.7;
-        text-overflow: ellipsis;
+        word-break: break-all;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
         overflow: hidden;
-        white-space: nowrap;
       }
 
       /* Display toggles (in the filter/settings panel) hide the tag and
-         description overlays to maximise the media area. Applied via body
-         classes so already-rendered cards update without a re-render. Hiding
-         the description also hides the filename path. */
+         description overlays to maximise the media area, and opt in to the
+         file path (off by default). Applied via body classes so
+         already-rendered cards update without a re-render. */
       body.hide-swipe-tags .swipe-tags {
         display: none;
       }
 
-      body.hide-swipe-description .swipe-description,
-      body.hide-swipe-description .swipe-path {
+      body.hide-swipe-description .swipe-description {
+        display: none;
+      }
+
+      body:not(.show-swipe-path) .swipe-path {
         display: none;
       }
 
@@ -723,9 +730,10 @@
       }
 
       /* Display toggles inside the settings/filter panel: hide tag chips or the
-         description+filename overlay to free up screen space. */
+         description overlay to free up screen space, or show the file path. */
       .display-toggles {
         display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         margin-bottom: 16px;
       }
@@ -1515,11 +1523,11 @@
         >
           ⚄
         </button>
-        <button class="action-btn" id="openBtn" title="Open in browser">
-          ↗
-        </button>
         <button class="action-btn" id="fitBtn" title="Toggle fit mode">
           ⛶
+        </button>
+        <button class="action-btn" id="soundBtn" title="Toggle video sound (m)">
+          🔇
         </button>
       </div>
 
@@ -1590,10 +1598,20 @@
           class="display-toggle"
           id="toggleDescBtn"
           aria-pressed="true"
-          title="Show or hide the description and filename on each item"
+          title="Show or hide the description on each item"
         >
           <span class="display-toggle-icon">📝</span>
           <span>Description</span>
+        </button>
+        <button
+          type="button"
+          class="display-toggle toggled-off"
+          id="togglePathBtn"
+          aria-pressed="false"
+          title="Show or hide the file path on each item"
+        >
+          <span class="display-toggle-icon">📁</span>
+          <span>Path</span>
         </button>
       </div>
 
@@ -1677,6 +1695,10 @@
       let hasMore = true;
       let searchQuery = '{{.SearchQuery}}';
       let fitMode = 'contain'; // contain or cover
+      // Video sound. Deliberately NOT persisted: every page load starts
+      // muted (autoplay with audio is both intrusive and blocked by browsers
+      // until a user gesture). Flipping it lasts for the rest of this load.
+      let soundOn = false;
       // Liked items are now managed via database tags (Swipe/Favorites)
       // This Set is used for UI state only
       let likedItems = new Set();
@@ -1756,8 +1778,8 @@
       const textSearchInput = document.getElementById('textSearchInput');
       const textSearchGo = document.getElementById('textSearchGo');
       const randomBtn = document.getElementById('randomBtn');
-      const openBtn = document.getElementById('openBtn');
       const fitBtn = document.getElementById('fitBtn');
+      const soundBtn = document.getElementById('soundBtn');
       const installPrompt = document.getElementById('installPrompt');
       const installPromptClose = document.getElementById('installPromptClose');
 
@@ -1936,46 +1958,46 @@
       let lastTouchCenter = { x: 0, y: 0 };
 
       // Initialize
-      // --- Overlay visibility toggles (tags / description) ---
-      // Header icon buttons hide the per-item tag chips and description so the
-      // media fills more of the screen. Persisted per-device in localStorage.
+      // --- Overlay visibility toggles (tags / description / path) ---
+      // Settings-panel buttons hide the per-item tag chips and description so
+      // the media fills more of the screen, and opt in to the full file path
+      // (off by default). Persisted per-device in localStorage.
       const HIDE_TAGS_KEY = 'swipe_hide_tags';
       const HIDE_DESC_KEY = 'swipe_hide_description';
+      const SHOW_PATH_KEY = 'swipe_show_path';
 
       function applyOverlayVisibility() {
         const hideTags = localStorage.getItem(HIDE_TAGS_KEY) === '1';
         const hideDesc = localStorage.getItem(HIDE_DESC_KEY) === '1';
+        const showPath = localStorage.getItem(SHOW_PATH_KEY) === '1';
         document.body.classList.toggle('hide-swipe-tags', hideTags);
         document.body.classList.toggle('hide-swipe-description', hideDesc);
-        const tagsBtn = document.getElementById('toggleTagsBtn');
-        const descBtn = document.getElementById('toggleDescBtn');
-        if (tagsBtn) {
-          tagsBtn.classList.toggle('toggled-off', hideTags);
-          tagsBtn.setAttribute('aria-pressed', String(!hideTags));
-        }
-        if (descBtn) {
-          descBtn.classList.toggle('toggled-off', hideDesc);
-          descBtn.setAttribute('aria-pressed', String(!hideDesc));
-        }
+        document.body.classList.toggle('show-swipe-path', showPath);
+        const setBtn = (id, on) => {
+          const btn = document.getElementById(id);
+          if (!btn) return;
+          btn.classList.toggle('toggled-off', !on);
+          btn.setAttribute('aria-pressed', String(on));
+        };
+        setBtn('toggleTagsBtn', !hideTags);
+        setBtn('toggleDescBtn', !hideDesc);
+        setBtn('togglePathBtn', showPath);
       }
 
       function setupOverlayToggles() {
-        const tagsBtn = document.getElementById('toggleTagsBtn');
-        const descBtn = document.getElementById('toggleDescBtn');
-        if (tagsBtn) {
-          tagsBtn.addEventListener('click', () => {
-            const hidden = localStorage.getItem(HIDE_TAGS_KEY) === '1';
-            localStorage.setItem(HIDE_TAGS_KEY, hidden ? '0' : '1');
+        // Each button flips a '0'/'1' localStorage flag and re-applies.
+        const wire = (id, key) => {
+          const btn = document.getElementById(id);
+          if (!btn) return;
+          btn.addEventListener('click', () => {
+            const on = localStorage.getItem(key) === '1';
+            localStorage.setItem(key, on ? '0' : '1');
             applyOverlayVisibility();
           });
-        }
-        if (descBtn) {
-          descBtn.addEventListener('click', () => {
-            const hidden = localStorage.getItem(HIDE_DESC_KEY) === '1';
-            localStorage.setItem(HIDE_DESC_KEY, hidden ? '0' : '1');
-            applyOverlayVisibility();
-          });
-        }
+        };
+        wire('toggleTagsBtn', HIDE_TAGS_KEY);
+        wire('toggleDescBtn', HIDE_DESC_KEY);
+        wire('togglePathBtn', SHOW_PATH_KEY);
         applyOverlayVisibility();
       }
 
@@ -2324,7 +2346,10 @@
 
           mediaEl.onloadeddata = () => {
             div.classList.remove('loading');
-            if (offset === 0) mediaEl.play().catch(() => {});
+            if (offset === 0) {
+              mediaEl.muted = !soundOn;
+              mediaEl.play().catch(() => {});
+            }
           };
           mediaEl.onerror = () => {
             div.classList.remove('loading');
@@ -2408,7 +2433,9 @@
                   )}</div>`
                 : ''
             }
-            <div class="swipe-path">${escapeHtml(getFileName(item.path))}</div>
+            <div class="swipe-path" title="${escapeAttr(item.path)}">${escapeHtml(
+              item.path
+            )}</div>
           </div>
         `;
         div.appendChild(info);
@@ -2457,7 +2484,10 @@
 
         // Pause current video if any
         const currentVideo = track.querySelector('[data-offset="0"] video');
-        if (currentVideo) currentVideo.pause();
+        if (currentVideo) {
+          currentVideo.pause();
+          currentVideo.muted = true;
+        }
 
         currentIndex = index;
 
@@ -2475,7 +2505,10 @@
         // Play new video if any
         setTimeout(() => {
           const newVideo = track.querySelector('[data-offset="0"] video');
-          if (newVideo) newVideo.play().catch(() => {});
+          if (newVideo) {
+            newVideo.muted = !soundOn;
+            newVideo.play().catch(() => {});
+          }
         }, 50);
 
         // Intelligent preloading
@@ -2590,6 +2623,23 @@
             el.classList.remove('cover');
           }
         });
+      }
+
+      // Video sound toggle. Only the on-screen video is ever unmuted;
+      // preloaded neighbours stay muted so nothing plays audio off-screen.
+      function toggleSound() {
+        soundOn = !soundOn;
+        soundBtn.textContent = soundOn ? '🔊' : '🔇';
+        soundBtn.classList.toggle('active', soundOn);
+        const item = track.querySelector('[data-offset="0"]');
+        const video = item && item.querySelector('video');
+        if (!video) return;
+        video.muted = !soundOn;
+        // The toggle click is a user gesture, so retry playback in case an
+        // earlier unmuted autoplay attempt was blocked by the browser.
+        if (soundOn && video.paused && !item.classList.contains('paused')) {
+          video.play().catch(() => {});
+        }
       }
 
       // --- "More like this" (similarity ranking) mode ---
@@ -2908,15 +2958,6 @@
       }
 
       // Open current item in browser
-      function openInBrowser() {
-        if (items.length === 0) return;
-        const currentPath = items[currentIndex].path;
-        window.open(
-          `/media?q=path:"${encodeURIComponent(currentPath)}"`,
-          '_blank'
-        );
-      }
-
       // Toggle video pause/play
       function toggleVideoPause() {
         const item = track.querySelector('[data-offset="0"]');
@@ -3506,6 +3547,9 @@
           case 'f':
             toggleFitMode();
             break;
+          case 'm':
+            toggleSound();
+            break;
           case 's':
             // Enter similar mode, or hop the anchor to the current image.
             onSimilarButton();
@@ -4012,8 +4056,8 @@
       feedBtn.addEventListener('click', enterFeedMode);
       faceBtn.addEventListener('click', onFaceButton);
       randomBtn.addEventListener('click', exitToShuffle);
-      openBtn.addEventListener('click', openInBrowser);
       fitBtn.addEventListener('click', toggleFitMode);
+      soundBtn.addEventListener('click', toggleSound);
 
       // Text vector search: 🔍 opens the query box; Enter or Go runs it,
       // Escape or a backdrop tap dismisses. Keystrokes must not reach the
@@ -4050,10 +4094,6 @@
           return path;
         }
         return `/media/file?path=${encodeURIComponent(path)}`;
-      }
-
-      function getFileName(path) {
-        return path.split(/[/\\]/).pop();
       }
 
       function escapeHtml(text) {

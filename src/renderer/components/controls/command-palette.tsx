@@ -334,6 +334,10 @@ const SettingsList: React.FC<SettingsListProps> = React.memo(
         ) {
           return false;
         }
+        // HLS streaming only exists against the media server (web mode).
+        if (settingKey === 'useHLS' && !capabilities.hlsStreaming) {
+          return false;
+        }
         return setting.display === filterType;
       }) as SettingKey[];
     }, [filterType, battleMode]);

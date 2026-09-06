@@ -44,6 +44,26 @@ var movablePathColumns = []pathColumn{
 	{Table: "battle", Column: "loser_path", quoted: "loser_path"},
 }
 
+// PathColumn is an exported view of one media-path reference, for callers
+// outside this package that need to find every row mentioning a path (the
+// thumbnail cleanup uses it to discover paths the library has forgotten).
+type PathColumn struct {
+	Table  string
+	Column string
+	// Quoted is the column as it must appear in SQL.
+	Quoted string
+}
+
+// PathColumns returns every table/column pair that stores a media path, in
+// the same order MovePath rewrites them. The media table itself is first.
+func PathColumns() []PathColumn {
+	out := make([]PathColumn, 0, len(movablePathColumns))
+	for _, pc := range movablePathColumns {
+		out = append(out, PathColumn{Table: pc.Table, Column: pc.Column, Quoted: pc.quoted})
+	}
+	return out
+}
+
 // MoveOptions tunes a MovePath call.
 type MoveOptions struct {
 	// Prefix treats From and To as directory prefixes: every path under From

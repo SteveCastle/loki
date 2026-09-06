@@ -34,6 +34,9 @@ export const capabilities = {
   // it is unavailable in the local-only Electron path.
   visualSearch: !isElectron,
   regionCapture: isElectron,
+  // HLS streaming is served by the media server (see hlsUrl); the Electron
+  // app plays files directly, so the setting is hidden and forced off there.
+  hlsStreaming: !isElectron,
 };
 
 // Diagnostics: forward renderer errors/load failures to the main-process file

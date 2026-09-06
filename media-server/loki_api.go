@@ -46,6 +46,16 @@ func redirectToPresigned(w http.ResponseWriter, r *http.Request, backend storage
 // render as missing.
 func wireRemoteExistence(reg *storage.Registry) {
 	const remoteExistsConcurrency = 16
+	// Library cleanup groups paths by the configured root containing them
+	// and refuses to forget items on a root it cannot see — a bucket that was
+	// removed from the configuration must not read as "every object gone".
+	media.SetRemoteRootChecker(func(root string) bool { return reg.BackendFor(root) != nil })
+	media.SetCleanupRootResolver(func(p string) (string, bool) {
+		if lb, ok := reg.BackendFor(p).(*storage.LocalBackend); ok && lb != nil {
+			return lb.RootPath(), true
+		}
+		return "", false
+	})
 	media.SetRemoteExistsChecker(func(paths []string) map[string]bool {
 		out := make(map[string]bool, len(paths))
 		if len(paths) == 0 {
@@ -1137,44 +1147,24 @@ func lokiMediaDeleteHandler(deps *Dependencies) http.HandlerFunc {
 	}
 }
 
-// eraseMediaReferences removes every database reference to a path: faces and
-// the face-id-keyed assertions first (DeleteFacesForMedia — RemoveItemsFromDB
-// deletes face rows but would strand vetoes, cannot-links, ban memberships,
-// and person cover pointers), then the media row, tags, embeddings, and scan
-// markers (RemoveItemsFromDB, whose registered removal hook also evicts the
-// path from the vector and face indexes), then the battle log. Shared by
+// eraseMediaReferences removes every database reference to a path via
+// media.RemoveItemsFromDB: the media row, tags, embeddings, faces and their
+// face-id-keyed assertions (vetoes, cannot-links, ban memberships), person
+// cover pointers, scan markers, and battle-log rows — with the registered
+// removal hook evicting the path from the vector and face indexes. Shared by
 // /api/media/delete and /api/media/forget so their table lists can't drift.
 // Mirrored in the Electron viewer (eraseMediaReferences in src/main/media.ts).
 func eraseMediaReferences(ctx context.Context, deps *Dependencies, path string) (map[string]any, error) {
-	countRows := func(query string, args ...any) int64 {
-		var n int64
-		if err := deps.DB.QueryRow(query, args...).Scan(&n); err != nil {
-			return 0
-		}
-		return n
-	}
-	// Counted up front: the deletes below report media/tag rows only, and
-	// these two are the numbers a "cleaned up" message is actually about.
-	faces := countRows(`SELECT COUNT(*) FROM face WHERE media_path = ?`, path)
-	embeddings := countRows(`SELECT COUNT(*) FROM media_embedding WHERE media_path = ?`, path)
-
-	if err := media.DeleteFacesForMedia(deps.DB, path); err != nil {
-		return nil, err
-	}
+	// RemoveItemsFromDB removes the full reference set — faces and their
+	// id-keyed assertions, person covers, scan markers, battle-log rows —
+	// and reports per-table counts, so nothing is deleted or counted here
+	// separately (a second pass would only ever see zero).
 	res, err := media.RemoveItemsFromDB(ctx, deps.DB, []string{path})
 	if err != nil {
 		return nil, err
 	}
-	// Battle-log rows name the path directly; leaving them keeps a deleted
-	// item in the Elo history and in rematch suppression.
-	var battles int64
-	if br, err := deps.DB.Exec(
-		`DELETE FROM battle WHERE winner_path = ? OR loser_path = ?`, path, path,
-	); err == nil {
-		battles, _ = br.RowsAffected()
-	}
 	media.InvalidateRandomSampleCache()
-	if faces > 0 {
+	if res.FacesRemoved > 0 {
 		// The item's faces were in someone's group — open People views are
 		// now showing stale counts.
 		broadcastPeopleChanged()
@@ -1183,9 +1173,9 @@ func eraseMediaReferences(ctx context.Context, deps *Dependencies, path string) 
 		"path":       path,
 		"media":      res.MediaItemsRemoved,
 		"tags":       res.TagsRemoved,
-		"embeddings": embeddings,
-		"faces":      faces,
-		"battles":    battles,
+		"embeddings": res.EmbeddingsRemoved,
+		"faces":      res.FacesRemoved,
+		"battles":    res.BattlesRemoved,
 	}, nil
 }
 

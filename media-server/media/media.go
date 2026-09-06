@@ -1158,8 +1158,16 @@ func getItemsWithExistenceFilter(db *sql.DB, baseQuery, whereClause string, wher
 type RemovalResult struct {
 	MediaItemsRemoved int64
 	TagsRemoved       int64
-	ProcessedPaths    []string
-	Errors            []error
+	// Sidecar rows removed alongside: embeddings, face rows, the face-id
+	// keyed curation assertions (vetoes, cannot-links, group-ban members),
+	// scan markers, and battle-log rows.
+	EmbeddingsRemoved     int64
+	FacesRemoved          int64
+	FaceAssertionsRemoved int64
+	FaceScansRemoved      int64
+	BattlesRemoved        int64
+	ProcessedPaths        []string
+	Errors                []error
 	// SkippedUnavailable counts missing-on-disk items that were NOT removed
 	// because their whole volume is offline (see StreamingCleanupNonExistentItems).
 	SkippedUnavailable int64
@@ -1242,6 +1250,14 @@ func RemoveItemsFromDBStream(ctx context.Context, db *sql.DB, paths []string, on
 		ProcessedPaths: validPaths,
 	}
 
+	// Statements are skipped for tables this database doesn't have (the
+	// viewer's schema has no face or embedding tables; a fresh server has no
+	// battle log), looked up once per call rather than per batch.
+	tables, err := existingTables(ctx, db)
+	if err != nil {
+		return result, fmt.Errorf("inspecting schema: %w", err)
+	}
+
 	// Process in batches to avoid SQL parameter limits (SQLite limit is typically 999)
 	const batchSize = 500 // Use 500 to be safe
 	totalMediaRemoved := int64(0)
@@ -1304,28 +1320,59 @@ func RemoveItemsFromDBStream(ctx context.Context, db *sql.DB, paths []string, on
 		}
 		in := strings.Join(placeholders, ",")
 
-		// Sidecar rows first: tags, embeddings (visual-similarity), then face
-		// rows + scan markers (face-identity). Person covers pointing at the
-		// doomed faces are cleared before the faces go so they don't dangle
-		// (GetPeople falls back to the person's best face). The removal hook
-		// evicts both indexes once the batch commits.
+		// Every reference to the paths, children first. Face curation
+		// assertions are keyed by face id, so they go before the face rows
+		// they point at; person covers pointing at doomed faces are cleared
+		// so GetPeople doesn't dangle (it falls back to the person's best
+		// face). Battle-log rows name the path directly — leaving them keeps
+		// a deleted item in the Elo history and in rematch suppression. The
+		// removal hook evicts both indexes once the batch commits.
 		type batchStmt struct {
 			label string
-			sql   string
-			count *int64 // nil when the statement's row count isn't reported
+			needs []string // tables the statement touches; skipped if any is absent
+			sql   string   // %s is the IN list; every occurrence gets the batch's args
+			count *int64   // accumulated with the statement's affected rows; nil = not reported
 		}
 		var batchTagsRemoved, batchMediaRemoved int64
 		stmts := []batchStmt{
-			{"media tags", `DELETE FROM media_tag_by_category WHERE media_path IN (%s)`, &batchTagsRemoved},
-			{"embeddings", `DELETE FROM media_embedding WHERE media_path IN (%s)`, nil},
-			{"person covers", `UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (SELECT id FROM face WHERE media_path IN (%s))`, nil},
-			{"face rows", `DELETE FROM face WHERE media_path IN (%s)`, nil},
-			{"face scan markers", `DELETE FROM face_scan WHERE media_path IN (%s)`, nil},
+			{"media tags", []string{"media_tag_by_category"},
+				`DELETE FROM media_tag_by_category WHERE media_path IN (%s)`, &batchTagsRemoved},
+			{"embeddings", []string{"media_embedding"},
+				`DELETE FROM media_embedding WHERE media_path IN (%s)`, &result.EmbeddingsRemoved},
+			{"person covers", []string{"person", "face"},
+				`UPDATE person SET cover_face_id = NULL WHERE cover_face_id IN (SELECT id FROM face WHERE media_path IN (%s))`, nil},
+			{"face vetoes", []string{"face_veto", "face"},
+				`DELETE FROM face_veto WHERE face_id IN (SELECT id FROM face WHERE media_path IN (%s))`, &result.FaceAssertionsRemoved},
+			{"face cannot-links", []string{"face_cannot_link", "face"},
+				`DELETE FROM face_cannot_link WHERE face_a IN (SELECT id FROM face WHERE media_path IN (%s)) OR face_b IN (SELECT id FROM face WHERE media_path IN (%s))`, &result.FaceAssertionsRemoved},
+			{"face group-ban members", []string{"face_group_ban_member", "face"},
+				`DELETE FROM face_group_ban_member WHERE face_id IN (SELECT id FROM face WHERE media_path IN (%s))`, &result.FaceAssertionsRemoved},
+			{"face rows", []string{"face"},
+				`DELETE FROM face WHERE media_path IN (%s)`, &result.FacesRemoved},
+			{"face scan markers", []string{"face_scan"},
+				`DELETE FROM face_scan WHERE media_path IN (%s)`, &result.FaceScansRemoved},
+			{"battle log", []string{"battle"},
+				`DELETE FROM battle WHERE winner_path IN (%s) OR loser_path IN (%s)`, &result.BattlesRemoved},
 			// Parent last, so the delete is legal even without deferral.
-			{"media items", `DELETE FROM media WHERE path IN (%s)`, &batchMediaRemoved},
+			{"media items", []string{"media"},
+				`DELETE FROM media WHERE path IN (%s)`, &batchMediaRemoved},
 		}
 		for _, s := range stmts {
-			res, err := tx.ExecContext(ctx, fmt.Sprintf(s.sql, in), args...)
+			skip := false
+			for _, t := range s.needs {
+				if !tables[t] {
+					skip = true
+				}
+			}
+			if skip {
+				continue
+			}
+			reps := strings.Count(s.sql, "%s")
+			stmtArgs := make([]interface{}, 0, len(args)*reps)
+			for k := 0; k < reps; k++ {
+				stmtArgs = append(stmtArgs, args...)
+			}
+			res, err := tx.ExecContext(ctx, strings.ReplaceAll(s.sql, "%s", in), stmtArgs...)
 			if err != nil {
 				tx.Rollback()
 				result.Errors = append(result.Errors, fmt.Errorf("failed to remove %s for batch: %w", s.label, err))
@@ -1334,7 +1381,8 @@ func RemoveItemsFromDBStream(ctx context.Context, db *sql.DB, paths []string, on
 				return result, err
 			}
 			if s.count != nil {
-				*s.count, _ = res.RowsAffected()
+				n, _ := res.RowsAffected()
+				*s.count += n
 			}
 		}
 		totalTagsRemoved += batchTagsRemoved
@@ -1451,154 +1499,6 @@ func volumeRoot(path string) string {
 		return ""
 	}
 	return vol + string(filepath.Separator)
-}
-
-// StreamingCleanupNonExistentItems finds and removes non-existent media items in streaming batches
-// This avoids memory issues and provides progress feedback during the operation
-//
-// Offline-volume guard: a path on an unmounted drive or unreachable network
-// share stats exactly like a deleted file, so without a guard, running cleanup
-// while one volume is offline would silently purge that volume's entire
-// library (tags, descriptions, transcripts — unrecoverable). A missing file is
-// therefore only treated as orphaned when its volume root still exists;
-// otherwise it is counted in SkippedUnavailable and left alone. Root existence
-// is checked once per volume per run.
-func StreamingCleanupNonExistentItems(ctx context.Context, db *sql.DB, progressCallback func(found, removed int)) (*RemovalResult, error) {
-	if db == nil {
-		return nil, fmt.Errorf("database connection not available")
-	}
-
-	const batchSize = 1000      // Process items in batches to manage memory
-	const removeBatchSize = 500 // Remove in smaller batches to avoid SQL limits
-
-	result := &RemovalResult{}
-	totalFound := 0
-	totalRemoved := 0
-	rootAvailable := map[string]bool{} // volume root → exists (cached per run)
-
-	// Use cursor-based pagination to avoid skipping items when deletions occur.
-	// Using OFFSET-based pagination with deletions would skip items because
-	// deleting N items shifts all subsequent items up by N positions.
-	var lastPath string
-
-	for {
-		// Check if context was cancelled
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-
-		// Get a batch of media items using cursor-based pagination
-		// This ensures we don't skip items when deletions occur
-		var rows *sql.Rows
-		var err error
-		if lastPath == "" {
-			query := `SELECT path FROM media ORDER BY path LIMIT ?`
-			rows, err = db.QueryContext(ctx, query, batchSize)
-		} else {
-			query := `SELECT path FROM media WHERE path > ? ORDER BY path LIMIT ?`
-			rows, err = db.QueryContext(ctx, query, lastPath, batchSize)
-		}
-		if err != nil {
-			return result, fmt.Errorf("failed to query media items: %w", err)
-		}
-
-		var batchPaths []string
-		for rows.Next() {
-			var path string
-			if err := rows.Scan(&path); err != nil {
-				rows.Close()
-				return result, fmt.Errorf("failed to scan media path: %w", err)
-			}
-			batchPaths = append(batchPaths, path)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return result, fmt.Errorf("error iterating media rows: %w", err)
-		}
-		rows.Close()
-
-		// If no more items, we're done
-		if len(batchPaths) == 0 {
-			break
-		}
-
-		// Track the last path for cursor-based pagination
-		// We need to remember the last path BEFORE any deletions
-		lastPath = batchPaths[len(batchPaths)-1]
-
-		// Check file existence for this batch
-		existenceMap := CheckFilesExistConcurrent(batchPaths)
-
-		// Collect non-existent paths from this batch, skipping any whose
-		// volume is offline (see the guard note in the function comment).
-		var nonExistentPaths []string
-		for path, exists := range existenceMap {
-			if exists {
-				continue
-			}
-			if root := volumeRoot(path); root != "" {
-				available, checked := rootAvailable[root]
-				if !checked {
-					_, statErr := os.Stat(root)
-					available = statErr == nil
-					rootAvailable[root] = available
-					if !available {
-						result.UnavailableRoots = append(result.UnavailableRoots, root)
-					}
-				}
-				if !available {
-					result.SkippedUnavailable++
-					continue
-				}
-			}
-			nonExistentPaths = append(nonExistentPaths, path)
-		}
-
-		totalFound += len(nonExistentPaths)
-
-		// Remove non-existent items if any found
-		if len(nonExistentPaths) > 0 {
-			// Process removals in smaller batches to avoid SQL parameter limits
-			for i := 0; i < len(nonExistentPaths); i += removeBatchSize {
-				end := i + removeBatchSize
-				if end > len(nonExistentPaths) {
-					end = len(nonExistentPaths)
-				}
-
-				removeBatch := nonExistentPaths[i:end]
-
-				// Remove this batch
-				batchResult, err := RemoveItemsFromDB(ctx, db, removeBatch)
-				if err != nil {
-					result.Errors = append(result.Errors, err)
-					return result, err
-				}
-
-				// Accumulate counts only — retaining every removed path for
-				// the whole run costs unbounded memory on large cleanups and
-				// no caller of the streaming variant uses the paths.
-				result.MediaItemsRemoved += batchResult.MediaItemsRemoved
-				result.TagsRemoved += batchResult.TagsRemoved
-				result.Errors = append(result.Errors, batchResult.Errors...)
-
-				totalRemoved += len(removeBatch)
-
-				// Call progress callback if provided
-				if progressCallback != nil {
-					progressCallback(totalFound, totalRemoved)
-				}
-			}
-		}
-
-		// If we got fewer items than batch size, we've reached the end
-		if len(batchPaths) < batchSize {
-			break
-		}
-	}
-
-	return result, nil
 }
 
 // -----------------------------------------------------------------------------

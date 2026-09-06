@@ -491,15 +491,23 @@ export function Video({
     const url = hlsManifestUrl.current;
     let cancelled = false;
 
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native HLS (Safari/WebKit): no library needed.
-      video.src = url;
-      return undefined;
-    }
-
+    // Prefer hls.js over the element's built-in HLS player. Chrome has
+    // answered "maybe" to canPlayType('application/vnd.apple.mpegurl') since
+    // 147, but its native player fails on desktop: it parses the playlist
+    // (so the duration shows) and never decodes a frame. See
+    // https://github.com/video-dev/hls.js/issues/7827. Native src is only the
+    // right choice where MSE is missing altogether (iOS Safari).
     import('hls.js')
       .then(({ default: Hls }) => {
-        if (cancelled || !Hls.isSupported()) return;
+        if (cancelled) return;
+        if (!Hls.isSupported()) {
+          if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = url;
+          } else {
+            setHlsFailed(true);
+          }
+          return;
+        }
         const hls: HlsType = new Hls({ enableWorker: true });
         hlsRef.current = hls;
         hls.loadSource(url);
@@ -515,11 +523,6 @@ export function Video({
             setHlsFailed(true);
           }
         });
-        // Unmounted while the chunk was in flight — tear down immediately.
-        if (cancelled) {
-          hls.destroy();
-          hlsRef.current = null;
-        }
       })
       .catch(() => {
         if (!cancelled) setHlsFailed(true);
@@ -670,6 +673,14 @@ export function Video({
           }}
           onError={(err) => {
             console.log('video error:', err.currentTarget?.error?.code);
+            if (hlsActive && hlsReady) {
+              // The HLS stream (native or hls.js-fed) failed to decode —
+              // drop back to direct playback instead of the image fallback.
+              hlsRef.current?.destroy();
+              hlsRef.current = null;
+              setHlsFailed(true);
+              return;
+            }
             setError(true);
           }}
           onDoubleClick={(e) => {

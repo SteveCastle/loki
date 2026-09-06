@@ -13,7 +13,8 @@
   transition: opacity 0.3s;
 }
 
-.videoControls:hover {
+.videoControls:hover,
+.videoControls.visible {
   opacity: 1;
 }
 

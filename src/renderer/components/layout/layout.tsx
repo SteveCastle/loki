@@ -235,6 +235,15 @@ const Layout = () => {
     // render's closure stays valid.
   }, []);
 
+  // Touch devices can't double-click a list item to open it full-screen;
+  // each item shows a corner control instead (list-item.tsx) that asks for
+  // the same list-collapse/detail-expand through this event.
+  useEffect(() => {
+    const handler = () => handleListClick();
+    window.addEventListener('loki-open-detail', handler);
+    return () => window.removeEventListener('loki-open-detail', handler);
+  }, []);
+
   useEffect(() => {
     if (library.length === 1) {
       // Collapse the list to focus the single file. Only the list collapses;

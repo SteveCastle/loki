@@ -15,6 +15,10 @@ import { ToastSystem } from './components/controls/toast-system';
 import AutoPlayController from './components/controls/autoplay-controller';
 import { PERFORMANCE_CONSTANTS } from './constants/performance';
 import { OnboardingGate } from './onboarding/OnboardingGate';
+import {
+  useLongPressContextMenu,
+  useBlockBrowserPinchZoom,
+} from './hooks/useLongPressContextMenu';
 
 // Create QueryClient with optimized settings
 const queryClient = new QueryClient({
@@ -42,6 +46,11 @@ export default function App(): JSX.Element {
     (state) => state.context.settings.autoPlay,
     (a, b) => a === b
   );
+
+  // Touch: a long press is the right-click (one finger = command palette,
+  // two = context palette), and the browser never zooms the page itself.
+  useLongPressContextMenu();
+  useBlockBrowserPinchZoom();
 
   const isLoadingState = useMemo(() => {
     return (

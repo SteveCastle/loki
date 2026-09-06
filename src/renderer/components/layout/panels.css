@@ -39,6 +39,9 @@
 
 .handle {
   cursor: col-resize;
+  /* Dragging a separator by touch must not start a native pan (which would
+     cancel the pointer mid-drag). */
+  touch-action: none;
   background-color: rgb(12, 12, 12);
   transition: background-color 0.2s ease-in-out;
   border-radius: 2px;

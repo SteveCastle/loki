@@ -2,6 +2,14 @@
 <html>
   <head>
     <meta charset="utf-8" />
+    <!-- Web/iPad: lay out at device width and let the app own pinch/zoom.
+         Safari ignores user-scalable for accessibility, so page zoom is
+         actually blocked by the touch-action rules in App.css; this keeps
+         layout stable and extends under the home indicator. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, user-scalable=no"
+    />
     <meta
       http-equiv="Content-Security-Policy"
       content="script-src 'self' 'unsafe-inline'"

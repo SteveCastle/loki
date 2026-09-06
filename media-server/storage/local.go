@@ -200,6 +200,10 @@ func (b *LocalBackend) Contains(path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
+// RootPath returns the backend's root directory as configured (cleaned).
+// Unlike Root it does no I/O, so it is safe to call per path.
+func (b *LocalBackend) RootPath() string { return b.rootPath }
+
 // Root returns the Entry representing the backend's root directory.
 func (b *LocalBackend) Root() Entry {
 	info, err := os.Stat(b.rootPath)

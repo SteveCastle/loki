@@ -54,7 +54,7 @@ func init() {
 	// Register built-in tasks
 	RegisterTask("wait", "Wait", nil, waitFn)
 	RegisterTask("remove", "Remove Media", nil, removeFromDB)
-	RegisterTask("cleanup", "CleanUp", nil, cleanUpFn)
+	RegisterTask("cleanup", "Clean Up Missing Media", cleanupOptions, cleanUpFn)
 	RegisterTask("thumbnail-cleanup", "Clean Up Orphaned Thumbnails", thumbnailCleanupOptions, thumbnailCleanupTask)
 	RegisterTask("autotag", "Auto Tag (ONNX)", itemOpTaskOptions("autotag"), makeItemOpTaskFn("autotag"))
 	RegisterTask("embed", "Visual Embedding (ONNX)", itemOpTaskOptions("embed"), makeItemOpTaskFn("embed"))

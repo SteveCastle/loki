@@ -1,6 +1,15 @@
 .GridSizePicker {
   display: grid;
   cursor: pointer;
+  /* Cell edge. 12px is fine under a mouse; a fingertip needs more to land
+     on the intended cell (the 16x16 static grid still fits the palette). */
+  --grid-cell: 12px;
+}
+
+@media (pointer: coarse) {
+  .GridSizePicker {
+    --grid-cell: 20px;
+  }
 }
 
 .grid-item {

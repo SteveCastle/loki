@@ -25,6 +25,12 @@
   height: 100%;
   width: 100%;
   overflow: scroll;
+  /* Touch is handled entirely by touch-gestures.ts (one finger pans, two
+     pinch-zoom). Native touch scrolling would race it: Safari treats ANY
+     multi-finger drag as a pan of the nearest scroller and cancels the
+     pointer stream the moment it starts, so a pinch never gets to run. */
+  touch-action: none;
+  overscroll-behavior: contain;
   display: grid;
   grid-template-rows: 100%;
   grid-template-columns: 100%;

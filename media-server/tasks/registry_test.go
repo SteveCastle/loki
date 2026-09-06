@@ -28,7 +28,7 @@ func TestGetTasks(t *testing.T) {
 		{"ffmpeg-screenshot", "FFmpeg Screenshot"},
 		{"ffmpeg-thumbnail", "FFmpeg Thumbnail"},
 		{"remove", "Remove Media"},
-		{"cleanup", "CleanUp"},
+		{"cleanup", "Clean Up Missing Media"},
 		{"ingest", "Ingest Media Files"},
 		{"metadata", "Generate Metadata (Legacy)"},
 		{"move", "Move Media Files"},

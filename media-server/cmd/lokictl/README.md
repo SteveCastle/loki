@@ -73,6 +73,8 @@ Run `lokictl help` for the always-current list. Highlights:
 | Library queries | `media query [--tag ... --visual ... --similar ...]`, `media search/similar/visual/image-search/metadata/tags/delete` |
 | Media data | `media describe <path> (--text D\|--clear)`, `media transcript <path> [--text T\|--clear]`, `media rate <path> [--elo E --views N --wins N --losses N]`, `media thumbs <path> [--regenerate]`, `media generate <path> --type T [--wait]` |
 | Library bookkeeping | `media move <from> <to> [--prefix] [--dry-run]` (you moved the file; re-point the DB), `media forget <path> --yes` (drop every DB reference, keep the file) |
+| Missing media | `media cleanup [--dir D] [--dry-run] [--max-missing-percent N] [--skip-orphans] [--detach]` — forget media whose files no longer exist, removing every tag/embedding/face/battle row that names them and sweeping dangling rows; scans then re-verifies before deleting, skips offline volumes, and holds back any volume with more than N% missing (default 50) |
+| Thumbnail cache | `media thumbnail-cleanup [--dir D] [--dry-run] [--db PATH]... [--no-discover] [--manifest FILE] [--detach]` — delete cached thumbnails no library still names. Every SQLite database beside the configured one counts as a library sharing the cache; `--db` adds others, `--manifest` writes per-file ownership, `--dir` scopes to a folder (recursive) and names the media path of every file it removes |
 | Embeddings index | `index status/models/rebuild`, `index missing [--model M]`, `index get <path> [--vector]`, `index delete <path> --yes`, `index prune --yes`, `index embed [args...] [--wait]` |
 | Raw SQL (read-only) | `db query "SELECT ..." [--arg V]`, `db tables`, `db schema [table]` |
 | Taxonomy | `taxonomy [--category C]`, `tag create/delete/rename/move/assign/unassign/assign-bulk/unassign-bulk`, `tag list/count/weight/has/timestamp/assignment-weight`, `category create/delete/rename/count` |
@@ -101,6 +103,27 @@ lokictl job run metadata --type description --apply all "C:/pics/x.jpg" --wait -
 ```sh
 lokictl job run ffmpeg-scale --width 1280 "C:/vids/in.mp4" --follow
 # stdout lines stream to stderr; final job JSON lands on stdout
+```
+
+**Forget media that no longer exists** (two passes: scan, then re-verify; a
+volume with most of its items missing is held back, not purged):
+
+```sh
+lokictl media cleanup --dry-run                        # report only, whole library
+lokictl media cleanup --dir "D:/photos/2019" --dry-run   # bounded test
+lokictl media cleanup                                  # forget missing items + sweep dangling sidecar rows
+lokictl media cleanup --max-missing-percent 100        # a volume is gone for good: purge it deliberately
+```
+
+**Reclaim thumbnail cache space** (the task log streams to stderr; the
+final job JSON on stdout carries the whole log in `stdout`):
+
+```sh
+lokictl media thumbnail-cleanup --dry-run --manifest C:/tmp/thumbs.tsv   # who needs what: ownership report + per-file TSV
+lokictl media thumbnail-cleanup --dir "D:/photos/2019" --dry-run   # bounded test: lists each file and the media path it belonged to
+lokictl media thumbnail-cleanup --dir "D:/photos/2019"             # delete, that folder only
+lokictl media thumbnail-cleanup --dry-run                          # whole cache, report only
+lokictl media thumbnail-cleanup                                    # whole cache, delete
 ```
 
 **Ask the database anything (read-only, bind args via `?`):**

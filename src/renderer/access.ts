@@ -11,6 +11,10 @@ export interface AccessInfo {
   // Server-configured folder a fresh session opens instead of the picker
   // (signed-in web sessions only; '' = no default).
   defaultStartPath: string;
+  // The cookie session's JWT (web, signed in via the server's /login page).
+  // Injected as the machine's authToken so the SPA's server features work
+  // without a second sign-in through the palette's login widget.
+  token: string | null;
 }
 
 // Flag-off + logged-out never renders the SPA (the server 302s /app/ to
@@ -28,6 +32,7 @@ let cached: AccessInfo = {
   publicAccess: false,
   canWrite: true,
   defaultStartPath: '',
+  token: null,
 };
 
 // Fetches /auth/status before the state machine starts so canWrite is
@@ -49,6 +54,7 @@ export async function initAccess(): Promise<AccessInfo> {
       }),
       defaultStartPath:
         typeof data.defaultStartPath === 'string' ? data.defaultStartPath : '',
+      token: typeof data.token === 'string' && data.token ? data.token : null,
     };
   } catch {
     // Server unreachable: keep the permissive default — the server still

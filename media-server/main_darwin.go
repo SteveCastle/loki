@@ -2333,6 +2333,14 @@ func authStatusHandler(deps *Dependencies) http.HandlerFunc {
 			"username":         claims.Username,
 			"publicAccess":     appconfig.Get().AllowPublicAccess,
 			"defaultStartPath": appconfig.Get().DefaultStartPath,
+			// The embedded SPA is served on this cookie session but talks
+			// to the API with a Bearer token, and gates its server features
+			// on having one. Handing the session's JWT over makes a /login
+			// sign-in a full sign-in inside the app, instead of the app
+			// asking for credentials a second time. The cookie is HttpOnly
+			// only to keep it out of document.cookie; the SPA already
+			// keeps the same JWT from /auth/login in its own storage.
+			"token": cookie.Value,
 		})
 	}
 }

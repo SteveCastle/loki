@@ -682,7 +682,9 @@ const getInitialContext = (): LibraryState => {
       volume: batched['volume'] as number,
       alwaysOnTop: batched['alwaysOnTop'] as boolean,
       layoutMode: batched['layoutMode'] as 'grid' | 'masonry',
-      useHLS: batched['useHLS'] as boolean,
+      // Forced off where the platform cannot stream HLS (Electron), even if
+      // an older session persisted it as on.
+      useHLS: !!capabilities.hlsStreaming && (batched['useHLS'] as boolean),
       subtitlesEnabled: batched['subtitlesEnabled'] as boolean,
       showDescriptionOverlay: batched['showDescriptionOverlay'] as boolean,
       descriptionOverlaySize: batched['descriptionOverlaySize'] as number,
@@ -3343,6 +3345,11 @@ const GlobalStateProviderInner = (props: Props) => {
       libraryMachine.withContext({
         ...(libraryMachine.context as LibraryState),
         canWrite: getAccess().canWrite,
+        // Web: the cookie session's token wins over anything stored from an
+        // earlier widget login, which may be stale.
+        authToken:
+          getAccess().token ??
+          (libraryMachine.context as LibraryState).authToken,
       }),
     []
   );

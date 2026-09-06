@@ -19,6 +19,33 @@ html,
   padding: 0;
 }
 
+/* The app never scrolls as a page: every scrollable surface (list, detail,
+   taxonomy, metadata) is its own overflow container. On iPad the page was
+   scrolling anyway — a touch drag that hit the edge of a scroller (or started
+   on something that isn't one) chained to the document and rubber-banded the
+   whole UI. Pin the body to the viewport so the document has nothing to
+   scroll, and stop scroll chaining at the root. No-op on desktop, where the
+   root already fills the window. */
+html {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  /* The browser must never zoom the page: the detail view has its own pinch
+     (zoom) and everything else is UI. `manipulation` is the value WebKit
+     reliably treats as "no double-tap zoom" (pan-x pan-y is not — a double
+     tap on the list still smart-zoomed, which on a position:fixed body
+     looks like a freeze). It leaves pinch-zoom to the browser in principle,
+     so that is blocked separately by the gesturestart/touchmove guards in
+     useBlockBrowserPinchZoom. */
+  touch-action: manipulation;
+}
+
 @font-face {
   font-family: open-sans;
   src: url(../../assets/fonts/OpenSans-Regular.ttf);
@@ -37,6 +64,21 @@ body {
 * {
   box-sizing: border-box;
   user-select: none;
+  /* Safari needs the prefixed property, and iOS also needs the long-press
+     callout (image preview / copy sheet) off, or a long press selects and
+     shows a menu instead of opening the palette. */
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Editable fields must keep selection: iOS Safari refuses to focus (and so to
+   type into) an input whose -webkit-user-select is none. */
+input,
+textarea,
+[contenteditable],
+[contenteditable] * {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 *:focus {
