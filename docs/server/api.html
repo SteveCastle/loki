@@ -64,7 +64,7 @@
         Every endpoint served by Lowkey Media Server.
       </p>
       <p class="info">
-        Base URL <span class="os">http://localhost:10111</span>
+        All paths are relative to your server's address
       </p>
       <p class="version">Version 2.30.0</p>
       <div class="header-links">
@@ -131,9 +131,11 @@
       <section id="conventions">
         <h2>Conventions</h2>
         <p>
-          The server listens on port 10111 by default (<code>LOWKEY_PORT</code>
-          or the <code>port</code> config key). All paths below are relative to
-          the base URL. Request bodies are JSON unless a table says otherwise.
+          All paths below are relative to wherever your server is reachable:
+          its host and port, or the address of a reverse proxy in front of it.
+          The port is 10111 unless changed with <code>LOWKEY_PORT</code> or the
+          <code>port</code> config key. Request bodies are JSON unless a table
+          says otherwise.
           Responses are JSON with <code>Content-Type: application/json</code>
           unless a table says otherwise. Booleans in query strings are the
           literal strings <code>true</code> and <code>false</code>.
@@ -495,7 +497,7 @@
           <tr><td><code>progress</code></td><td><code>{"updateType": "progress", "id": "&lt;jobId&gt;", "done": n, "total": n}</code>.</td></tr>
         </table>
         <div class="code-block">
-          <code>const es = new EventSource('http://localhost:10111/stream');</code><br>
+          <code>const es = new EventSource(serverUrl + '/stream');</code><br>
           <code>es.addEventListener('update', (e) =&gt; console.log(JSON.parse(e.data).job.state));</code><br>
           <code>es.addEventListener('stdout-' + jobId, (e) =&gt; console.log(JSON.parse(e.data).line));</code>
         </div>
