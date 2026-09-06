@@ -472,7 +472,7 @@
         </p>
 
         <h3 id="cmd-discovery">Discovery</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>health</code></td><td><code>GET /health</code></td><td>Server status, SSE connection stats, and job counts by state. No credential required.</td></tr>
           <tr><td><code>stats</code></td><td><code>GET /api/stats</code></td><td>Library statistics and metadata coverage. Returns <code>{"ready": false}</code> until the first snapshot has been computed after startup.</td></tr>
@@ -484,7 +484,7 @@
         <p>See <a href="#auth">Authentication</a>.</p>
 
         <h3 id="cmd-key">key</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Output</th></tr>
           <tr><td><code>key create --name N [--username U] [--save]</code></td><td><code>POST /auth/keys</code></td><td><code>{status, key, id, name, username, prefix}</code>. <code>key</code> is the plaintext, shown once.</td></tr>
           <tr><td><code>key list</code></td><td><code>GET /auth/keys</code></td><td><code>{keys: [{id, username, name, prefix, created_at, last_used_at}]}</code></td></tr>
@@ -492,7 +492,7 @@
         </table>
 
         <h3 id="cmd-job">job</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>job run &lt;task&gt; [args...] [--field k=v]... [--wait] [--follow] [--timeout D]</code></td><td><code>POST /create</code></td><td>Create a job. See <a href="#job-input">Job Input Syntax</a>.</td></tr>
           <tr><td><code>job list [--state S]</code></td><td><code>GET /jobs/list</code></td><td>All jobs. <code>--state</code> filters client-side: <code>pending</code>, <code>in_progress</code>, <code>paused</code>, <code>completed</code>, <code>cancelled</code>, <code>error</code>.</td></tr>
@@ -526,7 +526,7 @@
         </p>
 
         <h3 id="cmd-task">task</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>task list</code></td><td><code>GET /tasks</code></td><td>Every registered task with its option schema.</td></tr>
           <tr><td><code>task show &lt;id&gt;</code></td><td><code>GET /tasks</code></td><td>One task's <code>{id, name, options}</code>.</td></tr>
@@ -542,7 +542,7 @@
         </p>
 
         <h3 id="cmd-workflow">workflow</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>workflow list</code></td><td><code>GET /workflows</code></td><td>Saved workflows.</td></tr>
           <tr><td><code>workflow get &lt;id&gt;</code></td><td><code>GET /workflows/{id}</code></td><td>One saved workflow with its DAG.</td></tr>
@@ -554,7 +554,7 @@
         </table>
 
         <h3 id="cmd-media">media</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>media query [flags]</code></td><td><code>POST /api/media/query</code></td><td>Composable predicate query. See flags below.</td></tr>
           <tr><td><code>media search &lt;text&gt;</code></td><td><code>POST /api/media/search</code></td><td>Substring match on descriptions.</td></tr>
@@ -650,7 +650,7 @@
         </table>
 
         <h3 id="cmd-index">index</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>index status</code></td><td><code>GET /api/index/status</code></td><td>In-memory index state, active model, media total, count missing for the active model, orphaned vectors, and per-model stored-vector stats.</td></tr>
           <tr><td><code>index models</code></td><td><code>GET /api/index/models</code></td><td>Embedding model registry with <code>active</code> and <code>indexed</code> flags.</td></tr>
@@ -663,7 +663,7 @@
         </table>
 
         <h3 id="cmd-db">db</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>db query "SQL" [--arg V]... [--limit N] [--timeout-ms N]</code></td><td><code>POST /api/db/query</code></td><td>Run one read-only statement.</td></tr>
           <tr><td><code>db tables</code></td><td><code>POST /api/db/query</code></td><td>Tables and views.</td></tr>
@@ -683,7 +683,7 @@
         </p>
 
         <h3 id="cmd-taxonomy">taxonomy, tag, category</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>taxonomy</code></td><td><code>GET /api/taxonomy</code></td><td>Every category with its tags.</td></tr>
           <tr><td><code>taxonomy --category C</code></td><td><code>GET /api/taxonomy/tags</code></td><td>One category's tags.</td></tr>
@@ -712,7 +712,7 @@
         </p>
 
         <h3 id="cmd-deps">deps</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>deps status</code></td><td><code>GET /api/deps/status</code></td><td>State of every bundled binary, optional tool, and downloadable model.</td></tr>
           <tr><td><code>deps download &lt;model-id&gt; [--wait] [--timeout D]</code></td><td><code>POST /api/deps/models/{id}/download</code></td><td>Start a download. <code>--wait</code> polls status until installed. Default wait timeout 30m.</td></tr>
@@ -727,7 +727,7 @@
         </p>
 
         <h3 id="cmd-config">config, fs, upload</h3>
-        <table class="api-table">
+        <table>
           <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
           <tr><td><code>config get</code></td><td><code>GET /api/config</code></td><td>Active configuration. Secrets are redacted.</td></tr>
           <tr><td><code>config set --json '{...}'|@file|-</code></td><td><code>GET /api/config</code> then <code>POST /config</code></td><td>Merge fields over the current config and save. Redacted secrets and storage roots are never echoed back, so edit credentials in the web Config page.</td></tr>
