@@ -180,7 +180,7 @@
     "css-minimizer-webpack-plugin": "^4.0.0",
     "detect-port": "^2.1.0",
     "electron": "^39.2.7",
-    "electron-builder": "^26.0.12",
+    "electron-builder": "^26.15.3",
     "electron-devtools-installer": "^3.2.0",
     "electronmon": "^2.0.4",
     "eslint": "^8.36.0",
