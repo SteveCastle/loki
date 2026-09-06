@@ -527,6 +527,11 @@ tr:hover td {
   color: #64748b;
 }
 
+.task-table td:first-child,
+.api-table td code {
+  white-space: nowrap;
+}
+
 .task-table td:first-child code,
 .api-table td code {
   background-color: rgba(244, 114, 182, 0.1);
