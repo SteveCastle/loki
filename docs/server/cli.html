@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-VNSBCHX519"
+    ></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag("js", new Date());
+      gtag("config", "G-VNSBCHX519");
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="Description"
+      content="Reference documentation for lokictl, the command-line client for Lowkey Media Server: installation, authentication, output contract, and every command."
+    />
+    <meta property="og:url" content="https://lowkeyviewer.com/server/cli.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="lokictl Reference - LowKey Media Server" />
+    <meta
+      property="og:description"
+      content="Command-line reference for the Lowkey Media Server CLI."
+    />
+    <meta
+      property="og:image"
+      content="https://lowkeyviewer.com/screenshot.jpg"
+    />
+    <link rel="shortcut icon" href="../favicon.ico" type="image/x-icon" />
+    <link rel="icon" href="../favicon.ico" type="image/x-icon" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../index.css" />
+    <title>lokictl Reference - LowKey Media Server</title>
+  </head>
+  <body>
+    <header>
+      <nav class="tab-nav">
+        <a href="../" class="tab-link">
+          <img src="../logo.png" alt="Media Viewer" class="tab-icon" />
+          <span>Media Viewer</span>
+        </a>
+        <a href="./" class="tab-link active">
+          <img src="../server-icon.png" alt="Media Server" class="tab-icon" />
+          <span>Media Server</span>
+        </a>
+        <a href="../studio/" class="tab-link">
+          <img src="../studio-icon.png" alt="Studio" class="tab-icon" />
+          <span>Studio</span>
+        </a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <img src="../server-icon.png" class="logo" alt="Lowkey Media Server Logo" />
+      <h1>lokictl Reference</h1>
+      <p class="subTitle">
+        Command-line client for the Lowkey Media Server HTTP API.
+      </p>
+      <p class="info">
+        Ships with the server on <span class="os">Windows</span>, <span class="os">macOS</span>, and <span class="os">Linux</span>
+      </p>
+      <p class="version">Version 2.30.0</p>
+      <div class="header-links">
+        <a href="./" class="license-link">&larr; Server documentation</a>
+        <a href="./api.html" class="license-link">HTTP API reference &rarr;</a>
+      </div>
+    </section>
+
+    <div class="content-wrapper">
+      <nav class="toc">
+        <h2>Contents</h2>
+        <ul>
+          <li><a href="#synopsis">Synopsis</a></li>
+          <li><a href="#install">Installation</a></li>
+          <li><a href="#quick-start">Quick Start</a></li>
+          <li><a href="#connection">Connection</a>
+            <ul>
+              <li><a href="#server-resolution">Server URL Resolution</a></li>
+              <li><a href="#config-file">Config File</a></li>
+            </ul>
+          </li>
+          <li><a href="#auth">Authentication</a>
+            <ul>
+              <li><a href="#auth-browser">Browser Authorization</a></li>
+              <li><a href="#auth-password">Password Login</a></li>
+              <li><a href="#auth-keys">API Keys</a></li>
+              <li><a href="#auth-token-precedence">Token Precedence</a></li>
+              <li><a href="#auth-errors">Authentication Errors</a></li>
+            </ul>
+          </li>
+          <li><a href="#global-flags">Global Flags</a></li>
+          <li><a href="#output">Output Contract</a>
+            <ul>
+              <li><a href="#output-stdout">Standard Output</a></li>
+              <li><a href="#output-stderr">Standard Error</a></li>
+              <li><a href="#exit-codes">Exit Codes</a></li>
+              <li><a href="#destructive">Destructive Commands</a></li>
+            </ul>
+          </li>
+          <li><a href="#commands">Commands</a>
+            <ul>
+              <li><a href="#cmd-discovery">Discovery</a></li>
+              <li><a href="#cmd-login">login, whoami</a></li>
+              <li><a href="#cmd-key">key</a></li>
+              <li><a href="#cmd-job">job</a></li>
+              <li><a href="#cmd-task">task</a></li>
+              <li><a href="#cmd-workflow">workflow</a></li>
+              <li><a href="#cmd-media">media</a></li>
+              <li><a href="#cmd-media-cleanup">media cleanup</a></li>
+              <li><a href="#cmd-media-thumbnail-cleanup">media thumbnail-cleanup</a></li>
+              <li><a href="#cmd-index">index</a></li>
+              <li><a href="#cmd-db">db</a></li>
+              <li><a href="#cmd-taxonomy">taxonomy, tag, category</a></li>
+              <li><a href="#cmd-deps">deps</a></li>
+              <li><a href="#cmd-config">config, fs, upload</a></li>
+              <li><a href="#cmd-api">api</a></li>
+            </ul>
+          </li>
+          <li><a href="#job-input">Job Input Syntax</a></li>
+          <li><a href="#dag-format">Workflow DAG Format</a></li>
+          <li><a href="#recipes">Recipes</a></li>
+          <li><a href="#env">Environment Variables</a></li>
+          <li><a href="#limits">Notes and Limits</a></li>
+        </ul>
+      </nav>
+
+      <main>
+      <section id="synopsis">
+        <h2>Synopsis</h2>
+        <div class="code-block">
+          <code>lokictl [global flags] &lt;command&gt; [subcommand] [arguments] [command flags]</code>
+        </div>
+        <p>
+          <code>lokictl</code> is a client for the Lowkey Media Server
+          <a href="./api.html">HTTP API</a>. Every command maps to one or more API
+          calls. Results are written to standard output as JSON. Errors are written
+          to standard error as a single JSON object. Exit codes are stable. The
+          tool is designed to be driven by scripts and AI agents as well as by
+          people.
+        </p>
+        <p>
+          Global flags must appear before the command name. Flags that follow the
+          command belong to that command. Run <code>lokictl help</code> to print
+          the command table for the installed version.
+        </p>
+      </section>
+
+      <section id="install">
+        <h2>Installation</h2>
+        <p>
+          The binary ships alongside the server in every release package.
+        </p>
+        <table>
+          <tr><th>Platform</th><th>Location after install</th></tr>
+          <tr><td>Windows (installer)</td><td><code>lokictl.exe</code> in the server's install directory, next to <code>media-server.exe</code></td></tr>
+          <tr><td>Windows (zip)</td><td><code>lokictl.exe</code> at the archive root</td></tr>
+          <tr><td>Linux (tar.gz)</td><td><code>lokictl</code> at the archive root, next to <code>lowkeymediaserver</code></td></tr>
+          <tr><td>macOS (dmg)</td><td><code>lokictl</code> inside the application bundle, next to the <code>lowkeymediaserver</code> binary</td></tr>
+          <tr><td>Docker image</td><td>Not included. Download a release archive for the host platform and point it at the container with <code>--server</code>.</td></tr>
+        </table>
+        <p>
+          The binary has no runtime dependencies. Copy it anywhere on the
+          <code>PATH</code>. To build from source, run the following from the
+          repository root:
+        </p>
+        <div class="code-block">
+          <code>npm run build:cli</code><br>
+          <code># equivalent:</code><br>
+          <code>cd media-server &amp;&amp; go build -o lokictl ./cmd/lokictl</code>
+        </div>
+      </section>
+
+      <section id="quick-start">
+        <h2>Quick Start</h2>
+        <ol>
+          <li>
+            Confirm the server is reachable. No credential is required.
+            <div class="code-block"><code>lokictl health</code></div>
+          </li>
+          <li>
+            Authorize the CLI. This opens a browser page on the server, signs
+            you in if needed, and stores a long-lived API key in the CLI config
+            file.
+            <div class="code-block"><code>lokictl login</code></div>
+            On a machine without a browser, use a password instead:
+            <div class="code-block"><code>lokictl login --password &lt;password&gt; --username &lt;user&gt;</code></div>
+          </li>
+          <li>
+            Verify the stored credential.
+            <div class="code-block"><code>lokictl whoami</code></div>
+          </li>
+          <li>
+            List the tasks the server can run, then run one and wait for it.
+            <div class="code-block">
+              <code>lokictl task list -o table</code><br>
+              <code>lokictl task show describe</code><br>
+              <code>lokictl job run describe --apply missing "D:/photos/2024" --wait --timeout 30m</code>
+            </div>
+          </li>
+          <li>
+            Query the library.
+            <div class="code-block">
+              <code>lokictl media query --tag sunset --exclude-tag blurry</code><br>
+              <code>lokictl media visual "a red car in the snow" --limit 20</code><br>
+              <code>lokictl db query "SELECT COUNT(*) FROM media"</code>
+            </div>
+          </li>
+        </ol>
+        <p>
+          To use a remote server, set <code>LOKICTL_SERVER</code> or pass
+          <code>--server</code> before <code>login</code>. The stored config
+          then carries both the URL and the key.
+        </p>
+        <div class="code-block">
+          <code>lokictl --server http://nas.local:10111 login</code>
+        </div>
+      </section>
+
+      <section id="connection">
+        <h2>Connection</h2>
+
+        <h3 id="server-resolution">Server URL Resolution</h3>
+        <p>
+          The base URL is resolved from the first source that supplies a value,
+          in this order:
+        </p>
+        <ol>
+          <li><code>--server</code> flag</li>
+          <li><code>LOKICTL_SERVER</code> environment variable</li>
+          <li><code>server</code> field in the <a href="#config-file">config file</a></li>
+          <li>Auto-detected default: <code>http://localhost:&lt;port&gt;</code></li>
+        </ol>
+        <p>
+          The auto-detected port is <code>LOWKEY_PORT</code> if set, otherwise the
+          <code>port</code> field of the local server's own <code>config.json</code>
+          (in the server data directory), otherwise <code>10111</code>. A CLI on
+          the same machine as the server therefore follows the server's port
+          without configuration.
+        </p>
+        <p>
+          The base URL is used verbatim as a prefix. Include the scheme. Do not
+          include a trailing path. A reverse proxy that terminates TLS is
+          supported with an <code>https://</code> URL.
+        </p>
+
+        <h3 id="config-file">Config File</h3>
+        <p>
+          <code>lokictl login</code> and <code>lokictl key create --save</code>
+          write a JSON file with two optional fields. The file is created with
+          mode <code>0600</code> and its directory with <code>0700</code>.
+        </p>
+        <table>
+          <tr><th>Platform</th><th>Path</th></tr>
+          <tr><td>Windows</td><td><code>%APPDATA%\lokictl\config.json</code></td></tr>
+          <tr><td>Linux</td><td><code>$XDG_CONFIG_HOME/lokictl/config.json</code> (default <code>~/.config/lokictl/config.json</code>)</td></tr>
+          <tr><td>macOS</td><td><code>~/Library/Application Support/lokictl/config.json</code></td></tr>
+        </table>
+        <p>Set <code>LOKICTL_CONFIG_DIR</code> to relocate the directory.</p>
+        <div class="code-block">
+          <code>{</code><br>
+          <code>  "server": "http://nas.local:10111",</code><br>
+          <code>  "token": "lk_..."</code><br>
+          <code>}</code>
+        </div>
+        <p>
+          The file may be written by hand. Either field may be omitted. A
+          missing file is not an error.
+        </p>
+      </section>
+
+      <section id="auth">
+        <h2>Authentication</h2>
+        <p>
+          Every endpoint except <code>/health</code> requires a credential unless
+          the server has <em>Allow Public Access</em> enabled, in which case
+          read-only endpoints accept anonymous requests. The CLI sends its token
+          as <code>Authorization: Bearer &lt;token&gt;</code> on every request.
+          Two kinds of token are accepted:
+        </p>
+        <table>
+          <tr><th>Token</th><th>Prefix</th><th>Lifetime</th><th>Revocable</th><th>Obtained by</th></tr>
+          <tr><td>API key</td><td><code>lk_</code></td><td>Until revoked</td><td>Yes (<code>lokictl key revoke</code>, or Config &rarr; API Keys in the web UI)</td><td><code>lokictl login</code> (browser flow), <code>lokictl key create</code>, web UI</td></tr>
+          <tr><td>JWT</td><td>none</td><td>1 year</td><td>No (rotate the server's JWT secret to invalidate all)</td><td><code>lokictl login --password</code>, <code>POST /auth/login</code></td></tr>
+        </table>
+        <p>
+          API keys are the recommended credential for the CLI. They are tied to a
+          user, named, listable, and individually revocable.
+        </p>
+
+        <h3 id="auth-browser">Browser Authorization</h3>
+        <div class="code-block">
+          <code>lokictl login</code><br>
+          <code>lokictl login --no-browser</code>
+        </div>
+        <p>
+          The default login is a loopback authorization flow (RFC 8252 with PKCE).
+          The sequence is:
+        </p>
+        <ol>
+          <li>The CLI opens a listener on an ephemeral <code>127.0.0.1</code> port and generates a random state value and a PKCE code verifier.</li>
+          <li>The CLI opens the system browser at <code>&lt;server&gt;/auth/cli/authorize</code> with the port, state, code challenge, and a key name (<code>lokictl@&lt;hostname&gt;</code>). With <code>--no-browser</code>, the URL is printed instead.</li>
+          <li>If the browser has no server session, the server redirects to <code>/login</code> and back.</li>
+          <li>The server shows an approval page naming the user, the key name, and the loopback port. Approving redirects the browser to <code>http://127.0.0.1:&lt;port&gt;/callback</code> with a one-time code. Denying redirects with <code>error=access_denied</code>.</li>
+          <li>The CLI exchanges the code and its verifier at <code>POST /auth/cli/token</code>. The server mints a new <code>lk_</code> API key owned by the approving user and returns it.</li>
+          <li>The CLI writes the key and the server URL to the <a href="#config-file">config file</a> and prints the key metadata.</li>
+        </ol>
+        <p>
+          Constraints:
+        </p>
+        <ul>
+          <li>The browser must run on the same machine as the CLI. The callback is a loopback address. Over SSH, use <a href="#auth-password">password login</a>.</li>
+          <li>The one-time code expires two minutes after approval. The CLI stops waiting for the browser after three minutes and exits 1 with a hint to use <code>--password</code>.</li>
+          <li>The server refuses to authorize the CLI while the temporary <code>admin</code>/<code>admin</code> account is the only user. Complete first-run setup first.</li>
+          <li>Each successful login creates a new key. Old keys remain valid until revoked. Use <code>lokictl key list</code> to audit them.</li>
+        </ul>
+
+        <h3 id="auth-password">Password Login</h3>
+        <div class="code-block">
+          <code>lokictl login --password &lt;password&gt; [--username &lt;user&gt;]</code>
+        </div>
+        <table>
+          <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          <tr><td><code>--password P</code></td><td></td><td>Password. Presence of this flag selects the password flow.</td></tr>
+          <tr><td><code>--username U</code></td><td><code>admin</code></td><td>Username.</td></tr>
+        </table>
+        <p>
+          Calls <code>POST /auth/login</code> and stores the returned JWT in the
+          config file. JWTs issued to API clients are valid for one year and
+          cannot be revoked individually. A warning is printed if the login
+          succeeded as the temporary default admin, since most endpoints return
+          403 until a real user exists.
+        </p>
+
+        <h3 id="auth-keys">API Keys</h3>
+        <div class="code-block">
+          <code>lokictl key create --name &lt;name&gt; [--username &lt;user&gt;] [--save]</code><br>
+          <code>lokictl key list</code><br>
+          <code>lokictl key revoke --id &lt;id&gt;</code>
+        </div>
+        <table>
+          <tr><th>Flag</th><th>Description</th></tr>
+          <tr><td><code>--name N</code></td><td>Required. Display name for the key.</td></tr>
+          <tr><td><code>--username U</code></td><td>Owner. Defaults to the user the current credential authenticates as.</td></tr>
+          <tr><td><code>--save</code></td><td>Write the new key to the config file as this CLI's token.</td></tr>
+          <tr><td><code>--id N</code></td><td>Numeric key id from <code>key list</code>.</td></tr>
+        </table>
+        <p>
+          The plaintext key is returned once, in the <code>key</code> field of the
+          <code>create</code> response. The server stores only a hash. The
+          <code>list</code> output shows id, owner, name, prefix, creation time,
+          and last-used time.
+        </p>
+        <p>
+          A key may also be presented in an <code>X-API-Key</code> header. The
+          CLI always uses the <code>Authorization</code> header.
+        </p>
+
+        <h3 id="auth-token-precedence">Token Precedence</h3>
+        <ol>
+          <li><code>--token</code> flag</li>
+          <li><code>LOKICTL_TOKEN</code> environment variable</li>
+          <li><code>token</code> field in the config file</li>
+          <li>No credential. Only <code>/health</code> and, with public access enabled, read-only endpoints succeed.</li>
+        </ol>
+
+        <h3 id="auth-errors">Authentication Errors</h3>
+        <table>
+          <tr><th>HTTP status</th><th>Meaning</th><th>Action</th></tr>
+          <tr><td>401</td><td>No credential, an expired JWT, or a revoked key.</td><td>Run <code>lokictl login</code> again, or create a new key.</td></tr>
+          <tr><td>403 with <code>setup_required</code></td><td>Authenticated as the temporary default admin.</td><td>Complete first-run setup in a browser.</td></tr>
+          <tr><td>403 (other)</td><td>Cross-origin or same-origin check failed on the authorize page.</td><td>Retry the login from a browser on the same machine.</td></tr>
+        </table>
+      </section>
+
+      <section id="global-flags">
+        <h2>Global Flags</h2>
+        <p>Global flags are recognized only before the command name.</p>
+        <table>
+          <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          <tr><td><code>--server URL</code></td><td>see <a href="#server-resolution">resolution</a></td><td>Server base URL.</td></tr>
+          <tr><td><code>--token TOKEN</code></td><td>see <a href="#auth-token-precedence">precedence</a></td><td>API key or JWT.</td></tr>
+          <tr><td><code>-o, --output json|table</code></td><td><code>json</code></td><td>Output format. <code>table</code> renders arrays of flat objects as tab-separated rows with a header line. Values that are not arrays of objects fall back to JSON.</td></tr>
+          <tr><td><code>--timeout DUR</code></td><td><code>30s</code></td><td>HTTP request timeout as a Go duration (<code>90s</code>, <code>10m</code>). Streaming commands (<code>--follow</code>, <code>job logs</code>, cleanup log streams) ignore it. Commands with their own <code>--timeout</code> flag use that flag for the wait, not the request.</td></tr>
+          <tr><td><code>-q, --quiet</code></td><td>off</td><td>Suppress progress lines on stderr. Result JSON is still printed.</td></tr>
+          <tr><td><code>-h, --help</code></td><td></td><td>Print the command table and exit 0.</td></tr>
+        </table>
+        <p>
+          Flags accept both <code>--flag value</code> and <code>--flag=value</code>.
+        </p>
+      </section>
+
+      <section id="output">
+        <h2>Output Contract</h2>
+
+        <h3 id="output-stdout">Standard Output</h3>
+        <p>
+          On success, stdout carries exactly one JSON document, pretty-printed with
+          two-space indentation and without HTML escaping. The document is the
+          server response for the primary API call, or a CLI-composed object for
+          commands that make several calls. Commands that await a job print the
+          final job object.
+        </p>
+        <p>
+          With <code>-o table</code>, an array of objects is printed as TSV: a
+          header row of the first element's keys in order, followed by any
+          additional keys found in later elements sorted alphabetically, then one
+          row per element. Nested values are JSON-encoded inside the cell.
+        </p>
+
+        <h3 id="output-stderr">Standard Error</h3>
+        <p>
+          On failure, stderr carries exactly one JSON object on one line:
+        </p>
+        <div class="code-block">
+          <code>{"error": "&lt;message&gt;", "status": 404, "hint": "&lt;suggestion&gt;", "detail": &lt;parsed server body&gt;}</code>
+        </div>
+        <table>
+          <tr><th>Field</th><th>Present when</th><th>Description</th></tr>
+          <tr><td><code>error</code></td><td>always</td><td>Human-readable message.</td></tr>
+          <tr><td><code>status</code></td><td>HTTP error</td><td>HTTP status code returned by the server.</td></tr>
+          <tr><td><code>hint</code></td><td>known condition</td><td>Suggested next action (for example, re-run <code>login</code> on 401).</td></tr>
+          <tr><td><code>detail</code></td><td>server body is JSON</td><td>The server's error body, parsed.</td></tr>
+        </table>
+        <p>
+          Usage errors print <code>{"error": "usage: ..."}</code> followed by the
+          command's flag list. Progress output from <code>--follow</code>,
+          <code>--wait</code>, and streamed task logs is also written to stderr as
+          plain lines, so stdout remains parseable.
+        </p>
+
+        <h3 id="exit-codes">Exit Codes</h3>
+        <table>
+          <tr><th>Code</th><th>Meaning</th></tr>
+          <tr><td><code>0</code></td><td>Success.</td></tr>
+          <tr><td><code>1</code></td><td>Server returned an error status, or a network failure occurred.</td></tr>
+          <tr><td><code>2</code></td><td>Usage error: unknown command, missing argument, invalid flag, or a destructive command without <code>--yes</code>.</td></tr>
+          <tr><td><code>3</code></td><td>An awaited job or workflow ended in <code>error</code> or <code>cancelled</code>, or the wait timed out.</td></tr>
+        </table>
+
+        <h3 id="destructive">Destructive Commands</h3>
+        <p>
+          The following commands exit 2 without contacting the server unless
+          <code>--yes</code> is present:
+        </p>
+        <p>
+          <code>job clear</code>, <code>media delete</code>, <code>media forget</code>,
+          <code>tag delete</code>, <code>tag unassign-bulk</code>,
+          <code>category delete</code>, <code>workflow delete</code>,
+          <code>deps delete</code>, <code>index delete</code>, <code>index prune</code>.
+        </p>
+        <p>
+          <code>media cleanup</code> and <code>media thumbnail-cleanup</code> delete
+          data without <code>--yes</code>. Use <code>--dry-run</code> first.
+        </p>
+      </section>
+
+      <section id="commands">
+        <h2>Commands</h2>
+        <p>
+          Each entry lists the command form, its flags, the API endpoint it calls,
+          and the shape of its output. Angle brackets mark required positional
+          arguments; square brackets mark optional ones. Media paths are the
+          absolute paths stored in the library (or <code>s3://bucket/key</code>
+          for object storage roots).
+        </p>
+
+        <h3 id="cmd-discovery">Discovery</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>health</code></td><td><code>GET /health</code></td><td>Server status, SSE connection stats, and job counts by state. No credential required.</td></tr>
+          <tr><td><code>stats</code></td><td><code>GET /api/stats</code></td><td>Library statistics and metadata coverage. Returns <code>{"ready": false}</code> until the first snapshot has been computed after startup.</td></tr>
+          <tr><td><code>whoami</code></td><td><code>GET /auth/status</code></td><td>The user the current token authenticates as, plus <code>publicAccess</code> and <code>defaultStartPath</code>.</td></tr>
+          <tr><td><code>help</code></td><td></td><td>Print the command table.</td></tr>
+        </table>
+
+        <h3 id="cmd-login">login, whoami</h3>
+        <p>See <a href="#auth">Authentication</a>.</p>
+
+        <h3 id="cmd-key">key</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Output</th></tr>
+          <tr><td><code>key create --name N [--username U] [--save]</code></td><td><code>POST /auth/keys</code></td><td><code>{status, key, id, name, username, prefix}</code>. <code>key</code> is the plaintext, shown once.</td></tr>
+          <tr><td><code>key list</code></td><td><code>GET /auth/keys</code></td><td><code>{keys: [{id, username, name, prefix, created_at, last_used_at}]}</code></td></tr>
+          <tr><td><code>key revoke --id N</code></td><td><code>DELETE /auth/keys?id=N</code></td><td><code>{status: "deleted"}</code></td></tr>
+        </table>
+
+        <h3 id="cmd-job">job</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>job run &lt;task&gt; [args...] [--field k=v]... [--wait] [--follow] [--timeout D]</code></td><td><code>POST /create</code></td><td>Create a job. See <a href="#job-input">Job Input Syntax</a>.</td></tr>
+          <tr><td><code>job list [--state S]</code></td><td><code>GET /jobs/list</code></td><td>All jobs. <code>--state</code> filters client-side: <code>pending</code>, <code>in_progress</code>, <code>paused</code>, <code>completed</code>, <code>cancelled</code>, <code>error</code>.</td></tr>
+          <tr><td><code>job get &lt;id&gt;</code></td><td><code>GET /jobs/list</code></td><td>One job object.</td></tr>
+          <tr><td><code>job wait &lt;id&gt; [--timeout D]</code></td><td><code>GET /jobs/list</code> (polled)</td><td>Block until the job is terminal. Prints the final job. Exit 3 on error, cancel, or timeout. <code>--timeout 0</code> (default) waits forever.</td></tr>
+          <tr><td><code>job logs &lt;id&gt;</code></td><td><code>GET /stream</code></td><td>Stream a running job's stdout lines. Output is not persisted by the server; this works only while the job runs.</td></tr>
+          <tr><td><code>job cancel &lt;id&gt;</code></td><td><code>POST /job/{id}/cancel</code></td><td>Cancel a pending or running job.</td></tr>
+          <tr><td><code>job pause &lt;id&gt;</code></td><td><code>POST /job/{id}/pause</code></td><td>Pause at the next item boundary. Completed items are kept.</td></tr>
+          <tr><td><code>job resume &lt;id&gt;</code></td><td><code>POST /job/{id}/resume</code></td><td>Resume a paused job.</td></tr>
+          <tr><td><code>job copy &lt;id&gt;</code></td><td><code>POST /job/{id}/copy</code></td><td>Clone into a new pending job. Prints <code>{id, message}</code>.</td></tr>
+          <tr><td><code>job remove &lt;id&gt;</code></td><td><code>POST /job/{id}/remove</code></td><td>Delete the job record.</td></tr>
+          <tr><td><code>job clear --yes</code></td><td><code>POST /jobs/clear</code></td><td>Delete every finished job. Running, pending, and paused jobs are kept. Prints <code>{cleared_count, message}</code>.</td></tr>
+        </table>
+        <p>Flags for <code>job run</code>:</p>
+        <table>
+          <tr><th>Flag</th><th>Description</th></tr>
+          <tr><td><code>--field k=v</code></td><td>Send an option value verbatim as <code>--k v</code>, bypassing the server's token splitter. Repeatable. Use this for values containing spaces, quotes, or newlines.</td></tr>
+          <tr><td><code>--wait</code></td><td>Poll until the job is terminal and print the final job object. Exit 3 on error, cancel, or timeout.</td></tr>
+          <tr><td><code>--follow</code></td><td>Subscribe to the job's stdout over SSE and print lines to stderr while waiting. Implies <code>--wait</code>.</td></tr>
+          <tr><td><code>--timeout D</code></td><td>Maximum wait. <code>0</code> waits forever.</td></tr>
+        </table>
+        <p>
+          Job object fields: <code>id</code>, <code>command</code>,
+          <code>arguments</code>, <code>input</code>, <code>original_input</code>,
+          <code>state</code> (integer: 0 pending, 1 in progress, 2 completed,
+          3 cancelled, 4 error, 5 paused), <code>dependencies</code>,
+          <code>workflow_id</code>, <code>created_at</code>, <code>claimed_at</code>,
+          <code>completed_at</code>, <code>errored_at</code>,
+          <code>progress_done</code>, <code>progress_total</code>,
+          <code>output_files</code>, <code>source_files</code>.
+        </p>
+
+        <h3 id="cmd-task">task</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>task list</code></td><td><code>GET /tasks</code></td><td>Every registered task with its option schema.</td></tr>
+          <tr><td><code>task show &lt;id&gt;</code></td><td><code>GET /tasks</code></td><td>One task's <code>{id, name, options}</code>.</td></tr>
+        </table>
+        <p>
+          Each option has <code>name</code>, <code>label</code>, <code>type</code>
+          (<code>string</code>, <code>bool</code>, <code>enum</code>,
+          <code>multi-enum</code>, <code>number</code>), optional
+          <code>choices</code>, <code>default</code>, <code>required</code>, and
+          <code>description</code>. An option named <code>x</code> is passed to
+          <code>job run</code> as <code>--x value</code>, or <code>--x</code> alone
+          for booleans.
+        </p>
+
+        <h3 id="cmd-workflow">workflow</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>workflow list</code></td><td><code>GET /workflows</code></td><td>Saved workflows.</td></tr>
+          <tr><td><code>workflow get &lt;id&gt;</code></td><td><code>GET /workflows/{id}</code></td><td>One saved workflow with its DAG.</td></tr>
+          <tr><td><code>workflow create --name N --dag FILE|-</code></td><td><code>POST /workflows/create</code></td><td>Save a workflow. See <a href="#dag-format">DAG Format</a>.</td></tr>
+          <tr><td><code>workflow update &lt;id&gt; [--name N] [--dag FILE|-]</code></td><td><code>PUT /workflows/{id}</code></td><td>Replace the name, the DAG, or both. Omitted fields keep their current value.</td></tr>
+          <tr><td><code>workflow delete &lt;id&gt; --yes</code></td><td><code>DELETE /workflows/{id}</code></td><td>Delete a saved workflow.</td></tr>
+          <tr><td><code>workflow run &lt;id&gt; [--input S] [--wait] [--timeout D]</code></td><td><code>POST /workflows/{id}/run</code></td><td>Instantiate the DAG as jobs. <code>--input</code> is injected into the root tasks. Prints <code>{ids}</code>, or with <code>--wait</code>, the final job objects. <code>--timeout</code> is per job.</td></tr>
+          <tr><td><code>workflow run-adhoc --dag FILE|- [--wait] [--timeout D]</code></td><td><code>POST /workflow</code></td><td>Run a DAG without saving it.</td></tr>
+        </table>
+
+        <h3 id="cmd-media">media</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>media query [flags]</code></td><td><code>POST /api/media/query</code></td><td>Composable predicate query. See flags below.</td></tr>
+          <tr><td><code>media search &lt;text&gt;</code></td><td><code>POST /api/media/search</code></td><td>Substring match on descriptions.</td></tr>
+          <tr><td><code>media similar &lt;path&gt; [--limit N]</code></td><td><code>GET /api/media/similar</code></td><td>Items visually similar to a library item, ranked. Default limit 50.</td></tr>
+          <tr><td><code>media visual &lt;text&gt; [--limit N]</code></td><td><code>GET /api/media/search/visual</code></td><td>Text-to-image search over the embedding index. Default limit 50.</td></tr>
+          <tr><td><code>media image-search &lt;image-file&gt;</code></td><td><code>POST /api/media/search/image</code></td><td>Reverse image search with a local file (uploaded as the request body, 32 MB cap).</td></tr>
+          <tr><td><code>media metadata &lt;path&gt;</code></td><td><code>POST /api/media/metadata</code></td><td>Width, height, size, description, transcript, hash, and (video) duration.</td></tr>
+          <tr><td><code>media tags &lt;path&gt;</code></td><td><code>POST /api/media/tags</code></td><td>Tags on one item with category, weight, and timestamp.</td></tr>
+          <tr><td><code>media describe &lt;path&gt; (--text D | --clear)</code></td><td><code>POST /api/media/description</code></td><td>Set or clear the description.</td></tr>
+          <tr><td><code>media transcript &lt;path&gt; [--text T | --clear]</code></td><td><code>POST /api/media/transcript</code></td><td>Read (no flags), set, or clear the transcript.</td></tr>
+          <tr><td><code>media rate &lt;path&gt; [--elo E] [--views N] [--wins N] [--losses N]</code></td><td><code>POST /api/media/rating</code></td><td>Read (no flags) or set Battle Mode rating fields. Only supplied fields change.</td></tr>
+          <tr><td><code>media thumbs &lt;path&gt; [--regenerate] [--cache C] [--timestamp S]</code></td><td><code>POST /api/thumbnails</code>, <code>POST /api/thumbnails/regenerate</code></td><td>List cached thumbnails, or regenerate one. <code>--cache</code> is <code>thumbnail_path_100</code>, <code>thumbnail_path_600</code> (default), or <code>thumbnail_path_1200</code>. <code>--timestamp</code> selects the video frame.</td></tr>
+          <tr><td><code>media generate &lt;path&gt; --type T [--field k=v]... [--wait] [--follow] [--timeout D]</code></td><td><code>POST /create</code></td><td>Run the <code>metadata</code> task for one item. <code>--type</code> is <code>description</code>, <code>transcript</code>, <code>hash</code>, <code>dimensions</code>, or a comma-separated list.</td></tr>
+          <tr><td><code>media move &lt;from&gt; &lt;to&gt; [--prefix] [--dry-run]</code></td><td><code>POST /api/media/move</code></td><td>Re-point every database reference after a file or folder was moved on disk. Nothing on disk is touched.</td></tr>
+          <tr><td><code>media forget &lt;path&gt; --yes</code></td><td><code>POST /api/media/forget</code></td><td>Delete every database row that names the path. The file is kept.</td></tr>
+          <tr><td><code>media delete &lt;path&gt; --yes</code></td><td><code>POST /api/media/delete</code></td><td>Delete the item from the library. Same database effect as <code>forget</code>.</td></tr>
+        </table>
+        <p>Flags for <code>media query</code>:</p>
+        <table>
+          <tr><th>Flag</th><th>Predicate</th><th>Description</th></tr>
+          <tr><td><code>--tag T</code></td><td><code>tag</code></td><td>Require this tag. Repeatable.</td></tr>
+          <tr><td><code>--exclude-tag T</code></td><td><code>tag</code>, <code>exclude</code></td><td>Exclude this tag. Repeatable.</td></tr>
+          <tr><td><code>--path P</code></td><td><code>path</code></td><td>Path substring.</td></tr>
+          <tr><td><code>--description D</code></td><td><code>description</code></td><td>Description substring.</td></tr>
+          <tr><td><code>--hash H</code></td><td><code>hash</code></td><td>Content hash.</td></tr>
+          <tr><td><code>--similar PATH</code></td><td><code>similar</code></td><td>Rank by visual similarity to a library item.</td></tr>
+          <tr><td><code>--visual TEXT</code></td><td><code>visual</code></td><td>Rank by text-to-image similarity.</td></tr>
+          <tr><td><code>--mode AND|OR</code></td><td></td><td>How predicates combine. Default <code>AND</code>.</td></tr>
+          <tr><td><code>--predicates FILE|-</code></td><td></td><td>Raw predicate JSON array from a file or stdin. Overrides all predicate flags. Use this for <code>category</code>, <code>orientation</code>, <code>faces</code>, <code>clip</code>, <code>face</code>, per-predicate <code>join</code>, and blended <code>nodes</code>. The schema is documented in the <a href="./api.html#media-query">API reference</a>.</td></tr>
+          <tr><td><code>--limit N</code></td><td></td><td>Client-side cap on returned items. Default 50.</td></tr>
+        </table>
+        <p>
+          Query results are objects with <code>path</code>, <code>width</code>,
+          <code>height</code>, <code>elo</code>, <code>battles</code>, and, when a
+          tag predicate drives the query, <code>tagLabel</code>, <code>weight</code>,
+          and <code>timeStamp</code>. When a visual predicate is present the array
+          is ordered by descending score.
+        </p>
+        <p>Flags for <code>media move</code>:</p>
+        <table>
+          <tr><th>Flag</th><th>Description</th></tr>
+          <tr><td><code>--prefix</code></td><td>Treat both arguments as folders and move every item underneath. Matching is segment-aligned: moving <code>2023</code> does not affect <code>2023extra</code>.</td></tr>
+          <tr><td><code>--dry-run</code></td><td>Perform the move in a transaction and roll it back. Reported counts are exactly what a real run would change.</td></tr>
+        </table>
+        <p>
+          The move re-points the media row, tag assignments, embeddings, faces,
+          scan markers, and battle log in one transaction. A destination that
+          already belongs to another item returns 409 with the conflicting paths;
+          a move never merges two items.
+        </p>
+
+        <h3 id="cmd-media-cleanup">media cleanup</h3>
+        <div class="code-block">
+          <code>lokictl media cleanup [--dir D] [--dry-run] [--max-missing-percent N] [--skip-orphans] [--detach] [--timeout D]</code>
+        </div>
+        <p>
+          Runs the <code>cleanup</code> task as a job and streams its log to
+          stderr. The task forgets media whose files no longer exist, removing
+          every tag, embedding, face, and battle row that names them, then sweeps
+          dangling sidecar rows. Files are scanned, then re-verified before
+          deletion. Offline volumes are skipped. The final job object is printed
+          to stdout with the full log in <code>stdout</code>.
+        </p>
+        <table>
+          <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          <tr><td><code>--dir D</code></td><td>whole library</td><td>Restrict the scan to items under this directory.</td></tr>
+          <tr><td><code>--dry-run</code></td><td>off</td><td>Report what would be forgotten without writing.</td></tr>
+          <tr><td><code>--max-missing-percent N</code></td><td><code>50</code></td><td>Hold back any volume with more than N% of its items missing. Set to <code>100</code> to purge a volume that is gone for good.</td></tr>
+          <tr><td><code>--skip-orphans</code></td><td>off</td><td>Skip the final sweep of dangling rows.</td></tr>
+          <tr><td><code>--detach</code></td><td>off</td><td>Create the job and return its id without waiting.</td></tr>
+          <tr><td><code>--timeout D</code></td><td><code>0</code></td><td>Maximum wait.</td></tr>
+        </table>
+
+        <h3 id="cmd-media-thumbnail-cleanup">media thumbnail-cleanup</h3>
+        <div class="code-block">
+          <code>lokictl media thumbnail-cleanup [--dir D] [--dry-run] [--db PATH]... [--no-discover] [--manifest FILE] [--detach] [--timeout D]</code>
+        </div>
+        <p>
+          Runs the <code>thumbnail-cleanup</code> task as a job. It deletes cached
+          thumbnails that no library still references. Every SQLite database
+          found beside the configured one is treated as a library sharing the
+          cache, so thumbnails owned by a sibling library are kept.
+        </p>
+        <table>
+          <tr><th>Flag</th><th>Description</th></tr>
+          <tr><td><code>--dir D</code></td><td>Scope to thumbnails whose media path is under this folder (recursive). The log names the media path of every removed file.</td></tr>
+          <tr><td><code>--dry-run</code></td><td>Report only.</td></tr>
+          <tr><td><code>--db PATH</code></td><td>Add another library database to the ownership check. Repeatable.</td></tr>
+          <tr><td><code>--no-discover</code></td><td>Do not auto-discover sibling databases; use only the configured one and any <code>--db</code> values.</td></tr>
+          <tr><td><code>--manifest FILE</code></td><td>Write a TSV of every cached file and which library owns it.</td></tr>
+          <tr><td><code>--detach</code></td><td>Create the job and return without waiting.</td></tr>
+          <tr><td><code>--timeout D</code></td><td>Maximum wait.</td></tr>
+        </table>
+
+        <h3 id="cmd-index">index</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>index status</code></td><td><code>GET /api/index/status</code></td><td>In-memory index state, active model, media total, count missing for the active model, orphaned vectors, and per-model stored-vector stats.</td></tr>
+          <tr><td><code>index models</code></td><td><code>GET /api/index/models</code></td><td>Embedding model registry with <code>active</code> and <code>indexed</code> flags.</td></tr>
+          <tr><td><code>index missing [--model M] [--limit N]</code></td><td><code>GET /api/index/missing</code></td><td>Paths without an embedding. <code>--limit 0</code> returns the count only. Default 100, max 10000.</td></tr>
+          <tr><td><code>index get &lt;path&gt; [--model M] [--vector]</code></td><td><code>GET /api/embeddings</code></td><td>Stored embedding rows for one item. <code>--vector</code> includes the float array.</td></tr>
+          <tr><td><code>index delete &lt;path&gt; [--model M] --yes</code></td><td><code>DELETE /api/embeddings</code></td><td>Delete one item's vectors (all models unless <code>--model</code>).</td></tr>
+          <tr><td><code>index prune --yes</code></td><td><code>POST /api/embeddings/prune</code></td><td>Delete vectors whose media row no longer exists.</td></tr>
+          <tr><td><code>index rebuild</code></td><td><code>POST /api/index/rebuild</code></td><td>Rebuild the in-memory index for the active model. Large libraries need a longer global <code>--timeout</code>.</td></tr>
+          <tr><td><code>index embed [paths...] [--field k=v]... [--wait] [--follow] [--timeout D]</code></td><td><code>POST /create</code></td><td>Alias for <code>job run embed</code>.</td></tr>
+        </table>
+
+        <h3 id="cmd-db">db</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>db query "SQL" [--arg V]... [--limit N] [--timeout-ms N]</code></td><td><code>POST /api/db/query</code></td><td>Run one read-only statement.</td></tr>
+          <tr><td><code>db tables</code></td><td><code>POST /api/db/query</code></td><td>Tables and views.</td></tr>
+          <tr><td><code>db schema [table]</code></td><td><code>POST /api/db/query</code></td><td><code>CREATE</code> statements for one table or all.</td></tr>
+        </table>
+        <table>
+          <tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+          <tr><td><code>--arg V</code></td><td></td><td>Bind value for the next <code>?</code> placeholder. Repeatable, positional. Sent as a string; SQLite type affinity coerces it.</td></tr>
+          <tr><td><code>--limit N</code></td><td><code>1000</code></td><td>Row cap. Maximum 10000.</td></tr>
+          <tr><td><code>--timeout-ms N</code></td><td><code>5000</code></td><td>Server-side statement timeout. Maximum 30000.</td></tr>
+        </table>
+        <p>
+          The server accepts a single <code>SELECT</code> or <code>WITH</code>
+          statement and opens the connection in <code>query_only</code> mode.
+          The response is <code>{columns, rows, row_count, truncated, elapsed_ms}</code>
+          where <code>rows</code> is an array of arrays.
+        </p>
+
+        <h3 id="cmd-taxonomy">taxonomy, tag, category</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>taxonomy</code></td><td><code>GET /api/taxonomy</code></td><td>Every category with its tags.</td></tr>
+          <tr><td><code>taxonomy --category C</code></td><td><code>GET /api/taxonomy/tags</code></td><td>One category's tags.</td></tr>
+          <tr><td><code>taxonomy categories</code></td><td><code>GET /api/taxonomy/categories</code></td><td>Category list only.</td></tr>
+          <tr><td><code>tag list [--category C]</code></td><td><code>GET /api/tags/list</code></td><td>Tags with <code>media_count</code>.</td></tr>
+          <tr><td><code>tag create &lt;label&gt; --category C [--weight W]</code></td><td><code>POST /api/tags</code></td><td>Create a tag.</td></tr>
+          <tr><td><code>tag delete &lt;label&gt; --category C --yes</code></td><td><code>DELETE /api/tags</code></td><td>Delete a tag and all its assignments.</td></tr>
+          <tr><td><code>tag rename &lt;old&gt; &lt;new&gt;</code></td><td><code>POST /api/tags/rename</code></td><td>Rename a tag.</td></tr>
+          <tr><td><code>tag move &lt;label&gt; --category C</code></td><td><code>POST /api/tags/move</code></td><td>Move a tag to another category.</td></tr>
+          <tr><td><code>tag weight &lt;label&gt; --weight W</code></td><td><code>POST /api/tags/weight</code></td><td>Set a tag's sort weight.</td></tr>
+          <tr><td><code>tag count &lt;label&gt;</code></td><td><code>POST /api/tags/count</code></td><td>Distinct media count for a tag.</td></tr>
+          <tr><td><code>tag has &lt;media-path&gt; &lt;label&gt; --category C</code></td><td><code>GET /media/has-tag</code></td><td><code>{has_tag: bool}</code></td></tr>
+          <tr><td><code>tag assign &lt;media-path&gt; &lt;label&gt; --category C [--timestamp S]</code></td><td><code>POST /api/assignments</code></td><td>Tag one item. <code>--timestamp</code> attaches the tag to a video moment.</td></tr>
+          <tr><td><code>tag assign-bulk &lt;label&gt; --category C [--timestamp S] [paths... | --stdin]</code></td><td><code>POST /api/assignments</code></td><td>Tag many items in one request.</td></tr>
+          <tr><td><code>tag unassign &lt;media-path&gt; &lt;label&gt;</code></td><td><code>DELETE /api/assignments</code></td><td>Remove a tag from one item.</td></tr>
+          <tr><td><code>tag unassign-bulk &lt;label&gt; [paths... | --stdin] --yes</code></td><td><code>DELETE /api/assignments</code></td><td>Remove a tag from many items.</td></tr>
+          <tr><td><code>tag assignment-weight &lt;media-path&gt; &lt;label&gt; --weight W [--timestamp S]</code></td><td><code>POST /api/assignments/weight</code></td><td>Set the weight of one assignment.</td></tr>
+          <tr><td><code>tag timestamp &lt;media-path&gt; &lt;label&gt; (--from S --to S | --remove --at S)</code></td><td><code>PUT</code>/<code>DELETE /api/tags/timestamp</code></td><td>Move or remove a video tag timestamp.</td></tr>
+          <tr><td><code>category create &lt;label&gt;</code></td><td><code>POST /api/categories</code></td><td>Create a category.</td></tr>
+          <tr><td><code>category delete &lt;label&gt; --yes</code></td><td><code>DELETE /api/categories</code></td><td>Delete a category and its tags.</td></tr>
+          <tr><td><code>category rename &lt;old&gt; &lt;new&gt;</code></td><td><code>POST /api/categories/rename</code></td><td>Rename a category.</td></tr>
+          <tr><td><code>category count &lt;label&gt;</code></td><td><code>GET /api/taxonomy/category-count</code></td><td>Distinct media count for a category.</td></tr>
+        </table>
+        <p>
+          <code>--stdin</code> reads one path per line. Blank lines are ignored.
+        </p>
+
+        <h3 id="cmd-deps">deps</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>deps status</code></td><td><code>GET /api/deps/status</code></td><td>State of every bundled binary, optional tool, and downloadable model.</td></tr>
+          <tr><td><code>deps download &lt;model-id&gt; [--wait] [--timeout D]</code></td><td><code>POST /api/deps/models/{id}/download</code></td><td>Start a download. <code>--wait</code> polls status until installed. Default wait timeout 30m.</td></tr>
+          <tr><td><code>deps verify &lt;model-id&gt;</code></td><td><code>POST /api/deps/models/{id}/verify</code></td><td>Checksum every file. Returns <code>{id, files: {relPath: "ok" | error}}</code>.</td></tr>
+          <tr><td><code>deps delete &lt;model-id&gt; --yes</code></td><td><code>DELETE /api/deps/models/{id}</code></td><td>Remove a downloaded model.</td></tr>
+        </table>
+        <p>
+          Model ids: <code>wd-eva02-large-tagger-v3</code>,
+          <code>siglip2-base-patch16-224</code>, <code>dinov2-base</code>,
+          <code>yunet</code>, <code>sface</code>, <code>anime-head</code>,
+          <code>ccip</code>, <code>faster-whisper</code>.
+        </p>
+
+        <h3 id="cmd-config">config, fs, upload</h3>
+        <table class="api-table">
+          <tr><th>Command</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td><code>config get</code></td><td><code>GET /api/config</code></td><td>Active configuration. Secrets are redacted.</td></tr>
+          <tr><td><code>config set --json '{...}'|@file|-</code></td><td><code>GET /api/config</code> then <code>POST /config</code></td><td>Merge fields over the current config and save. Redacted secrets and storage roots are never echoed back, so edit credentials in the web Config page.</td></tr>
+          <tr><td><code>fs list [path]</code></td><td><code>POST /api/fs/list</code></td><td>Browse a storage root. Empty path lists the roots. Returns <code>{entries, parent, roots}</code>.</td></tr>
+          <tr><td><code>fs scan &lt;path&gt; [--recursive]</code></td><td><code>POST /api/fs/scan</code></td><td>List media files under a directory. Returns <code>{library, cursor}</code>.</td></tr>
+          <tr><td><code>upload &lt;file&gt;... [--dest DIR] [--no-ingest]</code></td><td><code>POST /api/upload</code></td><td>Multipart upload. Files land under <code>uploads/</code> in the default root, or in <code>--dest</code> (must be inside a root). An ingest job is queued unless <code>--no-ingest</code>.</td></tr>
+        </table>
+
+        <h3 id="cmd-api">api</h3>
+        <div class="code-block">
+          <code>lokictl api &lt;METHOD&gt; &lt;path&gt; [--body JSON|@file|-]</code>
+        </div>
+        <p>
+          Calls any endpoint with the resolved server URL and credential
+          attached. <code>path</code> is appended to the base URL and may include
+          a query string. <code>--body</code> accepts literal JSON, <code>@file</code>,
+          or <code>-</code> for stdin, and is sent with
+          <code>Content-Type: application/json</code>. A JSON response is
+          pretty-printed; any other body is printed as-is. A non-2xx status exits 1
+          with the standard error object.
+        </p>
+        <div class="code-block">
+          <code>lokictl api GET "/api/people"</code><br>
+          <code>lokictl api POST /api/faces/tuning --body '{"thresholdOffset": 0.02}'</code><br>
+          <code>lokictl api DELETE "/api/faces/all?confirm=true"</code>
+        </div>
+      </section>
+
+      <section id="job-input">
+        <h2>Job Input Syntax</h2>
+        <p>
+          <code>job run</code> joins the task id and every positional argument
+          into one string and sends it as the <code>input</code> field of
+          <code>POST /create</code>. The server splits that string on spaces,
+          honouring double quotes, and interprets it as:
+        </p>
+        <div class="code-block">
+          <code>&lt;task-id&gt; [option tokens...] &lt;input&gt;</code>
+        </div>
+        <ul>
+          <li>The first token is the task id.</li>
+          <li>The last token is the job's <code>input</code> (a path, URL, or query, depending on the task).</li>
+          <li>Everything between is passed to the task as its argument list. Options are <code>--name value</code> or <code>--flag</code>.</li>
+          <li>A task with no input takes exactly one token.</li>
+        </ul>
+        <p>
+          The splitter has no escape syntax. A token containing a double quote is
+          rejected. Values with spaces must be quoted at the shell level so they
+          reach the CLI as one argument; the CLI re-quotes them. For values
+          containing quotes or newlines, use <code>--field name=value</code>, which
+          is sent out of band and appended as <code>--name value</code> without
+          passing through the splitter.
+        </p>
+        <div class="code-block">
+          <code>lokictl job run ffmpeg-scale --width 1280 "C:/vids/in.mp4" --follow</code><br>
+          <code>lokictl job run describe --apply all --field prompt="Describe the scene. Include \"mood\"." "D:/photos" --wait</code>
+        </div>
+        <p>
+          Per-item tasks (<code>describe</code>, <code>transcribe</code>,
+          <code>hash</code>, <code>dimensions</code>, <code>autotag</code>,
+          <code>embed</code>, <code>faces</code>, <code>process</code>) accept a
+          directory, a single file, or a SQL query returning paths as the input.
+          Inspect the task's options with <code>task show</code>; the
+          <code>--apply</code> option (<code>missing</code> or <code>all</code>)
+          controls whether items that already have the result are reprocessed.
+        </p>
+      </section>
+
+      <section id="dag-format">
+        <h2>Workflow DAG Format</h2>
+        <p>
+          <code>workflow create</code>, <code>workflow update</code>, and
+          <code>workflow run-adhoc</code> read a JSON array of task nodes. Each
+          node has the following fields:
+        </p>
+        <table>
+          <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+          <tr><td><code>id</code></td><td>string</td><td>Node id, unique within the DAG. Used by <code>dependencies</code>.</td></tr>
+          <tr><td><code>command</code></td><td>string</td><td>Task id.</td></tr>
+          <tr><td><code>arguments</code></td><td>string[]</td><td>Option tokens, already split.</td></tr>
+          <tr><td><code>input</code></td><td>string</td><td>Job input. Root nodes receive the workflow's <code>--input</code> when it is given.</td></tr>
+          <tr><td><code>dependencies</code></td><td>string[]</td><td>Ids of nodes that must complete first. A failed dependency cancels this node.</td></tr>
+          <tr><td><code>pos_x</code>, <code>pos_y</code></td><td>number</td><td>Optional editor layout. Ignored at run time.</td></tr>
+        </table>
+        <div class="code-block">
+          <code>[</code><br>
+          <code>  {"id": "ingest", "command": "ingest", "arguments": ["--recursive"], "input": ""},</code><br>
+          <code>  {"id": "hash", "command": "hash", "arguments": ["--apply", "missing"], "input": "", "dependencies": ["ingest"]},</code><br>
+          <code>  {"id": "embed", "command": "embed", "arguments": [], "input": "", "dependencies": ["hash"]},</code><br>
+          <code>  {"id": "describe", "command": "describe", "arguments": [], "input": "", "dependencies": ["hash"]}</code><br>
+          <code>]</code>
+        </div>
+        <p>
+          A file whose top-level value is an object with a <code>dag</code> key is
+          also accepted, so the output of <code>workflow get</code> can be fed
+          back to <code>workflow create</code>.
+        </p>
+      </section>
+
+      <section id="recipes">
+        <h2>Recipes</h2>
+
+        <h4>Run a task and wait for the result</h4>
+        <div class="code-block">
+          <code>lokictl task show metadata</code><br>
+          <code>lokictl job run metadata --type description --apply all "C:/pics/x.jpg" --wait --timeout 10m</code><br>
+          <code># exit 0 completed; exit 3 error, cancelled, or timeout</code>
+        </div>
+
+        <h4>Watch a long job's output live</h4>
+        <div class="code-block">
+          <code>lokictl job run ffmpeg-scale --width 1280 "C:/vids/in.mp4" --follow</code><br>
+          <code># stdout lines stream to stderr; the final job JSON lands on stdout</code>
+        </div>
+
+        <h4>Forget media that no longer exists</h4>
+        <div class="code-block">
+          <code>lokictl media cleanup --dry-run</code><br>
+          <code>lokictl media cleanup --dir "D:/photos/2019" --dry-run</code><br>
+          <code>lokictl media cleanup</code><br>
+          <code>lokictl media cleanup --max-missing-percent 100   # a volume that is gone for good</code>
+        </div>
+
+        <h4>Reclaim thumbnail cache space</h4>
+        <div class="code-block">
+          <code>lokictl media thumbnail-cleanup --dry-run --manifest C:/tmp/thumbs.tsv</code><br>
+          <code>lokictl media thumbnail-cleanup --dir "D:/photos/2019"</code><br>
+          <code>lokictl media thumbnail-cleanup</code>
+        </div>
+
+        <h4>Ask the database anything</h4>
+        <div class="code-block">
+          <code>lokictl db tables</code><br>
+          <code>lokictl db schema media_tag_by_category</code><br>
+          <code>lokictl db query "SELECT hash, COUNT(*) n FROM media WHERE hash IS NOT NULL GROUP BY hash HAVING n &gt; 1 ORDER BY n DESC" --limit 50</code><br>
+          <code>lokictl db query "SELECT path FROM media WHERE path LIKE ?" --arg "%/vacation/%"</code>
+        </div>
+
+        <h4>Search the library four ways</h4>
+        <div class="code-block">
+          <code>lokictl media query --tag sunset --exclude-tag blurry --mode AND</code><br>
+          <code>lokictl media visual "a red car in the snow" --limit 20</code><br>
+          <code>lokictl media similar "C:/pics/x.jpg"</code><br>
+          <code>lokictl media image-search "C:/downloads/some.jpg"</code>
+        </div>
+
+        <h4>Blended query through raw predicates</h4>
+        <div class="code-block">
+          <code>echo '[{"type":"similar","value":"C:/pics/x.jpg","nodes":[{"kind":"text","value":"at night","weight":0.5},{"kind":"text","value":"blurry","weight":0.3,"negative":true}]},{"type":"tag","value":"portrait"}]' \</code><br>
+          <code>  | lokictl media query --predicates - --limit 30</code>
+        </div>
+
+        <h4>Keep the embedding index healthy</h4>
+        <div class="code-block">
+          <code>lokictl index status</code><br>
+          <code>lokictl index missing --limit 0</code><br>
+          <code>lokictl index embed --query "SELECT path FROM media" --wait</code><br>
+          <code>lokictl index prune --yes</code><br>
+          <code>lokictl --timeout 10m index rebuild</code>
+        </div>
+
+        <h4>Curate tags in bulk</h4>
+        <div class="code-block">
+          <code>lokictl tag list -o table</code><br>
+          <code>lokictl db query "SELECT path FROM media WHERE path LIKE '%/vacation/%'" -q \</code><br>
+          <code>  | jq -r '.rows[][]' | lokictl tag assign-bulk vacation --category trips --stdin</code><br>
+          <code>lokictl tag unassign-bulk blurry --stdin --yes &lt; paths.txt</code>
+        </div>
+
+        <h4>Write metadata directly, or have AI generate it</h4>
+        <div class="code-block">
+          <code>lokictl media describe "C:/pics/x.jpg" --text "Two dogs on a beach"</code><br>
+          <code>lokictl media transcript "C:/vids/talk.mp4"</code><br>
+          <code>lokictl media generate "C:/vids/talk.mp4" --type transcript --wait</code><br>
+          <code>lokictl media rate "C:/pics/x.jpg" --elo 1600</code>
+        </div>
+
+        <h4>Files moved on disk</h4>
+        <div class="code-block">
+          <code>lokictl media move "C:/pics/old.jpg" "D:/archive/old.jpg"</code><br>
+          <code>lokictl media move "C:/pics/2023" "D:/archive/2023" --prefix --dry-run</code><br>
+          <code>lokictl media move "C:/pics/2023" "D:/archive/2023" --prefix</code><br>
+          <code>lokictl media forget "C:/pics/gone.jpg" --yes</code>
+        </div>
+
+        <h4>Run a saved workflow</h4>
+        <div class="code-block">
+          <code>lokictl workflow list</code><br>
+          <code>lokictl workflow run &lt;id&gt; --input "C:/pics/new" --wait</code>
+        </div>
+
+        <h4>Install a model</h4>
+        <div class="code-block">
+          <code>lokictl deps status</code><br>
+          <code>lokictl deps download siglip2-base-patch16-224 --wait</code>
+        </div>
+
+        <h4>CI or automation with a scoped key</h4>
+        <div class="code-block">
+          <code>lokictl key create --name ci</code><br>
+          <code># store the printed key as a secret, then:</code><br>
+          <code>LOKICTL_SERVER=https://media.example.com LOKICTL_TOKEN=lk_... lokictl health</code>
+        </div>
+      </section>
+
+      <section id="env">
+        <h2>Environment Variables</h2>
+        <table>
+          <tr><th>Variable</th><th>Description</th></tr>
+          <tr><td><code>LOKICTL_SERVER</code></td><td>Server base URL. Overrides the config file; overridden by <code>--server</code>.</td></tr>
+          <tr><td><code>LOKICTL_TOKEN</code></td><td>API key or JWT. Overrides the config file; overridden by <code>--token</code>.</td></tr>
+          <tr><td><code>LOKICTL_CONFIG_DIR</code></td><td>Directory holding <code>config.json</code>.</td></tr>
+          <tr><td><code>LOWKEY_PORT</code></td><td>Read only for the auto-detected default URL when no server is configured.</td></tr>
+        </table>
+      </section>
+
+      <section id="limits">
+        <h2>Notes and Limits</h2>
+        <ul>
+          <li><code>job logs</code> and <code>--follow</code> work only while a job is running. The server streams stdout over SSE and does not persist it, except for the cleanup tasks, whose final job object carries the log.</li>
+          <li><code>db query</code> accepts one <code>SELECT</code> or <code>WITH</code> statement. Rows are capped at 1000 by default and 10000 at most; <code>truncated</code> is <code>true</code> when the cap was hit.</li>
+          <li><code>--arg</code> values are strings. SQLite affinity coerces them for comparisons against numeric columns.</li>
+          <li>Job input tokens containing a double quote are rejected. Use <code>--field</code>.</li>
+          <li><code>stats</code> returns <code>{"ready": false}</code> until the server has finished its first library count after startup.</li>
+          <li><code>config set</code> cannot write secrets or storage roots, because <code>config get</code> redacts them and the merge would clear them.</li>
+          <li>The CLI sends <code>Accept: application/json</code> so that authentication failures return a 401 JSON body instead of a redirect to the login page.</li>
+          <li>The <code>api</code> command does not add a trailing newline to non-JSON bodies.</li>
+        </ul>
+      </section>
+
+      <section>
+        <div class="divider"></div>
+        <h2>See Also</h2>
+        <ul>
+          <li><a href="./api.html">HTTP API Reference</a></li>
+          <li><a href="./#job-queue">Job Queue</a> and <a href="./#tasks">Available Tasks</a></li>
+          <li><a href="./#users">Users &amp; Permissions</a></li>
+          <li><a href="https://github.com/SteveCastle/loki/tree/master/media-server/cmd/lokictl">Source</a></li>
+        </ul>
+      </section>
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        document.querySelectorAll('main table').forEach((table) => {
+          const headerRow = table.querySelector('tr');
+          if (!headerRow) return;
+          const labels = Array.from(headerRow.children).map((cell) =>
+            cell.textContent.trim()
+          );
+          table.querySelectorAll('tr').forEach((row) => {
+            Array.from(row.children).forEach((cell, i) => {
+              if (cell.tagName === 'TD' && labels[i]) {
+                cell.setAttribute('data-label', labels[i]);
+              }
+            });
+          });
+          if (!table.parentElement.classList.contains('table-scroll')) {
+            const wrap = document.createElement('div');
+            wrap.className = 'table-scroll';
+            table.parentNode.insertBefore(wrap, table);
+            wrap.appendChild(table);
+          }
+        });
+      })();
+
+      document.querySelectorAll('.toc a').forEach(link => {
+        link.addEventListener('click', (e) => {
+          const href = link.getAttribute('href');
+          if (href.startsWith('#')) {
+            e.preventDefault();
+            const target = document.getElementById(href.slice(1));
+            if (target) {
+              history.pushState(null, '', href);
+              target.scrollIntoView({ behavior: 'smooth' });
+            }
+          }
+        });
+      });
+
+      (() => {
+        const toc = document.querySelector('.toc');
+        if (!toc) return;
+        const links = Array.from(toc.querySelectorAll('a[href^="#"]'));
+        const targets = links
+          .map((link) => {
+            const el = document.getElementById(link.getAttribute('href').slice(1));
+            return el ? { link, el } : null;
+          })
+          .filter(Boolean);
+        if (!targets.length) return;
+        let current = null;
+        let suppress = false;
+        let suppressTimer = null;
+        function setActive(link) {
+          if (link === current) return;
+          current = link;
+          toc.querySelectorAll('.active, .active-parent').forEach((el) => {
+            el.classList.remove('active', 'active-parent');
+          });
+          if (!link) return;
+          link.classList.add('active');
+          const sublist = link.closest('.toc ul ul');
+          if (sublist) {
+            const parentLink = sublist.closest('.toc > ul > li').querySelector(':scope > a');
+            if (parentLink) parentLink.classList.add('active-parent');
+          }
+          const linkRect = link.getBoundingClientRect();
+          const tocRect = toc.getBoundingClientRect();
+          if (linkRect.top < tocRect.top + 48) {
+            toc.scrollTop += linkRect.top - (tocRect.top + 48);
+          } else if (linkRect.bottom > tocRect.bottom - 24) {
+            toc.scrollTop += linkRect.bottom - (tocRect.bottom - 24);
+          }
+        }
+        function update() {
+          const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+          if (atBottom) { setActive(targets[targets.length - 1].link); return; }
+          let best = null;
+          for (const t of targets) {
+            if (t.el.getBoundingClientRect().top <= 110) best = t;
+          }
+          setActive(best ? best.link : targets[0].link);
+        }
+        function holdForClick() {
+          suppress = true;
+          clearTimeout(suppressTimer);
+          suppressTimer = setTimeout(() => { suppress = false; }, 150);
+        }
+        links.forEach((link) => {
+          link.addEventListener('click', () => { holdForClick(); setActive(link); });
+        });
+        let ticking = false;
+        window.addEventListener('scroll', () => {
+          if (suppress) { holdForClick(); return; }
+          if (!ticking) {
+            ticking = true;
+            requestAnimationFrame(() => { ticking = false; update(); });
+          }
+        }, { passive: true });
+        window.addEventListener('resize', () => { if (!suppress) update(); }, { passive: true });
+        update();
+      })();
+    </script>
+  </body>
+</html>

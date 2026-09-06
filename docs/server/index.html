@@ -90,6 +90,8 @@
         <a href="https://github.com/SteveCastle/loki/tree/master/media-server" class="github-link">
           <img src="../GitHub-Mark-Light-32px.png" alt="GitHub" />
         </a>
+        <a href="./api.html" class="license-link">HTTP API</a>
+        <a href="./cli.html" class="license-link">lokictl CLI</a>
       </div>
       <img
         class="fullsize hero-shot"
@@ -178,7 +180,8 @@
           </li>
           <li><a href="#swipe-app">Swipe App</a></li>
           <li><a href="#browser-extension">Browser Extensions</a></li>
-          <li><a href="#api">API Reference</a></li>
+          <li><a href="#cli">Command-Line Tool</a></li>
+          <li><a href="#api">HTTP API</a></li>
         </ul>
       </nav>
 
@@ -199,6 +202,8 @@
           <li>Video transcription with Faster Whisper</li>
           <li>Browser extensions for Chrome and Firefox</li>
           <li>Web-based media gallery and search</li>
+          <li>Complete <a href="./api.html">HTTP API</a> with API keys: every feature is scriptable</li>
+          <li><a href="./cli.html"><code>lokictl</code></a> command-line client with JSON output for shells, CI, and AI agents</li>
         </ul>
       </section>
 
@@ -1130,64 +1135,74 @@
         <div class="placeholder-video">Browser Extension Demo Video</div>
       </section>
 
-      <section id="api">
-        <h2>API Reference</h2>
-        <h4>Job Management</h4>
-        <table class="api-table">
-          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
-          <tr><td>POST</td><td><code>/create</code></td><td>Create a new job</td></tr>
-          <tr><td>GET</td><td><code>/job/{id}</code></td><td>View job details</td></tr>
-          <tr><td>POST</td><td><code>/job/{id}/cancel</code></td><td>Cancel a running job</td></tr>
-          <tr><td>POST</td><td><code>/job/{id}/copy</code></td><td>Copy job configuration</td></tr>
-          <tr><td>POST</td><td><code>/job/{id}/remove</code></td><td>Remove a job</td></tr>
-          <tr><td>POST</td><td><code>/jobs/clear</code></td><td>Clear finished jobs</td></tr>
-        </table>
-        <h4>Media Operations</h4>
-        <table class="api-table">
-          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
-          <tr><td>GET</td><td><code>/media</code></td><td>Media gallery page</td></tr>
-          <tr><td>GET</td><td><code>/media/api</code></td><td>Media JSON API with search</td></tr>
-          <tr><td>GET</td><td><code>/media/file</code></td><td>Serve media files</td></tr>
-        </table>
-        <h4>Visual Search</h4>
-        <table class="api-table">
-          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
-          <tr><td>POST</td><td><code>/api/media/query</code></td><td>Composable query (tags, text, similar/visual/clip predicates)</td></tr>
-          <tr><td>GET</td><td><code>/api/media/similar</code></td><td>Find media similar to a library item</td></tr>
-          <tr><td>GET</td><td><code>/api/media/search/visual</code></td><td>Text-to-image semantic search</td></tr>
-          <tr><td>POST</td><td><code>/api/media/search/image</code></td><td>Search by an uploaded image</td></tr>
-        </table>
-        <h4>People &amp; Faces</h4>
-        <table class="api-table">
-          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
-          <tr><td>GET</td><td><code>/api/people</code></td><td>List people</td></tr>
-          <tr><td>POST</td><td><code>/api/people</code></td><td>Create a person</td></tr>
-          <tr><td>POST</td><td><code>/api/people/{id}/rename</code></td><td>Rename a person</td></tr>
-          <tr><td>POST</td><td><code>/api/people/{id}/merge</code></td><td>Merge a person into another</td></tr>
-          <tr><td>DELETE</td><td><code>/api/people/{id}</code></td><td>Delete a person (<code>?deleteFaces=true</code> also purges faces)</td></tr>
-          <tr><td>GET</td><td><code>/api/people/{id}/faces</code></td><td>A person's faces, least typical first</td></tr>
-          <tr><td>POST</td><td><code>/api/faces/{id}/assign</code></td><td>Assign a face to a person (confirmed)</td></tr>
-          <tr><td>POST</td><td><code>/api/faces/{id}/reject</code></td><td>Reject a face from its person (permanent)</td></tr>
-          <tr><td>GET</td><td><code>/api/faces/ungrouped</code></td><td>Media or faces not yet grouped</td></tr>
-          <tr><td>POST</td><td><code>/api/media/search/face</code></td><td>Face-identity search by image</td></tr>
-          <tr><td>GET/POST</td><td><code>/api/faces/tuning</code></td><td>Read or set clustering thresholds</td></tr>
-          <tr><td>DELETE</td><td><code>/api/faces/all?confirm=true</code></td><td>Delete all face data (privacy wipe)</td></tr>
-        </table>
-        <h4>System</h4>
-        <table class="api-table">
-          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
-          <tr><td>GET</td><td><code>/health</code></td><td>Server health and stats</td></tr>
-          <tr><td>GET</td><td><code>/stream</code></td><td>SSE stream for real-time updates</td></tr>
-          <tr><td>GET</td><td><code>/config</code></td><td>Configuration page</td></tr>
-          <tr><td>POST</td><td><code>/config</code></td><td>Update configuration</td></tr>
-          <tr><td>GET</td><td><code>/api/config</code></td><td>Active configuration (JSON, secrets redacted)</td></tr>
-          <tr><td>POST</td><td><code>/api/db/query</code></td><td>Read-only SQL over the library database</td></tr>
+      <section id="cli">
+        <h2>Command-Line Tool</h2>
+        <p>
+          <code>lokictl</code> is a command-line client for the server's HTTP
+          API. It ships in every release package next to the server binary and
+          runs on Windows, macOS, and Linux. Every command prints JSON to
+          standard output, errors as a single JSON object to standard error, and
+          exits with a stable code (0 success, 1 server error, 2 usage error,
+          3 awaited job failed). The output contract is designed for shells, CI
+          pipelines, and AI agents.
+        </p>
+        <div class="code-block">
+          <code>lokictl health                                       # no credential needed</code><br>
+          <code>lokictl login                                        # browser authorization, stores an API key</code><br>
+          <code>lokictl job run describe --apply missing "D:/photos" --wait</code><br>
+          <code>lokictl media query --tag sunset --exclude-tag blurry</code><br>
+          <code>lokictl media visual "a red car in the snow"</code><br>
+          <code>lokictl db query "SELECT COUNT(*) FROM media"</code>
+        </div>
+        <p>Command groups:</p>
+        <table>
+          <tr><th>Group</th><th>Covers</th></tr>
+          <tr><td><code>login</code>, <code>whoami</code>, <code>key</code></td><td>Browser or password login; API key creation, listing, and revocation</td></tr>
+          <tr><td><code>job</code>, <code>task</code>, <code>workflow</code></td><td>Run, wait on, follow, pause, cancel, and clear jobs; inspect task option schemas; save and run DAG workflows</td></tr>
+          <tr><td><code>media</code></td><td>Predicate queries, visual and text search, reverse image search, metadata reads and writes, ratings, thumbnails, move and forget, missing-file and thumbnail-cache cleanup</td></tr>
+          <tr><td><code>index</code></td><td>Embedding index status, missing items, prune, rebuild</td></tr>
+          <tr><td><code>db</code></td><td>Read-only SQL with bind arguments, table and schema listing</td></tr>
+          <tr><td><code>taxonomy</code>, <code>tag</code>, <code>category</code></td><td>Create, rename, move, weight, assign, and bulk-assign tags and categories</td></tr>
+          <tr><td><code>deps</code>, <code>config</code>, <code>fs</code>, <code>upload</code></td><td>Model downloads, configuration, storage-root browsing, file upload</td></tr>
+          <tr><td><code>api</code></td><td>Call any endpoint with the stored credential attached</td></tr>
         </table>
         <p>
-          Prefer a terminal? The <code>lokictl</code> CLI (in
-          <code>media-server/cmd/lokictl</code>) wraps the whole API: query and search media,
-          run jobs and workflows, manage tags, deps, and config. It's built for scripting and
-          AI-agent use.
+          The <a href="./cli.html">lokictl reference</a> documents installation,
+          authentication, the output contract, every command and flag, the job
+          input and DAG formats, and a set of recipes.
+        </p>
+      </section>
+
+      <section id="api">
+        <h2>HTTP API</h2>
+        <p>
+          Everything the web interface, the viewer, the browser extensions, and
+          <code>lokictl</code> do goes through one JSON API on the server's port.
+          Requests authenticate with a session cookie, a JWT, or an
+          <code>lk_</code> API key in an <code>Authorization: Bearer</code> or
+          <code>X-API-Key</code> header. Read endpoints open to anonymous
+          visitors when <em>Allow Public Access</em> is on; write endpoints
+          always require a credential.
+        </p>
+        <table>
+          <tr><th>Area</th><th>Representative endpoints</th></tr>
+          <tr><td>Authentication</td><td><code>POST /auth/login</code>, <code>GET /auth/status</code>, <code>/auth/users</code>, <code>/auth/keys</code></td></tr>
+          <tr><td>Jobs and tasks</td><td><code>POST /create</code>, <code>GET /jobs/list</code>, <code>/job/{id}/cancel|pause|resume|copy|remove</code>, <code>GET /tasks</code></td></tr>
+          <tr><td>Workflows</td><td><code>/workflows</code>, <code>/workflows/{id}</code>, <code>/workflows/{id}/run</code>, <code>POST /workflow</code></td></tr>
+          <tr><td>Real-time events</td><td><code>GET /stream</code> (Server-Sent Events for job state, output, and progress)</td></tr>
+          <tr><td>Media library</td><td><code>POST /api/media/query</code>, <code>/api/media/similar</code>, <code>/api/media/search/visual|image|face</code>, <code>/api/media/metadata|tags|description|transcript|rating|move|forget</code></td></tr>
+          <tr><td>Taxonomy</td><td><code>/api/taxonomy</code>, <code>/api/tags</code>, <code>/api/categories</code>, <code>/api/assignments</code></td></tr>
+          <tr><td>Embeddings</td><td><code>/api/index/status|models|missing|rebuild</code>, <code>/api/embeddings</code></td></tr>
+          <tr><td>People and faces</td><td><code>/api/people</code>, <code>/api/faces</code>, <code>/api/faces/{id}/assign|reject</code>, <code>/api/faces/tuning</code></td></tr>
+          <tr><td>Storage and transfer</td><td><code>/api/fs/list</code>, <code>/api/fs/scan</code>, <code>/api/upload</code>, <code>/api/export</code>, <code>/api/import</code></td></tr>
+          <tr><td>Files</td><td><code>/media/file</code>, <code>/media/thumbnail</code>, <code>/media/hls</code></td></tr>
+          <tr><td>System</td><td><code>GET /health</code>, <code>/api/stats</code>, <code>/api/config</code>, <code>POST /api/db/query</code>, <code>/api/deps/*</code>, <code>/api/scheduler</code></td></tr>
+        </table>
+        <p>
+          The <a href="./api.html">HTTP API reference</a> lists every endpoint
+          with its method, access level, request body, query parameters, and
+          response shape, including the composable query predicate schema, the
+          job object, SSE event formats, and platform differences.
         </p>
       </section>
 

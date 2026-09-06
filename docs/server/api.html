@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <!-- Google tag (gtag.js) -->
+    <script
+      async
+      src="https://www.googletagmanager.com/gtag/js?id=G-VNSBCHX519"
+    ></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        dataLayer.push(arguments);
+      }
+      gtag("js", new Date());
+      gtag("config", "G-VNSBCHX519");
+    </script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="Description"
+      content="HTTP API reference for Lowkey Media Server: authentication, jobs, workflows, media queries, taxonomy, embeddings, people and faces, storage, and real-time events."
+    />
+    <meta property="og:url" content="https://lowkeyviewer.com/server/api.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="HTTP API Reference - LowKey Media Server" />
+    <meta
+      property="og:description"
+      content="Complete endpoint reference for the Lowkey Media Server HTTP API."
+    />
+    <meta
+      property="og:image"
+      content="https://lowkeyviewer.com/screenshot.jpg"
+    />
+    <link rel="shortcut icon" href="../favicon.ico" type="image/x-icon" />
+    <link rel="icon" href="../favicon.ico" type="image/x-icon" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../index.css" />
+    <title>HTTP API Reference - LowKey Media Server</title>
+  </head>
+  <body>
+    <header>
+      <nav class="tab-nav">
+        <a href="../" class="tab-link">
+          <img src="../logo.png" alt="Media Viewer" class="tab-icon" />
+          <span>Media Viewer</span>
+        </a>
+        <a href="./" class="tab-link active">
+          <img src="../server-icon.png" alt="Media Server" class="tab-icon" />
+          <span>Media Server</span>
+        </a>
+        <a href="../studio/" class="tab-link">
+          <img src="../studio-icon.png" alt="Studio" class="tab-icon" />
+          <span>Studio</span>
+        </a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <img src="../server-icon.png" class="logo" alt="Lowkey Media Server Logo" />
+      <h1>HTTP API Reference</h1>
+      <p class="subTitle">
+        Every endpoint served by Lowkey Media Server.
+      </p>
+      <p class="info">
+        Base URL <span class="os">http://localhost:10111</span>
+      </p>
+      <p class="version">Version 2.30.0</p>
+      <div class="header-links">
+        <a href="./" class="license-link">&larr; Server documentation</a>
+        <a href="./cli.html" class="license-link">lokictl CLI reference &rarr;</a>
+      </div>
+    </section>
+
+    <div class="content-wrapper">
+      <nav class="toc">
+        <h2>Contents</h2>
+        <ul>
+          <li><a href="#conventions">Conventions</a>
+            <ul>
+              <li><a href="#access-levels">Access Levels</a></li>
+              <li><a href="#errors">Errors</a></li>
+              <li><a href="#paths">Media Paths</a></li>
+            </ul>
+          </li>
+          <li><a href="#auth">Authentication</a></li>
+          <li><a href="#system">System</a></li>
+          <li><a href="#jobs">Jobs</a>
+            <ul>
+              <li><a href="#job-object">Job Object</a></li>
+              <li><a href="#tasks">Tasks</a></li>
+            </ul>
+          </li>
+          <li><a href="#workflows">Workflows</a></li>
+          <li><a href="#stream">Real-Time Events</a></li>
+          <li><a href="#media">Media Library</a>
+            <ul>
+              <li><a href="#media-query">Composable Query</a></li>
+              <li><a href="#media-search">Search</a></li>
+              <li><a href="#media-item">Item Data</a></li>
+              <li><a href="#media-mutation">Mutation</a></li>
+              <li><a href="#thumbnails">Thumbnails</a></li>
+            </ul>
+          </li>
+          <li><a href="#serving">File Serving</a></li>
+          <li><a href="#browser">Legacy Media Browser</a></li>
+          <li><a href="#taxonomy">Taxonomy</a>
+            <ul>
+              <li><a href="#taxonomy-read">Read</a></li>
+              <li><a href="#taxonomy-tags">Tags</a></li>
+              <li><a href="#taxonomy-categories">Categories</a></li>
+              <li><a href="#taxonomy-assignments">Assignments</a></li>
+            </ul>
+          </li>
+          <li><a href="#embeddings">Embeddings Index</a></li>
+          <li><a href="#people">People and Faces</a></li>
+          <li><a href="#storage">Storage and Transfer</a></li>
+          <li><a href="#deps">Dependencies</a></li>
+          <li><a href="#swipe">Swipe</a></li>
+          <li><a href="#session">Settings and Session</a></li>
+          <li><a href="#scheduler">Auto Scheduler</a></li>
+          <li><a href="#viz">Visualizations</a></li>
+          <li><a href="#setup">Setup Wizard</a></li>
+          <li><a href="#pages">HTML Pages</a></li>
+          <li><a href="#platform">Platform Differences</a></li>
+        </ul>
+      </nav>
+
+      <main>
+      <section id="conventions">
+        <h2>Conventions</h2>
+        <p>
+          The server listens on port 10111 by default (<code>LOWKEY_PORT</code>
+          or the <code>port</code> config key). All paths below are relative to
+          the base URL. Request bodies are JSON unless a table says otherwise.
+          Responses are JSON with <code>Content-Type: application/json</code>
+          unless a table says otherwise. Booleans in query strings are the
+          literal strings <code>true</code> and <code>false</code>.
+        </p>
+        <p>
+          Endpoints reject unsupported methods with <code>405</code>. A path
+          parameter written <code>{id}</code> is a single path segment.
+        </p>
+
+        <h3 id="access-levels">Access Levels</h3>
+        <p>Every endpoint is marked with one of three access levels.</p>
+        <table>
+          <tr><th>Level</th><th>Requirement</th></tr>
+          <tr><td><strong>Public</strong></td><td>No credential.</td></tr>
+          <tr><td><strong>Read</strong></td><td>A credential, unless the <code>allowPublicAccess</code> setting is on, in which case anonymous requests are accepted. Endpoints marked Read that also perform writes require a credential for the write path regardless of the setting.</td></tr>
+          <tr><td><strong>Admin</strong></td><td>A credential. Every authenticated user is an admin.</td></tr>
+        </table>
+        <p>
+          A credential is one of: an <code>auth_token</code> cookie set by
+          <code>POST /auth/login</code>; an <code>Authorization: Bearer &lt;token&gt;</code>
+          header carrying a JWT or an <code>lk_</code> API key; or an
+          <code>X-API-Key: &lt;key&gt;</code> header. Headers are checked before
+          the cookie.
+        </p>
+        <p>
+          A request that fails authentication receives <code>401</code> with a
+          plain-text body when the request carries
+          <code>Accept: application/json</code>. Otherwise it receives a
+          <code>302</code> redirect to <code>/login</code>. API clients should
+          send the <code>Accept</code> header. A request authenticated as the
+          temporary default <code>admin</code> account before first-run setup is
+          complete receives <code>403</code> with body
+          <code>{"error":"setup_required"}</code>.
+        </p>
+
+        <h3 id="errors">Errors</h3>
+        <p>
+          There is no single error envelope. Handlers under <code>/api/</code>
+          that were written for the web client return
+          <code>{"error": "&lt;message&gt;"}</code>. Older handlers return a
+          plain-text message with the status code. Status codes follow HTTP
+          semantics:
+        </p>
+        <table>
+          <tr><th>Status</th><th>Meaning</th></tr>
+          <tr><td><code>400</code></td><td>Malformed JSON, missing required field, invalid parameter, or a validation failure.</td></tr>
+          <tr><td><code>401</code></td><td>Missing or invalid credential.</td></tr>
+          <tr><td><code>403</code></td><td>Path outside every configured storage root; setup required; or cross-origin form post.</td></tr>
+          <tr><td><code>404</code></td><td>Unknown job, workflow, model, file, or person.</td></tr>
+          <tr><td><code>405</code></td><td>Method not supported on this path.</td></tr>
+          <tr><td><code>409</code></td><td>Move destination already belongs to another item.</td></tr>
+          <tr><td><code>413</code></td><td>Upload or image body exceeded its cap.</td></tr>
+          <tr><td><code>500</code></td><td>Database or filesystem failure.</td></tr>
+          <tr><td><code>503</code></td><td>Auto scheduler not running; SSE connection limit reached.</td></tr>
+        </table>
+
+        <h3 id="paths">Media Paths</h3>
+        <p>
+          A media item is identified by its <code>path</code>: the absolute
+          filesystem path for local roots, or <code>s3://bucket/key</code> for
+          object storage roots. Paths are compared as stored. Endpoints that
+          serve or process a file refuse paths outside every configured storage
+          root with <code>403</code>. Paths in query strings must be URL-encoded.
+        </p>
+      </section>
+
+      <section id="auth">
+        <h2>Authentication</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/auth/login</code></td><td>Public</td><td>Exchange credentials for a JWT.</td></tr>
+          <tr><td>POST</td><td><code>/auth/logout</code></td><td>Public</td><td>Clear the session cookie.</td></tr>
+          <tr><td>GET</td><td><code>/auth/status</code></td><td>Public</td><td>Report the current credential.</td></tr>
+          <tr><td>GET</td><td><code>/auth/users</code></td><td>Public*</td><td>List users.</td></tr>
+          <tr><td>POST</td><td><code>/auth/users</code></td><td>Public*</td><td>Create a user.</td></tr>
+          <tr><td>DELETE</td><td><code>/auth/users?username=</code></td><td>Public*</td><td>Delete a user.</td></tr>
+          <tr><td>GET</td><td><code>/auth/keys</code></td><td>Admin</td><td>List API keys.</td></tr>
+          <tr><td>POST</td><td><code>/auth/keys</code></td><td>Admin</td><td>Create an API key.</td></tr>
+          <tr><td>DELETE</td><td><code>/auth/keys?id=</code></td><td>Admin</td><td>Revoke an API key.</td></tr>
+          <tr><td>GET, POST</td><td><code>/auth/cli/authorize</code></td><td>Public</td><td>Browser approval page for the CLI login flow.</td></tr>
+          <tr><td>POST</td><td><code>/auth/cli/token</code></td><td>Public</td><td>Exchange a CLI authorization code for an API key.</td></tr>
+        </table>
+        <p>
+          * <code>/auth/users</code> is registered without middleware. Creating
+          a user is open only while no real user exists (first-run); after that
+          the caller must be authenticated or the response is <code>403</code>.
+          The server refuses to delete the last remaining user.
+        </p>
+
+        <h4>POST /auth/login</h4>
+        <div class="code-block">
+          <code>{"username": "alice", "password": "..."}</code>
+        </div>
+        <p>
+          Response <code>200</code>: <code>{"status": "ok", "token": "&lt;jwt&gt;", "setup_required": false}</code>.
+          The same JWT is set as an <code>auth_token</code> cookie
+          (<code>HttpOnly</code>, <code>SameSite=Lax</code>, 24-hour expiry).
+          The JWT itself is valid for one year. Invalid credentials return
+          <code>401</code> with <code>{"error":"Invalid credentials"}</code>.
+          <code>setup_required</code> is <code>true</code> when the login used
+          the temporary default admin.
+        </p>
+
+        <h4>GET /auth/status</h4>
+        <p>
+          With a valid credential:
+          <code>{"loggedIn": true, "username": "alice", "publicAccess": false, "defaultStartPath": "..."}</code>.
+          When the credential is the cookie, the response also carries
+          <code>"token"</code> with the session's JWT. Without a credential:
+          <code>{"loggedIn": false, "publicAccess": false}</code>.
+        </p>
+
+        <h4>POST /auth/users</h4>
+        <div class="code-block">
+          <code>{"username": "bob", "password": "..."}</code>
+        </div>
+        <p>Response <code>201</code>: <code>{"status": "created"}</code>. GET returns <code>{"users": [...]}</code>. DELETE returns <code>{"status": "deleted"}</code>.</p>
+
+        <h4>POST /auth/keys</h4>
+        <div class="code-block">
+          <code>{"name": "ci", "username": "alice"}</code>
+        </div>
+        <p>
+          <code>username</code> defaults to the caller. Response <code>201</code>:
+          <code>{"status": "created", "key": "lk_...", "id": 3, "name": "ci", "username": "alice", "prefix": "lk_ab12"}</code>.
+          The plaintext key is returned once. GET returns
+          <code>{"keys": [{"id", "username", "name", "prefix", "created_at", "last_used_at"}]}</code>
+          with Unix-second timestamps. DELETE returns <code>{"status": "deleted"}</code>.
+        </p>
+
+        <h4>CLI authorization flow</h4>
+        <p>
+          <code>GET /auth/cli/authorize?port=&amp;state=&amp;code_challenge=&amp;name=</code>
+          renders an approval page for the browser session's user. It redirects
+          to <code>/login</code> when there is no session and returns
+          <code>403</code> while the default admin is the only account.
+          <code>POST</code> of the same form with <code>action=approve</code>
+          redirects to <code>http://127.0.0.1:{port}/callback?code=&amp;state=</code>;
+          <code>action=deny</code> redirects with <code>error=access_denied</code>.
+          Cross-origin posts are rejected. The code expires after two minutes.
+        </p>
+        <p>
+          <code>POST /auth/cli/token</code> with
+          <code>{"code": "...", "code_verifier": "..."}</code> verifies the PKCE
+          challenge (S256) and returns
+          <code>{"status": "ok", "key": "lk_...", "username": "alice", "name": "lokictl@host"}</code>.
+          Invalid, expired, or mismatched codes return <code>400</code>.
+        </p>
+      </section>
+
+      <section id="system">
+        <h2>System</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/health</code></td><td>Public</td><td>Liveness, SSE stats, job counts by state.</td></tr>
+          <tr><td>GET</td><td><code>/api/stats</code></td><td>Read</td><td>Library statistics and metadata coverage.</td></tr>
+          <tr><td>GET</td><td><code>/api/config</code></td><td>Admin</td><td>Active configuration with secrets redacted.</td></tr>
+          <tr><td>POST</td><td><code>/config</code></td><td>Admin</td><td>Replace the configuration and apply it.</td></tr>
+          <tr><td>POST</td><td><code>/api/db/query</code></td><td>Admin</td><td>Read-only SQL.</td></tr>
+          <tr><td>POST</td><td><code>/api/db/load</code></td><td>Read</td><td>Web boot handshake. Acknowledges with <code>{}</code>; the web client cannot switch databases.</td></tr>
+          <tr><td>GET</td><td><code>/api/prompts/describe</code></td><td>Admin</td><td><code>{"prompt": "..."}</code>, the active description prompt.</td></tr>
+          <tr><td>GET</td><td><code>/ollama/models</code></td><td>Admin</td><td><code>{"models": [...]}</code> from the configured Ollama instance.</td></tr>
+          <tr><td>POST</td><td><code>/open</code></td><td>Admin</td><td><code>{"path": "..."}</code>. Opens an absolute path with the host's default application. Returns <code>{"status": "ok"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/embedding/directml/install</code></td><td>Admin</td><td>Install the DirectML runtime for GPU inference. Windows only.</td></tr>
+        </table>
+
+        <h4>GET /health</h4>
+        <div class="code-block">
+          <code>{</code><br>
+          <code>  "status": "healthy",</code><br>
+          <code>  "timestamp": 1704067200,</code><br>
+          <code>  "stream": {"active_connections": 2, "total_messages": 150, "max_connections": 1000,</code><br>
+          <code>             "dropped_broadcasts": 0, "dropped_client_msgs": 0, "rejected_connections": 0},</code><br>
+          <code>  "jobs": {"total": 10, "pending": 2, "in_progress": 1, "completed": 5, "cancelled": 1, "error": 1}</code><br>
+          <code>}</code>
+        </div>
+        <p>Fully permissive CORS headers are set on this endpoint.</p>
+
+        <h4>GET /api/stats</h4>
+        <p>
+          Statistics are computed as a snapshot after startup and refreshed in
+          the background. Until the first snapshot exists the response is
+          <code>{"ready": false}</code>. Otherwise it is an object of counts
+          keyed by metadata type (descriptions, transcripts, hashes,
+          dimensions, tags, embeddings, faces) with totals.
+        </p>
+
+        <h4>GET /api/config, POST /config</h4>
+        <p>
+          GET returns every configuration key with secrets replaced by a
+          redaction marker and storage-root credentials omitted. POST accepts
+          the full configuration object, validates <code>dbPath</code> as
+          non-empty, writes the file, and applies changes that do not need a
+          restart. Because GET redacts secrets, a client that round-trips GET
+          into POST must not send redacted values back; the
+          <a href="./cli.html#cmd-config">CLI</a> strips them. Set secrets and
+          storage roots from the web Config page.
+        </p>
+
+        <h4>POST /api/db/query</h4>
+        <div class="code-block">
+          <code>{"sql": "SELECT path FROM media WHERE path LIKE ?", "args": ["%/2024/%"], "limit": 100, "timeout_ms": 5000}</code>
+        </div>
+        <table>
+          <tr><th>Field</th><th>Default</th><th>Description</th></tr>
+          <tr><td><code>sql</code></td><td>required</td><td>One <code>SELECT</code> or <code>WITH</code> statement.</td></tr>
+          <tr><td><code>args</code></td><td><code>[]</code></td><td>Positional values for <code>?</code> placeholders.</td></tr>
+          <tr><td><code>limit</code></td><td><code>1000</code></td><td>Row cap. Maximum 10000.</td></tr>
+          <tr><td><code>timeout_ms</code></td><td><code>5000</code></td><td>Statement timeout. Maximum 30000.</td></tr>
+        </table>
+        <p>
+          Response: <code>{"columns": [...], "rows": [[...], ...], "row_count": n, "truncated": false, "elapsed_ms": 3}</code>.
+          The connection is opened with <code>PRAGMA query_only</code>, so
+          writes fail at the SQLite level. Errors return
+          <code>{"error": "..."}</code> with <code>400</code>.
+        </p>
+      </section>
+
+      <section id="jobs">
+        <h2>Jobs</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/create</code></td><td>Admin</td><td>Create a job.</td></tr>
+          <tr><td>GET</td><td><code>/jobs/list</code></td><td>Admin</td><td>All jobs as a JSON array.</td></tr>
+          <tr><td>GET</td><td><code>/api/jobs/for-path?path=</code></td><td>Admin</td><td>Jobs whose input or resources name a path: <code>{"path", "jobs": [...]}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/job/{id}/cancel</code></td><td>Admin</td><td>Cancel. Response <code>200</code>, plain text.</td></tr>
+          <tr><td>POST</td><td><code>/job/{id}/pause</code></td><td>Admin</td><td>Pause at the next item boundary. <code>400</code> if the job cannot be paused.</td></tr>
+          <tr><td>POST</td><td><code>/job/{id}/resume</code></td><td>Admin</td><td>Resume a paused job.</td></tr>
+          <tr><td>POST</td><td><code>/job/{id}/copy</code></td><td>Admin</td><td>Clone into a new pending job. Response <code>201</code>: <code>{"id", "message"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/job/{id}/remove</code></td><td>Admin</td><td>Delete the job record. Response <code>200</code>, plain text.</td></tr>
+          <tr><td>POST</td><td><code>/jobs/clear</code></td><td>Admin</td><td>Delete every job in a terminal state. Response: <code>{"cleared_count": n, "message": "..."}</code>.</td></tr>
+          <tr><td>GET</td><td><code>/tasks</code></td><td>Admin</td><td>Registered tasks and their option schemas.</td></tr>
+        </table>
+
+        <h4>POST /create</h4>
+        <div class="code-block">
+          <code>{"input": "describe --apply missing D:/photos/2024", "fields": {"prompt": "Describe the scene."}}</code>
+        </div>
+        <p>
+          <code>input</code> is split on spaces with double-quote grouping. The
+          first token is the task id, the last token is the job input, and the
+          tokens between are the task's arguments. A one-token input is a task
+          with no input. The splitter has no escape syntax; a token containing a
+          double quote cannot be expressed. <code>fields</code> is an optional
+          map appended to the arguments as <code>--key value</code> pairs
+          without splitting, for values containing spaces, quotes, or newlines.
+          Empty keys and empty values are skipped.
+        </p>
+        <p>
+          Response <code>201</code>: <code>{"id": "&lt;uuid&gt;"}</code>. The job
+          starts as soon as a runner is free. Task ids and options are listed by
+          <code>GET /tasks</code>.
+        </p>
+
+        <h3 id="job-object">Job Object</h3>
+        <table>
+          <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+          <tr><td><code>id</code></td><td>string</td><td>UUID.</td></tr>
+          <tr><td><code>command</code></td><td>string</td><td>Task id.</td></tr>
+          <tr><td><code>arguments</code></td><td>string[]</td><td>Argument tokens.</td></tr>
+          <tr><td><code>input</code></td><td>string</td><td>Job input.</td></tr>
+          <tr><td><code>original_input</code></td><td>string</td><td>The input as submitted, before any workflow substitution.</td></tr>
+          <tr><td><code>host</code></td><td>string</td><td>Hostname of the server that ran the job.</td></tr>
+          <tr><td><code>resources</code></td><td>string[]</td><td>Paths the job declared it touches.</td></tr>
+          <tr><td><code>dependencies</code></td><td>string[]</td><td>Ids of jobs that must complete first.</td></tr>
+          <tr><td><code>state</code></td><td>integer</td><td>0 pending, 1 in progress, 2 completed, 3 cancelled, 4 error, 5 paused.</td></tr>
+          <tr><td><code>created_at</code>, <code>claimed_at</code>, <code>completed_at</code>, <code>errored_at</code></td><td>RFC 3339</td><td>Zero value when unset.</td></tr>
+          <tr><td><code>output_files</code>, <code>source_files</code></td><td>string[]</td><td>Parallel arrays: files produced and the source each came from.</td></tr>
+          <tr><td><code>workflow_id</code></td><td>string</td><td>Non-empty when the job was created by a workflow.</td></tr>
+          <tr><td><code>progress_done</code>, <code>progress_total</code></td><td>integer</td><td>Per-item progress for per-item tasks.</td></tr>
+          <tr><td><code>interrupt_count</code></td><td>integer</td><td>Times the job was found still in progress at startup (crash or unclean shutdown). Auto-resume stops after a cap so a job that crashes the server does not loop.</td></tr>
+        </table>
+        <p>
+          Job stdout is not part of the object. It is streamed over
+          <a href="#stream"><code>/stream</code></a> while the job runs and is
+          not persisted, except by tasks that copy their log into the job
+          record (the cleanup tasks).
+        </p>
+        <p>
+          A job whose dependency fails or is cancelled is cancelled. A job in
+          progress when the server stops is returned to pending on restart.
+        </p>
+
+        <h3 id="tasks">Tasks</h3>
+        <p>
+          <code>GET /tasks</code> returns <code>{"tasks": [{"id", "name", "options": [...]}]}</code>
+          sorted by id. Each option:
+        </p>
+        <table>
+          <tr><th>Field</th><th>Description</th></tr>
+          <tr><td><code>name</code></td><td>Argument name. Passed as <code>--name value</code>.</td></tr>
+          <tr><td><code>label</code></td><td>Display label.</td></tr>
+          <tr><td><code>type</code></td><td><code>string</code>, <code>bool</code>, <code>enum</code>, <code>multi-enum</code>, or <code>number</code>.</td></tr>
+          <tr><td><code>choices</code></td><td>Allowed values for enum types.</td></tr>
+          <tr><td><code>default</code></td><td>Value used when omitted.</td></tr>
+          <tr><td><code>required</code></td><td>Whether the task fails without it.</td></tr>
+          <tr><td><code>description</code></td><td>Help text.</td></tr>
+        </table>
+        <p>
+          The task list is summarized in
+          <a href="./#tasks">Available Tasks</a>.
+        </p>
+      </section>
+
+      <section id="workflows">
+        <h2>Workflows</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/workflow</code></td><td>Admin</td><td>Run a DAG without saving it.</td></tr>
+          <tr><td>GET</td><td><code>/workflows</code></td><td>Admin</td><td>Saved workflows as a JSON array.</td></tr>
+          <tr><td>POST</td><td><code>/workflows/create</code></td><td>Admin</td><td>Save a workflow. Response <code>201</code> with the saved object.</td></tr>
+          <tr><td>GET</td><td><code>/workflows/{id}</code></td><td>Admin</td><td>One saved workflow.</td></tr>
+          <tr><td>PUT</td><td><code>/workflows/{id}</code></td><td>Admin</td><td>Update name and DAG. Returns the updated object.</td></tr>
+          <tr><td>DELETE</td><td><code>/workflows/{id}</code></td><td>Admin</td><td>Delete. Response <code>204</code>.</td></tr>
+          <tr><td>POST</td><td><code>/workflows/{id}/run</code></td><td>Admin</td><td>Instantiate as jobs. Response <code>201</code>: <code>{"ids": [...]}</code>.</td></tr>
+        </table>
+
+        <h4>DAG node</h4>
+        <table>
+          <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+          <tr><td><code>id</code></td><td>string</td><td>Node id, unique in the DAG.</td></tr>
+          <tr><td><code>command</code></td><td>string</td><td>Task id.</td></tr>
+          <tr><td><code>arguments</code></td><td>string[]</td><td>Argument tokens.</td></tr>
+          <tr><td><code>input</code></td><td>string</td><td>Job input.</td></tr>
+          <tr><td><code>dependencies</code></td><td>string[]</td><td>Node ids that must complete first.</td></tr>
+          <tr><td><code>pos_x</code>, <code>pos_y</code></td><td>number</td><td>Editor layout. Optional.</td></tr>
+        </table>
+        <p>
+          <code>POST /workflow</code> body: <code>{"tasks": [node, ...]}</code>.
+          <code>POST /workflows/create</code> and <code>PUT /workflows/{id}</code>
+          body: <code>{"name": "...", "dag": [node, ...]}</code>.
+          <code>POST /workflows/{id}/run</code> body: <code>{"input": "..."}</code>;
+          when non-empty, the input is injected into root nodes (nodes with no
+          dependencies). Each node becomes one job; node ids are rewritten to
+          job UUIDs and <code>dependencies</code> are mapped accordingly.
+        </p>
+      </section>
+
+      <section id="stream">
+        <h2>Real-Time Events</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/stream</code></td><td>Public</td><td>Server-Sent Events for job lifecycle, output, and progress.</td></tr>
+          <tr><td>GET</td><td><code>/api/deps/models/progress</code></td><td>Admin</td><td>Server-Sent Events for model download progress.</td></tr>
+        </table>
+        <p>
+          <code>/stream</code> responds with <code>text/event-stream</code>,
+          <code>Cache-Control: no-cache</code>, and permissive CORS. A comment
+          line <code>: keep-alive</code> is sent every 30 seconds. At most 1000
+          concurrent connections are accepted; further connections receive
+          <code>503</code>. Each client has a 50-message buffer; messages that
+          cannot be delivered within 5 seconds are dropped and counted in
+          <code>/health</code>.
+        </p>
+        <table>
+          <tr><th>Event name</th><th>Data</th></tr>
+          <tr><td><code>create</code>, <code>update</code>, <code>delete</code></td><td><code>{"updateType": "create"|"update"|"delete", "job": {...}, "html": "&lt;tr&gt;...&lt;/tr&gt;"}</code>. <code>job</code> is the <a href="#job-object">job object</a>; for <code>delete</code> only <code>id</code> is populated. <code>html</code> is the rendered table row for the admin page.</td></tr>
+          <tr><td><code>stdout-{jobId}</code></td><td><code>{"updateType": "stdout", "line": "..."}</code>. One event per output line while the job runs.</td></tr>
+          <tr><td><code>progress</code></td><td><code>{"updateType": "progress", "id": "&lt;jobId&gt;", "done": n, "total": n}</code>.</td></tr>
+        </table>
+        <div class="code-block">
+          <code>const es = new EventSource('http://localhost:10111/stream');</code><br>
+          <code>es.addEventListener('update', (e) =&gt; console.log(JSON.parse(e.data).job.state));</code><br>
+          <code>es.addEventListener('stdout-' + jobId, (e) =&gt; console.log(JSON.parse(e.data).line));</code>
+        </div>
+        <p>
+          The event stream is not authenticated. It carries job metadata and
+          output lines. Do not expose the port without a proxy that restricts
+          <code>/stream</code> if that is a concern.
+        </p>
+      </section>
+
+      <section id="media">
+        <h2>Media Library</h2>
+
+        <h3 id="media-query">Composable Query</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/media/query</code></td><td>Read</td><td>Predicate query with optional similarity ranking.</td></tr>
+          <tr><td>POST</td><td><code>/api/media</code></td><td>Read</td><td>Tag intersection or union. Predecessor of <code>/api/media/query</code>.</td></tr>
+        </table>
+        <div class="code-block">
+          <code>{</code><br>
+          <code>  "mode": "AND",</code><br>
+          <code>  "predicates": [</code><br>
+          <code>    {"type": "tag", "value": "sunset"},</code><br>
+          <code>    {"type": "tag", "value": "blurry", "exclude": true},</code><br>
+          <code>    {"type": "path", "value": "/2024/"},</code><br>
+          <code>    {"type": "similar", "value": "D:/photos/x.jpg", "text": "at night", "textWeight": 0.5}</code><br>
+          <code>  ]</code><br>
+          <code>}</code>
+        </div>
+        <table>
+          <tr><th>Field</th><th>Description</th></tr>
+          <tr><td><code>mode</code></td><td><code>AND</code> or <code>OR</code>. How predicates combine when a predicate has no <code>join</code>.</td></tr>
+          <tr><td><code>predicates[].type</code></td><td>See the table below.</td></tr>
+          <tr><td><code>predicates[].value</code></td><td>Predicate operand. Meaning depends on <code>type</code>.</td></tr>
+          <tr><td><code>predicates[].exclude</code></td><td>Negate the predicate.</td></tr>
+          <tr><td><code>predicates[].join</code></td><td><code>AND</code> or <code>OR</code>; overrides <code>mode</code> for this predicate's connection to the previous one.</td></tr>
+          <tr><td><code>predicates[].text</code>, <code>textWeight</code></td><td>Visual predicates only. Blend a text concept into the query vector. <code>textWeight</code> is 0 to 1; default 0.5.</td></tr>
+          <tr><td><code>predicates[].nodes</code></td><td>Visual predicates only. Composite blend; see below. When present, <code>text</code> is ignored.</td></tr>
+          <tr><td><code>predicates[].blendMode</code></td><td>Reserved for composite blends.</td></tr>
+        </table>
+        <table>
+          <tr><th>Type</th><th>Value</th><th>Semantics</th></tr>
+          <tr><td><code>tag</code></td><td>Tag label</td><td>Item has the tag.</td></tr>
+          <tr><td><code>category</code></td><td>Category label</td><td>Item has any tag in the category.</td></tr>
+          <tr><td><code>path</code></td><td>Substring</td><td><code>path LIKE %value%</code>.</td></tr>
+          <tr><td><code>description</code></td><td>Substring</td><td><code>description LIKE %value%</code>.</td></tr>
+          <tr><td><code>hash</code></td><td>Substring</td><td><code>hash LIKE %value%</code>.</td></tr>
+          <tr><td><code>orientation</code></td><td><code>landscape</code>, <code>portrait</code>, <code>square</code></td><td>Width versus height. Items without dimensions never match.</td></tr>
+          <tr><td><code>faces</code></td><td><code>ungrouped</code></td><td>Item has at least one face with no person and no face with a person.</td></tr>
+          <tr><td><code>similar</code></td><td>Media path</td><td>Rank by cosine similarity to the item's embedding.</td></tr>
+          <tr><td><code>visual</code></td><td>Free text</td><td>Rank by text-to-image similarity (SigLIP 2).</td></tr>
+          <tr><td><code>clip</code></td><td>Image data URL</td><td>Rank by similarity to an uploaded image (<code>data:image/...;base64,...</code>).</td></tr>
+          <tr><td><code>face</code></td><td>Media path or image data URL</td><td>Rank by face-identity similarity to the faces in the given item or image.</td></tr>
+        </table>
+        <p>
+          The four ranking types are <em>visual predicates</em>. Evaluation is
+          filter-first: when every predicate is joined by AND, the SQL predicates
+          run first and similarity is scored only within that set. Otherwise
+          similarity produces up to 1000 candidates that are then filtered. When
+          a visual predicate is present, results are ordered by descending score,
+          with the highest score kept when several visual predicates match the
+          same item. Without one, results are ordered by path.
+        </p>
+        <h4>Composite blend nodes</h4>
+        <div class="code-block">
+          <code>{"type": "similar", "value": "D:/photos/x.jpg", "nodes": [</code><br>
+          <code>  {"kind": "text",  "value": "at night", "weight": 0.5},</code><br>
+          <code>  {"kind": "text",  "value": "blurry",   "weight": 0.3, "negative": true},</code><br>
+          <code>  {"kind": "image", "value": "D:/photos/y.jpg", "weight": 0.7},</code><br>
+          <code>  {"kind": "clip",  "value": "data:image/png;base64,...", "weight": 0.4}</code><br>
+          <code>]}</code>
+        </div>
+        <table>
+          <tr><th>Field</th><th>Description</th></tr>
+          <tr><td><code>kind</code></td><td><code>image</code> (library path), <code>clip</code> (data URL), or <code>text</code>.</td></tr>
+          <tr><td><code>value</code></td><td>Path, data URL, or text.</td></tr>
+          <tr><td><code>weight</code></td><td>0 to 1. Omitted means 1.</td></tr>
+          <tr><td><code>negative</code></td><td>Subtract this node's direction.</td></tr>
+        </table>
+        <p>
+          The predicate's own <code>value</code> is the anchor with weight 1.
+          Every component is normalized, combined into one vector by signed
+          weight, and scanned once. Mixed text and image blends use the
+          multimodal model. A <code>face</code> predicate does not accept
+          <code>nodes</code>.
+        </p>
+        <h4>Result item</h4>
+        <table>
+          <tr><th>Field</th><th>Description</th></tr>
+          <tr><td><code>path</code></td><td>Media path.</td></tr>
+          <tr><td><code>width</code>, <code>height</code></td><td>Pixel dimensions or <code>null</code>.</td></tr>
+          <tr><td><code>elo</code>, <code>battles</code></td><td>Battle Mode rating and bout count.</td></tr>
+          <tr><td><code>mtimeMs</code></td><td>Reserved; <code>0</code>.</td></tr>
+          <tr><td><code>tagLabel</code>, <code>weight</code>, <code>timeStamp</code></td><td>Populated when a tag predicate drives the row; otherwise <code>null</code> or <code>0</code>.</td></tr>
+        </table>
+
+        <h4>POST /api/media</h4>
+        <div class="code-block">
+          <code>{"tags": ["sunset", "beach"], "mode": "EXCLUSIVE"}</code>
+        </div>
+        <p>
+          <code>mode</code> <code>EXCLUSIVE</code> (default) requires every tag;
+          any other value requires any tag. An empty <code>tags</code> array
+          returns the whole library ordered by path. Result items have the same
+          shape as above.
+        </p>
+
+        <h3 id="media-search">Search</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/media/search</code></td><td>Read</td><td><code>{"description": "..."}</code>. Description substring match. Optional <code>tags</code> and <code>filteringMode</code> narrow by tag.</td></tr>
+          <tr><td>GET</td><td><code>/api/media/similar?path=&amp;limit=</code></td><td>Read</td><td>Items similar to a library item. <code>limit</code> default 50. Returns <code>[{"path", "score"}]</code>.</td></tr>
+          <tr><td>GET</td><td><code>/api/media/search/visual?q=&amp;limit=</code></td><td>Read</td><td>Text-to-image search. <code>limit</code> default 50. Returns <code>[{"path", "score"}]</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/search/image</code></td><td>Read</td><td>Body is the raw image bytes (any common format, 32 MB cap). Returns ranked result items.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/search/face</code></td><td>Read</td><td>Body is the raw image bytes (32 MB cap). Detects faces in the image and returns face hits.</td></tr>
+        </table>
+        <p>
+          <code>score</code> is cosine similarity in the active embedding
+          model's space. <code>/api/media/similar</code> embeds the file on the
+          fly when the item has no stored vector. A face hit is
+          <code>{"faceId", "path", "score", "x", "y", "w", "h", "frameTs", "personId", "model"}</code>
+          with a normalized bounding box.
+        </p>
+
+        <h3 id="media-item">Item Data</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/media/metadata</code></td><td>Read</td><td><code>{"path"}</code> &rarr; <code>{"width", "height", "size", "description", "transcript", "hash", "duration"}</code>. <code>duration</code> is present for video.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/tags</code></td><td>Read</td><td><code>{"path"}</code> &rarr; <code>{"tags": [{"label", "category", "weight", "timeStamp"}]}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/gif-metadata</code></td><td>Read</td><td><code>{"path"}</code> &rarr; <code>{"frameCount", "duration"}</code> via ffprobe, or <code>null</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/preview</code></td><td>Read</td><td><code>{"path", "cache", "timeStamp"}</code>. Returns the thumbnail path string for the requested cache column, generating it if missing, or <code>null</code>. <code>cache</code> is a column name (below) or <code>false</code> to skip.</td></tr>
+          <tr><td>GET</td><td><code>/api/faces?path=</code></td><td>Read</td><td>Faces detected in one item. See <a href="#people">People and Faces</a>.</td></tr>
+          <tr><td>GET</td><td><code>/api/jobs/for-path?path=</code></td><td>Admin</td><td>Jobs touching the item.</td></tr>
+        </table>
+
+        <h3 id="media-mutation">Mutation</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/media/description</code></td><td>Admin</td><td><code>{"path", "description"}</code>. Empty string clears. Returns <code>{}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/transcript</code></td><td>Admin</td><td><code>{"path", "transcript"}</code>. Returns <code>{"status": "ok"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/rating</code></td><td>Admin</td><td><code>{"path", "elo"?, "views"?, "wins"?, "losses"?}</code>. Omitted fields are unchanged; with only <code>path</code> the call reads. Returns <code>{"path", "elo", "views", "wins", "losses"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/battle</code></td><td>Admin</td><td><code>{"winnerPath", "loserPath", "outcome"?}</code>. Records a Battle Mode bout and updates both Elo ratings server-side. <code>outcome</code> is the winner's score: 1 (default) or 0.5 for a draw. Returns <code>{"winnerPath", "winnerElo", "winnerMatches", "loserPath", "loserElo", "loserMatches"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/delete</code></td><td>Admin</td><td><code>{"path"}</code>. Removes the item and every referencing row. The file is not deleted.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/forget</code></td><td>Admin</td><td><code>{"path"}</code>. Same effect as <code>delete</code>; named for clarity in scripts.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/move</code></td><td>Admin</td><td>Re-point database references after a move on disk.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/merge-metadata</code></td><td>Admin</td><td><code>{"paths": [target, source, ...]}</code>. Merge tags, embeddings, transcript, and faces from the sources into the first path, then remove the sources.</td></tr>
+        </table>
+        <p>
+          <code>delete</code> and <code>forget</code> return
+          <code>{"path", "media": n, "tags": n, "embeddings": n, "faces": n, "battles": n}</code>
+          with the count of rows removed per table.
+        </p>
+        <h4>POST /api/media/move</h4>
+        <div class="code-block">
+          <code>{"from": "C:/pics/2023", "to": "D:/archive/2023", "prefix": true, "dryRun": false}</code>
+        </div>
+        <p>
+          With <code>prefix</code>, every item whose path begins with
+          <code>from</code> followed by a separator is re-pointed. Matching is
+          segment-aligned. <code>dryRun</code> runs the transaction and rolls it
+          back. Response:
+          <code>{"from", "to", "prefix", "dryRun", "items": n, "rows": {"media": n, "tags": n, ...}, "total": n, "paths": [...], "truncated": false}</code>.
+          When a destination already belongs to another item the response is
+          <code>409</code> with the conflicting paths and nothing is changed.
+        </p>
+        <p>
+          <code>merge-metadata</code> returns
+          <code>{"target", "sources", "tags", "embeddings", "transcript", "transcriptFile", "deleted", "failed", "facesRemoved"}</code>.
+        </p>
+
+        <h3 id="thumbnails">Thumbnails</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/thumbnails</code></td><td>Read</td><td><code>{"path"}</code> &rarr; <code>[{"cache", "path", "exists", "size"}]</code> for the 600 and 1200 caches.</td></tr>
+          <tr><td>POST</td><td><code>/api/thumbnails/regenerate</code></td><td>Admin</td><td><code>{"path", "cache", "timeStamp"}</code>. Regenerates one thumbnail and returns its path.</td></tr>
+          <tr><td>GET</td><td><code>/media/thumbnail?path=&amp;cache=&amp;ts=</code></td><td>Read</td><td>Serve a thumbnail image, generating it on first request.</td></tr>
+        </table>
+        <p>
+          <code>cache</code> is one of <code>thumbnail_path_100</code>,
+          <code>thumbnail_path_600</code> (default), or
+          <code>thumbnail_path_1200</code>. <code>timeStamp</code> /
+          <code>ts</code> is the video frame time in seconds. For S3 roots the
+          thumbnail is stored under the root's thumbnail prefix. Responses carry
+          an <code>ETag</code> and honour <code>If-None-Match</code> with
+          <code>304</code>.
+        </p>
+      </section>
+
+      <section id="serving">
+        <h2>File Serving</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/media/file?path=</code></td><td>Read</td><td>Serve the file. Local roots stream with range support, a 1-hour <code>Cache-Control</code>, and an <code>ETag</code>. S3 roots redirect to a presigned URL (1-hour expiry). Files over 2 GB return <code>413</code>. Directories return <code>400</code>.</td></tr>
+          <tr><td>GET</td><td><code>/media/hls?path=&amp;check=</code></td><td>Read</td><td>HLS status for a video: <code>{"status": "ready", "url": "/media/hls/{hash}/master.m3u8"}</code>, <code>{"status": "idle"}</code>, or an in-progress state. A GET without <code>check=true</code> starts transcoding when renditions do not exist.</td></tr>
+          <tr><td>DELETE</td><td><code>/media/hls?path=</code></td><td>Admin</td><td>Delete cached renditions for the video.</td></tr>
+          <tr><td>GET</td><td><code>/media/hls/{hash}/{file}</code></td><td>Read</td><td>Playlists (<code>.m3u8</code>) and segments (<code>.ts</code>).</td></tr>
+          <tr><td>GET</td><td><code>/media/facecrop?id=&amp;size=</code></td><td>Read</td><td>JPEG crop of one detected face by face id.</td></tr>
+          <tr><td>GET</td><td><code>/static/{file}</code></td><td>Public</td><td>Embedded static assets.</td></tr>
+          <tr><td>GET</td><td><code>/app/</code></td><td>Read</td><td>The embedded web viewer (single-page application).</td></tr>
+        </table>
+      </section>
+
+      <section id="browser">
+        <h2>Legacy Media Browser</h2>
+        <p>
+          These endpoints back the server-rendered gallery at <code>/media</code>
+          and the browser extensions. New integrations should use the
+          <a href="#media">Media Library</a> endpoints.
+        </p>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/media/api?offset=&amp;limit=&amp;q=</code></td><td>Admin</td><td>Paged items: <code>{"items": [...], "has_more", "total_count"}</code>. <code>limit</code> default 25, maximum 100. <code>q</code> matches filename, description, and tags.</td></tr>
+          <tr><td>GET</td><td><code>/media/api?path=&amp;single=true</code></td><td>Admin</td><td>One item by path.</td></tr>
+          <tr><td>GET</td><td><code>/media/suggest?kind=&amp;prefix=&amp;limit=</code></td><td>Read</td><td>Autocomplete. <code>kind</code> is <code>filters</code>, <code>tag</code>, <code>category</code>, <code>path</code>, or <code>pathdir</code>. <code>limit</code> default 25, maximum 200. Returns <code>{"suggestions": [...]}</code>; <code>tag</code> also returns <code>{"tags": [{"label", "category"}]}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/media/tag</code></td><td>Admin</td><td><code>{"media_path", "tag_label", "category_label", "action": "add"|"remove"}</code>. Returns <code>{"status": "ok"}</code>.</td></tr>
+          <tr><td>GET</td><td><code>/media/has-tag?media_path=&amp;tag_label=&amp;category_label=</code></td><td>Read</td><td><code>{"has_tag": bool}</code>.</td></tr>
+        </table>
+        <p>
+          Item objects from <code>/media/api</code> use the older shape:
+          <code>{"path", "description", "size", "hash", "width", "height", "tags": [{"label", "category"}], "exists", "duplicateCount"}</code>
+          where nullable columns are encoded as <code>{"String", "Valid"}</code>
+          or <code>{"Int64", "Valid"}</code> pairs.
+        </p>
+      </section>
+
+      <section id="taxonomy">
+        <h2>Taxonomy</h2>
+        <p>
+          A <em>category</em> groups <em>tags</em>. An <em>assignment</em>
+          attaches a tag to a media item, optionally at a video timestamp and
+          with a weight. Tag labels are unique across the library; a tag belongs
+          to one category.
+        </p>
+
+        <h3 id="taxonomy-read">Read</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/taxonomy</code></td><td>Read</td><td><code>[{"label", "weight", "tagViewMode", "tags": [{"label", "category", "weight"}]}]</code>, every category with its tags.</td></tr>
+          <tr><td>GET</td><td><code>/api/taxonomy/categories</code></td><td>Read</td><td><code>[{"label", "weight", "description", "tagViewMode"}]</code>.</td></tr>
+          <tr><td>GET</td><td><code>/api/taxonomy/tags?category=&amp;excludeCategory=</code></td><td>Read</td><td>Tags in one category, or all tags outside a comma-separated list of categories.</td></tr>
+          <tr><td>GET</td><td><code>/api/taxonomy/tag?label=</code></td><td>Read</td><td><code>{"label", "category", "weight", "description", "thumbnail_path_600"}</code>.</td></tr>
+          <tr><td>GET</td><td><code>/api/taxonomy/category-count?category=&amp;cap=</code></td><td>Read</td><td>Distinct media count for a category, as a bare integer. <code>cap</code> stops counting early.</td></tr>
+          <tr><td>GET</td><td><code>/api/tags/list?category=</code></td><td>Read</td><td><code>{"tags": [{"label", "category", "weight", "media_count"}]}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/tags/count</code></td><td>Read</td><td><code>{"label"}</code> &rarr; <code>{"count": n}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/tags/preview</code></td><td>Read</td><td><code>{"label"}</code> &rarr; the tag's preview thumbnail path or <code>null</code>.</td></tr>
+        </table>
+
+        <h3 id="taxonomy-tags">Tags</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Body</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/tags</code></td><td>Admin</td><td><code>{"label", "categoryLabel", "weight"?}</code></td><td>Create. Returns <code>{"label"}</code>.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/tags</code></td><td>Admin</td><td><code>{"label", "categoryLabel"}</code></td><td>Delete the tag and its assignments.</td></tr>
+          <tr><td>POST</td><td><code>/api/tags/rename</code></td><td>Admin</td><td><code>{"label", "newLabel"}</code></td><td>Rename.</td></tr>
+          <tr><td>POST</td><td><code>/api/tags/move</code></td><td>Admin</td><td><code>{"label", "categoryLabel"}</code></td><td>Move to another category.</td></tr>
+          <tr><td>POST</td><td><code>/api/tags/order</code></td><td>Admin</td><td><code>{"labels": [...]}</code></td><td>Set sort order by assigning ascending weights.</td></tr>
+          <tr><td>POST</td><td><code>/api/tags/weight</code></td><td>Admin</td><td><code>{"label", "weight"}</code></td><td>Set sort weight.</td></tr>
+          <tr><td>PUT</td><td><code>/api/tags/timestamp</code></td><td>Admin</td><td><code>{"mediaPath", "tagLabel", "oldTimestamp", "newTimestamp"}</code></td><td>Move a video tag timestamp.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/tags/timestamp</code></td><td>Admin</td><td><code>{"mediaPath", "tagLabel", "timestamp"}</code></td><td>Remove a video tag timestamp.</td></tr>
+        </table>
+        <p>Mutation endpoints in this section return <code>{}</code> on success unless noted.</p>
+
+        <h3 id="taxonomy-categories">Categories</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Body</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/categories</code></td><td>Admin</td><td><code>{"label"}</code></td><td>Create. Returns <code>{"label"}</code>.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/categories</code></td><td>Admin</td><td><code>{"label"}</code></td><td>Delete the category, its tags, and their assignments.</td></tr>
+          <tr><td>POST</td><td><code>/api/categories/rename</code></td><td>Admin</td><td><code>{"label", "newLabel"}</code></td><td>Rename.</td></tr>
+          <tr><td>POST</td><td><code>/api/categories/tag-view-mode</code></td><td>Admin</td><td><code>{"label", "mode"}</code></td><td>Set how the viewer lists the category's tags.</td></tr>
+        </table>
+
+        <h3 id="taxonomy-assignments">Assignments</h3>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Body</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/assignments</code></td><td>Admin</td><td><code>{"mediaPath" | "mediaPaths": [...], "tagLabel", "categoryLabel", "timeStamp"?, "applyTagPreview"?}</code></td><td>Tag one or many items. <code>mediaPaths</code> takes precedence. <code>applyTagPreview</code> sets the item as the tag's preview image.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/assignments</code></td><td>Admin</td><td><code>{"mediaPath" | "mediaPaths": [...], "tag": {"tag_label", "time_stamp"}}</code></td><td>Remove an assignment. <code>time_stamp</code> selects one timestamped assignment; <code>0</code> removes the untimed one.</td></tr>
+          <tr><td>POST</td><td><code>/api/assignments/weight</code></td><td>Admin</td><td><code>{"mediaPath", "tagLabel", "weight", "mediaTimeStamp"?}</code></td><td>Set the weight of one assignment.</td></tr>
+        </table>
+      </section>
+
+      <section id="embeddings">
+        <h2>Embeddings Index</h2>
+        <p>
+          Vectors are stored per model in the database and loaded into an exact
+          in-memory cosine index for the active model at startup and after each
+          embed job.
+        </p>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/index/status</code></td><td>Admin</td><td>Index and storage state.</td></tr>
+          <tr><td>GET</td><td><code>/api/index/models</code></td><td>Admin</td><td><code>{"models": [{"id", "name", "active", "indexed", ...}]}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/index/rebuild</code></td><td>Admin</td><td>Reload the in-memory index. Returns <code>{"status": "ok", "model", "vectors"}</code>. Blocks for the duration.</td></tr>
+          <tr><td>GET</td><td><code>/api/index/missing?model=&amp;limit=</code></td><td>Admin</td><td><code>{"model", "total_missing", "paths": [...]}</code>. <code>limit</code> default 100, maximum 10000, <code>0</code> for count only.</td></tr>
+          <tr><td>GET</td><td><code>/api/embeddings?path=&amp;model=&amp;vector=</code></td><td>Admin</td><td><code>{"path", "embeddings": [...]}</code>, one row per model unless <code>model</code> is given. <code>vector=true</code> includes the float array.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/embeddings?path=&amp;model=</code></td><td>Admin</td><td><code>{"deleted": n}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/embeddings/prune</code></td><td>Admin</td><td>Delete vectors whose media row is gone. <code>{"pruned_rows", "pruned_paths"}</code>.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/embeddings/all?confirm=true</code></td><td>Admin</td><td>Delete every vector. <code>{"deleted": n}</code>. <code>400</code> without <code>confirm</code>.</td></tr>
+          <tr><td>GET</td><td><code>/api/embeddings/projection?model=&amp;limit=</code></td><td>Admin</td><td>3D PCA projection for the visualizer: <code>{"model", "dim", "total", "count", "variance", "paths", "points"}</code>. <code>limit</code> default 4000, maximum 20000, stride-sampled.</td></tr>
+        </table>
+        <h4>GET /api/index/status</h4>
+        <div class="code-block">
+          <code>{</code><br>
+          <code>  "index": {"installed": true, "model": "siglip2-base-patch16-224", "vectors": 51234},</code><br>
+          <code>  "active_model": "siglip2-base-patch16-224",</code><br>
+          <code>  "media_total": 52000,</code><br>
+          <code>  "missing_active_model": 766,</code><br>
+          <code>  "orphaned": 12,</code><br>
+          <code>  "embeddings": [{"model": "...", "count": 51234, "dim": 768, "bytes": 157390848}],</code><br>
+          <code>  "total_count": 51234,</code><br>
+          <code>  "total_bytes": 157390848</code><br>
+          <code>}</code>
+        </div>
+      </section>
+
+      <section id="people">
+        <h2>People and Faces</h2>
+        <p>
+          A <em>face</em> is one detection with an embedding. A <em>person</em>
+          is a cluster of faces. Curation state (locks, rejections, bans) is
+          permanent across re-clustering.
+        </p>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/people</code></td><td>Read</td><td><code>[{"id", "name", "coverFaceId", "faceCount", "mediaCount", "lockedCount", "createdAt", "models"}]</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/people</code></td><td>Admin</td><td><code>{"name"}</code>. Create an empty person. Returns <code>{"id", "name"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/people/{id}/rename</code></td><td>Admin</td><td><code>{"name"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/people/{id}/merge</code></td><td>Admin</td><td><code>{"intoId"}</code>. Move every face into another person and delete this one. Returns <code>{"merged", "into"}</code>.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/people/{id}?deleteFaces=&amp;ban=</code></td><td>Admin</td><td>Delete the person. <code>deleteFaces=true</code> also deletes its faces. Otherwise the group is banned from re-forming unless <code>ban=false</code>. Returns <code>{"deleted", "facesDeleted"}</code> or <code>{"deleted", "banned"}</code>.</td></tr>
+          <tr><td>GET</td><td><code>/api/people/{id}/media</code></td><td>Read</td><td>Media items containing the person.</td></tr>
+          <tr><td>GET</td><td><code>/api/people/{id}/faces</code></td><td>Read</td><td><code>{"personId", "faces": [...]}</code>, least typical first.</td></tr>
+          <tr><td>POST</td><td><code>/api/people/{id}/cover</code></td><td>Admin</td><td>Choose the cover face. Returns <code>{"personId", "coverFaceId"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/people/{id}/lock</code></td><td>Admin</td><td>Confirm every current face. Returns <code>{"personId", "locked": n}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/people/lock-all</code></td><td>Admin</td><td>Confirm every face of every named person. Returns <code>{"people", "locked"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/people/{id}/curate</code></td><td>Admin</td><td><code>{"keepFaceIds": [...]}</code>. Lock the listed faces and reject the rest. Returns <code>{"personId", "kept", "rejected"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/assign-person</code></td><td>Admin</td><td><code>{"path", "personId" | "newPerson": true, "name"?, "setCover"?}</code>. Assign every face in a media item to a person.</td></tr>
+          <tr><td>POST</td><td><code>/api/media/reject-person</code></td><td>Admin</td><td><code>{"path", "personId" | "name"}</code>. Reject every face in the item from the person. Returns <code>{"personId", "rejectedFaceIds"}</code>.</td></tr>
+          <tr><td>GET</td><td><code>/api/faces?path=</code></td><td>Read</td><td><code>{"model", "scanned", "scannedAt", "faces": [...]}</code> for one item.</td></tr>
+          <tr><td>GET</td><td><code>/api/faces/{id}/similar</code></td><td>Read</td><td>Face hits ranked by identity similarity to one face.</td></tr>
+          <tr><td>POST</td><td><code>/api/faces/{id}/assign</code></td><td>Admin</td><td><code>{"personId" | "newPerson": true, "name"?}</code>. Confirmed assignment. Returns <code>{"faceId", "personId", "created", "name"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/faces/{id}/unassign</code></td><td>Admin</td><td>Detach the face from its person. Returns <code>{"faceId", "unassigned": true}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/faces/{id}/reject</code></td><td>Admin</td><td><code>{"personId"}</code>. Permanent veto: the face can never rejoin that person.</td></tr>
+          <tr><td>GET</td><td><code>/api/faces/ungrouped?faces=1&amp;limit=&amp;offset=</code></td><td>Read</td><td><code>{"count"}</code>; with <code>faces=1</code> also <code>"faces": [...]</code>. <code>limit</code> default 120, maximum 500.</td></tr>
+          <tr><td>GET</td><td><code>/api/faces/stats</code></td><td>Read</td><td><code>{"faces": [{"model", "count", "bytes"}], "total_faces", "total_bytes", "scans", "people": {"total", "named", "unnamed"}}</code>.</td></tr>
+          <tr><td>GET, POST</td><td><code>/api/faces/tuning</code></td><td>Admin</td><td><code>{"thresholdOffset", "minCluster", "minQuality"}</code>. POST merges the supplied fields and returns the full object.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/faces/all?confirm=true</code></td><td>Admin</td><td>Delete all faces and people. Returns <code>{"deleted": true}</code>.</td></tr>
+        </table>
+        <p>
+          A face object carries <code>id</code>, a normalized bounding box
+          (<code>x</code>, <code>y</code>, <code>w</code>, <code>h</code>),
+          <code>frameTs</code> for video, <code>personId</code>,
+          <code>score</code> (detection confidence), <code>assignedBy</code>
+          (<code>cluster</code> or <code>user</code>), and <code>model</code>.
+          Face crops are served by <code>/media/facecrop?id=</code>.
+        </p>
+      </section>
+
+      <section id="storage">
+        <h2>Storage and Transfer</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>POST</td><td><code>/api/fs/list</code></td><td>Read</td><td><code>{"path"}</code>. Empty path lists the storage roots. Returns <code>{"entries": [{"name", "path", "isDir", "mtimeMs", "size", "type"}], "parent", "roots"}</code>. Paths outside every root return <code>403</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/fs/scan</code></td><td>Read</td><td><code>{"path", "recursive"}</code>. Lists media files: <code>{"library": [{"path", "mtimeMs", "size"}], "cursor"}</code>. For admins, new files are also added to the library. <code>cursor</code> is the index of the requested file when <code>path</code> is a file.</td></tr>
+          <tr><td>POST</td><td><code>/api/upload</code></td><td>Admin</td><td>Multipart upload.</td></tr>
+          <tr><td>GET</td><td><code>/api/export</code></td><td>Admin</td><td>Stream a <code>.lokiexport</code> archive of all tagged media with their tags, embeddings, and faces. <code>Content-Type: application/gzip</code>, sent as an attachment. <code>400</code> when nothing is tagged.</td></tr>
+          <tr><td>POST</td><td><code>/api/import</code></td><td>Admin</td><td>Multipart: <code>file</code> (the archive), <code>destRoot</code> (root label, default root when omitted). Paths are rebased onto the destination root. Returns <code>{"imported", "skipped", "files", "dest_root", "warnings"}</code>. 50 GB cap.</td></tr>
+        </table>
+        <h4>POST /api/upload</h4>
+        <table>
+          <tr><th>Form field</th><th>Description</th></tr>
+          <tr><td><code>files</code></td><td>One or more file parts. Required.</td></tr>
+          <tr><td><code>destination</code></td><td>Directory inside a storage root. Default: <code>uploads/</code> under the default root.</td></tr>
+          <tr><td><code>autoIngest</code></td><td><code>false</code> to skip the ingest job queued after upload.</td></tr>
+        </table>
+        <p>
+          Response: <code>{"success": true, "files": ["&lt;stored path&gt;", ...], "message"}</code>.
+          The body cap is 10 GB. For S3 roots, files are staged locally and
+          uploaded to the bucket.
+        </p>
+      </section>
+
+      <section id="deps">
+        <h2>Dependencies</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/deps/status</code></td><td>Admin</td><td>Every bundled binary, optional tool, and downloadable model with its state.</td></tr>
+          <tr><td>POST</td><td><code>/api/deps/models/{id}/download</code></td><td>Admin</td><td>Start a download. <code>202</code> with a progress object; <code>200</code> <code>{"state": "installed"}</code> when already installed; <code>404</code> for an unknown id.</td></tr>
+          <tr><td>POST</td><td><code>/api/deps/models/{id}/cancel</code></td><td>Admin</td><td>Cancel an active download. <code>202</code>; <code>404</code> when none is active.</td></tr>
+          <tr><td>POST</td><td><code>/api/deps/models/{id}/verify</code></td><td>Admin</td><td>Checksum installed files: <code>{"id", "files": {"&lt;rel_path&gt;": "ok" | "&lt;error&gt;"}}</code>.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/deps/models/{id}</code></td><td>Admin</td><td>Remove a model. <code>204</code>.</td></tr>
+          <tr><td>GET</td><td><code>/api/deps/models/progress</code></td><td>Admin</td><td>Server-Sent Events; each event's data is a progress object.</td></tr>
+          <tr><td>GET</td><td><code>/api/onboarding/state</code></td><td>Admin</td><td><code>{"shown", "dismissed_at"}</code> for the first-run tour.</td></tr>
+          <tr><td>POST</td><td><code>/api/onboarding/dismiss</code>, <code>/api/onboarding/reset</code></td><td>Admin</td><td>Dismiss or re-arm the tour.</td></tr>
+        </table>
+        <p>
+          A status entry is
+          <code>{"id", "category", "name", "feature", "description", "state", "version", "size_bytes", "path", "error", "detail"}</code>.
+          A progress object is
+          <code>{"id", "state", "current_file", "bytes_done", "bytes_total", "error", "started_at"}</code>.
+          Model ids: <code>wd-eva02-large-tagger-v3</code>,
+          <code>siglip2-base-patch16-224</code>, <code>dinov2-base</code>,
+          <code>yunet</code>, <code>sface</code>, <code>anime-head</code>,
+          <code>ccip</code>, <code>faster-whisper</code>. Downloads resume and
+          are verified against pinned SHA-256 checksums.
+        </p>
+      </section>
+
+      <section id="swipe">
+        <h2>Swipe</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/swipe</code></td><td>Read</td><td>The Swipe progressive web app.</td></tr>
+          <tr><td>GET</td><td><code>/swipe/manifest.json</code></td><td>Public</td><td>PWA manifest.</td></tr>
+          <tr><td>GET</td><td><code>/swipe/api</code></td><td>Read</td><td>Feed items: <code>{"items": [...], "has_more"}</code>.</td></tr>
+        </table>
+        <table>
+          <tr><th>Parameter</th><th>Description</th></tr>
+          <tr><td><code>mode</code></td><td>Omitted: seeded shuffle. <code>similar</code>: ranked by similarity to <code>anchor</code>. <code>feed</code>: personalized feed built from likes, keyed by <code>session</code>. <code>text</code>: text-to-image search on <code>q</code>. <code>face</code>: same-person ranking around <code>anchor</code>.</td></tr>
+          <tr><td><code>q</code></td><td>Search text (shuffle filter, or the query for <code>mode=text</code>).</td></tr>
+          <tr><td><code>anchor</code></td><td>Media path. Required for <code>similar</code> and <code>face</code>. Excluded from its own results.</td></tr>
+          <tr><td><code>seed</code></td><td>Integer shuffle seed. Same seed, same order.</td></tr>
+          <tr><td><code>session</code></td><td>Client session id for <code>mode=feed</code>. Default <code>default</code>.</td></tr>
+          <tr><td><code>orientation</code></td><td><code>landscape</code>, <code>portrait</code>, or <code>square</code>.</td></tr>
+          <tr><td><code>offset</code>, <code>limit</code></td><td>Paging. <code>limit</code> default 20, maximum 50.</td></tr>
+        </table>
+      </section>
+
+      <section id="session">
+        <h2>Settings and Session</h2>
+        <p>
+          The web viewer persists its preferences and per-session UI state on
+          the server through these endpoints. Values are free-form JSON.
+        </p>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/settings</code></td><td>Read</td><td>The settings object.</td></tr>
+          <tr><td>PUT</td><td><code>/api/settings</code></td><td>Read (write requires credential)</td><td>Merge the body into settings.</td></tr>
+          <tr><td>GET</td><td><code>/api/session</code></td><td>Read</td><td>The whole session object.</td></tr>
+          <tr><td>GET</td><td><code>/api/session/{key}</code></td><td>Read</td><td>One value.</td></tr>
+          <tr><td>PUT</td><td><code>/api/session</code></td><td>Read (write requires credential)</td><td>Merge an object into the session.</td></tr>
+          <tr><td>PUT</td><td><code>/api/session/{key}</code></td><td>Read (write requires credential)</td><td>Set one value to the body.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/session</code></td><td>Read (write requires credential)</td><td>Clear the session.</td></tr>
+          <tr><td>POST</td><td><code>/api/session/keys</code></td><td>Admin</td><td><code>{"keys": [...]}</code>. Delete the named keys.</td></tr>
+        </table>
+      </section>
+
+      <section id="scheduler">
+        <h2>Auto Scheduler</h2>
+        <p>
+          The auto scheduler runs metadata tasks over the library when the
+          machine is idle and pauses them when it is not.
+        </p>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/scheduler</code></td><td>Admin</td><td>Status object.</td></tr>
+          <tr><td>POST</td><td><code>/api/scheduler/mode</code></td><td>Admin</td><td><code>{"mode": "off" | "auto"}</code>. Returns the status object.</td></tr>
+          <tr><td>POST</td><td><code>/api/scheduler/run</code></td><td>Admin</td><td>Force one pass now regardless of idle state. Returns the status object.</td></tr>
+        </table>
+        <p>
+          Status:
+          <code>{"mode", "forced", "state", "reason", "jobId", "done", "total", "ops", "cpuPercent", "sessionLocked", "fullscreenBusy", "onBattery", "inputIdleSeconds"}</code>.
+          <code>state</code> is <code>disabled</code>, <code>waiting</code>,
+          <code>running</code>, <code>yielding</code>, or <code>complete</code>.
+          All three endpoints return <code>503</code> when the scheduler is not
+          running.
+        </p>
+      </section>
+
+      <section id="viz">
+        <h2>Visualizations</h2>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/viz/</code></td><td>Admin</td><td>Index of visualizations.</td></tr>
+          <tr><td>GET</td><td><code>/viz/embeddings</code></td><td>Admin</td><td>3D embedding point cloud.</td></tr>
+          <tr><td>GET</td><td><code>/viz/treemap</code></td><td>Admin</td><td>Library treemap by folder.</td></tr>
+          <tr><td>GET</td><td><code>/api/treemap?metric=&amp;depth=&amp;limit=&amp;path=</code></td><td>Admin</td><td>Tree data rooted at <code>path</code>. <code>limit</code> default 100, maximum 2000 children per node.</td></tr>
+          <tr><td>GET</td><td><code>/api/treemap/metrics</code></td><td>Admin</td><td><code>{"metrics": [{"id", "label", "count"}]}</code>, the sizes a treemap can be drawn by.</td></tr>
+        </table>
+        <p>See also <code>/api/embeddings/projection</code> under <a href="#embeddings">Embeddings Index</a>.</p>
+      </section>
+
+      <section id="setup">
+        <h2>Setup Wizard</h2>
+        <p>
+          These endpoints serve the first-run wizard at <code>/setup</code>. They
+          are open until <code>setupComplete</code> is set in the config; after
+          that they require an admin credential.
+        </p>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/setup/api/state</code></td><td><code>{"setupComplete", "authed", "hasRealUsers", "os", "homeDir", "dataDir", "defaultDBPath", "activeDBPath", "roots", "deps", "modelGroups"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/setup/api/browse</code></td><td>List a directory on the server host for the folder picker.</td></tr>
+          <tr><td>POST</td><td><code>/setup/api/mkdir</code></td><td>Create a directory.</td></tr>
+          <tr><td>POST</td><td><code>/setup/api/database</code></td><td>Choose or create the SQLite database file.</td></tr>
+          <tr><td>POST</td><td><code>/setup/api/storage/test-s3</code></td><td>Test S3 credentials and bucket access.</td></tr>
+          <tr><td>POST</td><td><code>/setup/api/storage</code></td><td>Save the storage roots.</td></tr>
+          <tr><td>POST</td><td><code>/setup/api/complete</code></td><td>Mark setup complete.</td></tr>
+        </table>
+      </section>
+
+      <section id="pages">
+        <h2>HTML Pages</h2>
+        <p>
+          Server-rendered administration pages. All require an admin credential
+          except <code>/login</code>.
+        </p>
+        <table class="api-table">
+          <tr><th>Path</th><th>Description</th></tr>
+          <tr><td><code>/</code></td><td>Home: library stats, metadata coverage, ingestion, job queue.</td></tr>
+          <tr><td><code>/jobs</code></td><td>Job list.</td></tr>
+          <tr><td><code>/job/{id}</code></td><td>Job detail with live output.</td></tr>
+          <tr><td><code>/login</code></td><td>Sign-in form. <code>?redirect=</code> returns to a page; <code>?setup=true</code> forces account creation.</td></tr>
+          <tr><td><code>/config</code></td><td>Configuration editor (GET renders; POST saves, see <a href="#system">System</a>).</td></tr>
+          <tr><td><code>/editor</code></td><td>Job composer.</td></tr>
+          <tr><td><code>/media</code></td><td>Legacy gallery.</td></tr>
+          <tr><td><code>/setup</code></td><td>First-run wizard.</td></tr>
+          <tr><td><code>/app/</code></td><td>The full web viewer.</td></tr>
+          <tr><td><code>/swipe</code></td><td>The Swipe app.</td></tr>
+          <tr><td><code>/viz/</code></td><td>Visualizations.</td></tr>
+        </table>
+      </section>
+
+      <section id="platform">
+        <h2>Platform Differences</h2>
+        <p>
+          The server is built from platform-specific entry points. The API is
+          identical except for the following routes.
+        </p>
+        <table>
+          <tr><th>Route</th><th>Windows</th><th>Linux, macOS</th></tr>
+          <tr><td><code>/api/embedding/directml/install</code></td><td>Present</td><td>Absent</td></tr>
+          <tr><td><code>/events</code></td><td>Present (tray event log page)</td><td>Absent</td></tr>
+          <tr><td><code>/stats</code></td><td>Absent</td><td>Present (server-rendered statistics page)</td></tr>
+        </table>
+        <p>
+          <code>/api/stats</code> is available on every platform.
+        </p>
+      </section>
+
+      <section>
+        <div class="divider"></div>
+        <h2>See Also</h2>
+        <ul>
+          <li><a href="./cli.html">lokictl CLI Reference</a></li>
+          <li><a href="./#users">Users &amp; Permissions</a></li>
+          <li><a href="./#storage-roots">Storage Roots</a></li>
+          <li><a href="https://github.com/SteveCastle/loki/tree/master/media-server">Source</a></li>
+        </ul>
+      </section>
+      </main>
+    </div>
+
+    <script>
+      (function () {
+        document.querySelectorAll('main table').forEach((table) => {
+          const headerRow = table.querySelector('tr');
+          if (!headerRow) return;
+          const labels = Array.from(headerRow.children).map((cell) =>
+            cell.textContent.trim()
+          );
+          table.querySelectorAll('tr').forEach((row) => {
+            Array.from(row.children).forEach((cell, i) => {
+              if (cell.tagName === 'TD' && labels[i]) {
+                cell.setAttribute('data-label', labels[i]);
+              }
+            });
+          });
+          if (!table.parentElement.classList.contains('table-scroll')) {
+            const wrap = document.createElement('div');
+            wrap.className = 'table-scroll';
+            table.parentNode.insertBefore(wrap, table);
+            wrap.appendChild(table);
+          }
+        });
+      })();
+
+      document.querySelectorAll('.toc a').forEach(link => {
+        link.addEventListener('click', (e) => {
+          const href = link.getAttribute('href');
+          if (href.startsWith('#')) {
+            e.preventDefault();
+            const target = document.getElementById(href.slice(1));
+            if (target) {
+              history.pushState(null, '', href);
+              target.scrollIntoView({ behavior: 'smooth' });
+            }
+          }
+        });
+      });
+
+      (() => {
+        const toc = document.querySelector('.toc');
+        if (!toc) return;
+        const links = Array.from(toc.querySelectorAll('a[href^="#"]'));
+        const targets = links
+          .map((link) => {
+            const el = document.getElementById(link.getAttribute('href').slice(1));
+            return el ? { link, el } : null;
+          })
+          .filter(Boolean);
+        if (!targets.length) return;
+        let current = null;
+        let suppress = false;
+        let suppressTimer = null;
+        function setActive(link) {
+          if (link === current) return;
+          current = link;
+          toc.querySelectorAll('.active, .active-parent').forEach((el) => {
+            el.classList.remove('active', 'active-parent');
+          });
+          if (!link) return;
+          link.classList.add('active');
+          const sublist = link.closest('.toc ul ul');
+          if (sublist) {
+            const parentLink = sublist.closest('.toc > ul > li').querySelector(':scope > a');
+            if (parentLink) parentLink.classList.add('active-parent');
+          }
+          const linkRect = link.getBoundingClientRect();
+          const tocRect = toc.getBoundingClientRect();
+          if (linkRect.top < tocRect.top + 48) {
+            toc.scrollTop += linkRect.top - (tocRect.top + 48);
+          } else if (linkRect.bottom > tocRect.bottom - 24) {
+            toc.scrollTop += linkRect.bottom - (tocRect.bottom - 24);
+          }
+        }
+        function update() {
+          const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+          if (atBottom) { setActive(targets[targets.length - 1].link); return; }
+          let best = null;
+          for (const t of targets) {
+            if (t.el.getBoundingClientRect().top <= 110) best = t;
+          }
+          setActive(best ? best.link : targets[0].link);
+        }
+        function holdForClick() {
+          suppress = true;
+          clearTimeout(suppressTimer);
+          suppressTimer = setTimeout(() => { suppress = false; }, 150);
+        }
+        links.forEach((link) => {
+          link.addEventListener('click', () => { holdForClick(); setActive(link); });
+        });
+        let ticking = false;
+        window.addEventListener('scroll', () => {
+          if (suppress) { holdForClick(); return; }
+          if (!ticking) {
+            ticking = true;
+            requestAnimationFrame(() => { ticking = false; update(); });
+          }
+        }, { passive: true });
+        window.addEventListener('resize', () => { if (!suppress) update(); }, { passive: true });
+        update();
+      })();
+    </script>
+  </body>
+</html>
