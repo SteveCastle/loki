@@ -771,7 +771,11 @@ type thumbScopeStats struct {
 // sit under dir: the cleaned directory plus a separator, in both separator
 // spellings.
 func thumbScopePrefixes(dir string) []string {
-	return thumbSpellings(filepath.Clean(dir) + string(filepath.Separator))
+	// Clean only recognises the host separator, so a Windows scope handled
+	// on Linux (or vice versa) keeps its trailing separator; strip both
+	// kinds before adding one so no spelling ends in a doubled separator.
+	base := strings.TrimRight(filepath.Clean(dir), `\/`)
+	return thumbSpellings(base + string(filepath.Separator))
 }
 
 // thumbScopeCandidates enumerates the media paths a scoped run should judge:
