@@ -33,7 +33,7 @@ import {
   clipEnd, splitClip, uid, ensureDur, removeEmptyTracks,
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
   eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
-  clipRate, clipReversed, clipLoopSpan, clipSourceSpan, retimeClip,
+  clipRate, clipReversed, clipLoopSpan, clipPingPong, clipSourceSpan, retimeClip,
 } from './comp.js';
 import { clipIcon } from './icons.js';
 
@@ -343,8 +343,9 @@ export class Timeline {
       e.stopPropagation();
       const t = Math.max(0, this._timeAtClientX(e.clientX));
       const assetId = e.dataTransfer.getData('application/x-lowkey-asset');
+      // Bin assets get a track of their own, even when dropped over a clip.
       if (assetId)
-        this.host.addAssetAt(assetId, this._snapTime(t), this._trackIndexAtClientY(e.clientY));
+        this.host.addAssetAt(assetId, this._snapTime(t), null);
       else if (e.dataTransfer.files.length)
         this.host.addMediaAt([...e.dataTransfer.files], this._snapTime(t), this._trackIndexAtClientY(e.clientY));
     });
@@ -793,7 +794,7 @@ export class Timeline {
       return b;
     };
     const eye = flagBtn('tl-eye', '👁', '👁', 'hidden',
-      'show / hide this track (hidden tracks render nothing; fx are bypassed)');
+      'show / hide this track’s visuals (audio is controlled by mute)');
     const spk = flagBtn('tl-spk', '🔊', '🔇', 'muted',
       'mute / unmute this track’s audio');
 
@@ -991,7 +992,7 @@ export class Timeline {
       clip.name,
       rate !== 1 ? `${fmtSpeed(rate)} speed` : null,
       rev ? 'plays in reverse' : null,
-      lspan ? `cycles a ${lspan.toFixed(2)}s loop` : null,
+      clipPingPong(clip) ? `forward & backward over ${lspan.toFixed(2)}s` : lspan ? `cycles a ${lspan.toFixed(2)}s loop` : null,
       visualFx ? `${visualFx} visual effect${visualFx > 1 ? 's' : ''}` : null,
       audioFx ? `${audioFx} audio effect${audioFx > 1 ? 's' : ''}` : null,
     ].filter(Boolean).join(' · ');
@@ -1110,7 +1111,8 @@ export class Timeline {
         action: () => {
           this.host.history.record(comp, () => {
             comp.dur = Math.max(1 / comp.fps, quantize(clipEnd(clip), comp.fps));
-            ensureDur(comp);   // other clips may still reach further
+            // Keep this endpoint through model updates and export fitting.
+            comp.autoDuration = false;
           });
           this.host.setTime(Math.min(this.host.time(), comp.dur));
           this.host.onModelChange({ structural: false });
@@ -1153,14 +1155,14 @@ export class Timeline {
       // The loop finder trims the clip to footage that cycles invisibly —
       // the automated version of an editor hunting for two matching frames.
       ...(clip.kind === 'media' && (asset?.kind === 'video' || asset?.kind === 'gif') ? [{
-        label: 'Find seamless loop…',
-        detail: clipLoopSpan(clip) ? `cycling ${clipLoopSpan(clip).toFixed(2)}s` : null,
+        label: 'Loop video…',
+        detail: clipPingPong(clip) ? 'forward & backward' : clipLoopSpan(clip) ? `cycling ${clipLoopSpan(clip).toFixed(2)}s` : null,
         action: () => this.host.findLoop?.(clip),
       }] : []),
       ...(clipLoopSpan(clip) ? [{
-        label: 'Clear loop region',
+        label: 'Clear loop',
         action: () => {
-          this.host.history.record(comp, () => { delete clip.loopSpan; });
+          this.host.history.record(comp, () => { delete clip.loopSpan; delete clip.loopMode; });
           this.host.onModelChange({ structural: true });
           this.host.status(`${clip.name} plays straight through again`);
         },

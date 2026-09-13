@@ -136,7 +136,7 @@ through the whole file: stretch the clip and the region repeats, in
 preview (free-run + drift reseek at the seam — invisible when the seam is
 good, which is the point) and in the export mix (`loopStart`/`loopEnd` on
 the buffer source). It is written by the **seamless-loop finder**
-(right-click a video/gif clip → *Find seamless loop…*): frames are
+(right-click a video/gif clip → *Loop video…* → *Find seamless loop…*): frames are
 downsampled to tiny RGB thumbnails and every candidate seam `(i, j)` is
 scored by SAD(i, j) + SAD(i+1, j+1) — the successor term carries MOTION
 across the cut, not just the pose — normalized against the clip's median
@@ -145,6 +145,15 @@ invisible seams the longest loop wins; the chosen cut is re-searched at
 frame granularity before it is applied. Cycle phase is anchored to
 `clip.start` (no phase field), so splitting a looped clip restarts the
 cycle on the right half, and trims never move `in` on a looped clip.
+
+The same dialog offers **Forward & backward** (`clip.loopMode = 'pingpong'`).
+This skips analysis, resets `in` to zero, sets `loopSpan` to the full asset
+duration, and sizes the clip to whole out-and-back cycles at its current
+speed. `srcTime` reflects time at each end; `clipPlayingBackward` chooses
+free-running playback or reverse seeks for the current leg. Reverse audio
+is silent in preview, as with reversed clips; the offline mix bakes one
+forward/backward audio cycle and repeats it. Clearing the loop removes
+both fields; applying a detected seamless loop removes `loopMode`.
 
 ### Undo
 

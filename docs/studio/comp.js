@@ -267,6 +267,18 @@ export const clipLoopSpan = (clip) =>
   (hasSource(clip) && Number.isFinite(clip?.loopSpan) && clip.loopSpan > 0.02
     ? clip.loopSpan : 0);
 
+export const clipPingPong = (clip) => clipLoopSpan(clip) > 0 && clip.loopMode === 'pingpong';
+
+/** Instantaneous direction, including the return leg of a ping-pong loop. */
+export function clipPlayingBackward(clip, t) {
+  const reversed = clipReversed(clip);
+  if (!clipPingPong(clip)) return reversed;
+  const span = clipLoopSpan(clip);
+  const o = (reversed ? clip.dur - (t - clip.start) : t - clip.start) * clipRate(clip);
+  const phase = ((o % (2 * span)) + 2 * span) % (2 * span);
+  return reversed ? phase > 0 && phase <= span : phase >= span;
+}
+
 /** Source-file time for a source clip at COMP time t, before asset-length
  * wrapping. The ONE place trim, speed, direction and the loop region
  * meet: a reversed clip anchors on the far end of its footage and runs
@@ -276,6 +288,10 @@ export const srcTime = (clip, t) => {
   const o = (clipReversed(clip) ? clip.dur - (t - clip.start) : t - clip.start)
     * clipRate(clip);
   const span = clipLoopSpan(clip);
+  if (clipPingPong(clip)) {
+    const phase = ((o % (2 * span)) + 2 * span) % (2 * span);
+    return clip.in + Math.min(phase, 2 * span - phase);
+  }
   return clip.in + (span ? loopSrc(o, span) : o);
 };
 
@@ -540,8 +556,9 @@ export function allClipsBottomUp(comp, kind = null) {
   return out;
 }
 
-/** Grow the comp so no clip hangs off the end. */
+/** Grow the comp to fit its clips unless the user chose an explicit end. */
 export function ensureDur(comp) {
+  if (comp.autoDuration === false) return;
   let end = 0;
   for (const track of comp.tracks)
     for (const clip of track.clips) end = Math.max(end, clipEnd(clip));

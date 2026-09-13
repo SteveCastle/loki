@@ -701,6 +701,10 @@ body.mask-editing #mask-overlay {
   pointer-events: auto;
   cursor: crosshair;
 }
+/* Keep receiving paint strokes while hiding only the red preview. */
+body.mask-editing #mask-overlay.paint-preview-hidden {
+  opacity: 0;
+}
 
 /* ---- inspector panel ----------------------------------------------- */
 

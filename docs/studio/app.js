@@ -43,7 +43,7 @@ import {
   allClipsBottomUp,
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
-  clipRate, clipReversed, clipLoopSpan, srcTime, clipSourceSpan, retimeClip, loopSrc,
+  clipRate, clipReversed, clipLoopSpan, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc,
   newTrackClip,
 } from './comp.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
@@ -398,11 +398,11 @@ function tick() {
   // While a trim handle is being dragged, render the frame at the cut
   // point instead of the playhead (the playhead UI itself stays put).
   const t = trimPreviewT ?? tCur;
-  const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
-  const activeAudio = activeClips(comp, t, 'audio').filter(({ track }) => !track.hidden);
+  const activeMedia = activeClips(comp, t, 'media');
+  const activeAudio = activeClips(comp, t, 'audio');
   syncMedia(t, activeMedia, activeAudio);
   prepareMasks(t);       // media masks must compose before compositeFrame samples them
-  prepareMediaFx(t, activeMedia);   // per-clip effect stacks render in isolation
+  prepareMediaFx(t, activeMedia.filter(({ track }) => !track.hidden));
   compositeFrame(t);
   syncFxChain(t);
   applyParams(t);
@@ -465,11 +465,11 @@ function refreshDriverHints() {
 
 /** Clips whose audio participates in the mix — video clips and audio
  * clips alike. Drivers analyze all of them; the audible export path
- * excludes muted/hidden tracks. */
-function audioEntries(includeMutedHidden) {
+ * excludes muted tracks, independently of visual visibility. */
+function audioEntries(includeMuted) {
   const out = [];
   for (const track of comp.tracks) {
-    if (!includeMutedHidden && (track.hidden || track.muted)) continue;
+    if (!includeMuted && track.muted) continue;
     for (const clip of track.clips) {
       if (!hasSource(clip) || clip.start >= comp.dur) continue;
       const asset = assets.get(clip.assetId);
@@ -485,7 +485,7 @@ function audioDriveKey() {
   for (const { clip, asset } of audioEntries(true)) {
     const vol = clip.props.volume;
     parts.push(asset.id, clip.start, clip.dur, clip.in, clipRate(clip),
-      clipReversed(clip) ? 'rev' : 'fwd', clipLoopSpan(clip),
+      clipReversed(clip) ? 'rev' : 'fwd', clipLoopSpan(clip), clip.loopMode,
       vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '',
       // Effects colour the mix the analysis hears, so they belong in its
       // fingerprint: adding a reverb has to re-derive the envelopes.
@@ -639,7 +639,7 @@ function syncMedia(t, activeMedia, activeAudio = []) {
     // reversed clip stays paused and chases the comp clock with seeks,
     // exactly like scrubbing (its audio is silent in the preview — the
     // export mix plays a reversed buffer and is the real thing).
-    const rev = clipReversed(clip);
+    const rev = clipPlayingBackward(clip, t);
     let proxyScrub = false;
     if (playing && !rev) {
       if (el.paused) {
@@ -1886,7 +1886,7 @@ function placeAssetClip(asset, at, trackIdx = null, { imageFull = false } = {}) 
     else comp.tracks.unshift(track);
   }
   track.clips.push(clip);
-  if (comp._autoSize) comp.dur = Math.max(comp.dur, clipEnd(clip));
+  if (comp._autoSize && comp.autoDuration !== false) comp.dur = Math.max(comp.dur, clipEnd(clip));
   return clip;
 }
 
@@ -2774,7 +2774,7 @@ function openRetimeDialog(clips) {
     const dur = targetDur(primary);
     const parts = [`${many ? 'first clip: ' : ''}${fmtTimecode(dur, comp.fps)}`];
     if (hasSource(primary)) parts.push(clipLoopSpan(primary)
-      ? `cycles a ${clipLoopSpan(primary).toFixed(2)}s loop`
+      ? `${clipPingPong(primary) ? 'forward & backward over' : 'cycles a'} ${clipLoopSpan(primary).toFixed(2)}s${clipPingPong(primary) ? '' : ' loop'}`
       : `plays ${span.toFixed(2)}s of source`);
     if (revInput?.checked) parts.push('reversed — audio audible in export only');
     if (clipEnd(primary) - primary.dur + dur > comp.dur) parts.push('extends the comp');
@@ -3007,7 +3007,7 @@ async function refineLoopSeam(asset, cand, step, base, range, minLoopSrc, onProg
 
 const loopSeamWord = (r) => (r <= LOOP_GOOD ? 'invisible' : r <= 2.5 ? 'subtle' : 'visible');
 
-async function openLoopFinder(clip) {
+async function openLoopFinder(clip, mode = null) {
   if (rotoJob || offlineJob || loopJob) {
     setStatus('another job is running — finish or cancel it first');
     return;
@@ -3019,6 +3019,56 @@ async function openLoopFinder(clip) {
   }
   const srcLen = asset.duration || 0;
   const rate = clipRate(clip);
+  if (!Number.isFinite(srcLen) || srcLen <= 0.02) {
+    setStatus('loop: source duration is unavailable or too short');
+    return;
+  }
+  if (!mode) {
+    pause();
+    document.querySelector('.modal-wrap')?.remove();
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-wrap';
+    wrap.innerHTML = `
+      <div class="modal loop-modal">
+        <h3>Loop video</h3>
+        <p class="retime-hint">Choose how this clip repeats.</p>
+        <div class="loop-cands">
+          <button class="btn" id="lf-seamless">Find seamless loop…</button>
+          <button class="btn" id="lf-pingpong">Forward &amp; backward</button>
+        </div>
+        <p class="retime-hint">Forward &amp; backward plays the whole source from beginning to end, then back again. Extend the clip to repeat more.</p>
+        <div class="modal-actions"><button class="btn" id="lf-cancel">Cancel</button></div>
+      </div>`;
+    const close = () => {
+      wrap.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    };
+    document.addEventListener('keydown', onKey);
+    wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) close(); });
+    wrap.querySelector('#lf-cancel').onclick = close;
+    wrap.querySelector('#lf-seamless').onclick = () => { close(); openLoopFinder(clip, 'seamless'); };
+    wrap.querySelector('#lf-pingpong').onclick = () => {
+      const cycle = 2 * srcLen / rate;
+      const cycles = Math.max(1, Math.round(clip.dur / cycle));
+      history.record(comp, () => {
+        clip.in = 0;
+        clip.loopSpan = srcLen;
+        clip.loopMode = 'pingpong';
+        clip.reversed = false;
+        clip.dur = cycles * cycle;
+        ensureDur(comp);
+      });
+      close();
+      onModelChange({ structural: true });
+      setTime(clamp(clip.start, 0, lastFrame(comp)));
+      setStatus(`${clip.name}: forward & backward — stretch the clip to repeat more`);
+    };
+    document.body.appendChild(wrap);
+    return;
+  }
   const range = [clamp(clip.in, 0, srcLen), clamp(clip.in + clipSourceSpan(clip), 0, srcLen)];
   if (range[1] - range[0] < LOOP_MIN_SRC * 3) {
     setStatus('loop finder: clip is too short to loop');
@@ -3054,6 +3104,8 @@ async function openLoopFinder(clip) {
     clip.in = snapshot.in;
     if (snapshot.loopSpan === undefined) delete clip.loopSpan;
     else clip.loopSpan = snapshot.loopSpan;
+    if (snapshot.loopMode === undefined) delete clip.loopMode;
+    else clip.loopMode = snapshot.loopMode;
     clip.dur = snapshot.dur;
     comp.dur = snapshot.compDur;
     setTime(Math.min(snapshot.t, lastFrame(comp)));
@@ -3079,10 +3131,11 @@ async function openLoopFinder(clip) {
   /** Audition a candidate in place: cycle the clip and drop the playhead
    * just ahead of the seam so it crosses within a second. */
   const preview = (ta, tb) => {
-    snapshot ??= { in: clip.in, loopSpan: clip.loopSpan, dur: clip.dur, compDur: comp.dur, t: tCur };
+    snapshot ??= { in: clip.in, loopSpan: clip.loopSpan, loopMode: clip.loopMode, dur: clip.dur, compDur: comp.dur, t: tCur };
     touched = true;
     clip.in = ta;
     clip.loopSpan = tb - ta;
+    delete clip.loopMode;
     const cycle = (tb - ta) / rate;
     // Long enough to cross the seam a couple of times, whatever dur was.
     clip.dur = Math.max(snapshot.dur, Math.min(cycle * 2.5, 7200));
@@ -3118,6 +3171,7 @@ async function openLoopFinder(clip) {
     history.record(comp, () => {
       clip.in = final.ta;
       clip.loopSpan = span;
+      delete clip.loopMode;
       clip.dur = cycles * cycle;
       ensureDur(comp);
     });
@@ -3439,7 +3493,7 @@ async function restoreProject() {
  * default comp with trailing black — and so trimming a clip shorter also
  * shortens the saved file. A manually-set duration (⚙ Comp) is respected. */
 function fitDurToContent() {
-  if (!comp._autoSize) return;
+  if (!comp._autoSize || comp.autoDuration === false) return;
   let end = 0;
   for (const track of comp.tracks)
     for (const clip of track.clips) end = Math.max(end, clipEnd(clip));
@@ -3782,7 +3836,7 @@ $('btn-project').addEventListener('click', (e) => {
  * =================================================================== */
 
 const maskOverlay = $('mask-overlay');
-const brush = { size: 60, soft: 0.5, mode: 'hide', tool: 'brush' };
+const brush = { size: 60, soft: 0.5, mode: 'hide', tool: 'brush', showOverlay: true };
 /* ---- mask node stack -------------------------------------------------
  * A layer's mask is an ordered stack of nodes composited on the GPU every
  * frame (engine MaskComposer): paint canvases, chroma keys, and other
@@ -3968,8 +4022,8 @@ function prepareNodeSources(nodes, t, getEncoder) {
     if (asset.kind === 'gif') {
       syncGifFrame(asset, clip, t);
     } else if (asset.kind === 'video') {
-      // Hidden-track sources never go through syncMedia — chase the comp
-      // clock with paused seeks (the offline exporter seeks exactly).
+      // Keep mask-source frames aligned with the comp clock, including
+      // hidden sources (the offline exporter seeks exactly).
       const el = asset.el;
       const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
       if (!el.seeking && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
@@ -4104,7 +4158,7 @@ function rotoFrameIndexLive(node, clip, asset, t) {
   const seq = node.seq;
   // A reversed clip never free-runs — playback chases it with exact seeks —
   // so the clock index already matches the presented frame.
-  if (!playing || idx < 0 || asset.kind !== 'video' || clipReversed(clip)
+  if (!playing || idx < 0 || asset.kind !== 'video' || clipPlayingBackward(clip, t)
     || !(seq.srcStep > 1e-9)) return idx;
   const el = asset.el;
   if (!el || el.readyState < 2) return idx;
@@ -5861,12 +5915,13 @@ function maskStroke(x, y) {
   if (!node?.source) return;
   const mctx = node.source.getContext('2d');
   const rctx = maskOverlay.getContext('2d');
-  if (brush.mode === 'hide') {
+  if (brush.tool !== 'eraser' && brush.mode === 'hide') {
     mctx._stampColor = 'rgba(0,0,0,';
     stampBrush(mctx, x, y, false);
     rctx._stampColor = 'rgba(255,0,0,';
     stampBrush(rctx, x, y, false);
   } else {
+    // Erasing restores the paint mask's white base and removes its red tint.
     mctx._stampColor = 'rgba(255,255,255,';
     stampBrush(mctx, x, y, false);
     stampBrush(rctx, x, y, true);
@@ -5922,7 +5977,7 @@ function overlayToMedia(e) {
   ];
 }
 
-/* Brush-size cursor: while the brush tool paints, the native cursor is
+/* Brush-size cursor: while the brush or eraser paints, the native cursor is
  * replaced by a circle matching the brush's on-screen diameter, so the
  * stroke footprint is visible before committing it. Gradient tools keep
  * the crosshair. */
@@ -5933,7 +5988,7 @@ $('canvas-inner').appendChild(brushCursor);
 let brushCursorPos = null;   // last pointer [clientX, clientY] over the overlay
 
 function updateBrushCursor() {
-  const active = maskEdit && brush.tool === 'brush';
+  const active = maskEdit && (brush.tool === 'brush' || brush.tool === 'eraser');
   maskOverlay.style.cursor = active ? 'none' : '';
   if (!active || !brushCursorPos) {
     brushCursor.hidden = true;
@@ -5960,7 +6015,7 @@ let lastPt = null;
 maskOverlay.addEventListener('pointerdown', (e) => {
   if (!maskEdit || e.button !== 0) return;
   try { maskOverlay.setPointerCapture(e.pointerId); } catch {}
-  if (brush.tool === 'brush') {
+  if (brush.tool === 'brush' || brush.tool === 'eraser') {
     painting = true;
     lastPt = overlayToMedia(e);
     maskStroke(...lastPt);
@@ -6007,9 +6062,10 @@ async function startMaskEdit(clip, nodeId) {
   if (!node?.source) return;
   maskEdit = { clipId: clip.id, nodeId };
   rebuildRuby(node.source);
+  maskOverlay.classList.toggle('paint-preview-hidden', !brush.showOverlay);
   document.body.classList.add('mask-editing');
   updateBrushCursor();
-  setStatus(clip.kind === 'media'
+  setStatus(!brush.showOverlay ? 'painting mask — red overlay hidden' : clip.kind === 'media'
     ? 'painting mask — red = clip hidden'
     : 'painting mask — red = effect hidden');
   renderInspector();
@@ -9559,9 +9615,22 @@ function maskNodeRow(clip, ctx, node) {
     };
     body.append(editBtn, clearBtn);
     if (editing) {
+      const overlayBtn = document.createElement('button');
+      overlayBtn.className = 'btn' + (brush.showOverlay ? ' active' : '');
+      overlayBtn.textContent = 'Red overlay';
+      overlayBtn.title = 'show / hide the red mask preview while painting';
+      overlayBtn.setAttribute('aria-pressed', String(brush.showOverlay));
+      overlayBtn.onclick = () => {
+        brush.showOverlay = !brush.showOverlay;
+        maskOverlay.classList.toggle('paint-preview-hidden', !brush.showOverlay);
+        setStatus(`painting mask — red overlay ${brush.showOverlay ? 'visible' : 'hidden'}`);
+        renderInspector();
+      };
+      body.appendChild(overlayBtn);
       const toolBtn = (tool, icon, tip) => {
         const b = document.createElement('button');
         b.className = 'btn' + (brush.tool === tool ? ' active' : '');
+        b.setAttribute('aria-pressed', String(brush.tool === tool));
         b.textContent = icon;
         b.title = tip;
         b.onclick = () => { brush.tool = tool; updateBrushCursor(); renderInspector(); };
@@ -9571,12 +9640,14 @@ function maskNodeRow(clip, ctx, node) {
         const b = document.createElement('button');
         b.className = 'btn' + (brush.mode === mode ? ' active' : '');
         b.textContent = label;
+        b.disabled = brush.tool === 'eraser';
         b.onclick = () => { brush.mode = mode; renderInspector(); };
         return b;
       };
-      const isBrush = brush.tool === 'brush';
+      const isBrush = brush.tool === 'brush' || brush.tool === 'eraser';
       body.append(
         toolBtn('brush', '🖌', 'brush'),
+        toolBtn('eraser', 'Erase', 'erase painted masking to restore the clip or effect'),
         toolBtn('linear', '▤', 'linear gradient — drag across the preview'),
         toolBtn('radial', '◎', 'radial gradient — drag outward from the center'),
         modeBtn('hide', 'Hide'), modeBtn('show', 'Show'),
@@ -10248,8 +10319,24 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
     const buf = asset._audioBuf;
     if (!buf) continue;
     const rev = clipReversed(clip);
+    const pingpong = clipPingPong(clip);
     const src = ctx.createBufferSource();
     src.buffer = rev ? reversedAudioBuf(asset) : buf;
+    if (pingpong) {
+      // Bake one complete out-and-back cycle, including reversed clips'
+      // phase, then let the buffer source repeat it at the clip's rate.
+      const cycle = ctx.createBuffer(buf.numberOfChannels,
+        Math.max(1, Math.round(2 * clipLoopSpan(clip) * buf.sampleRate)), buf.sampleRate);
+      for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+        const input = buf.getChannelData(ch);
+        const output = cycle.getChannelData(ch);
+        for (let i = 0; i < output.length; i++) {
+          const time = srcTime(clip, clip.start + i / buf.sampleRate / clipRate(clip));
+          output[i] = input[clamp(Math.floor(time * buf.sampleRate), 0, input.length - 1)];
+        }
+      }
+      src.buffer = cycle;
+    }
     src.loop = true;   // clips longer than their source wrap, like syncMedia
     // Retiming resamples, pitch and all — the same thing the preview's
     // element playbackRate does, so the export matches what was auditioned.
@@ -10310,7 +10397,7 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
     // doesn't move them). Reversed clips enter their region mid-cycle,
     // matching srcTime's phase anchor at the clip end.
     const lspan = clipLoopSpan(clip);
-    if (lspan && buf.duration > 0.02) {
+    if (!pingpong && lspan && buf.duration > 0.02) {
       const region0 = clamp(rev ? buf.duration - clip.in - lspan : clip.in,
         0, buf.duration);
       const region1 = clamp(region0 + lspan, 0, buf.duration);
@@ -10318,7 +10405,7 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
       const o0 = rev ? loopSrc(clip.dur * clipRate(clip), lspan) : 0;
       offset = clamp(region0 + (rev ? lspan - o0 : 0), 0, Math.max(0, buf.duration - 1e-4));
     }
-    src.start(start, offset);
+    src.start(start, pingpong ? 0 : offset);
     // Reverb and delay tails are part of the clip's sound: the source
     // stops, the graph keeps ringing until the render ends.
     src.stop(start + len);
