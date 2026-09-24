@@ -18,7 +18,7 @@ require (
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/yalue/onnxruntime_go v1.21.0
 	golang.org/x/crypto v0.46.0
-	golang.org/x/image v0.31.0
+	golang.org/x/image v0.41.0
 	golang.org/x/sys v0.43.0
 	modernc.org/sqlite v1.38.0
 )
