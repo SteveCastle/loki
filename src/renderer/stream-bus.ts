@@ -28,6 +28,7 @@ const EVENT_TYPES = [
   'media-updated',
   'media-created',
   'people-updated',
+  'duplicates-updated',
   'stats',
 ];
 

@@ -72,7 +72,13 @@ func init() {
 	RegisterTask("hls", "HLS Transcode", hlsOptions, hlsTask)
 	RegisterTask("move", "Move Media Files", moveOptions, moveTask)
 	RegisterTask("split-dir", "Split Directory into Subfolders", splitDirOptions, splitDirTask)
-	RegisterTask("dedupe", "Deduplicate Directory", dedupeOptions, dedupeTask)
+	// Two deliberately different duplicate tasks: "dedupe" acts (exact byte
+	// copies are merged and deleted on the spot); "find-duplicates" only
+	// proposes (visually similar items become review groups for the
+	// Duplicates panel, where the user decides what to merge).
+	RegisterTask("dedupe", "Deduplicate Exact Copies (Merge + Delete)", dedupeOptions, dedupeTask)
+	RegisterTask("find-duplicates", "Find Duplicate Candidates (Review Only)", findDuplicatesOptions, findDuplicatesTask)
+	RegisterTask("merge-duplicates", "Merge All Duplicate Groups (Accept Review)", mergeDuplicatesOptions, mergeDuplicatesTask)
 	RegisterTask("ingest", "Ingest Media Files", ingestOptions, ingestTask)
 	RegisterTask("lora-dataset", "Create LoRA Dataset", loraDatasetOptions, loraDatasetTask)
 
@@ -96,6 +102,13 @@ func init() {
 	// Embedding is a local ONNX task with its own concurrency bucket — it must
 	// not share the LLM inference cap (it parallelizes internally instead).
 	RegisterHostResolver("embed", func(string) string { return HostBucketEmbed })
+	// Duplicate-candidate discovery reads the same vectors an embed job is
+	// still writing, so it shares the embed bucket: never concurrent with an
+	// embedding run (or with itself), and never in the LLM inference cap.
+	RegisterHostResolver("find-duplicates", func(string) string { return HostBucketEmbed })
+	// Bulk-accepting groups deletes files and rewrites the same rows the
+	// scan reads; keep it in the same bucket so the two never overlap.
+	RegisterHostResolver("merge-duplicates", func(string) string { return HostBucketEmbed })
 	// Face scanning is a local ONNX task with its own concurrency bucket — like
 	// embed/autotag, it parallelizes internally via its worker pool. Clustering
 	// shares the bucket so a scan and a recluster never run concurrently.

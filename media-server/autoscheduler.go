@@ -94,6 +94,7 @@ var userIntentPrefixes = []string{
 	"/api/image-search",
 	"/api/faces",
 	"/api/people",
+	"/api/duplicates",
 	"/api/embeddings",
 }
 

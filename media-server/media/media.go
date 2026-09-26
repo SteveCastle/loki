@@ -1353,6 +1353,35 @@ func RemoveItemsFromDBStream(ctx context.Context, db *sql.DB, paths []string, on
 				`DELETE FROM face_scan WHERE media_path IN (%s)`, &result.FaceScansRemoved},
 			{"battle log", []string{"battle"},
 				`DELETE FROM battle WHERE winner_path IN (%s) OR loser_path IN (%s)`, &result.BattlesRemoved},
+			// Duplicate-candidate membership, then the repair PruneDuplicateGroups
+			// would do — but scoped to the groups this batch actually touched
+			// (a temp table of their ids, filled BEFORE the member rows go):
+			// a group left with one member is no longer a group, and a group
+			// whose anchor went away is re-anchored on its best remaining
+			// member. Sweeping every group per batch instead made a large
+			// merge quadratic (tens of thousands of groups × thousands of
+			// paths). The temp table lives on the transaction's connection.
+			{"duplicate touched-group scratch", []string{"duplicate_member"},
+				`CREATE TEMP TABLE IF NOT EXISTS _dup_touched (group_id INTEGER PRIMARY KEY)`, nil},
+			{"duplicate touched groups", []string{"duplicate_member"},
+				`INSERT OR IGNORE INTO _dup_touched (group_id) SELECT group_id FROM duplicate_member WHERE media_path IN (%s)`, nil},
+			{"duplicate members", []string{"duplicate_member"},
+				`DELETE FROM duplicate_member WHERE media_path IN (%s)`, nil},
+			{"duplicate groups", []string{"duplicate_group", "duplicate_member"},
+				`DELETE FROM duplicate_group WHERE id IN (SELECT group_id FROM _dup_touched)
+				   AND (SELECT COUNT(*) FROM duplicate_member m WHERE m.group_id = duplicate_group.id) < 2`, nil},
+			{"duplicate orphan members", []string{"duplicate_group", "duplicate_member"},
+				`DELETE FROM duplicate_member WHERE group_id IN (SELECT group_id FROM _dup_touched)
+				   AND group_id NOT IN (SELECT id FROM duplicate_group)`, nil},
+			{"duplicate anchors", []string{"duplicate_group", "duplicate_member"},
+				`UPDATE duplicate_group SET anchor_path = COALESCE(
+					(SELECT m.media_path FROM duplicate_member m WHERE m.group_id = duplicate_group.id AND m.excluded = 0 ORDER BY m.score DESC, m.media_path ASC LIMIT 1),
+					(SELECT m.media_path FROM duplicate_member m WHERE m.group_id = duplicate_group.id ORDER BY m.score DESC, m.media_path ASC LIMIT 1),
+					anchor_path)
+				 WHERE id IN (SELECT group_id FROM _dup_touched)
+				   AND NOT EXISTS (SELECT 1 FROM duplicate_member m WHERE m.group_id = duplicate_group.id AND m.media_path = duplicate_group.anchor_path AND m.excluded = 0)`, nil},
+			{"duplicate touched-group scratch reset", []string{"duplicate_member"},
+				`DELETE FROM _dup_touched`, nil},
 			// Parent last, so the delete is legal even without deferral.
 			{"media items", []string{"media"},
 				`DELETE FROM media WHERE path IN (%s)`, &batchMediaRemoved},
@@ -2418,6 +2447,11 @@ func InitializeSchema(db *sql.DB) error {
 		log.Printf("warning: superseded-face cleanup failed (will retry on next start): %v", err)
 	} else if n > 0 {
 		log.Printf("faces: removed %d stale face row(s) superseded by newer scans under another model", n)
+	}
+
+	// Duplicate-candidate review tables (see duplicates.go).
+	if err := initDuplicateSchema(db); err != nil {
+		return err
 	}
 
 	log.Println("Database schema initialized successfully")

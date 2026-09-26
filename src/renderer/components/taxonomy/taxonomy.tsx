@@ -1,4 +1,11 @@
-import { useState, useContext, useRef, useEffect, useMemo } from 'react';
+import {
+  Fragment,
+  useState,
+  useContext,
+  useRef,
+  useEffect,
+  useMemo,
+} from 'react';
 import { useSelector } from '@xstate/react';
 import { useQuery } from '@tanstack/react-query';
 import { debounce } from 'lodash';
@@ -22,8 +29,9 @@ import PeopleGrid, {
   PeopleSearchResults,
   usePeople,
 } from './people-grid';
+import DuplicatesGrid, { DUPLICATES_CATEGORY } from './duplicates-grid';
 import './taxonomy.css';
-import Category from './category';
+import Category, { SystemCategoryIcon } from './category';
 import SuggestionSections from './suggestion-sections';
 import { invoke } from '../../platform';
 import QueryInput from '../query-input/QueryInput';
@@ -36,6 +44,7 @@ import {
 import { useMeaningMode } from '../../hooks/useMeaningMode';
 import useVisualSearchAvailable from '../../hooks/useVisualSearchAvailable';
 import { useFilterHistory } from '../../hooks/useFilterHistory';
+import { SUGGESTED_CATEGORY } from '../../search/tag-scopes';
 
 const VIRTUALIZE_THRESHOLD = 300;
 
@@ -55,6 +64,28 @@ type Category = {
   weight: number;
   description: string;
   tagViewMode?: TagViewMode;
+  // Client-side entries that are not category rows (Duplicates): no tags,
+  // no rename/delete/drop-to-move, no "+" — a panel behind a category label.
+  synthetic?: boolean;
+  // Machine-managed categories (Suggested, People, Duplicates): listed after
+  // the user's own categories, behind a divider, never renamed or deleted
+  // from the sidebar, and marked with an icon (see category.tsx).
+  system?: boolean;
+  icon?: SystemCategoryIcon;
+};
+
+// Categories the app manages rather than the user: the autotagger's bucket,
+// the face-identity mirror, and the duplicate-review panel.
+const SYSTEM_CATEGORIES = new Set<string>([
+  SUGGESTED_CATEGORY,
+  PEOPLE_CATEGORY,
+  DUPLICATES_CATEGORY,
+]);
+
+const SYSTEM_ICONS: Record<string, SystemCategoryIcon> = {
+  [SUGGESTED_CATEGORY]: 'suggested',
+  [PEOPLE_CATEGORY]: 'people',
+  [DUPLICATES_CATEGORY]: 'duplicates',
 };
 
 // Loaders for the three taxonomy slices. Each is a separate React Query so
@@ -237,9 +268,34 @@ export default function Taxonomy() {
   // scroll-to-active behaviour below.
   const sortedCategories = useMemo(() => {
     if (!categories) return [] as Category[];
-    return [...categories].sort((a, b) =>
-      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' })
-    );
+    const list = [...categories];
+    // Duplicates is a special case of a category like People, but unlike
+    // People it has no rows in the category table: the entry is synthesized
+    // here so the panel has a place in the list. Always present — it is the
+    // only way to reach the review panel. A real category with the same
+    // label wins.
+    if (!list.some((c) => c.label === DUPLICATES_CATEGORY)) {
+      list.push({
+        label: DUPLICATES_CATEGORY,
+        weight: Number.MAX_SAFE_INTEGER,
+        description:
+          'Visually identical items found by the duplicate scan, for review',
+        synthetic: true,
+      });
+    }
+    const byLabel = (a: Category, b: Category) =>
+      a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+    // The user's curated categories come first, alphabetically; the
+    // machine-managed ones (Suggested, People, Duplicates) sit together at
+    // the bottom behind a divider, so the list reads "mine, then the app's".
+    const curated = list
+      .filter((c) => !SYSTEM_CATEGORIES.has(c.label))
+      .sort(byLabel);
+    const system = list
+      .filter((c) => SYSTEM_CATEGORIES.has(c.label))
+      .sort(byLabel)
+      .map((c) => ({ ...c, system: true, icon: SYSTEM_ICONS[c.label] }));
+    return [...curated, ...system];
   }, [categories]);
 
   // Indexed lookup so the edit-category modal can pull description / view mode
@@ -506,20 +562,31 @@ export default function Taxonomy() {
             </div>
           )}
           <div className={`categories`} ref={categoryListRef}>
-            {sortedCategories.map((category) => {
+            {sortedCategories.map((category, i) => {
+              // One divider ahead of the first machine-managed category.
+              const firstSystem =
+                !!category.system && !sortedCategories[i - 1]?.system;
               return (
-                <Category
-                  key={category.label}
-                  category={category}
-                  activeCategory={activeCategory}
-                  setActiveCategory={handleCategoryClick}
-                  handleEditAction={setEditingCategory}
-                />
+                <Fragment key={category.label}>
+                  {firstSystem && (
+                    <div
+                      className="category-divider"
+                      role="separator"
+                      title="Managed by the app: auto-tag suggestions, people, and duplicate review"
+                    />
+                  )}
+                  <Category
+                    category={category}
+                    activeCategory={activeCategory}
+                    setActiveCategory={handleCategoryClick}
+                    handleEditAction={setEditingCategory}
+                  />
+                </Fragment>
               );
             })}
           </div>
         </div>
-        {activeCategory && canWrite && (
+        {activeCategory && canWrite && activeCategory !== DUPLICATES_CATEGORY && (
           <div
             className={`new-tag`}
             onClick={() =>
@@ -570,6 +637,11 @@ export default function Taxonomy() {
             // People matches through PeopleSearchResults (see above).
             if (!tagFilter && activeCategory === PEOPLE_CATEGORY) {
               return <PeopleGrid isDisabled={isDisabled} />;
+            }
+            // Duplicates is the other special case: no tags at all, just the
+            // review panel for the groups the find-duplicates scan recorded.
+            if (!tagFilter && activeCategory === DUPLICATES_CATEGORY) {
+              return <DuplicatesGrid isDisabled={isDisabled} />;
             }
             // Search results span categories — always use card style.
             // For an active category, honour its persisted tagViewMode.

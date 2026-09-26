@@ -185,6 +185,14 @@ func MergeInto(ctx context.Context, db *sql.DB, target string, sources []string)
 	// Delete the merged-away sources: local file plus leftover sidecar, then
 	// every database reference. s3:// objects are not deleted here (no local
 	// file to remove) — they keep their rows and are reported as failed.
+	//
+	// Files first, then ONE batched row erase for everything that came off
+	// disk. Per-source erases (a transaction and a full reference sweep each)
+	// made a 3,000-item merge take minutes; the batched removal commits 500
+	// paths per transaction. A file that is already gone counts as deleted —
+	// that is also how an interrupted merge is repaired: re-run it and the
+	// rows of the files it removed last time are erased now.
+	var toErase []string
 	for _, src := range srcs {
 		if strings.HasPrefix(src, "s3://") {
 			res.Failed = append(res.Failed, src)
@@ -197,40 +205,36 @@ func MergeInto(ctx context.Context, db *sql.DB, target string, sources []string)
 		if leftover := findVttSidecar(src); leftover != "" {
 			_ = os.Remove(leftover)
 		}
-		faces, err := eraseReferences(ctx, db, src)
-		res.FacesRemoved += faces
-		if err != nil {
-			res.Failed = append(res.Failed, src)
-			continue
+		toErase = append(toErase, src)
+	}
+	if len(toErase) == 0 {
+		return res, nil
+	}
+	// The files are gone; the erase MUST finish even if the caller's request
+	// is abandoned (a browser giving up on a long merge used to cancel this
+	// context mid-loop and leave deleted files with live rows).
+	eraseCtx := context.WithoutCancel(ctx)
+	committed := map[string]bool{}
+	removal, err := RemoveItemsFromDBStream(eraseCtx, db, toErase, func(b RemovalBatch) {
+		for _, p := range b.Paths {
+			committed[p] = true
 		}
-		res.Deleted = append(res.Deleted, src)
+	})
+	if removal != nil {
+		res.FacesRemoved = removal.FacesRemoved
 	}
-	return res, nil
-}
-
-// eraseReferences removes every database reference to a path WITHOUT touching
-// the file: faces (plus the curation assertions keyed by those face ids),
-// tags, the media row, embeddings, scan markers, and battle-log rows.
-// RemoveItemsFromDB fires the media-removal hook, so the live vector and face
-// indexes are evicted too. Returns how many face rows the path had, so callers
-// know whether People views went stale.
-func eraseReferences(ctx context.Context, db *sql.DB, path string) (int64, error) {
-	var faces int64
-	// Missing face tables (a viewer-only library) read as zero, and the
-	// delete below is what actually decides whether that is an error.
-	_ = db.QueryRow(`SELECT COUNT(*) FROM face WHERE media_path = ?`, path).Scan(&faces)
-	if err := DeleteFacesForMedia(db, path); err != nil {
-		return faces, err
+	for _, p := range toErase {
+		if committed[p] {
+			res.Deleted = append(res.Deleted, p)
+		} else {
+			res.Failed = append(res.Failed, p)
+		}
 	}
-	if _, err := RemoveItemsFromDB(ctx, db, []string{path}); err != nil {
-		return faces, err
+	if err != nil && len(res.Deleted) == 0 {
+		return res, err
 	}
-	// Battle-log rows name the path directly; leaving them keeps a deleted
-	// item in the Elo history and in rematch suppression.
-	_, _ = db.ExecContext(ctx,
-		`DELETE FROM battle WHERE winner_path = ? OR loser_path = ?`, path, path)
 	InvalidateRandomSampleCache()
-	return faces, nil
+	return res, nil
 }
 
 // Transcript sidecars live next to the media file: `<base>.vtt` (extension

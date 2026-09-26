@@ -65,6 +65,31 @@ function clauseFor(p: Predicate, params: string[]): string {
       }
       return p.exclude ? '(1=1)' : '(1=0)';
     }
+    case 'dupe': {
+      // dupe:<group id> — the active members of one duplicate-candidate
+      // group; dupe:pending — every item still waiting on review; dupe:any —
+      // every grouped item. Mirror of media_query.go / media.DuplicatePredicateSQL.
+      // Like `faces`, the tables are created by the media server in the shared
+      // library DB and the predicate is only offered from the Duplicates
+      // panel (which requires the server). Unknown values match nothing.
+      const v = p.value.trim().toLowerCase();
+      let clause: string | null = null;
+      if (v === 'pending') {
+        clause =
+          '(EXISTS (SELECT 1 FROM duplicate_member dm JOIN duplicate_group dg ON dg.id = dm.group_id' +
+          " WHERE dm.media_path = media.path AND dm.excluded = 0 AND dg.status = 'pending'))";
+      } else if (v === 'any' || v === 'all') {
+        clause =
+          '(EXISTS (SELECT 1 FROM duplicate_member dm WHERE dm.media_path = media.path))';
+      } else if (/^[1-9]\d*$/.test(v)) {
+        params.push(v);
+        clause =
+          '(EXISTS (SELECT 1 FROM duplicate_member dm WHERE dm.media_path = media.path' +
+          ' AND dm.group_id = ? AND dm.excluded = 0))';
+      }
+      if (clause === null) return p.exclude ? '(1=1)' : '(1=0)';
+      return p.exclude ? `(NOT ${clause})` : clause;
+    }
     case 'orientation': {
       // orientation:landscape / portrait / square — compares the stored media
       // dimensions. Items with missing or zero width/height have no known

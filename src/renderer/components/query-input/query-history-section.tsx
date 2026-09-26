@@ -31,6 +31,7 @@ export const TYPE_GLYPH: Record<Predicate['type'], string> = {
   clip: 'clip:', // never shown — clip chips render a thumbnail instead
   face: 'face:', // never shown — face chips render a thumbnail instead
   faces: 'faces:',
+  dupe: 'dupe:',
   orientation: 'orientation:',
 };
 

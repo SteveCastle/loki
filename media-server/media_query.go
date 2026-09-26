@@ -1,7 +1,11 @@
 // media-server/media_query.go
 package main
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/stevecastle/shrike/media"
+)
 
 // BlendNode is one extra component of a composite similarity predicate: an
 // additional library image ("image" = media path), captured region ("clip" =
@@ -114,6 +118,24 @@ func clauseFor(p Predicate, params *[]any) string {
 			return "(NOT " + oriented + ")"
 		}
 		return oriented
+	case "dupe":
+		// dupe:<group id> — the active members of one duplicate-candidate
+		// group (the Duplicates panel's "view in library"); dupe:pending —
+		// every item still waiting on a review; dupe:any — every grouped
+		// item, dismissed groups included. Mirror of query-sql.ts. Unknown
+		// values match nothing rather than everything.
+		clause, args, ok := media.DuplicatePredicateSQL(p.Value, "media.path")
+		*params = append(*params, args...)
+		if !ok {
+			if p.Exclude {
+				return "(1=1)"
+			}
+			return "(1=0)"
+		}
+		if p.Exclude {
+			return "(NOT " + clause + ")"
+		}
+		return clause
 	case "faces":
 		// faces:ungrouped — media whose detected faces are ALL still
 		// unassigned (the People panel's Ungrouped card). One grouped face

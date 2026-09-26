@@ -33,6 +33,7 @@ const PREFIXES: Array<{ prefix: string; type: PredicateType }> = [
   // match a 'faces:…' token (the 's' precedes the colon) — but keep them
   // adjacent so nobody reorders them apart.
   { prefix: 'faces:', type: 'faces' },
+  { prefix: 'dupe:', type: 'dupe' },
   { prefix: 'face:', type: 'face' },
   { prefix: 'orientation:', type: 'orientation' },
 ];
@@ -86,6 +87,7 @@ const TYPE_PREFIX: Record<PredicateType, string> = {
   clip: 'clip:',
   face: 'face:',
   faces: 'faces:',
+  dupe: 'dupe:',
   orientation: 'orientation:',
 };
 

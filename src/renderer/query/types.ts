@@ -14,6 +14,7 @@ export type PredicateType =
   | 'clip'
   | 'face'
   | 'faces'
+  | 'dupe'
   | 'orientation';
 
 // One extra component of a composite similarity query, merged with the
@@ -43,6 +44,9 @@ export interface Predicate {
   // 'faces' = face-presence filter; value 'ungrouped' = media holding at
   //   least one detected face not assigned to any person yet (the People
   //   panel's Ungrouped pool).
+  // 'dupe' = duplicate-candidate group filter (the Duplicates panel): a group
+  //   id (that group's active members), 'pending' (every item still waiting
+  //   on review) or 'any' (every grouped item, dismissed groups included).
   // 'orientation' = dimension filter on media.width vs media.height; value
   //   'landscape' | 'portrait' | 'square'. Items without known dimensions
   //   never match an include and are kept by an exclude.

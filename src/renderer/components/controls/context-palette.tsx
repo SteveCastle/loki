@@ -212,6 +212,8 @@ const JOB_TITLES: Record<string, string> = {
   faces: 'Face Scan',
   'faces-cluster': 'Face Clustering',
   dedupe: 'Deduplicate',
+  'find-duplicates': 'Find Duplicates',
+  'merge-duplicates': 'Merge Duplicate Groups',
 };
 
 function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
@@ -1020,6 +1022,37 @@ export default function ContextPalette() {
   useEffect(() => {
     setDedupeArmed(false);
   }, [display, selection, scope]);
+  // Review-only counterpart of dedupe: the find-duplicates task records
+  // visually identical items as groups in the Duplicates panel instead of
+  // merging or deleting anything, so it needs no confirmation click. Same
+  // target-tail contract (selection list or the current query).
+  const handleFindDuplicates = async () => {
+    const targetTail = hasSelection
+      ? `"${selection.join('\n')}"`
+      : `--query64=${query64}`;
+    try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(`${mediaServerBase}/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ input: `find-duplicates ${targetTail}` }),
+        signal: AbortSignal.timeout(10000),
+        redirect: 'error',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Create Job',
+          message: 'Could not communicate with job service',
+        },
+      });
+    }
+  };
   const canDedupe =
     !!serverAvailable &&
     !!authToken &&
@@ -1544,6 +1577,19 @@ export default function ContextPalette() {
             {multiSelection
               ? 'exact copies among the selection merge into one'
               : `runs over ${contextLabel}`}
+          </span>
+          <button
+            type="button"
+            className="merge-selection-btn"
+            onClick={handleFindDuplicates}
+            title="Group visually identical items (by visual embedding) into duplicate groups for review in the Duplicates panel. Nothing is merged or deleted."
+          >
+            {multiSelection
+              ? `Find duplicates among ${selection.length} selected`
+              : 'Find duplicates to review'}
+          </button>
+          <span className="merge-selection-note">
+            review-only — groups appear in the Duplicates panel
           </span>
         </div>
       )}

@@ -422,6 +422,15 @@ func (n *ConditionNode) ToSQL() (string, []interface{}) {
 			return "m.hash IN (SELECT hash FROM media WHERE hash IS NOT NULL AND hash <> '' GROUP BY hash HAVING COUNT(*) " + op + " ?)", []interface{}{iVal}
 		}
 		return "m.hash IN (SELECT hash FROM media WHERE hash IS NOT NULL AND hash <> '' GROUP BY hash HAVING COUNT(*) " + op + " ?)", []interface{}{val}
+	case "dupe":
+		// dupe:<group id> / dupe:pending / dupe:any — duplicate-candidate
+		// groups (the Duplicates panel), distinct from "duplicates:<n>"
+		// above which counts hash collisions. Unknown values match nothing.
+		clause, args, ok := DuplicatePredicateSQL(val, "m.path")
+		if !ok {
+			return "1=0", nil
+		}
+		return clause, args
 	case "faces":
 		// faces:ungrouped — items whose detected faces are ALL still
 		// unassigned (the People panel's Ungrouped card). One grouped face
@@ -540,8 +549,9 @@ func (n *ConditionNode) Evaluate(item MediaItem) bool {
 		// filtered; treat as satisfied rather than dropping every row on the
 		// exists-condition slow path.
 		return true
-	case "faces":
-		// Face rows live in their own table; the SQL side already filtered.
+	case "faces", "dupe":
+		// Face and duplicate-group rows live in their own tables; the SQL
+		// side already filtered.
 		return true
 	case "filetype":
 		ext := strings.ToLower(filepath.Ext(item.Path))

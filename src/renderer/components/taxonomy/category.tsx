@@ -8,8 +8,65 @@ import deleteIcon from '../../../../assets/delete.svg';
 import { invoke } from '../../platform';
 import { GlobalStateContext } from '../../state';
 
+// Which glyph marks a system category in the list.
+export type SystemCategoryIcon = 'suggested' | 'people' | 'duplicates';
+
 type Category = {
   label: string;
+  // Client-only entries (the Duplicates panel) are browsable but not
+  // editable: no rename/delete, no drop-to-move, no category context menu.
+  synthetic?: boolean;
+  // Machine-managed (Suggested, People, Duplicates): styled a notch quieter,
+  // never renamed or deleted from here (the app owns their names and their
+  // rows), and marked with an icon.
+  system?: boolean;
+  icon?: SystemCategoryIcon;
+};
+
+// Inline so the glyphs inherit the row's text colour and need no asset
+// pipeline: sparkles (machine suggestions), a person, two overlapping frames.
+const SYSTEM_ICONS: Record<SystemCategoryIcon, JSX.Element> = {
+  suggested: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />
+      <path d="M19 16l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z" />
+      <path d="M4.5 15l.5 1.5 1.5.5-1.5.5-.5 1.5-.5-1.5L2.5 17l1.5-.5z" />
+    </svg>
+  ),
+  people: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5" />
+    </svg>
+  ),
+  duplicates: (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="3" width="12" height="12" rx="2" />
+      <rect x="9" y="9" width="12" height="12" rx="2" />
+    </svg>
+  ),
 };
 
 type Props = {
@@ -57,7 +114,7 @@ export default function Category({
   const [collectedProps, drop] = useDrop(
     () => ({
       accept: ['TAG'],
-      canDrop: () => canWrite,
+      canDrop: () => canWrite && !category.synthetic,
       collect: (monitor) => ({
         isOver: monitor.isOver(),
       }),
@@ -79,10 +136,10 @@ export default function Category({
       key={category.label}
       className={`category ${activeCategory === category.label && 'active'} ${
         collectedProps.isOver ? 'hovered' : ''
-      }`}
+      }${category.system ? ' system' : ''}`}
       onClick={() => setActiveCategory(category.label)}
       onContextMenu={(e) => {
-        if (e.shiftKey) {
+        if (e.shiftKey && !category.synthetic) {
           e.preventDefault();
           e.stopPropagation();
           libraryService.send('SHOW_CONTEXT_PALETTE', {
@@ -92,8 +149,20 @@ export default function Category({
         }
       }}
     >
-      <div className="category-label">{category.label}</div>
-      {canWrite && (
+      <div
+        className="category-label"
+        title={
+          category.system
+            ? 'Managed by the app — cannot be renamed or deleted'
+            : undefined
+        }
+      >
+        {category.icon && (
+          <span className="category-icon">{SYSTEM_ICONS[category.icon]}</span>
+        )}
+        {category.label}
+      </div>
+      {canWrite && !category.synthetic && !category.system && (
         <div className="actions">
           <button
             onClick={(e) => {

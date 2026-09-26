@@ -65,6 +65,43 @@ describe('buildMediaQuery', () => {
     expect(bogus.sql).toContain('1=0');
   });
 
+  it('compiles dupe:<id> / dupe:pending / dupe:any over the duplicate tables', () => {
+    const byId = buildMediaQuery(
+      [{ type: 'dupe', value: '12', exclude: false }],
+      'AND'
+    );
+    expect(byId.sql).toContain(
+      'EXISTS (SELECT 1 FROM duplicate_member dm WHERE dm.media_path = media.path AND dm.group_id = ? AND dm.excluded = 0)'
+    );
+    expect(byId.params).toEqual(['12']);
+
+    const pending = buildMediaQuery(
+      [{ type: 'dupe', value: 'pending', exclude: false }],
+      'AND'
+    );
+    expect(pending.sql).toContain("dg.status = 'pending'");
+    expect(pending.sql).toContain('dm.excluded = 0');
+    expect(pending.params).toEqual([]);
+
+    const any = buildMediaQuery(
+      [{ type: 'dupe', value: 'any', exclude: true }],
+      'AND'
+    );
+    expect(any.sql).toContain(
+      '(NOT (EXISTS (SELECT 1 FROM duplicate_member dm WHERE dm.media_path = media.path)))'
+    );
+
+    // Unknown values match nothing — never everything.
+    for (const value of ['bogus', '0', '-3', '1.5']) {
+      const bogus = buildMediaQuery(
+        [{ type: 'dupe', value, exclude: false }],
+        'AND'
+      );
+      expect(bogus.sql).toContain('1=0');
+      expect(bogus.params).toEqual([]);
+    }
+  });
+
   it('compiles orientation:landscape/portrait/square from width vs height', () => {
     const landscape = buildMediaQuery(
       [{ type: 'orientation', value: 'landscape', exclude: false }],

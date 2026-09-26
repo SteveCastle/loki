@@ -42,6 +42,8 @@ var movablePathColumns = []pathColumn{
 	{Table: "face_scan", Column: "media_path", quoted: "media_path"},
 	{Table: "battle", Column: "winner_path", quoted: "winner_path"},
 	{Table: "battle", Column: "loser_path", quoted: "loser_path"},
+	{Table: "duplicate_member", Column: "media_path", quoted: "media_path"},
+	{Table: "duplicate_group", Column: "anchor_path", quoted: "anchor_path"},
 }
 
 // PathColumn is an exported view of one media-path reference, for callers

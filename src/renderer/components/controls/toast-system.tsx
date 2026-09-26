@@ -98,6 +98,14 @@ const getJobTitle = (job: JobRunnerJob): string => {
       return 'Processing Media';
     case 'dedupe':
       return 'Removing Duplicates';
+    case 'find-duplicates':
+      return job.input.includes('--reset')
+        ? 'Rebuilding Duplicate Groups'
+        : 'Finding Duplicate Candidates';
+    case 'merge-duplicates':
+      return job.input.includes('--dry-run')
+        ? 'Previewing Duplicate Merge'
+        : 'Merging Duplicate Groups';
     case 'metadata':
       switch (parseFlag(job.input, 'type')) {
         case 'description':
@@ -144,6 +152,12 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return 'Applying multiple operations to each file in one pass.';
     case 'dedupe':
       return 'Finding exact duplicates, merging their metadata, and deleting the copies.';
+    case 'find-duplicates':
+      return 'Grouping visually identical items for review in the Duplicates panel — nothing is merged or deleted.';
+    case 'merge-duplicates':
+      return job.input.includes('--dry-run')
+        ? 'Counting what accepting every pending duplicate group would merge and delete.'
+        : 'Accepting every pending duplicate group: merging each into its anchor and deleting the other copies.';
     case 'metadata':
       switch (parseFlag(job.input, 'type')) {
         case 'description':
@@ -503,8 +517,8 @@ export function ToastSystem() {
           queryClient.invalidateQueries(['metadata']);
         }
 
-        if (job.command === 'dedupe') {
-          // Dedupe deleted duplicate files from disk and consolidated their
+        if (job.command === 'dedupe' || job.command === 'merge-duplicates') {
+          // Dedupe / merge-duplicates deleted duplicate files from disk and consolidated their
           // rows — the set of available media itself changed, so re-query the
           // current view (same reload as media-created) and drop every cache
           // that could still name a deleted path or miss merged metadata.
@@ -520,6 +534,13 @@ export function ToastSystem() {
           } else if (snapshot.matches({ library: 'loadedFromFS' })) {
             libraryService.send('REFRESH_LIBRARY');
           }
+        }
+
+        if (job.command === 'find-duplicates') {
+          // Review-only: no media changed, but the Duplicates panel's groups
+          // and counts did (the panel also follows the job's live
+          // duplicates-updated broadcasts while it runs).
+          queryClient.invalidateQueries({ queryKey: ['taxonomy', 'duplicates'] });
         }
 
         // Auto-remove completed jobs after 3 seconds to show completion state briefly

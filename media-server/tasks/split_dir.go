@@ -508,6 +508,8 @@ var sidecarPathColumns = []struct{ Table, Column string }{
 	{"face_scan", "media_path"},
 	{"battle", "winner_path"},
 	{"battle", "loser_path"},
+	{"duplicate_member", "media_path"},
+	{"duplicate_group", "anchor_path"},
 }
 
 // rootPathsOutsideMedia finds paths under dir that a sidecar table references

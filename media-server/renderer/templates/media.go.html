@@ -1817,6 +1817,8 @@
               <option value="move">Move Files</option>
               <option value="lora-dataset">Create LoRA Dataset</option>
               <option value="hls">Pre-generate HLS Streams</option>
+              <option value="find-duplicates">Find Duplicate Candidates (review only)</option>
+              <option value="dedupe">Deduplicate Exact Copies (merge + delete)</option>
             </select>
             <div
               id="move-options"
@@ -2059,6 +2061,89 @@
                 matching the query. Passthrough remuxes without re-encoding
                 (fastest). Adaptive creates multiple quality tiers. Already-cached
                 streams are skipped automatically.
+              </div>
+            </div>
+            <div
+              id="find-duplicates-options"
+              style="
+                display: none;
+                flex-direction: column;
+                gap: 10px;
+                margin-top: 10px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label style="color: #aaa; font-size: 0.9em; min-width: 120px"
+                  >Similarity (%):</label
+                >
+                <input
+                  type="number"
+                  id="find-duplicates-threshold"
+                  value="100"
+                  min="50"
+                  max="100"
+                  step="0.5"
+                  style="
+                    padding: 6px 10px;
+                    background-color: #1e1e1e;
+                    border: 1px solid #555;
+                    color: #d4d4d4;
+                    border-radius: 4px;
+                    font-family: monospace;
+                    width: 100px;
+                  "
+                />
+                <label
+                  style="color: #aaa; font-size: 0.9em; display: flex; align-items: center; gap: 6px"
+                  ><input type="checkbox" id="find-duplicates-reset" />Reset pending
+                  groups first</label
+                >
+              </div>
+              <div style="font-size: 0.8em; color: #888; line-height: 1.3">
+                <strong>Review only:</strong> groups visually identical items (by
+                visual embedding) into duplicate groups for the Duplicates panel
+                as they are found. Nothing is merged or deleted. 100% finds exact
+                copies, re-encodes and resizes; lower it to catch crops and edits.
+                Items need an embedding first. Re-running is incremental.
+              </div>
+            </div>
+            <div
+              id="dedupe-options"
+              style="
+                display: none;
+                flex-direction: column;
+                gap: 10px;
+                margin-top: 10px;
+              "
+            >
+              <div
+                style="
+                  display: flex;
+                  gap: 10px;
+                  align-items: center;
+                  flex-wrap: wrap;
+                "
+              >
+                <label
+                  style="color: #aaa; font-size: 0.9em; display: flex; align-items: center; gap: 6px"
+                  ><input type="checkbox" id="dedupe-dry-run" checked />Dry run
+                  (report only)</label
+                >
+              </div>
+              <div style="font-size: 0.8em; color: #888; line-height: 1.3">
+                <strong>Destructive:</strong> finds byte-identical files among the
+                selection, merges their tags, embeddings and transcripts onto one
+                copy, and <strong>deletes the other copies and zero-byte files
+                from disk</strong>. Leave Dry run on to see what would happen
+                first. For visually similar (not identical) items use Find
+                Duplicate Candidates instead.
               </div>
             </div>
             <button type="submit" id="execute-button">Execute</button>
@@ -2384,11 +2469,17 @@
             'lora-dataset-options'
           );
           const hlsOptions = document.getElementById('hls-options');
+          const findDuplicatesOptions = document.getElementById(
+            'find-duplicates-options'
+          );
+          const dedupeOptions = document.getElementById('dedupe-options');
 
           // Hide all options first
           moveOptions.style.display = 'none';
           loraDatasetOptions.style.display = 'none';
           hlsOptions.style.display = 'none';
+          findDuplicatesOptions.style.display = 'none';
+          dedupeOptions.style.display = 'none';
 
           // Show relevant options
           if (this.value === 'move') {
@@ -2397,6 +2488,10 @@
             loraDatasetOptions.style.display = 'flex';
           } else if (this.value === 'hls') {
             hlsOptions.style.display = 'flex';
+          } else if (this.value === 'find-duplicates') {
+            findDuplicatesOptions.style.display = 'flex';
+          } else if (this.value === 'dedupe') {
+            dedupeOptions.style.display = 'flex';
           }
         });
 
@@ -2549,7 +2644,7 @@
             return;
           }
 
-          const applyAllowedTasks = ['move', 'remove', 'lora-dataset', 'hls'];
+          const applyAllowedTasks = ['move', 'remove', 'lora-dataset', 'hls', 'find-duplicates', 'dedupe'];
           if (
             selectedItems.size === 0 &&
             !(
@@ -2686,6 +2781,63 @@
             const hlsPreset = document.getElementById('hls-preset-select').value;
             args.push('--preset', hlsPreset);
 
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push('--query64=' + encQuery);
+              } catch (e) {
+                args.push('--query', currentSearchQuery);
+              }
+              input = '';
+            } else {
+              input = Array.from(selectedItems).join('\n');
+            }
+          } else if (selectedTask === 'find-duplicates') {
+            // Review only: groups land in the SPA's Duplicates panel; the
+            // task never merges or deletes. Same scope contract as the
+            // others (query64 or the selected path list).
+            command = 'find-duplicates';
+            args = [];
+            const thresholdInput = document.getElementById(
+              'find-duplicates-threshold'
+            );
+            let threshold = parseFloat(thresholdInput.value);
+            if (!isFinite(threshold)) threshold = 100;
+            threshold = Math.max(50, Math.min(100, threshold));
+            args.push('--threshold=' + threshold);
+            if (document.getElementById('find-duplicates-reset').checked) {
+              args.push('--reset');
+            }
+            if (applyToQuery && currentSearchQuery) {
+              try {
+                const encQuery = btoa(
+                  unescape(encodeURIComponent(currentSearchQuery))
+                );
+                args.push('--query64=' + encQuery);
+              } catch (e) {
+                args.push('--query', currentSearchQuery);
+              }
+              input = '';
+            } else {
+              input = Array.from(selectedItems).join('\n');
+            }
+          } else if (selectedTask === 'dedupe') {
+            // Destructive counterpart: exact byte copies are merged and the
+            // redundant files deleted. Dry run (default on) only reports.
+            command = 'dedupe';
+            args = [];
+            const dryRun = document.getElementById('dedupe-dry-run').checked;
+            if (dryRun) {
+              args.push('--dry-run');
+            } else if (
+              !confirm(
+                'Deduplicate will DELETE redundant byte-identical copies and zero-byte files from disk after merging their metadata onto one kept copy. This cannot be undone. Continue?'
+              )
+            ) {
+              return;
+            }
             if (applyToQuery && currentSearchQuery) {
               try {
                 const encQuery = btoa(
@@ -4070,6 +4222,8 @@
           ingest: 'Import Media',
           cleanup: 'Clean Up Database',
           hls: 'Pre-generate HLS',
+          'find-duplicates': 'Find Duplicate Candidates',
+          dedupe: 'Deduplicate Exact Copies',
           'lora-dataset': 'Create LoRA Dataset',
         };
 

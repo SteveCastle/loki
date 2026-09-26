@@ -811,6 +811,9 @@
           <tr><td><code>embed</code></td><td>Visual Embedding (ONNX)</td><td>Compute embeddings for similarity search</td></tr>
           <tr><td><code>faces</code></td><td>Detect Faces (ONNX)</td><td>Detect and embed faces, clustering incrementally</td></tr>
           <tr><td><code>faces-cluster</code></td><td>Cluster Faces into People</td><td>Group stored faces into people</td></tr>
+          <tr><td><code>dedupe</code></td><td>Deduplicate Exact Copies (Merge + Delete)</td><td>Find byte-identical files, merge their metadata onto one copy, and delete the rest</td></tr>
+          <tr><td><code>find-duplicates</code></td><td>Find Duplicate Candidates (Review Only)</td><td>Group visually identical items (by embedding similarity, default 100%) into review groups for the Duplicates panel; never merges or deletes</td></tr>
+          <tr><td><code>merge-duplicates</code></td><td>Merge All Duplicate Groups (Accept Review)</td><td>Merge every pending duplicate group into its anchor and delete the other copies (<code>--min-similarity</code> to accept only the tight groups, <code>--dry-run</code> to count)</td></tr>
           <tr><td><code>metadata</code></td><td>Generate Metadata (Legacy)</td><td>Legacy alias that maps <code>--type</code> onto the ops above</td></tr>
           <tr><td><code>hls</code></td><td>HLS Transcode</td><td>Adaptive streaming renditions for large videos</td></tr>
           <tr><td><code>move</code></td><td>Move Media Files</td><td>Move files and update database references</td></tr>

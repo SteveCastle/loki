@@ -1,0 +1,336 @@
+/* Duplicates category — duplicate-candidate review inside the taxonomy panel.
+   Shares the People panel's wrap/toolbar/empty-state classes (people-grid.css)
+   so the two special categories read as one family; only the group cards
+   are its own. */
+
+.dupes-wrap {
+  overflow-y: auto;
+}
+
+.dupes-toolbar {
+  justify-content: flex-start;
+  align-items: center;
+}
+
+.dupes-tabs {
+  display: inline-flex;
+  gap: 2px;
+  margin-right: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  padding: 2px;
+}
+
+.dupes-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dupes-tab.active {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.dupes-threshold {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+
+.dupes-threshold input {
+  width: 56px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  padding: 3px 5px;
+}
+
+.dupes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+/* ── Group card ── */
+.dupes-group {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.1s;
+}
+
+.dupes-group.active {
+  border-color: rgb(211, 3, 72);
+}
+
+.dupes-group.dismissed {
+  opacity: 0.75;
+}
+
+.dupes-group.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.dupes-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dupes-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: auto;
+}
+
+.dupes-group-title:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.dupes-group-id {
+  color: rgba(255, 255, 255, 0.45);
+  font-variant-numeric: tabular-nums;
+}
+
+.dupes-group-count {
+  font-weight: 600;
+}
+
+.dupes-group-score,
+.dupes-group-excluded {
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+}
+
+.dupes-group-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.dupes-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dupes-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.dupes-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dupes-btn-merge {
+  border-color: rgba(211, 3, 72, 0.5);
+}
+
+.dupes-btn.danger,
+.people-cluster-btn.danger {
+  background: rgb(211, 3, 72);
+  border-color: rgb(211, 3, 72);
+  color: #fff;
+}
+
+/* ── Members ── */
+.dupes-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px;
+}
+
+.dupes-member {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.dupes-member:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.dupes-member.keep {
+  border-color: rgba(120, 220, 140, 0.9);
+}
+
+.dupes-member.excluded {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dupes-member-thumb {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  background: #111;
+  overflow: hidden;
+}
+
+.dupes-member-thumb img,
+.dupes-member-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.dupes-member-badge {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  font-size: 9px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 5px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.65);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.dupes-member-badge.keep {
+  left: auto;
+  right: 4px;
+  background: rgba(120, 220, 140, 0.9);
+  color: #052;
+}
+
+.dupes-member-badge.excluded {
+  background: rgba(211, 3, 72, 0.8);
+  color: #fff;
+}
+
+.dupes-member-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px 5px;
+  min-width: 0;
+}
+
+.dupes-member-name {
+  font-size: 11px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dupes-member-meta {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dupes-member-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  border: 0;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.dupes-member:hover .dupes-member-toggle,
+.dupes-member.excluded .dupes-member-toggle {
+  opacity: 1;
+}
+
+.dupes-member-more {
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  border-style: dashed;
+  min-height: 60px;
+}
+
+.dupes-load-more {
+  align-self: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+  margin: 4px 0 8px;
+}
+
+/* Narrow panel: drop button labels' surrounding chrome first. */
+@container (max-width: 380px) {
+  .dupes-threshold {
+    display: none;
+  }
+}
+
+/* Group order toggle: shares the tab pill styling, sits after the status tabs. */
+.dupes-sort {
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 5px;
+  padding: 2px;
+}
+
+.dupes-tabs {
+  margin-right: 0;
+}
+
+.dupes-sort {
+  margin-right: auto;
+}

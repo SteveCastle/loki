@@ -260,15 +260,42 @@ const newLoadId = () =>
 const setLibrary = assign<LibraryState, AnyEventObject>({
   library: (context, event) => {
     const library = event.data.library;
+    // The view is sorted under the load id it will render with (shuffle and
+    // battle orderings are seeded by it), so mint it here and hand it to the
+    // libraryLoadId assigner below through the event.
+    const loadId = newLoadId();
+    (event as any).__newLoadId = loadId;
+    // A pinned path (e.g. the Duplicates panel: "filter to this cluster and
+    // land on this item") wins over the loader's default cursor when it is
+    // in the result set; otherwise the loader's cursor stands.
+    let cursor: number = event.data.cursor;
+    if (context.pinnedPath) {
+      const want = path.normalize(context.pinnedPath).toLowerCase();
+      const view = filter(
+        loadId,
+        context.textFilter,
+        library,
+        context.settings.filters,
+        context.settings.sortBy
+      );
+      const idx = (view ?? []).findIndex(
+        (it: Item) =>
+          !!it?.path && path.normalize(it.path).toLowerCase() === want
+      );
+      if (idx >= 0) cursor = idx;
+    }
+    (event as any).__cursor = cursor;
     // Update library and cursor data using session store (async, debounced)
     setSessionValues({
       library: { library, initialFile: context.initialFile },
-      cursor: { cursor: event.data.cursor },
+      cursor: { cursor },
     });
     return library;
   },
-  libraryLoadId: () => newLoadId(),
-  cursor: (_, event) => event.data.cursor,
+  libraryLoadId: (_, event) => (event as any).__newLoadId ?? newLoadId(),
+  cursor: (_, event) => (event as any).__cursor ?? event.data.cursor,
+  // Consumed: the pin was for this load only.
+  pinnedPath: () => null,
 });
 
 // Snapshot the current FS view into the base slot. Runs alongside every
@@ -799,7 +826,15 @@ const queryMutationOn = {
         // itself on the libraryLoadId change, but when the query changes while
         // the list is unmounted (e.g. similar-search from the detail screen)
         // the persisted position would be restored stale on the next mount.
-        return { query: q, dbQuery: { tags: tagsFromQuery(q) }, scrollPosition: 0 };
+        // An optional pinnedPath (the Duplicates panel: "filter to this
+        // cluster and land on this item") is honoured by runningQuery when
+        // it places the cursor in the new result set.
+        return {
+          query: q,
+          dbQuery: { tags: tagsFromQuery(q) },
+          scrollPosition: 0,
+          pinnedPath: event.data.pinnedPath || context.pinnedPath,
+        };
       }),
     ],
   },

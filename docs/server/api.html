@@ -115,6 +115,7 @@
           </li>
           <li><a href="#embeddings">Embeddings Index</a></li>
           <li><a href="#people">People and Faces</a></li>
+          <li><a href="#duplicates">Duplicate Candidates</a></li>
           <li><a href="#storage">Storage and Transfer</a></li>
           <li><a href="#deps">Dependencies</a></li>
           <li><a href="#swipe">Swipe</a></li>
@@ -495,6 +496,8 @@
           <tr><td><code>create</code>, <code>update</code>, <code>delete</code></td><td><code>{"updateType": "create"|"update"|"delete", "job": {...}, "html": "&lt;tr&gt;...&lt;/tr&gt;"}</code>. <code>job</code> is the <a href="#job-object">job object</a>; for <code>delete</code> only <code>id</code> is populated. <code>html</code> is the rendered table row for the admin page.</td></tr>
           <tr><td><code>stdout-{jobId}</code></td><td><code>{"updateType": "stdout", "line": "..."}</code>. One event per output line while the job runs.</td></tr>
           <tr><td><code>progress</code></td><td><code>{"updateType": "progress", "id": "&lt;jobId&gt;", "done": n, "total": n}</code>.</td></tr>
+          <tr><td><code>people-updated</code></td><td><code>{"models": [...]}</code>. People or face assignments changed (clustering progress or a manual edit); refetch <code>/api/people</code>.</td></tr>
+          <tr><td><code>duplicates-updated</code></td><td><code>{"groups": n, "items": n}</code>. Duplicate-candidate groups changed — emitted as the <code>find-duplicates</code> task writes groups (throttled) and after every manual review action; refetch <code>/api/duplicates</code>.</td></tr>
         </table>
         <div class="code-block">
           <code>const es = new EventSource(serverUrl + '/stream');</code><br>
@@ -548,6 +551,7 @@
           <tr><td><code>hash</code></td><td>Substring</td><td><code>hash LIKE %value%</code>.</td></tr>
           <tr><td><code>orientation</code></td><td><code>landscape</code>, <code>portrait</code>, <code>square</code></td><td>Width versus height. Items without dimensions never match.</td></tr>
           <tr><td><code>faces</code></td><td><code>ungrouped</code></td><td>Item has at least one face with no person and no face with a person.</td></tr>
+          <tr><td><code>dupe</code></td><td>Group id, <code>pending</code>, or <code>any</code></td><td>Duplicate-candidate groups (see <a href="#duplicates">Duplicate Candidates</a>): the active members of one group, every item in a pending group, or every grouped item.</td></tr>
           <tr><td><code>similar</code></td><td>Media path</td><td>Rank by cosine similarity to the item's embedding.</td></tr>
           <tr><td><code>visual</code></td><td>Free text</td><td>Rank by text-to-image similarity (SigLIP 2).</td></tr>
           <tr><td><code>clip</code></td><td>Image data URL</td><td>Rank by similarity to an uploaded image (<code>data:image/...;base64,...</code>).</td></tr>
@@ -851,6 +855,63 @@
           <code>score</code> (detection confidence), <code>assignedBy</code>
           (<code>cluster</code> or <code>user</code>), and <code>model</code>.
           Face crops are served by <code>/media/facecrop?id=</code>.
+        </p>
+      </section>
+
+      <section id="duplicates">
+        <h2>Duplicate Candidates</h2>
+        <p>
+          A <em>duplicate group</em> is a cluster of media whose visual
+          embeddings are at least a threshold similar to the group's
+          <em>anchor</em> item. Groups are produced by the review-only
+          <code>find-duplicates</code> task (the exact-bytes <code>dedupe</code>
+          task merges and deletes on its own; this one never does) and live in
+          their own tables, not the taxonomy. A path belongs to at most one
+          group, and stays "taken" while the group exists — pending or
+          dismissed, member or excluded — so re-running the scan is incremental
+          and a dismissal sticks. The <code>dupe:</code> query predicate filters
+          the library to a group's members.
+        </p>
+        <table class="api-table">
+          <tr><th>Method</th><th>Endpoint</th><th>Access</th><th>Description</th></tr>
+          <tr><td>GET</td><td><code>/api/duplicates?status=&amp;sort=&amp;limit=&amp;offset=</code></td><td>Read</td><td><code>{"groups": [...], "total", "limit", "offset"}</code>. <code>status</code> is <code>pending</code> (default), <code>dismissed</code>, or <code>all</code>; <code>sort</code> is <code>newest</code> (default) or <code>members</code> (largest clusters first); <code>limit</code> default 50, maximum 500. Each group is <code>{"id", "model", "threshold", "anchorPath", "keeperPath", "status", "createdAt", "updatedAt", "memberCount", "activeCount", "minScore", "members": [...]}</code>; each member is a media item (<code>path</code>, <code>elo</code>, <code>width</code>, <code>height</code>, <code>size</code>, <code>battles</code>) plus <code>score</code> (cosine similarity to the anchor), <code>anchor</code>, <code>keeper</code>, and <code>excluded</code>. <code>keeperPath</code> is the default merge target: the highest-resolution active member, then the largest file, then the anchor.</td></tr>
+          <tr><td>GET</td><td><code>/api/duplicates/stats</code></td><td>Read</td><td><code>{"pending", "dismissed", "members", "pendingItems"}</code> — group counts, member rows, and active members of pending groups.</td></tr>
+          <tr><td>GET</td><td><code>/api/duplicates/for-path?path=</code></td><td>Read</td><td><code>{"groupId", "status"?, "activeCount"?}</code>; <code>groupId</code> is 0 when the item is in no group.</td></tr>
+          <tr><td>GET</td><td><code>/api/duplicates/{id}</code></td><td>Read</td><td>One group in the list shape.</td></tr>
+          <tr><td>POST</td><td><code>/api/duplicates/{id}/merge</code></td><td>Admin</td><td><code>{"keep"?, "sources"?}</code>. Merge <code>sources</code> (default: every other active member; excluded members only when named) into <code>keep</code> (default: the group's <code>keeperPath</code>) with the same merge as <code>/api/media/merge-metadata</code>: the keeper gains the sources' tags, embeddings, and transcript and the sources are deleted from disk and the database. Returns <code>{"merge": {merge-metadata result}, "group": {...} | null}</code>; the group is <code>null</code> when nothing is left to review.</td></tr>
+          <tr><td>POST</td><td><code>/api/duplicates/{id}/dismiss</code></td><td>Admin</td><td>Not duplicates: hide the group and keep its members out of future scans. Returns <code>{"id", "status"}</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/duplicates/{id}/restore</code></td><td>Admin</td><td>Back to <code>pending</code>.</td></tr>
+          <tr><td>POST</td><td><code>/api/duplicates/{id}/exclude</code></td><td>Admin</td><td><code>{"path", "excluded"?: true}</code>. Pull one member out of the group (it is never merged and never regrouped here), or put it back with <code>"excluded": false</code>. A group left with fewer than two active members is dismissed automatically. Returns <code>{"id", "group"}</code>.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/duplicates/{id}</code></td><td>Admin</td><td>Forget the group without deciding; its items may be regrouped by a later scan. Returns <code>{"deleted": id}</code>.</td></tr>
+          <tr><td>DELETE</td><td><code>/api/duplicates/all?confirm=true&amp;status=</code></td><td>Admin</td><td>Forget every group (<code>status</code> narrows to <code>pending</code> or <code>dismissed</code>). Returns <code>{"deleted": n}</code>.</td></tr>
+        </table>
+        <p>
+          Removing or merging media removes its member rows; a group left with
+          one member is deleted and a group whose anchor is gone is re-anchored
+          on its best remaining member. Moving media follows it. Every write
+          here, and every group the scan writes, broadcasts
+          <code>duplicates-updated</code> on <a href="#stream"><code>/stream</code></a>.
+        </p>
+        <p>
+          <code>find-duplicates</code> accepts the same inputs as the other bulk
+          tasks — <code>--target &lt;dir&gt;</code> (with <code>--recursive</code>),
+          <code>--query</code> / <code>--query64</code>, or a newline-separated
+          path list — and with no input scans every stored vector of the active
+          embedding model. Options: <code>--threshold</code> (percent, default
+          100 = visually identical), <code>--reset</code> (forget pending groups
+          first), <code>--model</code>. Groups are written as they are found, so
+          the run can be paused or canceled at any point and re-run later to
+          continue.
+        </p>
+        <p>
+          <code>merge-duplicates</code> is the bulk accept: it merges every
+          pending group into its <code>keeperPath</code> (highest resolution,
+          then largest file) with the same merge as
+          <code>/api/duplicates/{id}/merge</code> (excluded members and
+          dismissed groups are left alone), reports per-group progress, and
+          can be paused or canceled between groups. Options:
+          <code>--min-similarity</code> (percent; merge only groups whose
+          loosest member clears it) and <code>--dry-run</code>.
         </p>
       </section>
 
