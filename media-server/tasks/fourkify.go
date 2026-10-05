@@ -178,10 +178,20 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 			q.ErrorJob(j.ID)
 			return waitErr
 		}
-		if _, statErr := os.Stat(output); statErr != nil {
+		info, statErr := os.Stat(output)
+		if statErr != nil {
 			q.PushJobStdout(j.ID, "4kify: no output produced for "+base)
 			q.ErrorJob(j.ID)
 			return fmt.Errorf("4kify produced no output for %s", base)
+		}
+		// A finished file the chain ends on belongs in the library right away:
+		// without a media row it is invisible to path/tag queries until
+		// someone re-ingests the folder. Intermediate (.loki-temp) output is
+		// never added — the step that places it owns that.
+		if terminal {
+			if err := insertMediaRecord(q.Db, output, info.Size()); err != nil {
+				q.PushJobStdout(j.ID, "4kify: failed to add to library: "+err.Error())
+			}
 		}
 
 		q.PushJobStdout(j.ID, "4kify: completed for "+base)

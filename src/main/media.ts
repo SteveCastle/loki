@@ -591,22 +591,36 @@ const updateDescription =
     ]);
   };
 
+// removeFileFromDisk: trash the file, falling back to unlink. A file that is
+// ALREADY gone counts as removed — trashItem can throw on network drives after
+// the file has vanished, and the unlink fallback then reports ENOENT. Treating
+// that as a failure skipped the database cleanup that follows, leaving rows for
+// files that no longer exist (still matched by path search). Any other failure
+// still throws so the rows stay.
+async function removeFileFromDisk(filePath: string): Promise<void> {
+  try {
+    await shell.trashItem(filePath);
+    console.log('File was moved to the trash');
+  } catch {
+    console.error('Error trashing file, trying unlink:');
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') throw e;
+    }
+  }
+}
+
 type DeleteMediaInput = [string];
 const deleteMedia =
   (db: Database) => async (_: IpcMainInvokeEvent, args: DeleteMediaInput) => {
     const filePath = args[0];
-    try {
-      await shell.trashItem(filePath);
-      console.log('File was moved to the trash');
-    } catch {
-      console.error('Error trashing file, trying unlink:');
-      await fs.promises.unlink(filePath);
-    }
+    await removeFileFromDisk(filePath);
     // Same cleanup as forgetMedia: every index that stores the path (tags,
     // embeddings, faces + their assertions, scan markers, battle log) — not
-    // just the media row. Runs only after the file is actually gone; if both
-    // trash and unlink threw above, the rows stay so the item remains
-    // recoverable via the media-unavailable panel.
+    // just the media row. Runs only once the file is actually gone (including
+    // "was already gone"); if the file is stuck for any other reason the rows
+    // stay so the item remains recoverable via the media-unavailable panel.
     return eraseMediaReferences(db, filePath);
   };
 
@@ -1136,13 +1150,8 @@ const mergeItemMetadata =
     // recoverability contract as deleteMedia.
     for (const src of sources) {
       try {
-        try {
-          // eslint-disable-next-line no-await-in-loop
-          await shell.trashItem(src);
-        } catch {
-          // eslint-disable-next-line no-await-in-loop
-          await fs.promises.unlink(src);
-        }
+        // eslint-disable-next-line no-await-in-loop
+        await removeFileFromDisk(src);
         // eslint-disable-next-line no-await-in-loop
         const leftoverVtt = await findVttSidecar(src);
         if (leftoverVtt) {
