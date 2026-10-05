@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/stevecastle/shrike/jobqueue"
+	"github.com/stevecastle/shrike/mediaext"
 	"github.com/stevecastle/shrike/platform"
 )
 
@@ -19,10 +21,12 @@ import (
 // 4K canvas). Shaped like the ffmpeg media-altering tasks (rotate, crop): one
 // new `<name>_4k.png` per image beside the original (or in the workflow temp
 // dir when chained), registered as an output file so downstream steps and the
-// library pick it up. Images only; the binary is resolved from PATH.
+// library pick it up. Videos are handled by sampling one frame at --time
+// (seconds) and upscaling that. The binary is resolved from PATH.
 
 var fourKifyOptions = []TaskOption{
 	{Name: "phone", Label: "Phone Wallpaper", Type: "bool", Default: false, Description: "Make a vertical 1296x2800 phone wallpaper instead of a 3840x2160 desktop one"},
+	{Name: "time", Label: "Video Time", Type: "number", Default: 0.0, Description: "Seconds into a video to sample the frame from (videos only; images ignore it)"},
 	{Name: "steps", Label: "Steps", Type: "number", Default: 25.0, Description: "Sampling steps (more is slower)"},
 }
 
@@ -31,6 +35,10 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	opts := ParseOptions(j, fourKifyOptions)
 	phone, _ := opts["phone"].(bool)
 	steps, _ := opts["steps"].(float64)
+	at, _ := opts["time"].(float64)
+	if at < 0 {
+		at = 0
+	}
 	if steps <= 0 {
 		steps = 25
 	}
@@ -97,8 +105,9 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		ext := filepath.Ext(abs)
 		name := strings.TrimSuffix(base, ext)
 
-		if !isImageExt(ext) {
-			q.PushJobStdout(j.ID, "4kify: skipping non-image "+base)
+		isVideo := mediaext.IsVideo(abs)
+		if !isImageExt(ext) && !isVideo {
+			q.PushJobStdout(j.ID, "4kify: skipping unsupported file "+base)
 			_ = q.SetJobProgress(j.ID, idx+1, len(files))
 			continue
 		}
@@ -115,7 +124,11 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 				return err
 			}
 		}
-		output := filepath.Join(outputDir, name+"_4k.png")
+		outName := name + "_4k.png"
+		if isVideo {
+			outName = fmt.Sprintf("%s_t%.2f_4k.png", name, at)
+		}
+		output := filepath.Join(outputDir, outName)
 		if terminal {
 			if _, err := os.Stat(output); err == nil {
 				output = resolveConflict(output)
@@ -126,7 +139,21 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		if phone {
 			args = append(args, "--phone")
 		}
-		args = append(args, abs)
+
+		input := abs
+		frameDir := ""
+		if isVideo {
+			frame, ferr := sampleVideoFrame(ctx, abs, at)
+			if ferr != nil {
+				q.PushJobStdout(j.ID, fmt.Sprintf("4kify: failed to sample frame at %.2fs from %s: %v", at, base, ferr))
+				q.ErrorJob(j.ID)
+				return ferr
+			}
+			frameDir = filepath.Dir(frame)
+			input = frame
+			q.PushJobStdout(j.ID, fmt.Sprintf("4kify: sampled frame at %.2fs from %s", at, base))
+		}
+		args = append(args, input)
 
 		q.PushJobStdout(j.ID, "4kify: running on "+base+" -> "+filepath.Base(output))
 
@@ -167,6 +194,9 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		}
 		waitErr := cmd.Wait()
 		<-doneErr
+		if frameDir != "" {
+			_ = os.RemoveAll(frameDir)
+		}
 
 		if ctx.Err() != nil {
 			q.PushJobStdout(j.ID, "4kify: task canceled")
@@ -202,4 +232,19 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	q.CompleteJob(j.ID)
 	return nil
+}
+
+// sampleVideoFrame renders the frame at `at` seconds to a lossless PNG in a
+// fresh temp dir (the caller removes the directory).
+func sampleVideoFrame(ctx context.Context, src string, at float64) (string, error) {
+	dir, err := os.MkdirTemp("", "4kify-frame-")
+	if err != nil {
+		return "", err
+	}
+	frame := filepath.Join(dir, "frame.png")
+	if err := runFFmpegSingleFrame(ctx, src, frame, at); err != nil {
+		os.RemoveAll(dir)
+		return "", err
+	}
+	return frame, nil
 }
