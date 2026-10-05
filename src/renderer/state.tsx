@@ -1551,6 +1551,58 @@ export const libraryMachine = createMachine(
               },
             }),
           },
+          // A file just created by a job (e.g. 4kify output) that the active
+          // search/filter/query doesn't include. Add it to the in-memory library
+          // PROVISIONALLY — without touching the query, filters, or history — and
+          // jump the cursor to it so the user can act on it. It is not persisted
+          // anywhere: any reload or re-query drops it if it doesn't match, which
+          // is intended. Items already in the library are just navigated to.
+          ADD_PROVISIONAL_ITEMS: {
+            actions: assign<LibraryState, AnyEventObject>((context, event) => {
+              const paths: string[] = (event.paths || []).filter(Boolean);
+              if (paths.length === 0) return {};
+              const norm = (p: string) => path.normalize(p).toLowerCase();
+              const known = new Set(
+                context.library.map((item) => item?.path && norm(item.path))
+              );
+              const added: Item[] = [];
+              for (const p of paths) {
+                if (known.has(norm(p))) continue;
+                known.add(norm(p));
+                added.push({ path: p, mtimeMs: Date.now() });
+              }
+              const library = added.length
+                ? [...added, ...context.library]
+                : context.library;
+              const loadId = added.length ? newLoadId() : context.libraryLoadId;
+              const view = filter(
+                loadId,
+                context.textFilter,
+                library,
+                context.settings.filters,
+                context.settings.sortBy
+              );
+              const target = norm(paths[0]);
+              const idx = view.findIndex(
+                (item: Item) => item?.path && norm(item.path) === target
+              );
+              if (idx < 0 && !added.length) return {};
+              const cursor = idx > -1 ? idx : context.cursor;
+              updatePersistedCursor(context, cursor);
+              return {
+                library,
+                libraryLoadId: loadId,
+                // In-place edit of the current view, not a navigation: keep
+                // the list's scroll position (same contract as DELETE_FILE).
+                preserveScrollFromLoadId: added.length
+                  ? context.libraryLoadId
+                  : context.preserveScrollFromLoadId,
+                cursor,
+                scrollToCursorEventId: uniqueId(),
+                videoPlayer: { ...context.videoPlayer, loopCount: 0 },
+              };
+            }),
+          },
           INCREMENT_CURSOR: {
             actions: assign<LibraryState, AnyEventObject>((context, event) => {
               const view = filter(

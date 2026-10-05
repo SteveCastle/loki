@@ -115,6 +115,9 @@ func ResolveResources(command string, arguments []string, input string) []string
 	switch command {
 	case "describe", "transcribe", "embed", "autotag", "faces":
 		ops = []string{command}
+	case "4kify":
+		// Heavy local GPU diffusion run.
+		return []string{HostBucketLocalCompute}
 	case "faces-cluster":
 		// Clustering shares the faces bucket (its Host) and crunches vectors
 		// locally.

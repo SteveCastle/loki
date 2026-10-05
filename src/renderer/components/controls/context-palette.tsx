@@ -54,6 +54,9 @@ import './context-palette.css';
 const STUDIO_MEDIA_RE =
   /\.(mp4|webm|mov|mkv|avi|m4v|flv|gif|jpe?g|jfif|png|webp|avif|bmp)$/i;
 
+// Still-image types the `4kify` task accepts (it skips anything else).
+const IMAGE_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp|tiff?)$/i;
+
 // Generation mode for the metadata chips. `missing` only fills gaps; `all`
 // replaces existing metadata (passes `--overwrite`). The mode is chosen once
 // via the panel-wide toggle and applied to whichever chip is clicked.
@@ -212,6 +215,7 @@ const JOB_TITLES: Record<string, string> = {
   faces: 'Face Scan',
   'faces-cluster': 'Face Clustering',
   dedupe: 'Deduplicate',
+  '4kify': '4K Upscale',
   'find-duplicates': 'Find Duplicates',
   'merge-duplicates': 'Merge Duplicate Groups',
 };
@@ -1115,6 +1119,43 @@ export default function ContextPalette() {
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
+  // 4kify: restore + outpaint images onto a 4K canvas (the `4kify` task, which
+  // writes a `<name>_4k.png` beside each source). Acts on the discrete
+  // selection — or the single right-clicked file — and drops non-images,
+  // since the engine only takes stills. Explicit path list, same tail
+  // contract as the other jobs.
+  const fourKifyPaths = (hasSelection ? selection : [similarTargetPath]).filter(
+    (p) => !!p && IMAGE_MEDIA_RE.test(p)
+  );
+  const canFourKify =
+    !!serverAvailable && !!authToken && fourKifyPaths.length > 0;
+  const handleFourKify = async () => {
+    if (fourKifyPaths.length === 0) return;
+    try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(`${mediaServerBase}/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ input: `4kify "${fourKifyPaths.join('\n')}"` }),
+        signal: AbortSignal.timeout(10000),
+        redirect: 'error',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Create Job',
+          message: 'Could not communicate with job service',
+        },
+      });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    }
+  };
+
   // Person context: when the right-clicked tag is a person (its name exists
   // in /api/people — i.e. a People-category tag), the palette offers person
   // actions (rename) that keep the person table and its taxonomy tag in sync.
@@ -1590,6 +1631,25 @@ export default function ContextPalette() {
           </button>
           <span className="merge-selection-note">
             review-only — groups appear in the Duplicates panel
+          </span>
+        </div>
+      )}
+
+      {canFourKify && (
+        <div className="context-palette-merge">
+          <span className="action-group-title">Transform</span>
+          <button
+            type="button"
+            className="merge-selection-btn"
+            onClick={handleFourKify}
+            title="Upscale and outpaint to fit a 4K monitor. Saves a new _4k.png next to each original; needs a CUDA GPU."
+          >
+            {fourKifyPaths.length > 1
+              ? `4K upscale ${fourKifyPaths.length} images`
+              : '4K upscale + outpaint'}
+          </button>
+          <span className="merge-selection-note">
+            saves a new _4k.png beside each original
           </span>
         </div>
       )}
