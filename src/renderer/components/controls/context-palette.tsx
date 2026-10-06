@@ -54,6 +54,10 @@ import './context-palette.css';
 const STUDIO_MEDIA_RE =
   /\.(mp4|webm|mov|mkv|avi|m4v|flv|gif|jpe?g|jfif|png|webp|avif|bmp)$/i;
 
+// Build flag (see webpack.config.base.ts): the 4K Upscale action is hidden
+// from shipped builds until the feature is ready. Replaced at build time.
+const FOURKIFY_ENABLED = process.env.ENABLE_4KIFY === '1';
+
 // Still-image types the `4kify` task accepts directly.
 const IMAGE_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp|tiff?)$/i;
 // Videos 4kify takes by sampling one frame at the viewer's playback time.
@@ -1134,6 +1138,7 @@ export default function ContextPalette() {
         (fourKifyCandidates.length === 1 && VIDEO_MEDIA_RE.test(p)))
   );
   const canFourKify =
+    FOURKIFY_ENABLED &&
     !!serverAvailable && !!authToken && fourKifyPaths.length > 0;
   const fourKifyIsVideo =
     fourKifyPaths.length === 1 && VIDEO_MEDIA_RE.test(fourKifyPaths[0]);
