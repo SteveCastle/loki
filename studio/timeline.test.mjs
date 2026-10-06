@@ -146,24 +146,31 @@ test('duplicating a multi-selection keeps the gaps between clips and selects the
   timeline.selClips = new Set(['a1', 'a2', 'b1']);
   timeline.duplicateSelection();                          // selection spans 2..10 → shift by 8
   const starts = (t) => t.clips.map((c) => c.start).sort((x, y) => x - y);
-  assert.deepEqual(starts(a), [2, 8, 10, 16]);
-  assert.deepEqual(starts(b), [4, 12]);
+  assert.deepEqual(starts(a), [2, 8]);          // originals stay put
+  assert.deepEqual(starts(b), [4]);
+  const copied = comp.tracks.filter((tr) => tr !== a && tr !== b).map(starts).sort((x, y) => x[0] - y[0]);
+  assert.deepEqual(copied, [[2, 8], [4]]);      // same timing as the sources
   assert.equal(timeline.selClips.size, 3);
   assert.ok(![...timeline.selClips].some((id) => ['a1', 'a2', 'b1'].includes(id)));
   assert.equal(new Set(comp.tracks.flatMap((t) => t.clips.map((c) => c.id))).size, 6);
 });
 
-test('duplicates go to the end of the whole timeline, never onto another clip', () => {
+test('duplicates go on new tracks above their sources with the same timing', () => {
   const { comp, timeline } = setup();
   const a = model.newTrack('A'), b = model.newTrack('B');
   const clip = (id, start, dur) => ({ id, kind: 'audio', name: id, start, dur, props: {}, effects: [] });
-  a.clips.push(clip('a1', 1, 2), clip('a2', 6, 1));
-  b.clips.push(clip('long', 0, 20));                    // something else reaches t=20
+  a.clips.push(clip('a1', 1, 2), clip('a2', 6, 1), clip('blocker', 8, 2));
+  b.clips.push(clip('b1', 3, 1));
   comp.tracks.push(a, b);
-  timeline.selClips = new Set(['a1', 'a2']);
-  timeline.duplicateSelection();                        // end = 20, selection starts at 1 → +19
-  assert.deepEqual(a.clips.map((c) => c.start).sort((x, y) => x - y), [1, 6, 20, 25]);
-  assert.deepEqual(model.resolveOverlaps(comp), 0);
+  timeline.selClips = new Set(['a1', 'a2', 'b1']);
+  timeline.duplicateSelection();          
+  assert.equal(comp.tracks.length, 4);
+  assert.deepEqual(comp.tracks[1], a);    // originals untouched, copies sit above each
+  assert.deepEqual(a.clips.map((c) => c.start), [1, 6, 8]);
+  assert.deepEqual(comp.tracks[0].clips.map((c) => c.start), [1, 6]);
+  assert.deepEqual(comp.tracks[2].clips.map((c) => c.start), [3]);
+  assert.equal(comp.tracks[3], b);
+  assert.equal(timeline.selClips.size, 3);
 });
 
 test('overlap helpers: fitStart stops at neighbours, resolveOverlaps spills to a new track', () => {
@@ -185,4 +192,21 @@ test('overlap helpers: fitStart stops at neighbours, resolveOverlaps spills to a
     for (const c of track.clips) for (const d of track.clips)
       if (c !== d) assert.ok(c.start >= d.start + d.dur - 1e-9 || d.start >= c.start + c.dur - 1e-9);
   assert.ok(comp.tracks.some((track) => track.clips.some((c) => c.id === 'q')));
+});
+
+test('staggering with a snap track active puts each clip on a grid line without overlap', () => {
+  const { comp, timeline } = setup();
+  const music = { id: 'music', kind: 'audio', name: 'music', start: 0, dur: 30, in: 0, rate: 1, props: {}, effects: [] };
+  const m = model.newTrack('M'); m.clips.push(music);
+  const a = model.newTrack('A');
+  const clip = (id, start, dur) => ({ id, kind: 'audio', name: id, start, dur, props: {}, effects: [] });
+  a.clips.push(clip('x', 1.1, 0.7), clip('y', 5, 0.4), clip('z', 9, 1.3));
+  comp.tracks.push(m, a);
+  comp.grid = { clipId: 'music', bpm: 120, offset: 0, beatsPerBar: 4, division: '1/4' };   // lines every 0.5s
+  timeline.selClips = new Set(['x', 'y', 'z']);
+  timeline.staggerSelection();
+  assert.deepEqual(a.clips.map((c) => c.start), [1, 2, 2.5]);   // 1.1→1.0, then next line ≥1.7, ≥2.4
+  comp.grid.division = '1/2';                                    // lines every 1s
+  timeline.staggerSelection();
+  assert.deepEqual(a.clips.map((c) => c.start), [1, 2, 3]);
 });

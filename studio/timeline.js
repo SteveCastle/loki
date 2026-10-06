@@ -34,10 +34,10 @@ import {
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
   eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
   clipRate, clipReversed, clipLoopSpan, clipPingPong, clipSourceSpan, retimeClip,
-  fitStart, trackWalls,
+  fitStart, trackWalls, newTrack,
 } from './comp.js';
 import { clipIcon } from './icons.js';
-import { nearestGridLine, gridLines, gridStep, gridSummary } from './beat-grid.js';
+import { nearestGridLine, gridLines, gridStep, gridGeometry, gridSummary } from './beat-grid.js';
 
 const TRACK_H = 36;
 const PROP_H = 24;
@@ -429,13 +429,13 @@ export class Timeline {
 
   /** Nearest magnet target (clip edges / playhead / comp bounds) within
    * snapping reach of `t`, or null. */
-  _magnetTarget(t, { excludeClip = null, extraTargets = [] } = {}) {
+  _magnetTarget(t, { excludeClip = null, excludeIds = null, extraTargets = [] } = {}) {
     if (!this.snap) return null;
     const comp = this.host.comp();
     const targets = [0, comp.dur, this.host.time(), ...extraTargets];
     for (const track of comp.tracks)
       for (const c of track.clips) {
-        if (c === excludeClip) continue;
+        if (c === excludeClip || excludeIds?.has(c.id)) continue;
         targets.push(c.start, clipEnd(c));
       }
     const thresh = SNAP_PX / this.pps;
@@ -1032,7 +1032,10 @@ export class Timeline {
       (clip.kind === 'fx' && !clip.enabled ? ' off' : '') +
       (clip.kind === 'media' && effects.some((e) => !isAudioEffect(e)) ? ' fxd' : '');
     el.style.left = `${this._timeToX(clip.start)}px`;
-    el.style.width = `${Math.max(this._timeToX(clip.dur), 4)}px`;
+    const widthPx = Math.max(this._timeToX(clip.dur), 4);
+    el.style.width = `${widthPx}px`;
+    if (widthPx < 44) el.classList.add('tiny');
+    if (widthPx < 16) el.classList.add('micro');
     el.dataset.clipId = clip.id;
     if (clip.kind === 'audio') this._paintWaveform(el, clip);
 
@@ -1283,22 +1286,35 @@ export class Timeline {
   /** Re-time the selected clips to play back to back in visual order, each
    * starting where the previous one ends. Clips keep their track and their
    * duration — only `start` moves — and the chain is anchored to the
-   * earliest start in the selection, so the group's leading edge holds. */
+   * earliest start in the selection, so the group's leading edge holds.
+   * With a snap track active the chain rides the beat grid: the first clip
+   * snaps to the nearest grid line and each next one starts on the first
+   * line at or after the previous clip's end (so none overlap). */
   staggerSelection() {
     const comp = this.host.comp();
     const sel = this._selectionInOrder();
     if (sel.length < 2) return;
-    const base = quantize(Math.min(...sel.map(({ clip }) => clip.start)), comp.fps);
+    const earliest = Math.min(...sel.map(({ clip }) => clip.start));
+    const ag = this.snap ? this._activeGrid() : null;
+    // Snapshot the grid before anything moves: the snap track may itself be
+    // in the selection, and moving it would shift the grid mid-loop.
+    const geo = ag && { bar: gridGeometry(ag.grid, ag.clip).bar, step: gridStep(ag.grid, ag.clip) };
+    const onGrid = (t, ceil) => {
+      const n = (t - geo.bar) / geo.step;
+      return Math.max(0, geo.bar + (ceil ? Math.ceil(n - 1e-6) : Math.round(n)) * geo.step);
+    };
+    const base = geo ? onGrid(earliest, false) : quantize(earliest, comp.fps);
     this.host.history.record(comp, () => {
       let t = base;
       for (const { clip } of sel) {
         clip.start = t;
-        t = quantize(t + clip.dur, comp.fps);
+        const end = t + clip.dur;
+        t = geo ? onGrid(end, true) : quantize(end, comp.fps);
       }
       ensureDur(comp);
     });
     this.host.onModelChange({ structural: true });
-    this.host.status(`${sel.length} clips staggered from ${fmtTimecode(base, comp.fps)}`);
+    this.host.status(`${sel.length} clips staggered from ${fmtTimecode(base, comp.fps)}${geo ? ' on the beat grid' : ''}`);
   }
 
   _select(clipId, additive) {
@@ -1349,7 +1365,8 @@ export class Timeline {
     e.preventDefault();
     const comp = this.host.comp();
     const wasSelected = this.selClips.has(clip.id);
-    if (!wasSelected) this._select(clip.id, e.shiftKey);
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
+    if (!wasSelected) this._select(clip.id, additive);
 
     const mode = e.target.classList.contains('tl-handle')
       ? (e.target.classList.contains('l') ? 'trim-l' : 'trim-r')
@@ -1361,12 +1378,44 @@ export class Timeline {
     let moved = false;
     this.host.history.begin(comp);
 
+    // Dragging one of several selected clips moves them all, by the same
+    // time delta, so the spacing between them is kept.
+    const group = mode === 'move' && this.selClips.size > 1 && this.selClips.has(clip.id)
+      ? comp.tracks.flatMap((t) => t.clips.filter((c) => this.selClips.has(c.id)).map((c) => ({ c, t, s: c.start })))
+      : null;
+    const groupIds = group ? new Set(group.map((g) => g.c.id)) : null;
+
     const onMove = (ev) => {
       const dxT = (ev.clientX - startX) / this.pps;
       if (!moved && Math.abs(ev.clientX - startX) < 3 && Math.abs(ev.clientY - startY) < 6) return;
       moved = true;
 
-      if (mode === 'move') {
+      if (group) {
+        const raw = orig.start + dxT;
+        const mStart = this._magnetTarget(raw, { excludeIds: groupIds });
+        const mEnd = this._magnetTarget(raw + orig.dur, { excludeIds: groupIds });
+        let cand;
+        if (mStart != null || mEnd != null) {
+          const dS = mStart != null ? Math.abs(mStart - raw) : Infinity;
+          const dE = mEnd != null ? Math.abs(mEnd - orig.dur - raw) : Infinity;
+          cand = dS <= dE ? mStart : mEnd - orig.dur;
+        } else {
+          cand = quantize(raw, comp.fps);
+        }
+        // The shared delta may not push any member before 0, past the comp
+        // end, or onto a clip outside the group on its track.
+        let lo = -Math.min(...group.map((g) => g.s));
+        let hi = comp.dur - Math.max(...group.map((g) => g.s + g.c.dur));
+        for (const g of group) {
+          for (const o of g.t.clips) {
+            if (groupIds.has(o.id)) continue;
+            if (clipEnd(o) <= g.s + 1e-4) lo = Math.max(lo, clipEnd(o) - g.s);
+            else if (o.start >= g.s + g.c.dur - 1e-4) hi = Math.min(hi, o.start - (g.s + g.c.dur));
+          }
+        }
+        const d = lo > hi ? 0 : clamp(cand - orig.start, lo, hi);
+        for (const g of group) g.c.start = g.s + d;
+      } else if (mode === 'move') {
         // Either edge of the dragged clip can catch a magnet; a real magnet
         // hit on one edge must beat the other edge's frame-grid fallback.
         const raw = orig.start + dxT;
@@ -1459,7 +1508,8 @@ export class Timeline {
         this.render();
       } else {
         this.host.history.pending = null;
-        if (wasSelected && !ev.shiftKey) this._select(clip.id, false);
+        if (wasSelected && additive) this._select(clip.id, true);   // toggle off
+        else if (wasSelected) this._select(clip.id, false);
       }
     };
     window.addEventListener('pointermove', onMove);
@@ -1700,36 +1750,35 @@ export class Timeline {
     }
   }
 
-  /** Ctrl+D: copy the selected clips to the end of the timeline, keeping
-   * the spacing between them, and select the copies so the key can be
-   * pressed again to keep appending. */
+  /** Ctrl+D: copy the selected clips onto NEW tracks at exactly their
+   * source timing, and select the copies. */
   duplicateSelection() {
     const comp = this.host.comp();
     const sel = this._selectionInOrder();
     if (!sel.length) return;
-    const from = Math.min(...sel.map(({ clip }) => clip.start));
-    // Copies go after EVERYTHING on the timeline (so they can never land on
-    // another clip), keeping the selection's own spacing.
-    const to = Math.max(...comp.tracks.flatMap((t) => t.clips.map(clipEnd)));
     const copies = [];
     this.host.history.record(comp, () => {
+      // Copies ALWAYS get their own track(s): one new track directly above
+      // each source track, holding that track's copies.
+      const lanes = new Map();
       for (const { clip } of sel) {
         // Fresh effect ids: they key compiled runtimes and editor state,
         // so the copy must not share them with the original.
         const copy = reidEffects(structuredClone(clip));
         copy.id = uid('clip');
-        copy.start = quantize(clip.start - from + to, comp.fps);
-        trackOf(comp, clip)?.clips.push(copy);
+        const src = trackOf(comp, clip);
+        if (!lanes.has(src)) lanes.set(src, newTrack(src.name));
+        lanes.get(src).clips.push(copy);
         copies.push(copy.id);
       }
+      [...lanes.entries()]
+        .map(([src, lane]) => [comp.tracks.indexOf(src), lane])
+        .sort((a, b) => b[0] - a[0])
+        .forEach(([i, lane]) => comp.tracks.splice(i, 0, lane));
       ensureDur(comp);
     });
     this.selClips = new Set(copies);
     this.host.onModelChange({ structural: true });
-    // Bring the copies into view — they sit past the old end.
-    const x = this._timeToX(to);
-    if (x < this.scrollEl.scrollLeft || x > this.scrollEl.scrollLeft + this.scrollEl.clientWidth - 60)
-      this.scrollEl.scrollLeft = Math.max(0, x - 40);
     this.host.onSelect?.();
     this.host.status(`duplicated ${copies.length} clip${copies.length > 1 ? 's' : ''}`);
   }

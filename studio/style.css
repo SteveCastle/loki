@@ -1838,6 +1838,17 @@ body.roto-analyzing #gizmo { display: none; }
   width: 7px;
   cursor: ew-resize;
 }
+/* Small clips: the twirl/icon/label and 7px trim handles would swallow the
+   whole body, leaving nowhere to grab for a move. Below 44px the furniture
+   steps aside (the body IS the drag target); below 16px the trim handles go
+   too — zoom in to trim a clip that small. */
+.tl-clip.tiny .tl-twirl,
+.tl-clip.tiny .tl-clip-ico,
+.tl-clip.tiny .tl-clip-name,
+.tl-clip.tiny .tl-clip-kf { display: none; }
+.tl-clip.tiny { padding: 0; }
+.tl-clip.tiny .tl-handle { width: 4px; }
+.tl-clip.micro .tl-handle { display: none; }
 .tl-handle.l { left: 0; border-radius: 5px 0 0 5px; }
 .tl-handle.r { right: 0; border-radius: 0 5px 5px 0; }
 .tl-clip:hover .tl-handle { background: rgba(255, 255, 255, 0.18); }
