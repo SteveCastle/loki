@@ -11,7 +11,7 @@ const dest = path.resolve(src, '..', 'docs', 'studio');
 const FILES = [
   'index.html', 'style.css', 'effects.json', 'studio-icon.png',
   'app.js', 'comp.js', 'compositor.js', 'timeline.js', 'shader-editor.js',
-  'driver.js', 'audio-analysis.js', 'audio-fx.js', 'audio-widgets.js', 'icons.js',
+  'driver.js', 'audio-analysis.js', 'beat-grid.js', 'audio-fx.js', 'audio-widgets.js', 'icons.js',
   'roto.js', 'roto-sam.js',
 ];
 const DIRS = ['engine', 'vendor', 'shaders', 'demo'];
