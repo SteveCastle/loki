@@ -34,8 +34,10 @@ import {
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
   eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
   clipRate, clipReversed, clipLoopSpan, clipPingPong, clipSourceSpan, retimeClip,
+  fitStart, trackWalls,
 } from './comp.js';
 import { clipIcon } from './icons.js';
+import { nearestGridLine, gridLines, gridStep, gridSummary } from './beat-grid.js';
 
 const TRACK_H = 36;
 const PROP_H = 24;
@@ -212,6 +214,7 @@ export class Timeline {
           <div class="tl-content">
             <canvas class="tl-ruler"></canvas>
             <div class="tl-rows"></div>
+            <div class="tl-gridwrap"><canvas class="tl-grid"></canvas></div>
             <div class="tl-playhead"><div class="tl-ph-cap"></div></div>
           </div>
         </div>
@@ -241,6 +244,7 @@ export class Timeline {
     this.contentEl = this.$('.tl-content');
     this.ruler = this.$('.tl-ruler');
     this.rowsEl = this.$('.tl-rows');
+    this.gridCanvas = this.$('.tl-grid');
     this.playheadEl = this.$('.tl-playhead');
     this.navEl = this.$('.tl-nav-track');
     this.navMap = this.$('.tl-nav-map');
@@ -391,6 +395,10 @@ export class Timeline {
       else if (e.key === 'ArrowRight') { e.preventDefault(); h.setTime(h.time() + step); }
       else if (e.key === 'Home') { e.preventDefault(); h.setTime(0); }
       else if (e.key === 'End') { e.preventDefault(); h.setTime(h.comp().dur); }
+      else if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();   // the browser's own Ctrl+D is "bookmark this page"
+        this.duplicateSelection();
+      }
       else if (e.key === 's' || e.key === 'S') this.splitAtPlayhead();
       else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelection(); }
       else if ((e.key === '=' || e.key === '+') && !e.ctrlKey) this._setZoom(this.pps * 1.5, h.time());
@@ -440,9 +448,29 @@ export class Timeline {
     return best;
   }
 
-  /** Magnet targets beat the frame grid; the grid is the fallback. */
+  /** The snap track's musical grid, or null when there is none (or it is
+   * switched off). Resolved from the comp each call: the grid is derived
+   * from the clip it names, so moving that clip moves the grid. */
+  _activeGrid() {
+    const comp = this.host.comp();
+    const grid = comp.grid;
+    if (!grid || grid.enabled === false) return null;
+    const clip = findClip(comp, grid.clipId)?.clip;
+    return clip && gridStep(grid, clip) > 0 ? { grid, clip } : null;
+  }
+
+  /** Magnet targets (clip edges, playhead) and the beat grid compete: the
+   * nearest within reach wins, a grid line taking ties. Failing both, the
+   * frame grid is the fallback. */
   _snapTime(t, opts = {}) {
     const m = this._magnetTarget(t, opts);
+    const g = this.snap ? this._activeGrid() : null;
+    if (g) {
+      const line = nearestGridLine(g.grid, g.clip, t);
+      if (line != null && Math.abs(line - t) < SNAP_PX / this.pps
+          && (m == null || Math.abs(line - t) <= Math.abs(m - t) + 1e-9))
+        return Math.max(0, line);
+    }
     if (m != null) return Math.max(0, m);
     return Math.max(0, quantize(t, this.host.comp().fps));
   }
@@ -715,6 +743,53 @@ export class Timeline {
       ctx.fillStyle = 'rgba(0,0,0,0.35)';
       ctx.fillRect(Math.max(endX, 0), 0, w, RULER_H);
     }
+
+    this._drawGrid(ctx, w, x0);
+  }
+
+  /* ---- beat grid -------------------------------------------------------
+   * The snap track's bars/beats/subdivisions, as ticks on the ruler and
+   * faint lines across the lanes. The lane canvas is viewport-sized and
+   * sticky (a full-length canvas would blow the browser's size limit on a
+   * long comp at high zoom), so it is repainted on scroll like the ruler. */
+
+  _drawGrid(rulerCtx, w, x0) {
+    const canvas = this.gridCanvas;
+    const g = this._activeGrid();
+    const showLines = g && g.grid.show !== false;
+    const h = Math.max(0, this.scrollEl.clientHeight - RULER_H);
+    const dpr = devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+    }
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!g) return;
+
+    const step = gridStep(g.grid, g.clip);
+    // Thin by on-screen density: past ~6px apart, subdivisions give way to
+    // beats, and beats to bars, so the grid never turns into a wash.
+    let minKind = 0;                                   // 0 sub · 1 beat · 2 bar
+    const beatPx = (60 / g.grid.bpm / clipRate(g.clip)) * this.pps;
+    if (step * this.pps < 6) minKind = beatPx < 6 ? 2 : 1;
+    const rank = { sub: 0, beat: 1, bar: 2 };
+    const comp = this.host.comp();
+    const lines = gridLines(g.grid, g.clip, x0 / this.pps, (x0 + w) / this.pps, 6000);
+    for (const { t, kind } of lines) {
+      if (rank[kind] < minKind || t < -1e-9 || t > comp.dur + 1e-9) continue;
+      const x = Math.round(t * this.pps - x0) + 0.5;
+      rulerCtx.fillStyle = kind === 'bar' ? 'rgba(63,208,192,0.95)'
+        : kind === 'beat' ? 'rgba(63,208,192,0.6)' : 'rgba(63,208,192,0.35)';
+      rulerCtx.fillRect(x - 0.5, 0, 1, kind === 'bar' ? 9 : kind === 'beat' ? 6 : 3);
+      if (!showLines) continue;
+      ctx.fillStyle = kind === 'bar' ? 'rgba(63,208,192,0.34)'
+        : kind === 'beat' ? 'rgba(63,208,192,0.16)' : 'rgba(63,208,192,0.08)';
+      ctx.fillRect(x - 0.5, 0, 1, h);
+    }
   }
 
   /* ---- rendering -------------------------------------------------------- */
@@ -986,7 +1061,10 @@ export class Timeline {
     const rate = clipRate(clip);
     const rev = clipReversed(clip);
     const lspan = clipLoopSpan(clip);
-    label.textContent = clip.name + (effects.length ? ` · ${effects.length} fx` : '')
+    const isSnap = comp.grid?.clipId === clip.id;
+    if (isSnap) el.classList.add('snap-track');
+    label.textContent = clip.name + (isSnap ? ` · ♩ ${gridSummary(comp.grid)}` : '')
+      + (effects.length ? ` · ${effects.length} fx` : '')
       + (rate !== 1 ? ` · ${fmtSpeed(rate)}` : '') + (rev ? ' · ◀' : '') + (lspan ? ' · ⟳' : '');
     label.title = [
       clip.name,
@@ -1067,19 +1145,9 @@ export class Timeline {
       }, '-'] : []),
       { label: 'Split at playhead', action: () => this.splitAtPlayhead() },
       {
-        label: 'Duplicate',
-        action: () => {
-          this.host.history.record(comp, () => {
-            // Fresh effect ids: they key compiled runtimes and editor state,
-            // so the copy must not share them with the original.
-            const copy = reidEffects(structuredClone(clip));
-            copy.id = uid('clip');
-            copy.start = clipEnd(clip);
-            trackOf(comp, clip)?.clips.push(copy);
-            ensureDur(comp);
-          });
-          this.host.onModelChange({ structural: true });
-        },
+        label: sel.length > 1 ? `Duplicate ${sel.length} clips` : 'Duplicate',
+        detail: 'Ctrl+D',
+        action: () => this.duplicateSelection(),
       },
       ...(clip.kind === 'media' ? [{
         label: 'Fit in frame',
@@ -1151,6 +1219,17 @@ export class Timeline {
           this.host.onModelChange({ structural: true });
           this.host.status(`${clip.name} back to 100% · ${fmtTimecode(clip.dur, comp.fps)}`);
         },
+      }] : []),
+      // The snap track: one clip's audio becomes a musical grid that every
+      // other edit snaps to. Its granularity lives in the inspector.
+      ...(hasSource(clip) && (asset?.kind === 'audio' || asset?.kind === 'video') ? [
+        comp.grid?.clipId === clip.id
+          ? { label: 'Re-analyze snap track', detail: gridSummary(comp.grid), action: () => this.host.setSnapTrack?.(clip) }
+          : { label: 'Use as snap track (beat grid)…', action: () => this.host.setSnapTrack?.(clip) },
+      ] : []),
+      ...(comp.grid?.clipId === clip.id ? [{
+        label: 'Remove snap track',
+        action: () => this.host.clearSnapTrack?.(),
       }] : []),
       // The loop finder trims the clip to footage that cycles invisibly —
       // the automated version of an editor hunting for two matching frames.
@@ -1302,14 +1381,23 @@ export class Timeline {
           cand = quantize(raw, comp.fps);
         }
         // The comp end is a hard wall — clips can't be dragged past it.
-        clip.start = clamp(cand, 0, Math.max(0, comp.dur - clip.dur));
-        // Vertical: retarget track.
+        const want = clamp(cand, 0, Math.max(0, comp.dur - clip.dur));
+        // Vertical: retarget track — but a clip never lands on top of
+        // another, so a target with no room is refused (the clip stays on
+        // its current track) and the move stops at neighbours.
         const targetIdx = this._trackIndexAtClientY(ev.clientY);
         const curTrack = trackOf(comp, clip);
         const curIdx = comp.tracks.indexOf(curTrack);
+        let dest = curTrack;
+        let at = fitStart(curTrack, clip, want);
         if (targetIdx != null && targetIdx !== curIdx) {
+          const p = fitStart(comp.tracks[targetIdx], clip, want);
+          if (p != null) { dest = comp.tracks[targetIdx]; at = p; }
+        }
+        clip.start = at ?? want;
+        if (dest !== curTrack) {
           curTrack.clips.splice(curTrack.clips.indexOf(clip), 1);
-          comp.tracks[targetIdx].clips.push(clip);
+          dest.clips.push(clip);
         }
       } else if (mode === 'trim-l') {
         // A retimed clip eats `rate` seconds of source per second of
@@ -1323,7 +1411,8 @@ export class Timeline {
         const rev = clipReversed(clip);
         const looped = clipLoopSpan(clip) > 0;
         let ns = this._snapTime(orig.start + dxT, { excludeClip: clip });
-        ns = clamp(ns, rev || looped ? 0 : orig.start - orig.in / rate,
+        const wallL = trackWalls(trackOf(comp, clip), { ...clip, start: orig.start, dur: orig.dur }).left;
+        ns = clamp(ns, Math.max(wallL, rev || looped ? 0 : orig.start - orig.in / rate),
           orig.start + orig.dur - minDur);
         const d = ns - orig.start;
         clip.start = ns;
@@ -1343,7 +1432,9 @@ export class Timeline {
         const looped = clipLoopSpan(clip) > 0;
         let ne = this._snapTime(orig.start + orig.dur + dxT, { excludeClip: clip });
         if (rev && !looped) ne = Math.min(ne, orig.start + orig.dur + orig.in / rate);
-        clip.dur = clamp(ne - orig.start, minDur, Math.max(minDur, comp.dur - orig.start));
+        const wallR = trackWalls(trackOf(comp, clip), { ...clip, start: orig.start, dur: orig.dur }).right;
+        ne = Math.min(ne, wallR);
+        clip.dur = clamp(ne - orig.start, minDur, Math.max(minDur, Math.min(wallR, comp.dur) - orig.start));
         if (hasSource(clip) && rev && !looped) clip.in = orig.in - (clip.dur - orig.dur) * rate;
       }
       // While trimming, preview the frame at the cut point so you can see
@@ -1607,6 +1698,40 @@ export class Timeline {
       this.host.onModelChange({ structural: true });
       this.host.status(`split ${n} clip${n > 1 ? 's' : ''} at ${fmtTimecode(t, comp.fps)}`);
     }
+  }
+
+  /** Ctrl+D: copy the selected clips to the end of the timeline, keeping
+   * the spacing between them, and select the copies so the key can be
+   * pressed again to keep appending. */
+  duplicateSelection() {
+    const comp = this.host.comp();
+    const sel = this._selectionInOrder();
+    if (!sel.length) return;
+    const from = Math.min(...sel.map(({ clip }) => clip.start));
+    // Copies go after EVERYTHING on the timeline (so they can never land on
+    // another clip), keeping the selection's own spacing.
+    const to = Math.max(...comp.tracks.flatMap((t) => t.clips.map(clipEnd)));
+    const copies = [];
+    this.host.history.record(comp, () => {
+      for (const { clip } of sel) {
+        // Fresh effect ids: they key compiled runtimes and editor state,
+        // so the copy must not share them with the original.
+        const copy = reidEffects(structuredClone(clip));
+        copy.id = uid('clip');
+        copy.start = quantize(clip.start - from + to, comp.fps);
+        trackOf(comp, clip)?.clips.push(copy);
+        copies.push(copy.id);
+      }
+      ensureDur(comp);
+    });
+    this.selClips = new Set(copies);
+    this.host.onModelChange({ structural: true });
+    // Bring the copies into view — they sit past the old end.
+    const x = this._timeToX(to);
+    if (x < this.scrollEl.scrollLeft || x > this.scrollEl.scrollLeft + this.scrollEl.clientWidth - 60)
+      this.scrollEl.scrollLeft = Math.max(0, x - 40);
+    this.host.onSelect?.();
+    this.host.status(`duplicated ${copies.length} clip${copies.length > 1 ? 's' : ''}`);
   }
 
   deleteSelection() {

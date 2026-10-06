@@ -57,6 +57,10 @@ const configuration: webpack.Configuration = {
       // (the command palette's badge) can't drift out of date the way a
       // hand-maintained constant does.
       PACKAGE_VERSION: appVersion,
+      // Unfinished features stay out of shipped builds: the 4K Upscale
+      // (4kify) button renders only when this is '1'. Default: on for dev,
+      // off for production; override with ENABLE_4KIFY=1 / ENABLE_4KIFY=0.
+      ENABLE_4KIFY: process.env.NODE_ENV === 'development' ? '1' : '',
     }),
   ],
 };

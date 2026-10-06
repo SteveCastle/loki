@@ -565,6 +565,7 @@ Tasks register themselves in `tasks/registry.go`'s `init()`. The current catalog
 | `ffmpeg-resize`              | FFmpeg Resize              |                                                          |
 | `ffmpeg-crop`                | FFmpeg Crop                |                                                          |
 | `ffmpeg-rotate`              | FFmpeg Rotate              |                                                          |
+| `4kify`                      | 4K Upscale + Outpaint      | Needs the `4kify` binary on PATH; images only            |
 | `ffmpeg-caption`             | FFmpeg Caption             |                                                          |
 | `ffmpeg-thumbsheet`          | FFmpeg Thumbnail Sheet     |                                                          |
 

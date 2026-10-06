@@ -1141,6 +1141,30 @@ func (q *Queue) GetJob(id string) *Job {
 	return job
 }
 
+// HasDependents reports whether any other job in the same workflow lists id
+// as a dependency, i.e. whether a later step will consume this job's output.
+// A job with no dependents is the end of its chain (a standalone run included).
+func (q *Queue) HasDependents(id string) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	job, ok := q.Jobs[id]
+	if !ok {
+		return false
+	}
+	for _, other := range q.Jobs {
+		if other.ID == id || other.WorkflowID != job.WorkflowID || job.WorkflowID == "" {
+			continue
+		}
+		for _, dep := range other.Dependencies {
+			if dep == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // GetWorkflowOutputFiles returns all OutputFiles paths for jobs matching the given workflowID.
 func (q *Queue) GetWorkflowOutputFiles(workflowID string) []string {
 	q.mu.Lock()

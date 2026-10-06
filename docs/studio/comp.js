@@ -557,6 +557,81 @@ export function allClipsBottomUp(comp, kind = null) {
 }
 
 /** Grow the comp to fit its clips unless the user chose an explicit end. */
+/* ---- no overlapping clips on a track ------------------------------------
+ * A track is one lane: two clips sharing time on it would hide one another.
+ * (Stacking is what separate tracks are for.) Interactive edits stop at
+ * neighbours via fitStart / trackWalls; resolveOverlaps is the safety net
+ * for everything else (retime, stretch, import, old projects). */
+
+const OVERLAP_EPS = 1e-4;
+
+/** Where `clip` can sit on `track` closest to `desired` without touching
+ * another clip, or null when no gap on the track is long enough. */
+export function fitStart(track, clip, desired) {
+  const others = track.clips.filter((c) => c !== clip).sort((a, b) => a.start - b.start);
+  let best = null, bestD = Infinity, cursor = 0;
+  const consider = (s, e) => {
+    if (e - s < clip.dur - OVERLAP_EPS) return;
+    const pos = Math.min(Math.max(desired, s), e - clip.dur);
+    const d = Math.abs(pos - desired);
+    if (d < bestD) { best = pos; bestD = d; }
+  };
+  for (const c of others) {
+    if (c.start > cursor) consider(cursor, c.start);
+    cursor = Math.max(cursor, clipEnd(c));
+  }
+  consider(cursor, Infinity);
+  return best;
+}
+
+/** Latest end among `clip`'s left neighbours and earliest start among its
+ * right neighbours on `track` — the walls a trim can't cross. */
+export function trackWalls(track, clip) {
+  let left = 0, right = Infinity;
+  for (const c of track.clips) {
+    if (c === clip) continue;
+    if (clipEnd(c) <= clip.start + OVERLAP_EPS) left = Math.max(left, clipEnd(c));
+    else if (c.start >= clipEnd(clip) - OVERLAP_EPS) right = Math.min(right, c.start);
+  }
+  return { left, right };
+}
+
+const sharesTime = (a, b) => a.start < clipEnd(b) - OVERLAP_EPS && b.start < clipEnd(a) - OVERLAP_EPS;
+
+/** Separate any clips that share time on a track: the later one of each
+ * colliding pair (never one in `keep`, if the other isn't) moves to a new
+ * track directly above, reusing an earlier spill track when it fits.
+ * Returns how many clips moved. */
+export function resolveOverlaps(comp, keep = new Set()) {
+  let moved = 0;
+  for (let ti = 0; ti < comp.tracks.length; ti++) {
+    const track = comp.tracks[ti];
+    const sorted = [...track.clips].sort((a, b) => a.start - b.start);
+    const stay = [];
+    const spill = [];
+    for (const clip of sorted) {
+      const hit = stay.find((c) => sharesTime(c, clip));
+      if (!hit) { stay.push(clip); continue; }
+      if (keep.has(clip.id) && !keep.has(hit.id)) {
+        stay.splice(stay.indexOf(hit), 1, clip);
+        spill.push(hit);
+      } else spill.push(clip);
+    }
+    if (!spill.length) continue;
+    track.clips = track.clips.filter((c) => !spill.includes(c));
+    const extras = [];
+    for (const clip of spill.sort((a, b) => a.start - b.start)) {
+      let lane = extras.find((t) => !t.clips.some((c) => sharesTime(c, clip)));
+      if (!lane) { lane = newTrack(track.name); extras.push(lane); }
+      lane.clips.push(clip);
+      moved++;
+    }
+    comp.tracks.splice(ti, 0, ...extras);
+    ti += extras.length;
+  }
+  return moved;
+}
+
 export function ensureDur(comp) {
   if (comp.autoDuration === false) return;
   let end = 0;

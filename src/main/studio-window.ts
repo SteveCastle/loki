@@ -434,9 +434,23 @@ export function openStudioWindow(mediaPaths: string[]) {
   const target = `studio://app/index.html?${params.toString()}`;
 
   if (studioWindow && !studioWindow.isDestroyed()) {
-    studioWindow.loadURL(target);
-    if (studioWindow.isMinimized()) studioWindow.restore();
-    studioWindow.focus();
+    const win = studioWindow;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    if (!entries.length) return;
+    // Already open: add the media to the current project as new tracks
+    // rather than reloading into a fresh one. If the page hasn't finished
+    // booting (hook missing) or the call fails, fall back to a reload.
+    win.webContents
+      .executeJavaScript(
+        `typeof window.studioAddLaunchImports === 'function' ? window.studioAddLaunchImports(${JSON.stringify(entries)}) : false`
+      )
+      .then((ok) => {
+        if (!ok && !win.isDestroyed()) win.loadURL(target);
+      })
+      .catch(() => {
+        if (!win.isDestroyed()) win.loadURL(target);
+      });
     return;
   }
 

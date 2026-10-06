@@ -411,7 +411,7 @@ export function ToastSystem() {
   // current libraryLoadId. Once libraryLoadId changes (the refresh completed),
   // we send RESET_CURSOR which searches the filtered/sorted view.
   const pendingNavigateRef = useRef<{
-    path: string;
+    paths: string[];
     sinceLoadId: string;
   } | null>(null);
 
@@ -429,9 +429,11 @@ export function ToastSystem() {
     // Wait until the library has actually been reloaded.
     if (libraryLoadId === pending.sinceLoadId) return;
     pendingNavigateRef.current = null;
-    libraryService.send('RESET_CURSOR', {
-      currentItem: { path: pending.path },
-    });
+    // The reload re-ran the user's active search/filter/query, which may not
+    // include the new file (or the DB may not know it yet). The state handler
+    // navigates to it if present, otherwise adds it provisionally so the
+    // filter context survives and the user can still act on the file.
+    libraryService.send('ADD_PROVISIONAL_ITEMS', { paths: pending.paths });
   }, [libraryLoadId, libraryService]);
 
   const toasts = useSelector(
@@ -640,7 +642,7 @@ export function ToastSystem() {
           // wait for it to change before navigating.
           const snapshot = libraryService.getSnapshot();
           pendingNavigateRef.current = {
-            path: paths[0],
+            paths,
             sinceLoadId: snapshot.context.libraryLoadId,
           };
 
@@ -700,7 +702,7 @@ export function ToastSystem() {
       if (created) {
         const snapshot = libraryService.getSnapshot();
         pendingNavigateRef.current = {
-          path: paths[0],
+          paths,
           sinceLoadId: snapshot.context.libraryLoadId,
         };
         if (snapshot.matches({ library: 'loadedFromDB' })) {

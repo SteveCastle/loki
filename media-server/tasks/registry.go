@@ -119,6 +119,9 @@ func init() {
 	// racing a scan or recluster.
 	RegisterHostResolver("assign-person", func(string) string { return HostBucketFaces })
 	RegisterHostResolver("ingest", urlHostResolver)
+	// 4kify is a standalone CUDA diffusion engine: one at a time, and never
+	// alongside another local model workload (see ResolveResources).
+	RegisterHostResolver("4kify", func(string) string { return "4kify" })
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
 	RegisterTask("ffmpeg-scale", "FFmpeg Scale", ffmpegScaleOptions, ffmpegScaleTask)
@@ -134,7 +137,8 @@ func init() {
 	RegisterTask("ffmpeg-resize", "FFmpeg Resize", ffmpegResizeOptions, ffmpegResizeTask)
 	RegisterTask("ffmpeg-crop", "FFmpeg Crop", ffmpegCropOptions, ffmpegCropTask)
 	RegisterTask("ffmpeg-rotate", "FFmpeg Rotate", ffmpegRotateOptions, ffmpegRotateTask)
-	RegisterTask("ffmpeg-caption", "FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)
+	RegisterTask("4kify", "4K Upscale + Outpaint", fourKifyOptions, fourKifyTask)
+	RegisterTask("ffmpeg-caption","FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)
 	RegisterTask("ffmpeg-thumbsheet", "FFmpeg Thumbnail Sheet", ffmpegThumbSheetOptions, ffmpegThumbSheetTask)
 
 	RegisterTask("save", "Save File", saveOptions, saveTask)

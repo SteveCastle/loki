@@ -151,6 +151,24 @@ describe('deleteMedia', () => {
     await db.close();
   });
 
+  it('treats an already-missing file as deleted and still cleans the database', async () => {
+    const db = await makeDb();
+    // trashItem throws on a vanished file; unlink then reports ENOENT. The
+    // rows must still go, or a gone file keeps matching path searches.
+    trashItem.mockRejectedValue(new Error('gone'));
+    const unlink = jest
+      .spyOn(fs.promises, 'unlink')
+      .mockRejectedValue(
+        Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' })
+      );
+
+    await call(db, DOOMED);
+
+    expect(await countAllReferences(db, DOOMED)).toBe(0);
+    unlink.mockRestore();
+    await db.close();
+  });
+
   it('leaves all rows intact when the file cannot be deleted', async () => {
     const db = await makeDb();
     trashItem.mockRejectedValue(new Error('no trash'));

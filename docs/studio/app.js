@@ -44,7 +44,7 @@ import {
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
   clipRate, clipReversed, clipLoopSpan, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc,
-  newTrackClip,
+  newTrackClip, resolveOverlaps,
 } from './comp.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
 import {
@@ -54,6 +54,7 @@ import {
 } from './driver.js';
 import { analyzeMixAsync, detectBeats, sampleLevel, samplePulse } from './audio-analysis.js';
 import { AUDIO_EFFECTS, audioEffectDef, controlTargets } from './audio-fx.js';
+import { analyzeBeats, DIVISIONS, DEFAULT_DIVISION, gridSummary } from './beat-grid.js';
 import { responseWidget } from './audio-widgets.js';
 import { LAYER_ICONS, clipIcon, shapeIconCanvas } from './icons.js';
 import { Muxer as WebMMuxer, ArrayBufferTarget } from './vendor/webm-muxer.mjs';
@@ -314,6 +315,16 @@ async function boot() {
   window.comp = () => comp;
   // Console/test handle. Sound especially needs one: a mixdown has no
   // picture to eyeball, so renderCompAudio is the only way to see it.
+  // The host app (Electron viewer) calls this when "Open in Studio" is used
+  // while this window is already open: the media joins the current project
+  // as new tracks at the start of the timeline instead of replacing it.
+  window.studioAddLaunchImports = async (entries) => {
+    const { files } = await collectLaunchImports(entries);
+    if (!files.length) return false;
+    pause();
+    await importFiles(files, { t: 0, trackIdx: null });
+    return true;
+  };
   window.studio = {
     timeline, assets, onModelChange,
     importFiles, addAssetAt, setBinOpen,
@@ -1604,12 +1615,18 @@ function onModelChange({ structural = false, transient = false, propKey = null }
   ensureDur(comp);
   markChainDirty();
   if (transient) return;
+  // One lane, one clip at a time: anything the edit pushed onto another
+  // clip (retime, stretch, import…) moves to its own track. Clips the user
+  // is acting on (selected) hold their place.
+  const spilled = resolveOverlaps(comp, timeline.selClips);
+  if (spilled) setStatus(`${spilled} clip${spilled > 1 ? 's' : ''} moved to new tracks to avoid overlapping`);
   removeEmptyTracks(comp);   // e.g. the last clip was dragged off a track
   gcEffectState();           // deleted effects release their compiled state
   gcMediaChains();           // clips that lost their effects release theirs
   gcAudioChains();           // …and their audio graphs
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
   syncAudioDrive();          // no-op unless audio drivers exist + audio changed
+  if (comp.grid && !findClip(comp, comp.grid.clipId)) delete comp.grid;   // snap track deleted
   refreshDropHint();
   timeline.render();
   if (propKey) syncInspProp(propKey);
@@ -1703,6 +1720,8 @@ const timelineHost = {
   status: setStatus,
   retime: (clips) => openRetimeDialog(clips),
   findLoop: (clip) => openLoopFinder(clip),
+  setSnapTrack: (clip) => setSnapTrack(clip),
+  clearSnapTrack,
   undo: appUndo,
   redo: appRedo,
   addLayerMenu: (anchor) => showAddLayerMenu(anchor),
@@ -3500,9 +3519,11 @@ function fitDurToContent() {
   if (end > 0) comp.dur = Math.max(1 / comp.fps, Math.round(end * comp.fps) / comp.fps);
 }
 
-async function collectLaunchImports() {
-  let entries = null;
-  try { entries = JSON.parse(new URLSearchParams(location.search).get('import')); } catch {}
+async function collectLaunchImports(given = null) {
+  let entries = given;
+  if (!entries) {
+    try { entries = JSON.parse(new URLSearchParams(location.search).get('import')); } catch {}
+  }
   if (!Array.isArray(entries)) return { files: [], saveBack: null };
   const files = [];
   let saveBack = null;
@@ -8275,6 +8296,9 @@ function renderInspector() {
   /* -- mask (fx: gates the whole stack; media: cuts the clip's alpha) -- */
   if (clip.kind !== 'audio' && clip.kind !== 'track') renderMaskSection(clip);
 
+  /* -- beat grid: this clip as the timeline's snap track -- */
+  if (hasSource(clip) && (asset?.kind === 'audio' || asset?.kind === 'video')) inspectorEl.appendChild(snapGridSection(clip));
+
   /* -- the two effect chains -- */
   if (clip.kind !== 'track') renderEffectStack(clip);
 
@@ -8409,6 +8433,164 @@ const openEffects = new Set();   // effect ids twirled open in the inspector
 /** The picture chain and the sound chain, each its own section. Sound
  * leads with the clip's Volume: level and effects are one mental group,
  * and it's where you'd look for either. */
+/* ---- snap track (beat grid) -------------------------------------------
+ * One audio-bearing clip is nominated the snap track: its audio is analyzed
+ * for tempo + a bar line (beat-grid.js) and the timeline snaps everything
+ * else to bars/beats/subdivisions of it. comp.grid names the clip and holds
+ * bpm/offset in SOURCE time, so the grid follows the clip when it moves. */
+
+let snapJob = false;
+
+async function setSnapTrack(clip) {
+  if (snapJob) { setStatus('beat analysis already running…'); return; }
+  const asset = assets.get(clip.assetId);
+  if (!asset?.ready || (asset.kind !== 'audio' && asset.kind !== 'video')) {
+    setStatus('snap track: needs an audio or video clip');
+    return;
+  }
+  snapJob = true;
+  try {
+    setStatus(`analyzing beats in ${clip.name}…`);
+    const buf = await decodeAssetAudio(asset);
+    if (!buf) { setStatus(`${clip.name} has no decodable audio`); return; }
+    await nextTask();
+    const n = buf.length;
+    const mono = new Float32Array(n);
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < n; i++) mono[i] += d[i] / buf.numberOfChannels;
+    }
+    const prev = comp.grid?.clipId === clip.id ? comp.grid : null;
+    const found = analyzeBeats(mono, buf.sampleRate, { beatsPerBar: prev?.beatsPerBar ?? 4 });
+    if (!found) { setStatus(`no steady beat found in ${clip.name}`); return; }
+    history.record(comp, () => {
+      comp.grid = {
+        clipId: clip.id,
+        bpm: +found.bpm.toFixed(3),
+        offset: +found.offset.toFixed(4),
+        beatsPerBar: prev?.beatsPerBar ?? 4,
+        division: prev?.division ?? DEFAULT_DIVISION,
+        show: prev?.show ?? true,
+        enabled: true,
+        confidence: +found.confidence.toFixed(2),
+      };
+    });
+    onModelChange({ structural: false });
+    setStatus(`snap track: ${clip.name} — ${gridSummary(comp.grid)}` +
+      (found.confidence < 0.25 ? ' (low confidence — check the BPM in the inspector)' : ''));
+  } finally {
+    snapJob = false;
+  }
+}
+
+function clearSnapTrack() {
+  if (!comp.grid) return;
+  history.record(comp, () => { delete comp.grid; });
+  onModelChange({ structural: false });
+  setStatus('snap track removed');
+}
+
+function snapGridSection(clip) {
+  const mine = comp.grid?.clipId === clip.id;
+  const g = mine ? comp.grid : null;
+  const actions = [];
+  if (mine) {
+    actions.push(secBtn('Re-analyze', 'detect tempo and bar line again', () => setSnapTrack(clip)));
+    actions.push(secBtn('Remove', 'stop using this clip as the snap track', clearSnapTrack));
+  } else {
+    actions.push(secBtn('Use as snap track', 'analyze this clip’s audio and snap the timeline to its beat', () => setSnapTrack(clip)));
+  }
+  const { sec, body, collapsed } = inspSection('snapgrid', 'Snap grid', {
+    hint: mine ? gridSummary(g) : 'beat grid for the whole timeline',
+    actions,
+  });
+  if (collapsed) return sec;
+  if (!mine) {
+    const note = document.createElement('div');
+    note.className = 'insp-note';
+    note.textContent = comp.grid
+      ? 'another clip is the snap track — using this one replaces it'
+      : 'analyze this clip’s audio to get a musical grid: clip edges, keyframes and the playhead snap to bars, beats and subdivisions';
+    body.appendChild(note);
+    return sec;
+  }
+
+  const edit = (fn) => {
+    history.record(comp, () => fn(comp.grid));
+    onModelChange({ structural: false });
+  };
+  const row = document.createElement('div');
+  row.className = 'snapgrid-row';
+  const field = (label, input, title = '') => {
+    const l = document.createElement('label');
+    l.title = title;
+    l.append(label, input);
+    return l;
+  };
+  const num = (key, { step, min, title, digits = 3 }) => {
+    const i = document.createElement('input');
+    i.type = 'number';
+    i.step = String(step);
+    if (min != null) i.min = String(min);
+    i.value = String(+(+g[key]).toFixed(digits));
+    i.title = title;
+    i.addEventListener('keydown', (e) => e.stopPropagation());
+    i.addEventListener('change', () => {
+      const v = parseFloat(i.value);
+      if (Number.isFinite(v) && (min == null || v >= min)) edit((gr) => { gr[key] = v; });
+      else i.value = String(+(+g[key]).toFixed(digits));
+    });
+    return i;
+  };
+
+  const div = document.createElement('select');
+  div.title = 'how finely the timeline snaps — 1 bar, 1/2, 1/4 (a beat), 1/8, 1/16…';
+  for (const d of DIVISIONS) {
+    const o = document.createElement('option');
+    o.value = d.id;
+    o.textContent = d.label;
+    div.appendChild(o);
+  }
+  div.value = g.division;
+  div.addEventListener('change', () => edit((gr) => { gr.division = div.value; }));
+  const divField = field('snap to', div);
+  divField.classList.add('wide');
+  row.appendChild(divField);
+
+  row.appendChild(field('BPM', num('bpm', { step: 0.01, min: 20, title: 'tempo of the source audio' })));
+  row.append(
+    secBtn('÷2', 'half the tempo (the analysis locked onto double time)', () => edit((gr) => { gr.bpm = +(gr.bpm / 2).toFixed(3); })),
+    secBtn('×2', 'double the tempo (the analysis locked onto half time)', () => edit((gr) => { gr.bpm = +(gr.bpm * 2).toFixed(3); })),
+  );
+  row.appendChild(field('beats/bar', num('beatsPerBar', { step: 1, min: 1, digits: 0, title: 'time signature numerator — sets where bars fall' })));
+  row.appendChild(field('bar 1 @', num('offset', { step: 0.001, title: 'a bar line, in seconds of the source audio' })));
+  body.appendChild(row);
+
+  const row2 = document.createElement('div');
+  row2.className = 'snapgrid-row';
+  row2.appendChild(secBtn('Bar line = playhead', 'shift the grid so a bar line lands on the playhead', () => {
+    const src = (clip.in ?? 0) + (tCur - clip.start) * clipRate(clip);
+    const bar = 60 / g.bpm * Math.max(1, Math.round(g.beatsPerBar));
+    edit((gr) => { gr.offset = +(((src % bar) + bar) % bar).toFixed(4); });
+  }));
+  const chk = (label, key, title) => {
+    const i = document.createElement('input');
+    i.type = 'checkbox';
+    i.checked = g[key] !== false;
+    i.addEventListener('change', () => edit((gr) => { gr[key] = i.checked; }));
+    return field(i, document.createTextNode(label), title);
+  };
+  row2.appendChild(chk('snap', 'enabled', 'switch grid snapping off without losing the analysis'));
+  row2.appendChild(chk('show lines', 'show', 'draw the grid across the timeline lanes'));
+  body.appendChild(row2);
+
+  const hint = document.createElement('div');
+  hint.className = 'insp-note';
+  hint.textContent = 'Snapping follows the 🧲 toggle. Tempo is assumed constant; if it’s off, fix BPM and “Bar line = playhead”.';
+  body.appendChild(hint);
+  return sec;
+}
+
 function renderEffectStack(clip) {
   if (clipTakesVisualFx(clip)) inspectorEl.appendChild(fxSection(clip, 'visual'));
   if (clipTakesAudioFx(clip)) inspectorEl.appendChild(fxSection(clip, 'audio'));

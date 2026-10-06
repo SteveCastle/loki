@@ -54,6 +54,15 @@ import './context-palette.css';
 const STUDIO_MEDIA_RE =
   /\.(mp4|webm|mov|mkv|avi|m4v|flv|gif|jpe?g|jfif|png|webp|avif|bmp)$/i;
 
+// Build flag (see webpack.config.base.ts): the 4K Upscale action is hidden
+// from shipped builds until the feature is ready. Replaced at build time.
+const FOURKIFY_ENABLED = process.env.ENABLE_4KIFY === '1';
+
+// Still-image types the `4kify` task accepts directly.
+const IMAGE_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp|tiff?)$/i;
+// Videos 4kify takes by sampling one frame at the viewer's playback time.
+const VIDEO_MEDIA_RE = /\.(mp4|webm|mov|mkv|avi|m4v)$/i;
+
 // Generation mode for the metadata chips. `missing` only fills gaps; `all`
 // replaces existing metadata (passes `--overwrite`). The mode is chosen once
 // via the panel-wide toggle and applied to whichever chip is clicked.
@@ -212,6 +221,7 @@ const JOB_TITLES: Record<string, string> = {
   faces: 'Face Scan',
   'faces-cluster': 'Face Clustering',
   dedupe: 'Deduplicate',
+  '4kify': '4K Upscale',
   'find-duplicates': 'Find Duplicates',
   'merge-duplicates': 'Merge Duplicate Groups',
 };
@@ -615,8 +625,7 @@ export default function ContextPalette() {
   // loads the profile's storage database — measured at 5.6s of blocked
   // renderer when the leveldb couldn't be opened cleanly. Nothing may touch
   // localStorage before the user's media is on screen.
-  const [selectedTypes, setSelectedTypes] =
-    useState<string[]>(EMPTY_SELECTION);
+  const [selectedTypes, setSelectedTypes] = useState<string[]>(EMPTY_SELECTION);
   const selectionHydrated = useRef(false);
   useEffect(
     () =>
@@ -1115,6 +1124,77 @@ export default function ContextPalette() {
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
+  // 4kify: restore + outpaint onto a 4K canvas (the `4kify` task, which writes
+  // a `<name>_4k.png` beside each source). Acts on the discrete selection — or
+  // the single right-clicked file. Images go through as-is. A video is sampled
+  // at the viewer's current playback time (the frame being looked at), which
+  // only means something for ONE video, so videos are accepted only when the
+  // target is a single file; in a multi-selection they are dropped.
+  const fourKifyCandidates = hasSelection ? selection : [similarTargetPath];
+  const fourKifyPaths = fourKifyCandidates.filter(
+    (p) =>
+      !!p &&
+      (IMAGE_MEDIA_RE.test(p) ||
+        (fourKifyCandidates.length === 1 && VIDEO_MEDIA_RE.test(p)))
+  );
+  const canFourKify =
+    FOURKIFY_ENABLED &&
+    !!serverAvailable && !!authToken && fourKifyPaths.length > 0;
+  const fourKifyIsVideo =
+    fourKifyPaths.length === 1 && VIDEO_MEDIA_RE.test(fourKifyPaths[0]);
+  const handleFourKify = async () => {
+    if (fourKifyPaths.length === 0) return;
+    // Read the playback position at click time. It only applies when the
+    // video being targeted is the one on screen; any other video (e.g. one
+    // right-clicked in the grid) samples from the start.
+    let timeArg = '';
+    if (fourKifyIsVideo) {
+      const ctx = libraryService.getSnapshot().context;
+      const current = filter(
+        ctx.libraryLoadId,
+        ctx.textFilter,
+        ctx.library,
+        ctx.settings.filters,
+        ctx.settings.sortBy
+      )[ctx.cursor];
+      const key = (p?: string) => (p || '').replace(/\\/g, '/').toLowerCase();
+      const t = ctx.videoPlayer.actualVideoTime;
+      if (
+        key(current?.path) &&
+        key(current?.path) === key(fourKifyPaths[0]) &&
+        Number.isFinite(t) &&
+        t > 0
+      ) {
+        timeArg = `--time=${t.toFixed(3)} `;
+      }
+    }
+    try {
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      const res = await fetch(`${mediaServerBase}/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          input: `4kify ${timeArg}"${fourKifyPaths.join('\n')}"`,
+        }),
+        signal: AbortSignal.timeout(10000),
+        redirect: 'error',
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    } catch {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to Create Job',
+          message: 'Could not communicate with job service',
+        },
+      });
+      libraryService.send('HIDE_CONTEXT_PALETTE');
+    }
+  };
+
   // Person context: when the right-clicked tag is a person (its name exists
   // in /api/people — i.e. a People-category tag), the palette offers person
   // actions (rename) that keep the person table and its taxonomy tag in sync.
@@ -1375,39 +1455,39 @@ export default function ContextPalette() {
             <span className="context-count">1 file</span>
           ) : null}
           {isElectron && studioPaths.length > 0 && (
-              <button
-                className="find-similar-btn"
-                onClick={handleOpenInStudio}
-                title={
-                  studioPaths.length > 1
-                    ? `Open ${studioPaths.length} items in Studio`
-                    : 'Open in Studio'
-                }
-                aria-label={
-                  studioPaths.length > 1
-                    ? `Open ${studioPaths.length} items in Studio`
-                    : 'Open in Studio'
-                }
+            <button
+              className="find-similar-btn"
+              onClick={handleOpenInStudio}
+              title={
+                studioPaths.length > 1
+                  ? `Open ${studioPaths.length} items in Studio`
+                  : 'Open in Studio'
+              }
+              aria-label={
+                studioPaths.length > 1
+                  ? `Open ${studioPaths.length} items in Studio`
+                  : 'Open in Studio'
+              }
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <rect x="3" y="9" width="18" height="11" rx="2" />
-                  <path d="M3 9l1.8-4.6 16.2 1.7-1 2.9" />
-                  <path d="M8.5 4.9L7 9" />
-                  <path d="M13.7 5.4L12.2 9" />
-                  <path d="M18.8 6L17.4 9" />
-                </svg>
-              </button>
-            )}
+                <rect x="3" y="9" width="18" height="11" rx="2" />
+                <path d="M3 9l1.8-4.6 16.2 1.7-1 2.9" />
+                <path d="M8.5 4.9L7 9" />
+                <path d="M13.7 5.4L12.2 9" />
+                <path d="M18.8 6L17.4 9" />
+              </svg>
+            </button>
+          )}
           {(capabilities.visualSearch || (serverAvailable && authToken)) &&
             similarSearchPaths.length > 0 && (
               <button
@@ -1547,8 +1627,8 @@ export default function ContextPalette() {
             />
           ) : (
             <span className="merge-selection-note">
-              too many items for shared-tag editing (max {SELECTION_TAGS_MAX})
-              — narrow the view, or use tag drag-and-drop with Ctrl held
+              too many items for shared-tag editing (max {SELECTION_TAGS_MAX}) —
+              narrow the view, or use tag drag-and-drop with Ctrl held
             </span>
           )}
         </div>
@@ -1590,6 +1670,33 @@ export default function ContextPalette() {
           </button>
           <span className="merge-selection-note">
             review-only — groups appear in the Duplicates panel
+          </span>
+        </div>
+      )}
+
+      {canFourKify && (
+        <div className="context-palette-merge">
+          <span className="action-group-title">Transform</span>
+          <button
+            type="button"
+            className="merge-selection-btn"
+            onClick={handleFourKify}
+            title={
+              fourKifyIsVideo
+                ? 'Sample the frame at the current playback time, then upscale and outpaint it to fit a 4K monitor. Saves a new _4k.png next to the video; needs a CUDA GPU.'
+                : 'Upscale and outpaint to fit a 4K monitor. Saves a new _4k.png next to each original; needs a CUDA GPU.'
+            }
+          >
+            {fourKifyPaths.length > 1
+              ? `4K upscale ${fourKifyPaths.length} images`
+              : fourKifyIsVideo
+              ? '4K upscale current frame'
+              : '4K upscale + outpaint'}
+          </button>
+          <span className="merge-selection-note">
+            {fourKifyIsVideo
+              ? 'saves a new _4k.png of this frame beside the video'
+              : 'saves a new _4k.png beside each original'}
           </span>
         </div>
       )}

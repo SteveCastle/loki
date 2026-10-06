@@ -2258,3 +2258,32 @@ body.roto-analyzing #gizmo { display: none; }
 .driver-panel input:focus, .driver-panel select:focus { outline: none; border-color: var(--accent); }
 .driver-panel .mn-del { margin-left: auto; }
 .driver-panel .drv-hint { font-size: 10px; color: var(--dim); opacity: 0.8; }
+
+/* ---- snap track / beat grid ---- */
+
+/* Viewport-sized sticky canvas holding the lane grid lines; the wrapper only
+   exists to give the sticky canvas the full content area to stick within. */
+.tl-gridwrap {
+  position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+.tl-grid { position: sticky; top: 28px; left: 0; display: block; }
+.tl-clip.snap-track { border-color: #3fd0c0; box-shadow: 0 0 0 1px rgba(63, 208, 192, 0.55); }
+
+.snapgrid-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 2px 0 6px; font-size: 11px; color: var(--dim); }
+.snapgrid-row label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.snapgrid-row label.wide { flex: 1 1 100%; }
+.snapgrid-row label.wide select { flex: 1; max-width: none; }
+.snapgrid-row select,
+.snapgrid-row input[type=number] {
+  background: var(--bg3);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+.snapgrid-row input[type=number] { width: 62px; }
+.snapgrid-row input:focus, .snapgrid-row select:focus { outline: none; border-color: var(--accent); }

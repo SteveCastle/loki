@@ -16,7 +16,8 @@ Object.assign(globalThis, {
 });
 const { Timeline } = await import(moduleURL(read('./timeline.js')
   .replace("'./comp.js'", JSON.stringify(modelURL))
-  .replace("'./icons.js'", JSON.stringify(moduleURL(read('./icons.js'))))));
+  .replace("'./icons.js'", JSON.stringify(moduleURL(read('./icons.js'))))
+  .replace("'./beat-grid.js'", JSON.stringify(moduleURL(read('./beat-grid.js'))))));
 
 // Exercise the app's functions without booting its GPU renderer and asset store.
 const app = read('./app.js');
@@ -133,4 +134,55 @@ test('hide and mute independently control preview visuals and preview/export aud
     assert.equal(audioEntries(false).length, muted ? 0 : 1);
     assert.equal(audioEntries(true).length, 1);
   }
+});
+
+test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {
+  const { comp, timeline } = setup();
+  const a = model.newTrack('A'), b = model.newTrack('B');
+  const clip = (id, start, dur) => ({ id, kind: 'audio', name: id, start, dur, props: {}, effects: [] });
+  a.clips.push(clip('a1', 2, 3), clip('a2', 8, 2));      // gap of 3s inside track A
+  b.clips.push(clip('b1', 4, 1));
+  comp.tracks.push(a, b);
+  timeline.selClips = new Set(['a1', 'a2', 'b1']);
+  timeline.duplicateSelection();                          // selection spans 2..10 → shift by 8
+  const starts = (t) => t.clips.map((c) => c.start).sort((x, y) => x - y);
+  assert.deepEqual(starts(a), [2, 8, 10, 16]);
+  assert.deepEqual(starts(b), [4, 12]);
+  assert.equal(timeline.selClips.size, 3);
+  assert.ok(![...timeline.selClips].some((id) => ['a1', 'a2', 'b1'].includes(id)));
+  assert.equal(new Set(comp.tracks.flatMap((t) => t.clips.map((c) => c.id))).size, 6);
+});
+
+test('duplicates go to the end of the whole timeline, never onto another clip', () => {
+  const { comp, timeline } = setup();
+  const a = model.newTrack('A'), b = model.newTrack('B');
+  const clip = (id, start, dur) => ({ id, kind: 'audio', name: id, start, dur, props: {}, effects: [] });
+  a.clips.push(clip('a1', 1, 2), clip('a2', 6, 1));
+  b.clips.push(clip('long', 0, 20));                    // something else reaches t=20
+  comp.tracks.push(a, b);
+  timeline.selClips = new Set(['a1', 'a2']);
+  timeline.duplicateSelection();                        // end = 20, selection starts at 1 → +19
+  assert.deepEqual(a.clips.map((c) => c.start).sort((x, y) => x - y), [1, 6, 20, 25]);
+  assert.deepEqual(model.resolveOverlaps(comp), 0);
+});
+
+test('overlap helpers: fitStart stops at neighbours, resolveOverlaps spills to a new track', () => {
+  const clip = (id, start, dur) => ({ id, kind: 'audio', name: id, start, dur, props: {}, effects: [] });
+  const t = model.newTrack('T');
+  const x = clip('x', 0, 2), y = clip('y', 5, 2), mover = clip('m', 3, 2);
+  t.clips.push(x, y);
+  assert.equal(model.fitStart(t, mover, 1.5), 2);        // pushed right of x
+  assert.equal(model.fitStart(t, mover, 4.4), 3);        // gap is [2,5] — 2 long clip fits to 3
+  assert.equal(model.fitStart(t, clip('big', 0, 4), 1), 7); // only the open end fits
+  assert.deepEqual(model.trackWalls(t, clip('w', 2, 3)), { left: 2, right: 5 });
+
+  const comp = model.newComp({ dur: 10 });
+  const tr = model.newTrack('T');
+  tr.clips.push(clip('p', 0, 4), clip('q', 3, 4), clip('r', 5, 1));
+  comp.tracks.push(tr);
+  assert.equal(model.resolveOverlaps(comp, new Set(['q'])), 2);   // q is being edited: it stays
+  for (const track of comp.tracks)
+    for (const c of track.clips) for (const d of track.clips)
+      if (c !== d) assert.ok(c.start >= d.start + d.dur - 1e-9 || d.start >= c.start + c.dur - 1e-9);
+  assert.ok(comp.tracks.some((track) => track.clips.some((c) => c.id === 'q')));
 });
