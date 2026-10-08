@@ -562,7 +562,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tools-${{ matrix.tool }}-${{ matrix.target }}
-          path: tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
+          path: |
+            tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
+            tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}.sha256
           if-no-files-found: error
 
   # Container image — the easiest install path for Linux/NAS users. Publishes
@@ -698,7 +700,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       # v2: re-running for an existing tag must replace assets. v1's

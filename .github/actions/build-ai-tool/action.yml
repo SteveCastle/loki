@@ -18,7 +18,7 @@ inputs:
 
 outputs:
   archive:
-    description: File name of the produced archive (inside tools/<tool>/dist)
+    description: File name of the produced archive (inside tools/<tool>/dist; a .sha256 sidecar sits next to it)
     value: ${{ steps.package.outputs.archive }}
 
 runs:
@@ -116,11 +116,13 @@ runs:
         cp README.md "$STAGE/README.md"
         cp ../CONVENTIONS.md "$STAGE/CONVENTIONS.md"
         cd dist
+        # A zip on both platforms (the media server's dependency installer unpacks zips), with a sha256sum
+        # sidecar that it verifies the download against. The executable sits in a <name>/ folder inside.
         if [ "$RUNNER_OS" = "Windows" ]; then
           7z a "$NAME.zip" "$NAME" > /dev/null
-          echo "archive=$NAME.zip" >> "$GITHUB_OUTPUT"
         else
-          tar -czf "$NAME.tar.gz" "$NAME"
-          echo "archive=$NAME.tar.gz" >> "$GITHUB_OUTPUT"
+          zip -qr "$NAME.zip" "$NAME"
         fi
+        sha256sum "$NAME.zip" > "$NAME.zip.sha256"
+        echo "archive=$NAME.zip" >> "$GITHUB_OUTPUT"
         ls -lh

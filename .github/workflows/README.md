@@ -52,7 +52,7 @@ To change the release behavior, edit `.github/workflows/release.yml`:
 
 **Purpose:** fast feedback for the standalone CUDA CLIs under `tools/`. Builds, tests (GPU-free tests only: hosted runners have no GPU),
 smoke-tests (the executable must start and print help with no NVIDIA driver) and packages each tool on Windows and Linux. The same
-action runs as the *Build AI tools* job of `release.yml`, whose archives (`loki-<tool>-<target>.zip|tar.gz`) are attached to the release.
+action runs as the *Build AI tools* job of `release.yml`, whose archives (`loki-<tool>-<target>.zip` plus a `.zip.sha256`) are attached to the release. The media server's dependency manifest downloads them from `releases/latest/download/` and verifies the sidecar, so the asset names must stay unversioned.
 See `tools/README.md`.
 
 Notes:

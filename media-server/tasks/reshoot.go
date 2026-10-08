@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -218,9 +217,9 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 
 	p := reshootParamsFromOptions(ParseOptions(j, reshootOptions))
 
-	bin, err := exec.LookPath("loki-reshoot")
+	bin, err := resolveAITool(ctx, q, j.ID, tag, reshootTool)
 	if err != nil {
-		return fail(`loki-reshoot not found on PATH (install it to C:\Users\steph\bin or any PATH folder; models go in a models/ folder next to it)`, fmt.Errorf("loki-reshoot not found on PATH: %w", err))
+		return fail(err.Error(), err)
 	}
 
 	res, rerr := resolveJobItemsRaw(j, q)

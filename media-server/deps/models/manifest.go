@@ -31,9 +31,12 @@ type Model struct {
 // extracts that whole subtree into RelPath as a directory (7z only); Exec
 // then marks the extracted root-level binaries executable.
 type File struct {
-	URL           string `json:"url"`
-	RelPath       string `json:"rel_path"`
-	SHA256        string `json:"sha256"`
+	URL     string `json:"url"`
+	RelPath string `json:"rel_path"`
+	SHA256  string `json:"sha256"`
+	// SHA256URL names a sidecar checksum file used when SHA256 is empty (see
+	// resolveChecksum); for assets that track a moving "latest" release.
+	SHA256URL     string `json:"sha256_url,omitempty"`
 	OS            string `json:"os,omitempty"`
 	SizeBytes     int64  `json:"size_bytes,omitempty"`
 	Archive       string `json:"archive,omitempty"` // "zip" (single member) or "7z" (directory member)

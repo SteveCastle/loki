@@ -2173,7 +2173,7 @@
             try {
               const inst = JSON.parse(ev.data);
               depsCurrent = depsCurrent.map((it) =>
-                it.category === 'model' && it.id === inst.id
+                (it.category === 'model' || it.category === 'tool') && it.id === inst.id
                   ? { ...it, state: inst.state, detail: inst, error: inst.error }
                   : it,
               );

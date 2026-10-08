@@ -14,13 +14,22 @@ They share one set of conventions (streams, flags, exit codes, model discovery):
 
 ## Getting the binaries
 
-- **Releases**: every GitHub release attaches `loki-retouch-<target>` and `loki-reshoot-<target>` archives
-  (`windows-amd64` `.zip`, `linux-amd64` `.tar.gz`), built by CI. Put the executable on `PATH`.
+- **Through the Lowkey Media Server (no setup)**: the engines are dependencies like the tagger and Whisper. The first
+  Retouch/Reshoot job installs what it needs, logging progress in the job: the executable (about 50 MB, from the latest
+  GitHub release, verified against its `.sha256`) and the model files (17 GB / 42 GB, from Hugging Face, SHA-256 pinned
+  in `media-server/deps/models/manifest.json`, resumable). The setup wizard and the Dependencies page offer the same
+  installs ahead of time ("AI image editing", "AI video from references"). The weights are shared: the server runs the
+  engine with `LOKI_MODELS` pointing at its copy, and ffmpeg comes from the server's bundled one. A `loki-retouch` /
+  `loki-reshoot` already on `PATH` always wins, and then nothing is installed for you.
+- **Releases**: every GitHub release attaches `loki-retouch-<target>.zip` and `loki-reshoot-<target>.zip`
+  (`windows-amd64`, `linux-amd64`) plus a `.sha256` for each, built by CI. Unzip and put the executable on `PATH`.
 - **From source**: Rust (stable) plus CUDA Toolkit 12.6+ (`nvcc`) and a host C++ compiler (MSVC on Windows, gcc ≤ 13 on Linux), then
   `cargo build --release` inside the tool's directory. Kernels are compiled for sm_89 (RTX 40 series) with a compute_80 PTX fallback.
 - **Models** are not in the archives (17 GB for loki-retouch, 42 GB for loki-reshoot). Each tool finds them next to the executable,
   in `./models`, or in `$LOKI_MODELS`, and downloads whatever is missing from Hugging Face on first use (resumable). Keeping the
   executables and a shared `models/` folder together (this repo's author uses `~/bin`) means every tool and the media server find them.
+  If you change a model file name or add one, update `media-server/deps/models/manifest.json` too (`qwen-image-2.1`,
+  `minimax-h3-ref2va`; the `loki-*` tool entries point at release assets and need no edit).
 - Runtime needs only the NVIDIA driver. `loki-reshoot` also needs `ffmpeg` (downloaded automatically on Windows when missing).
 - macOS is not supported (no CUDA).
 

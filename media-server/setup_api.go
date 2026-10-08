@@ -192,6 +192,18 @@ func setupModelGroups() []setupModelGroup {
 			Desc:   "Generate searchable transcripts for videos and audio files.",
 			Models: []string{"faster-whisper"}},
 	}
+	// The local CUDA engines (Transform: retouch / reshoot) only exist for
+	// Windows and Linux and need an RTX 40-series class GPU.
+	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
+		groups = append(groups,
+			setupModelGroup{ID: "ai-image-editing", Title: "AI image editing (NVIDIA GPU)",
+				Desc:   "Edit, upscale and restore images with a prompt, fully on this machine. Needs an RTX 40-series or newer GPU with 24 GB of VRAM.",
+				Models: []string{"loki-retouch", "qwen-image-2.1"}},
+			setupModelGroup{ID: "ai-video", Title: "AI video from references (NVIDIA GPU)",
+				Desc:   "Turn photos, clips and audio into video with generated sound, fully on this machine. Needs an RTX 40-series or newer GPU with 24 GB of VRAM.",
+				Models: []string{"loki-reshoot", "minimax-h3-ref2va"}},
+		)
+	}
 	sizes := map[string]int64{}
 	for _, m := range models.Manifest {
 		sizes[m.ID] = m.EffectiveSizeBytes()

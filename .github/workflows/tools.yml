@@ -48,6 +48,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tools-${{ matrix.tool }}-${{ matrix.target }}
-          path: tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
+          path: |
+            tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
+            tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}.sha256
           if-no-files-found: error
           retention-days: 7
