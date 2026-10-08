@@ -56,11 +56,6 @@ import './context-palette.css';
 const STUDIO_MEDIA_RE =
   /\.(mp4|webm|mov|mkv|avi|m4v|flv|gif|jpe?g|jfif|png|webp|avif|bmp)$/i;
 
-// Build flag (see webpack.config.base.ts): the Transform section (local AI
-// image/video engines) is hidden from shipped builds until the feature is
-// ready. Replaced at build time.
-const TRANSFORM_ENABLED = process.env.ENABLE_4KIFY === '1';
-
 // Still images the desktop wallpaper can be set from.
 const WALLPAPER_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp)$/i;
 
@@ -1186,7 +1181,7 @@ export default function ContextPalette() {
     (p) => !!p && mediaKind(p) !== 'other'
   );
   const canTransform =
-    TRANSFORM_ENABLED && !!serverAvailable && !!authToken && transformPaths.length > 0;
+    !!serverAvailable && !!authToken && transformPaths.length > 0;
   // Playback position (seconds) of the video on screen — only meaningful when
   // the ONE targeted file is that video; a retouch job samples that frame.
   const getTransformVideoTime = (): number | undefined => {
