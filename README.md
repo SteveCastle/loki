@@ -1,25 +1,53 @@
-# 4kify
+# loki-retouch
 
-Restore a photo and outpaint it into a 4K desktop wallpaper (or a vertical phone wallpaper) with
-**Qwen Image 2.1**, as a single self-contained Windows binary. No ComfyUI, no Python, no PyTorch:
-the whole inference engine (int8/bf16/fp8 tensor-core kernels, flash attention, VAE convolutions)
-is written from scratch in CUDA and driven from Rust. The only runtime dependency is the NVIDIA driver.
+**AI image editing from the command line.** Change the content of a photo with a text instruction, upscale it
+faithfully, restore it, composite several images, or outpaint it into a 4K wallpaper, with **Qwen Image 2.1**, as a
+single self-contained binary. No ComfyUI, no Python, no PyTorch: the whole inference engine (int8/bf16/fp8
+tensor-core kernels, flash attention, VAE convolutions) is written from scratch in CUDA and driven from Rust.
+The only runtime dependency is the NVIDIA driver.
 
-It reproduces the "Qwen Image 2.1 restore + outpaint" ComfyUI workflow (Qwen3-VL 8B conditioning with
-the reference image, euler / simple schedule, 25 steps, cfg 1, shift 0.69) and was validated layer by
-layer against ComfyUI's implementation (text encoder, one DiT step, VAE encode/decode).
+```
+loki-retouch -p "make it night, with rain" photo.jpg          # edit content   -> photo_edit.png
+loki-retouch --upscale 2 small.jpg                            # faithful 2x    -> small_up.png
+loki-retouch --preset 4kify photo.jpg                         # restore + outpaint to a 4K wallpaper
+loki-retouch -p "put the jacket of <image2> on <image1>" -r jacket.png me.png
+```
+
+## Part of the loki- toolkit
+
+`loki-retouch` is one of a family of small, composable media tools that share one set of conventions, so they
+chain with each other and with ordinary Unix tools, and are easy for agents to drive:
+
+| tool | does | engine |
+|---|---|---|
+| **loki-retouch** (this repo) | image editing, upscaling, restoration, compositing | Qwen Image 2.1 |
+| [loki-reshoot](../loki-reshoot) | reference images / videos / audio -> video with sound | MiniMax H3 |
+
+The shared conventions (also see `docs/CONVENTIONS.md`):
+
+- **Inputs** are files, globs, directories, or `-` for stdin; **results** are written to a file whose path is printed
+  on stdout (`--json` prints a JSON object instead), or streamed as the media itself with `-o -`.
+- **Progress and diagnostics go to stderr only**; `-q` silences them. Exit status: 0 ok, 1 error, 2 usage error.
+- `-p/--prompt`, `-P/--prompt-file`, `--seed`, `--steps`, `--show-prompt` mean the same thing in every tool.
+- Models are looked up next to the binary, in `./models`, and in `$LOKI_MODELS`; missing ones are downloaded
+  (and the download notice is printed even with `-q`).
+- `lokictl` (the Lowkey Media Server client) is separate and unrelated: these tools never talk to a server.
+
+```
+loki-retouch --preset restore -o - old.jpg | loki-retouch -p "colorize" - -o - | loki-reshoot --animate - -d 5 -o alive.mp4
+```
+
+Agent skills for both tools live in `.claude/skills/` (Claude Code and OpenCode read that folder).
 
 ## Usage
 
-`qedit` is a generic image-editing CLI for Qwen Image 2.1: it edits content (any prompt), upscales
-faithfully, restores, composites several images, and outpaints. `4kify` is the same program with
-`--preset 4kify` as its default (restore + outpaint into a 4K wallpaper). Both follow Unix conventions so
-they chain: images in from files, globs, directories or stdin (`-`); results out as a file (its path is
-printed on stdout, or one JSON object per result with `--json`) or as PNG bytes on stdout (`-o -`);
-progress goes to stderr only (`-q` silences it); non-zero exit status on failure.
+`loki-retouch` edits content (any prompt), upscales faithfully, restores, composites several images, and
+outpaints. Presets (`--preset NAME`) bundle a prompt, an output size and reference sizing: `4kify` is the
+restore + outpaint into a 4K wallpaper treatment this project started as, `4kify-phone` the vertical
+variant, `upscale` faithful super-resolution, `restore` restoration at the input's own size.
 
 ```
-qedit [OPTIONS] [INPUT]...
+loki-retouch [OPTIONS] [INPUT]...
 
   INPUT                files, directories, globs ("photos/*.jpg"), or - for stdin; each input is one job (models load once)
   -p, --prompt TEXT    what to do (-P FILE reads it from a file, - = stdin); <image1>, <image2>... name the images
@@ -38,15 +66,15 @@ qedit [OPTIONS] [INPUT]...
 Examples:
 
 ```
-qedit -p "make it night, with rain" photo.jpg                   # content edit at the input's size -> photo_edit.png
-qedit --upscale 2 small.jpg                                     # faithful 2x super-resolution, ratio kept
-qedit --scale 1.5 -p "replace the sky with a sunset" photo.jpg  # content edit + 1.5x
-qedit -p "put the jacket of <image2> on <image1>" -r jacket.png me.png
-qedit --preset restore -o - old.jpg | qedit -p "colorize" - -o - | qedit --preset 4kify - -o wall.png
-4kify photo.jpg                                                 # -> photo_4k.png (3840x2160)
-4kify --phone photo.jpg                                         # -> photo_phone.png (1296x2800)
-4kify -q -o wallpapers "camera/*.jpg"                           # batch; the result paths are printed on stdout
-4kify --seq -o out frames/                                      # the frames of a clip: one seed, framing pinned
+loki-retouch -p "make it night, with rain" photo.jpg                   # content edit at the input's size -> photo_edit.png
+loki-retouch --upscale 2 small.jpg                                     # faithful 2x super-resolution, ratio kept
+loki-retouch --scale 1.5 -p "replace the sky with a sunset" photo.jpg  # content edit + 1.5x
+loki-retouch -p "put the jacket of <image2> on <image1>" -r jacket.png me.png
+loki-retouch --preset restore -o - old.jpg | loki-retouch -p "colorize" - -o - | loki-retouch --preset 4kify - -o wall.png
+loki-retouch --preset 4kify photo.jpg                           # -> photo_4k.png (3840x2160)
+loki-retouch --preset 4kify-phone photo.jpg                     # -> photo_phone.png (1296x2800)
+loki-retouch --preset 4kify -q -o wallpapers "camera/*.jpg"      # batch; the result paths are printed on stdout
+loki-retouch --preset 4kify --seq -o out frames/                 # the frames of a clip: one seed, framing pinned
 ```
 
 Batch mode is phase-ordered: every input is encoded (VAE + text encoder), then the text encoder is
@@ -55,12 +83,12 @@ sampled. Each of the two large models is loaded exactly once per run. The model 
 of 16; any other requested size (e.g. `--size same` on a 1001x747 image) is generated at the nearest
 multiple and Lanczos-resampled to exactly what you asked for.
 
-Sequence mode (`--seq`, for the frames of a clip extracted in order, e.g. `4kify --seq -o out frames/`
+Sequence mode (`--seq`, for the frames of a clip extracted in order, e.g. `loki-retouch --preset 4kify --seq -o out frames/`
 then `ffmpeg -framerate 10 -i out/frame_%03d_4k.png -c:v libx264 -crf 16 -pix_fmt yuv420p clip.mp4`) uses
 one seed for every frame and a stricter prompt: a "faithful enlargement" restoration paragraph instead of
 the free restoration, and a framing paragraph that spells out where the input sits on the canvas (full
 height, centred, nothing cropped), because independently restored frames otherwise drift in zoom by about
-+-15%. See `4kify --seq --show-prompt`.
++-15%. See `loki-retouch --preset 4kify --seq --show-prompt`.
 
 Tried for video and dropped, for the record: feeding a restored frame back as a second reference pins the
 framing but the model copies its rendering and over-restores it into grain unless it is shrunk to the
@@ -69,13 +97,13 @@ frame, and chaining frames (even warped by optical flow) compounds errors until 
 ten frames; seeding every frame from one flow-warped keyframe is stable but needs a Python driver with
 OpenCV and brings its own seams and occlusion handling. The measured results of every attempt, the
 evaluation scripts (`tools/metrics`) and a ranked plan for a re-attempt are in the
-"4kify video upscaling plan" doc: https://claude.ai/code/artifact/6626f241-bb72-4324-80c9-fd7916a8a886
+"video upscaling plan" doc: https://claude.ai/code/artifact/6626f241-bb72-4324-80c9-fd7916a8a886
 
-The wallpaper prompt is parameterized by orientation; see `4kify --show-prompt` (and `qedit --list-presets`).
+The wallpaper prompt is parameterized by orientation; see `loki-retouch --preset 4kify --show-prompt` (and `--list-presets`).
 
 ## Models
 
-Put these next to `4kify.exe` (or in a `models/` folder next to it), or pass them explicitly. Any that
+Put these next to `loki-retouch.exe` (or in a `models/` folder next to it, or in `$LOKI_MODELS`), or pass them explicitly. Any that
 can't be found are downloaded automatically (~17 GB total) from
 [Comfy-Org/Qwen-Image-2.1](https://huggingface.co/Comfy-Org/Qwen-Image-2.1) into `models/` next to the
 binary; interrupted downloads resume on the next run.
@@ -93,13 +121,19 @@ The int8 files are ComfyUI's "int8 ConvRot" format (per-row int8 with a 256-wide
 Requirements: Rust (stable, MSVC toolchain), CUDA Toolkit 12.x (`nvcc`), Visual Studio 2022 C++ tools.
 
 ```
-cargo build --release          # -> target/release/4kify.exe
+cargo build --release          # -> target/release/loki-retouch.exe
 cargo test --release           # kernel tests against CPU references
 cargo run --release --bin bench
 ```
 
 `build.rs` compiles `kernels/*.cu` with nvcc into fatbins (sm_89 SASS + compute_80 PTX) that are
 embedded in the binary. `cudarc` loads the driver (`nvcuda.dll`) dynamically.
+
+## Tests
+
+`cargo test --release` runs the kernel tests against CPU references and the prompt/preset unit tests. `ref/` holds the
+scripts that dump reference tensors from ComfyUI's own code (generated dumps are git-ignored; this repo never tracks
+media or test fixtures). `te_check` and `dit_check` compare this engine against such dumps.
 
 ## Engine notes
 
@@ -120,8 +154,8 @@ embedded in the binary. `cudarc` loads the driver (`nvcuda.dll`) dynamically.
   At native size it gives the DiT a 26x16 token grid centred on a 240x135 target, too little aligned
   structure to copy, and the output re-draws eyes, fingers and contours (fidelity to the aligned source
   SSIM 0.91 vs 0.94 at 1024; 2048 gains little more and shifts the tone). The prompt alone does not fix it.
-- Environment switches: `FOURKIFY_ATTN=bf16` (bf16 attention + bf16 cache), `FOURKIFY_PROFILE=1`
-  (per-kernel timing of the DiT step), `FOURKIFY_GEMM_NARROW=1` (128x128 GEMM tiles only).
+- Environment switches: `LOKI_ATTN=bf16` (bf16 attention + bf16 cache), `LOKI_PROFILE=1`
+  (per-kernel timing of the DiT step), `LOKI_GEMM_NARROW=1` (128x128 GEMM tiles only).
 
 ## Performance (RTX 4090, 25 steps)
 

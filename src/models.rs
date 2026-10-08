@@ -82,7 +82,7 @@ pub fn resolve(explicit: Option<PathBuf>, spec: &Spec) -> Result<PathBuf> {
     }
     let base = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."));
     let dest = base.join("models").join(spec.hf_path.rsplit('/').next().unwrap());
-    crate::info!("{} not found locally; downloading {} from Hugging Face to {}", spec.what, spec.hf_path, dest.display());
+    eprintln!("{} not found locally; downloading {} from Hugging Face to {}", spec.what, spec.hf_path, dest.display());
     download(spec.hf_path, &dest)?;
     Ok(dest)
 }
