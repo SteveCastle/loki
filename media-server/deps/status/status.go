@@ -5,6 +5,7 @@ package status
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -83,6 +84,15 @@ func Snapshot() []Item {
 				}
 			}
 		}
+		// Model weights that a PATH-installed engine already has where it looks
+		// for them (beside the executable, its models/ folder, $LOKI_MODELS).
+		if m.EffectiveCategory() == "model" && item.State == string(models.StatusMissing) {
+			if dir := engineModelsDir(m); dir != "" {
+				item.State = string(models.StatusInstalled)
+				item.Path = dir
+				item.Detail = map[string]string{"source": "path"}
+			}
+		}
 		// A loki-* engine already on PATH (a developer build, or installed by
 		// hand) is used as-is by the tasks and never downloaded, so the UI must
 		// not ask to download it or its models.
@@ -96,4 +106,36 @@ func Snapshot() []Item {
 		out = append(out, item)
 	}
 	return out
+}
+
+// engineModelsDir returns the folder holding every file of m when m belongs to
+// a loki-* engine found on PATH, mirroring the engines' own model search
+// order, or "" when the engine isn't on PATH or some file is absent.
+func engineModelsDir(m models.Model) string {
+	if len(m.Consumers) == 0 {
+		return ""
+	}
+	exe, err := exec.LookPath("loki-" + m.Consumers[0])
+	if err != nil {
+		return ""
+	}
+	base := filepath.Dir(exe)
+	dirs := []string{base, filepath.Join(base, "models")}
+	if d := os.Getenv("LOKI_MODELS"); d != "" {
+		dirs = append(dirs, d)
+	}
+	files := m.EffectiveFiles()
+	for _, d := range dirs {
+		all := len(files) > 0
+		for _, f := range files {
+			if _, err := os.Stat(filepath.Join(d, f.RelPath)); err != nil {
+				all = false
+				break
+			}
+		}
+		if all {
+			return d
+		}
+	}
+	return ""
 }
