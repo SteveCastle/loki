@@ -6,12 +6,14 @@ import { Detail } from '../detail/detail';
 import './panels.css';
 import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
+import TransformStudio from '../transform/transform-studio';
 
 const DetailOnly = () => {
   return (
     <GlobalStateProvider>
       <CommandPalette />
       <ContextPalette />
+      <TransformStudio />
       <Panel className="panel">
         <Detail />
       </Panel>
