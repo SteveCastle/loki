@@ -8,9 +8,11 @@ pub mod weights;
 
 // H3 engine components (one workstream each)
 pub mod dit_h3;
+pub mod fit;
 pub mod media;
 pub mod models;
 pub mod pipeline;
+pub mod presets;
 pub mod sampler;
 pub mod te_h3;
 pub mod vae_audio;

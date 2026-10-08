@@ -19,6 +19,20 @@ generated native audio. It runs the whole model locally on the NVIDIA GPU (RTX 4
   prompt for the first time in a task, `h3ref2va --prompt-guide` (MiniMax's full reference-mode prompt guide). They are the source
   of truth if this skill and the binary disagree.
 
+## Quick mode: bring a still photo to life (most common job)
+```
+h3ref2va --animate photo.jpg --describe "the young woman in a black swimsuit taking a mirror selfie in a sunlit room" -d 5 -o outlive.mp4
+```
+`--animate IMAGE` = natural ambient life + subtle resting movement + subtle camera shake, identity/framing kept, ambient sound, no
+speech or music. It adds the image as `<Picture 1>`, uses `--native` (below) and 5 s by default. Always pass `--describe` (one sentence on
+subject and setting: it anchors identity and what may move). `--shake none|subtle|handheld`; `--prompt "..."` appends extra direction;
+`--ref-image-size max` for best identity. Also works with other flags (`-a music.mp3` to add audio refs, `--seed`, `--steps`).
+
+## Native canvas / supported ratios (`--native`, implied by `--animate`)
+The model is built around five canvases: 1:1 768x768, 4:3 1024x768, 3:4 768x1024, 16:9 1344x768, 9:16 768x1344. `--native` snaps the first
+reference's aspect to the nearest one and fits the first image to it with `--fit pad` (default: black bars that the prompt tells the model to
+fill in; best when the photo is close to a supported ratio), `crop` (centre-crop) or `stretch`. Use `--size WxH` to override.
+
 ## 1. Gather inputs
 - Reference images: `-i FILE` (repeat). Tags `<Picture 1>`, `<Picture 2>`... in the order given.
 - Reference videos: `-v FILE[@START[,DURATION]]` (seconds). Tags `<Video k>`. Resampled to 24 fps; need ≥5 frames; at most the output

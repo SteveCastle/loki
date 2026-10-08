@@ -38,6 +38,17 @@ h3ref2va -i hero.png -a theme.mp3 -d 6 -p "Animate <Picture 1> as one continuous
 h3ref2va -i face.png -v dance.mp4@2,4 -p "The woman of <Picture 1> performs the motion of <Video 1>, keeping the voice and sound of <Audio 1>."
 ```
 
+## Quick mode: living photos
+
+```
+h3ref2va --animate photo.jpg --describe "the woman in a black swimsuit taking a mirror selfie in a sunlit room" -d 5
+```
+
+`--animate IMAGE` gives natural ambient life, subtle resting movement and a subtle camera shake (`--shake none|subtle|handheld`) with
+ambient sound, keeping the photo's identity and framing. It implies `--native`: the model works best at five canvases (1:1 768×768,
+4:3 1024×768, 3:4 768×1024, 16:9 1344×768, 9:16 768×1344); the first image is snapped to the nearest ratio and fitted with
+`--fit pad|crop|stretch` (pad = black bars the model fills in, as in the ComfyUI `MiniMaxH3AutoRatio` node).
+
 ## What the model can do (limits enforced by the CLI)
 
 | | |

@@ -4,13 +4,29 @@ use clap::{Parser, ValueEnum};
 use h3ref2va::cuda::Device;
 use h3ref2va::media::{Ffmpeg, FPS};
 use h3ref2va::models;
+use h3ref2va::fit::{self, Fit};
 use h3ref2va::pipeline::{self, MediaSpec, Paths, RefImageSize, Request};
+use h3ref2va::presets::{self, Shake};
 use std::path::{Path, PathBuf};
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum RefSize {
     Match,
     Max,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum ShakeArg {
+    None,
+    Subtle,
+    Handheld,
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum FitArg {
+    Pad,
+    Crop,
+    Stretch,
 }
 
 #[derive(Parser, Debug)]
@@ -41,6 +57,26 @@ struct Cli {
     /// Read the PROMPT WRITING section below (or `--prompt-guide`) before writing one: this model needs a detailed, structured prompt.
     #[arg(short, long)]
     prompt: Option<String>,
+    /// QUICK MODE "living photo": animate IMAGE with natural ambient life, subtle resting movement and (by default) a subtle
+    /// camera shake, keeping the photo's identity and framing. Adds the image as <Picture 1>, uses --native size and 5 s unless
+    /// overridden. Describe the subject with --describe for best results; --prompt adds extra direction.
+    #[arg(long, value_name = "IMAGE")]
+    animate: Option<PathBuf>,
+    /// With --animate: one sentence naming the subject and setting (e.g. "the young woman in a black swimsuit taking a mirror
+    /// selfie in a sunlit room"). Anchors identity and what may move.
+    #[arg(long)]
+    describe: Option<String>,
+    /// With --animate: camera behaviour.
+    #[arg(long, value_enum, default_value_t = ShakeArg::Subtle)]
+    shake: ShakeArg,
+    /// Use the model's native canvas: snap the first reference's aspect to the nearest supported ratio (1:1 768x768, 4:3 1024x768,
+    /// 3:4 768x1024, 16:9 1344x768, 9:16 768x1344) and fit the first image to it (see --fit). Overridden by --size.
+    #[arg(long)]
+    native: bool,
+    /// With --native: how the first reference image is fitted to the canvas when its ratio is not exactly the supported one:
+    /// `pad` (default; black bars that the model fills in), `crop` (centre-crop) or `stretch`.
+    #[arg(long, value_enum, default_value_t = FitArg::Pad)]
+    fit: FitArg,
     /// Print MiniMax's full reference-mode prompt-writing guide and exit.
     #[arg(long)]
     prompt_guide: bool,
@@ -163,11 +199,13 @@ fn run() -> Result<()> {
         println!("{}", include_str!("../docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md"));
         return Ok(());
     }
-    let prompt = match (&cli.prompt, &cli.prompt_file) {
-        (Some(p), _) => p.clone(),
-        (None, Some(f)) => std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?,
-        (None, None) => bail!("give a prompt with --prompt or --prompt-file"),
-    };
+    let mut cli = cli;
+    if let Some(img) = cli.animate.clone() {
+        cli.ref_image.insert(0, img);
+        if cli.size.is_none() && cli.aspect.is_none() {
+            cli.native = true;
+        }
+    }
     let ff = Ffmpeg::discover(cli.ffmpeg.as_deref())?;
     let ref_videos: Vec<MediaSpec> = cli.ref_video.iter().map(|s| parse_media(s)).collect::<Result<_>>()?;
     let ref_audios: Vec<MediaSpec> = cli.ref_audio.iter().map(|s| parse_media(s)).collect::<Result<_>>()?;
@@ -198,7 +236,55 @@ fn run() -> Result<()> {
         } else {
             16.0 / 9.0
         };
-        size_for(ratio, cli.megapixels)
+        if cli.native {
+            // the canvas rule ComfyUI uses for reference videos: 768 short edge, area cap 768*1344
+            let (bw, bh) = if let Some(p) = cli.ref_image.first() {
+                image_dims(&ff, p)?
+            } else if let Some(v) = ref_videos.first() {
+                let i = ff.probe(&v.path)?;
+                (i.width, i.height)
+            } else {
+                (1920, 1080)
+            };
+            let ratio = match &cli.aspect {
+                Some(a) => parse_aspect(a)?,
+                None => bw as f64 / bh as f64,
+            };
+            let (label, r) = fit::best_ratio((ratio * 10000.0) as usize, 10000);
+            let (w, h) = fit::canvas_for_ratio(r);
+            eprintln!("native canvas: nearest supported ratio {label} -> {w}x{h}");
+            (w, h)
+        } else {
+            size_for(ratio, cli.megapixels)
+        }
+    };
+    // is the first reference going to be padded with black bars on the canvas?
+    let padded_first = cli.native
+        && matches!(cli.fit, FitArg::Pad)
+        && match cli.ref_image.first() {
+            Some(p) => {
+                let (ow, oh) = image_dims(&ff, p)?;
+                fit::pad_extent(ow, oh, width, height) != (width, height)
+            }
+            None => false,
+        };
+    let prompt = match (&cli.prompt, &cli.prompt_file) {
+        _ if cli.animate.is_some() => {
+            let extra = match (&cli.prompt, &cli.prompt_file) {
+                (Some(p), _) => Some(p.clone()),
+                (None, Some(f)) => Some(std::fs::read_to_string(f)?),
+                _ => None,
+            };
+            let shake = match cli.shake {
+                ShakeArg::None => Shake::None,
+                ShakeArg::Subtle => Shake::Subtle,
+                ShakeArg::Handheld => Shake::Handheld,
+            };
+            presets::animate_prompt(cli.describe.as_deref(), shake, extra.as_deref(), padded_first)
+        }
+        (Some(p), _) => p.clone(),
+        (None, Some(f)) => std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?,
+        (None, None) => bail!("give a prompt with --prompt or --prompt-file"),
     };
     let seed = cli.seed.unwrap_or_else(|| {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
@@ -218,6 +304,15 @@ fn run() -> Result<()> {
         ref_image_size: match cli.ref_image_size {
             RefSize::Match => RefImageSize::Match,
             RefSize::Max => RefImageSize::Max,
+        },
+        fit_first: if cli.native {
+            Some(match cli.fit {
+                FitArg::Pad => Fit::Pad,
+                FitArg::Crop => Fit::Crop,
+                FitArg::Stretch => Fit::Stretch,
+            })
+        } else {
+            None
         },
         video_audio: !cli.no_video_audio,
         no_audio: cli.no_audio,

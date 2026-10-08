@@ -4,6 +4,7 @@
 //! Phases keep GPU memory bounded on a 24 GB card: text encoder (evicted) -> VAE encode (evicted) -> DiT (evicted) -> VAE decode.
 use crate::cuda::Device;
 use crate::dit_h3::{Dit, DitInputs, RefBlock, RefKind};
+use crate::fit::{fit_to_canvas, Fit};
 use crate::image::Rgb8;
 use crate::media::{self, Ffmpeg, VideoWriter, AUDIO_SR, FPS};
 use crate::sampler;
@@ -58,6 +59,8 @@ pub struct Request {
     pub steps: usize,
     pub seed: u64,
     pub ref_image_size: RefImageSize,
+    /// fit the FIRST reference image to the output canvas (pad/crop/stretch) before it becomes <Picture 1>
+    pub fit_first: Option<Fit>,
     pub video_audio: bool,
     pub no_audio: bool,
     pub crf: u32,
@@ -180,7 +183,12 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
     // ---- 1. load / resize references (CPU) -----------------------------------------------------------------
     let mut images: Vec<Image> = Vec::new();
     for p in &req.ref_images {
-        let img = load_image(ff, p).with_context(|| format!("reference image {}", p.display()))?;
+        let mut img = load_image(ff, p).with_context(|| format!("reference image {}", p.display()))?;
+        if let (Some(f), true) = (req.fit_first, images.is_empty()) {
+            let (fitted, padded) = fit_to_canvas(&img, req.width, req.height, f);
+            eprintln!("first reference {}x{} fitted to the {}x{} canvas ({:?}{})", img.w, img.h, req.width, req.height, f, if padded { ", black bars to be filled by the model" } else { "" });
+            img = fitted;
+        }
         let (tw, th) = ref_image_dims(img.w, img.h, req.width, req.height, req.ref_image_size);
         let r = img.resize_lanczos(tw, th);
         images.push(Image { w: tw, h: th, rgb: r.data });
