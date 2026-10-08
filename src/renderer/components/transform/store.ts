@@ -1,43 +1,43 @@
-// Tiny external store for the Transform Studio: the palette (which unmounts its
-// contents when it hides) opens the studio through here, and a root-level host
+// Tiny external store for the Transform flow: the palette (which unmounts its
+// contents when it hides) opens the full options through here, and a root-level host
 // renders it. Also persists the last-used settings per intent.
 import { useSyncExternalStore } from 'react';
 import type { IntentId, TransformSettings, JobRequest } from './intents';
 
-export type StudioPhase = 'choose' | 'shape' | 'review';
+export type FlowPhase = 'choose' | 'shape' | 'review';
 
-export interface StudioRequest {
+export interface FlowRequest {
   /** The working set: right-clicked file plus any multi-selection, in order. */
   paths: string[];
   /** Playback position of a single video target, seconds (frame sampling). */
   videoTime?: number;
   intent?: IntentId;
-  phase?: StudioPhase;
+  phase?: FlowPhase;
 }
 
-let current: StudioRequest | null = null;
+let current: FlowRequest | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
   listeners.forEach((l) => l());
 }
 
-export function openTransformStudio(req: StudioRequest): void {
+export function openTransformFlow(req: FlowRequest): void {
   current = req;
   emit();
 }
 
-export function closeTransformStudio(): void {
+export function closeTransformFlow(): void {
   if (current === null) return;
   current = null;
   emit();
 }
 
-export function getStudioRequest(): StudioRequest | null {
+export function getFlowRequest(): FlowRequest | null {
   return current;
 }
 
-export function useStudioRequest(): StudioRequest | null {
+export function useFlowRequest(): FlowRequest | null {
   return useSyncExternalStore(
     (cb) => {
       listeners.add(cb);

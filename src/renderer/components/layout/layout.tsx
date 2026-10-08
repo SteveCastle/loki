@@ -19,7 +19,7 @@ import Taxonomy from '../taxonomy/taxonomy';
 import Metadata from '../metadata/metadata';
 import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
-import TransformStudio from '../transform/transform-studio';
+import TransformFlow from '../transform/transform-flow';
 import RegionSelect from '../controls/region-select';
 
 // Persisted panel layout, read through an in-memory cache.
@@ -261,7 +261,7 @@ const Layout = () => {
     <>
       <CommandPalette />
       <ContextPalette />
-      <TransformStudio />
+      <TransformFlow />
       <RegionSelect />
       {/* defaultSize props below only apply on first run (or after clearing
           stored layouts) — once the user resizes anything, useDefaultLayout

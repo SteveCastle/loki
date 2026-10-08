@@ -7,8 +7,8 @@ if (typeof (AbortSignal as any).timeout !== 'function') {
 }
 
 import TransformSection from '../renderer/components/transform/transform-section';
-import { TransformStudioView } from '../renderer/components/transform/studio-view';
-import { getStudioRequest, closeTransformStudio } from '../renderer/components/transform/store';
+import { TransformFlowView } from '../renderer/components/transform/flow-view';
+import { getFlowRequest, closeTransformFlow } from '../renderer/components/transform/store';
 import { settingsFor } from '../renderer/components/transform/intents';
 
 const IMG = 'C:/media/photo.jpg';
@@ -19,7 +19,7 @@ describe('TransformSection (palette chips)', () => {
   let fetchMock: jest.Mock;
   beforeEach(() => {
     window.localStorage.clear();
-    closeTransformStudio();
+    closeTransformFlow();
     fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'job-1' }) });
     (global as any).fetch = fetchMock;
   });
@@ -60,7 +60,7 @@ describe('TransformSection (palette chips)', () => {
     expect(init.headers.Authorization).toBe('Bearer tok');
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(notify).toHaveBeenCalledWith('success', 'Queued', expect.any(String));
-    expect(getStudioRequest()).toBeNull();
+    expect(getFlowRequest()).toBeNull();
   });
 
   it('remembers the last upscale factor in the chip label', () => {
@@ -69,21 +69,21 @@ describe('TransformSection (palette chips)', () => {
     expect(screen.getByRole('button', { name: /Upscale 4×/ })).toBeTruthy();
   });
 
-  it('shift-click opens the studio at the shape phase instead of running', () => {
+  it('shift-click opens the full options at the shape phase instead of running', () => {
     const { onDone } = setup([IMG]);
     fireEvent.click(screen.getByRole('button', { name: /Restore/ }), { shiftKey: true });
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(getStudioRequest()).toMatchObject({ paths: [IMG], intent: 'restore', phase: 'shape' });
+    expect(getFlowRequest()).toMatchObject({ paths: [IMG], intent: 'restore', phase: 'shape' });
     expect(onDone).toHaveBeenCalled();
   });
 
-  it('prompt-driven chips open the studio, and "Studio" opens the chooser', () => {
+  it('prompt-driven chips open the flow, and "Customize" opens the chooser', () => {
     setup([IMG]);
     fireEvent.click(screen.getByRole('button', { name: /Edit…/ }));
-    expect(getStudioRequest()).toMatchObject({ intent: 'edit', phase: 'shape' });
-    closeTransformStudio();
-    fireEvent.click(screen.getByRole('button', { name: /Studio/ }));
-    expect(getStudioRequest()).toMatchObject({ phase: 'choose' });
+    expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape' });
+    closeTransformFlow();
+    fireEvent.click(screen.getByRole('button', { name: /Customize/ }));
+    expect(getFlowRequest()).toMatchObject({ phase: 'choose' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -102,8 +102,8 @@ describe('TransformSection (palette chips)', () => {
   });
 });
 
-describe('TransformStudioView', () => {
-  const baseProps = (over: Partial<React.ComponentProps<typeof TransformStudioView>> = {}) => ({
+describe('TransformFlowView', () => {
+  const baseProps = (over: Partial<React.ComponentProps<typeof TransformFlowView>> = {}) => ({
     paths: [IMG],
     intent: null as any,
     phase: 'choose' as const,
@@ -124,7 +124,7 @@ describe('TransformStudioView', () => {
 
   it('choose: unavailable intents are disabled with a reason; picking one reports it', () => {
     const props = baseProps();
-    render(<TransformStudioView {...props} />);
+    render(<TransformFlowView {...props} />);
     const combine = screen.getByText('Combine').closest('button') as HTMLButtonElement;
     expect(combine.disabled).toBe(true);
     expect(screen.getByText('Select 2 or more images')).toBeTruthy();
@@ -134,12 +134,12 @@ describe('TransformStudioView', () => {
 
   it('shape (edit): needs text before it can continue, then reviews', () => {
     const empty = baseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: '' } });
-    const { rerender } = render(<TransformStudioView {...empty} />);
+    const { rerender } = render(<TransformFlowView {...empty} />);
     const review = screen.getByText(/Review →/).closest('button') as HTMLButtonElement;
     expect(review.disabled).toBe(true);
     expect(screen.getByText('Describe what should change')).toBeTruthy();
     const filled = baseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: 'make it night' }, onPhase: empty.onPhase });
-    rerender(<TransformStudioView {...filled} />);
+    rerender(<TransformFlowView {...filled} />);
     const ok = screen.getByText(/Review →/).closest('button') as HTMLButtonElement;
     expect(ok.disabled).toBe(false);
     fireEvent.click(ok);
@@ -148,14 +148,14 @@ describe('TransformStudioView', () => {
 
   it('shape (edit): idea chips write into the prompt', () => {
     const props = baseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: '' } });
-    render(<TransformStudioView {...props} />);
+    render(<TransformFlowView {...props} />);
     fireEvent.click(screen.getByText('+ Night'));
     expect(props.onSettings).toHaveBeenCalledWith({ prompt: expect.stringMatching(/night/i) });
   });
 
   it('shape (upscale): scale options map to settings and show the resulting size', () => {
     const props = baseProps({ intent: 'upscale', phase: 'shape', settings: settingsFor('upscale', { scale: 2 }) });
-    render(<TransformStudioView {...props} />);
+    render(<TransformFlowView {...props} />);
     expect(screen.getAllByText('2000×1000').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('radio', { name: /^4×/ }));
     expect(props.onSettings).toHaveBeenCalledWith({ sizeMode: 'scale', scale: 4 });
@@ -165,9 +165,9 @@ describe('TransformStudioView', () => {
 
   it('shape (alive): duration under the trained range warns, 5 s does not', () => {
     const ok = baseProps({ intent: 'alive', phase: 'shape', settings: { ...settingsFor('alive'), describe: 'x', duration: 5 } });
-    const { rerender } = render(<TransformStudioView {...ok} />);
+    const { rerender } = render(<TransformFlowView {...ok} />);
     expect(screen.queryByText(/Shorter than the model was trained on/)).toBeNull();
-    rerender(<TransformStudioView {...baseProps({ intent: 'alive', phase: 'shape', settings: { ...settingsFor('alive'), describe: 'x', duration: 2 } })} />);
+    rerender(<TransformFlowView {...baseProps({ intent: 'alive', phase: 'shape', settings: { ...settingsFor('alive'), describe: 'x', duration: 2 } })} />);
     expect(screen.getByText(/Shorter than the model was trained on/)).toBeTruthy();
   });
 
@@ -179,7 +179,7 @@ describe('TransformStudioView', () => {
       queueAhead: 2,
       settings: settingsFor('upscale', { scale: 2 }),
     });
-    render(<TransformStudioView {...props} />);
+    render(<TransformFlowView {...props} />);
     expect(screen.getByText(/2 GPU jobs already queued ahead/)).toBeTruthy();
     expect(screen.getByText(/Built-in “upscale” prompt/)).toBeTruthy();
     expect(screen.getByText(/photo_up\.png/)).toBeTruthy();
@@ -189,7 +189,7 @@ describe('TransformStudioView', () => {
 
   it('done: offers to run again or close', () => {
     const props = baseProps({ intent: 'restore', phase: 'review', status: 'done', queuedCount: 3 });
-    render(<TransformStudioView {...props} />);
+    render(<TransformFlowView {...props} />);
     expect(screen.getByText('3 jobs queued')).toBeTruthy();
     fireEvent.click(screen.getByText('Tweak and run again'));
     expect(props.onAgain).toHaveBeenCalled();
@@ -199,7 +199,7 @@ describe('TransformStudioView', () => {
 
   it('stepper only lets you jump to phases that are ready', () => {
     const props = baseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: '' } });
-    render(<TransformStudioView {...props} />);
+    render(<TransformFlowView {...props} />);
     const review = screen.getByText('Review', { selector: '.ts-step-label' }).closest('button') as HTMLButtonElement;
     expect(review.disabled).toBe(true); // no prompt yet
     const choose = screen.getByText('Choose', { selector: '.ts-step-label' }).closest('button') as HTMLButtonElement;

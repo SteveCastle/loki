@@ -18,9 +18,9 @@ import {
   type Shake,
   type TransformSettings,
 } from './intents';
-import type { StudioPhase } from './store';
+import type { FlowPhase } from './store';
 import { GlyphCheck, GlyphDie, GlyphMusic, IntentIcon } from './icons';
-import './transform-studio.css';
+import './transform-flow.css';
 
 // ---------------------------------------------------------------------------
 // Small controls
@@ -171,10 +171,10 @@ export function roleLabels(intent: IntentId | null, paths: string[]): Record<str
 // The view
 // ---------------------------------------------------------------------------
 
-export interface StudioViewProps {
+export interface FlowViewProps {
   paths: string[];
   intent: IntentId | null;
-  phase: StudioPhase;
+  phase: FlowPhase;
   settings: TransformSettings;
   source: { width: number; height: number } | null;
   videoTime?: number;
@@ -185,14 +185,14 @@ export interface StudioViewProps {
   thumbUrl: (p: string) => string;
   onSettings: (patch: Partial<TransformSettings>) => void;
   onIntent: (id: IntentId) => void;
-  onPhase: (p: StudioPhase) => void;
+  onPhase: (p: FlowPhase) => void;
   onRun: () => void;
   onClose: () => void;
   onRemovePath: (p: string) => void;
   onAgain: () => void;
 }
 
-const PHASES: Array<{ id: StudioPhase; label: string }> = [
+const PHASES: Array<{ id: FlowPhase; label: string }> = [
   { id: 'choose', label: 'Choose' },
   { id: 'shape', label: 'Shape' },
   { id: 'review', label: 'Review' },
@@ -207,7 +207,7 @@ function summarizeInputs(paths: string[]): string {
   return parts.join(' · ') || 'nothing selected';
 }
 
-export function TransformStudioView(props: StudioViewProps) {
+export function TransformFlowView(props: FlowViewProps) {
   const { paths, intent, phase, status } = props;
   const inputs = useMemo(() => classify(paths), [paths]);
   const def = intent ? intentById(intent) : null;
@@ -272,7 +272,7 @@ export function TransformStudioView(props: StudioViewProps) {
 
 // ---- Phase 1: choose -------------------------------------------------------
 
-function ChooseView(props: StudioViewProps & { inputs: ReturnType<typeof classify> }) {
+function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify> }) {
   const { inputs, intent } = props;
   const groups: Array<{ id: 'image' | 'video'; title: string; sub: string }> = [
     { id: 'image', title: 'Images', sub: 'loki-retouch · Qwen Image 2.1' },
@@ -331,7 +331,7 @@ const QUALITY_OPTIONS = (engine: 'retouch' | 'reshoot'): Array<SegOption<Quality
   { value: 'fine', label: 'Fine', sub: 'slow' },
 ];
 
-function ShapeView(props: StudioViewProps & { def: ReturnType<typeof intentById> }) {
+function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
   const { def, settings: s, onSettings, source, paths } = props;
   const inputs = classify(paths);
   const [more, setMore] = useState(false);
@@ -616,7 +616,7 @@ function ShapeView(props: StudioViewProps & { def: ReturnType<typeof intentById>
   );
 }
 
-function ShapeFooter(props: StudioViewProps) {
+function ShapeFooter(props: FlowViewProps) {
   const err = props.intent ? validateForRun(props.intent, props.settings, props.paths) : 'Pick something to do';
   return (
     <div className="ts-footer">
@@ -633,7 +633,7 @@ function ShapeFooter(props: StudioViewProps) {
 
 // ---- Phase 3: review -------------------------------------------------------
 
-function ReviewView(props: StudioViewProps & { def: ReturnType<typeof intentById> }) {
+function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
   const { def, settings: s, paths, source, status } = props;
   const plan = planFor(def.id, s, paths, source);
   const eta = estimateSeconds(plan);
@@ -709,7 +709,7 @@ function ReviewView(props: StudioViewProps & { def: ReturnType<typeof intentById
   );
 }
 
-function DoneView(props: StudioViewProps) {
+function DoneView(props: FlowViewProps) {
   const n = props.queuedCount || 1;
   return (
     <div className="ts-done">

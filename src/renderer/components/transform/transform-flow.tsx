@@ -13,14 +13,14 @@ import {
   type TransformSettings,
 } from './intents';
 import {
-  closeTransformStudio,
+  closeTransformFlow,
   loadRemembered,
   saveRemembered,
   submitJobs,
-  useStudioRequest,
-  type StudioPhase,
+  useFlowRequest,
+  type FlowPhase,
 } from './store';
-import { TransformStudioView, validateForRun } from './studio-view';
+import { TransformFlowView, validateForRun } from './flow-view';
 
 // ---------------------------------------------------------------------------
 // Host (container): owns phase/intent/settings state, talks to the server
@@ -57,18 +57,18 @@ function useSourceSize(path: string | undefined, thumbUrl: (p: string) => string
   return size;
 }
 
-export default function TransformStudio() {
-  const req = useStudioRequest();
+export default function TransformFlow() {
+  const req = useFlowRequest();
   if (!req) return null;
-  return <StudioSession key={req.paths.join('|') + (req.intent || '')} req={req} />;
+  return <FlowSession key={req.paths.join('|') + (req.intent || '')} req={req} />;
 }
 
-function StudioSession({ req }: { req: NonNullable<ReturnType<typeof useStudioRequest>> }) {
+function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowRequest>> }) {
   const { libraryService } = useContext(GlobalStateContext);
   const authToken = useSelector(libraryService, (state) => state.context.authToken);
   const [paths, setPaths] = useState<string[]>(req.paths);
   const [intent, setIntent] = useState<IntentId | null>(req.intent || null);
-  const [phase, setPhase] = useState<StudioPhase>(req.phase || (req.intent ? 'shape' : 'choose'));
+  const [phase, setPhase] = useState<FlowPhase>(req.phase || (req.intent ? 'shape' : 'choose'));
   const [settings, setSettings] = useState<TransformSettings>(() => settingsFor(req.intent || 'restore', req.intent ? loadRemembered(req.intent) : null));
   const [status, setStatus] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle');
   const [error, setError] = useState<string | undefined>();
@@ -144,7 +144,7 @@ function StudioSession({ req }: { req: NonNullable<ReturnType<typeof useStudioRe
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        closeTransformStudio();
+        closeTransformFlow();
       } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && phase === 'review' && status !== 'submitting' && status !== 'done') {
         e.preventDefault();
         e.stopPropagation();
@@ -156,7 +156,7 @@ function StudioSession({ req }: { req: NonNullable<ReturnType<typeof useStudioRe
   }, [phase, status, run]);
 
   const view = (
-    <TransformStudioView
+    <TransformFlowView
       paths={paths}
       intent={intent}
       phase={phase}
@@ -175,7 +175,7 @@ function StudioSession({ req }: { req: NonNullable<ReturnType<typeof useStudioRe
         setPhase(p);
       }}
       onRun={run}
-      onClose={closeTransformStudio}
+      onClose={closeTransformFlow}
       onRemovePath={(p) => setPaths((prev) => (prev.length > 1 ? prev.filter((x) => x !== p) : prev))}
       onAgain={() => {
         setStatus('idle');

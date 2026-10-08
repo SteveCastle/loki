@@ -8,7 +8,7 @@ import (
 	"github.com/stevecastle/shrike/jobqueue"
 )
 
-// The Transform Studio (src/renderer/components/transform) submits jobs as
+// The Transform flow (src/renderer/components/transform) submits jobs as
 // POST /create {input, fields}; the server turns every non-empty field into
 // "--key value" arguments (createjob_args.go: appendFieldArgs). These tests
 // feed the task option parsing the exact field maps the UI produces (see

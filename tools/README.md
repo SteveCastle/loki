@@ -1,7 +1,7 @@
 # tools/ — standalone AI CLIs
 
 Small, composable command-line tools that run AI models locally on an NVIDIA GPU, written from scratch in CUDA and Rust
-(no Python, no PyTorch). The Lowkey Media Server's `retouch` and `reshoot` tasks, and the Transform Studio in the
+(no Python, no PyTorch). The Lowkey Media Server's `retouch` and `reshoot` tasks, and the Transform flow in the
 app, drive them; they are just as usable from a shell or an agent.
 
 | tool | does | model | dir |
