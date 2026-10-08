@@ -77,9 +77,19 @@ func HandleModelVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := struct {
-		ID    string            `json:"id"`
-		Files map[string]string `json:"files"`
+		ID       string            `json:"id"`
+		Source   string            `json:"source,omitempty"`
+		Location string            `json:"location,omitempty"`
+		Note     string            `json:"note,omitempty"`
+		Files    map[string]string `json:"files"`
 	}{ID: id, Files: map[string]string{}}
+	if loc, user := status.UserProvided(m); user {
+		verifyUserProvided(&result.Files, m, loc)
+		result.Source, result.Location = status.SourceUser, loc
+		result.Note = "This is your own copy, so it is not managed by the server. Only its presence and size are checked; checksums apply to managed downloads."
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	for _, f := range m.EffectiveFiles() {
 		path := filepath.Join(models.ModelDir(id), f.RelPath)
 		if f.Archive != "" {
@@ -103,6 +113,32 @@ func HandleModelVerify(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+// verifyUserProvided checks a user-supplied copy in place: files must exist and,
+// where the manifest knows the size, match it (a different size usually means
+// a different quantization, which may still be what the user wants).
+func verifyUserProvided(files *map[string]string, m models.Model, loc string) {
+	out := *files
+	if m.EffectiveCategory() == "tool" {
+		if _, err := os.Stat(loc); err != nil {
+			out[filepath.Base(loc)] = "missing"
+		} else {
+			out[filepath.Base(loc)] = "ok (on PATH)"
+		}
+		return
+	}
+	for _, f := range m.EffectiveFiles() {
+		fi, err := os.Stat(filepath.Join(loc, f.RelPath))
+		switch {
+		case err != nil:
+			out[f.RelPath] = "missing"
+		case f.SizeBytes > 0 && fi.Size() != f.SizeBytes:
+			out[f.RelPath] = fmt.Sprintf("present, but %d bytes (this release is %d); fine if you chose a different variant", fi.Size(), f.SizeBytes)
+		default:
+			out[f.RelPath] = "ok"
+		}
+	}
 }
 
 // HandleModelProgressSSE serves GET /api/deps/models/progress.

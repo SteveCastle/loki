@@ -51,7 +51,7 @@ func TestSnapshot_EngineOnPathCountsAsInstalled(t *testing.T) {
 	for _, s := range Snapshot() {
 		byID[s.ID] = s
 	}
-	if got := byID["loki-retouch"]; got.State != string(models.StatusInstalled) || got.Path == "" {
+	if got := byID["loki-retouch"]; got.State != string(models.StatusInstalled) || got.Path == "" || got.Source != SourceUser {
 		t.Errorf("loki-retouch on PATH: %+v", got)
 	}
 	if got := byID["loki-reshoot"]; got.State == string(models.StatusInstalled) {

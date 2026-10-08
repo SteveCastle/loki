@@ -26,6 +26,41 @@ type Item struct {
 	Path        string `json:"path,omitempty"`
 	Error       string `json:"error,omitempty"`
 	Detail      any    `json:"detail,omitempty"`
+	// Source is "user" when the item is the user's own copy (see UserProvided)
+	// rather than something this server downloaded; empty means managed.
+	Source string `json:"source,omitempty"`
+}
+
+// SourceUser marks an item the user supplied themselves.
+const SourceUser = "user"
+
+// UserProvided reports whether m is satisfied by the user's own copy instead
+// of a managed download, and where it lives (the file for a tool, the folder
+// holding the files for a model).
+func UserProvided(m models.Model) (string, bool) {
+	// A user-configured faster-whisper binary satisfies the transcription tool.
+	if m.ID == "faster-whisper" {
+		if p := strings.TrimSpace(appconfig.Get().FasterWhisperPath); p != "" {
+			if _, err := os.Stat(p); err == nil {
+				return p, true
+			}
+		}
+		return "", false
+	}
+	// A loki-* engine on PATH (a developer build, or installed by hand).
+	if m.EffectiveCategory() == "tool" && strings.HasPrefix(m.ID, "loki-") {
+		if p, err := exec.LookPath(m.ID); err == nil {
+			return p, true
+		}
+		return "", false
+	}
+	// Weights an engine on PATH already has where it looks for them.
+	if m.EffectiveCategory() == "model" {
+		if dir := engineModelsDir(m); dir != "" {
+			return dir, true
+		}
+	}
+	return "", false
 }
 
 func Snapshot() []Item {
@@ -73,33 +108,14 @@ func Snapshot() []Item {
 			out = append(out, item)
 			continue
 		}
-		// A user-configured faster-whisper binary satisfies the transcription
-		// tool without the assisted download.
-		if m.ID == "faster-whisper" && item.State == string(models.StatusMissing) {
-			if p := strings.TrimSpace(appconfig.Get().FasterWhisperPath); p != "" {
-				if _, err := os.Stat(p); err == nil {
-					item.State = string(models.StatusInstalled)
-					item.Path = p
-					item.Detail = map[string]string{"source": "configured_path"}
-				}
-			}
-		}
-		// Model weights that a PATH-installed engine already has where it looks
-		// for them (beside the executable, its models/ folder, $LOKI_MODELS).
-		if m.EffectiveCategory() == "model" && item.State == string(models.StatusMissing) {
-			if dir := engineModelsDir(m); dir != "" {
+		// Ejected from management: the user supplied their own copy (a PATH
+		// binary, weights beside it, or a configured Whisper path). It is used
+		// as-is and never downloaded, replaced or deleted by the server.
+		if item.State == string(models.StatusMissing) {
+			if loc, ok := UserProvided(m); ok {
 				item.State = string(models.StatusInstalled)
-				item.Path = dir
-				item.Detail = map[string]string{"source": "path"}
-			}
-		}
-		// A loki-* engine already on PATH (a developer build, or installed by
-		// hand) is used as-is by the tasks and never downloaded, so the UI must
-		// not ask to download it or its models.
-		if m.EffectiveCategory() == "tool" && strings.HasPrefix(m.ID, "loki-") && item.State == string(models.StatusMissing) {
-			if p, err := exec.LookPath(m.ID); err == nil {
-				item.State = string(models.StatusInstalled)
-				item.Path = p
+				item.Path = loc
+				item.Source = SourceUser
 				item.Detail = map[string]string{"source": "path"}
 			}
 		}

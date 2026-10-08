@@ -2416,8 +2416,13 @@
         const total = Number(inst.bytes_total || it.size_bytes || 0);
         const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
         const isInFlight = ['downloading', 'extracting', 'queued', 'verifying'].includes(it.state);
+        // Ejected from management: the user's own copy (PATH binary, weights
+        // beside it, configured path). We only look at it, never change it.
+        const isUser = it.source === 'user';
         let actions = '';
-        if (it.state === 'installed') {
+        if (isUser) {
+          actions = `<button type="button" class="btn btn-secondary dep-verify">Check</button>`;
+        } else if (it.state === 'installed') {
           actions = `<button type="button" class="btn btn-secondary dep-verify">Verify</button>
                      <button type="button" class="btn btn-secondary dep-delete">Delete</button>`;
         } else if (isInFlight) {
@@ -2434,11 +2439,12 @@
         return `<div class="dep-card" data-cat="model" data-id="${escDep(it.id)}">
           <div class="dep-row">
             <strong>${title}</strong>
-            ${stateBadge(it.state)}
-            ${it.size_bytes ? `<span class="dep-version">${escDep(fmtBytes(it.size_bytes))}</span>` : ''}
+            ${isUser ? '<span class="status-badge status-info">Your own copy</span>' : stateBadge(it.state)}
+            ${it.size_bytes && !isUser ? `<span class="dep-version">${escDep(fmtBytes(it.size_bytes))}</span>` : ''}
             <div class="dep-actions">${actions}</div>
           </div>
           ${path}
+          ${isUser ? '<div class="dep-hint"><small>Using the copy you provided, so it is not downloaded, updated or deleted here. To let Loki manage it again, remove it from your PATH / models folder.</small></div>' : ''}
           ${isInFlight && total > 0 ? `
             <div class="dep-progress">
               <div class="dep-progress-bar"><div class="dep-progress-fill" style="width:${pct}%"></div></div>
@@ -2475,7 +2481,13 @@
           if (verify) verify.addEventListener('click', () => {
             apiPost(`/api/deps/models/${encodeURIComponent(id)}/verify`)
               .then((r) => r && r.json && r.json())
-              .then((r) => { if (r) alert(JSON.stringify(r.files || r, null, 2)); });
+              .then((r) => {
+                if (!r) return;
+                const lines = Object.entries(r.files || {}).map(([f, v]) => f + ': ' + v);
+                const head = r.source === 'user' ? 'Your own copy' + (r.location ? ' at ' + r.location : '') : 'Managed install';
+                alert([head, '', ...lines, ...(r.note ? ['', r.note] : [])].join('
+'));
+              });
           });
         });
       }

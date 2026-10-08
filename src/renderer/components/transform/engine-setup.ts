@@ -51,7 +51,7 @@ export function planEngineSetup(status: DepStatus[], kind: EngineKind): EngineNe
   const tool = status.find((d) => d.id === toolId);
   const model = status.find((d) => d.id === modelId);
   if (!tool || !model) return null;
-  if (isInstalled(tool) && tool.detail?.source === 'path') return null;
+  if (isInstalled(tool) && (tool.source === 'user' || tool.detail?.source === 'path')) return null;
   const items = [tool, model].filter((d) => !isInstalled(d));
   if (items.length === 0) return null;
   return {
