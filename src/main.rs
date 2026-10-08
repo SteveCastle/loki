@@ -24,6 +24,7 @@ enum ShakeArg {
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
 enum FitArg {
+    Auto,
     Pad,
     Crop,
     Stretch,
@@ -74,9 +75,13 @@ struct Cli {
     #[arg(long)]
     native: bool,
     /// With --native: how the first reference image is fitted to the canvas when its ratio is not exactly the supported one:
-    /// `pad` (default; black bars that the model fills in), `crop` (centre-crop) or `stretch`.
-    #[arg(long, value_enum, default_value_t = FitArg::Pad)]
+    /// `auto` (default: centre-crop when the ratios are within ~12%, else pad), `crop`, `pad` (black bars; the model tends to KEEP
+    /// them, so use it only for large mismatches you want to letterbox) or `stretch`.
+    #[arg(long, value_enum, default_value_t = FitArg::Auto)]
     fit: FitArg,
+    /// Print the final prompt (after --animate expansion) and exit without generating.
+    #[arg(long)]
+    show_prompt: bool,
     /// Print MiniMax's full reference-mode prompt-writing guide and exit.
     #[arg(long)]
     prompt_guide: bool,
@@ -258,9 +263,26 @@ fn run() -> Result<()> {
             size_for(ratio, cli.megapixels)
         }
     };
+    // resolve --fit auto against the first image: crop when the mismatch is small, else pad
+    let fit_resolved = match cli.fit {
+        FitArg::Pad => Fit::Pad,
+        FitArg::Crop => Fit::Crop,
+        FitArg::Stretch => Fit::Stretch,
+        FitArg::Auto => match cli.ref_image.first() {
+            Some(p) => {
+                let (ow, oh) = image_dims(&ff, p)?;
+                if ((ow as f64 / oh as f64) / (width as f64 / height as f64)).ln().abs() <= 0.12 {
+                    Fit::Crop
+                } else {
+                    Fit::Pad
+                }
+            }
+            None => Fit::Crop,
+        },
+    };
     // is the first reference going to be padded with black bars on the canvas?
     let padded_first = cli.native
-        && matches!(cli.fit, FitArg::Pad)
+        && fit_resolved == Fit::Pad
         && match cli.ref_image.first() {
             Some(p) => {
                 let (ow, oh) = image_dims(&ff, p)?;
@@ -286,6 +308,10 @@ fn run() -> Result<()> {
         (None, Some(f)) => std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?,
         (None, None) => bail!("give a prompt with --prompt or --prompt-file"),
     };
+    if cli.show_prompt {
+        println!("{prompt}");
+        return Ok(());
+    }
     let seed = cli.seed.unwrap_or_else(|| {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         (t as u64) & 0xFFFF_FFFF
@@ -305,15 +331,7 @@ fn run() -> Result<()> {
             RefSize::Match => RefImageSize::Match,
             RefSize::Max => RefImageSize::Max,
         },
-        fit_first: if cli.native {
-            Some(match cli.fit {
-                FitArg::Pad => Fit::Pad,
-                FitArg::Crop => Fit::Crop,
-                FitArg::Stretch => Fit::Stretch,
-            })
-        } else {
-            None
-        },
+        fit_first: if cli.native { Some(fit_resolved) } else { None },
         video_audio: !cli.no_video_audio,
         no_audio: cli.no_audio,
         crf: cli.crf,

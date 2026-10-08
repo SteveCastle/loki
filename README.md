@@ -47,7 +47,7 @@ h3ref2va --animate photo.jpg --describe "the woman in a black swimsuit taking a 
 `--animate IMAGE` gives natural ambient life, subtle resting movement and a subtle camera shake (`--shake none|subtle|handheld`) with
 ambient sound, keeping the photo's identity and framing. It implies `--native`: the model works best at five canvases (1:1 768×768,
 4:3 1024×768, 3:4 768×1024, 16:9 1344×768, 9:16 768×1344); the first image is snapped to the nearest ratio and fitted with
-`--fit pad|crop|stretch` (pad = black bars the model fills in, as in the ComfyUI `MiniMaxH3AutoRatio` node).
+`--fit auto|crop|pad|stretch` (default `auto`: centre-crop when the ratio is within ~12%, else pad; padded black bars are kept by the model, not filled). Without an audio reference the model generates near-silent ambience; add `-a` for audible sound.
 
 ## What the model can do (limits enforced by the CLI)
 

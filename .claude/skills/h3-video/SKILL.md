@@ -28,10 +28,14 @@ speech or music. It adds the image as `<Picture 1>`, uses `--native` (below) and
 subject and setting: it anchors identity and what may move). `--shake none|subtle|handheld`; `--prompt "..."` appends extra direction;
 `--ref-image-size max` for best identity. Also works with other flags (`-a music.mp3` to add audio refs, `--seed`, `--steps`).
 
+Audio caveat: with no audio reference the model renders ambient-only prompts almost silent (about -60 dB; ComfyUI does the same).
+If you want audible ambience, pass a reference audio with `-a` (a room-tone/nature recording or music slice). `--show-prompt` prints the
+composed prompt and exits.
+
 ## Native canvas / supported ratios (`--native`, implied by `--animate`)
 The model is built around five canvases: 1:1 768x768, 4:3 1024x768, 3:4 768x1024, 16:9 1344x768, 9:16 768x1344. `--native` snaps the first
-reference's aspect to the nearest one and fits the first image to it with `--fit pad` (default: black bars that the prompt tells the model to
-fill in; best when the photo is close to a supported ratio), `crop` (centre-crop) or `stretch`. Use `--size WxH` to override.
+reference's aspect to the nearest one and fits the first image to it with `--fit auto` (default: centre-crop when within ~12% of the
+supported ratio, else pad), `crop`, `pad` (black bars; the model keeps them in the video rather than filling them) or `stretch`. Use `--size WxH` to override.
 
 ## 1. Gather inputs
 - Reference images: `-i FILE` (repeat). Tags `<Picture 1>`, `<Picture 2>`... in the order given.
