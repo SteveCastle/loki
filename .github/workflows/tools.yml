@@ -1,0 +1,53 @@
+name: AI CLI tools
+
+# Fast feedback for the standalone CUDA CLIs under tools/. The same build also runs inside release.yml
+# (job "Build AI tools"), where it can never block a release; this workflow is where a broken tool build
+# shows up as a red check on the PR.
+on:
+  push:
+    branches-ignore:
+      - master # master is covered by release.yml
+    paths:
+      - 'tools/**'
+      - '.github/actions/build-ai-tool/**'
+      - '.github/workflows/tools.yml'
+  pull_request:
+    paths:
+      - 'tools/**'
+      - '.github/actions/build-ai-tool/**'
+      - '.github/workflows/tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.tool }} (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tool: loki-retouch, os: windows-latest, target: windows-amd64 }
+          - { tool: loki-retouch, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-reshoot, os: windows-latest, target: windows-amd64 }
+          - { tool: loki-reshoot, os: ubuntu-latest, target: linux-amd64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build, test, package
+        id: tool
+        uses: ./.github/actions/build-ai-tool
+        with:
+          tool: ${{ matrix.tool }}
+          target: ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.tool }}-${{ matrix.target }}
+          path: tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 7

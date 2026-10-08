@@ -15,6 +15,8 @@ on:
       - '.erb/**' # webpack / build configuration
       - 'scripts/**' # build helpers (build-server.js, etc.)
       - 'media-server/**' # Go media server
+      - 'tools/**' # standalone CUDA CLIs (loki-retouch, loki-reshoot)
+      - '.github/actions/**' # composite actions the jobs below use
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
@@ -528,6 +530,41 @@ jobs:
             release/lowkey-media-server-${{ matrix.target }}.*
             release/lowkey-media-server-setup-windows-amd64.exe
 
+  # Standalone CUDA CLIs under tools/. Builds need only nvcc (no GPU on the runner), so they run on stock
+  # hosted runners; the GPU-free tests run here, GPU tests are run by hand (tools/README.md). Job-level
+  # continue-on-error: a toolchain-install hiccup must not block the Electron/server release; the tools
+  # simply won't be attached to that release. Drop it once these jobs have proven stable.
+  build-tools:
+    name: Build AI tools (${{ matrix.tool }}, ${{ matrix.target }})
+    needs: version-and-tag
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tool: loki-retouch, os: windows-latest, target: windows-amd64 }
+          - { tool: loki-retouch, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-reshoot, os: windows-latest, target: windows-amd64 }
+          - { tool: loki-reshoot, os: ubuntu-latest, target: linux-amd64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build, test, package
+        id: tool
+        uses: ./.github/actions/build-ai-tool
+        with:
+          tool: ${{ matrix.tool }}
+          target: ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.tool }}-${{ matrix.target }}
+          path: tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
+          if-no-files-found: error
+
   # Container image — the easiest install path for Linux/NAS users. Publishes
   # to GHCR with both a version tag and :latest.
   publish-docker:
@@ -597,11 +634,12 @@ jobs:
           echo "# What's Changed in $CURRENT_TAG" > changelog.md
           echo "" >> changelog.md
 
-          # Get commit messages - use HEAD if PREV_TAG is a commit hash
+          # Get commit messages - use HEAD if PREV_TAG is a commit hash. --first-parent follows the mainline only,
+          # so a subtree import (tools/) shows up as one line instead of its whole history.
           if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
-            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.md
+            git log --first-parent --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.md
           else
-            git log --pretty=format:"- %s (%h)" >> changelog.md
+            git log --first-parent --pretty=format:"- %s (%h)" >> changelog.md
           fi
 
           # Get contributors — strip spaces from author names so @-mentions
@@ -610,9 +648,9 @@ jobs:
           echo "" >> changelog.md
           echo "## Contributors" >> changelog.md
           if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
-            git log $PREV_TAG..HEAD --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
+            git log --first-parent $PREV_TAG..HEAD --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
           else
-            git log --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
+            git log --first-parent --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
           fi
 
           # Output for next step
@@ -636,6 +674,7 @@ jobs:
         build-electron-macos,
         build-electron-linux,
         build-media-server,
+        build-tools,
         generate-changelog,
       ]
     runs-on: ubuntu-latest
@@ -651,7 +690,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: '{electron-*,server-*,changelog}'
+          pattern: '{electron-*,server-*,tools-*,changelog}'
 
       - name: Display structure of downloaded files
         run: ls -R artifacts

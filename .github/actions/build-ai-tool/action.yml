@@ -1,0 +1,126 @@
+name: Build AI CLI tool
+description: >
+  Build, test and package one of the standalone CUDA CLIs under tools/ (loki-retouch, loki-reshoot) for the
+  runner's OS. Only nvcc and the CUDA headers are installed (kernels are compiled to fatbins at build time;
+  the driver is loaded at run time), so no GPU is needed: the tests that run here are the GPU-free ones, and
+  the GPU tests are run by hand (see tools/README.md).
+
+inputs:
+  tool:
+    description: Directory name under tools/ (loki-retouch or loki-reshoot)
+    required: true
+  target:
+    description: Artifact suffix, e.g. windows-amd64 or linux-amd64
+    required: true
+  cuda:
+    description: CUDA toolkit version to install (must match the cudarc feature in Cargo.toml)
+    default: '12.6.3'
+
+outputs:
+  archive:
+    description: File name of the produced archive (inside tools/<tool>/dist)
+    value: ${{ steps.package.outputs.archive }}
+
+runs:
+  using: composite
+  steps:
+    # Compiling the kernels needs nvcc plus the CUDA headers (cuda_fp16.h / cuda_bf16.h / cuda_fp8.h, which in turn
+    # include <nv/target> from CCCL). No CUDA libraries are linked: cudarc loads the driver dynamically and the
+    # fatbins are embedded in the executable.
+    #
+    # Linux: just those three packages (verified: nvcc + cudart-dev + cccl is enough to build both tools).
+    - name: "Install CUDA toolkit (Linux: nvcc + headers)"
+      if: runner.os == 'Linux'
+      uses: Jimver/cuda-toolkit@v0.2.36
+      with:
+        cuda: ${{ inputs.cuda }}
+        method: network
+        sub-packages: '["nvcc", "cudart-dev", "cccl"]'
+        log-file-suffix: ${{ inputs.tool }}-${{ inputs.target }}.txt
+
+    # Windows: the full toolkit. The installer's component names for the CCCL headers differ between CUDA
+    # releases and were not verifiable off-runner; once a run has shown which components are needed, a
+    # `sub-packages` list here will cut several minutes.
+    - name: Install CUDA toolkit (Windows)
+      if: runner.os == 'Windows'
+      uses: Jimver/cuda-toolkit@v0.2.36
+      with:
+        cuda: ${{ inputs.cuda }}
+        log-file-suffix: ${{ inputs.tool }}-${{ inputs.target }}.txt
+
+    - name: Show nvcc
+      shell: bash
+      run: nvcc --version
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: tools/${{ inputs.tool }}
+        key: ${{ inputs.target }}-cuda${{ inputs.cuda }}
+
+    # loki-reshoot's media tests round-trip through ffmpeg.
+    - name: Install ffmpeg (for the media tests)
+      if: inputs.tool == 'loki-reshoot'
+      shell: bash
+      run: |
+        if command -v ffmpeg >/dev/null; then exit 0; fi
+        if [ "$RUNNER_OS" = "Windows" ]; then choco install ffmpeg -y --no-progress; else sudo apt-get update && sudo apt-get install -y ffmpeg; fi
+
+    - name: Build
+      shell: bash
+      working-directory: tools/${{ inputs.tool }}
+      run: cargo build --release --locked --bin ${{ inputs.tool }}
+
+    # GPU-free tests only: CPU unit tests, the tokenizer against HuggingFace fixtures, the CPU references of the
+    # audio VAE / text encoder, and the ffmpeg media layer. (tests/kernels.rs, sampler.rs, vvae_frames.rs and the
+    # *_check binaries need a GPU and the models.)
+    - name: Test (GPU-free)
+      shell: bash
+      working-directory: tools/${{ inputs.tool }}
+      run: |
+        if [ "${{ inputs.tool }}" = "loki-reshoot" ]; then
+          cargo test --release --locked --lib --test tokenizer --test te_cpu --test avae_cpu --test media
+        else
+          cargo test --release --locked --lib --test tokenizer
+        fi
+
+    # The executable must start and print its help on a machine with no NVIDIA driver at all.
+    - name: Smoke test (no GPU needed)
+      shell: bash
+      working-directory: tools/${{ inputs.tool }}
+      run: |
+        EXE=target/release/${{ inputs.tool }}
+        [ "$RUNNER_OS" = "Windows" ] && EXE="$EXE.exe"
+        "$EXE" --version
+        "$EXE" --help > /dev/null
+        if [ "${{ inputs.tool }}" = "loki-retouch" ]; then "$EXE" --list-presets; "$EXE" --preset 4kify --show-prompt | head -c 200; echo; fi
+        if [ "${{ inputs.tool }}" = "loki-reshoot" ]; then "$EXE" --prompt-guide | head -c 200; echo; fi
+
+    - name: Package
+      id: package
+      shell: bash
+      working-directory: tools/${{ inputs.tool }}
+      run: |
+        set -euo pipefail
+        NAME="${{ inputs.tool }}-${{ inputs.target }}"
+        STAGE="dist/$NAME"
+        rm -rf dist && mkdir -p "$STAGE"
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          cp "target/release/${{ inputs.tool }}.exe" "$STAGE/"
+        else
+          cp "target/release/${{ inputs.tool }}" "$STAGE/"
+        fi
+        cp README.md "$STAGE/README.md"
+        cp ../CONVENTIONS.md "$STAGE/CONVENTIONS.md"
+        cd dist
+        if [ "$RUNNER_OS" = "Windows" ]; then
+          7z a "$NAME.zip" "$NAME" > /dev/null
+          echo "archive=$NAME.zip" >> "$GITHUB_OUTPUT"
+        else
+          tar -czf "$NAME.tar.gz" "$NAME"
+          echo "archive=$NAME.tar.gz" >> "$GITHUB_OUTPUT"
+        fi
+        ls -lh
