@@ -1,0 +1,42 @@
+PROMPT WRITING (condensed from MiniMax's "Full-Reference Mode" guide; `h3ref2va --prompt-guide` prints the full guide)
+
+  The model is very sensitive to prompt wording. Write the prompt in English (keep dialogue/lyrics and on-screen text in
+  their own language) as a detailed, explicit, shot-by-shot description. Never write a bare plot summary or a list of references.
+
+  1. REFERENCE TAGS. The CLI numbers references per type in command-line order: <Picture i> (--ref-image), <Video k>
+     (--ref-video), <Audio j> (soundtracks of the reference videos first, then --ref-audio); the tags are printed at start-up.
+     Use exactly these tags, with a stable meaning, everywhere in the prompt. State what each reference is FOR:
+       <Picture N>  a concrete frame/anchor (first/last frame, keyframe, storyboard) - or the source of a <Subject N>
+       <Subject N>  reusable visible content abstracted from the refs (a person, place, outfit, prop, style, motion, pose):
+                    "<Subject 1> is the young woman in <Picture 1>, with long dark hair and a blue cardigan."
+                    "<Subject 1> is the woman whose looks come from <Picture 1> and whose walking motion comes from <Video 1>."
+       <Video N>    whole-video relationship only: the clip being edited/continued, or the source of camera moves, cuts, rhythm
+       <Audio N>    audio that is copied or referenced (voice timbre, music style, beat, dialogue/lyrics, sound effects)
+                    "<Audio 1> is the voice-timbre reference for <Subject 1> (S1)."
+     A video's soundtrack only becomes an <Audio N> if you pass --ref-video (it is on by default; --no-video-audio disables it).
+
+  2. STRUCTURE (the guide's six sections, in this order; plain text lines "name:" then content):
+       subject_definitions   one line per reusable item: what its label means, its role, key features to keep
+       summary               one paragraph starting with a task type in brackets, e.g. [reference generation + audio reference]
+                             types: keyframe completion | reference generation | video editing | video continuation |
+                                    audio reuse | audio reference    (combine with " + ", no repeats)
+       retention_analysis    one line per label: <Subject 1> (appears in [Shot 1]): fully_preserved|partially_preserved|
+                             attribute_transfer|weak_reference - why;  audio: fully_copy|partially_copy|reference|weak_reference
+       detailed_description  the main body, in playback order (see 3)
+       overall_soundscape    ambience / physical sounds for the whole video ("N/A" if none)
+       non_diegetic_music    score only the audience hears: instrumentation, tempo, dynamics ("N/A" if none)
+
+  3. detailed_description. Open with one or two sentences of style/lighting ("The target video is in a cinematic style with
+     soft lighting..."). Then shots: "[Shot 1] ..." (no timestamp) and "[Shot 2] At 00:09.000, ..." (cut time MM:SS.mmm).
+     Per shot say: composition/framing, subject appearance and position (use the <Subject N> labels, with their referenced
+     features at first appearance), environment and lighting, actions and state changes, camera movement (type, amplitude,
+     speed), the current sound, and where <Picture>/<Video>/<Audio> references actually apply ("the shot begins from <Picture 1>").
+     Typical length 350-500 words for generation; dialogue-dense scenes must fit the whole spoken timeline.
+  4. SPEAKERS AND DIALOGUE. Give each vocal source a stable ID in order of first speech: (S1), (S2)...; a referenced subject that
+     speaks is "<Subject 2> (S1)". Dialogue/lyrics: <d>[English] Hey! Watch your dog!</d>  (language tag, plain punctuation ending
+     with . ? or !). Off-screen speaker: mark "off-screen". Verbal cues that exist only inside a reused soundtrack use <Audio N>
+     as the source (no new (Sx)). Reference audio used only for timbre/rhythm/emotion: do not copy its words into the prompt.
+     Other markers: <scenetrans>, <cutoff> for speech crossing a cut / cut off by the video end. Do not put dialogue in
+     overall_soundscape / non_diegetic_music.
+  5. Keep in mind: the model sets the video length (--duration, trained 5.2-15 s); whatever happens in the prompt must fit it.
+

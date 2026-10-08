@@ -18,12 +18,32 @@ enum RefSize {
     name = "h3ref2va",
     version,
     about = "MiniMax H3 reference-to-video on a standalone CUDA engine: any mix of reference images, videos and audio -> mp4 with native audio",
-    after_help = "REFERENCE TAGS\n  In the prompt, point at references by tag, in the order given on the command line:\n  <Picture 1>.. (--ref-image), <Video 1>.. (--ref-video), <Audio 1>.. (soundtracks of the reference videos first, then --ref-audio).\n  The tags are printed at start-up.\n\nLIMITS\n  length  : 5.2-15 s trained (124-362 frames @ 24 fps); shorter runs, > 15.08 s is refused\n  size    : multiples of 32, up to ~2K (2048x1152); ComfyUI's table tops out at 1920x1088\n  refs    : up to 9 images, 3 videos (each 5+ frames, ~0.2-15 s), 3 audio clips\n\nMODELS\n  Looked up next to the binary, in ./models, $H3_MODELS; missing ones are downloaded from Hugging Face (~42 GB)."
+    after_help = concat!(
+        "REFERENCE TAGS
+  In the prompt, point at references by tag, in the order given on the command line:
+  <Picture 1>.. (--ref-image), <Video 1>.. (--ref-video), <Audio 1>.. (soundtracks of the reference videos first, then --ref-audio).
+  The tags are printed at start-up.
+
+LIMITS
+  length  : 5.2-15 s trained (124-362 frames @ 24 fps); shorter runs, > 15.08 s is refused
+  size    : multiples of 32, up to ~2K (2048x1152); ComfyUI's table tops out at 1920x1088
+  refs    : up to 9 images, 3 videos (each 5+ frames, ~0.2-15 s), 3 audio clips
+
+MODELS
+  Looked up next to the binary, in ./models, $H3_MODELS; missing ones are downloaded from Hugging Face (~42 GB).
+
+",
+        include_str!("../docs/PROMPT_CHEATSHEET.txt")
+    )
 )]
 struct Cli {
-    /// Prompt text (use <Picture 1>, <Video 1>, <Audio 1> tags to address the references).
+    /// Prompt text (use <Picture 1>, <Video 1>, <Audio 1> tags to address the references). Long prompts: --prompt-file.
+    /// Read the PROMPT WRITING section below (or `--prompt-guide`) before writing one: this model needs a detailed, structured prompt.
     #[arg(short, long)]
     prompt: Option<String>,
+    /// Print MiniMax's full reference-mode prompt-writing guide and exit.
+    #[arg(long)]
+    prompt_guide: bool,
     /// Read the prompt from a text file.
     #[arg(long)]
     prompt_file: Option<PathBuf>,
@@ -139,6 +159,10 @@ fn main() {
 
 fn run() -> Result<()> {
     let cli = Cli::parse();
+    if cli.prompt_guide {
+        println!("{}", include_str!("../docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md"));
+        return Ok(());
+    }
     let prompt = match (&cli.prompt, &cli.prompt_file) {
         (Some(p), _) => p.clone(),
         (None, Some(f)) => std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))?,
