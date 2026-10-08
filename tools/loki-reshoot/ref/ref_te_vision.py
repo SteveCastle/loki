@@ -5,7 +5,7 @@ import torch, numpy as np
 from PIL import Image
 import comfy.sd
 from comfy.sd import CLIPType
-TE = r"C:\Users\steph\dev\loki-reshoot\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+TE = r"C:\Users\steph\bin\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 img, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
 clip = comfy.sd.load_clip(ckpt_paths=[TE], clip_type=CLIPType.MINIMAX)

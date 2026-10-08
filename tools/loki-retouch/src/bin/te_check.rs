@@ -11,7 +11,7 @@ use std::path::Path;
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let ref_dir = Path::new(&args[1]);
-    let model = args.get(2).cloned().unwrap_or_else(|| format!("{}/dev/loki-retouch/models/qwen3vl_8b_int8_convrot.safetensors", std::env::var("USERPROFILE").unwrap()));
+    let model = args.get(2).cloned().unwrap_or_else(|| format!("{}/bin/models/qwen3vl_8b_int8_convrot.safetensors", std::env::var("USERPROFILE").unwrap()));
     let prompt = std::fs::read_to_string(Path::new(file!()).parent().unwrap().join("../../ref/prompt.txt")).context("prompt.txt")?;
     let meta: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(ref_dir.join("meta.json"))?)?;
     let shape = meta["shape"].as_array().unwrap();

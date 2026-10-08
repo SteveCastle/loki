@@ -23,7 +23,7 @@ import comfy.sd
 import comfy.utils
 import comfy.model_management
 
-MODEL = r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+MODEL = r"C:\Users\steph\bin\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 
 if os.environ.get("REF_W8A16") == "1":
     # High-precision reference: no activation quantization (rotated activation x dequantized int8 weight in fp32).

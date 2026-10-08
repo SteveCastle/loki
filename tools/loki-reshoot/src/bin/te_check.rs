@@ -35,8 +35,8 @@ fn main() -> Result<()> {
         args.drain(i..(i + 2).min(args.len()));
         v
     };
-    let ref_dir = PathBuf::from(take("--ref").unwrap_or_else(|| r"C:\Users\steph\dev\loki-reshoot\ref_out\te".into()));
-    let model = PathBuf::from(take("--model").unwrap_or_else(|| r"C:\Users\steph\dev\loki-reshoot\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors".into()));
+    let ref_dir = PathBuf::from(take("--ref").unwrap_or_else(|| r"C:\Users\steph\dev\loki\tools\loki-reshoot\ref_out\te".into()));
+    let model = PathBuf::from(take("--model").unwrap_or_else(|| r"C:\Users\steph\bin\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors".into()));
     let vision_dir = take("--vision");
     let vision_img = take("--vision-img");
     let long = take("--long");

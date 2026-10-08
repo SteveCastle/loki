@@ -10,9 +10,11 @@ native audio. It runs the whole model locally on the NVIDIA GPU (RTX 4090 class,
 composable tools: see the sibling `loki-retouch` (image editing/upscaling) and the shared conventions below.
 
 ## 0. Locate and sanity-check
-- Binary: `C:\Users\steph\dev\loki-reshoot\target\release\loki-reshoot.exe` (`cargo build --release` in that repo if missing).
-  Run it **from the repo root** so `./models` (the four model files) is found, or set `LOKI_MODELS` to the folder holding them.
-  Otherwise it downloads ~42 GB from Hugging Face (it prints a notice even with `-q`). Never run it from a random cwd without `LOKI_MODELS`.
+- Binary: `loki-reshoot` is on PATH (installed in `C:\Users\steph\bin`, with the four models in `bin\models` next to it), so run it
+  from any directory. Source: the loki monorepo, `tools/loki-reshoot`; to update the installed copy, `cargo build --release` there and
+  copy `target/release/loki-reshoot.exe` over the one in `C:\Users\steph\bin`. If it can't find the models it downloads ~42 GB from
+  Hugging Face (it prints a notice even with `-q`); `LOKI_MODELS` points it at another model folder. CI builds release binaries for
+  Windows and Linux.
 - The GPU must be free (~22 GB). If ComfyUI or another big GPU job is running the run fails with an allocation error. Check
   `nvidia-smi --query-gpu=memory.used --format=csv`; ask before stopping the user's processes.
 - ffmpeg/ffprobe are required (PATH, or next to the exe; auto-downloaded on Windows if absent).
@@ -79,9 +81,8 @@ The model is very sensitive to prompt wording. Follow `--prompt-guide`:
 
 ## 4. Run
 ```
-cd C:\Users\steph\dev\loki-reshoot
-.\target\release\loki-reshoot.exe -i hero.png -a theme.mp3@30,6 -d 6 --size 1216x672 --seed 7 -P prompt.txt -o out\hero.mp4
-.\target\release\loki-reshoot.exe -i face.png -v dance.mp4@2,4 -d 5 -P p.txt -o out\dance.mp4
+loki-reshoot -i hero.png -a theme.mp3@30,6 -d 6 --size 1216x672 --seed 7 -P prompt.txt -o out\hero.mp4
+loki-reshoot -i face.png -v dance.mp4@2,4 -d 5 -P p.txt -o out\dance.mp4
 ```
 Run long jobs in the background and poll; progress prints per step on stderr. Default output is `reshoot_<seed>.mp4` in the cwd. `--no-audio`
 skips audio. Phases load/evict models, so expect ~10 s of model loading per phase.

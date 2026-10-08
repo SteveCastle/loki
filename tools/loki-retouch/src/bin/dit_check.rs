@@ -55,7 +55,7 @@ fn main() -> Result<()> {
     let (h, w) = (x_shape[2], x_shape[3]);
 
     // ---- VAE encode
-    let vae = Vae::load(dev.clone(), Path::new(&format!("{home}/dev/loki-retouch/models/qwen_image_2.1_vae_bf16.safetensors")))?;
+    let vae = Vae::load(dev.clone(), Path::new(&format!("{home}/bin/models/qwen_image_2.1_vae_bf16.safetensors")))?;
     let img = Rgb8::load(&te_dir.join("resized.png"))?;
     let t0 = std::time::Instant::now();
     let lat = vae.encode(&img.to_f32(), img.h, img.w)?; // [rh*rw, 64] f32 token-major
@@ -75,7 +75,7 @@ fn main() -> Result<()> {
     let ref_lat_t = Tensor::from_f32(&dev, &ref_hwc, &[rh * rw, 64])?;
     let ref_norm = Tensor::new(&dev, DType::BF16, &[rh * rw, 64])?;
     dit::latent_norm_in(&dev, &ref_lat_t, &vae.latents_mean, &vae.latents_std, &ref_norm)?;
-    let model = Dit::load(dev.clone(), Path::new(&format!("{home}/dev/loki-retouch/models/qwen_image_2.1_int8_convrot.safetensors")))?;
+    let model = Dit::load(dev.clone(), Path::new(&format!("{home}/bin/models/qwen_image_2.1_int8_convrot.safetensors")))?;
     let mut run = model.prepare(&context, &[dit::RefLatent { slot, latent: ref_norm, rh, rw }], h, w)?;
     let x_chw = read_f32(&dit_dir.join("x.bin"));
     let x_hwc = chw_to_hwc(&x_chw, 64, h * w);

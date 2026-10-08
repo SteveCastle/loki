@@ -30,7 +30,7 @@ and with ordinary Unix tools, and are easy for agents to drive:
   printed on stdout (`--json` prints a JSON object instead), or the mp4 itself on stdout with `-o -` (fragmented mp4).
 - **Progress and diagnostics go to stderr only**; `-q` silences them. Exit status: 0 ok, 1 error, 2 usage error.
 - `-p/--prompt`, `-P/--prompt-file`, `--seed`, `--steps`, `--show-prompt` mean the same thing in every tool; models are found next to the
-  binary, in `./models` and in `$LOKI_MODELS` (see `docs/CONVENTIONS.md`).
+  binary, in `./models` and in `$LOKI_MODELS` (see `../CONVENTIONS.md`).
 - `lokictl` (the Lowkey Media Server client) is separate: these tools never talk to a server.
 
 ```

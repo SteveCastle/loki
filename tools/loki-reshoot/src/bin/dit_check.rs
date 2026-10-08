@@ -8,7 +8,7 @@ use loki_reshoot::dit_h3::{Dit, DitInputs, RefBlock, RefKind, HIDDEN, LAYERS};
 use loki_reshoot::tensor::{DType, Tensor};
 use std::path::{Path, PathBuf};
 
-const MODEL: &str = r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors";
+const MODEL: &str = r"C:\Users\steph\bin\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors";
 
 fn read_f32(p: &Path) -> Result<Vec<f32>> {
     let b = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
@@ -226,7 +226,7 @@ fn main() -> Result<()> {
         let p = |i: usize, d: usize| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
         return bench(p(2, 1344), p(3, 768), p(4, 124), p(5, 2));
     }
-    let dir = args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Users\steph\dev\loki-reshoot\ref_out\dit"));
+    let dir = args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Users\steph\dev\loki\tools\loki-reshoot\ref_out\dit"));
     check(&dir)
 }
 

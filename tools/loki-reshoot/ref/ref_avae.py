@@ -27,7 +27,7 @@ import comfy.sd
 import comfy.utils
 import comfy.model_management
 
-MODEL = r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_audio_vae_fp32.safetensors"
+MODEL = r"C:\Users\steph\bin\models\minimax_h3_audio_vae_fp32.safetensors"
 SR = 32000
 
 

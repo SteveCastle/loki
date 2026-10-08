@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 #[test]
 fn vvae_frame_counts_gpu() {
-    let model = PathBuf::from(std::env::var("LOKI_VVAE").unwrap_or_else(|_| r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_video_vae_fp16.safetensors".into()));
+    let model = PathBuf::from(std::env::var("LOKI_VVAE").unwrap_or_else(|_| r"C:\Users\steph\bin\models\minimax_h3_video_vae_fp16.safetensors".into()));
     if !model.exists() {
         eprintln!("skipping: {} not found", model.display());
         return;

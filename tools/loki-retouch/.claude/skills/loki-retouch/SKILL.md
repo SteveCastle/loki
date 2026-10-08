@@ -11,9 +11,10 @@ Qwen Image 2.1 edit model locally on the NVIDIA GPU (RTX 4090 class, 24 GB) in a
 small, composable tools: see the sibling `loki-reshoot` (references -> video with sound).
 
 ## 0. Locate and sanity-check
-- Binary: `C:\Users\steph\dev\loki-retouch\target\release\loki-retouch.exe` (`cargo build --release` in that repo if missing). Run it
-  **from the repo root** so `./models` (three model files, ~17 GB) is found, or set `LOKI_MODELS` to the folder holding them; otherwise
-  it downloads them from Hugging Face (it prints a notice even with `-q`).
+- Binary: `loki-retouch` is on PATH (installed in `C:\Users\steph\bin`, with the three models in `bin\models` next to it), so run it
+  from any directory. Source: the loki monorepo, `tools/loki-retouch`; to update the installed copy, `cargo build --release` there and
+  copy `target/release/loki-retouch.exe` over the one in `C:\Users\steph\bin`. If it can't find the models it downloads ~17 GB from Hugging
+  Face (it prints a notice even with `-q`); `LOKI_MODELS` points it at another model folder. CI builds release binaries for Windows and Linux.
 - The GPU must be free (~12-20 GB). If ComfyUI or another big GPU job is running, the run fails with an allocation error. Check
   `nvidia-smi --query-gpu=memory.used --format=csv`; ask before stopping the user's processes.
 - ALWAYS read the live docs first: `loki-retouch --help` (all options, SIZE rules, REFERENCES, EXAMPLES) and `loki-retouch --list-presets`.

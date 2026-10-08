@@ -23,7 +23,7 @@ chain with each other and with ordinary Unix tools, and are easy for agents to d
 | **loki-retouch** (this repo) | image editing, upscaling, restoration, compositing | Qwen Image 2.1 |
 | [loki-reshoot](../loki-reshoot) | reference images / videos / audio -> video with sound | MiniMax H3 |
 
-The shared conventions (also see `docs/CONVENTIONS.md`):
+The shared conventions (also see `../CONVENTIONS.md`):
 
 - **Inputs** are files, globs, directories, or `-` for stdin; **results** are written to a file whose path is printed
   on stdout (`--json` prints a JSON object instead), or streamed as the media itself with `-o -`.

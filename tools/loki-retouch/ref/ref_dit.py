@@ -26,7 +26,7 @@ def main():
     sigma = float(sys.argv[5])
     seed = int(sys.argv[6]) if len(sys.argv) > 6 else 0
     os.makedirs(out_dir, exist_ok=True)
-    models = os.path.expanduser("~/dev/loki-retouch/models")
+    models = os.path.expanduser("~/bin/models")
     meta = json.load(open(os.path.join(te_dir, "meta.json")))
     L, D = meta["shape"]
     ctx = torch.from_numpy(np.fromfile(os.path.join(te_dir, "context.bin"), dtype=np.float32).reshape(1, L, D))

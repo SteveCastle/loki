@@ -42,12 +42,12 @@ fn used(dev: &Device) -> f64 {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or_else(|| r"C:\Users\steph\dev\loki-reshoot\ref_out\vvae".into()));
+    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or_else(|| r"C:\Users\steph\dev\loki\tools\loki-reshoot\ref_out\vvae".into()));
     let cases: Vec<String> = args.get(2).map(|s| s.split(',').map(|x| x.to_string()).collect()).unwrap_or_else(|| vec!["v448".into(), "v448_39".into(), "v640".into(), "img448".into()]);
     let roundtrip = args.iter().any(|a| a == "--roundtrip");
     let png_dir = args.iter().position(|a| a == "--png").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let debug = args.iter().any(|a| a == "--debug");
-    let model = PathBuf::from(std::env::var("LOKI_VVAE").unwrap_or_else(|_| r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_video_vae_fp16.safetensors".into()));
+    let model = PathBuf::from(std::env::var("LOKI_VVAE").unwrap_or_else(|_| r"C:\Users\steph\bin\models\minimax_h3_video_vae_fp16.safetensors".into()));
 
     let dev = Device::new(0)?;
     let base = used(&dev);

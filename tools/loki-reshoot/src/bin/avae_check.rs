@@ -1,6 +1,6 @@
 //! Compare the Rust MiniMax H3 audio VAE against the ComfyUI reference dumps (ref/ref_avae.py) and benchmark it.
 //! Usage: avae_check [ref_dir] [model]
-//!   defaults: C:\Users\steph\dev\loki-reshoot\ref_out\avae, C:\Users\steph\dev\loki-reshoot\models\minimax_h3_audio_vae_fp32.safetensors
+//!   defaults: C:\Users\steph\dev\loki\tools\loki-reshoot\ref_out\avae, C:\Users\steph\bin\models\minimax_h3_audio_vae_fp32.safetensors
 use anyhow::Result;
 use loki_reshoot::cuda::Device;
 use loki_reshoot::tensor::Tensor;
@@ -33,8 +33,8 @@ fn report(name: &str, got: &[f32], want: &[f32]) -> f64 {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or(r"C:\Users\steph\dev\loki-reshoot\ref_out\avae".into()));
-    let model = PathBuf::from(args.get(2).cloned().unwrap_or(r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_audio_vae_fp32.safetensors".into()));
+    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or(r"C:\Users\steph\dev\loki\tools\loki-reshoot\ref_out\avae".into()));
+    let model = PathBuf::from(args.get(2).cloned().unwrap_or(r"C:\Users\steph\bin\models\minimax_h3_audio_vae_fp32.safetensors".into()));
     let dev = Device::new(0)?;
     let free0 = dev.free_mem()?;
     let t0 = Instant::now();

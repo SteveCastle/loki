@@ -22,7 +22,7 @@ def main():
     img_path, out_dir = sys.argv[1], sys.argv[2]
     resolution = int(sys.argv[3]) if len(sys.argv) > 3 else 0
     os.makedirs(out_dir, exist_ok=True)
-    te_path = os.path.expanduser("~/dev/loki-retouch/models/qwen3vl_8b_int8_convrot.safetensors")
+    te_path = os.path.expanduser("~/bin/models/qwen3vl_8b_int8_convrot.safetensors")
     clip = comfy.sd.load_clip(ckpt_paths=[te_path], clip_type=CLIPType.QWEN_IMAGE)
 
     im = Image.open(img_path).convert("RGB")
