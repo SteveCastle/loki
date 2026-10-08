@@ -57,7 +57,6 @@ export default function TransformSection(props: TransformSectionProps) {
     setBusy(id);
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
-      notify('success', 'Queued', built.jobs.length > 1 ? `${built.jobs.length} ${intentById(id).title} jobs` : built.jobs[0].label);
       onDone();
     } catch (e) {
       if (e instanceof EngineSetupDeferred) {

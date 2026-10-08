@@ -130,10 +130,6 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       saveRemembered(intent, settings);
       setQueuedCount(built.jobs.length);
       setStatus('done');
-      libraryService.send({
-        type: 'ADD_TOAST',
-        data: { type: 'success', title: 'Queued', message: built.jobs.length > 1 ? `${built.jobs.length} ${intentById(intent).title} jobs` : built.jobs[0].label },
-      });
     } catch (e) {
       if (e instanceof EngineSetupDeferred) {
         // Declined or left downloading: nothing was queued, stay on the review step.

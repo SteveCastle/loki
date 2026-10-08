@@ -62,7 +62,6 @@ describe('TransformSection (palette chips)', () => {
     expect(body.fields).toMatchObject({ preset: 'restore', steps: '25' });
     expect(init.headers.Authorization).toBe('Bearer tok');
     await waitFor(() => expect(onDone).toHaveBeenCalled());
-    expect(notify).toHaveBeenCalledWith('success', 'Queued', expect.any(String));
     expect(getFlowRequest()).toBeNull();
   });
 

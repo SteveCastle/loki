@@ -56,6 +56,12 @@ const parseFlag = (input: string, flag: string): string | null => {
   return m ? m[1] : null;
 };
 
+// argValue reads the value following a `--flag` in a job's argument list.
+const argValue = (args: string[], flag: string): string | null => {
+  const i = args.indexOf(`--${flag}`);
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : null;
+};
+
 // getJobTitle returns a short, human-readable title for a background job.
 export const getJobTitle = (job: JobRunnerJob): string => {
   switch (job.command) {
@@ -81,6 +87,24 @@ export const getJobTitle = (job: JobRunnerJob): string => {
       return 'Visual Embedding';
     case 'autotag':
       return 'Auto-Tagging';
+    case 'retouch':
+    case '4kify': {
+      // Options travel as `--key value` arguments (the input is just the paths).
+      const args = job.arguments || [];
+      switch (argValue(args, 'preset')) {
+        case 'restore':
+          return 'Restoring Image';
+        case 'upscale':
+          return 'Upscaling Image';
+        case '4kify':
+        case '4kify-phone':
+          return 'Making Wallpaper';
+        default:
+          return args.includes('--combine') ? 'Combining Images' : 'Editing Image';
+      }
+    }
+    case 'reshoot':
+      return (job.arguments || []).includes('--animate') ? 'Bringing Photo to Life' : 'Generating Video';
     case 'faces':
       return 'Scanning Faces';
     case 'faces-cluster':
@@ -135,6 +159,11 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
       return 'Indexing images so you can search by visual similarity.';
     case 'autotag':
       return 'Detecting tags from each image’s content.';
+    case 'retouch':
+    case '4kify':
+      return 'Running the local image model on your GPU.';
+    case 'reshoot':
+      return 'Running the local video model on your GPU. This can take a few minutes.';
     case 'faces':
       return 'Finding faces and characters so they can be grouped into people.';
     case 'faces-cluster':
