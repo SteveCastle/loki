@@ -463,7 +463,12 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
         let t0 = std::time::Instant::now();
         let bar = if show_bar { indicatif::ProgressBar::new(settings.steps as u64) } else { indicatif::ProgressBar::hidden() };
         bar.set_style(indicatif::ProgressStyle::with_template("  {bar:40} {pos}/{len} steps  {elapsed_precise} eta {eta_precise}").unwrap());
-        let lat = pipe_i.sample(&model, enc, &vae.latents_mean, &vae.latents_std, &|n, _| bar.set_position(n as u64))?;
+        let lat = pipe_i.sample(&model, enc, &vae.latents_mean, &vae.latents_std, &|n, total| {
+            bar.set_position(n as u64);
+            if !show_bar {
+                crate::info!("step {n}/{total}"); // machine-readable progress for callers that capture stderr
+            }
+        })?;
         bar.finish_and_clear();
         crate::info!("  sampled in {:.1}s", t0.elapsed().as_secs_f64());
         let t0 = std::time::Instant::now();
