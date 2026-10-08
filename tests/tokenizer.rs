@@ -1,4 +1,4 @@
-use h3ref2va::tokenizer::Tokenizer;
+use loki_reshoot::tokenizer::Tokenizer;
 
 #[test]
 fn tokenizer_matches_huggingface() {

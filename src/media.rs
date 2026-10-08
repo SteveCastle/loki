@@ -75,7 +75,7 @@ impl Ffmpeg {
             return Ok(Ffmpeg { ffmpeg: a, ffprobe: b });
         }
         if cfg!(windows) {
-            eprintln!("ffmpeg not found; downloading a static build (one time)...");
+            crate::info!("ffmpeg not found; downloading a static build (one time)...");
             return download_ffmpeg();
         }
         bail!("ffmpeg/ffprobe not found: install them (e.g. `apt install ffmpeg`) or pass --ffmpeg PATH");
@@ -204,8 +204,19 @@ impl VideoWriter {
         if wav.is_some() {
             cmd.args(["-c:a", "aac", "-b:a", "192k"]);
         }
-        cmd.args(["-movflags", "+faststart"]).arg(out);
-        let mut child = cmd.stdin(Stdio::piped()).stderr(Stdio::inherit()).spawn().context("starting ffmpeg (encoder)")?;
+        let to_stdout = out == Path::new("-");
+        if to_stdout {
+            // a pipe is not seekable: fragmented mp4 plays and demuxes while streaming
+            cmd.args(["-movflags", "frag_keyframe+empty_moov+default_base_moof", "-f", "mp4", "pipe:1"]);
+        } else {
+            cmd.args(["-movflags", "+faststart"]).arg(out);
+        }
+        let mut child = cmd
+            .stdin(Stdio::piped())
+            .stdout(if to_stdout { Stdio::inherit() } else { Stdio::null() })
+            .stderr(Stdio::inherit())
+            .spawn()
+            .context("starting ffmpeg (encoder)")?;
         let stdin = child.stdin.take();
         Ok(VideoWriter { child, stdin, frames: 0, frame_bytes: w * h * 3 })
     }

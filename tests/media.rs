@@ -1,4 +1,4 @@
-use h3ref2va::media::*;
+use loki_reshoot::media::*;
 use std::path::Path;
 
 #[test]

@@ -325,25 +325,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "h3ref2va"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "cudarc",
- "half",
- "image",
- "indicatif",
- "memmap2",
- "rand",
- "rand_distr",
- "serde",
- "serde_json",
- "ureq",
- "zip",
-]
-
-[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -576,6 +557,25 @@ name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
+
+[[package]]
+name = "loki-reshoot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "cudarc",
+ "half",
+ "image",
+ "indicatif",
+ "memmap2",
+ "rand",
+ "rand_distr",
+ "serde",
+ "serde_json",
+ "ureq",
+ "zip",
+]
 
 [[package]]
 name = "memchr"

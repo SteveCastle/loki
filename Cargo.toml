@@ -1,11 +1,11 @@
 [package]
-name = "h3ref2va"
+name = "loki-reshoot"
 version = "0.1.0"
 edition = "2021"
-default-run = "h3ref2va"
+default-run = "loki-reshoot"
 
 [[bin]]
-name = "h3ref2va"
+name = "loki-reshoot"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,6 +1,6 @@
 //! Host-side helpers of the audio VAE module (no GPU needed). GPU accuracy is checked by `avae_check`
 //! against ComfyUI dumps (ref/ref_avae.py).
-use h3ref2va::vae_audio::{comfy_crop_window, resample};
+use loki_reshoot::vae_audio::{comfy_crop_window, resample};
 
 #[test]
 fn crop_window_matches_comfy() {

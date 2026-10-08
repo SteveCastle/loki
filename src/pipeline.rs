@@ -133,11 +133,11 @@ pub fn check_limits(width: usize, height: usize, frames: usize) -> Result<()> {
     ensure!(width % CANVAS_MULTIPLE == 0 && height % CANVAS_MULTIPLE == 0 && width >= 64 && height >= 64, "size must be multiples of {CANVAS_MULTIPLE} (>= 64), got {width}x{height}");
     ensure!(width * height <= MAX_PIXELS, "{width}x{height} is {:.2} MP; the model supports up to ~2K (2048x1152, {:.2} MP)", (width * height) as f64 / 1e6, MAX_PIXELS as f64 / 1e6);
     if width * height > WARN_PIXELS {
-        eprintln!("warning: {width}x{height} is above the largest size in ComfyUI's template table (1920x1088); expect long run times and high VRAM use");
+        crate::info!("warning: {width}x{height} is above the largest size in ComfyUI's template table (1920x1088); expect long run times and high VRAM use");
     }
     ensure!(frames <= MAX_FRAMES, "{frames} frames ({:.1} s) exceeds the model's ~15 s limit ({MAX_FRAMES} frames)", frames as f64 / FPS as f64);
     if frames < MIN_TRAINED_FRAMES {
-        eprintln!("note: {frames} frames ({:.1} s) is shorter than the trained range (124-362 frames, 5.2-15 s); it runs, but quality may be lower", frames as f64 / FPS as f64);
+        crate::info!("note: {frames} frames ({:.1} s) is shorter than the trained range (124-362 frames, 5.2-15 s); it runs, but quality may be lower", frames as f64 / FPS as f64);
     }
     Ok(())
 }
@@ -175,7 +175,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
     let (frame_count, latent_t, audio_t) = temporal_shape(req.frames);
     check_limits(req.width, req.height, frame_count)?;
     let (lh, lw) = (req.height / 16, req.width / 16);
-    eprintln!(
+    crate::info!(
         "output: {}x{} @ {} fps, {} frames ({:.2} s), latent {}x{}x{} (+{} audio frames), {} steps, seed {}",
         req.width, req.height, FPS, frame_count, frame_count as f64 / FPS as f64, latent_t, lh, lw, audio_t, req.steps, req.seed
     );
@@ -186,7 +186,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         let mut img = load_image(ff, p).with_context(|| format!("reference image {}", p.display()))?;
         if let (Some(f), true) = (req.fit_first, images.is_empty()) {
             let (fitted, padded) = fit_to_canvas(&img, req.width, req.height, f);
-            eprintln!("first reference {}x{} fitted to the {}x{} canvas ({:?}{})", img.w, img.h, req.width, req.height, f, if padded { ", black bars to be filled by the model" } else { "" });
+            crate::info!("first reference {}x{} fitted to the {}x{} canvas ({:?}{})", img.w, img.h, req.width, req.height, f, if padded { ", black bars to be filled by the model" } else { "" });
             img = fitted;
         }
         let (tw, th) = ref_image_dims(img.w, img.h, req.width, req.height, req.ref_image_size);
@@ -215,7 +215,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         } else {
             None
         };
-        eprintln!("ref video {}: {}x{} -> canvas {cw}x{ch}, {n} frames ({secs:.2} s){}", v.path.display(), info.width, info.height, if audio.is_some() { " + soundtrack" } else { "" });
+        crate::info!("ref video {}: {}x{} -> canvas {cw}x{ch}, {n} frames ({secs:.2} s){}", v.path.display(), info.width, info.height, if audio.is_some() { " + soundtrack" } else { "" });
         videos.push(Video { w: cw, h: ch, n, rgb, audio });
     }
     let mut audios: Vec<(Vec<f32>, usize)> = Vec::new();
@@ -223,7 +223,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         let dur = a.dur.map(|d| d.min(MAX_REF_AUDIO_SECONDS)).or(Some(MAX_REF_AUDIO_SECONDS));
         let (wav, n) = ff.decode_audio(&a.path, a.start, dur, None).with_context(|| format!("reference audio {}", a.path.display()))?;
         ensure!(n >= AUDIO_SR / 20, "reference audio {} is empty", a.path.display());
-        eprintln!("ref audio {}: {:.2} s", a.path.display(), n as f64 / AUDIO_SR as f64);
+        crate::info!("ref audio {}: {:.2} s", a.path.display(), n as f64 / AUDIO_SR as f64);
         audios.push((wav, n));
     }
     print_tags(req, &videos);
@@ -254,7 +254,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         let te = TextEncoder::load(dev.clone(), &paths.text_encoder).context("loading text encoder")?;
         let c = te.encode(&req.prompt, &items).context("text encoding")?;
         dev.sync()?;
-        eprintln!("text encoder: {} tokens in {:.1}s", c.tags.len(), t0.elapsed().as_secs_f64());
+        crate::info!("text encoder: {} tokens in {:.1}s", c.tags.len(), t0.elapsed().as_secs_f64());
         c
     }; // text encoder dropped here
     dev.sync()?;
@@ -291,7 +291,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         dev.sync()?;
     } // VAEs dropped
     dev.sync()?;
-    eprintln!("reference latents: {} block(s) in {:.1}s", refs.len(), t0.elapsed().as_secs_f64());
+    crate::info!("reference latents: {} block(s) in {:.1}s", refs.len(), t0.elapsed().as_secs_f64());
 
     // ---- 4. DiT sampling ----------------------------------------------------------------------------------------
     let (xv, xa) = {
@@ -323,7 +323,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
             &|i, _| bar.set_position(i as u64),
         )?;
         bar.finish_and_clear();
-        eprintln!("sampled {} steps in {:.1}s", req.steps, t0.elapsed().as_secs_f64());
+        crate::info!("sampled {} steps in {:.1}s", req.steps, t0.elapsed().as_secs_f64());
         (xv, xa)
     }; // DiT dropped
     dev.sync()?;
@@ -357,7 +357,11 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         )?;
         let avae = AudioVae::load(dev.clone(), &paths.audio_vae)?;
         let wav = avae.decode(&za, audio_t).context("decoding audio")?;
-        let p = req.out.with_extension("tmp.wav");
+        let p = if req.out == std::path::Path::new("-") {
+            std::env::temp_dir().join(format!("loki-reshoot-{}.wav", std::process::id()))
+        } else {
+            req.out.with_extension("tmp.wav")
+        };
         media::write_wav_f32(&p, &wav, audio_t * 800, AUDIO_SR)?;
         wav_path = Some(p);
     }
@@ -374,8 +378,8 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
     if let Some(p) = wav_path {
         let _ = std::fs::remove_file(p);
     }
-    eprintln!("decoded + encoded in {:.1}s", t0.elapsed().as_secs_f64());
-    eprintln!("wrote {} (total {:.1}s)", req.out.display(), t_all.elapsed().as_secs_f64());
+    crate::info!("decoded + encoded in {:.1}s", t0.elapsed().as_secs_f64());
+    crate::info!("wrote {} (total {:.1}s)", req.out.display(), t_all.elapsed().as_secs_f64());
     Ok(())
 }
 
@@ -390,21 +394,21 @@ fn encode_ref_audio(avae: &AudioVae, wav: &[f32], n: usize) -> Result<Tensor> {
 }
 
 fn print_tags(req: &Request, videos: &[Video]) {
-    eprintln!("prompt tags (use them in the prompt to point at a reference):");
+    crate::info!("prompt tags (use them in the prompt to point at a reference):");
     for (i, p) in req.ref_images.iter().enumerate() {
-        eprintln!("  <Picture {}>  {}", i + 1, p.display());
+        crate::info!("  <Picture {}>  {}", i + 1, p.display());
     }
     let mut audio_n = 0;
     for (i, v) in req.ref_videos.iter().enumerate() {
         if videos[i].audio.is_some() {
             audio_n += 1;
-            eprintln!("  <Audio {}>    soundtrack of {}", audio_n, v.path.display());
+            crate::info!("  <Audio {}>    soundtrack of {}", audio_n, v.path.display());
         }
-        eprintln!("  <Video {}>    {}", i + 1, v.path.display());
+        crate::info!("  <Video {}>    {}", i + 1, v.path.display());
     }
     for a in &req.ref_audios {
         audio_n += 1;
-        eprintln!("  <Audio {}>    {}", audio_n, a.path.display());
+        crate::info!("  <Audio {}>    {}", audio_n, a.path.display());
     }
 }
 

@@ -2,9 +2,9 @@
 //!
 //!   te_check [--ref DIR] [--model FILE] [--selftest] [--bench] [case ...]
 use anyhow::{Context, Result};
-use h3ref2va::cuda::Device;
-use h3ref2va::image::Rgb8;
-use h3ref2va::te_h3::{self, RefItem, TextEncoder};
+use loki_reshoot::cuda::Device;
+use loki_reshoot::image::Rgb8;
+use loki_reshoot::te_h3::{self, RefItem, TextEncoder};
 use std::path::{Path, PathBuf};
 
 fn load_item(v: &serde_json::Value) -> Result<RefItem> {
@@ -35,8 +35,8 @@ fn main() -> Result<()> {
         args.drain(i..(i + 2).min(args.len()));
         v
     };
-    let ref_dir = PathBuf::from(take("--ref").unwrap_or_else(|| r"C:\Users\steph\dev\h3ref2va\ref_out\te".into()));
-    let model = PathBuf::from(take("--model").unwrap_or_else(|| r"C:\Users\steph\dev\h3ref2va\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors".into()));
+    let ref_dir = PathBuf::from(take("--ref").unwrap_or_else(|| r"C:\Users\steph\dev\loki-reshoot\ref_out\te".into()));
+    let model = PathBuf::from(take("--model").unwrap_or_else(|| r"C:\Users\steph\dev\loki-reshoot\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors".into()));
     let vision_dir = take("--vision");
     let vision_img = take("--vision-img");
     let long = take("--long");

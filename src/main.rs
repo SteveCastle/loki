@@ -1,12 +1,12 @@
-//! h3ref2va: MiniMax H3 reference-to-video (images / videos / audio -> video with sound) on a standalone CUDA engine.
+//! loki-reshoot: MiniMax H3 reference-to-video (images / videos / audio -> video with sound) on a standalone CUDA engine.
 use anyhow::{bail, ensure, Context, Result};
 use clap::{Parser, ValueEnum};
-use h3ref2va::cuda::Device;
-use h3ref2va::media::{Ffmpeg, FPS};
-use h3ref2va::models;
-use h3ref2va::fit::{self, Fit};
-use h3ref2va::pipeline::{self, MediaSpec, Paths, RefImageSize, Request};
-use h3ref2va::presets::{self, Shake};
+use loki_reshoot::cuda::Device;
+use loki_reshoot::media::{Ffmpeg, FPS};
+use loki_reshoot::models;
+use loki_reshoot::fit::{self, Fit};
+use loki_reshoot::pipeline::{self, MediaSpec, Paths, RefImageSize, Request};
+use loki_reshoot::presets::{self, Shake};
 use std::path::{Path, PathBuf};
 
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -32,9 +32,9 @@ enum FitArg {
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "h3ref2va",
+    name = "loki-reshoot",
     version,
-    about = "MiniMax H3 reference-to-video on a standalone CUDA engine: any mix of reference images, videos and audio -> mp4 with native audio",
+    about = "loki-reshoot: AI video with sound from reference images, videos and audio (MiniMax H3) on a standalone CUDA engine. Part of the loki- toolkit (see also loki-retouch, image editing).",
     after_help = concat!(
         "REFERENCE TAGS
   In the prompt, point at references by tag, in the order given on the command line:
@@ -46,8 +46,14 @@ LIMITS
   size    : multiples of 32, up to ~2K (2048x1152); ComfyUI's table tops out at 1920x1088
   refs    : up to 9 images, 3 videos (each 5+ frames, ~0.2-15 s), 3 audio clips
 
+COMPOSING (loki- toolkit conventions, shared with loki-retouch)
+  `-` as a reference path reads that one input (image, video or audio) from stdin; `-o -` writes the mp4 itself to stdout
+  (fragmented mp4); otherwise the path of the written file is printed on stdout (`--json`: one JSON object instead).
+  Progress goes to stderr only (`-q` silences it); exit status 0 = ok, 1 = error, 2 = usage error.
+    loki-retouch --preset restore -o - old.jpg | loki-reshoot --animate - -d 5 -o - | ffmpeg -i - -vf scale=720:-2 small.mp4
+
 MODELS
-  Looked up next to the binary, in ./models, $H3_MODELS; missing ones are downloaded from Hugging Face (~42 GB).
+  Looked up next to the binary, in ./models, $LOKI_MODELS; missing ones are downloaded from Hugging Face (~42 GB).
 
 ",
         include_str!("../docs/PROMPT_CHEATSHEET.txt")
@@ -82,11 +88,17 @@ struct Cli {
     /// Print the final prompt (after --animate expansion) and exit without generating.
     #[arg(long)]
     show_prompt: bool,
+    /// Silence progress/diagnostics on stderr (errors still print).
+    #[arg(short, long)]
+    quiet: bool,
+    /// Print one JSON object describing the result on stdout instead of the bare output path.
+    #[arg(long)]
+    json: bool,
     /// Print MiniMax's full reference-mode prompt-writing guide and exit.
     #[arg(long)]
     prompt_guide: bool,
-    /// Read the prompt from a text file.
-    #[arg(long)]
+    /// Read the prompt from a text file (`-` = stdin).
+    #[arg(short = 'P', long, value_name = "FILE")]
     prompt_file: Option<PathBuf>,
     /// Reference image (repeatable, up to 9). Any format the `image` crate or ffmpeg can read.
     #[arg(short = 'i', long = "ref-image")]
@@ -100,7 +112,7 @@ struct Cli {
     /// Do not use the soundtracks of the reference videos.
     #[arg(long)]
     no_video_audio: bool,
-    /// Output mp4 (default: h3_<seed>.mp4 in the current directory).
+    /// Output mp4, or `-` for the mp4 on stdout (default: reshoot_<seed>.mp4 in the current directory).
     #[arg(short, long)]
     out: Option<PathBuf>,
     /// Duration in seconds (snapped up to the model's 17k+5 frame grid at 24 fps). Default 5.
@@ -205,6 +217,8 @@ fn run() -> Result<()> {
         return Ok(());
     }
     let mut cli = cli;
+    loki_reshoot::log::set_quiet(cli.quiet);
+    let _stdin_tmp = TempFile(resolve_stdin(&mut cli)?);
     if let Some(img) = cli.animate.clone() {
         cli.ref_image.insert(0, img);
         if cli.size.is_none() && cli.aspect.is_none() {
@@ -316,7 +330,12 @@ fn run() -> Result<()> {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         (t as u64) & 0xFFFF_FFFF
     });
-    let out = cli.out.clone().unwrap_or_else(|| PathBuf::from(format!("h3_{seed}.mp4")));
+    let out = cli.out.clone().unwrap_or_else(|| PathBuf::from(format!("reshoot_{seed}.mp4")));
+    let to_stdout = out == Path::new("-");
+    if to_stdout {
+        use std::io::IsTerminal;
+        ensure!(!std::io::stdout().is_terminal(), "refusing to write a video to the terminal: pipe stdout (| ffmpeg -i - ...) or use -o FILE");
+    }
     let req = Request {
         prompt,
         ref_images: cli.ref_image.clone(),
@@ -350,7 +369,70 @@ fn run() -> Result<()> {
     eprintln!("  dit: {}\n  text encoder: {}\n  video vae: {}\n  audio vae: {}", paths.dit.display(), paths.text_encoder.display(), paths.video_vae.display(), paths.audio_vae.display());
     let dev = Device::new(0)?;
     eprintln!("  gpu: {} MB free of {} MB", dev.free_mem()? >> 20, dev.total_mem >> 20);
-    pipeline::run(dev, &req, &paths, &ff)
+    let out_path = req.out.clone();
+    pipeline::run(dev, &req, &paths, &ff)?;
+    if !to_stdout {
+        if cli.json {
+            let (fc, _, _) = pipeline::temporal_shape(req.frames);
+            let j = serde_json::json!({
+                "output": out_path.display().to_string(), "width": req.width, "height": req.height, "frames": fc, "fps": FPS,
+                "seconds": fc as f64 / FPS as f64, "seed": req.seed, "steps": req.steps, "audio": !req.no_audio,
+            });
+            println!("{j}");
+        } else {
+            println!("{}", out_path.display());
+        }
+    }
+    Ok(())
+}
+
+/// `-` as a reference (or prompt file) means stdin; at most one such input per run. The bytes go to a temp file so ffmpeg and
+/// the image decoder can sniff the format from the content.
+/// Removes the stdin temp file when dropped.
+struct TempFile(Option<PathBuf>);
+impl Drop for TempFile {
+    fn drop(&mut self) {
+        if let Some(p) = &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+fn resolve_stdin(cli: &mut Cli) -> Result<Option<PathBuf>> {
+    use std::io::Read;
+    let mut uses = 0usize;
+    let is_dash = |p: &Path| p == Path::new("-");
+    let strip = |s: &str| -> bool { s == "-" || s.starts_with("-@") };
+    uses += cli.ref_image.iter().filter(|p| is_dash(p)).count() + cli.animate.iter().filter(|p| is_dash(p)).count();
+    uses += cli.ref_video.iter().filter(|s| strip(s)).count() + cli.ref_audio.iter().filter(|s| strip(s)).count();
+    uses += cli.prompt_file.iter().filter(|p| is_dash(p)).count();
+    ensure!(uses <= 1, "stdin (`-`) can carry only one input per run");
+    if uses == 0 {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin().lock().read_to_end(&mut bytes).context("reading stdin")?;
+    ensure!(!bytes.is_empty(), "no data on stdin");
+    if cli.prompt_file.as_deref().map_or(false, |p| is_dash(p)) {
+        cli.prompt = Some(String::from_utf8(bytes).context("prompt on stdin is not UTF-8")?);
+        cli.prompt_file = None;
+        return Ok(None);
+    }
+    let tmp = std::env::temp_dir().join(format!("loki-reshoot-stdin-{}", std::process::id()));
+    std::fs::write(&tmp, &bytes)?;
+    for p in cli.ref_image.iter_mut().chain(cli.animate.iter_mut()) {
+        if is_dash(p) {
+            *p = tmp.clone();
+        }
+    }
+    for s in cli.ref_video.iter_mut().chain(cli.ref_audio.iter_mut()) {
+        if s == "-" {
+            *s = tmp.display().to_string();
+        } else if let Some(rest) = s.strip_prefix("-@") {
+            *s = format!("{}@{rest}", tmp.display());
+        }
+    }
+    Ok(Some(tmp))
 }
 
 fn image_dims(ff: &Ffmpeg, p: &Path) -> Result<(usize, usize)> {

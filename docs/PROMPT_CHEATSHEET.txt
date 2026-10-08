@@ -1,4 +1,4 @@
-PROMPT WRITING (condensed from MiniMax's "Full-Reference Mode" guide; `h3ref2va --prompt-guide` prints the full guide)
+PROMPT WRITING (condensed from MiniMax's "Full-Reference Mode" guide; `loki-reshoot --prompt-guide` prints the full guide)
 
   The model is very sensitive to prompt wording. Write the prompt in English (keep dialogue/lyrics and on-screen text in
   their own language) as a detailed, explicit, shot-by-shot description. Never write a bare plot summary or a list of references.

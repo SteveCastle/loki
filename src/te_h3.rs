@@ -70,7 +70,7 @@ pub struct EncodeTiming {
     pub total: f64,
 }
 
-/// Per-category GPU timing (enabled with H3_PROFILE=1; synchronizes around every timed op).
+/// Per-category GPU timing (enabled with LOKI_PROFILE=1; synchronizes around every timed op).
 pub static PROF: std::sync::LazyLock<crate::cuda::Profiler> = std::sync::LazyLock::new(crate::cuda::Profiler::new);
 
 // ------------------------------------------------------------------------------------------------
@@ -118,7 +118,7 @@ pub fn fp4_gemm(dev: &Device, a: u64, lda: usize, m: usize, lin: &Fp4Linear, out
     let sms = dev.sm_count.max(1) as usize;
     let nt = n / 128;
     let tiles128 = (m + 127) / 128 * nt;
-    let bm = if std::env::var("H3_FP4_BM").map(|v| v == "64").unwrap_or(false) || (m <= 64) || tiles128 < 2 * sms { 64 } else { 128 };
+    let bm = if std::env::var("LOKI_FP4_BM").map(|v| v == "64").unwrap_or(false) || (m <= 64) || tiles128 < 2 * sms { 64 } else { 128 };
     let mt = (m + bm - 1) / bm;
     let blocks = mt * nt;
     let mut splits = 1usize;
@@ -355,8 +355,8 @@ fn patchify(f0: &[f32], f1: &[f32], hb: usize, wb: usize) -> Vec<f32> {
     let mut out = patchify_exact(f0, f1, hb, wb);
     // ComfyUI's fp32 Conv3d patch embedding runs through cuDNN with TF32 allowed: the pixels enter the tensor
     // cores rounded to TF32 (10-bit mantissa, round-to-nearest-away). Reproducing that rounding brings the whole
-    // vision tower to ~1e-4 of the reference (vs ~1e-2 without). H3_TF32_PATCH=off|trunc for experiments.
-    let mode = std::env::var("H3_TF32_PATCH").unwrap_or_default();
+    // vision tower to ~1e-4 of the reference (vs ~1e-2 without). LOKI_TF32_PATCH=off|trunc for experiments.
+    let mode = std::env::var("LOKI_TF32_PATCH").unwrap_or_default();
     if mode != "off" {
         for v in out.iter_mut() {
             let b = v.to_bits();
@@ -576,7 +576,7 @@ impl VisionTower {
             dev.launch_n("k_rope_vision_f32", n * 2 * V_HEADS * (V_HEAD_DIM / 2), &[Arg::Ptr(qkv.ptr), Arg::I32(n as i32), Arg::I32(V_HEADS as i32), Arg::I32(V_HEAD_DIM as i32), Arg::Ptr(rope.ptr)])?;
             let scale_log2 = (1.0 / (V_HEAD_DIM as f32).sqrt()) * std::f32::consts::LOG2_E;
             PROF.time(dev, "vis_attn", || {
-                if std::env::var("H3_VIS_ATTN").map(|v| v == "simt").unwrap_or(false) {
+                if std::env::var("LOKI_VIS_ATTN").map(|v| v == "simt").unwrap_or(false) {
                     return dev.launch("k_attn_f32_d72", (((n + 63) / 64) as u32, V_HEADS as u32, 1), (256, 1, 1), 0, &[Arg::Ptr(qkv.ptr), Arg::Ptr(attn_out.ptr), Arg::I32(n as i32), Arg::I32(V_HEADS as i32), Arg::F32(scale_log2)]);
                 }
                 dev.launch_n("k_split_hilo_bf16", n * 3 * V_HIDDEN, &[Arg::Ptr(qkv.ptr), Arg::Ptr(sc.hi.ptr), Arg::Ptr(sc.lo.ptr), Arg::I64((n * 3 * V_HIDDEN) as i64)])?;
@@ -750,7 +750,7 @@ impl TextEncoder {
         let embed_scale = st.f32s("model.embed_tokens.weight_scale")?;
         ensure!(embed_scale.len() == einfo.shape[0]);
         dev.sync()?;
-        eprintln!("  text encoder: {:.2} GB uploaded in {:.1}s", uploaded as f64 / 1e9, t0.elapsed().as_secs_f64());
+        crate::info!("  text encoder: {:.2} GB uploaded in {:.1}s", uploaded as f64 / 1e9, t0.elapsed().as_secs_f64());
         Ok(TextEncoder { dev, st, vision, layers, tok: Tokenizer::new()?, embed_name, embed_scale, last_timing: Default::default() })
     }
 

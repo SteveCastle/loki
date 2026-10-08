@@ -1,4 +1,4 @@
-# h3ref2va — MiniMax H3 ref2va inference in Rust/CUDA (sibling of 4kify)
+# loki-reshoot — MiniMax H3 ref2va inference in Rust/CUDA (sibling of 4kify)
 
 Goal: a self-contained CLI (no Python/PyTorch) reproducing ComfyUI's
 `video_minimax_h3_r2v` workflow (MiniMaxH3ReferenceToVideo -> BasicGuider (cfg 1, ONE DiT pass per step)
@@ -22,7 +22,7 @@ scripts with cwd = the ComfyUI root and `sys.path.insert(0, os.getcwd())` (see `
 - workflow: `ComfyUI/user/default/workflows/video_minimax_h3_r2v.json`; explainer `../MiniMax-H3-Explained.md`
 - comfy_kitchen (nvfp4 / int8 kernels, eager reference): `python_embeded/Lib/site-packages/comfy_kitchen/backends/eager/`
 
-## Models (test copies, read-only): `C:\Users\steph\dev\h3ref2va\models\`
+## Models (test copies, read-only): `C:\Users\steph\dev\loki-reshoot\models\`
 - `minimax_h3_ref2va_pruned_int8_convrot.safetensors` (20.97 GB) DiT. int8 ConvRot (per-row int8, 256-wide Hadamard
   on activations, same format as 4kify's Qwen DiT), 50 blocks, hidden 5376, 56 heads x128, ffn 14336 (fc1 -> 28672 = [gate|up]),
   "adaln curve" form: `adaln_t_table [1025,8]` lerp'd, adaln linears are 8 -> 6*5376*3 (f16 weights, no silu), token_refiner (2 bf16 blocks),

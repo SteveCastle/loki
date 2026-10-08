@@ -1,9 +1,9 @@
 //! Validate the video VAE against ComfyUI reference dumps (ref/ref_vvae.py).
 //! Usage: vvae_check [ref_dir] [case,case,...] [--roundtrip] [--png out_dir]
 use anyhow::{Context, Result};
-use h3ref2va::cuda::Device;
-use h3ref2va::tensor::Tensor;
-use h3ref2va::vae_video::VideoVae;
+use loki_reshoot::cuda::Device;
+use loki_reshoot::tensor::Tensor;
+use loki_reshoot::vae_video::VideoVae;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -42,12 +42,12 @@ fn used(dev: &Device) -> f64 {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or_else(|| r"C:\Users\steph\dev\h3ref2va\ref_out\vvae".into()));
+    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or_else(|| r"C:\Users\steph\dev\loki-reshoot\ref_out\vvae".into()));
     let cases: Vec<String> = args.get(2).map(|s| s.split(',').map(|x| x.to_string()).collect()).unwrap_or_else(|| vec!["v448".into(), "v448_39".into(), "v640".into(), "img448".into()]);
     let roundtrip = args.iter().any(|a| a == "--roundtrip");
     let png_dir = args.iter().position(|a| a == "--png").and_then(|i| args.get(i + 1)).map(PathBuf::from);
     let debug = args.iter().any(|a| a == "--debug");
-    let model = PathBuf::from(std::env::var("H3_VVAE").unwrap_or_else(|_| r"C:\Users\steph\dev\h3ref2va\models\minimax_h3_video_vae_fp16.safetensors".into()));
+    let model = PathBuf::from(std::env::var("LOKI_VVAE").unwrap_or_else(|_| r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_video_vae_fp16.safetensors".into()));
 
     let dev = Device::new(0)?;
     let base = used(&dev);
@@ -92,7 +92,7 @@ fn main() -> Result<()> {
             println!("bench {w}x{h}x{t} (rep {rep}): encode {te:.2}s -> [24,{tl},{hl},{wl}], decode {td:.2}s -> {n} frames, roundtrip PSNR {:.2} dB, pool peak {:.2} GB", psnr_u8(&out[..n_cmp], &pixf).0, used(&dev) - after_load);
         }
         dev.sync()?;
-        h3ref2va::vae_video::profile_report();
+        loki_reshoot::vae_video::profile_report();
         return Ok(());
     }
 
@@ -113,7 +113,7 @@ fn main() -> Result<()> {
             let sh = &meta["dbg_enc_out"];
             let (dt, dh, dw) = (sh[2].as_u64().unwrap() as usize, sh[3].as_u64().unwrap() as usize, sh[4].as_u64().unwrap() as usize);
             let tclip = t.min(17);
-            let pd = Tensor::from_buf(dev.upload(&pix[..tclip * h * w * 3])?, h3ref2va::tensor::DType::U8, &[tclip * h * w * 3]);
+            let pd = Tensor::from_buf(dev.upload(&pix[..tclip * h * w * 3])?, loki_reshoot::tensor::DType::U8, &[tclip * h * w * 3]);
             let mine = vae.encode_tile(&pd, tclip, h, w, 0, if t == 1 { 1 } else { 17 }, 0, 0, dh * 16, dw * 16)?;
             let n = 24 * dt * dh * dw;
             let (mx, rl) = stats(&mine[..n], &r[..n]);
@@ -211,7 +211,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            let out = h3ref2va::image::Rgb8 { w: cols * w, h: rows * h, data: img };
+            let out = loki_reshoot::image::Rgb8 { w: cols * w, h: rows * h, data: img };
             out.save_png(&dir.join(format!("{case}.png")))?;
         }
     }

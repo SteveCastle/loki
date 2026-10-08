@@ -22,13 +22,13 @@ fn exe_dir() -> PathBuf {
     std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Directories searched for models: next to the binary, its `models/`, `$H3_MODELS`, `.` and `./models`.
+/// Directories searched for models: next to the binary, its `models/`, `$LOKI_MODELS`, `.` and `./models`.
 pub fn search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     let exe = exe_dir();
     dirs.push(exe.clone());
     dirs.push(exe.join("models"));
-    if let Ok(d) = std::env::var("H3_MODELS") {
+    if let Ok(d) = std::env::var("LOKI_MODELS") {
         dirs.push(PathBuf::from(d));
     }
     dirs.push(PathBuf::from("."));
@@ -94,7 +94,7 @@ pub fn download(hf_path: &str, dest: &Path) -> Result<()> {
     let resumed = resp.status() == 206;
     let start = if resumed { have } else { 0 };
     let total = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok()).map(|n| n + start);
-    let pb = indicatif::ProgressBar::new(total.unwrap_or(0));
+    let pb = if crate::log::quiet() { indicatif::ProgressBar::hidden() } else { indicatif::ProgressBar::new(total.unwrap_or(0)) };
     pb.set_style(
         indicatif::ProgressStyle::with_template("{bar:40} {bytes}/{total_bytes} {bytes_per_sec} eta {eta}")
             .unwrap_or_else(|_| indicatif::ProgressStyle::default_bar()),

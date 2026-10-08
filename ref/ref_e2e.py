@@ -1,5 +1,5 @@
 """Run the video_minimax_h3_r2v graph through a private headless ComfyUI server (API format) for an apples-to-apples
-comparison with h3ref2va. Usage (any python):
+comparison with loki-reshoot. Usage (any python):
   python ref/ref_e2e.py --image testdata/ref.jpg --audio testdata/music3s.wav --prompt "..." --width 448 --height 256 --length 22 --seed 1 --out ref_out/e2e
 Starts ComfyUI on port 8199 with --input-directory/--output-directory pointed at the out dir, kills it afterwards.
 """

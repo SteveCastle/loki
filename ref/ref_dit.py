@@ -1,7 +1,7 @@
 """Reference dump of ComfyUI's MiniMax H3 DiT (MiniMaxH3Model.forward) on a small synthetic ref2va case.
 
 Usage (cwd = ComfyUI root, embedded python):
-    python <h3ref2va>/ref/ref_dit.py <out_dir> [sigmas=0.7,0.2] [W=448] [H=256] [frames=22]
+    python <loki-reshoot>/ref/ref_dit.py <out_dir> [sigmas=0.7,0.2] [W=448] [H=256] [frames=22]
 
 Writes into out_dir:
     text.bin        f32 [L, 5120]   (bf16-representable values; fed to the model as bf16)
@@ -23,7 +23,7 @@ import comfy.sd
 import comfy.utils
 import comfy.model_management
 
-MODEL = r"C:\Users\steph\dev\h3ref2va\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
+MODEL = r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors"
 
 if os.environ.get("REF_W8A16") == "1":
     # High-precision reference: no activation quantization (rotated activation x dequantized int8 weight in fp32).

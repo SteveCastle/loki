@@ -3,12 +3,12 @@
 //!   dit_check [ref_dir]                         compare with ref_out/dit (default)
 //!   dit_check --bench <W> <H> <frames> [n]      synthetic run at W x H px, `frames` frames, n forwards
 use anyhow::{Context, Result};
-use h3ref2va::cuda::Device;
-use h3ref2va::dit_h3::{Dit, DitInputs, RefBlock, RefKind, HIDDEN, LAYERS};
-use h3ref2va::tensor::{DType, Tensor};
+use loki_reshoot::cuda::Device;
+use loki_reshoot::dit_h3::{Dit, DitInputs, RefBlock, RefKind, HIDDEN, LAYERS};
+use loki_reshoot::tensor::{DType, Tensor};
 use std::path::{Path, PathBuf};
 
-const MODEL: &str = r"C:\Users\steph\dev\h3ref2va\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors";
+const MODEL: &str = r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_ref2va_pruned_int8_convrot.safetensors";
 
 fn read_f32(p: &Path) -> Result<Vec<f32>> {
     let b = std::fs::read(p).with_context(|| format!("reading {}", p.display()))?;
@@ -208,7 +208,7 @@ fn main() -> Result<()> {
         let p = |i: usize, d: usize| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
         let (m, iters) = (p(2, 8192), p(3, 50));
         for (name, n, k, mode) in [("qkv/kv", 14336usize, 5376usize, 0), ("q", 7168, 5376, 0), ("out", 5376, 7168, 4), ("fc1", 28672, 5376, 3), ("fc2", 5376, 14336, 4)] {
-            let dt = h3ref2va::dit_h3::gemm_bench(&dev, m, n, k, mode, iters)?;
+            let dt = loki_reshoot::dit_h3::gemm_bench(&dev, m, n, k, mode, iters)?;
             println!("gemm {name:<6} m {m} n {n} k {k}: {:.3} ms  {:.1} TOPS", dt * 1e3, 2.0 * m as f64 * n as f64 * k as f64 / dt / 1e12);
         }
         return Ok(());
@@ -217,7 +217,7 @@ fn main() -> Result<()> {
         let dev = Device::new(0)?;
         let nk: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(32768);
         let nq: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8192);
-        let dt = h3ref2va::dit_h3::attention_bench(&dev, nq, nk, std::env::var("ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(30))?;
+        let dt = loki_reshoot::dit_h3::attention_bench(&dev, nq, nk, std::env::var("ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(30))?;
         let flops = 4.0 * nq as f64 * nk as f64 * 7168.0;
         println!("attention nq {nq} nk {nk}: {:.2} ms  {:.1} TOPS", dt * 1e3, flops / dt / 1e12);
         return Ok(());
@@ -226,13 +226,13 @@ fn main() -> Result<()> {
         let p = |i: usize, d: usize| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
         return bench(p(2, 1344), p(3, 768), p(4, 124), p(5, 2));
     }
-    let dir = args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Users\steph\dev\h3ref2va\ref_out\dit"));
+    let dir = args.get(1).map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Users\steph\dev\loki-reshoot\ref_out\dit"));
     check(&dir)
 }
 
 #[allow(dead_code)]
 pub fn mma_bench() -> Result<()> {
-    use h3ref2va::cuda::Arg;
+    use loki_reshoot::cuda::Arg;
     let dev = Device::new(0)?;
     let out = Tensor::zeros(&dev, DType::F32, &[4])?;
     let iters = 65536;

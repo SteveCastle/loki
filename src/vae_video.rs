@@ -49,7 +49,7 @@ static PROF: std::sync::OnceLock<crate::cuda::Profiler> = std::sync::OnceLock::n
 fn prof() -> &'static crate::cuda::Profiler {
     PROF.get_or_init(crate::cuda::Profiler::new)
 }
-/// Print the per-kernel-category GPU time profile (H3_PROFILE=1).
+/// Print the per-kernel-category GPU time profile (LOKI_PROFILE=1).
 pub fn profile_report() {
     prof().report();
 }
@@ -399,8 +399,8 @@ impl VideoVae {
             enc,
             dec,
             max_batch: 8,
-            hacc_enc: std::env::var("H3_VVAE_HACC").map(|v| v.contains('e')).unwrap_or(true),
-            hacc_dec: std::env::var("H3_VVAE_HACC").map(|v| v.contains('d')).unwrap_or(true),
+            hacc_enc: std::env::var("LOKI_VVAE_HACC").map(|v| v.contains('e')).unwrap_or(true),
+            hacc_dec: std::env::var("LOKI_VVAE_HACC").map(|v| v.contains('d')).unwrap_or(true),
         })
     }
 

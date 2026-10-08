@@ -1,30 +1,60 @@
-# h3ref2va
+# loki-reshoot
 
-MiniMax **H3 reference-to-video** (`ref2va`) as a single self-contained Windows binary: any mix of reference
-**images, videos and audio** in, an **mp4 with native generated sound** out. No ComfyUI, no Python, no PyTorch: the
-whole engine (int8 tensor-core GEMMs, Sage-style int8/fp8 attention, NVFP4 text encoder, 3-D video VAE, BigVGAN audio VAE)
-is CUDA written from scratch and driven from Rust. Runtime dependencies: the NVIDIA driver and `ffmpeg` (auto-downloaded on
-Windows when missing).
+**AI video with sound from reference images, videos and audio**, from the command line. A single self-contained binary running
+MiniMax **H3 reference-to-video** (`ref2va`): give it a photo, a clip, a voice or a song and a prompt, get an **mp4 with native
+generated audio** back. No ComfyUI, no Python, no PyTorch: the whole engine (int8 tensor-core GEMMs, Sage-style int8/fp8 attention,
+NVFP4 text encoder, 3-D video VAE, BigVGAN audio VAE) is CUDA written from scratch and driven from Rust. Runtime dependencies: the
+NVIDIA driver and `ffmpeg` (auto-downloaded on Windows when missing).
+
+```
+loki-reshoot --animate photo.jpg --describe "a woman taking a mirror selfie in a sunlit room" -d 5   # living photo
+loki-reshoot -i hero.png -a theme.mp3 -d 6 -P prompt.txt -o hero.mp4                                # image + music
+loki-reshoot -i face.png -v dance.mp4@2,4 -P prompt.txt                                              # motion transfer
+```
 
 It reproduces the ComfyUI `video_minimax_h3_r2v` workflow (`MiniMaxH3ReferenceToVideo` → `BasicGuider` (cfg 1, one DiT pass
 per step) → `SamplerCustomAdvanced` `res_multistep` / `simple` schedule / 20 steps → video + audio VAE decode → mp4), and
-every component was validated against ComfyUI's implementation (see *Validation*). Sibling of [4kify](../4kify).
+every component was validated against ComfyUI's implementation (see *Validation*).
+
+## Part of the loki- toolkit
+
+`loki-reshoot` is one of a family of small, composable media tools that share one set of conventions, so they chain with each other
+and with ordinary Unix tools, and are easy for agents to drive:
+
+| tool | does | engine |
+|---|---|---|
+| [loki-retouch](../loki-retouch) | image editing, upscaling, restoration, compositing | Qwen Image 2.1 |
+| **loki-reshoot** (this repo) | reference images / videos / audio -> video with sound | MiniMax H3 |
+
+- **Inputs** are files, or `-` for stdin (any one of `-i -`, `--animate -`, `-v -`, `-a -`, `-P -`); the **result** is a file whose path is
+  printed on stdout (`--json` prints a JSON object instead), or the mp4 itself on stdout with `-o -` (fragmented mp4).
+- **Progress and diagnostics go to stderr only**; `-q` silences them. Exit status: 0 ok, 1 error, 2 usage error.
+- `-p/--prompt`, `-P/--prompt-file`, `--seed`, `--steps`, `--show-prompt` mean the same thing in every tool; models are found next to the
+  binary, in `./models` and in `$LOKI_MODELS` (see `docs/CONVENTIONS.md`).
+- `lokictl` (the Lowkey Media Server client) is separate: these tools never talk to a server.
+
+```
+loki-retouch --preset restore -o - old.jpg | loki-reshoot --animate - -d 5 -o alive.mp4
+loki-retouch -p "make it night" -o - photo.jpg | loki-reshoot --animate - --json -o night.mp4
+```
+
+Agent skills for both tools live in `.claude/skills/` (Claude Code and OpenCode read that folder).
 
 ## Usage
 
 ```
-h3ref2va --prompt TEXT [OPTIONS]
+loki-reshoot --prompt TEXT [OPTIONS]
 
-  -p, --prompt TEXT / --prompt-file F   prompt; address references with <Picture 1>, <Video 1>, <Audio 1> tags
-  -i, --ref-image PATH                  reference image            (repeatable, up to 9)
+  -p, --prompt TEXT / -P, --prompt-file F   prompt (- = stdin); address references with <Picture 1>, <Video 1>, <Audio 1> tags
+  -i, --ref-image PATH|-                reference image            (repeatable, up to 9)
   -v, --ref-video FILE[@START[,DUR]]    reference video, seconds   (repeatable, up to 3)
   -a, --ref-audio FILE[@START[,DUR]]    reference audio            (repeatable, up to 3)
       --no-video-audio                  ignore the soundtracks of reference videos
-  -o, --out PATH                        output mp4 (default h3_<seed>.mp4)
+  -o, --out PATH|-                      output mp4, or - for the mp4 on stdout (default reshoot_<seed>.mp4)
   -d, --duration SECONDS                default 5 (snapped up to the model's 17k+5 frame grid @ 24 fps)
       --frames N                        exact frame count instead of --duration
       --size WxH | --aspect W:H --megapixels F    output size (default: first reference's aspect at 0.4 MP)
-      --steps N (20)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)
+      --steps N (20)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)  -q  --json  --show-prompt  --prompt-guide
       --dit / --text-encoder / --video-vae / --audio-vae PATH   model files
       --ffmpeg PATH
 ```
@@ -34,14 +64,14 @@ Reference tags are numbered per type in command-line order: `<Picture i>` for `-
 at start-up. The model is very sensitive to prompt wording: say explicitly which reference drives which part of the shot, e.g.
 
 ```
-h3ref2va -i hero.png -a theme.mp3 -d 6 -p "Animate <Picture 1> as one continuous shot: she dances to the music of <Audio 1>. Audio: loud rhythmic club music from <Audio 1>."
-h3ref2va -i face.png -v dance.mp4@2,4 -p "The woman of <Picture 1> performs the motion of <Video 1>, keeping the voice and sound of <Audio 1>."
+loki-reshoot -i hero.png -a theme.mp3 -d 6 -p "Animate <Picture 1> as one continuous shot: she dances to the music of <Audio 1>. Audio: loud rhythmic club music from <Audio 1>."
+loki-reshoot -i face.png -v dance.mp4@2,4 -p "The woman of <Picture 1> performs the motion of <Video 1>, keeping the voice and sound of <Audio 1>."
 ```
 
 ## Quick mode: living photos
 
 ```
-h3ref2va --animate photo.jpg --describe "the woman in a black swimsuit taking a mirror selfie in a sunlit room" -d 5
+loki-reshoot --animate photo.jpg --describe "the woman in a black swimsuit taking a mirror selfie in a sunlit room" -d 5
 ```
 
 `--animate IMAGE` gives natural ambient life, subtle resting movement and a subtle camera shake (`--shake none|subtle|handheld`) with
@@ -63,7 +93,7 @@ Length is much cheaper than resolution for the same added value.
 
 ## Models
 
-Looked up next to the binary, in `./models`, and in `$H3_MODELS`; any that are missing are downloaded (resumable) from
+Looked up next to the binary, in `./models`, and in `$LOKI_MODELS`; any that are missing are downloaded (resumable) from
 [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) into `models/` next to the binary (~42 GB total).
 
 | flag | file | size |
@@ -78,7 +108,7 @@ Models are loaded in phases so everything fits a 24 GB card: text encoder (evict
 
 ## Building
 
-Rust (stable, MSVC), CUDA Toolkit 12.x (`nvcc`), Visual Studio 2022 C++ tools. `cargo build --release` → `target/release/h3ref2va.exe`
+Rust (stable, MSVC), CUDA Toolkit 12.x (`nvcc`), Visual Studio 2022 C++ tools. `cargo build --release` → `target/release/loki-reshoot.exe`
 (`build.rs` compiles `kernels/*.cu` to sm_89 fatbins embedded in the binary; `cudarc` loads the driver dynamically).
 
 See `docs/NOTES.md` for the reference-code map, and `ref/` for the ComfyUI reference-dump scripts used to validate each component.

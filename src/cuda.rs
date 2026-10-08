@@ -225,14 +225,14 @@ impl Drop for DevBuf {
 }
 
 // ------------------------------------------------------------------------------------------
-// Lightweight profiler (enabled with H3_PROFILE=1): accumulates GPU time per category.
+// Lightweight profiler (enabled with LOKI_PROFILE=1): accumulates GPU time per category.
 pub struct Profiler {
     enabled: bool,
     acc: Mutex<Vec<(String, f64, usize)>>,
 }
 impl Profiler {
     pub fn new() -> Profiler {
-        Profiler { enabled: std::env::var("H3_PROFILE").is_ok(), acc: Mutex::new(Vec::new()) }
+        Profiler { enabled: std::env::var("LOKI_PROFILE").is_ok(), acc: Mutex::new(Vec::new()) }
     }
     pub fn enabled(&self) -> bool {
         self.enabled
@@ -262,11 +262,11 @@ impl Profiler {
         }
         let acc = self.acc.lock().unwrap();
         let total: f64 = acc.iter().map(|e| e.1).sum();
-        eprintln!("---- profile (total {:.2}s) ----", total);
+        crate::info!("---- profile (total {:.2}s) ----", total);
         let mut v: Vec<_> = acc.iter().collect();
         v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         for (n, t, c) in v {
-            eprintln!("  {:<24} {:>8.3}s  {:>5.1}%  x{}", n, t, 100.0 * t / total, c);
+            crate::info!("  {:<24} {:>8.3}s  {:>5.1}%  x{}", n, t, 100.0 * t / total, c);
         }
     }
 }

@@ -1,7 +1,7 @@
-use h3ref2va::cuda::Device;
-use h3ref2va::ops::{self, Act, Epi, QuantAct};
-use h3ref2va::reference;
-use h3ref2va::tensor::{bf16_bits, bf16_to_f32, DType, Tensor};
+use loki_reshoot::cuda::Device;
+use loki_reshoot::ops::{self, Act, Epi, QuantAct};
+use loki_reshoot::reference;
+use loki_reshoot::tensor::{bf16_bits, bf16_to_f32, DType, Tensor};
 use rand::{Rng, SeedableRng};
 
 fn dev() -> std::sync::Arc<Device> {
@@ -282,7 +282,7 @@ fn cpu_attention(q: &[f32], k: &[f32], v: &[f32], nq: usize, nk: usize, hq: usiz
 fn flash_attention_matches_reference() {
     let d = dev();
     ops::attn_init(&d).unwrap();
-    use h3ref2va::ops::{AttnArgs, AttnView};
+    use loki_reshoot::ops::{AttnArgs, AttnView};
     // (nq, nk, hq, hk, dim, mode) mode: 0 full, 1 causal, 2 kv_limit blocks, 3 two-segment full
     for (nq, nk, hq, hk, dim, mode) in [
         (64usize, 64usize, 2usize, 2usize, 128usize, 0),
@@ -340,7 +340,7 @@ fn sage_attention_close_to_reference() {
     let d = dev();
     ops::attn_init(&d).unwrap();
     ops::sage_init(&d).unwrap();
-    use h3ref2va::ops::AttnView;
+    use loki_reshoot::ops::AttnView;
     // two segments: prefix of 150 keys (padded to 192) + 300 target keys; 2 heads; queries 200 with full attention
     for (nq, n1, n2, hq, mode) in [(200usize, 150usize, 300usize, 2usize, 0), (130, 70, 0, 3, 1), (257, 100, 500, 4, 0)] {
         let dim = 128;

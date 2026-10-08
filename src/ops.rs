@@ -117,7 +117,7 @@ pub fn gemm_i8(dev: &Device, aq: &Tensor, sa: &Tensor, wq: &Tensor, sw: &Tensor,
         Epi::SwiGluPairs => (3, 0u64, 0u64),
     };
     ensure!(out.numel() == if mode == 3 { m * n / 2 } else { m * n }, "gemm_i8: out shape");
-    let wide = gemm_i8_wide(m, n) && std::env::var("H3_GEMM_NARROW").is_err();
+    let wide = gemm_i8_wide(m, n) && std::env::var("LOKI_GEMM_NARROW").is_err();
     let kname = match (out.dtype, wide) {
         (DType::BF16, false) => "k_gemm_i8_bf16",
         (DType::F32, false) => "k_gemm_i8_f32",

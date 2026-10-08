@@ -1,14 +1,14 @@
 //! Video VAE frame bookkeeping on the GPU: decode streams exactly `decode_frame_count(tl)` frames for every
 //! latent length, and encode produces the reference latent frame count. Skipped when the model is missing.
 //! Run through the GPU lock: bash tools/gpu.sh cargo test --release --test vvae_frames
-use h3ref2va::cuda::Device;
-use h3ref2va::tensor::Tensor;
-use h3ref2va::vae_video::{encode_latent_frames, VideoVae};
+use loki_reshoot::cuda::Device;
+use loki_reshoot::tensor::Tensor;
+use loki_reshoot::vae_video::{encode_latent_frames, VideoVae};
 use std::path::PathBuf;
 
 #[test]
 fn vvae_frame_counts_gpu() {
-    let model = PathBuf::from(std::env::var("H3_VVAE").unwrap_or_else(|_| r"C:\Users\steph\dev\h3ref2va\models\minimax_h3_video_vae_fp16.safetensors".into()));
+    let model = PathBuf::from(std::env::var("LOKI_VVAE").unwrap_or_else(|_| r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_video_vae_fp16.safetensors".into()));
     if !model.exists() {
         eprintln!("skipping: {} not found", model.display());
         return;

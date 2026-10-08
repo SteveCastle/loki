@@ -18,6 +18,27 @@ pub mod te_h3;
 pub mod vae_audio;
 pub mod vae_video;
 
+/// Progress/diagnostic output (stderr), silenced by `--quiet`. Results go to stdout, never through this.
+pub mod log {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static QUIET: AtomicBool = AtomicBool::new(false);
+    pub fn set_quiet(q: bool) {
+        QUIET.store(q, Ordering::Relaxed);
+    }
+    pub fn quiet() -> bool {
+        QUIET.load(Ordering::Relaxed)
+    }
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($t:tt)*) => {
+        if !$crate::log::quiet() {
+            eprintln!($($t)*);
+        }
+    };
+}
+
 /// CPU reference helpers shared by tests.
 pub mod reference {
     /// Normalized regular Hadamard H256 = kron^4(h4) / 16, applied to each 256-group of a row.

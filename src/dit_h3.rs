@@ -13,9 +13,9 @@
 //! Resident per run: x (bf16), K8, V8 (+ scales) for the whole sequence plus small scratch; for very long runs the
 //! fc1 weights of a few layers are evicted to host memory and streamed per layer.
 //!
-//! Environment knobs: H3_PROFILE=1 (per-kernel GPU time breakdown, synchronizing), H3_ATTN=g3|fp16 (alternative
-//! attention kernels; fp16 = fp16 V/PV, more accurate audio, ~25% slower attention), H3_QK_ROT=0 (disable the q/k
-//! Hadamard rotation), H3_CHUNK / H3_ABATCH (scratch sizes), H3_DEBUG_MEM=1.
+//! Environment knobs: LOKI_PROFILE=1 (per-kernel GPU time breakdown, synchronizing), LOKI_ATTN=g3|fp16 (alternative
+//! attention kernels; fp16 = fp16 V/PV, more accurate audio, ~25% slower attention), LOKI_QK_ROT=0 (disable the q/k
+//! Hadamard rotation), LOKI_CHUNK / LOKI_ABATCH (scratch sizes), LOKI_DEBUG_MEM=1.
 use crate::cuda::{Arg, Device, Profiler};
 use crate::ops::{self, AttnArgs, AttnView, Epi, QuantAct};
 use crate::safetensors::SafeTensors;
@@ -225,25 +225,25 @@ struct AttnRaw {
 }
 unsafe impl cudarc::driver::DeviceRepr for AttnRaw {}
 
-/// Hadamard-rotate q/k heads before the int8 attention quantization (H3_QK_ROT=0 disables)
+/// Hadamard-rotate q/k heads before the int8 attention quantization (LOKI_QK_ROT=0 disables)
 fn qk_rotate() -> bool {
-    std::env::var("H3_QK_ROT").map(|v| v != "0").unwrap_or(true)
+    std::env::var("LOKI_QK_ROT").map(|v| v != "0").unwrap_or(true)
 }
 /// PV precision of the attention kernel: fp8 V (default; half the L2->SM traffic, which bounds this kernel)
-/// or fp16 V (H3_ATTN=fp16).
+/// or fp16 V (LOKI_ATTN=fp16).
 fn attn_fp16() -> bool {
-    std::env::var("H3_ATTN").map(|v| v == "fp16").unwrap_or(false)
+    std::env::var("LOKI_ATTN").map(|v| v == "fp16").unwrap_or(false)
 }
 const ATTN_V4_SMEM: u32 = (128 * 128 + 3 * (64 * 144 + 64 * 272 + 64 * 4)) as u32;
 const ATTN_V6_SMEM: u32 = (256 * 128 + 3 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
 const ATTN_V5G3_SMEM: u32 = (192 * 128 + 3 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
 /// (kernel, dynamic smem, queries per block, threads per block)
-/// default: k_h3_attn_v6 (fp8 PV, 32 query rows per warp, 256 per block); H3_ATTN=g3: k_h3_attn_v5g3 (3 warp groups of
-/// 16-row warps); H3_ATTN=fp16: k_h3_attn_v4 (fp16 V/PV: more accurate PV, ~25% slower)
+/// default: k_h3_attn_v6 (fp8 PV, 32 query rows per warp, 256 per block); LOKI_ATTN=g3: k_h3_attn_v5g3 (3 warp groups of
+/// 16-row warps); LOKI_ATTN=fp16: k_h3_attn_v4 (fp16 V/PV: more accurate PV, ~25% slower)
 fn attn_kernel() -> (&'static str, u32, usize, u32) {
     if attn_fp16() {
         ("k_h3_attn_v4", ATTN_V4_SMEM, 128, 256)
-    } else if std::env::var("H3_ATTN").map(|v| v == "g3").unwrap_or(false) {
+    } else if std::env::var("LOKI_ATTN").map(|v| v == "g3").unwrap_or(false) {
         ("k_h3_attn_v5g3", ATTN_V5G3_SMEM, 192, 384)
     } else {
         ("k_h3_attn_v6", ATTN_V6_SMEM, 256, 256)
@@ -328,7 +328,7 @@ pub fn attention_bench(dev: &Device, nq: usize, nk: usize, iters: usize) -> Resu
     dev.sync()?;
     let o = out.to_f32_vec(dev)?;
     if !o.iter().all(|x| x.is_finite()) {
-        eprintln!("warning: attention bench produced non-finite output");
+        crate::info!("warning: attention bench produced non-finite output");
     }
     Ok(t.elapsed().as_secs_f64() / iters as f64)
 }
@@ -588,7 +588,7 @@ impl Dit {
         let inv_freq = st.f32s("rope.inv_freq")?;
         ensure!(inv_freq.len() == 16);
         trim_mem_pool(&dev)?;
-        eprintln!("  dit: {:.2} GB uploaded in {:.1}s, {} MB free", (uploaded + l.uploaded) as f64 / 1e9, t0.elapsed().as_secs_f64(), dev.free_mem()? >> 20);
+        crate::info!("  dit: {:.2} GB uploaded in {:.1}s, {} MB free", (uploaded + l.uploaded) as f64 / 1e9, t0.elapsed().as_secs_f64(), dev.free_mem()? >> 20);
         Ok(Dit {
             dev,
             prof: Profiler::new(),
@@ -898,8 +898,8 @@ impl Dit {
         dev.dtod(prefix_x.ptr, text_states.ptr, l * HIDDEN * 2)?;
         drop(text_states);
         trim_mem_pool(dev)?;
-        if std::env::var("H3_DEBUG_MEM").is_ok() {
-            eprintln!("  dit prepare: free after refiner {} MB", dev.free_mem()? >> 20);
+        if std::env::var("LOKI_DEBUG_MEM").is_ok() {
+            crate::info!("  dit prepare: free after refiner {} MB", dev.free_mem()? >> 20);
         }
         let aug = inp.cond_noise_aug.unwrap_or(VISUAL_COND_TIMESTEP as f32);
         for e in &embeds {
@@ -939,7 +939,7 @@ impl Dit {
         let x = Tensor::new(dev, DType::BF16, &[seq, HIDDEN])?;
         let k8 = Tensor::zeros(dev, DType::I8, &[s_pad, HEADS, HEAD_DIM])?;
         let sk = Tensor::zeros(dev, DType::F32, &[s_pad, HEADS])?;
-        // V: fp16 [S_pad, H, 128] (H3_ATTN=fp16) or fp8 e4m3 transposed [H, 128, S_pad]
+        // V: fp16 [S_pad, H, 128] (LOKI_ATTN=fp16) or fp8 e4m3 transposed [H, 128, S_pad]
         let vbuf = if attn_fp16() { Tensor::zeros(dev, DType::BF16, &[s_pad, HEADS, HEAD_DIM])? } else { Tensor::zeros(dev, DType::U8, &[HEADS, HEAD_DIM, s_pad])? };
         let sv = Tensor::zeros(dev, DType::F32, &[s_pad / 256, HEADS])?;
         let mean_k = Tensor::zeros(dev, DType::F32, &[INNER])?;
@@ -955,8 +955,8 @@ impl Dit {
         let fc1_stage = self.balance_fc1(8192 * per_a + 4096 * per_c + margin)?;
         trim_mem_pool(dev)?;
         let free = dev.free_mem()?;
-        if std::env::var("H3_DEBUG_MEM").is_ok() {
-            eprintln!("  dit prepare: seq {seq}, free before scratch {} MB", free >> 20);
+        if std::env::var("LOKI_DEBUG_MEM").is_ok() {
+            crate::info!("  dit prepare: seq {seq}, free before scratch {} MB", free >> 20);
         }
         let budget = free.saturating_sub(margin);
         let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<usize>().ok());
@@ -969,11 +969,11 @@ impl Dit {
                 break;
             }
         }
-        if let Some(c) = env("H3_CHUNK") {
+        if let Some(c) = env("LOKI_CHUNK") {
             chunk = c;
             abatch = abatch.max(c);
         }
-        if let Some(a) = env("H3_ABATCH") {
+        if let Some(a) = env("LOKI_ABATCH") {
             abatch = a;
         }
         chunk = ((chunk / 256).max(1) * 256).min(s_pad);
@@ -1047,7 +1047,7 @@ impl Dit {
                     done += 1;
                 }
             }
-            eprintln!("  dit: evicted fc1 of {done} more layer(s) to host memory ({} total) to fit the run", evicted + done);
+            crate::info!("  dit: evicted fc1 of {done} more layer(s) to host memory ({} total) to fit the run", evicted + done);
         } else if evicted > 0 {
             // restore layers while memory allows (keeping `want` free)
             let mut avail = free - want;

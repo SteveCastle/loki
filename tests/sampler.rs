@@ -1,7 +1,7 @@
 //! res_multistep vs ComfyUI (toy denoiser). Needs ref_out/sampler from ref/ref_sampler.py.
-use h3ref2va::cuda::Device;
-use h3ref2va::sampler;
-use h3ref2va::tensor::{DType, Tensor};
+use loki_reshoot::cuda::Device;
+use loki_reshoot::sampler;
+use loki_reshoot::tensor::{DType, Tensor};
 
 fn read_f32(p: &str) -> Vec<f32> {
     std::fs::read(p).unwrap().chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect()

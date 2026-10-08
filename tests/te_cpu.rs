@@ -1,6 +1,6 @@
 //! CPU-side checks of the MiniMax H3 conditioning presentation (no GPU needed).
-use h3ref2va::te_h3::{fmt_1f, mrope_table, token_rc, tokenize_piece, vision_size};
-use h3ref2va::tokenizer::Tokenizer;
+use loki_reshoot::te_h3::{fmt_1f, mrope_table, token_rc, tokenize_piece, vision_size};
+use loki_reshoot::tokenizer::Tokenizer;
 
 #[test]
 fn timestamps_format_like_python() {

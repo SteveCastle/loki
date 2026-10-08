@@ -5,7 +5,7 @@ sys.path.insert(0, os.getcwd())
 import torch, numpy as np
 import comfy.samplers, comfy.k_diffusion.sampling as ks, comfy.model_sampling
 
-out = r"C:\Users\steph\dev\h3ref2va\ref_out\sampler"
+out = r"C:\Users\steph\dev\loki-reshoot\ref_out\sampler"
 os.makedirs(out, exist_ok=True)
 class MS:  # ModelSamplingAV(shift=12) sigmas table
     def __init__(self):

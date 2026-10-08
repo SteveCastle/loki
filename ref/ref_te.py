@@ -17,7 +17,7 @@ import comfy.sd
 import comfy.model_management
 from comfy.sd import CLIPType
 
-TE = r"C:\Users\steph\dev\h3ref2va\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+TE = r"C:\Users\steph\dev\loki-reshoot\models\qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
 TESTIMGS = r"C:\Users\steph\dev\4kify\testimgs"
 PROMPT = ("A woman in a red coat walks through a snowy street at dusk, talking to the camera; "
           "she says: \"It's 5 degrees, can you believe it?\" Warm lights, 35mm film look.")

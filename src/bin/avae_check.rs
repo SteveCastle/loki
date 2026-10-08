@@ -1,10 +1,10 @@
 //! Compare the Rust MiniMax H3 audio VAE against the ComfyUI reference dumps (ref/ref_avae.py) and benchmark it.
 //! Usage: avae_check [ref_dir] [model]
-//!   defaults: C:\Users\steph\dev\h3ref2va\ref_out\avae, C:\Users\steph\dev\h3ref2va\models\minimax_h3_audio_vae_fp32.safetensors
+//!   defaults: C:\Users\steph\dev\loki-reshoot\ref_out\avae, C:\Users\steph\dev\loki-reshoot\models\minimax_h3_audio_vae_fp32.safetensors
 use anyhow::Result;
-use h3ref2va::cuda::Device;
-use h3ref2va::tensor::Tensor;
-use h3ref2va::vae_audio::AudioVae;
+use loki_reshoot::cuda::Device;
+use loki_reshoot::tensor::Tensor;
+use loki_reshoot::vae_audio::AudioVae;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -33,8 +33,8 @@ fn report(name: &str, got: &[f32], want: &[f32]) -> f64 {
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or(r"C:\Users\steph\dev\h3ref2va\ref_out\avae".into()));
-    let model = PathBuf::from(args.get(2).cloned().unwrap_or(r"C:\Users\steph\dev\h3ref2va\models\minimax_h3_audio_vae_fp32.safetensors".into()));
+    let ref_dir = PathBuf::from(args.get(1).cloned().unwrap_or(r"C:\Users\steph\dev\loki-reshoot\ref_out\avae".into()));
+    let model = PathBuf::from(args.get(2).cloned().unwrap_or(r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_audio_vae_fp32.safetensors".into()));
     let dev = Device::new(0)?;
     let free0 = dev.free_mem()?;
     let t0 = Instant::now();
@@ -43,7 +43,7 @@ fn main() -> Result<()> {
     let free_loaded = dev.free_mem()?;
     println!("loaded in {:.2}s, weights {} MB", t0.elapsed().as_secs_f64(), (free0 - free_loaded) >> 20);
 
-    if std::env::var("H3_PROFILE").is_ok() {
+    if std::env::var("LOKI_PROFILE").is_ok() {
         // profile mode: stereo encode + decode (AVAE_PROF_SECS, default 5 s), per-kernel GPU time
         let secs: usize = std::env::var("AVAE_PROF_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
         let n = secs * 32000;
@@ -51,7 +51,7 @@ fn main() -> Result<()> {
         let z = vae.encode(&wav, n)?;
         let _ = vae.decode(&z, n / 800)?;
         let mut vae = vae;
-        vae.prof = h3ref2va::cuda::Profiler::new();
+        vae.prof = loki_reshoot::cuda::Profiler::new();
         let z = vae.encode(&wav, n)?;
         let _ = vae.decode(&z, n / 800)?;
         vae.prof.report();
@@ -99,7 +99,7 @@ fn main() -> Result<()> {
     if rin.exists() {
         let x = read_f32(&rin);
         let want = read_f32(&ref_dir.join("resample_out_32000.bin"));
-        let got = h3ref2va::vae_audio::resample(&x, 44100, 32000);
+        let got = loki_reshoot::vae_audio::resample(&x, 44100, 32000);
         println!("== resample 44.1k -> 32k (host port of comfy.audio.resample): len {} vs {}", got.len(), want.len());
         if got.len() == want.len() {
             report("resample vs comfy", &got, &want);

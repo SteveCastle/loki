@@ -22,7 +22,7 @@ import comfy.model_management
 import comfy.ldm.minimax.vae as mvae
 from comfy.ldm.modules import attention as cattn
 
-MODEL = r"C:\Users\steph\dev\h3ref2va\models\minimax_h3_video_vae_fp16.safetensors"
+MODEL = r"C:\Users\steph\dev\loki-reshoot\models\minimax_h3_video_vae_fp16.safetensors"
 
 
 def make_clip(img, w, h, t, seed):

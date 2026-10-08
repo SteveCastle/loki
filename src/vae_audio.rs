@@ -89,7 +89,7 @@ pub struct AudioVae {
     filt: Tensor,
     /// Process the encoder conv stack one stereo channel at a time above this many samples per channel.
     pub enc_split_samples: usize,
-    /// Per-kernel GPU timing when H3_PROFILE is set (report with `prof.report()`).
+    /// Per-kernel GPU timing when LOKI_PROFILE is set (report with `prof.report()`).
     pub prof: Profiler,
 }
 
