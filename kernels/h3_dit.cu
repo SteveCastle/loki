@@ -206,54 +206,6 @@ extern "C" __global__ void k_h3_qk_norm_rope(bf16* __restrict__ qkv, int64_t ts,
 }
 
 // =============================================================================================
-// V -> fp8 (e4m3) transposed per head with the 32-key mma permutation, per-(128-key tile, head) scale.
-// v bf16 rows (token stride ts), n valid rows starting at global token tok0 (multiple of 128).
-// vt u8 [H][128][s_pad], sv f32 [s_pad/128][H]. grid (ceil(n/128), H), dyn smem 128*129*4.
-// =============================================================================================
-extern "C" __global__ void __launch_bounds__(256) k_h3_quant_v(const bf16* __restrict__ v, int64_t ts, int n, int H, const float* __restrict__ mean,
-                                                              uint8_t* __restrict__ vt, int64_t s_pad, int tok0, float* __restrict__ sv) {
-    extern __shared__ float tile[];  // [128][129]
-    __shared__ float red[32];
-    const int tb = blockIdx.x, h = blockIdx.y;
-    const int tid = threadIdx.x;
-    float amax = 0.f;
-    for (int e = tid; e < 128 * 64; e += 256) {
-        int key = e >> 6, d2 = (e & 63) * 2;
-        int j = tb * 128 + key;
-        float a = 0.f, b = 0.f;
-        if (j < n) {
-            bf162 x2 = *reinterpret_cast<const bf162*>(v + (int64_t)j * ts + h * 128 + d2);
-            a = __low2float(x2) - mean[h * 128 + d2];
-            b = __high2float(x2) - mean[h * 128 + d2 + 1];
-        }
-        tile[key * 129 + d2] = a;
-        tile[key * 129 + d2 + 1] = b;
-        amax = fmaxf(amax, fmaxf(fabsf(a), fabsf(b)));
-    }
-    amax = block_max(amax, red);
-    float s = amax / 448.f;
-    float inv = s > 0.f ? 1.f / s : 0.f;
-    const int gt = tok0 / 128 + tb;
-    if (tid == 0) sv[(int64_t)gt * H + h] = s > 0.f ? s : 1.f;
-    __syncthreads();
-    // each thread writes 4 consecutive positions (one u32) of a dim row
-    for (int e = tid; e < 128 * 32; e += 256) {
-        int d = e >> 5, pos0 = (e & 31) * 4;
-        uint32_t packed = 0;
-#pragma unroll
-        for (int u = 0; u < 4; ++u) {
-            int pos = pos0 + u;
-            int grp = pos >> 5, pp = pos & 31;
-            int half = pp >> 4, tt = (pp & 15) >> 2, i = pp & 3;
-            int key = grp * 32 + half * 16 + (i >> 1) * 8 + 2 * tt + (i & 1);
-            __nv_fp8_storage_t f = __nv_cvt_float_to_fp8(tile[key * 129 + d] * inv, __NV_SATFINITE, __NV_E4M3);
-            packed |= ((uint32_t)f) << (8 * u);
-        }
-        *reinterpret_cast<uint32_t*>(vt + ((int64_t)h * 128 + d) * s_pad + gt * 128 + pos0) = packed;
-    }
-}
-
-// =============================================================================================
 // int8 GEMM (copy of the shared engine's kernel with an extra epilogue):
 //   v = acc * sa[m] * sb[n] (+ bias[n])
 //   mode 0: out = v ; 1: out = res + v ; 3: SwiGLU pairs (bf16 out, width N/2)
@@ -434,10 +386,7 @@ extern "C" __global__ void __launch_bounds__(256) k_h3_gemm_i8_w(const int8_t* A
                                                                 const float* sa, const float* sb, const h3gemm::Epi ep) {
     h3gemm::gemm_kernel<256, 3>(A, B, C, M, N, K, sa, sb, ep);
 }
-extern "C" __global__ void __launch_bounds__(256) k_h3_gemm_i8_w4(const int8_t* A, const int8_t* B, bf16* C, int M, int N, int K,
-                                                                 const float* sa, const float* sb, const h3gemm::Epi ep) {
-    h3gemm::gemm_kernel<256, 4>(A, B, C, M, N, K, sa, sb, ep);
-}
+
 
 // =============================================================================================
 // Patch embedding: rows gathered from a channel-first latent, fp32 projection (weight transposed [Kf][N]) -> bf16.
@@ -689,13 +638,6 @@ extern "C" __global__ void __launch_bounds__(256) k_h3_quant_v16(const bf16* __r
 // Block: 128 queries (8 warps x 16 rows), 64-key tiles, STAGES-deep cp.async pipeline.
 // =============================================================================================
 namespace h3attn {
-constexpr int BQ = 128, BKV = 64, THREADS = 256;
-constexpr int GROUP_TILES = H3_VGROUP / BKV;
-constexpr int SMEM_Q = BQ * 128;
-constexpr int SMEM_K = BKV * 128;
-constexpr int SMEM_V = BKV * 256;
-constexpr int SMEM_SK = BKV * 4;
-constexpr int STAGE = SMEM_K + SMEM_V + SMEM_SK;
 struct Params {
     const int8_t* q; const float* sq;
     const int8_t* k; const float* sk;
@@ -720,260 +662,14 @@ DEVI uint32_t pack_h2(float a, float b) {
 DEVI float i2f(int x) { return __int_as_float(x + 0x4B400000) - 12582912.f; }
 }  // namespace h3attn
 
-// Software-pipelined variant: at iteration t the QK^T MMAs of tile t+1 are issued before the softmax of tile t,
-// so the tensor pipe works on them while the ALU/MUFU pipes run the softmax. 3 smem stages:
-// tile t (V for PV), tile t+1 (K for QK), tile t+2 (in flight).
-template <bool PIPE, int ABL = 0>
-__device__ void h3_attn_kernel(const h3attn::Params p) {
-    using namespace h3attn;
-    constexpr int STAGES = 3;
-    extern __shared__ __align__(128) uint8_t smem[];
-    uint8_t* Qs = smem;
-    uint8_t* St = smem + SMEM_Q;
-    const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
-    const int q0 = blockIdx.x * BQ;
-    const int h = blockIdx.y;
-    const int H = p.H;
-    const int ntiles = (p.nk + BKV - 1) / BKV;
-
-    for (int c = tid; c < BQ * 8; c += THREADS) {
-        int row = c >> 3, ch = c & 7;
-        int i = q0 + row;
-        bool pred = i < p.nq;
-        cp_async_16(smem_u32(Qs + swz128(row, ch)), p.q + ((int64_t)(pred ? i : 0) * H + h) * 128 + ch * 16, pred);
-    }
-    auto load_kv = [&](int tile, int stage) {
-        if ((ABL & 8) && tile >= 2) return;
-        const int j0 = tile * BKV;
-        uint8_t* ks = St + stage * STAGE;
-        uint8_t* vs = ks + SMEM_K;
-        float* sks = reinterpret_cast<float*>(vs + SMEM_V);
-#pragma unroll
-        for (int it = 0; it < 2; ++it) {
-            int c = tid + it * THREADS;
-            int row = c >> 3, ch = c & 7;
-            int j = j0 + row;
-            bool pred = j < p.nk;
-            cp_async_16(smem_u32(ks + swz128(row, ch)), p.k + ((int64_t)(pred ? j : 0) * H + h) * 128 + ch * 16, pred);
-        }
-#pragma unroll
-        for (int it = 0; it < 4; ++it) {
-            int c = tid + it * THREADS;
-            int row = c >> 4, ch = c & 15;
-            cp_async_16(smem_u32(vs + swz256(row, ch)), p.v + ((int64_t)(j0 + row) * H + h) * 128 + ch * 8, true);
-        }
-        if (tid < BKV) {
-            int j = j0 + tid;
-            sks[tid] = (j < p.nk) ? p.sk[(int64_t)j * H + h] : 0.f;
-        }
-    };
-    // prologue: tiles 0 and 1 in flight
-    load_kv(0, 0);
-    cp_async_commit();
-    if (1 < ntiles) load_kv(1, 1);
-    cp_async_commit();
-
-    const int lidx = lane >> 3, lrow = lane & 7;
-    const int g = lane >> 2, t4 = lane & 3;
-    const int row_a = q0 + warp * 16 + g, row_b = row_a + 8;
-    const bool va = row_a < p.nq, vb = row_b < p.nq;
-    const float sq_a = (va ? p.sq[(int64_t)row_a * H + h] : 0.f) * p.scale_log2;
-    const float sq_b = (vb ? p.sq[(int64_t)row_b * H + h] : 0.f) * p.scale_log2;
-
-    uint32_t qf[4][4];
-    float o_acc[16][4];
-#pragma unroll
-    for (int j = 0; j < 16; ++j) o_acc[j][0] = o_acc[j][1] = o_acc[j][2] = o_acc[j][3] = 0.f;
-    uint32_t oh[16][2];
-#pragma unroll
-    for (int j = 0; j < 16; ++j) oh[j][0] = oh[j][1] = 0u;
-    float m_a = -INFINITY, m_b = -INFINITY, l_a = 0.f, l_b = 0.f;
-    float ga_a = 1.f, ga_b = 1.f;
-
-    auto qk = [&](int stage, int32_t (&s)[8][4]) {
-        const uint8_t* ks = St + stage * STAGE;
-#pragma unroll
-        for (int j = 0; j < 8; ++j) s[j][0] = s[j][1] = s[j][2] = s[j][3] = 0;
-        if (ABL & 1) { s[0][0] = stage; return; }
-#pragma unroll
-        for (int kk = 0; kk < 4; ++kk) {
-#pragma unroll
-            for (int j = 0; j < 8; j += 2) {
-                uint32_t b0, b1, b2, b3;
-                int row = (j + (lidx >> 1)) * 8 + lrow;
-                int ch = 2 * kk + (lidx & 1);
-                ldmatrix_x4(b0, b1, b2, b3, smem_u32(ks + swz128(row, ch)));
-                uint32_t bb0[2] = {b0, b1}, bb1[2] = {b2, b3};
-                mma_s8_16832(s[j], qf[kk], bb0);
-                mma_s8_16832(s[j + 1], qf[kk], bb1);
-            }
-        }
-    };
-
-    int32_t s_cur[8][4];
-    // tile 0 ready -> Q frags + QK(0)
-    cp_async_wait<1>();
-    __syncthreads();
-#pragma unroll
-    for (int s = 0; s < 4; ++s) {
-        int row = warp * 16 + (lidx & 1) * 8 + lrow;
-        int ch = 2 * s + (lidx >> 1);
-        ldmatrix_x4(qf[s][0], qf[s][1], qf[s][2], qf[s][3], smem_u32(Qs + swz128(row, ch)));
-    }
-    qk(0, s_cur);
-
-    for (int t = 0; t < ntiles; ++t) {
-        // tile t+1 landed and every warp finished PV(t-1) (its stage is reused for tile t+2)
-        cp_async_wait<0>();
-        __syncthreads();
-        if (t + 2 < ntiles) load_kv(t + 2, (t + 2) % STAGES);
-        cp_async_commit();
-        int32_t s_next[8][4];
-        if (PIPE && t + 1 < ntiles) qk((t + 1) % STAGES, s_next);
-
-        const uint8_t* vs = St + (t % STAGES) * STAGE + SMEM_K;
-        const float* sks = reinterpret_cast<const float*>(vs + SMEM_V);
-        const int j0 = t * BKV;
-        float sf[8][4];
-        float mx_a = -INFINITY, mx_b = -INFINITY;
-        const bool full = j0 + BKV <= p.nk;
-#pragma unroll
-        for (int j = 0; j < 8; ++j) {
-            int kl = j * 8 + t4 * 2;
-            float2 sk2 = *reinterpret_cast<const float2*>(sks + kl);
-            sf[j][0] = i2f(s_cur[j][0]) * (sq_a * sk2.x);
-            sf[j][1] = i2f(s_cur[j][1]) * (sq_a * sk2.y);
-            sf[j][2] = i2f(s_cur[j][2]) * (sq_b * sk2.x);
-            sf[j][3] = i2f(s_cur[j][3]) * (sq_b * sk2.y);
-            if (!full) {
-                if (j0 + kl >= p.nk) { sf[j][0] = -INFINITY; sf[j][2] = -INFINITY; }
-                if (j0 + kl + 1 >= p.nk) { sf[j][1] = -INFINITY; sf[j][3] = -INFINITY; }
-            }
-            mx_a = fmaxf(mx_a, fmaxf(sf[j][0], sf[j][1]));
-            mx_b = fmaxf(mx_b, fmaxf(sf[j][2], sf[j][3]));
-        }
-        mx_a = fmaxf(mx_a, __shfl_xor_sync(0xffffffff, mx_a, 1));
-        mx_a = fmaxf(mx_a, __shfl_xor_sync(0xffffffff, mx_a, 2));
-        mx_b = fmaxf(mx_b, __shfl_xor_sync(0xffffffff, mx_b, 1));
-        mx_b = fmaxf(mx_b, __shfl_xor_sync(0xffffffff, mx_b, 2));
-        const float mn_a = fmaxf(m_a, mx_a), mn_b = fmaxf(m_b, mx_b);
-        const float alpha_a = fast_exp2(m_a - mn_a), alpha_b = fast_exp2(m_b - mn_b);  // exp2(-inf) = 0
-        m_a = mn_a; m_b = mn_b;
-        float rs_a = 0.f, rs_b = 0.f;
-        uint32_t pf[4][4];
-#pragma unroll
-        for (int kk = 0; kk < 4; ++kk) {
-            if (ABL & 4) {
-                pf[kk][0] = __float_as_uint(sf[2 * kk][0]); pf[kk][1] = __float_as_uint(sf[2 * kk][1]);
-                pf[kk][2] = __float_as_uint(sf[2 * kk + 1][2]); pf[kk][3] = __float_as_uint(sf[2 * kk + 1][3]);
-                rs_a += sf[2 * kk][0]; rs_b += sf[2 * kk][3];
-                continue;
-            }
-            float p0 = fast_exp2(sf[2 * kk][0] - mn_a), p1 = fast_exp2(sf[2 * kk][1] - mn_a);
-            float p2 = fast_exp2(sf[2 * kk][2] - mn_b), p3 = fast_exp2(sf[2 * kk][3] - mn_b);
-            float p4 = fast_exp2(sf[2 * kk + 1][0] - mn_a), p5 = fast_exp2(sf[2 * kk + 1][1] - mn_a);
-            float p6 = fast_exp2(sf[2 * kk + 1][2] - mn_b), p7 = fast_exp2(sf[2 * kk + 1][3] - mn_b);
-            rs_a += (p0 + p1) + (p4 + p5);
-            rs_b += (p2 + p3) + (p6 + p7);
-            pf[kk][0] = pack_h2(p0, p1);
-            pf[kk][1] = pack_h2(p2, p3);
-            pf[kk][2] = pack_h2(p4, p5);
-            pf[kk][3] = pack_h2(p6, p7);
-        }
-        rs_a += __shfl_xor_sync(0xffffffff, rs_a, 1);
-        rs_a += __shfl_xor_sync(0xffffffff, rs_a, 2);
-        rs_b += __shfl_xor_sync(0xffffffff, rs_b, 1);
-        rs_b += __shfl_xor_sync(0xffffffff, rs_b, 2);
-        l_a = l_a * alpha_a + rs_a;
-        l_b = l_b * alpha_b + rs_b;
-        if (__any_sync(0xffffffff, (alpha_a != 1.f) || (alpha_b != 1.f))) {
-            const __half2 fa = __float2half2_rn(alpha_a), fb = __float2half2_rn(alpha_b);
-#pragma unroll
-            for (int j = 0; j < 16; ++j) {
-                __half2 x0 = __hmul2(*reinterpret_cast<__half2*>(&oh[j][0]), fa);
-                __half2 x1 = __hmul2(*reinterpret_cast<__half2*>(&oh[j][1]), fb);
-                oh[j][0] = *reinterpret_cast<uint32_t*>(&x0);
-                oh[j][1] = *reinterpret_cast<uint32_t*>(&x1);
-            }
-            ga_a *= alpha_a;
-            ga_b *= alpha_b;
-        }
-#pragma unroll
-        for (int kk = 0; kk < 4; ++kk) {
-            if (ABL & 2) { oh[kk][0] ^= pf[kk][0] ^ pf[kk][1] ^ pf[kk][2] ^ pf[kk][3]; continue; }
-#pragma unroll
-            for (int dj = 0; dj < 16; dj += 2) {
-                uint32_t b0, b1, b2, b3;
-                int row = kk * 16 + (lidx & 1) * 8 + lrow;
-                int ch = dj + (lidx >> 1);
-                ldmatrix_x4_trans(b0, b1, b2, b3, smem_u32(vs + swz256(row, ch)));
-                mma_f16acc(oh[dj], pf[kk], b0, b1);
-                mma_f16acc(oh[dj + 1], pf[kk], b2, b3);
-            }
-        }
-        if ((t % GROUP_TILES) == GROUP_TILES - 1 || t == ntiles - 1) {
-            const float svt = p.sv[(int64_t)(j0 / H3_VGROUP) * H + h];
-#pragma unroll
-            for (int j = 0; j < 16; ++j) {
-                float2 lo = __half22float2(*reinterpret_cast<__half2*>(&oh[j][0]));
-                float2 hi = __half22float2(*reinterpret_cast<__half2*>(&oh[j][1]));
-                o_acc[j][0] = fmaf(o_acc[j][0], ga_a, lo.x * svt);
-                o_acc[j][1] = fmaf(o_acc[j][1], ga_a, lo.y * svt);
-                o_acc[j][2] = fmaf(o_acc[j][2], ga_b, hi.x * svt);
-                o_acc[j][3] = fmaf(o_acc[j][3], ga_b, hi.y * svt);
-                oh[j][0] = oh[j][1] = 0u;
-            }
-            ga_a = ga_b = 1.f;
-        }
-        if (!PIPE) {
-            if (t + 1 < ntiles) qk((t + 1) % STAGES, s_next);
-        }
-#pragma unroll
-        for (int j = 0; j < 8; ++j) {
-            s_cur[j][0] = s_next[j][0]; s_cur[j][1] = s_next[j][1]; s_cur[j][2] = s_next[j][2]; s_cur[j][3] = s_next[j][3];
-        }
-    }
-    cp_async_wait<0>();
-
-    const float inv_a = l_a > 0.f ? 1.f / l_a : 0.f, inv_b = l_b > 0.f ? 1.f / l_b : 0.f;
-    const float* mv = p.mv + h * 128;
-#pragma unroll
-    for (int j = 0; j < 16; ++j) {
-        int d = j * 8 + t4 * 2;
-        float m0 = mv[d], m1 = mv[d + 1];
-        if (va) {
-            bf16* dst = p.o + (int64_t)row_a * p.o_ts + h * 128 + d;
-            *reinterpret_cast<bf162*>(dst) = __floats2bfloat162_rn(o_acc[j][0] * inv_a + m0, o_acc[j][1] * inv_a + m1);
-        }
-        if (vb) {
-            bf16* dst = p.o + (int64_t)row_b * p.o_ts + h * 128 + d;
-            *reinterpret_cast<bf162*>(dst) = __floats2bfloat162_rn(o_acc[j][2] * inv_b + m0, o_acc[j][3] * inv_b + m1);
-        }
-    }
-}
-
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn2(const h3attn::Params p) { h3_attn_kernel<false>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn3(const h3attn::Params p) { h3_attn_kernel<true>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl1(const h3attn::Params p) { h3_attn_kernel<true, 1>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl2(const h3attn::Params p) { h3_attn_kernel<true, 2>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl4(const h3attn::Params p) { h3_attn_kernel<true, 4>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl3(const h3attn::Params p) { h3_attn_kernel<true, 3>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl6(const h3attn::Params p) { h3_attn_kernel<true, 6>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl7(const h3attn::Params p) { h3_attn_kernel<true, 7>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl8(const h3attn::Params p) { h3_attn_kernel<true, 8>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl15(const h3attn::Params p) { h3_attn_kernel<true, 15>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_abl11(const h3attn::Params p) { h3_attn_kernel<true, 11>(p); }
 
 // =============================================================================================
-// Ping-pong attention (FA3-style scheduling on sm_89): two warp groups (warps 0-3: query rows 0-63, warps 4-7:
-// rows 64-127) alternate their MMA phases through named barriers, so one group's softmax (ALU/MUFU) overlaps the
-// other group's tensor-core work. K/V stages are tracked with mbarriers (no per-tile __syncthreads):
-//   full[s]  : completes when the cp.async copies of the stage landed (cp.async.mbarrier.arrive.noinc by the
-//              128 threads of group 1, which owns all loads: it is the trailing group, so it never waits for the
-//              leading one when it recycles a stage)
-//   empty[s] : completes when all 256 threads finished reading the stage
-// Per iteration t of a group: [turn] QK(t) + PV(t-1) [pass turn] release stage t-1, (group 1: refill it with
-// tile t-1+STAGES) softmax(t).
+// Ping-pong attention helpers (FA3-style scheduling on sm_89): warp groups of 4 warps alternate their MMA phases
+// through named barriers (turn tokens), so one group's softmax (ALU/MUFU) overlaps another group's tensor-core
+// work. Stage fills are tracked with mbarriers completed by cp.async (cp.async.mbarrier.arrive.noinc) issued by the
+// trailing group, which owns all K/V loads; stage release uses per-stage named barriers (an mbarrier arrive would
+// cost a MEMBAR.ALL.CTA on sm_89). Per iteration t of a group:
+//   [turn] QK(t) + PV(t-1) [pass turn] release stage of tile t-1 (loader: refill it) softmax(t)
 // =============================================================================================
 namespace h3pp {
 DEVI void bar_sync(int id, int n) { asm volatile("bar.sync %0, %1;" ::"r"(id), "r"(n) : "memory"); }
@@ -999,267 +695,6 @@ DEVI void mbar_wait(uint64_t* b, int parity) {
 }
 }  // namespace h3pp
 
-template <int STAGES, int ABL = 0>
-__device__ void h3_attn_pp_kernel(const h3attn::Params p) {
-    using namespace h3attn;
-    using namespace h3pp;
-    extern __shared__ __align__(128) uint8_t smem[];
-    uint8_t* Qs = smem;
-    uint8_t* St = smem + SMEM_Q;
-    __shared__ __align__(8) uint64_t full[STAGES], empty[STAGES];
-    const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
-    const int grp = warp >> 2;
-    const int q0 = blockIdx.x * BQ;
-    const int h = blockIdx.y;
-    const int H = p.H;
-    const int ntiles = (p.nk + BKV - 1) / BKV;
-
-    if (tid == 0) {
-        for (int s = 0; s < STAGES; ++s) {
-            mbar_init(&full[s], 128);
-            mbar_init(&empty[s], 256);
-        }
-    }
-    for (int c = tid; c < BQ * 8; c += THREADS) {
-        int row = c >> 3, ch = c & 7;
-        int i = q0 + row;
-        bool pred = i < p.nq;
-        cp_async_16(smem_u32(Qs + swz128(row, ch)), p.q + ((int64_t)(pred ? i : 0) * H + h) * 128 + ch * 16, pred);
-    }
-    cp_async_commit();
-    cp_async_wait<0>();
-    __syncthreads();
-
-    // loads by group 1 only (128 threads): K 512 chunks, V 1024 chunks, sk 64 floats
-    const int lt = tid - 128;
-    auto load_kv = [&](int tile, int stage) {
-        if ((ABL & 8) && tile >= STAGES) { mbar_cp_async_arrive(&full[stage]); return; }
-        if ((ABL & 16) && tile >= STAGES && (tile & 1)) { mbar_cp_async_arrive(&full[stage]); return; }
-        const int j0 = tile * BKV;
-        uint8_t* ks = St + stage * STAGE;
-        uint8_t* vs = ks + SMEM_K;
-        float* sks = reinterpret_cast<float*>(vs + SMEM_V);
-#pragma unroll
-        for (int it = 0; it < 4; ++it) {
-            int c = lt + it * 128;
-            int row = c >> 3, ch = c & 7;
-            int j = j0 + row;
-            bool pred = j < p.nk;
-            cp_async_16(smem_u32(ks + swz128(row, ch)), p.k + ((int64_t)(pred ? j : 0) * H + h) * 128 + ch * 16, pred);
-        }
-#pragma unroll
-        for (int it = 0; it < 8; ++it) {
-            int c = lt + it * 128;
-            int row = c >> 4, ch = c & 15;
-            cp_async_16(smem_u32(vs + swz256(row, ch)), p.v + ((int64_t)(j0 + row) * H + h) * 128 + ch * 8, true);
-        }
-        if (lt < BKV) {
-            int j = j0 + lt;
-            bool pred = j < p.nk;
-            asm volatile("cp.async.ca.shared.global [%0], [%1], 4, %2;" ::"r"(smem_u32(sks + lt)),
-                         "l"(p.sk + (int64_t)(pred ? j : 0) * H + h), "r"(pred ? 4 : 0));
-        }
-        mbar_cp_async_arrive(&full[stage]);
-    };
-    if (grp == 1) {
-        for (int s = 0; s < STAGES; ++s) {
-            if (s < ntiles) load_kv(s, s);
-        }
-    }
-
-    const int lidx = lane >> 3, lrow = lane & 7;
-    const int g = lane >> 2, t4 = lane & 3;
-    const int wrow = warp * 16;
-    const int row_a = q0 + wrow + g, row_b = row_a + 8;
-    const bool va = row_a < p.nq, vb = row_b < p.nq;
-    const float sq_a = (va ? p.sq[(int64_t)row_a * H + h] : 0.f) * p.scale_log2;
-    const float sq_b = (vb ? p.sq[(int64_t)row_b * H + h] : 0.f) * p.scale_log2;
-
-    uint32_t qf[4][4];
-#pragma unroll
-    for (int s = 0; s < 4; ++s) {
-        int row = wrow + (lidx & 1) * 8 + lrow;
-        int ch = 2 * s + (lidx >> 1);
-        ldmatrix_x4(qf[s][0], qf[s][1], qf[s][2], qf[s][3], smem_u32(Qs + swz128(row, ch)));
-    }
-    float o_acc[16][4];
-#pragma unroll
-    for (int j = 0; j < 16; ++j) o_acc[j][0] = o_acc[j][1] = o_acc[j][2] = o_acc[j][3] = 0.f;
-    uint32_t oh[16][2];
-#pragma unroll
-    for (int j = 0; j < 16; ++j) oh[j][0] = oh[j][1] = 0u;
-    uint32_t pf[4][4];
-    float m_a = -INFINITY, m_b = -INFINITY, l_a = 0.f, l_b = 0.f;
-    float ga_a = 1.f, ga_b = 1.f;
-
-    auto pv = [&](int stage) {
-        const uint8_t* vs = St + stage * STAGE + SMEM_K;
-#pragma unroll
-        for (int kk = 0; kk < 4; ++kk) {
-#pragma unroll
-            for (int dj = 0; dj < 16; dj += 2) {
-                uint32_t b0, b1, b2, b3;
-                int row = kk * 16 + (lidx & 1) * 8 + lrow;
-                int ch = dj + (lidx >> 1);
-                if (ABL & 4) { oh[dj][0] ^= pf[kk][dj & 3]; continue; }
-                ldmatrix_x4_trans(b0, b1, b2, b3, smem_u32(vs + swz256(row, ch)));
-                if (ABL & 2) { oh[dj][0] ^= b0 ^ b1; oh[dj + 1][0] ^= b2 ^ b3; continue; }
-                mma_f16acc(oh[dj], pf[kk], b0, b1);
-                mma_f16acc(oh[dj + 1], pf[kk], b2, b3);
-            }
-        }
-    };
-    auto flush = [&](int tile) {
-        const float svt = p.sv[(int64_t)(tile * BKV / H3_VGROUP) * H + h];
-#pragma unroll
-        for (int j = 0; j < 16; ++j) {
-            float2 lo = __half22float2(*reinterpret_cast<__half2*>(&oh[j][0]));
-            float2 hi = __half22float2(*reinterpret_cast<__half2*>(&oh[j][1]));
-            o_acc[j][0] = fmaf(o_acc[j][0], ga_a, lo.x * svt);
-            o_acc[j][1] = fmaf(o_acc[j][1], ga_a, lo.y * svt);
-            o_acc[j][2] = fmaf(o_acc[j][2], ga_b, hi.x * svt);
-            o_acc[j][3] = fmaf(o_acc[j][3], ga_b, hi.y * svt);
-            oh[j][0] = oh[j][1] = 0u;
-        }
-        ga_a = ga_b = 1.f;
-    };
-
-    if (grp == 1) bar_arrive(1, 256);  // group 0 takes the first MMA turn
-    for (int t = 0; t < ntiles; ++t) {
-        const int st = t % STAGES;
-        mbar_wait(&full[st], (t / STAGES) & 1);
-        bar_sync(1 + grp, 256);
-        // ---- MMA phase: QK(t), PV(t-1)
-        int32_t s[8][4];
-        {
-            const uint8_t* ks = St + st * STAGE;
-#pragma unroll
-            for (int j = 0; j < 8; ++j) s[j][0] = s[j][1] = s[j][2] = s[j][3] = 0;
-#pragma unroll
-            for (int kk = 0; kk < 4; ++kk) {
-#pragma unroll
-                for (int j = 0; j < 8; j += 2) {
-                    uint32_t b0, b1, b2, b3;
-                    int row = (j + (lidx >> 1)) * 8 + lrow;
-                    int ch = 2 * kk + (lidx & 1);
-                    ldmatrix_x4(b0, b1, b2, b3, smem_u32(ks + swz128(row, ch)));
-                    if (ABL & 1) { s[j][0] ^= b0 ^ b1; s[j + 1][0] ^= b2 ^ b3; continue; }
-                    uint32_t bb0[2] = {b0, b1}, bb1[2] = {b2, b3};
-                    mma_s8_16832(s[j], qf[kk], bb0);
-                    mma_s8_16832(s[j + 1], qf[kk], bb1);
-                }
-            }
-        }
-        if (t > 0) pv((t - 1) % STAGES);
-        bar_arrive(1 + (grp ^ 1), 256);
-        if (t > 0) {
-            const int ps = (t - 1) % STAGES;
-            // stage ps (tile t-1) is free once group 0 is done with it (group 1, the trailing group, refills it).
-            // Named barrier per stage: no memory fence needed (all smem reads of the stage were consumed by MMAs).
-            if (t - 1 + STAGES < ntiles) {
-                if (grp == 0) {
-                    bar_arrive(3 + ps, 256);
-                } else {
-                    bar_sync(3 + ps, 256);
-                    load_kv(t - 1 + STAGES, ps);
-                }
-            }
-            if ((t - 1) % GROUP_TILES == GROUP_TILES - 1) flush(t - 1);
-        }
-        // ---- softmax(t)
-        const float* sks = reinterpret_cast<const float*>(St + st * STAGE + SMEM_K + SMEM_V);
-        const int j0 = t * BKV;
-        float sf[8][4];
-        float mx_a = -INFINITY, mx_b = -INFINITY;
-        const bool full_tile = j0 + BKV <= p.nk;
-#pragma unroll
-        for (int j = 0; j < 8; ++j) {
-            int kl = j * 8 + t4 * 2;
-            float2 sk2 = *reinterpret_cast<const float2*>(sks + kl);
-            sf[j][0] = i2f(s[j][0]) * (sq_a * sk2.x);
-            sf[j][1] = i2f(s[j][1]) * (sq_a * sk2.y);
-            sf[j][2] = i2f(s[j][2]) * (sq_b * sk2.x);
-            sf[j][3] = i2f(s[j][3]) * (sq_b * sk2.y);
-            if (!full_tile) {
-                if (j0 + kl >= p.nk) { sf[j][0] = -INFINITY; sf[j][2] = -INFINITY; }
-                if (j0 + kl + 1 >= p.nk) { sf[j][1] = -INFINITY; sf[j][3] = -INFINITY; }
-            }
-            mx_a = fmaxf(mx_a, fmaxf(sf[j][0], sf[j][1]));
-            mx_b = fmaxf(mx_b, fmaxf(sf[j][2], sf[j][3]));
-        }
-        mx_a = fmaxf(mx_a, __shfl_xor_sync(0xffffffff, mx_a, 1));
-        mx_a = fmaxf(mx_a, __shfl_xor_sync(0xffffffff, mx_a, 2));
-        mx_b = fmaxf(mx_b, __shfl_xor_sync(0xffffffff, mx_b, 1));
-        mx_b = fmaxf(mx_b, __shfl_xor_sync(0xffffffff, mx_b, 2));
-        const float mn_a = fmaxf(m_a, mx_a), mn_b = fmaxf(m_b, mx_b);
-        const float alpha_a = fast_exp2(m_a - mn_a), alpha_b = fast_exp2(m_b - mn_b);  // exp2(-inf) = 0
-        m_a = mn_a; m_b = mn_b;
-        float rs_a = 0.f, rs_b = 0.f;
-#pragma unroll
-        for (int kk = 0; kk < 4; ++kk) {
-            float p0 = fast_exp2(sf[2 * kk][0] - mn_a), p1 = fast_exp2(sf[2 * kk][1] - mn_a);
-            float p2 = fast_exp2(sf[2 * kk][2] - mn_b), p3 = fast_exp2(sf[2 * kk][3] - mn_b);
-            float p4 = fast_exp2(sf[2 * kk + 1][0] - mn_a), p5 = fast_exp2(sf[2 * kk + 1][1] - mn_a);
-            float p6 = fast_exp2(sf[2 * kk + 1][2] - mn_b), p7 = fast_exp2(sf[2 * kk + 1][3] - mn_b);
-            rs_a += (p0 + p1) + (p4 + p5);
-            rs_b += (p2 + p3) + (p6 + p7);
-            pf[kk][0] = pack_h2(p0, p1);
-            pf[kk][1] = pack_h2(p2, p3);
-            pf[kk][2] = pack_h2(p4, p5);
-            pf[kk][3] = pack_h2(p6, p7);
-        }
-        rs_a += __shfl_xor_sync(0xffffffff, rs_a, 1);
-        rs_a += __shfl_xor_sync(0xffffffff, rs_a, 2);
-        rs_b += __shfl_xor_sync(0xffffffff, rs_b, 1);
-        rs_b += __shfl_xor_sync(0xffffffff, rs_b, 2);
-        l_a = l_a * alpha_a + rs_a;
-        l_b = l_b * alpha_b + rs_b;
-        if (__any_sync(0xffffffff, (alpha_a != 1.f) || (alpha_b != 1.f))) {
-            const __half2 fa = __float2half2_rn(alpha_a), fb = __float2half2_rn(alpha_b);
-#pragma unroll
-            for (int j = 0; j < 16; ++j) {
-                __half2 x0 = __hmul2(*reinterpret_cast<__half2*>(&oh[j][0]), fa);
-                __half2 x1 = __hmul2(*reinterpret_cast<__half2*>(&oh[j][1]), fb);
-                oh[j][0] = *reinterpret_cast<uint32_t*>(&x0);
-                oh[j][1] = *reinterpret_cast<uint32_t*>(&x1);
-            }
-            ga_a *= alpha_a;
-            ga_b *= alpha_b;
-        }
-    }
-    // tail: PV of the last tile (outside the turn protocol: the other group no longer needs the tensor pipe badly)
-    bar_sync(1 + grp, 256);
-    pv((ntiles - 1) % STAGES);
-    bar_arrive(1 + (grp ^ 1), 256);
-    flush(ntiles - 1);
-    if (grp == 0) bar_sync(1, 256);  // consume the final turn token passed by group 1 (keeps barrier counts balanced)
-
-    const float inv_a = l_a > 0.f ? 1.f / l_a : 0.f, inv_b = l_b > 0.f ? 1.f / l_b : 0.f;
-    const float* mv = p.mv + h * 128;
-#pragma unroll
-    for (int j = 0; j < 16; ++j) {
-        int d = j * 8 + t4 * 2;
-        float m0 = mv[d], m1 = mv[d + 1];
-        if (va) {
-            bf16* dst = p.o + (int64_t)row_a * p.o_ts + h * 128 + d;
-            *reinterpret_cast<bf162*>(dst) = __floats2bfloat162_rn(o_acc[j][0] * inv_a + m0, o_acc[j][1] * inv_a + m1);
-        }
-        if (vb) {
-            bf16* dst = p.o + (int64_t)row_b * p.o_ts + h * 128 + d;
-            *reinterpret_cast<bf162*>(dst) = __floats2bfloat162_rn(o_acc[j][2] * inv_b + m0, o_acc[j][3] * inv_b + m1);
-        }
-    }
-}
-
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp(const h3attn::Params p) { h3_attn_pp_kernel<3>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a1(const h3attn::Params p) { h3_attn_pp_kernel<3, 1>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a2(const h3attn::Params p) { h3_attn_pp_kernel<3, 2>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a3(const h3attn::Params p) { h3_attn_pp_kernel<3, 3>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a4(const h3attn::Params p) { h3_attn_pp_kernel<3, 4>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a5(const h3attn::Params p) { h3_attn_pp_kernel<3, 5>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a8(const h3attn::Params p) { h3_attn_pp_kernel<3, 8>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a16(const h3attn::Params p) { h3_attn_pp_kernel<3, 16>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_pp_a13(const h3attn::Params p) { h3_attn_pp_kernel<3, 13>(p); }
 
 // =============================================================================================
 // v4: ping-pong scheduling (as above) + padded shared-memory rows (K 144 B, V 272 B: conflict-free ldmatrix with
@@ -1276,7 +711,6 @@ constexpr int SMEM_V = BKV * VROW;
 constexpr int SMEM_SK = BKV * 4;
 constexpr int STAGE = SMEM_K + SMEM_V + SMEM_SK;
 constexpr int STAGES = 3;
-constexpr int SMEM_TOTAL = SMEM_Q + STAGES * STAGE;
 constexpr int GROUP_TILES = H3_VGROUP / BKV;
 DEVI void ldsm_x4(uint32_t& r0, uint32_t& r1, uint32_t& r2, uint32_t& r3, uint32_t addr) {
     asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n" : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
@@ -1319,7 +753,6 @@ __device__ __forceinline__ void h3_attn_v4_kernel(const h3attn::Params p) {
 
     const int lt = tid - 128;
     auto load_kv = [&](int tile, int stage) {
-        if ((ABL & 8) && tile >= STAGES) { mbar_cp_async_arrive(&full[stage]); return; }
         const int j0 = tile * BKV;
         uint8_t* ks = St + stage * STAGE;
         uint8_t* vs = ks + SMEM_K;
@@ -1434,7 +867,7 @@ __device__ __forceinline__ void h3_attn_v4_kernel(const h3attn::Params p) {
                 }
             }
         }
-        if (t > 0 && !(ABL & 64)) pv(prev_base);
+        if (t > 0) pv(prev_base);
         bar_arrive(1 + (grp ^ 1), 256);
         if (t > 0) {
             const int ps = st == 0 ? STAGES - 1 : st - 1;
@@ -1449,16 +882,6 @@ __device__ __forceinline__ void h3_attn_v4_kernel(const h3attn::Params p) {
             if (((t - 1) & (GROUP_TILES - 1)) == GROUP_TILES - 1) flush(t - 1);
         }
         // ---- softmax(t)
-        if (ABL & 32) {
-#pragma unroll
-            for (int kk = 0; kk < 4; ++kk) {
-                pf[kk][0] = s[2 * kk][0] & 0x3c003c00u; pf[kk][1] = s[2 * kk][1] & 0x3c003c00u;
-                pf[kk][2] = s[2 * kk + 1][2] & 0x3c003c00u; pf[kk][3] = s[2 * kk + 1][3] & 0x3c003c00u;
-            }
-            prev_base = sbase;
-            if (++st == STAGES) { st = 0; par ^= 1; }
-            continue;
-        }
         const int j0 = t * BKV;
         float sf[8][4];
         float mx_a = -INFINITY, mx_b = -INFINITY;
@@ -1547,10 +970,6 @@ __device__ __forceinline__ void h3_attn_v4_kernel(const h3attn::Params p) {
 }
 
 extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v4(const h3attn::Params p) { h3_attn_v4_kernel<0>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v4_nosm(const h3attn::Params p) { h3_attn_v4_kernel<32>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v4_nosm_nold(const h3attn::Params p) { h3_attn_v4_kernel<40>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v4_nosm_nopv(const h3attn::Params p) { h3_attn_v4_kernel<96>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v4_nold(const h3attn::Params p) { h3_attn_v4_kernel<8>(p); }
 
 // =============================================================================================
 // V -> fp8 e4m3, smoothed by the per-channel mean, one scale per (256-key group, head) (amax -> 448),
@@ -1630,13 +1049,10 @@ extern "C" __global__ void __launch_bounds__(256) k_h3_quant_v8(const bf16* __re
 namespace h3v5 {
 constexpr int BQ = 128, BKV = 64;
 constexpr int KROW = 144, VROW = 80;
-constexpr int SMEM_Q = BQ * 128;
 constexpr int SMEM_K = BKV * KROW;
 constexpr int SMEM_V = 128 * VROW;
 constexpr int SMEM_SK = BKV * 4;
 constexpr int STAGE = SMEM_K + SMEM_V + SMEM_SK;
-constexpr int STAGES = 4;
-constexpr int SMEM_TOTAL = SMEM_Q + STAGES * STAGE;
 struct Params {
     const int8_t* q; const float* sq;
     const int8_t* k; const float* sk;
@@ -1686,7 +1102,6 @@ __device__ __forceinline__ void h3_attn_v5_kernel(const h3v5::Params p) {
     const int lt = tid - 128 * (NG - 1);
     const uint8_t* vhead = p.vt + (int64_t)h * 128 * p.s_pad;
     auto load_kv = [&](int tile, int stage) {
-        if ((ABL & 8) && tile >= STAGES) { mbar_cp_async_arrive(&full[stage]); return; }
         const int j0 = tile * BKV;
         uint8_t* ks = St + stage * STAGE;
         uint8_t* vs = ks + SMEM_K;
@@ -1761,13 +1176,13 @@ __device__ __forceinline__ void h3_attn_v5_kernel(const h3v5::Params p) {
     };
 
     const int next_bar = 1 + (grp + 1) % NG;
-    if (!(ABL & 256) && grp == NG - 1) bar_arrive(1, 256);
+    if (grp == NG - 1) bar_arrive(1, 256);
     int st = 0, par = 0;
     uint32_t prev_base = 0;
     for (int t = 0; t < ntiles; ++t) {
         const uint32_t sbase = st0 + st * STAGE;
         mbar_wait(&full[st], par);
-        if (!(ABL & 256)) bar_sync(1 + grp, 256);
+        bar_sync(1 + grp, 256);
         int32_t s[8][4];
 #pragma unroll
         for (int j = 0; j < 8; ++j) s[j][0] = s[j][1] = s[j][2] = s[j][3] = 0;
@@ -1785,13 +1200,8 @@ __device__ __forceinline__ void h3_attn_v5_kernel(const h3v5::Params p) {
                 }
             }
         }
-        if (ABL & 128) {
-            if (!(ABL & 256)) bar_arrive(next_bar, 256);
-            if (t > 0) pv(prev_base);
-        } else {
-            if (t > 0) pv(prev_base);
-            if (!(ABL & 256)) bar_arrive(next_bar, 256);
-        }
+        if (t > 0) pv(prev_base);
+        bar_arrive(next_bar, 256);
         if (t > 0) {
             const int ps = st == 0 ? STAGES - 1 : st - 1;
             if (t - 1 + STAGES < ntiles) {
@@ -1804,13 +1214,6 @@ __device__ __forceinline__ void h3_attn_v5_kernel(const h3v5::Params p) {
             }
         }
         // ---- softmax(t)
-        if (ABL & 32) {
-            pf[0][0] = s[0][0] & 0x38383838u; pf[0][1] = s[1][1] & 0x38383838u; pf[0][2] = s[2][2] & 0x38383838u; pf[0][3] = s[3][3] & 0x38383838u;
-            pf[1][0] = s[4][0] & 0x38383838u; pf[1][1] = s[5][1] & 0x38383838u; pf[1][2] = s[6][2] & 0x38383838u; pf[1][3] = s[7][3] & 0x38383838u;
-            prev_base = sbase;
-            if (++st == STAGES) { st = 0; par ^= 1; }
-            continue;
-        }
         const int j0 = t * BKV;
         float sf[8][4];
         float mx_a = -INFINITY, mx_b = -INFINITY;
@@ -1883,12 +1286,10 @@ __device__ __forceinline__ void h3_attn_v5_kernel(const h3v5::Params p) {
         prev_base = sbase;
         if (++st == STAGES) { st = 0; par ^= 1; }
     }
-    if (!(ABL & 256)) bar_sync(1 + grp, 256);
+    bar_sync(1 + grp, 256);
     pv(prev_base);
-    if (!(ABL & 256)) {
-        bar_arrive(next_bar, 256);
-        if (grp == 0) bar_sync(1, 256);
-    }
+    bar_arrive(next_bar, 256);
+    if (grp == 0) bar_sync(1, 256);
 
     const float inv_a = l_a > 0.f ? sv_cur / (448.f * l_a) : 0.f, inv_b = l_b > 0.f ? sv_cur / (448.f * l_b) : 0.f;
     const float* mv = p.mv + h * 128;
@@ -1907,22 +1308,22 @@ __device__ __forceinline__ void h3_attn_v5_kernel(const h3v5::Params p) {
     }
 }
 
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v5(const h3v5::Params p) { h3_attn_v5_kernel<0>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v5_nold(const h3v5::Params p) { h3_attn_v5_kernel<8>(p); }
 extern "C" __global__ void __launch_bounds__(384, 1) k_h3_attn_v5g3(const h3v5::Params p) { h3_attn_v5_kernel<0, 3, 3>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v5_nosm(const h3v5::Params p) { h3_attn_v5_kernel<32>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v5_nosm_nold(const h3v5::Params p) { h3_attn_v5_kernel<40>(p); }
-extern "C" __global__ void __launch_bounds__(384, 1) k_h3_attn_v5g3_a(const h3v5::Params p) { h3_attn_v5_kernel<128, 3, 3>(p); }
-extern "C" __global__ void __launch_bounds__(384, 1) k_h3_attn_v5g3_b(const h3v5::Params p) { h3_attn_v5_kernel<256, 3, 3>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v5_a(const h3v5::Params p) { h3_attn_v5_kernel<128>(p); }
-extern "C" __global__ void __launch_bounds__(256) k_h3_attn_v5_b(const h3v5::Params p) { h3_attn_v5_kernel<256>(p); }
 
 // =============================================================================================
 // v6: like v5 (int8 QK, fp8 PV, ping-pong of two 4-warp groups, padded smem), but every warp owns 32 query rows
 // (two m16 tiles): K/V fragments are reused by both m-tiles (half the ldmatrix and L2->SM traffic per FLOP).
 // BQ = 256 queries per block; Q fragments are re-read from shared memory every tile to stay within 255 registers.
 // =============================================================================================
-template <int ABL = 0>
+DEVI uint32_t e4m3x4_from_h2(__half2 lo, __half2 hi) {
+    __nv_fp8x2_storage_t a = __nv_cvt_halfraw2_to_fp8x2(static_cast<__half2_raw>(lo), __NV_SATFINITE, __NV_E4M3);
+    __nv_fp8x2_storage_t b = __nv_cvt_halfraw2_to_fp8x2(static_cast<__half2_raw>(hi), __NV_SATFINITE, __NV_E4M3);
+    return (uint32_t)a | ((uint32_t)b << 16);
+}
+
+// HX: exponentials as packed f16x2 (ex2.approx.f16x2), x448 folded into the exponent, f16x2 -> e4m3x2 directly,
+//     per-tile row sums in half2
+template <int ABL = 0, bool HX = false>
 __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
     using namespace h3v5;
     using h3attn::swz128;
@@ -2086,11 +1487,6 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
         // ---- softmax(t) for both m-tiles
         const int j0 = t * BKV;
         const bool full_tile = j0 + BKV <= p.nk;
-        float sk_x[8], sk_y[8];
-#pragma unroll
-        for (int j = 0; j < 8; ++j) {
-            asm volatile("ld.shared.v2.f32 {%0,%1}, [%2];" : "=f"(sk_x[j]), "=f"(sk_y[j]) : "r"(sbase + sk_lane + j * 32));
-        }
         float alpha[2][2];
 #pragma unroll
         for (int mt = 0; mt < 2; ++mt) {
@@ -2098,11 +1494,13 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
             float mx0 = -INFINITY, mx1 = -INFINITY;
 #pragma unroll
             for (int j = 0; j < 8; ++j) {
-                const float c0 = -12582912.f * sk_x[j], c1 = -12582912.f * sk_y[j];
-                sf[j][0] = fmaf(__int_as_float(s[mt][j][0] + 0x4B400000), sk_x[j], c0);
-                sf[j][1] = fmaf(__int_as_float(s[mt][j][1] + 0x4B400000), sk_y[j], c1);
-                sf[j][2] = fmaf(__int_as_float(s[mt][j][2] + 0x4B400000), sk_x[j], c0);
-                sf[j][3] = fmaf(__int_as_float(s[mt][j][3] + 0x4B400000), sk_y[j], c1);
+                float skx, sky;
+                asm volatile("ld.shared.v2.f32 {%0,%1}, [%2];" : "=f"(skx), "=f"(sky) : "r"(sbase + sk_lane + j * 32));
+                const float c0 = -12582912.f * skx, c1 = -12582912.f * sky;
+                sf[j][0] = fmaf(__int_as_float(s[mt][j][0] + 0x4B400000), skx, c0);
+                sf[j][1] = fmaf(__int_as_float(s[mt][j][1] + 0x4B400000), sky, c1);
+                sf[j][2] = fmaf(__int_as_float(s[mt][j][2] + 0x4B400000), skx, c0);
+                sf[j][3] = fmaf(__int_as_float(s[mt][j][3] + 0x4B400000), sky, c1);
                 if (!full_tile) {
                     int kl = j * 8 + t4 * 2;
                     if (j0 + kl >= p.nk) { sf[j][0] = -INFINITY; sf[j][2] = -INFINITY; }
@@ -2119,8 +1517,32 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
             alpha[mt][0] = fast_exp2((m[mt][0] - mn0) * sqr[mt][0]);
             alpha[mt][1] = fast_exp2((m[mt][1] - mn1) * sqr[mt][1]);
             m[mt][0] = mn0; m[mt][1] = mn1;
-            const float nm0 = -mn0 * sqr[mt][0], nm1 = -mn1 * sqr[mt][1];
             float rs0 = 0.f, rs1 = 0.f;
+            if (HX) {
+                const float LOG2_448 = 8.807354922057604f;
+                const float nm0 = fmaf(-mn0, sqr[mt][0], LOG2_448), nm1 = fmaf(-mn1, sqr[mt][1], LOG2_448);
+                const float q0 = sqr[mt][0], q1 = sqr[mt][1];
+                __half2 hs0 = __float2half2_rn(0.f), hs1 = __float2half2_rn(0.f);
+#pragma unroll
+                for (int ks = 0; ks < 2; ++ks) {
+                    __half2 a[4], b[4];
+#pragma unroll
+                    for (int jj = 0; jj < 4; ++jj) {
+                        const int j = ks * 4 + jj;
+                        a[jj] = h2exp2(__floats2half2_rn(fmaf(sf[j][0], q0, nm0), fmaf(sf[j][1], q0, nm0)));
+                        b[jj] = h2exp2(__floats2half2_rn(fmaf(sf[j][2], q1, nm1), fmaf(sf[j][3], q1, nm1)));
+                    }
+                    hs0 = __hadd2(hs0, __hadd2(__hadd2(a[0], a[1]), __hadd2(a[2], a[3])));
+                    hs1 = __hadd2(hs1, __hadd2(__hadd2(b[0], b[1]), __hadd2(b[2], b[3])));
+                    pf[mt][ks][0] = e4m3x4_from_h2(a[0], a[1]);
+                    pf[mt][ks][1] = e4m3x4_from_h2(b[0], b[1]);
+                    pf[mt][ks][2] = e4m3x4_from_h2(a[2], a[3]);
+                    pf[mt][ks][3] = e4m3x4_from_h2(b[2], b[3]);
+                }
+                rs0 = __low2float(hs0) + __high2float(hs0);
+                rs1 = __low2float(hs1) + __high2float(hs1);
+            } else {
+            const float nm0 = -mn0 * sqr[mt][0], nm1 = -mn1 * sqr[mt][1];
 #pragma unroll
             for (int ks = 0; ks < 2; ++ks) {
                 float pa[8], pb[8];
@@ -2138,6 +1560,9 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
                 pf[mt][ks][1] = pack_e4m3x4(pb[0] * 448.f, pb[1] * 448.f, pb[2] * 448.f, pb[3] * 448.f);
                 pf[mt][ks][2] = pack_e4m3x4(pa[4] * 448.f, pa[5] * 448.f, pa[6] * 448.f, pa[7] * 448.f);
                 pf[mt][ks][3] = pack_e4m3x4(pb[4] * 448.f, pb[5] * 448.f, pb[6] * 448.f, pb[7] * 448.f);
+            }
+            rs0 *= 448.f;
+            rs1 *= 448.f;
             }
             rs0 += __shfl_xor_sync(0xffffffff, rs0, 1);
             rs0 += __shfl_xor_sync(0xffffffff, rs0, 2);
@@ -2171,8 +1596,8 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
     const float* mv = p.mv + h * 128;
 #pragma unroll
     for (int mt = 0; mt < 2; ++mt) {
-        const float inv0 = l[mt][0] > 0.f ? sv_cur / (448.f * l[mt][0]) : 0.f;
-        const float inv1 = l[mt][1] > 0.f ? sv_cur / (448.f * l[mt][1]) : 0.f;
+        const float inv0 = l[mt][0] > 0.f ? sv_cur / l[mt][0] : 0.f;  // l and P both carry the x448 fp8 scale
+        const float inv1 = l[mt][1] > 0.f ? sv_cur / l[mt][1] : 0.f;
         const int ra = q0 + wrow + mt * 16 + g, rb = ra + 8;
 #pragma unroll
         for (int j = 0; j < 16; ++j) {
@@ -2190,7 +1615,7 @@ __device__ __forceinline__ void h3_attn_v6_kernel(const h3v5::Params p) {
     }
 }
 
-extern "C" __global__ void __launch_bounds__(256, 1) k_h3_attn_v6(const h3v5::Params p) { h3_attn_v6_kernel<0>(p); }
+extern "C" __global__ void __launch_bounds__(256, 1) k_h3_attn_v6(const h3v5::Params p) { h3_attn_v6_kernel<0, false>(p); }
 
 // =============================================================================================
 // Fused per-head RMSNorm + partial split-half rope + H128 rotation (+ optional per-channel mean subtraction) +

@@ -3,8 +3,19 @@
 //! bidirectional attention over the packed [text | refs | audio | video] sequence.
 //!
 //! Port of ComfyUI `comfy/ldm/minimax/model.py` (MiniMaxH3Model.forward incl. the audio-carry conversion).
-//! Long sequences are processed in row chunks (norm/qkv/K-V quantization, then attention + out-proj + MLP per
-//! query chunk), so only x (bf16), Q8/K8/V8 for the whole sequence and one chunk of intermediates are resident.
+//!
+//! Per block and forward:
+//!   phase 1 (row chunks of `chunk` rows): RMSNorm+adaLN+ConvRot int8 quant -> K|V int8 GEMM -> fused k RMSNorm +
+//!            partial rope + H128 rotation + int8 quant (K8, whole sequence) and V -> fp8 (transposed, whole sequence)
+//!   phase 2 (query batches of `abatch` rows): Q GEMM + fused norm/rope/rotate/int8 -> ping-pong int8-QK/fp8-PV
+//!            attention -> per chunk: quant -> out-proj (gated residual epilogue) -> norm2+adaLN+quant -> fc1 with fused
+//!            SwiGLU epilogue -> quant -> fc2 (gated residual epilogue)
+//! Resident per run: x (bf16), K8, V8 (+ scales) for the whole sequence plus small scratch; for very long runs the
+//! fc1 weights of a few layers are evicted to host memory and streamed per layer.
+//!
+//! Environment knobs: H3_PROFILE=1 (per-kernel GPU time breakdown, synchronizing), H3_ATTN=g3|fp16 (alternative
+//! attention kernels; fp16 = fp16 V/PV, more accurate audio, ~25% slower attention), H3_QK_ROT=0 (disable the q/k
+//! Hadamard rotation), H3_CHUNK / H3_ABATCH (scratch sizes), H3_DEBUG_MEM=1.
 use crate::cuda::{Arg, Device, Profiler};
 use crate::ops::{self, AttnArgs, AttnView, Epi, QuantAct};
 use crate::safetensors::SafeTensors;
@@ -149,7 +160,7 @@ pub struct Run {
     /// whole sequence: K int8 [S_pad, H, 128] + scales, V fp16 [S_pad, H, 128] + per-64-key scales [S_pad/64, H]
     k8: Tensor,
     sk: Tensor,
-    v16: Tensor,
+    vbuf: Tensor,
     sv: Tensor,
     mean_k: Tensor,
     mean_v: Tensor,
@@ -224,19 +235,18 @@ fn attn_fp16() -> bool {
     std::env::var("H3_ATTN").map(|v| v == "fp16").unwrap_or(false)
 }
 const ATTN_V4_SMEM: u32 = (128 * 128 + 3 * (64 * 144 + 64 * 272 + 64 * 4)) as u32;
-const ATTN_V5_SMEM: u32 = (128 * 128 + 4 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
 const ATTN_V6_SMEM: u32 = (256 * 128 + 3 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
 const ATTN_V5G3_SMEM: u32 = (192 * 128 + 3 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
 /// (kernel, dynamic smem, queries per block, threads per block)
+/// default: k_h3_attn_v6 (fp8 PV, 32 query rows per warp, 256 per block); H3_ATTN=g3: k_h3_attn_v5g3 (3 warp groups of
+/// 16-row warps); H3_ATTN=fp16: k_h3_attn_v4 (fp16 V/PV: more accurate PV, ~25% slower)
 fn attn_kernel() -> (&'static str, u32, usize, u32) {
     if attn_fp16() {
         ("k_h3_attn_v4", ATTN_V4_SMEM, 128, 256)
-    } else if std::env::var("H3_ATTN_V6").is_ok() {
-        ("k_h3_attn_v6", ATTN_V6_SMEM, 256, 256)
-    } else if let Ok(k) = std::env::var("H3_ATTN_G2") {
-        (match k.as_str() { "nosm" => "k_h3_attn_v5_nosm", "nosm_nold" => "k_h3_attn_v5_nosm_nold", "nold" => "k_h3_attn_v5_nold", "a" => "k_h3_attn_v5_a", "b" => "k_h3_attn_v5_b", _ => "k_h3_attn_v5" }, ATTN_V5_SMEM, 128, 256)
+    } else if std::env::var("H3_ATTN").map(|v| v == "g3").unwrap_or(false) {
+        ("k_h3_attn_v5g3", ATTN_V5G3_SMEM, 192, 384)
     } else {
-        (match std::env::var("H3_ATTN_G3").as_deref() { Ok("a") => "k_h3_attn_v5g3_a", Ok("b") => "k_h3_attn_v5g3_b", _ => "k_h3_attn_v5g3" }, ATTN_V5G3_SMEM, 192, 384)
+        ("k_h3_attn_v6", ATTN_V6_SMEM, 256, 256)
     }
 }
 
@@ -328,7 +338,6 @@ pub fn gemm_bench(dev: &Arc<Device>, m: usize, n: usize, k: usize, mode: i32, it
     ops::gemm_init(dev)?;
     dev.set_max_smem("k_h3_gemm_i8", ops::GEMM_SMEM)?;
     dev.set_max_smem("k_h3_gemm_i8_w", ops::GEMM_SMEM_W)?;
-    dev.set_max_smem("k_h3_gemm_i8_w4", 4 * (128 * 64 + 256 * 64))?;
     let mut seed = 777u32;
     let mut rnd = move || {
         seed ^= seed << 13;
@@ -442,9 +451,7 @@ impl Dit {
         ops::sage_init(&dev)?;
         dev.set_max_smem("k_h3_gemm_i8", ops::GEMM_SMEM)?;
         dev.set_max_smem("k_h3_gemm_i8_w", ops::GEMM_SMEM_W)?;
-        dev.set_max_smem("k_h3_gemm_i8_w4", 4 * (128 * 64 + 256 * 64))?;
-        dev.set_max_smem("k_h3_norm_mod_quant", (HIDDEN * 4) as u32)?;
-        dev.set_max_smem("k_h3_quant_v", 128 * 129 * 4)?;
+            dev.set_max_smem("k_h3_norm_mod_quant", (HIDDEN * 4) as u32)?;
         let (an, asm, _, _) = attn_kernel();
         dev.set_max_smem(an, asm)?;
         dev.set_max_smem("k_h3_quant_v8", 64 * 129 * 4)?;
@@ -618,8 +625,7 @@ impl Dit {
         let k = w.k;
         ensure!(k % 64 == 0, "gemm: K % 64");
         let wide = ops::gemm_i8_wide(m, n);
-        let w4 = std::env::var("H3_GEMM_W4").is_ok();
-        let (kname, bn, smem) = if wide && w4 { ("k_h3_gemm_i8_w4", 256, 4 * (128 * 64 + 256 * 64)) } else if wide { ("k_h3_gemm_i8_w", 256, ops::GEMM_SMEM_W) } else { ("k_h3_gemm_i8", 128, ops::GEMM_SMEM) };
+        let (kname, bn, smem) = if wide { ("k_h3_gemm_i8_w", 256, ops::GEMM_SMEM_W) } else { ("k_h3_gemm_i8", 128, ops::GEMM_SMEM) };
         let grid = (((n + bn - 1) / bn) * ((m + 127) / 128)) as u32;
         let ep = EpiRaw { bias: 0, mode, _p: 0, res, gate, modrow, gstride: (6 * HIDDEN) as i64 };
         let f = dev.func(kname)?;
@@ -705,7 +711,7 @@ impl Dit {
 
     /// Attention of the current chunk's queries (run.q8 / run.sq, n rows) against the whole sequence.
     fn attention(&self, run: &Run, n: usize, out: u64) -> Result<()> {
-        launch_attention(&self.dev, run.q8.ptr, run.sq.ptr, n, run.k8.ptr, run.sk.ptr, run.v16.ptr, run.s_pad, run.sv.ptr, run.mean_v.ptr, run.seq, out)
+        launch_attention(&self.dev, run.q8.ptr, run.sq.ptr, n, run.k8.ptr, run.sk.ptr, run.vbuf.ptr, run.s_pad, run.sv.ptr, run.mean_v.ptr, run.seq, out)
     }
 
     // ------------------------------------------------------------------ token refiner
@@ -934,7 +940,7 @@ impl Dit {
         let k8 = Tensor::zeros(dev, DType::I8, &[s_pad, HEADS, HEAD_DIM])?;
         let sk = Tensor::zeros(dev, DType::F32, &[s_pad, HEADS])?;
         // V: fp16 [S_pad, H, 128] (H3_ATTN=fp16) or fp8 e4m3 transposed [H, 128, S_pad]
-        let v16 = if attn_fp16() { Tensor::zeros(dev, DType::BF16, &[s_pad, HEADS, HEAD_DIM])? } else { Tensor::zeros(dev, DType::U8, &[HEADS, HEAD_DIM, s_pad])? };
+        let vbuf = if attn_fp16() { Tensor::zeros(dev, DType::BF16, &[s_pad, HEADS, HEAD_DIM])? } else { Tensor::zeros(dev, DType::U8, &[HEADS, HEAD_DIM, s_pad])? };
         let sv = Tensor::zeros(dev, DType::F32, &[s_pad / 256, HEADS])?;
         let mean_k = Tensor::zeros(dev, DType::F32, &[INNER])?;
         let mean_v = Tensor::zeros(dev, DType::F32, &[INNER])?;
@@ -1000,7 +1006,7 @@ impl Dit {
             attn_out,
             k8,
             sk,
-            v16,
+            vbuf,
             sv,
             mean_k,
             mean_v,
@@ -1199,7 +1205,7 @@ impl Dit {
                             (((n + 255) / 256) as u32, HEADS as u32, 1),
                             (256, 1, 1),
                             0,
-                            &[Arg::Ptr(vp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_v.ptr), Arg::Ptr(run.v16.ptr), Arg::I32(r0 as i32), Arg::Ptr(run.sv.ptr)],
+                            &[Arg::Ptr(vp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_v.ptr), Arg::Ptr(run.vbuf.ptr), Arg::I32(r0 as i32), Arg::Ptr(run.sv.ptr)],
                         )
                     } else {
                         dev.launch(
@@ -1207,7 +1213,7 @@ impl Dit {
                             (((n + 255) / 256) as u32, HEADS as u32, 1),
                             (256, 1, 1),
                             64 * 129 * 4,
-                            &[Arg::Ptr(vp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_v.ptr), Arg::Ptr(run.v16.ptr), Arg::I64(run.s_pad as i64), Arg::I32(r0 as i32), Arg::Ptr(run.sv.ptr)],
+                            &[Arg::Ptr(vp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_v.ptr), Arg::Ptr(run.vbuf.ptr), Arg::I64(run.s_pad as i64), Arg::I32(r0 as i32), Arg::Ptr(run.sv.ptr)],
                         )
                     }
                 })?;
