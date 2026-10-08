@@ -312,7 +312,8 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
         let xv = sampler::randn(&dev, &[24, latent_t, lh, lw], req.seed)?;
         let xa = sampler::randn(&dev, &[32, 2, audio_t], req.seed ^ 0x9E37_79B9_7F4A_7C15)?;
         let sigmas = sampler::simple_sigmas(req.steps, sampler::SHIFT_VIDEO);
-        let bar = indicatif::ProgressBar::new(req.steps as u64);
+        let show_bar = std::io::IsTerminal::is_terminal(&std::io::stderr()) && !crate::log::quiet();
+        let bar = if show_bar { indicatif::ProgressBar::new(req.steps as u64) } else { indicatif::ProgressBar::hidden() };
         bar.set_style(indicatif::ProgressStyle::with_template("  sampling {bar:40} {pos}/{len} steps  {elapsed_precise} eta {eta_precise}").unwrap());
         sampler::res_multistep(
             &dev,
@@ -320,7 +321,12 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
             &xv,
             &xa,
             &mut |v, a, sigma, ov, oa| dit.forward(&mut run, v, a, sigma, ov, oa),
-            &|i, _| bar.set_position(i as u64),
+            &|i, total| {
+                bar.set_position(i as u64);
+                if !show_bar {
+                    crate::info!("step {i}/{total}"); // machine-readable progress for callers that capture stderr
+                }
+            },
         )?;
         bar.finish_and_clear();
         crate::info!("sampled {} steps in {:.1}s", req.steps, t0.elapsed().as_secs_f64());
