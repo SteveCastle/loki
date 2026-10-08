@@ -141,6 +141,12 @@ func TestResolveResources(t *testing.T) {
 			arguments: []string{"--type", "transcript"},
 			want:      []string{HostBucketLocalCompute},
 			absent:    []string{HostBucketEmbed}},
+		{name: "retouch", command: "retouch",
+			want: []string{HostBucketLocalCompute}},
+		{name: "reshoot", command: "reshoot",
+			want: []string{HostBucketLocalCompute}},
+		{name: "4kify alias", command: "4kify",
+			want: []string{HostBucketLocalCompute}},
 		{name: "cheap task", command: "hash",
 			absent: []string{HostBucketLocalCompute}},
 		{name: "unknown command", command: "wait",
@@ -324,5 +330,54 @@ func TestApplyHostLimitsConcurrentClaims(t *testing.T) {
 	}
 	if blocked != nil {
 		t.Errorf("ClaimJob returned %s while bucket should be at capacity", blocked.ID)
+	}
+}
+
+// TestResolveHostGPUDiffusion: the loki-retouch / loki-reshoot engines each
+// need ~20 GB of VRAM, so every task that starts one (including the legacy
+// 4kify alias) must share ONE host bucket.
+func TestResolveHostGPUDiffusion(t *testing.T) {
+	for _, cmd := range []string{"retouch", "reshoot", "4kify"} {
+		if got := ResolveHost(cmd, "/tmp/x.png"); got != HostBucketGPUDiffusion {
+			t.Errorf("ResolveHost(%s) = %q; want %q", cmd, got, HostBucketGPUDiffusion)
+		}
+	}
+}
+
+// TestGPUDiffusionJobsSerialize: a queued retouch and reshoot never run at
+// the same time, even with a generous local-compute limit.
+func TestGPUDiffusionJobsSerializeHost(t *testing.T) {
+	jobqueue.SetHostResolver(ResolveHost)
+	jobqueue.SetResourceResolver(ResolveResources)
+	t.Cleanup(func() {
+		jobqueue.SetHostResolver(nil)
+		jobqueue.SetResourceResolver(nil)
+	})
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	q := jobqueue.NewQueueWithDB(db)
+	cfg := appconfig.Get()
+	cfg.LocalComputeConcurrency = 4
+	ApplyHostLimits(q, cfg)
+
+	if _, err := q.AddJob("", "retouch", nil, "/tmp/a.png", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.AddJob("", "reshoot", nil, "/tmp/b.png", nil); err != nil {
+		t.Fatal(err)
+	}
+	first, err := q.ClaimJob()
+	if err != nil || first == nil {
+		t.Fatalf("first claim: %v %v", first, err)
+	}
+	if second, _ := q.ClaimJob(); second != nil {
+		t.Fatalf("claimed %s while %s holds the GPU", second.Command, first.Command)
+	}
+	q.CompleteJob(first.ID)
+	if next, _ := q.ClaimJob(); next == nil {
+		t.Fatal("second diffusion job not claimable after the first finished")
 	}
 }

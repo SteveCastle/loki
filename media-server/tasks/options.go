@@ -64,6 +64,13 @@ func ParseOptions(j *jobqueue.Job, options []TaskOption) map[string]any {
 		case "bool":
 			if hasEquals {
 				result[key] = value == "true" || value == "1" || value == "yes"
+			} else if i+1 < len(args) && isBoolLiteral(args[i+1]) {
+				// POST /create's `fields` arrive as "--name value" pairs, so a
+				// bool field the UI sets to false shows up as "--name false".
+				// Consume an explicit literal so that means false, not true.
+				i++
+				v := strings.ToLower(args[i])
+				result[key] = v == "true" || v == "1" || v == "yes"
 			} else {
 				result[key] = true
 			}
@@ -84,4 +91,14 @@ func ParseOptions(j *jobqueue.Job, options []TaskOption) map[string]any {
 		}
 	}
 	return result
+}
+
+// isBoolLiteral reports whether s is an explicit boolean value token
+// ("true"/"false"/"1"/"0"/"yes"/"no", any case).
+func isBoolLiteral(s string) bool {
+	switch strings.ToLower(s) {
+	case "true", "false", "1", "0", "yes", "no":
+		return true
+	}
+	return false
 }
