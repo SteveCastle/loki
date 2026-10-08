@@ -3,6 +3,7 @@ package tasks
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,6 +28,7 @@ import (
 var fourKifyOptions = []TaskOption{
 	{Name: "phone", Label: "Phone Wallpaper", Type: "bool", Default: false, Description: "Make a vertical 1296x2800 phone wallpaper instead of a 3840x2160 desktop one"},
 	{Name: "time", Label: "Video Time", Type: "number", Default: 0.0, Description: "Seconds into a video to sample the frame from (videos only; images ignore it)"},
+	{Name: "prompt64", Label: "Prompt Override (base64)", Type: "string", Default: "", Description: "Base64-encoded UTF-8 prompt that replaces the built-in 4kify prompt (must mention <image1>). Empty = default behavior"},
 	{Name: "steps", Label: "Steps", Type: "number", Default: 25.0, Description: "Sampling steps (more is slower)"},
 }
 
@@ -41,6 +43,16 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	}
 	if steps <= 0 {
 		steps = 25
+	}
+	prompt := ""
+	if enc, _ := opts["prompt64"].(string); strings.TrimSpace(enc) != "" {
+		dec, derr := base64.StdEncoding.DecodeString(strings.TrimSpace(enc))
+		if derr != nil {
+			q.PushJobStdout(j.ID, "4kify: invalid prompt64 option: "+derr.Error())
+			q.ErrorJob(j.ID)
+			return derr
+		}
+		prompt = strings.TrimSpace(string(dec))
 	}
 
 	bin, err := exec.LookPath("4kify")
@@ -138,6 +150,9 @@ func fourKifyTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		args := []string{"--steps", fmt.Sprintf("%d", int(steps)), "-o", output}
 		if phone {
 			args = append(args, "--phone")
+		}
+		if prompt != "" {
+			args = append(args, "--prompt", prompt)
 		}
 
 		input := abs

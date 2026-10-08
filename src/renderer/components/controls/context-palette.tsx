@@ -60,6 +60,8 @@ const FOURKIFY_ENABLED = process.env.ENABLE_4KIFY === '1';
 
 // Still-image types the `4kify` task accepts directly.
 const IMAGE_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp|tiff?)$/i;
+// Still images the desktop wallpaper can be set from.
+const WALLPAPER_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp)$/i;
 // Videos 4kify takes by sampling one frame at the viewer's playback time.
 const VIDEO_MEDIA_RE = /\.(mp4|webm|mov|mkv|avi|m4v)$/i;
 
@@ -364,7 +366,6 @@ function DepRequirementRows({
     .map(([label, req]) => ({ label, req, dep: deps.get(req.depId) }))
     .filter(({ req, dep }) => {
       if (!dep) return false;
-      if (req.kind === 'external') return dep.state === 'not_installed';
       return isDownloadableState(dep.state) || isDownloadingState(dep.state);
     });
   if (rows.length === 0) return null;
@@ -373,23 +374,6 @@ function DepRequirementRows({
     <div className="dep-rows">
       {rows.map(({ label, req, dep }) => {
         const d = dep!;
-        if (req.kind === 'external') {
-          return (
-            <div key={label} className="dep-row hint">
-              <span>
-                {req.feature} uses your configured AI provider — Ollama not
-                detected.{' '}
-                <a
-                  href="https://ollama.com/download"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Get Ollama
-                </a>
-              </span>
-            </div>
-          );
-        }
         if (isDownloadingState(d.state)) {
           const inst = d.detail || {};
           const done: number = inst.bytes_done ?? 0;
@@ -937,6 +921,17 @@ export default function ContextPalette() {
   // undoable, and this button sits one row under the header of a palette
   // that opens on every right-click.
   const [merging, setMerging] = useState(false);
+  // Wallpaper picker: null = closed, otherwise the monitors to choose from.
+  const [wallpaperMonitors, setWallpaperMonitors] = useState<
+    | null
+    | {
+        id: string;
+        index: number;
+        width: number;
+        height: number;
+        primary: boolean;
+      }[]
+  >(null);
   const [mergeArmed, setMergeArmed] = useState(false);
   // Disarm on every palette open, and whenever the selection or scope
   // changes — a confirm click must never land on a different set than the one
@@ -1124,6 +1119,63 @@ export default function ContextPalette() {
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
+  // Electron + Windows: set the right-clicked image as the desktop wallpaper
+  // on one chosen monitor (or all). The monitor list comes from the shell's
+  // IDesktopWallpaper API in the main process; the picker row opens below the
+  // header. Single still images only.
+  const wallpaperCandidate = hasSelection
+    ? selection.length === 1
+      ? selection[0]
+      : ''
+    : similarTargetPath;
+  const wallpaperPath = WALLPAPER_MEDIA_RE.test(wallpaperCandidate || '')
+    ? wallpaperCandidate
+    : '';
+  const canSetWallpaper =
+    isElectron && /windows/i.test(navigator.userAgent) && !!wallpaperPath;
+  const handleToggleWallpaper = async () => {
+    if (wallpaperMonitors) {
+      setWallpaperMonitors(null);
+      return;
+    }
+    try {
+      const monitors = await invoke('list-monitors', []);
+      if (!Array.isArray(monitors) || monitors.length === 0) {
+        throw new Error('No monitors found');
+      }
+      setWallpaperMonitors(monitors);
+    } catch (e) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Could not list monitors',
+          message: e instanceof Error ? e.message : String(e),
+        },
+      });
+    }
+  };
+  const handleSetWallpaper = async (monitorId: string, label: string) => {
+    try {
+      await invoke('set-wallpaper', [wallpaperPath, monitorId]);
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: { type: 'success', title: 'Wallpaper set', message: label },
+      });
+    } catch (e) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to set wallpaper',
+          message: e instanceof Error ? e.message : String(e),
+        },
+      });
+    }
+    setWallpaperMonitors(null);
+    libraryService.send('HIDE_CONTEXT_PALETTE');
+  };
+
   // 4kify: restore + outpaint onto a 4K canvas (the `4kify` task, which writes
   // a `<name>_4k.png` beside each source). Acts on the discrete selection — or
   // the single right-clicked file. Images go through as-is. A video is sampled
@@ -1144,6 +1196,18 @@ export default function ContextPalette() {
     fourKifyPaths.length === 1 && VIDEO_MEDIA_RE.test(fourKifyPaths[0]);
   const handleFourKify = async () => {
     if (fourKifyPaths.length === 0) return;
+    // Optional prompt override, base64 so quotes/newlines survive the task
+    // command-line tokenizer. Empty = the binary's built-in 4kify prompt.
+    let promptArg = '';
+    const customPrompt = fourKifyPrompt.trim();
+    if (customPrompt) {
+      const bytes = new TextEncoder().encode(customPrompt);
+      let bin = '';
+      bytes.forEach((b) => {
+        bin += String.fromCharCode(b);
+      });
+      promptArg = `--prompt64=${btoa(bin)} `;
+    }
     // Read the playback position at click time. It only applies when the
     // video being targeted is the one on screen; any other video (e.g. one
     // right-clicked in the grid) samples from the start.
@@ -1175,7 +1239,7 @@ export default function ContextPalette() {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          input: `4kify ${timeArg}"${fourKifyPaths.join('\n')}"`,
+          input: `4kify ${timeArg}${promptArg}"${fourKifyPaths.join('\n')}"`,
         }),
         signal: AbortSignal.timeout(10000),
         redirect: 'error',
@@ -1204,6 +1268,7 @@ export default function ContextPalette() {
     name: string;
   } | null>(null);
   const [personRename, setPersonRename] = useState('');
+  const [fourKifyPrompt, setFourKifyPrompt] = useState('');
   useEffect(() => {
     setPersonTarget(null);
     setPersonRename('');
@@ -1454,6 +1519,31 @@ export default function ContextPalette() {
           ) : effectiveTarget.type === 'file' ? (
             <span className="context-count">1 file</span>
           ) : null}
+          {canSetWallpaper && (
+            <button
+              className="find-similar-btn"
+              onClick={handleToggleWallpaper}
+              title="Set as wallpaper on a monitor"
+              aria-label="Set as wallpaper"
+              aria-expanded={!!wallpaperMonitors}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="13" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+                <path d="M2 14l5-4 4 3 4-3 7 5" />
+              </svg>
+            </button>
+          )}
           {isElectron && studioPaths.length > 0 && (
             <button
               className="find-similar-btn"
@@ -1547,6 +1637,41 @@ export default function ContextPalette() {
             )}
         </div>
       </div>
+
+      {canSetWallpaper && wallpaperMonitors && (
+        <div className="context-scope-row">
+          <span className="scope-label">Wallpaper</span>
+          <div className="mode-toggle" role="group" aria-label="Monitor">
+            {wallpaperMonitors.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className="mode-opt"
+                onClick={() =>
+                  handleSetWallpaper(
+                    m.id,
+                    `Monitor ${m.index + 1} (${m.width}×${m.height})`
+                  )
+                }
+                title={`${m.width}×${m.height}${m.primary ? ' — primary' : ''}`}
+              >
+                {`${m.index + 1}${m.primary ? '★' : ''} · ${m.width}×${
+                  m.height
+                }`}
+              </button>
+            ))}
+            {wallpaperMonitors.length > 1 && (
+              <button
+                type="button"
+                className="mode-opt"
+                onClick={() => handleSetWallpaper('*', 'All monitors')}
+              >
+                All
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {canScopeToLibrary && (
         <div className="context-scope-row">
@@ -1693,6 +1818,16 @@ export default function ContextPalette() {
               ? '4K upscale current frame'
               : '4K upscale + outpaint'}
           </button>
+          <textarea
+            className="person-rename-input"
+            rows={2}
+            value={fourKifyPrompt}
+            onChange={(e) => setFourKifyPrompt(e.target.value)}
+            onKeyDown={(e) => e.stopPropagation()}
+            placeholder="Prompt override (optional) — replaces the 4K prompt; mention <image1>"
+            title="Leave empty for the default 4K upscale + outpaint behavior. A custom prompt replaces it entirely and must mention <image1>."
+            style={{ width: '100%', resize: 'vertical', marginTop: 6 }}
+          />
           <span className="merge-selection-note">
             {fourKifyIsVideo
               ? 'saves a new _4k.png of this frame beside the video'

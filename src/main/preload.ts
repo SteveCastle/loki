@@ -79,6 +79,8 @@ export type Channels =
   | 'log-event'
   | 'find-subtitle'
   | 'open-studio'
+  | 'list-monitors'
+  | 'set-wallpaper'
   | 'studio-media-saved'
   | 'startup-first-media';
 
