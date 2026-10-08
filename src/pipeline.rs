@@ -267,7 +267,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
             ensure!(tl == video_latent_t(v.n), "reference video latent frames {tl} != expected {}", video_latent_t(v.n));
             let (audio, rt, kind) = match &v.audio {
                 Some((wav, n)) => {
-                    let a = avae.encode(wav, *n).context("encoding reference video soundtrack")?;
+                    let a = encode_ref_audio(&avae, wav, *n).context("encoding reference video soundtrack")?;
                     let rt = a.shape[2];
                     (Some(a), rt, RefKind::VideoAudio)
                 }
@@ -276,7 +276,7 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
             refs.push(RefBlock { kind, latent_t: tl, latent_h: v.h / 16, latent_w: v.w / 16, ref_audio_t: rt, video: Some(z), audio });
         }
         for (wav, n) in &audios {
-            let a = avae.encode(wav, *n).context("encoding reference audio")?;
+            let a = encode_ref_audio(&avae, wav, *n).context("encoding reference audio")?;
             let rt = a.shape[2];
             refs.push(RefBlock { kind: RefKind::Audio, latent_t: 0, latent_h: 0, latent_w: 0, ref_audio_t: rt, video: None, audio: Some(a) });
         }
@@ -369,6 +369,16 @@ pub fn run(dev: Arc<Device>, req: &Request, paths: &Paths, ff: &Ffmpeg) -> Resul
     eprintln!("decoded + encoded in {:.1}s", t0.elapsed().as_secs_f64());
     eprintln!("wrote {} (total {:.1}s)", req.out.display(), t_all.elapsed().as_secs_f64());
     Ok(())
+}
+
+/// ComfyUI crops (centred) the reference waveform to a multiple of 800 samples before the audio VAE.
+fn encode_ref_audio(avae: &AudioVae, wav: &[f32], n: usize) -> Result<Tensor> {
+    let (start, len) = crate::vae_audio::comfy_crop_window(n);
+    ensure!(len > 0, "reference audio is shorter than one latent frame (25 ms)");
+    let mut c = Vec::with_capacity(2 * len);
+    c.extend_from_slice(&wav[start..start + len]);
+    c.extend_from_slice(&wav[n + start..n + start + len]);
+    avae.encode(&c, len)
 }
 
 fn print_tags(req: &Request, videos: &[Video]) {
