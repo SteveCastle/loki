@@ -4,6 +4,7 @@ package status
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -80,6 +81,16 @@ func Snapshot() []Item {
 					item.Path = p
 					item.Detail = map[string]string{"source": "configured_path"}
 				}
+			}
+		}
+		// A loki-* engine already on PATH (a developer build, or installed by
+		// hand) is used as-is by the tasks and never downloaded, so the UI must
+		// not ask to download it or its models.
+		if m.EffectiveCategory() == "tool" && strings.HasPrefix(m.ID, "loki-") && item.State == string(models.StatusMissing) {
+			if p, err := exec.LookPath(m.ID); err == nil {
+				item.State = string(models.StatusInstalled)
+				item.Path = p
+				item.Detail = map[string]string{"source": "path"}
 			}
 		}
 		out = append(out, item)
