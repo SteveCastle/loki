@@ -128,6 +128,7 @@ fn check(dir: &Path) -> Result<()> {
 fn bench(w: usize, h: usize, frames: usize, n: usize) -> Result<()> {
     use rand::{Rng, SeedableRng};
     let dev = Device::new(0)?;
+    eprintln!("  device: {} MB free of {} MB before loading", dev.free_mem()? >> 20, dev.total_mem >> 20);
     let dit = Dit::load(dev.clone(), Path::new(MODEL))?;
     let align = |mut f: usize| {
         while f % 17 != 5 {
@@ -149,7 +150,7 @@ fn bench(w: usize, h: usize, frames: usize, n: usize) -> Result<()> {
     let t1 = std::time::Instant::now();
     let mut run = dit.prepare(&inp)?;
     dev.sync()?;
-    println!("{w}x{h} {fc} frames: latent {lt}x{lh}x{lw}, audio {ta}, seq {} tokens, chunk {}, prepare {:.2}s, free {} MB", run.seq, run.chunk, t1.elapsed().as_secs_f64(), dev.free_mem()? >> 20);
+    println!("{w}x{h} {fc} frames: latent {lt}x{lh}x{lw}, audio {ta}, seq {} tokens, chunk {} abatch {}, prepare {:.2}s, free {} MB", run.seq, run.chunk, run.abatch, t1.elapsed().as_secs_f64(), dev.free_mem()? >> 20);
     let xv = Tensor::from_f32(&dev, &randn(24 * lt * lh * lw), &[24, lt, lh, lw])?;
     let xa = Tensor::from_f32(&dev, &randn(64 * ta), &[32, 2, ta])?;
     let ov = Tensor::zeros(&dev, DType::F32, &[24, lt, lh, lw])?;
@@ -171,6 +172,46 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "--mma" {
         return mma_bench();
+    }
+    if args.len() > 1 && args[1] == "--alloctest" {
+        let dev = Device::new(0)?;
+        let f0 = dev.free_mem()?;
+        let mut v = Vec::new();
+        for _ in 0..400 {
+            v.push(Tensor::new(&dev, DType::F32, &[64])?);
+        }
+        dev.sync()?;
+        let f1 = dev.free_mem()?;
+        let mut w = Vec::new();
+        for _ in 0..20 {
+            w.push(Tensor::new(&dev, DType::I8, &[115_605_504])?);
+        }
+        dev.sync()?;
+        let f2 = dev.free_mem()?;
+        println!("400 tiny allocs: {} MB; 20 x 115.6MB allocs: {} MB (payload {} MB)", (f0 - f1) >> 20, (f1 - f2) >> 20, (20 * 115_605_504usize) >> 20);
+        drop(w);
+        drop(v);
+        dev.sync()?;
+        let g0 = dev.free_mem()?;
+        let big = dev.alloc(19_370_000_000)?;
+        dev.sync()?;
+        let g1 = dev.free_mem()?;
+        println!("one 19.37 GB alloc: free {} -> {} MB (delta {} MB, payload {} MB)", g0 >> 20, g1 >> 20, (g0 - g1) >> 20, 19_370_000_000usize >> 20);
+        // touch it with a memset to force residency
+        dev.memset_at(big.ptr(), big.len)?;
+        dev.sync()?;
+        println!("after memset: free {} MB", dev.free_mem()? >> 20);
+        return Ok(());
+    }
+    if args.len() > 1 && args[1] == "--gemm" {
+        let dev = Device::new(0)?;
+        let p = |i: usize, d: usize| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
+        let (m, iters) = (p(2, 8192), p(3, 50));
+        for (name, n, k, mode) in [("qkv/kv", 14336usize, 5376usize, 0), ("q", 7168, 5376, 0), ("out", 5376, 7168, 4), ("fc1", 28672, 5376, 3), ("fc2", 5376, 14336, 4)] {
+            let dt = h3ref2va::dit_h3::gemm_bench(&dev, m, n, k, mode, iters)?;
+            println!("gemm {name:<6} m {m} n {n} k {k}: {:.3} ms  {:.1} TOPS", dt * 1e3, 2.0 * m as f64 * n as f64 * k as f64 / dt / 1e12);
+        }
+        return Ok(());
     }
     if args.len() > 1 && args[1] == "--attn" {
         let dev = Device::new(0)?;

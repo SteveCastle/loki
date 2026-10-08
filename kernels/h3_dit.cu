@@ -434,6 +434,10 @@ extern "C" __global__ void __launch_bounds__(256) k_h3_gemm_i8_w(const int8_t* A
                                                                 const float* sa, const float* sb, const h3gemm::Epi ep) {
     h3gemm::gemm_kernel<256, 3>(A, B, C, M, N, K, sa, sb, ep);
 }
+extern "C" __global__ void __launch_bounds__(256) k_h3_gemm_i8_w4(const int8_t* A, const int8_t* B, bf16* C, int M, int N, int K,
+                                                                 const float* sa, const float* sb, const h3gemm::Epi ep) {
+    h3gemm::gemm_kernel<256, 4>(A, B, C, M, N, K, sa, sb, ep);
+}
 
 // =============================================================================================
 // Patch embedding: rows gathered from a channel-first latent, fp32 projection (weight transposed [Kf][N]) -> bf16.

@@ -82,7 +82,7 @@ struct Block {
     q: QLinear,  // rows [0, 7168) of qkv_proj
     kv: QLinear, // rows [7168, 21504) of qkv_proj
     out: QLinear,
-    fc1: QLinear, // gate/up interleaved for the fused SwiGLU epilogue
+    fc1_scale: Tensor, // fc1 per-row scales (gate/up interleaved); the weight lives in Dit::fc1w (evictable)
     fc2: QLinear,
     norm1: Tensor,
     norm2: Tensor,
@@ -95,6 +95,9 @@ pub struct Dit {
     pub prof: Profiler,
     st: SafeTensors,
     blocks: Vec<Block>,
+    /// fc1 weights [28672, 5376] int8 (gate/up interleaved), per layer on the device or evicted to host memory
+    /// when a very long run needs the VRAM (streamed through Run::fc1_stage then)
+    fc1w: std::sync::Mutex<Vec<Fc1W>>,
     adaln_w: Tensor, // f16 raw [L, 96768, 8]
     adaln_b: Tensor, // f16 raw [L, 96768]
     fin_adaln_w: Tensor,
@@ -108,12 +111,16 @@ pub struct Dit {
     vproj_b: Tensor,
     aproj_wt: Tensor, // f32 [32, 5376]
     aproj_b: Tensor,
-    cond_w: Tensor, // bf16 [5376, 5120]
-    cond_b: Tensor, // f32
     t_table: Vec<f32>, // [1025, 8]
     inv_freq: Vec<f32>,
     pub path: PathBuf,
 }
+
+enum Fc1W {
+    Dev(Tensor),
+    Host(Vec<u8>),
+}
+const FC1_BYTES: usize = 2 * FFN * HIDDEN;
 
 /// Prepared per-run state (layout, tables, refined text, buffers).
 pub struct Run {
@@ -129,13 +136,16 @@ pub struct Run {
     pub lh: usize,
     pub lw: usize,
     pub chunk: usize,
+    /// attention query batch rows (multiple of chunk)
+    pub abatch: usize,
     prefix_x: Tensor,
     modrow: Tensor, // i32 [S]
     rope: Tensor,   // bf16 [S, 48, 2]
     x: Tensor,
-    /// per chunk: Q int8 [C, H, 128] + scales [C, H]
+    /// per attention batch: Q int8 [A, H, 128] + scales [A, H], attention output bf16 [A, 7168]
     q8: Tensor,
     sq: Tensor,
+    attn_out: Tensor,
     /// whole sequence: K int8 [S_pad, H, 128] + scales, V fp16 [S_pad, H, 128] + per-64-key scales [S_pad/64, H]
     k8: Tensor,
     sk: Tensor,
@@ -148,6 +158,8 @@ pub struct Run {
     xs: Tensor,
     modtab: Tensor,
     fmod: Tensor,
+    /// staging buffer for evicted fc1 weights (only when some layers are evicted)
+    fc1_stage: Option<Tensor>,
     /// debug: copy x to the host after these blocks (index, data)
     pub snap_layers: Vec<usize>,
     pub snapshots: Vec<(usize, Vec<f32>)>,
@@ -311,6 +323,55 @@ pub fn attention_bench(dev: &Device, nq: usize, nk: usize, iters: usize) -> Resu
     Ok(t.elapsed().as_secs_f64() / iters as f64)
 }
 
+/// Stand-alone int8 GEMM micro-benchmark (random data): seconds per call of [m,k] x [n,k]^T with epilogue `mode`.
+pub fn gemm_bench(dev: &Arc<Device>, m: usize, n: usize, k: usize, mode: i32, iters: usize) -> Result<f64> {
+    ops::gemm_init(dev)?;
+    dev.set_max_smem("k_h3_gemm_i8", ops::GEMM_SMEM)?;
+    dev.set_max_smem("k_h3_gemm_i8_w", ops::GEMM_SMEM_W)?;
+    dev.set_max_smem("k_h3_gemm_i8_w4", 4 * (128 * 64 + 256 * 64))?;
+    let mut seed = 777u32;
+    let mut rnd = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    let av: Vec<i8> = (0..m * k).map(|_| (rnd() >> 8) as u8 as i8).collect();
+    let wv: Vec<i8> = (0..n * k).map(|_| (rnd() >> 8) as u8 as i8).collect();
+    let a = Tensor::from_i8(dev, &av, &[m, k])?;
+    let w = QLinear { w: Tensor::from_i8(dev, &wv, &[n, k])?, scale: Tensor::zeros(dev, DType::F32, &[n])?, n, k };
+    let sa = Tensor::zeros(dev, DType::F32, &[m])?;
+    let out = Tensor::zeros(dev, DType::BF16, &[m, n])?;
+    let gate = Tensor::zeros(dev, DType::F32, &[12 * 6 * HIDDEN.max(n)])?;
+    let mr = Tensor::zeros(dev, DType::F32, &[m])?;
+    let run = |_: ()| -> Result<()> {
+        Dit::gemm_raw(dev, a.ptr, sa.ptr, m, &w, mode, out.ptr, gate.ptr, mr.ptr, out.ptr)
+    };
+    run(())?;
+    dev.sync()?;
+    let t = std::time::Instant::now();
+    for _ in 0..iters {
+        run(())?;
+    }
+    dev.sync()?;
+    Ok(t.elapsed().as_secs_f64() / iters as f64)
+}
+
+/// Hand the CUDA default memory pool's cached free blocks back to the driver (the engine keeps freed memory in
+/// the pool; after the refiner weights are dropped this makes ~1.5 GB visible to the scratch sizing again).
+fn trim_mem_pool(dev: &Device) -> Result<()> {
+    use cudarc::driver::sys;
+    dev.sync()?;
+    unsafe {
+        let mut pool: sys::CUmemoryPool = std::ptr::null_mut();
+        let mut d: sys::CUdevice = 0;
+        if sys::cuCtxGetDevice(&mut d) == sys::CUresult::CUDA_SUCCESS && sys::cuDeviceGetDefaultMemPool(&mut pool, d) == sys::CUresult::CUDA_SUCCESS {
+            let _ = sys::cuMemPoolTrimTo(pool, 0);
+        }
+    }
+    Ok(())
+}
+
 fn view(t: &Tensor, off_bytes: usize, dtype: DType, shape: &[usize]) -> Tensor {
     let n: usize = shape.iter().product();
     assert!(off_bytes + n * dtype.size() <= t.buf.len, "view out of range");
@@ -381,50 +442,115 @@ impl Dit {
         ops::sage_init(&dev)?;
         dev.set_max_smem("k_h3_gemm_i8", ops::GEMM_SMEM)?;
         dev.set_max_smem("k_h3_gemm_i8_w", ops::GEMM_SMEM_W)?;
+        dev.set_max_smem("k_h3_gemm_i8_w4", 4 * (128 * 64 + 256 * 64))?;
         dev.set_max_smem("k_h3_norm_mod_quant", (HIDDEN * 4) as u32)?;
         dev.set_max_smem("k_h3_quant_v", 128 * 129 * 4)?;
         let (an, asm, _, _) = attn_kernel();
         dev.set_max_smem(an, asm)?;
         dev.set_max_smem("k_h3_quant_v8", 64 * 129 * 4)?;
+        // All block weights live in one exact-size allocation (the stream-ordered pool otherwise over-reserves
+        // ~1.7 GB while growing, which matters at ~110k tokens).
+        let mut fc1_list: Vec<Fc1W> = Vec::with_capacity(LAYERS);
         let (blocks, adaln_w, adaln_b, uploaded) = {
-            let mut l = Loader::new(&st, dev.clone());
-            let mut blocks = Vec::with_capacity(LAYERS);
             let no = 18 * HIDDEN;
-            let adaln_w = Tensor::new(&dev, DType::U8, &[LAYERS * no * T_DIM * 2])?;
-            let adaln_b = Tensor::new(&dev, DType::U8, &[LAYERS * no * 2])?;
+            let names = |i: usize| -> Vec<(String, usize)> {
+                let p = format!("blocks.{i}");
+                vec![
+                    (format!("{p}.attn.qkv_proj.weight"), 3 * INNER * HIDDEN),
+                    (format!("{p}.attn.qkv_proj.weight_scale"), 3 * INNER * 4),
+                    (format!("{p}.attn.out_proj.weight"), HIDDEN * INNER),
+                    (format!("{p}.attn.out_proj.weight_scale"), HIDDEN * 4),
+                    (format!("{p}.mlp.fc1.weight_scale"), 2 * FFN * 4),
+                    (format!("{p}.mlp.fc2.weight"), HIDDEN * FFN),
+                    (format!("{p}.mlp.fc2.weight_scale"), HIDDEN * 4),
+                    (format!("{p}.norm1.weight"), HIDDEN * 2),
+                    (format!("{p}.norm2.weight"), HIDDEN * 2),
+                    (format!("{p}.attn.q_norm.weight"), HEAD_DIM * 2),
+                    (format!("{p}.attn.k_norm.weight"), HEAD_DIM * 2),
+                ]
+            };
+            let align = |x: usize| (x + 255) / 256 * 256;
+            let mut total = align(LAYERS * no * T_DIM * 2) + align(LAYERS * no * 2);
+            for i in 0..LAYERS {
+                for (name, bytes) in names(i) {
+                    let have = st.bytes(&name)?.len();
+                    ensure!(have == bytes, "{name}: {have} bytes, expected {bytes}");
+                    total += align(bytes);
+                }
+                let meta: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.mlp.fc1.comfy_quant"))?)?;
+                for q in ["attn.qkv_proj", "attn.out_proj", "mlp.fc1", "mlp.fc2"] {
+                    let m: serde_json::Value = serde_json::from_slice(st.bytes(&format!("blocks.{i}.{q}.comfy_quant"))?)?;
+                    ensure!(m["format"] == "int8_tensorwise" && m["convrot"] == true && m["convrot_groupsize"] == 256, "blocks.{i}.{q}: unsupported quant format {m}");
+                }
+                let _ = meta;
+            }
+            let arena = Arc::new(dev.alloc(total)?);
+            let mut off = 0usize;
+            let mut uploaded = 0usize;
+            let mut take = |dtype: DType, shape: &[usize], data: Option<&[u8]>| -> Result<Tensor> {
+                let n: usize = shape.iter().product::<usize>() * dtype.size();
+                let t = Tensor { buf: arena.clone(), ptr: arena.ptr() + off as u64, dtype, shape: shape.to_vec() };
+                if let Some(d) = data {
+                    ensure!(d.len() == n, "arena upload size mismatch");
+                    dev.htod_at(t.ptr, d)?;
+                    uploaded += d.len();
+                }
+                off += align(n);
+                Ok(t)
+            };
+            let adaln_w = take(DType::U8, &[LAYERS * no * T_DIM * 2], None)?;
+            let adaln_b = take(DType::U8, &[LAYERS * no * 2], None)?;
+            let mut blocks = Vec::with_capacity(LAYERS);
+            let mut adaln_bytes = 0usize;
             for i in 0..LAYERS {
                 let p = format!("blocks.{i}");
-                let fc1 = l.qlinear(&format!("{p}.mlp.fc1"))?;
-                ensure!(fc1.n == 2 * FFN && fc1.k == HIDDEN, "unexpected fc1 shape");
-                let fc1 = fc1.interleave_gate_up(&dev)?;
-                let qkv = l.qlinear(&format!("{p}.attn.qkv_proj"))?;
-                ensure!(qkv.n == 3 * INNER && qkv.k == HIDDEN, "unexpected qkv shape {}x{}", qkv.n, qkv.k);
+                let qlin = |take: &mut dyn FnMut(DType, &[usize], Option<&[u8]>) -> Result<Tensor>, q: &str, n: usize, k: usize| -> Result<QLinear> {
+                    let w = take(DType::I8, &[n, k], Some(st.bytes(&format!("{p}.{q}.weight"))?))?;
+                    let scale = take(DType::F32, &[n], Some(st.bytes(&format!("{p}.{q}.weight_scale"))?))?;
+                    Ok(QLinear { w, scale, n, k })
+                };
+                let qkv = qlin(&mut take, "attn.qkv_proj", 3 * INNER, HIDDEN)?;
+                let out = qlin(&mut take, "attn.out_proj", HIDDEN, INNER)?;
+                // fc1: [gate | up] rows interleaved (gate_j, up_j) on the host for the fused SwiGLU epilogue
+                let (fc1_scale, fc1_w) = {
+                    let (n, k) = (2 * FFN, HIDDEN);
+                    let wb = st.bytes(&format!("{p}.mlp.fc1.weight"))?;
+                    let sb = st.bytes(&format!("{p}.mlp.fc1.weight_scale"))?;
+                    let mut wi = vec![0u8; n * k];
+                    let mut si = vec![0u8; n * 4];
+                    for r in 0..n {
+                        let src = if r % 2 == 0 { r / 2 } else { FFN + r / 2 };
+                        wi[r * k..(r + 1) * k].copy_from_slice(&wb[src * k..(src + 1) * k]);
+                        si[r * 4..(r + 1) * 4].copy_from_slice(&sb[src * 4..(src + 1) * 4]);
+                    }
+                    let w = Tensor::new(&dev, DType::I8, &[n, k])?;
+                    dev.htod_at(w.ptr, &wi)?;
+                    let scale = take(DType::F32, &[n], Some(&si))?;
+                    (scale, w)
+                };
+                fc1_list.push(Fc1W::Dev(fc1_w));
+                let fc2 = qlin(&mut take, "mlp.fc2", HIDDEN, FFN)?;
+                let norm1 = take(DType::BF16, &[HIDDEN], Some(st.bytes(&format!("{p}.norm1.weight"))?))?;
+                let norm2 = take(DType::BF16, &[HIDDEN], Some(st.bytes(&format!("{p}.norm2.weight"))?))?;
+                let q_norm = take(DType::BF16, &[HEAD_DIM], Some(st.bytes(&format!("{p}.attn.q_norm.weight"))?))?;
+                let k_norm = take(DType::BF16, &[HEAD_DIM], Some(st.bytes(&format!("{p}.attn.k_norm.weight"))?))?;
                 let sub = |r0: usize, n: usize| QLinear {
                     w: Tensor { buf: qkv.w.buf.clone(), ptr: qkv.w.ptr + (r0 * HIDDEN) as u64, dtype: DType::I8, shape: vec![n, HIDDEN] },
                     scale: Tensor { buf: qkv.scale.buf.clone(), ptr: qkv.scale.ptr + (r0 * 4) as u64, dtype: DType::F32, shape: vec![n] },
                     n,
                     k: HIDDEN,
                 };
-                blocks.push(Block {
-                    q: sub(0, INNER),
-                    kv: sub(INNER, 2 * INNER),
-                    out: l.qlinear(&format!("{p}.attn.out_proj"))?,
-                    fc1,
-                    fc2: l.qlinear(&format!("{p}.mlp.fc2"))?,
-                    norm1: l.bf16(&format!("{p}.norm1.weight"))?,
-                    norm2: l.bf16(&format!("{p}.norm2.weight"))?,
-                    q_norm: l.bf16(&format!("{p}.attn.q_norm.weight"))?,
-                    k_norm: l.bf16(&format!("{p}.attn.k_norm.weight"))?,
-                });
+                blocks.push(Block { q: sub(0, INNER), kv: sub(INNER, 2 * INNER), out, fc1_scale, fc2, norm1, norm2, q_norm, k_norm });
                 let wi = st.info(&format!("{p}.adaln_proj.linear.weight"))?;
                 ensure!(wi.dtype == "F16" && wi.shape == vec![no, T_DIM], "unexpected adaln weight {:?} {:?}", wi.dtype, wi.shape);
                 let wb = st.bytes(&format!("{p}.adaln_proj.linear.weight"))?;
                 dev.htod_at(adaln_w.ptr + (i * no * T_DIM * 2) as u64, wb)?;
                 let bb = st.bytes(&format!("{p}.adaln_proj.linear.bias"))?;
                 dev.htod_at(adaln_b.ptr + (i * no * 2) as u64, bb)?;
-                l.uploaded += wb.len() + bb.len();
+                adaln_bytes += wb.len() + bb.len();
             }
-            (blocks, adaln_w, adaln_b, l.uploaded)
+            drop(take);
+            (blocks, adaln_w, adaln_b, uploaded + adaln_bytes + LAYERS * FC1_BYTES)
         };
         let mut l = Loader::new(&st, dev.clone());
         ensure!(!st.has("final_layer.video_out.weight") || st.info("final_layer.video_out.weight")?.shape[0] == 96, "PDD multi-head final layer is not supported");
@@ -450,19 +576,18 @@ impl Dit {
         let vproj_b = l.f32("video_patch_proj.bias")?;
         let aproj_wt = transpose("audio_patch_proj.weight", 32)?;
         let aproj_b = l.f32("audio_patch_proj.bias")?;
-        let cond_w = l.bf16("condition_proj.weight")?;
-        let cond_b = l.f32("condition_proj.bias")?;
         let t_table = st.f32s("adaln_t_table")?;
         ensure!(t_table.len() == 1025 * T_DIM, "unexpected adaln_t_table size");
         let inv_freq = st.f32s("rope.inv_freq")?;
         ensure!(inv_freq.len() == 16);
-        dev.sync()?;
-        eprintln!("  dit: {:.2} GB uploaded in {:.1}s", (uploaded + l.uploaded) as f64 / 1e9, t0.elapsed().as_secs_f64());
+        trim_mem_pool(&dev)?;
+        eprintln!("  dit: {:.2} GB uploaded in {:.1}s, {} MB free", (uploaded + l.uploaded) as f64 / 1e9, t0.elapsed().as_secs_f64(), dev.free_mem()? >> 20);
         Ok(Dit {
             dev,
             prof: Profiler::new(),
             st,
             blocks,
+            fc1w: std::sync::Mutex::new(fc1_list),
             adaln_w,
             adaln_b,
             fin_adaln_w,
@@ -476,8 +601,6 @@ impl Dit {
             vproj_b,
             aproj_wt,
             aproj_b,
-            cond_w,
-            cond_b,
             t_table,
             inv_freq,
             path: path.to_path_buf(),
@@ -487,17 +610,22 @@ impl Dit {
     // ------------------------------------------------------------------ kernels
     #[allow(clippy::too_many_arguments)]
     fn gemm(&self, aq: u64, sa: u64, m: usize, w: &QLinear, mode: i32, res: u64, gate: u64, modrow: u64, out: u64) -> Result<()> {
+        Dit::gemm_raw(&self.dev, aq, sa, m, w, mode, res, gate, modrow, out)
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn gemm_raw(dev: &Device, aq: u64, sa: u64, m: usize, w: &QLinear, mode: i32, res: u64, gate: u64, modrow: u64, out: u64) -> Result<()> {
         let n = w.n;
         let k = w.k;
         ensure!(k % 64 == 0, "gemm: K % 64");
         let wide = ops::gemm_i8_wide(m, n);
-        let (kname, bn, smem) = if wide { ("k_h3_gemm_i8_w", 256, ops::GEMM_SMEM_W) } else { ("k_h3_gemm_i8", 128, ops::GEMM_SMEM) };
+        let w4 = std::env::var("H3_GEMM_W4").is_ok();
+        let (kname, bn, smem) = if wide && w4 { ("k_h3_gemm_i8_w4", 256, 4 * (128 * 64 + 256 * 64)) } else if wide { ("k_h3_gemm_i8_w", 256, ops::GEMM_SMEM_W) } else { ("k_h3_gemm_i8", 128, ops::GEMM_SMEM) };
         let grid = (((n + bn - 1) / bn) * ((m + 127) / 128)) as u32;
         let ep = EpiRaw { bias: 0, mode, _p: 0, res, gate, modrow, gstride: (6 * HIDDEN) as i64 };
-        let f = self.dev.func(kname)?;
+        let f = dev.func(kname)?;
         let cfg = cudarc::driver::LaunchConfig { grid_dim: (grid, 1, 1), block_dim: (256, 1, 1), shared_mem_bytes: smem };
         let (mi, ni, ki) = (m as i32, n as i32, k as i32);
-        let mut b = self.dev.stream.launch_builder(&f);
+        let mut b = dev.stream.launch_builder(&f);
         b.arg(&aq).arg(&w.w.ptr).arg(&out).arg(&mi).arg(&ni).arg(&ki).arg(&sa).arg(&w.scale.ptr).arg(&ep);
         unsafe { b.launch(cfg) }.with_context(|| format!("{kname} m={m} n={n} k={k}"))?;
         Ok(())
@@ -593,7 +721,14 @@ impl Dit {
             t
         };
         let x = Tensor::new(dev, DType::BF16, &[l, HIDDEN])?;
-        ops::gemm_bf16(dev, &tb, &self.cond_w, Some(&self.cond_b), ops::Act::None, Epi::Store, &x)?;
+        {
+            // condition_proj + refiner weights are only needed here: loaded per prepare, freed afterwards
+            let mut ld = Loader::new(&self.st, dev.clone());
+            let cond_w = ld.bf16("condition_proj.weight")?;
+            let cond_b = ld.f32("condition_proj.bias")?;
+            ops::gemm_bf16(dev, &tb, &cond_w, Some(&cond_b), ops::Act::None, Epi::Store, &x)?;
+            dev.sync()?;
+        }
         let n = Tensor::new(dev, DType::BF16, &[l, HIDDEN])?;
         let qkv = Tensor::new(dev, DType::BF16, &[l, 3 * INNER])?;
         let attn = Tensor::new(dev, DType::BF16, &[l, INNER])?;
@@ -756,6 +891,10 @@ impl Dit {
         let text_states = self.refine_text(inp.text).context("token refiner")?;
         dev.dtod(prefix_x.ptr, text_states.ptr, l * HIDDEN * 2)?;
         drop(text_states);
+        trim_mem_pool(dev)?;
+        if std::env::var("H3_DEBUG_MEM").is_ok() {
+            eprintln!("  dit prepare: free after refiner {} MB", dev.free_mem()? >> 20);
+        }
         let aug = inp.cond_noise_aug.unwrap_or(VISUAL_COND_TIMESTEP as f32);
         for e in &embeds {
             match *e {
@@ -799,22 +938,44 @@ impl Dit {
         let sv = Tensor::zeros(dev, DType::F32, &[s_pad / 256, HEADS])?;
         let mean_k = Tensor::zeros(dev, DType::F32, &[INNER])?;
         let mean_v = Tensor::zeros(dev, DType::F32, &[INNER])?;
-        let modtab = Tensor::new(dev, DType::F32, &[LAYERS * MOD_ROWS * 6 * HIDDEN])?;
+        let modtab = Tensor::new(dev, DType::F32, &[MOD_ROWS * 6 * HIDDEN])?; // built per layer
         let fmod = Tensor::new(dev, DType::F32, &[4 * 2 * HIDDEN])?;
         dev.sync()?;
-        // chunk rows: as large as memory allows (<= 8192), multiple of 128
+        // Scratch sizes from the free memory: GEMM/MLP chunk rows `chunk` (big + xq: ~43 KB/row) and the attention
+        // query batch `abatch` (Q8 + scales + bf16 output: ~22 KB/row), abatch a multiple of chunk, both multiples of 256.
+        let per_c = 2 * INNER * 2 + FFN + 4;
+        let per_a = INNER + 4 * HEADS + INNER * 2;
+        let margin = 160usize << 20;
+        let fc1_stage = self.balance_fc1(8192 * per_a + 4096 * per_c + margin)?;
+        trim_mem_pool(dev)?;
         let free = dev.free_mem()?;
-        let per_row = 2 * INNER * 2 + FFN + INNER + 4 * HEADS + 4;
-        let margin = 512usize << 20;
-        let mut chunk = std::env::var("H3_CHUNK").ok().and_then(|v| v.parse().ok()).unwrap_or(8192usize);
-        while chunk > 512 && chunk * per_row + margin > free {
-            chunk /= 2;
+        if std::env::var("H3_DEBUG_MEM").is_ok() {
+            eprintln!("  dit prepare: seq {seq}, free before scratch {} MB", free >> 20);
         }
-        chunk = (chunk / 256).max(1) * 256;
-        chunk = chunk.min(s_pad);
+        let budget = free.saturating_sub(margin);
+        let env = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<usize>().ok());
+        let (mut abatch, mut chunk) = (8192usize, 8192usize);
+        let cands = [(8192usize, 8192usize), (8192, 4096), (8192, 2048), (4096, 2048), (4096, 1024), (2048, 1024), (2048, 512), (1024, 512), (512, 256)];
+        for (a, c) in cands {
+            abatch = a;
+            chunk = c;
+            if a * per_a + c * per_c <= budget {
+                break;
+            }
+        }
+        if let Some(c) = env("H3_CHUNK") {
+            chunk = c;
+            abatch = abatch.max(c);
+        }
+        if let Some(a) = env("H3_ABATCH") {
+            abatch = a;
+        }
+        chunk = ((chunk / 256).max(1) * 256).min(s_pad);
+        abatch = ((abatch / chunk).max(1) * chunk).min(s_pad.div_ceil(chunk) * chunk);
         let big = Tensor::new(dev, DType::BF16, &[chunk, 2 * INNER])?;
-        let q8 = Tensor::new(dev, DType::I8, &[chunk, HEADS, HEAD_DIM])?;
-        let sq = Tensor::new(dev, DType::F32, &[chunk, HEADS])?;
+        let q8 = Tensor::new(dev, DType::I8, &[abatch, HEADS, HEAD_DIM])?;
+        let sq = Tensor::new(dev, DType::F32, &[abatch, HEADS])?;
+        let attn_out = Tensor::new(dev, DType::BF16, &[abatch, INNER])?;
         let xq = Tensor::new(dev, DType::I8, &[chunk, FFN])?;
         let xs = Tensor::new(dev, DType::F32, &[chunk])?;
         Ok(Run {
@@ -829,12 +990,14 @@ impl Dit {
             lh,
             lw,
             chunk,
+            abatch,
             prefix_x,
             modrow: modrow_t,
             rope,
             x,
             q8,
             sq,
+            attn_out,
             k8,
             sk,
             v16,
@@ -846,9 +1009,58 @@ impl Dit {
             xs,
             modtab,
             fmod,
+            fc1_stage,
             snap_layers: Vec::new(),
             snapshots: Vec::new(),
         })
+    }
+
+    /// Make `want` bytes of device memory available for run scratch by evicting fc1 weights of the last layers
+    /// to host memory (or restore evicted layers when memory allows). Returns the staging buffer if any layer
+    /// stays evicted.
+    fn balance_fc1(&self, want: usize) -> Result<Option<Tensor>> {
+        let dev = &self.dev;
+        let mut slots = self.fc1w.lock().unwrap();
+        trim_mem_pool(dev)?;
+        let free = dev.free_mem()?;
+        let evicted = slots.iter().filter(|s| matches!(s, Fc1W::Host(_))).count();
+        if free < want {
+            // each evicted layer frees FC1_BYTES; one staging buffer (FC1_BYTES) is needed once anything is evicted
+            let need = want - free + if evicted == 0 { FC1_BYTES } else { 0 };
+            let k = need.div_ceil(FC1_BYTES).min(LAYERS);
+            let mut done = 0;
+            for li in (0..LAYERS).rev() {
+                if done == k {
+                    break;
+                }
+                if let Fc1W::Dev(t) = &slots[li] {
+                    let mut host = vec![0u8; FC1_BYTES];
+                    let v: Vec<u8> = dev.dtoh_at(t.ptr, FC1_BYTES)?;
+                    host.copy_from_slice(&v);
+                    slots[li] = Fc1W::Host(host);
+                    done += 1;
+                }
+            }
+            eprintln!("  dit: evicted fc1 of {done} more layer(s) to host memory ({} total) to fit the run", evicted + done);
+        } else if evicted > 0 {
+            // restore layers while memory allows (keeping `want` free)
+            let mut avail = free - want;
+            for li in 0..LAYERS {
+                if let Fc1W::Host(bytes) = &slots[li] {
+                    // the last restored layer also releases the staging buffer
+                    if avail < FC1_BYTES {
+                        break;
+                    }
+                    let t = Tensor::new(dev, DType::I8, &[2 * FFN, HIDDEN])?;
+                    dev.htod_at(t.ptr, bytes)?;
+                    slots[li] = Fc1W::Dev(t);
+                    avail -= FC1_BYTES;
+                }
+            }
+        }
+        trim_mem_pool(dev)?;
+        let still = slots.iter().filter(|s| matches!(s, Fc1W::Host(_))).count();
+        Ok(if still > 0 { Some(Tensor::new(dev, DType::I8, &[2 * FFN, HIDDEN])?) } else { None })
     }
 
     fn lerp_temb(&self, t: f32) -> [f32; 8] {
@@ -884,11 +1096,7 @@ impl Dit {
         let t_a = 1.0 - s_a;
         let cls = [t_v, t_a, (t_v as f64).max(VISUAL_COND_TIMESTEP) as f32, (t_a as f64).max(AUDIO_COND_TIMESTEP) as f32];
         let te = TEmbRaw { v: [self.lerp_temb(cls[0]), self.lerp_temb(cls[1]), self.lerp_temb(cls[2]), self.lerp_temb(cls[3])] };
-        pr.time(dev, "adaln tables", || {
-            let n = LAYERS * 18 * HIDDEN;
-            self.launch_temb("k_h3_mod_table", ((n + 255) / 256) as u32, &[self.adaln_w.ptr, self.adaln_b.ptr], &[LAYERS as i32, HIDDEN as i32], &te, run.modtab.ptr)?;
-            self.launch_temb("k_h3_mod_final", ((2 * HIDDEN + 255) / 256) as u32, &[self.fin_adaln_w.ptr, self.fin_adaln_b.ptr], &[HIDDEN as i32], &te, run.fmod.ptr)
-        })?;
+        pr.time(dev, "adaln tables", || self.launch_temb("k_h3_mod_final", ((2 * HIDDEN + 255) / 256) as u32, &[self.fin_adaln_w.ptr, self.fin_adaln_b.ptr], &[HIDDEN as i32], &te, run.fmod.ptr))?;
         let audio_scale = SHIFT_VIDEO / SHIFT_AUDIO;
         let carry = s_a / s_v;
 
@@ -908,10 +1116,37 @@ impl Dit {
         let nchunks = (seq + c - 1) / c;
         let order: Vec<usize> = if nchunks >= 2 { std::iter::once(nchunks - 2).chain(std::iter::once(nchunks - 1)).chain(0..nchunks - 2).collect() } else { vec![0] };
         let row_bytes = HIDDEN * 2;
-        let mstride = MOD_ROWS * 6 * HIDDEN * 4;
         let ts_kv = 2 * INNER;
         for (li, b) in self.blocks.iter().enumerate() {
-            let modtab = run.modtab.ptr + (li * mstride) as u64;
+            // fc1 weight (device resident, or streamed from host into the staging buffer once per layer)
+            let fc1 = {
+                let slots = self.fc1w.lock().unwrap();
+                let w = match &slots[li] {
+                    Fc1W::Dev(t) => t.clone(),
+                    Fc1W::Host(bytes) => {
+                        let stage = run.fc1_stage.as_ref().context("evicted fc1 weights but no staging buffer")?;
+                        pr.time(dev, "fc1 upload", || {
+                            dev.sync()?; // the previous user of the staging buffer must be done
+                            dev.htod_at(stage.ptr, bytes)
+                        })?;
+                        stage.clone()
+                    }
+                };
+                QLinear { w, scale: b.fc1_scale.clone(), n: 2 * FFN, k: HIDDEN }
+            };
+            // this layer's adaLN rows: 4 timestep classes x 3 modality tags x (shift, scale, gate) x 2
+            let modtab = run.modtab.ptr;
+            pr.time(dev, "adaln tables", || {
+                let no = 18 * HIDDEN;
+                self.launch_temb(
+                    "k_h3_mod_table",
+                    ((no + 255) / 256) as u32,
+                    &[self.adaln_w.ptr + (li * no * T_DIM * 2) as u64, self.adaln_b.ptr + (li * no * 2) as u64],
+                    &[1, HIDDEN as i32],
+                    &te,
+                    modtab,
+                )
+            })?;
             let norm_quant = |r0: usize, n: usize, w: &Tensor, k_shift: i32, k_scale: i32| -> Result<()> {
                 pr.time(dev, "norm+mod+quant", || {
                     dev.launch(
@@ -977,27 +1212,35 @@ impl Dit {
                     }
                 })?;
             }
-            // phase 2 (per chunk): norm1 -> Q projection -> q norm + rope -> Q8 -> attention -> out-proj (gated residual)
-            //                      -> norm2 + mod + quant -> fc1 (SwiGLU) -> quant -> fc2 (gated residual)
-            for ci in 0..nchunks {
-                let r0 = ci * c;
-                let n = c.min(seq - r0);
-                let xr = run.x.ptr + (r0 * row_bytes) as u64;
-                let mr = run.modrow.ptr + (r0 * 4) as u64;
-                norm_quant(r0, n, &b.norm1, 0, 1)?;
-                pr.time(dev, "gemm q", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.q, 0, 0, 0, 0, run.big.ptr))?;
-                pr.time(dev, "qk norm+rope+quant", || self.head_nrq(run.big.ptr, INNER, n, &b.q_norm, run.rope.ptr + (r0 * 96 * 2) as u64, 0, run.q8.ptr, run.sq.ptr))?;
-                let attn = view(&run.big, 0, DType::BF16, &[n, INNER]);
-                pr.time(dev, "attention", || self.attention(run, n, attn.ptr))?;
-                let xq_a = view(&run.xq, 0, DType::I8, &[n, INNER]);
-                pr.time(dev, "quant", || ops::quant_rows(dev, &attn, QuantAct::None, None, 0.0, &xq_a, &run.xs))?;
-                pr.time(dev, "gemm out", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.out, 4, xr, modtab + (2 * HIDDEN * 4) as u64, mr, xr))?;
-                norm_quant(r0, n, &b.norm2, 3, 4)?;
-                pr.time(dev, "gemm fc1", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.fc1, 3, 0, 0, 0, run.big.ptr))?;
-                let h = view(&run.big, 0, DType::BF16, &[n, FFN]);
-                let xq_h = view(&run.xq, 0, DType::I8, &[n, FFN]);
-                pr.time(dev, "quant", || ops::quant_rows(dev, &h, QuantAct::None, None, 0.0, &xq_h, &run.xs))?;
-                pr.time(dev, "gemm fc2", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.fc2, 4, xr, modtab + (5 * HIDDEN * 4) as u64, mr, xr))?;
+            // phase 2, per attention batch of `abatch` rows (sub-chunks of `chunk` rows):
+            //   norm1 -> Q projection -> q norm + rope + rotate + int8 -> attention over the whole sequence ->
+            //   per sub-chunk: quant -> out-proj (gated residual) -> norm2 + mod + quant -> fc1 (SwiGLU) -> quant -> fc2 (gated residual)
+            let ab = run.abatch;
+            for b0 in (0..seq).step_by(ab) {
+                let bn = ab.min(seq - b0);
+                for r0 in (b0..b0 + bn).step_by(c) {
+                    let n = c.min(b0 + bn - r0);
+                    norm_quant(r0, n, &b.norm1, 0, 1)?;
+                    pr.time(dev, "gemm q", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.q, 0, 0, 0, 0, run.big.ptr))?;
+                    let qo = ((r0 - b0) * HEADS) as u64;
+                    pr.time(dev, "qk norm+rope+quant", || self.head_nrq(run.big.ptr, INNER, n, &b.q_norm, run.rope.ptr + (r0 * 96 * 2) as u64, 0, run.q8.ptr + qo * 128, run.sq.ptr + qo * 4))?;
+                }
+                pr.time(dev, "attention", || self.attention(run, bn, run.attn_out.ptr))?;
+                for r0 in (b0..b0 + bn).step_by(c) {
+                    let n = c.min(b0 + bn - r0);
+                    let xr = run.x.ptr + (r0 * row_bytes) as u64;
+                    let mr = run.modrow.ptr + (r0 * 4) as u64;
+                    let attn = view(&run.attn_out, (r0 - b0) * INNER * 2, DType::BF16, &[n, INNER]);
+                    let xq_a = view(&run.xq, 0, DType::I8, &[n, INNER]);
+                    pr.time(dev, "quant", || ops::quant_rows(dev, &attn, QuantAct::None, None, 0.0, &xq_a, &run.xs))?;
+                    pr.time(dev, "gemm out", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.out, 4, xr, modtab + (2 * HIDDEN * 4) as u64, mr, xr))?;
+                    norm_quant(r0, n, &b.norm2, 3, 4)?;
+                    pr.time(dev, "gemm fc1", || self.gemm(run.xq.ptr, run.xs.ptr, n, &fc1, 3, 0, 0, 0, run.big.ptr))?;
+                    let h = view(&run.big, 0, DType::BF16, &[n, FFN]);
+                    let xq_h = view(&run.xq, 0, DType::I8, &[n, FFN]);
+                    pr.time(dev, "quant", || ops::quant_rows(dev, &h, QuantAct::None, None, 0.0, &xq_h, &run.xs))?;
+                    pr.time(dev, "gemm fc2", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.fc2, 4, xr, modtab + (5 * HIDDEN * 4) as u64, mr, xr))?;
+                }
             }
             if run.snap_layers.contains(&li) {
                 let v = run.x.to_f32_vec(dev)?;
