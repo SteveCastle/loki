@@ -206,16 +206,109 @@ unsafe impl cudarc::driver::DeviceRepr for AttnRaw {}
 fn qk_rotate() -> bool {
     std::env::var("H3_QK_ROT").map(|v| v != "0").unwrap_or(true)
 }
-fn attn_stages() -> usize {
-    std::env::var("H3_ATTN_STAGES").ok().and_then(|v| v.parse().ok()).unwrap_or(3)
+/// PV precision of the attention kernel: fp8 V (default; half the L2->SM traffic, which bounds this kernel)
+/// or fp16 V (H3_ATTN=fp16).
+fn attn_fp16() -> bool {
+    std::env::var("H3_ATTN").map(|v| v == "fp16").unwrap_or(false)
 }
-const ATTN_STAGE_BYTES: usize = 64 * 128 + 64 * 256 + 64 * 4;
-fn attn_kernel() -> (&'static str, u32) {
-    if attn_stages() == 2 {
-        ("k_h3_attn2", (128 * 128 + 2 * ATTN_STAGE_BYTES) as u32)
+const ATTN_V4_SMEM: u32 = (128 * 128 + 3 * (64 * 144 + 64 * 272 + 64 * 4)) as u32;
+const ATTN_V5_SMEM: u32 = (128 * 128 + 4 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
+const ATTN_V6_SMEM: u32 = (256 * 128 + 3 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
+const ATTN_V5G3_SMEM: u32 = (192 * 128 + 3 * (64 * 144 + 128 * 80 + 64 * 4)) as u32;
+/// (kernel, dynamic smem, queries per block, threads per block)
+fn attn_kernel() -> (&'static str, u32, usize, u32) {
+    if attn_fp16() {
+        ("k_h3_attn_v4", ATTN_V4_SMEM, 128, 256)
+    } else if std::env::var("H3_ATTN_V6").is_ok() {
+        ("k_h3_attn_v6", ATTN_V6_SMEM, 256, 256)
+    } else if let Ok(k) = std::env::var("H3_ATTN_G2") {
+        (match k.as_str() { "nosm" => "k_h3_attn_v5_nosm", "nosm_nold" => "k_h3_attn_v5_nosm_nold", "nold" => "k_h3_attn_v5_nold", "a" => "k_h3_attn_v5_a", "b" => "k_h3_attn_v5_b", _ => "k_h3_attn_v5" }, ATTN_V5_SMEM, 128, 256)
     } else {
-        ("k_h3_attn3", (128 * 128 + 3 * ATTN_STAGE_BYTES) as u32)
+        (match std::env::var("H3_ATTN_G3").as_deref() { Ok("a") => "k_h3_attn_v5g3_a", Ok("b") => "k_h3_attn_v5g3_b", _ => "k_h3_attn_v5g3" }, ATTN_V5G3_SMEM, 192, 384)
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Attn8Raw {
+    q: u64,
+    sq: u64,
+    k: u64,
+    sk: u64,
+    vt: u64,
+    s_pad: i64,
+    sv: u64,
+    mv: u64,
+    o: u64,
+    o_ts: i64,
+    nq: i32,
+    nk: i32,
+    h: i32,
+    scale_log2: f32,
+}
+unsafe impl cudarc::driver::DeviceRepr for Attn8Raw {}
+
+/// Attention launch: q8/sq for nq queries, K8/sk, V (fp16 [nk_pad][H][128] or fp8 [H][128][nk_pad]) + per-256-key
+/// scales, mean_v; out bf16 [nq, 7168].
+#[allow(clippy::too_many_arguments)]
+fn launch_attention(dev: &Device, q: u64, sq: u64, nq: usize, k: u64, sk: u64, v: u64, s_pad: usize, sv: u64, mv: u64, nk: usize, out: u64) -> Result<()> {
+    let scale_log2 = (1.0 / (HEAD_DIM as f32).sqrt()) * std::f32::consts::LOG2_E;
+    let (name, smem, bq, threads) = attn_kernel();
+    let f = dev.func(name)?;
+    let cfg = cudarc::driver::LaunchConfig { grid_dim: (((nq + bq - 1) / bq) as u32, HEADS as u32, 1), block_dim: (threads, 1, 1), shared_mem_bytes: smem };
+    let mut b = dev.stream.launch_builder(&f);
+    let p16 = AttnRaw { q, sq, k, sk, v, sv, mv, o: out, o_ts: INNER as i64, nq: nq as i32, nk: nk as i32, h: HEADS as i32, scale_log2 };
+    let p8 = Attn8Raw { q, sq, k, sk, vt: v, s_pad: s_pad as i64, sv, mv, o: out, o_ts: INNER as i64, nq: nq as i32, nk: nk as i32, h: HEADS as i32, scale_log2 };
+    if attn_fp16() {
+        b.arg(&p16);
+    } else {
+        b.arg(&p8);
+    }
+    unsafe { b.launch(cfg) }?;
+    Ok(())
+}
+
+/// Stand-alone attention micro-benchmark on random data (no weights): seconds per call for `nq` queries
+/// against `nk` keys (56 heads).
+pub fn attention_bench(dev: &Device, nq: usize, nk: usize, iters: usize) -> Result<f64> {
+    let (name, smem, _, _) = attn_kernel();
+    dev.set_max_smem(name, smem)?;
+    let nk_pad = (nk + 255) / 256 * 256;
+    let mut seed = 12345u32;
+    let mut rnd = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        seed
+    };
+    let q8: Vec<i8> = (0..nq * INNER).map(|_| (rnd() % 255) as i32 as i8).collect();
+    let k8: Vec<i8> = (0..nk_pad * INNER).map(|_| (rnd() % 255) as i32 as i8).collect();
+    let q8 = Tensor::from_i8(dev, &q8, &[nq * INNER])?;
+    let k8 = Tensor::from_i8(dev, &k8, &[nk_pad * INNER])?;
+    let v = if attn_fp16() {
+        let v16: Vec<u16> = (0..nk_pad * INNER).map(|_| half::f16::from_f32((rnd() % 1000) as f32 / 10.0 - 50.0).to_bits()).collect();
+        Tensor::from_bf16(dev, &v16, &[nk_pad * INNER])?
+    } else {
+        let v8: Vec<i8> = (0..nk_pad * INNER).map(|_| ((rnd() % 100) as i32 + 0x20) as i8).collect();
+        Tensor::from_i8(dev, &v8, &[nk_pad * INNER])?
+    };
+    let sq = Tensor::from_f32(dev, &vec![0.002f32; nq * HEADS], &[nq * HEADS])?;
+    let sk = Tensor::from_f32(dev, &vec![0.002f32; nk_pad * HEADS], &[nk_pad * HEADS])?;
+    let sv = Tensor::from_f32(dev, &vec![0.5f32; nk_pad / 256 * HEADS], &[nk_pad / 256 * HEADS])?;
+    let mv = Tensor::zeros(dev, DType::F32, &[INNER])?;
+    let out = Tensor::new(dev, DType::BF16, &[nq, INNER])?;
+    launch_attention(dev, q8.ptr, sq.ptr, nq, k8.ptr, sk.ptr, v.ptr, nk_pad, sv.ptr, mv.ptr, nk, out.ptr)?;
+    dev.sync()?;
+    let t = std::time::Instant::now();
+    for _ in 0..iters {
+        launch_attention(dev, q8.ptr, sq.ptr, nq, k8.ptr, sk.ptr, v.ptr, nk_pad, sv.ptr, mv.ptr, nk, out.ptr)?;
+    }
+    dev.sync()?;
+    let o = out.to_f32_vec(dev)?;
+    if !o.iter().all(|x| x.is_finite()) {
+        eprintln!("warning: attention bench produced non-finite output");
+    }
+    Ok(t.elapsed().as_secs_f64() / iters as f64)
 }
 
 fn view(t: &Tensor, off_bytes: usize, dtype: DType, shape: &[usize]) -> Tensor {
@@ -290,8 +383,9 @@ impl Dit {
         dev.set_max_smem("k_h3_gemm_i8_w", ops::GEMM_SMEM_W)?;
         dev.set_max_smem("k_h3_norm_mod_quant", (HIDDEN * 4) as u32)?;
         dev.set_max_smem("k_h3_quant_v", 128 * 129 * 4)?;
-        dev.set_max_smem("k_h3_attn2", (128 * 128 + 2 * ATTN_STAGE_BYTES) as u32)?;
-        dev.set_max_smem("k_h3_attn3", (128 * 128 + 3 * ATTN_STAGE_BYTES) as u32)?;
+        let (an, asm, _, _) = attn_kernel();
+        dev.set_max_smem(an, asm)?;
+        dev.set_max_smem("k_h3_quant_v8", 64 * 129 * 4)?;
         let (blocks, adaln_w, adaln_b, uploaded) = {
             let mut l = Loader::new(&st, dev.clone());
             let mut blocks = Vec::with_capacity(LAYERS);
@@ -471,30 +565,19 @@ impl Dit {
         )
     }
 
+    /// Fused per-head RMSNorm + rope + H128 rotation (- mean) + int8 quantization of [m, H, 128] (token stride ts)
+    #[allow(clippy::too_many_arguments)]
+    fn head_nrq(&self, x: u64, ts: usize, m: usize, w: &Tensor, rope: u64, mean: u64, q8: u64, scale: u64) -> Result<()> {
+        self.dev.launch_n(
+            "k_h3_head_nrq",
+            m * HEADS * 32,
+            &[Arg::Ptr(x), Arg::I64(ts as i64), Arg::I32(m as i32), Arg::I32(HEADS as i32), Arg::Ptr(w.ptr), Arg::F32(EPS), Arg::Ptr(rope), Arg::Ptr(mean), Arg::Ptr(q8), Arg::Ptr(scale)],
+        )
+    }
+
     /// Attention of the current chunk's queries (run.q8 / run.sq, n rows) against the whole sequence.
     fn attention(&self, run: &Run, n: usize, out: u64) -> Result<()> {
-        let p = AttnRaw {
-            q: run.q8.ptr,
-            sq: run.sq.ptr,
-            k: run.k8.ptr,
-            sk: run.sk.ptr,
-            v: run.v16.ptr,
-            sv: run.sv.ptr,
-            mv: run.mean_v.ptr,
-            o: out,
-            o_ts: INNER as i64,
-            nq: n as i32,
-            nk: run.seq as i32,
-            h: HEADS as i32,
-            scale_log2: (1.0 / (HEAD_DIM as f32).sqrt()) * std::f32::consts::LOG2_E,
-        };
-        let (name, smem) = attn_kernel();
-        let f = self.dev.func(name)?;
-        let cfg = cudarc::driver::LaunchConfig { grid_dim: (((n + 127) / 128) as u32, HEADS as u32, 1), block_dim: (256, 1, 1), shared_mem_bytes: smem };
-        let mut b = self.dev.stream.launch_builder(&f);
-        b.arg(&p);
-        unsafe { b.launch(cfg) }?;
-        Ok(())
+        launch_attention(&self.dev, run.q8.ptr, run.sq.ptr, n, run.k8.ptr, run.sk.ptr, run.v16.ptr, run.s_pad, run.sv.ptr, run.mean_v.ptr, run.seq, out)
     }
 
     // ------------------------------------------------------------------ token refiner
@@ -650,7 +733,7 @@ impl Dit {
         video_grid(&mut pos, lt, &frame, target_cursor);
         modrow.extend(std::iter::repeat(CLS_V * 3 + TAG_VIDEO).take(pos.len() - v0));
         let seq = pos.len();
-        let s_pad = (seq + 127) / 128 * 128;
+        let s_pad = (seq + 255) / 256 * 256;
 
         // ---------------- rope table: bf16 (cos, sin) of pos_f32 * inv_freq for 48 pairs (t,h,w x 16)
         let mut rope = vec![0u16; seq * 96];
@@ -711,8 +794,9 @@ impl Dit {
         let x = Tensor::new(dev, DType::BF16, &[seq, HIDDEN])?;
         let k8 = Tensor::zeros(dev, DType::I8, &[s_pad, HEADS, HEAD_DIM])?;
         let sk = Tensor::zeros(dev, DType::F32, &[s_pad, HEADS])?;
-        let v16 = Tensor::zeros(dev, DType::BF16, &[s_pad, HEADS, HEAD_DIM])?; // fp16 bits
-        let sv = Tensor::zeros(dev, DType::F32, &[s_pad / 64, HEADS])?;
+        // V: fp16 [S_pad, H, 128] (H3_ATTN=fp16) or fp8 e4m3 transposed [H, 128, S_pad]
+        let v16 = if attn_fp16() { Tensor::zeros(dev, DType::BF16, &[s_pad, HEADS, HEAD_DIM])? } else { Tensor::zeros(dev, DType::U8, &[HEADS, HEAD_DIM, s_pad])? };
+        let sv = Tensor::zeros(dev, DType::F32, &[s_pad / 256, HEADS])?;
         let mean_k = Tensor::zeros(dev, DType::F32, &[INNER])?;
         let mean_v = Tensor::zeros(dev, DType::F32, &[INNER])?;
         let modtab = Tensor::new(dev, DType::F32, &[LAYERS * MOD_ROWS * 6 * HIDDEN])?;
@@ -726,6 +810,7 @@ impl Dit {
         while chunk > 512 && chunk * per_row + margin > free {
             chunk /= 2;
         }
+        chunk = (chunk / 256).max(1) * 256;
         chunk = chunk.min(s_pad);
         let big = Tensor::new(dev, DType::BF16, &[chunk, 2 * INNER])?;
         let q8 = Tensor::new(dev, DType::I8, &[chunk, HEADS, HEAD_DIM])?;
@@ -858,23 +943,38 @@ impl Dit {
                 pr.time(dev, "gemm kv", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.kv, 0, 0, 0, 0, run.big.ptr))?;
                 let kp = run.big.ptr;
                 let vp = run.big.ptr + (INNER * 2) as u64;
-                pr.time(dev, "qk norm+rope", || self.head_norm_rope(kp, ts_kv, n, &b.k_norm, run.rope.ptr + (r0 * 96 * 2) as u64))?;
-                pr.time(dev, "attn quantize", || {
+                let rope_r = run.rope.ptr + (r0 * 96 * 2) as u64;
+                let tok = (r0 * HEADS) as u64;
+                pr.time(dev, "qk norm+rope+quant", || {
                     if oi == 0 {
                         // smoothing means from the first processed (full) chunk: any per-channel vector keeps the
                         // single-segment softmax exact (K) / is restored in the output (V)
+                        self.head_norm_rope(kp, ts_kv, n, &b.k_norm, rope_r)?;
                         ops::col_mean(dev, kp, ts_kv, n, INNER, &run.mean_k)?;
                         ops::col_mean(dev, vp, ts_kv, n, INNER, &run.mean_v)?;
+                        dev.launch_n("k_quant_qk_int8", n * HEADS * 32, &[Arg::Ptr(kp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_k.ptr), Arg::Ptr(run.k8.ptr + tok * 128), Arg::Ptr(run.sk.ptr + tok * 4)])
+                    } else {
+                        self.head_nrq(kp, ts_kv, n, &b.k_norm, rope_r, run.mean_k.ptr, run.k8.ptr + tok * 128, run.sk.ptr + tok * 4)
                     }
-                    let tok = (r0 * HEADS) as u64;
-                    dev.launch_n("k_quant_qk_int8", n * HEADS * 32, &[Arg::Ptr(kp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_k.ptr), Arg::Ptr(run.k8.ptr + tok * 128), Arg::Ptr(run.sk.ptr + tok * 4)])?;
-                    dev.launch(
-                        "k_h3_quant_v16",
-                        (((n + 63) / 64) as u32, HEADS as u32, 1),
-                        (256, 1, 1),
-                        0,
-                        &[Arg::Ptr(vp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_v.ptr), Arg::Ptr(run.v16.ptr), Arg::I32(r0 as i32), Arg::Ptr(run.sv.ptr)],
-                    )
+                })?;
+                pr.time(dev, "attn quantize", || {
+                    if attn_fp16() {
+                        dev.launch(
+                            "k_h3_quant_v16",
+                            (((n + 255) / 256) as u32, HEADS as u32, 1),
+                            (256, 1, 1),
+                            0,
+                            &[Arg::Ptr(vp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_v.ptr), Arg::Ptr(run.v16.ptr), Arg::I32(r0 as i32), Arg::Ptr(run.sv.ptr)],
+                        )
+                    } else {
+                        dev.launch(
+                            "k_h3_quant_v8",
+                            (((n + 255) / 256) as u32, HEADS as u32, 1),
+                            (256, 1, 1),
+                            64 * 129 * 4,
+                            &[Arg::Ptr(vp), Arg::I64(ts_kv as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(run.mean_v.ptr), Arg::Ptr(run.v16.ptr), Arg::I64(run.s_pad as i64), Arg::I32(r0 as i32), Arg::Ptr(run.sv.ptr)],
+                        )
+                    }
                 })?;
             }
             // phase 2 (per chunk): norm1 -> Q projection -> q norm + rope -> Q8 -> attention -> out-proj (gated residual)
@@ -886,35 +986,7 @@ impl Dit {
                 let mr = run.modrow.ptr + (r0 * 4) as u64;
                 norm_quant(r0, n, &b.norm1, 0, 1)?;
                 pr.time(dev, "gemm q", || self.gemm(run.xq.ptr, run.xs.ptr, n, &b.q, 0, 0, 0, 0, run.big.ptr))?;
-                pr.time(dev, "qk norm+rope", || self.head_norm_rope(run.big.ptr, INNER, n, &b.q_norm, run.rope.ptr + (r0 * 96 * 2) as u64))?;
-                if std::env::var("H3_DEBUG_QSTATS").is_ok() && ci == 0 && li % 7 == 0 {
-                    let q = view(&run.big, 0, DType::BF16, &[n, INNER]).to_f32_vec(dev)?;
-                    let (mut ratio, mut amax_r) = (0f64, 0f64);
-                    for h in 0..HEADS {
-                        let mut mean = [0f64; 128];
-                        let mut ss = 0f64;
-                        let mut am = 0f64;
-                        for i in 0..n {
-                            let mut rowmax = 0f64;
-                            let mut rowss = 0f64;
-                            for d in 0..128 {
-                                let v = q[i * INNER + h * 128 + d] as f64;
-                                mean[d] += v / n as f64;
-                                ss += v * v;
-                                rowss += v * v;
-                                rowmax = rowmax.max(v.abs());
-                            }
-                            am += rowmax / (rowss / 128.0).sqrt() / n as f64;
-                        }
-                        let mn = mean.iter().map(|v| v * v).sum::<f64>().sqrt();
-                        ratio += mn / (ss / n as f64).sqrt() / HEADS as f64;
-                        amax_r += am / HEADS as f64;
-                    }
-                    eprintln!("layer {li}: |mean_q|/rms|q| = {ratio:.3}, row amax/rms = {amax_r:.2}");
-                }
-                pr.time(dev, "attn quantize", || {
-                    dev.launch_n("k_quant_qk_int8", n * HEADS * 32, &[Arg::Ptr(run.big.ptr), Arg::I64(INNER as i64), Arg::I32(n as i32), Arg::I32(HEADS as i32), Arg::Ptr(0), Arg::Ptr(run.q8.ptr), Arg::Ptr(run.sq.ptr)])
-                })?;
+                pr.time(dev, "qk norm+rope+quant", || self.head_nrq(run.big.ptr, INNER, n, &b.q_norm, run.rope.ptr + (r0 * 96 * 2) as u64, 0, run.q8.ptr, run.sq.ptr))?;
                 let attn = view(&run.big, 0, DType::BF16, &[n, INNER]);
                 pr.time(dev, "attention", || self.attention(run, n, attn.ptr))?;
                 let xq_a = view(&run.xq, 0, DType::I8, &[n, INNER]);

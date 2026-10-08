@@ -172,6 +172,15 @@ fn main() -> Result<()> {
     if args.len() > 1 && args[1] == "--mma" {
         return mma_bench();
     }
+    if args.len() > 1 && args[1] == "--attn" {
+        let dev = Device::new(0)?;
+        let nk: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(32768);
+        let nq: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(8192);
+        let dt = h3ref2va::dit_h3::attention_bench(&dev, nq, nk, std::env::var("ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(30))?;
+        let flops = 4.0 * nq as f64 * nk as f64 * 7168.0;
+        println!("attention nq {nq} nk {nk}: {:.2} ms  {:.1} TOPS", dt * 1e3, flops / dt / 1e12);
+        return Ok(());
+    }
     if args.len() > 1 && args[1] == "--bench" {
         let p = |i: usize, d: usize| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
         return bench(p(2, 1344), p(3, 768), p(4, 124), p(5, 2));
@@ -185,17 +194,20 @@ pub fn mma_bench() -> Result<()> {
     use h3ref2va::cuda::Arg;
     let dev = Device::new(0)?;
     let out = Tensor::zeros(&dev, DType::F32, &[4])?;
-    let iters = 4096;
-    for (mode, name, macs) in [(0, "s8 m16n8k32", 4096.0), (1, "e4m3 f32acc m16n8k32", 4096.0), (2, "f16 f16acc m16n8k16", 2048.0), (3, "bf16 f32acc m16n8k16", 2048.0), (4, "f16 f32acc m16n8k16", 2048.0)] {
-        let blocks = dev.sm_count as u32 * 8;
-        dev.launch("k_h3_mma_bench", (blocks, 1, 1), (256, 1, 1), 0, &[Arg::I32(mode), Arg::I32(16), Arg::Ptr(out.ptr)])?;
+    let iters = 65536;
+    for (mode, name, macs) in [(0, "s8 m16n8k32", 4096.0), (1, "e4m3 f32acc m16n8k32", 4096.0), (2, "f16 f16acc m16n8k16", 2048.0), (3, "bf16 f32acc m16n8k16", 2048.0), (4, "f16 f32acc m16n8k16", 2048.0), (5, "mixed s8:f16 1:2 (interleaved)", 0.0), (6, "mixed s8:f16 5:11 (blocks)", 0.0), (7, "mixed s8:e4m3 1:1", 0.0)] {
+        let blocks = dev.sm_count as u32 * 4;
+        dev.launch("k_h3_mma_bench", (blocks, 1, 1), (128, 1, 1), 0, &[Arg::I32(mode), Arg::I32(16), Arg::Ptr(out.ptr)])?;
         dev.sync()?;
         let t = std::time::Instant::now();
-        dev.launch("k_h3_mma_bench", (blocks, 1, 1), (256, 1, 1), 0, &[Arg::I32(mode), Arg::I32(iters), Arg::Ptr(out.ptr)])?;
+        dev.launch("k_h3_mma_bench", (blocks, 1, 1), (128, 1, 1), 0, &[Arg::I32(mode), Arg::I32(iters), Arg::Ptr(out.ptr)])?;
         dev.sync()?;
         let dt = t.elapsed().as_secs_f64();
-        let ops = blocks as f64 * 8.0 * iters as f64 * 8.0 * macs * 2.0;
-        println!("{name:<24} {:.1} TOPS", ops / dt / 1e12);
+        let per16 = match mode { 5 => 6.0 * 4096.0 + 10.0 * 2048.0, 6 => 5.0 * 4096.0 + 11.0 * 2048.0, 7 => 16.0 * 4096.0, _ => 16.0 * macs };
+        let ops = blocks as f64 * 4.0 * iters as f64 * per16 * 2.0;
+        // ideal time if each instruction type ran at its own peak (s8 660, f16 333)
+        let ideal = match mode { 5 => (6.0 * 4096.0 * 2.0 / 660e12 + 10.0 * 2048.0 * 2.0 / 333e12) * blocks as f64 * 4.0 * iters as f64, 6 => (5.0 * 4096.0 * 2.0 / 660e12 + 11.0 * 2048.0 * 2.0 / 333e12) * blocks as f64 * 4.0 * iters as f64, 7 => (8.0 * 4096.0 * 2.0 / 660e12 + 8.0 * 4096.0 * 2.0 / 333e12) * blocks as f64 * 4.0 * iters as f64, _ => 0.0 };
+        println!("{name:<32} {:.1} TOPS  ({:.0}% of ideal mix)", ops / dt / 1e12, if ideal > 0.0 { 100.0 * ideal / dt } else { 0.0 });
     }
     Ok(())
 }
