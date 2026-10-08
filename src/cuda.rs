@@ -16,6 +16,7 @@ const FATBINS: &[(&str, &[u8])] = &[
     ("nvfp4", include_bytes!(concat!(env!("OUT_DIR"), "/nvfp4.fatbin"))),
     ("vvae", include_bytes!(concat!(env!("OUT_DIR"), "/vvae.fatbin"))),
     ("avae", include_bytes!(concat!(env!("OUT_DIR"), "/avae.fatbin"))),
+    ("sampler", include_bytes!(concat!(env!("OUT_DIR"), "/sampler.fatbin"))),
     ("sage_attn", include_bytes!(concat!(env!("OUT_DIR"), "/sage_attn.fatbin"))),
 ];
 

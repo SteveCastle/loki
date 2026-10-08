@@ -21,6 +21,7 @@ rand = "0.8"
 rand_distr = "0.4"
 indicatif = "0.17"
 ureq = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [build-dependencies]
 anyhow = "1"
