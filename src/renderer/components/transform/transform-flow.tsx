@@ -20,6 +20,7 @@ import {
   useFlowRequest,
   type FlowPhase,
 } from './store';
+import { EngineSetupDeferred } from './engine-setup';
 import { TransformFlowView, validateForRun } from './flow-view';
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,17 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
         data: { type: 'success', title: 'Queued', message: built.jobs.length > 1 ? `${built.jobs.length} ${intentById(intent).title} jobs` : built.jobs[0].label },
       });
     } catch (e) {
+      if (e instanceof EngineSetupDeferred) {
+        // Declined or left downloading: nothing was queued, stay on the review step.
+        setStatus('idle');
+        if (e.result === 'background') {
+          libraryService.send({
+            type: 'ADD_TOAST',
+            data: { type: 'info', title: 'Downloading', message: 'The download continues in the background. Run this again when it has finished.' },
+          });
+        }
+        return;
+      }
       setStatus('error');
       setError(`Could not queue the job (${e instanceof Error ? e.message : String(e)}). Is the media server running?`);
     }

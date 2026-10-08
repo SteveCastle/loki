@@ -9,7 +9,8 @@ if (typeof (AbortSignal as any).timeout !== 'function') {
 import TransformSection from '../renderer/components/transform/transform-section';
 import { TransformFlowView } from '../renderer/components/transform/flow-view';
 import { getFlowRequest, closeTransformFlow } from '../renderer/components/transform/store';
-import { settingsFor } from '../renderer/components/transform/intents';
+import { settingsFor, type TransformSettings } from '../renderer/components/transform/intents';
+import { insertToken } from '../renderer/components/transform/flow-view';
 
 const IMG = 'C:/media/photo.jpg';
 const IMG2 = 'C:/media/other.png';
@@ -51,8 +52,10 @@ describe('TransformSection (palette chips)', () => {
   it('a preset chip queues a retouch job straight away and closes the palette', async () => {
     const { onDone, notify } = setup([IMG, IMG2]);
     fireEvent.click(screen.getByRole('button', { name: /Restore/ }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const [url, init] = fetchMock.mock.calls[0];
+    // (the engine status check comes first; nothing is missing here, so no confirmation)
+    const created = () => fetchMock.mock.calls.filter((c) => /\/create$/.test(String(c[0])));
+    await waitFor(() => expect(created()).toHaveLength(1));
+    const [url, init] = created()[0];
     expect(url).toMatch(/\/create$/);
     const body = JSON.parse(init.body);
     expect(body.input).toBe('retouch "C:/media/photo.jpg\nC:/media/other.png"');
@@ -208,5 +211,71 @@ describe('TransformFlowView', () => {
       fireEvent.click(choose);
     });
     expect(props.onPhase).toHaveBeenCalledWith('choose');
+  });
+});
+
+describe('TransformFlowView: typing and prompt tokens', () => {
+  const noop = jest.fn();
+  // A real stateful parent, so controlled inputs behave as in the app.
+  function Harness({ intent, paths, initial }: { intent: any; paths: string[]; initial: Partial<ReturnType<typeof settingsFor>> }) {
+    const [settings, setSettings] = React.useState({ ...settingsFor(intent), ...initial });
+    return (
+      <TransformFlowView
+        paths={paths}
+        intent={intent}
+        phase="shape"
+        settings={settings}
+        source={{ width: 1000, height: 500 }}
+        queueAhead={0}
+        status="idle"
+        thumbUrl={(p: string) => p}
+        onSettings={(patch: Partial<TransformSettings>) => setSettings((cur) => ({ ...cur, ...patch }))}
+        onIntent={noop}
+        onPhase={noop}
+        onRun={noop}
+        onClose={noop}
+        onRemovePath={noop}
+        onAgain={noop}
+      />
+    );
+  }
+
+  it('custom size: digits typed one at a time stay in the fields', () => {
+    render(<Harness intent="upscale" paths={[IMG]} initial={{ sizeMode: 'custom', customSize: '' }} />);
+    const w = screen.getByPlaceholderText('width') as HTMLInputElement;
+    const h = screen.getByPlaceholderText('height') as HTMLInputElement;
+    fireEvent.change(w, { target: { value: '1' } });
+    expect(w.value).toBe('1'); // a lone "1" is not a size yet, but must not be wiped
+    fireEvent.change(w, { target: { value: '1920' } });
+    fireEvent.change(h, { target: { value: '1' } });
+    expect(h.value).toBe('1');
+    fireEvent.change(h, { target: { value: '1080' } });
+    expect(w.value).toBe('1920');
+    expect(h.value).toBe('1080');
+  });
+
+  it('typing in a field does not reach the app hotkeys', () => {
+    render(<Harness intent="upscale" paths={[IMG]} initial={{ sizeMode: 'custom', customSize: '' }} />);
+    const seen = jest.fn();
+    window.addEventListener('keydown', seen);
+    fireEvent.keyDown(screen.getByPlaceholderText('width'), { key: '5', code: 'Digit5' });
+    window.removeEventListener('keydown', seen);
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it('clicking a reference thumbnail puts its tag into the prompt, spaced from the words around it', () => {
+    render(<Harness intent="combine" paths={[IMG, IMG2]} initial={{ prompt: 'put the jacket of' }} />);
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
+    expect(ta.value).toBe('put the jacket of');
+    fireEvent.click(screen.getByTitle(/click to put <image2> in the prompt/));
+    expect(ta.value).toBe('put the jacket of <image2> ');
+    fireEvent.click(screen.getByTitle(/click to put <image1> in the prompt/));
+    expect(ta.value).toBe('put the jacket of <image2> <image1> ');
+  });
+
+  it('insertToken splices at the caret or over a selection', () => {
+    expect(insertToken('', '<Picture 1>', 0, 0)).toEqual({ text: '<Picture 1> ', caret: 12 });
+    expect(insertToken('a b', '<Video 1>', 1, 1).text).toBe('a <Video 1> b');
+    expect(insertToken('make X glow', '<Picture 2>', 5, 6).text).toBe('make <Picture 2> glow');
   });
 });

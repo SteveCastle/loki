@@ -873,6 +873,7 @@
 }
 
 .ts-review-side {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -883,7 +884,7 @@
 
 .ts-summary {
   display: grid;
-  grid-template-columns: 78px 1fr;
+  grid-template-columns: 78px minmax(0, 1fr);
   gap: 10px 14px;
   margin: 0;
 }
@@ -971,4 +972,32 @@
     border-left: none;
     border-top: 1px solid var(--ts-hairline);
   }
+}
+
+/* ---- first-use download confirmation ---- */
+
+.ts-setup-backdrop { z-index: 10001; }
+.ts-setup { width: min(480px, 100%); }
+.ts-setup-body { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+.ts-setup-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--ts-hairline); border-radius: 5px; }
+.ts-setup-list li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; color: var(--ts-dim); }
+.ts-setup-list li + li { border-top: 1px solid var(--ts-hairline); }
+.ts-setup-size { color: var(--ts-faint); white-space: nowrap; }
+.ts-setup-bar { height: 6px; border-radius: 3px; background: var(--ts-field); overflow: hidden; }
+.ts-setup-bar-fill { height: 100%; background: var(--ts-accent); transition: width 0.4s ease; }
+
+.ts-thumb-pick { cursor: pointer; }
+.ts-thumb-pick:hover, .ts-thumb-pick:focus-visible { outline: 2px solid var(--ts-accent); outline-offset: 1px; }
+
+/* Long file names / unbroken words must wrap inside their container instead of pushing it wider. */
+.ts-backdrop :is(p, dd, li, h2, small, strong, code, .ts-quote, .ts-note, .ts-error, .ts-footer-note, .ts-field-hint, .ts-preview-file, .ts-preview-meta span, .ts-lead) {
+  overflow-wrap: anywhere;
+}
+
+.ts-backdrop .ts-body {
+  overflow-x: hidden;
+}
+
+.ts-footer-note {
+  min-width: 0;
 }

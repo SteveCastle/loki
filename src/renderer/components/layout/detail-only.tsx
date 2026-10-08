@@ -7,6 +7,7 @@ import './panels.css';
 import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
 import TransformFlow from '../transform/transform-flow';
+import EngineSetupDialog from '../transform/engine-setup-dialog';
 
 const DetailOnly = () => {
   return (
@@ -14,6 +15,7 @@ const DetailOnly = () => {
       <CommandPalette />
       <ContextPalette />
       <TransformFlow />
+      <EngineSetupDialog />
       <Panel className="panel">
         <Detail />
       </Panel>

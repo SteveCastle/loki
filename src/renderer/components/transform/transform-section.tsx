@@ -9,6 +9,7 @@ import {
   settingsFor,
   type IntentId,
 } from './intents';
+import { EngineSetupDeferred } from './engine-setup';
 import { loadRemembered, openTransformFlow, submitJobs } from './store';
 import { IntentIcon } from './icons';
 import './transform-section.css';
@@ -26,7 +27,7 @@ export interface TransformSectionProps {
   getVideoTime: () => number | undefined;
   /** Close the palette (after a job is queued or the flow opened). */
   onDone: () => void;
-  notify: (type: 'success' | 'error', title: string, message: string) => void;
+  notify: (type: 'success' | 'error' | 'info', title: string, message: string) => void;
 }
 
 export default function TransformSection(props: TransformSectionProps) {
@@ -58,8 +59,12 @@ export default function TransformSection(props: TransformSectionProps) {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
       notify('success', 'Queued', built.jobs.length > 1 ? `${built.jobs.length} ${intentById(id).title} jobs` : built.jobs[0].label);
       onDone();
-    } catch {
-      notify('error', 'Failed to Create Job', 'Could not communicate with job service');
+    } catch (e) {
+      if (e instanceof EngineSetupDeferred) {
+        if (e.result === 'background') notify('info', 'Downloading', 'The download continues in the background. Run this again when it has finished.');
+      } else {
+        notify('error', 'Failed to Create Job', 'Could not communicate with job service');
+      }
       onDone();
     } finally {
       setBusy(null);
