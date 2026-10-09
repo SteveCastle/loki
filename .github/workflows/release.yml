@@ -718,3 +718,54 @@ jobs:
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The docs site's download buttons point at release assets, so they are only
+  # updated once the release (and its binaries) exist. The push uses
+  # GITHUB_TOKEN, which does not start another workflow run; docs/** is not a
+  # release path anyway.
+  update-docs:
+    name: Update docs download links
+    needs: [version-and-tag, create-release]
+    runs-on: ubuntu-latest
+    if: needs.version-and-tag.outputs.tag != ''
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Re-running an old release must not roll the site back.
+      - name: Is this the newest release?
+        id: newest
+        run: |
+          LATEST=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ "$LATEST" = "v${{ needs.version-and-tag.outputs.version }}" ]; then
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "newest=false" >> "$GITHUB_OUTPUT"
+            echo "v${{ needs.version-and-tag.outputs.version }} is not the newest tag ($LATEST); leaving the docs alone"
+          fi
+
+      - name: Point the docs at this release
+        if: steps.newest.outputs.newest == 'true'
+        run: node .github/scripts/update-docs-version.js "${{ needs.version-and-tag.outputs.version }}"
+
+      - name: Commit and push
+        if: steps.newest.outputs.newest == 'true'
+        run: |
+          if git diff --quiet -- docs; then
+            echo "Docs already point at ${{ needs.version-and-tag.outputs.version }}"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git commit -m "docs: download links for v${{ needs.version-and-tag.outputs.version }}"
+          for i in 1 2 3; do
+            git pull --rebase origin master && git push origin HEAD:master && exit 0
+            sleep 5
+          done
+          echo "::error::could not push the docs update (is master protected?)"
+          exit 1
