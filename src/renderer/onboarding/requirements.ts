@@ -24,7 +24,6 @@ export interface TaskRequirement {
 /** Keyed by the Generate chip labels in the context palette. */
 export const TASK_REQUIREMENTS: Record<string, TaskRequirement> = {
   Tags: { depId: 'wd-eva02-large-tagger-v3', feature: 'Auto-tagging', kind: 'downloadable' },
-  Descriptions: { depId: 'ollama', feature: 'AI descriptions', kind: 'external' },
   Transcripts: { depId: 'faster-whisper', feature: 'Transcription', kind: 'downloadable' },
   Embeddings: { depId: 'siglip2-base-patch16-224', feature: 'Visual similarity search', kind: 'downloadable' },
   // Face scanning also needs the (tiny) YuNet detector; SFace is the big

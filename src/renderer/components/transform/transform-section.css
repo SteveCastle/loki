@@ -1,0 +1,17 @@
+/* Transform chips reuse the palette's .type-chip look; just seat the icon. */
+.transform-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.transform-chip .ts-icon {
+  flex: none;
+  opacity: 0.8;
+}
+
+.transform-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

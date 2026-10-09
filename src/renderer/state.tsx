@@ -3242,6 +3242,15 @@ export const libraryMachine = createMachine(
                 target: 'runningQuery',
                 actions: () => console.log('sorting weights'),
               },
+              // "r" in a DB/query view re-runs the active query (the FS
+              // equivalent diffs the directory). Same in-place refresh as
+              // DELETED_ASSIGNMENT: keep the scroll position.
+              REFRESH_LIBRARY: {
+                target: 'runningQuery',
+                actions: assign<LibraryState, AnyEventObject>({
+                  preserveScrollFromLoadId: (context) => context.libraryLoadId,
+                }),
+              },
             },
             states: {
               idle: {

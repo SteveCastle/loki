@@ -119,9 +119,14 @@ func init() {
 	// racing a scan or recluster.
 	RegisterHostResolver("assign-person", func(string) string { return HostBucketFaces })
 	RegisterHostResolver("ingest", urlHostResolver)
-	// 4kify is a standalone CUDA diffusion engine: one at a time, and never
-	// alongside another local model workload (see ResolveResources).
-	RegisterHostResolver("4kify", func(string) string { return "4kify" })
+	// The loki-retouch / loki-reshoot diffusion engines each take ~20 GB of
+	// VRAM: all of them share ONE bucket (one at a time, across tasks) and
+	// never run alongside another local model workload (see ResolveResources).
+	// 4kify is the deprecated alias of retouch.
+	gpuDiffusion := func(string) string { return HostBucketGPUDiffusion }
+	RegisterHostResolver("retouch", gpuDiffusion)
+	RegisterHostResolver("reshoot", gpuDiffusion)
+	RegisterHostResolver("4kify", gpuDiffusion)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
 	RegisterTask("ffmpeg-scale", "FFmpeg Scale", ffmpegScaleOptions, ffmpegScaleTask)
@@ -137,6 +142,9 @@ func init() {
 	RegisterTask("ffmpeg-resize", "FFmpeg Resize", ffmpegResizeOptions, ffmpegResizeTask)
 	RegisterTask("ffmpeg-crop", "FFmpeg Crop", ffmpegCropOptions, ffmpegCropTask)
 	RegisterTask("ffmpeg-rotate", "FFmpeg Rotate", ffmpegRotateOptions, ffmpegRotateTask)
+	RegisterTask("retouch", "Retouch (AI image edit)", retouchOptions, retouchTask)
+	RegisterTask("reshoot", "Reshoot (AI video)", reshootOptions, reshootTask)
+	// Deprecated alias of retouch --preset 4kify|4kify-phone (saved workflows).
 	RegisterTask("4kify", "4K Upscale + Outpaint", fourKifyOptions, fourKifyTask)
 	RegisterTask("ffmpeg-caption","FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)
 	RegisterTask("ffmpeg-thumbsheet", "FFmpeg Thumbnail Sheet", ffmpegThumbSheetOptions, ffmpegThumbSheetTask)

@@ -25,6 +25,7 @@ import { logEvent, installGlobalErrorHandlers } from './errorLog';
 import { withTimeout } from './async-timeout';
 import { isValidFilePath, filePathFromArgv } from './file-handling';
 import { registerStudioProtocol, openStudioWindow } from './studio-window';
+import { registerWallpaperHandlers } from './wallpaper';
 import {
   mark,
   getBootId,
@@ -267,6 +268,8 @@ ipcMain.on('minimize', async (event) => {
     win?.minimize();
   }
 });
+
+registerWallpaperHandlers();
 
 ipcMain.on('open-external', async (event, args) => {
   const url = args[0];

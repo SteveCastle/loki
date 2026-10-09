@@ -565,9 +565,13 @@ Tasks register themselves in `tasks/registry.go`'s `init()`. The current catalog
 | `ffmpeg-resize`              | FFmpeg Resize              |                                                          |
 | `ffmpeg-crop`                | FFmpeg Crop                |                                                          |
 | `ffmpeg-rotate`              | FFmpeg Rotate              |                                                          |
-| `4kify`                      | 4K Upscale + Outpaint      | Needs the `4kify` binary on PATH; images only            |
+| `retouch`                    | Retouch (AI image edit)    | AI image editing via `loki-retouch` (Qwen Image 2.1): edit by prompt, presets `4kify` / `4kify-phone` / `upscale` / `restore`, extra `--ref` images, `combine` several inputs into one edit. One `<name>_<suffix>.png` per input (`_edit`, `_4k`, `_phone`, `_up`, `_restored`); videos are sampled at `time` |
+| `reshoot`                    | Reshoot (AI video)         | Reference images/videos/audio -> one mp4 with sound via `loki-reshoot` (MiniMax H3). All inputs (+ `refs`) feed ONE `<first>_reshoot.mp4`; `animate` = living photo of the first image |
+| `4kify`                      | 4K Upscale + Outpaint      | **Deprecated** alias of `retouch --preset 4kify` (`--phone` -> `4kify-phone`); kept for saved workflows |
 | `ffmpeg-caption`             | FFmpeg Caption             |                                                          |
 | `ffmpeg-thumbsheet`          | FFmpeg Thumbnail Sheet     |                                                          |
+
+The AI tasks (`retouch`, `reshoot`, `4kify`) need the standalone `loki-retouch` / `loki-reshoot` CLIs on PATH, with their model files next to the binary or in a `models/` folder beside it. Each uses ~20 GB of VRAM, so they share one `gpu-diffusion` concurrency bucket (one at a time) and the machine-wide local-compute slot. Progress follows the CLIs' `step i/n` stderr lines; a random seed (`--seed -1`, the default) is logged so a run can be reproduced.
 
 To add a new task: implement a `TaskFn` (`func(j *jobqueue.Job, q *jobqueue.Queue, r *sync.Mutex) error`) and add a `RegisterTask(...)` line in `tasks/registry.go`. Tasks can register output files via `RegisterOutputFile` so downstream workflow steps can chain off them.
 

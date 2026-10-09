@@ -44,6 +44,10 @@
   transform: translateY(6px);
 }
 
+.toast.job-toast.closing {
+  transform: translateX(40%);
+}
+
 .toast-content {
   display: flex;
   flex-direction: row;

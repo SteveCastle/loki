@@ -24,6 +24,9 @@ The system supports the following built-in tasks:
 | `ingest` | Ingest Media Files | Scan directories and add media files to database |
 | `metadata` | Generate Metadata | Generate descriptions, transcripts, hashes, and dimensions for media files |
 | `move` | Move Media Files | Move media files to new location while updating database references |
+| `retouch` | Retouch (AI image edit) | AI image edit / upscale / restore / wallpaper presets via the `loki-retouch` CLI (one PNG per input) |
+| `reshoot` | Reshoot (AI video) | Reference images, videos and audio -> one mp4 with sound via the `loki-reshoot` CLI |
+| `4kify` | 4K Upscale + Outpaint | Deprecated alias of `retouch --preset 4kify` (`--phone` -> `4kify-phone`) |
 
 ## API Endpoints
 

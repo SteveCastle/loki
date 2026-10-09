@@ -21,6 +21,11 @@ var (
 	hostResolvers   = map[string]HostResolverFn{}
 )
 
+// HostBucketGPUDiffusion is the shared host bucket of the standalone CUDA
+// diffusion engines (loki-retouch, loki-reshoot): each needs ~20 GB of VRAM,
+// so at most one of them runs at a time regardless of which task started it.
+const HostBucketGPUDiffusion = "gpu-diffusion"
+
 // RegisterHostResolver attaches a host-bucket resolver to a task command.
 // Call alongside RegisterTask in registry.go (or any init()) so the policy
 // for "where does this task's concurrency live" sits next to the task
@@ -115,8 +120,8 @@ func ResolveResources(command string, arguments []string, input string) []string
 	switch command {
 	case "describe", "transcribe", "embed", "autotag", "faces":
 		ops = []string{command}
-	case "4kify":
-		// Heavy local GPU diffusion run.
+	case "retouch", "reshoot", "4kify":
+		// Heavy local GPU diffusion run (~20 GB VRAM).
 		return []string{HostBucketLocalCompute}
 	case "faces-cluster":
 		// Clustering shares the faces bucket (its Host) and crunches vectors
@@ -184,6 +189,8 @@ func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	q.SetHostLimit(HostBucketAutotag, 1)
 	// Likewise one faces job at a time (internally parallel via its pool).
 	q.SetHostLimit(HostBucketFaces, 1)
+	// One diffusion engine at a time (retouch, reshoot, 4kify share it).
+	q.SetHostLimit(HostBucketGPUDiffusion, 1)
 	// Machine-wide cap on concurrent heavy LOCAL jobs (see the bucket's doc
 	// in llm_vision.go). Config value <= 0 falls back to the safe default of
 	// one heavy local workload at a time.

@@ -40,6 +40,9 @@ interface Toast {
 interface JobToastProps {
   job: JobRunnerJob;
   onClear: () => void;
+  // Timed auto-dismiss: hides the toast but, unlike onClear, lets a later
+  // update for the same job bring it back.
+  onExpire: () => void;
   // Pause/resume the job (graceful: the current item finishes and all
   // completed work is kept). Shown for active and paused jobs.
   onPauseResume: () => void;
@@ -54,7 +57,7 @@ const parseFlag = (input: string, flag: string): string | null => {
 };
 
 // getJobTitle returns a short, human-readable title for a background job.
-const getJobTitle = (job: JobRunnerJob): string => {
+export const getJobTitle = (job: JobRunnerJob): string => {
   switch (job.command) {
     case 'wait':
       return 'Wait';
@@ -190,7 +193,46 @@ const getJobSubtitle = (job: JobRunnerJob): string | null => {
   }
 };
 
-const JobToast: React.FC<JobToastProps> = ({ job, onClear, onPauseResume }) => {
+// How long a job toast lingers after its last update before fading away.
+// Finished jobs go quickly; running/queued ones stay until they've been quiet
+// for a while (any progress or state update restarts the clock).
+const JOB_TOAST_CLOSE_MS = 250;
+const jobToastLingerMs = (state: JobState): number => {
+  if (state === 'completed') return 3000;
+  if (state === 'error' || state === 'cancelled') return 6000;
+  return 12000;
+};
+
+const JobToast: React.FC<JobToastProps> = ({
+  job,
+  onClear,
+  onExpire,
+  onPauseResume,
+}) => {
+  const [isClosing, setIsClosing] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const onExpireRef = useRef(onExpire);
+  onExpireRef.current = onExpire;
+
+  // Auto-dismiss: fade out, then drop the toast (view-only — the job is
+  // untouched). Hovering pauses the countdown; any update restarts it.
+  useEffect(() => {
+    setIsClosing(false);
+    if (hovered) return undefined;
+    let removeTimer: number | undefined;
+    const timer = window.setTimeout(() => {
+      setIsClosing(true);
+      removeTimer = window.setTimeout(
+        () => onExpireRef.current(),
+        JOB_TOAST_CLOSE_MS
+      );
+    }, jobToastLingerMs(job.state));
+    return () => {
+      window.clearTimeout(timer);
+      if (removeTimer !== undefined) window.clearTimeout(removeTimer);
+    };
+  }, [job.state, job.progress_done, job.progress_total, hovered]);
+
   const { libraryService } = useContext(GlobalStateContext);
   const library = useSelector(libraryService, (state) => state.context.library);
   const status = job.state;
@@ -254,7 +296,11 @@ const JobToast: React.FC<JobToastProps> = ({ job, onClear, onPauseResume }) => {
       : 0;
 
   return (
-    <div className="toast job-toast">
+    <div
+      className={`toast job-toast ${isClosing ? 'closing' : ''}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div className="toast-content toast-clickable" onClick={handleOpenJobDetail}>
         <div
           className={[
@@ -544,24 +590,6 @@ export function ToastSystem() {
           // duplicates-updated broadcasts while it runs).
           queryClient.invalidateQueries({ queryKey: ['taxonomy', 'duplicates'] });
         }
-
-        // Auto-remove completed jobs after 3 seconds to show completion state briefly
-        setTimeout(() => {
-          setJobs((prev) => {
-            const newJobs = new Map(prev);
-            newJobs.delete(job.id);
-            return newJobs;
-          });
-        }, 3000);
-      } else if (job.state === 'error') {
-        // Error - also auto-remove after 5 seconds (longer to let user see the error)
-        setTimeout(() => {
-          setJobs((prev) => {
-            const newJobs = new Map(prev);
-            newJobs.delete(job.id);
-            return newJobs;
-          });
-        }, 5000);
       }
     };
 
@@ -725,6 +753,14 @@ export function ToastSystem() {
   // Clearing a toast is view-only: hide the notification, leave the job alone
   // (pause/resume has its own button; the job detail page can cancel). We also
   // record the id so a later SSE update for the same job doesn't resurrect it.
+  const removeJobToast = (job: JobRunnerJob) => {
+    setJobs((prev) => {
+      const newJobs = new Map(prev);
+      newJobs.delete(job.id);
+      return newJobs;
+    });
+  };
+
   const handleClearJob = (job: JobRunnerJob) => {
     dismissedJobsRef.current.add(job.id);
     setJobs((prev) => {
@@ -781,6 +817,7 @@ export function ToastSystem() {
           key={key}
           job={job}
           onClear={() => handleClearJob(job)}
+          onExpire={() => removeJobToast(job)}
           onPauseResume={() => handlePauseResumeJob(job)}
         />
       ))}

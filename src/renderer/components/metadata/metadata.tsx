@@ -11,6 +11,8 @@ import Duplicates from './duplicates';
 import Thumbnails from './thumbnails';
 import Transcript from './transcript';
 import Transformations from './transformations';
+import JobQueue from './job-queue';
+import useJobServerAvailable from '../../hooks/useJobServerAvailable';
 import './metadata.css';
 
 type ActionMap = {
@@ -53,6 +55,14 @@ const tabs = [
     fileTypes: [FileTypes.Image, FileTypes.Audio, FileTypes.Video],
     active: true,
   },
+  {
+    // Whole-queue management; only offered while the job server is reachable.
+    key: 'jobs',
+    label: 'Jobs',
+    actions: [],
+    fileTypes: [FileTypes.Image, FileTypes.Audio, FileTypes.Video],
+    active: true,
+  },
 ];
 
 export default function Metadata() {
@@ -81,6 +91,12 @@ export default function Metadata() {
     });
   };
 
+  const authToken = useSelector(
+    libraryService,
+    (state) => state.context.authToken
+  );
+  const jobServerAvailable = useJobServerAvailable(authToken);
+
   const item = useSelector(
     libraryService,
     (state) =>
@@ -102,8 +118,13 @@ export default function Metadata() {
   };
 
   const filteredTabs = useMemo(() => {
-    return tabs.filter((t) => t.active && t.fileTypes.includes(itemType));
-  }, [itemType]);
+    return tabs.filter(
+      (t) =>
+        t.active &&
+        t.fileTypes.includes(itemType) &&
+        (t.key !== 'jobs' || jobServerAvailable === true)
+    );
+  }, [itemType, jobServerAvailable]);
 
   // Ensure active tab remains valid across type changes; default to first available
   useEffect(() => {
@@ -150,6 +171,7 @@ export default function Metadata() {
           </div>
         )}
         {activeTabKey === 'transcript' && <Transcript />}
+        {activeTabKey === 'jobs' && <JobQueue />}
         {activeTabKey === 'transformations' && <Transformations />}
         {activeTabKey === 'duplicates' && item && (
           <div className="thumbnails-container">

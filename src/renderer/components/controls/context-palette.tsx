@@ -46,6 +46,8 @@ import {
   depsApiBase,
   fmtSize,
 } from '../../onboarding/requirements';
+import TransformSection from '../transform/transform-section';
+import { mediaKind } from '../transform/intents';
 import './context-palette.css';
 
 // Media types Lowkey Studio can actually import (mirrors the importFiles
@@ -54,14 +56,8 @@ import './context-palette.css';
 const STUDIO_MEDIA_RE =
   /\.(mp4|webm|mov|mkv|avi|m4v|flv|gif|jpe?g|jfif|png|webp|avif|bmp)$/i;
 
-// Build flag (see webpack.config.base.ts): the 4K Upscale action is hidden
-// from shipped builds until the feature is ready. Replaced at build time.
-const FOURKIFY_ENABLED = process.env.ENABLE_4KIFY === '1';
-
-// Still-image types the `4kify` task accepts directly.
-const IMAGE_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp|tiff?)$/i;
-// Videos 4kify takes by sampling one frame at the viewer's playback time.
-const VIDEO_MEDIA_RE = /\.(mp4|webm|mov|mkv|avi|m4v)$/i;
+// Still images the desktop wallpaper can be set from.
+const WALLPAPER_MEDIA_RE = /\.(jpe?g|jfif|png|webp|avif|bmp)$/i;
 
 // Generation mode for the metadata chips. `missing` only fills gaps; `all`
 // replaces existing metadata (passes `--overwrite`). The mode is chosen once
@@ -222,6 +218,8 @@ const JOB_TITLES: Record<string, string> = {
   'faces-cluster': 'Face Clustering',
   dedupe: 'Deduplicate',
   '4kify': '4K Upscale',
+  retouch: 'Retouch',
+  reshoot: 'Reshoot',
   'find-duplicates': 'Find Duplicates',
   'merge-duplicates': 'Merge Duplicate Groups',
 };
@@ -364,7 +362,6 @@ function DepRequirementRows({
     .map(([label, req]) => ({ label, req, dep: deps.get(req.depId) }))
     .filter(({ req, dep }) => {
       if (!dep) return false;
-      if (req.kind === 'external') return dep.state === 'not_installed';
       return isDownloadableState(dep.state) || isDownloadingState(dep.state);
     });
   if (rows.length === 0) return null;
@@ -373,23 +370,6 @@ function DepRequirementRows({
     <div className="dep-rows">
       {rows.map(({ label, req, dep }) => {
         const d = dep!;
-        if (req.kind === 'external') {
-          return (
-            <div key={label} className="dep-row hint">
-              <span>
-                {req.feature} uses your configured AI provider — Ollama not
-                detected.{' '}
-                <a
-                  href="https://ollama.com/download"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Get Ollama
-                </a>
-              </span>
-            </div>
-          );
-        }
         if (isDownloadingState(d.state)) {
           const inst = d.detail || {};
           const done: number = inst.bytes_done ?? 0;
@@ -937,6 +917,17 @@ export default function ContextPalette() {
   // undoable, and this button sits one row under the header of a palette
   // that opens on every right-click.
   const [merging, setMerging] = useState(false);
+  // Wallpaper picker: null = closed, otherwise the monitors to choose from.
+  const [wallpaperMonitors, setWallpaperMonitors] = useState<
+    | null
+    | {
+        id: string;
+        index: number;
+        width: number;
+        height: number;
+        primary: boolean;
+      }[]
+  >(null);
   const [mergeArmed, setMergeArmed] = useState(false);
   // Disarm on every palette open, and whenever the selection or scope
   // changes — a confirm click must never land on a different set than the one
@@ -1124,75 +1115,97 @@ export default function ContextPalette() {
     libraryService.send('HIDE_CONTEXT_PALETTE');
   };
 
-  // 4kify: restore + outpaint onto a 4K canvas (the `4kify` task, which writes
-  // a `<name>_4k.png` beside each source). Acts on the discrete selection — or
-  // the single right-clicked file. Images go through as-is. A video is sampled
-  // at the viewer's current playback time (the frame being looked at), which
-  // only means something for ONE video, so videos are accepted only when the
-  // target is a single file; in a multi-selection they are dropped.
-  const fourKifyCandidates = hasSelection ? selection : [similarTargetPath];
-  const fourKifyPaths = fourKifyCandidates.filter(
-    (p) =>
-      !!p &&
-      (IMAGE_MEDIA_RE.test(p) ||
-        (fourKifyCandidates.length === 1 && VIDEO_MEDIA_RE.test(p)))
-  );
-  const canFourKify =
-    FOURKIFY_ENABLED &&
-    !!serverAvailable && !!authToken && fourKifyPaths.length > 0;
-  const fourKifyIsVideo =
-    fourKifyPaths.length === 1 && VIDEO_MEDIA_RE.test(fourKifyPaths[0]);
-  const handleFourKify = async () => {
-    if (fourKifyPaths.length === 0) return;
-    // Read the playback position at click time. It only applies when the
-    // video being targeted is the one on screen; any other video (e.g. one
-    // right-clicked in the grid) samples from the start.
-    let timeArg = '';
-    if (fourKifyIsVideo) {
-      const ctx = libraryService.getSnapshot().context;
-      const current = filter(
-        ctx.libraryLoadId,
-        ctx.textFilter,
-        ctx.library,
-        ctx.settings.filters,
-        ctx.settings.sortBy
-      )[ctx.cursor];
-      const key = (p?: string) => (p || '').replace(/\\/g, '/').toLowerCase();
-      const t = ctx.videoPlayer.actualVideoTime;
-      if (
-        key(current?.path) &&
-        key(current?.path) === key(fourKifyPaths[0]) &&
-        Number.isFinite(t) &&
-        t > 0
-      ) {
-        timeArg = `--time=${t.toFixed(3)} `;
-      }
+  // Electron + Windows: set the right-clicked image as the desktop wallpaper
+  // on one chosen monitor (or all). The monitor list comes from the shell's
+  // IDesktopWallpaper API in the main process; the picker row opens below the
+  // header. Single still images only.
+  const wallpaperCandidate = hasSelection
+    ? selection.length === 1
+      ? selection[0]
+      : ''
+    : similarTargetPath;
+  const wallpaperPath = WALLPAPER_MEDIA_RE.test(wallpaperCandidate || '')
+    ? wallpaperCandidate
+    : '';
+  const canSetWallpaper =
+    isElectron && /windows/i.test(navigator.userAgent) && !!wallpaperPath;
+  const handleToggleWallpaper = async () => {
+    if (wallpaperMonitors) {
+      setWallpaperMonitors(null);
+      return;
     }
     try {
-      const headers: HeadersInit = { 'Content-Type': 'application/json' };
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
-      const res = await fetch(`${mediaServerBase}/create`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          input: `4kify ${timeArg}"${fourKifyPaths.join('\n')}"`,
-        }),
-        signal: AbortSignal.timeout(10000),
-        redirect: 'error',
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      libraryService.send('HIDE_CONTEXT_PALETTE');
-    } catch {
+      const monitors = await invoke('list-monitors', []);
+      if (!Array.isArray(monitors) || monitors.length === 0) {
+        throw new Error('No monitors found');
+      }
+      setWallpaperMonitors(monitors);
+    } catch (e) {
       libraryService.send({
         type: 'ADD_TOAST',
         data: {
           type: 'error',
-          title: 'Failed to Create Job',
-          message: 'Could not communicate with job service',
+          title: 'Could not list monitors',
+          message: e instanceof Error ? e.message : String(e),
         },
       });
-      libraryService.send('HIDE_CONTEXT_PALETTE');
     }
+  };
+  const handleSetWallpaper = async (monitorId: string, label: string) => {
+    try {
+      await invoke('set-wallpaper', [wallpaperPath, monitorId]);
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: { type: 'success', title: 'Wallpaper set', message: label },
+      });
+    } catch (e) {
+      libraryService.send({
+        type: 'ADD_TOAST',
+        data: {
+          type: 'error',
+          title: 'Failed to set wallpaper',
+          message: e instanceof Error ? e.message : String(e),
+        },
+      });
+    }
+    setWallpaperMonitors(null);
+    libraryService.send('HIDE_CONTEXT_PALETTE');
+  };
+
+  // Transform: the local AI engines (`retouch` = loki-retouch for images,
+  // `reshoot` = loki-reshoot for video). Acts on the discrete selection, or the
+  // single right-clicked file. The section offers one-click presets and opens
+  // the Transform Studio (see ../transform) for everything else.
+  const transformCandidates = hasSelection ? selection : [similarTargetPath];
+  const transformPaths = transformCandidates.filter(
+    (p) => !!p && mediaKind(p) !== 'other'
+  );
+  const canTransform =
+    !!serverAvailable && !!authToken && transformPaths.length > 0;
+  // Playback position (seconds) of the video on screen — only meaningful when
+  // the ONE targeted file is that video; a retouch job samples that frame.
+  const getTransformVideoTime = (): number | undefined => {
+    if (transformPaths.length !== 1 || mediaKind(transformPaths[0]) !== 'video')
+      return undefined;
+    const ctx = libraryService.getSnapshot().context;
+    const current = filter(
+      ctx.libraryLoadId,
+      ctx.textFilter,
+      ctx.library,
+      ctx.settings.filters,
+      ctx.settings.sortBy
+    )[ctx.cursor];
+    const key = (p?: string) => (p || '').replace(/\\/g, '/').toLowerCase();
+    const t = ctx.videoPlayer.actualVideoTime;
+    if (
+      key(current?.path) &&
+      key(current?.path) === key(transformPaths[0]) &&
+      Number.isFinite(t) &&
+      t > 0
+    ) {
+      return t;
+    }
+    return undefined;
   };
 
   // Person context: when the right-clicked tag is a person (its name exists
@@ -1454,6 +1467,31 @@ export default function ContextPalette() {
           ) : effectiveTarget.type === 'file' ? (
             <span className="context-count">1 file</span>
           ) : null}
+          {canSetWallpaper && (
+            <button
+              className="find-similar-btn"
+              onClick={handleToggleWallpaper}
+              title="Set as wallpaper on a monitor"
+              aria-label="Set as wallpaper"
+              aria-expanded={!!wallpaperMonitors}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2" y="4" width="20" height="13" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+                <path d="M2 14l5-4 4 3 4-3 7 5" />
+              </svg>
+            </button>
+          )}
           {isElectron && studioPaths.length > 0 && (
             <button
               className="find-similar-btn"
@@ -1547,6 +1585,41 @@ export default function ContextPalette() {
             )}
         </div>
       </div>
+
+      {canSetWallpaper && wallpaperMonitors && (
+        <div className="context-scope-row">
+          <span className="scope-label">Wallpaper</span>
+          <div className="mode-toggle" role="group" aria-label="Monitor">
+            {wallpaperMonitors.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className="mode-opt"
+                onClick={() =>
+                  handleSetWallpaper(
+                    m.id,
+                    `Monitor ${m.index + 1} (${m.width}×${m.height})`
+                  )
+                }
+                title={`${m.width}×${m.height}${m.primary ? ' — primary' : ''}`}
+              >
+                {`${m.index + 1}${m.primary ? '★' : ''} · ${m.width}×${
+                  m.height
+                }`}
+              </button>
+            ))}
+            {wallpaperMonitors.length > 1 && (
+              <button
+                type="button"
+                className="mode-opt"
+                onClick={() => handleSetWallpaper('*', 'All monitors')}
+              >
+                All
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {canScopeToLibrary && (
         <div className="context-scope-row">
@@ -1674,31 +1747,19 @@ export default function ContextPalette() {
         </div>
       )}
 
-      {canFourKify && (
-        <div className="context-palette-merge">
-          <span className="action-group-title">Transform</span>
-          <button
-            type="button"
-            className="merge-selection-btn"
-            onClick={handleFourKify}
-            title={
-              fourKifyIsVideo
-                ? 'Sample the frame at the current playback time, then upscale and outpaint it to fit a 4K monitor. Saves a new _4k.png next to the video; needs a CUDA GPU.'
-                : 'Upscale and outpaint to fit a 4K monitor. Saves a new _4k.png next to each original; needs a CUDA GPU.'
-            }
-          >
-            {fourKifyPaths.length > 1
-              ? `4K upscale ${fourKifyPaths.length} images`
-              : fourKifyIsVideo
-              ? '4K upscale current frame'
-              : '4K upscale + outpaint'}
-          </button>
-          <span className="merge-selection-note">
-            {fourKifyIsVideo
-              ? 'saves a new _4k.png of this frame beside the video'
-              : 'saves a new _4k.png beside each original'}
-          </span>
-        </div>
+      {canTransform && (
+        <TransformSection
+          paths={transformPaths}
+          authToken={authToken}
+          getVideoTime={getTransformVideoTime}
+          onDone={() => libraryService.send('HIDE_CONTEXT_PALETTE')}
+          notify={(type, title, message) =>
+            libraryService.send({
+              type: 'ADD_TOAST',
+              data: { type, title, message },
+            })
+          }
+        />
       )}
 
       {personTarget && serverAvailable && authToken && (
