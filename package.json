@@ -177,7 +177,7 @@
     "core-js": "^3.47.0",
     "cross-env": "^7.0.3",
     "css-loader": "^6.11.0",
-    "css-minimizer-webpack-plugin": "^4.0.0",
+    "css-minimizer-webpack-plugin": "^8.0.0",
     "detect-port": "^2.1.0",
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
