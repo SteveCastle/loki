@@ -187,7 +187,13 @@ describe('mergeItemMetadata', () => {
 
   it('keeps rows for a source whose file cannot be deleted', async () => {
     const db = await makeDb();
-    const ghost = path.join(dir, 'ghost.mp4'); // never written to disk
+    // A path that cannot be removed. (A file that simply isn't there counts as
+    // already removed, so it can't stand in for this.) unlink() on a non-empty
+    // directory fails with EISDIR/EPERM on every platform, and trashItem is mocked
+    // to reject, so the removal really fails.
+    const ghost = path.join(dir, 'ghost.mp4');
+    fs.mkdirSync(ghost);
+    fs.writeFileSync(path.join(ghost, 'inside.bin'), 'x');
     await db.run(`INSERT INTO media (path) VALUES (?)`, [keep]);
     await db.run(`INSERT INTO media (path) VALUES (?)`, [ghost]);
     await tagRow(db, ghost, 'beach');

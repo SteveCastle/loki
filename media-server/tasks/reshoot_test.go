@@ -266,13 +266,14 @@ func TestReshootTaskValidation(t *testing.T) {
 
 func TestReshootTaskMissingBinary(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	offlineInstalls(t)
 	db := setupItemOpsDB(t)
 	img := writeFileForTest(t, filepath.Join(t.TempDir(), "a.png"), "x")
 	q, j := newItemOpsJob(t, db, "reshoot", []string{"--prompt", "x"}, img)
 	if err := reshootTask(j, q, &sync.Mutex{}); err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(jobLog(q, j.ID), "reshoot: loki-reshoot not found on PATH") {
+	if !strings.Contains(jobLog(q, j.ID), "reshoot: could not install loki-reshoot") {
 		t.Errorf("log:\n%s", jobLog(q, j.ID))
 	}
 }

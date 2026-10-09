@@ -6,14 +6,16 @@ import { Detail } from '../detail/detail';
 import './panels.css';
 import CommandPalette from '../controls/command-palette';
 import ContextPalette from '../controls/context-palette';
-import TransformStudio from '../transform/transform-studio';
+import TransformFlow from '../transform/transform-flow';
+import EngineSetupDialog from '../transform/engine-setup-dialog';
 
 const DetailOnly = () => {
   return (
     <GlobalStateProvider>
       <CommandPalette />
       <ContextPalette />
-      <TransformStudio />
+      <TransformFlow />
+      <EngineSetupDialog />
       <Panel className="panel">
         <Detail />
       </Panel>

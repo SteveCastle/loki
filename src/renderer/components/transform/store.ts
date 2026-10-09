@@ -1,43 +1,44 @@
-// Tiny external store for the Transform Studio: the palette (which unmounts its
-// contents when it hides) opens the studio through here, and a root-level host
+// Tiny external store for the Transform flow: the palette (which unmounts its
+// contents when it hides) opens the full options through here, and a root-level host
 // renders it. Also persists the last-used settings per intent.
 import { useSyncExternalStore } from 'react';
 import type { IntentId, TransformSettings, JobRequest } from './intents';
+import { EngineSetupDeferred, ensureEngines } from './engine-setup';
 
-export type StudioPhase = 'choose' | 'shape' | 'review';
+export type FlowPhase = 'choose' | 'shape' | 'review';
 
-export interface StudioRequest {
+export interface FlowRequest {
   /** The working set: right-clicked file plus any multi-selection, in order. */
   paths: string[];
   /** Playback position of a single video target, seconds (frame sampling). */
   videoTime?: number;
   intent?: IntentId;
-  phase?: StudioPhase;
+  phase?: FlowPhase;
 }
 
-let current: StudioRequest | null = null;
+let current: FlowRequest | null = null;
 const listeners = new Set<() => void>();
 
 function emit() {
   listeners.forEach((l) => l());
 }
 
-export function openTransformStudio(req: StudioRequest): void {
+export function openTransformFlow(req: FlowRequest): void {
   current = req;
   emit();
 }
 
-export function closeTransformStudio(): void {
+export function closeTransformFlow(): void {
   if (current === null) return;
   current = null;
   emit();
 }
 
-export function getStudioRequest(): StudioRequest | null {
+export function getFlowRequest(): FlowRequest | null {
   return current;
 }
 
-export function useStudioRequest(): StudioRequest | null {
+export function useFlowRequest(): FlowRequest | null {
   return useSyncExternalStore(
     (cb) => {
       listeners.add(cb);
@@ -100,11 +101,17 @@ export interface SubmitContext {
   authToken: string | null;
 }
 
-/** POST each job to the media server's /create. Resolves with the ids; rejects on the first failure. */
+/**
+ * POST each job to the media server's /create. Resolves with the ids; rejects on the first failure.
+ * A first-ever job for an engine that is not installed asks before downloading it (see engine-setup);
+ * if that is declined or left running in the background nothing is queued and EngineSetupDeferred is thrown.
+ */
 export async function submitJobs(
   jobs: JobRequest[],
   ctx: SubmitContext
 ): Promise<string[]> {
+  const setup = await ensureEngines(jobs, ctx.mediaServerBase);
+  if (setup !== 'ready') throw new EngineSetupDeferred(setup);
   const ids: string[] = [];
   for (const job of jobs) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };

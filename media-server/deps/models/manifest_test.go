@@ -27,7 +27,7 @@ func TestManifest_ParsesAndHasModels(t *testing.T) {
 			if f.RelPath == "" {
 				t.Errorf("model %s: empty rel_path", m.ID)
 			}
-			if f.SHA256 == "" {
+			if f.SHA256 == "" && f.SHA256URL == "" {
 				t.Errorf("model %s file %s: empty sha256", m.ID, f.RelPath)
 			}
 		}

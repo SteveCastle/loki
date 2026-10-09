@@ -174,6 +174,142 @@
           "exec": true
         }
       ]
-    }
+    },
+      {
+        "id": "loki-retouch",
+        "name": "loki-retouch",
+        "category": "tool",
+        "feature": "AI image editing",
+        "description": "Command-line engine for the Retouch tasks: edit, upscale and restore images with a prompt. Needs an NVIDIA RTX 40-series (or newer) GPU with 24 GB of VRAM; Windows or Linux.",
+        "version": "latest",
+        "consumers": [
+          "retouch"
+        ],
+        "size_bytes": 45000000,
+        "files": [
+          {
+            "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-retouch-windows-amd64.zip",
+            "rel_path": "loki-retouch.exe",
+            "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-retouch-windows-amd64.zip.sha256",
+            "os": "windows",
+            "size_bytes": 45000000,
+            "archive": "zip",
+            "archive_member": "loki-retouch-windows-amd64/loki-retouch.exe",
+            "exec": true
+          },
+          {
+            "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-retouch-linux-amd64.zip",
+            "rel_path": "loki-retouch",
+            "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-retouch-linux-amd64.zip.sha256",
+            "os": "linux",
+            "size_bytes": 45000000,
+            "archive": "zip",
+            "archive_member": "loki-retouch-linux-amd64/loki-retouch",
+            "exec": true
+          }
+        ]
+      },
+      {
+        "id": "qwen-image-2.1",
+        "name": "Qwen Image 2.1 (int8)",
+        "feature": "AI image editing",
+        "description": "Diffusion model, Qwen3-VL text encoder and VAE used by loki-retouch. Needs an NVIDIA RTX 40-series (or newer) GPU with 24 GB of VRAM; Windows or Linux.",
+        "version": "1.0.0",
+        "consumers": [
+          "retouch"
+        ],
+        "size_bytes": 17283091112,
+        "files": [
+          {
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+            "rel_path": "qwen_image_2.1_int8_convrot.safetensors",
+            "sha256": "cb74113cb03faecd79611b01fd7fd642f0aa60d6f0b95086abee214d75eaa57d",
+            "size_bytes": 7256783064
+          },
+          {
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+            "rel_path": "qwen3vl_8b_int8_convrot.safetensors",
+            "sha256": "8bfd0f6e12abf2d2d697ecc888e5e90b0d6741d6708f05799f53afa560452e8f",
+            "size_bytes": 9350798360
+          },
+          {
+            "url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors",
+            "rel_path": "qwen_image_2.1_vae_bf16.safetensors",
+            "sha256": "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9",
+            "size_bytes": 675509688
+          }
+        ]
+      },
+      {
+        "id": "loki-reshoot",
+        "name": "loki-reshoot",
+        "category": "tool",
+        "feature": "AI video from references",
+        "description": "Command-line engine for the Reshoot tasks: turn reference images, videos and audio into a video with sound. Needs an NVIDIA RTX 40-series (or newer) GPU with 24 GB of VRAM; Windows or Linux.",
+        "version": "latest",
+        "consumers": [
+          "reshoot"
+        ],
+        "size_bytes": 55000000,
+        "files": [
+          {
+            "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-reshoot-windows-amd64.zip",
+            "rel_path": "loki-reshoot.exe",
+            "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-reshoot-windows-amd64.zip.sha256",
+            "os": "windows",
+            "size_bytes": 55000000,
+            "archive": "zip",
+            "archive_member": "loki-reshoot-windows-amd64/loki-reshoot.exe",
+            "exec": true
+          },
+          {
+            "url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-reshoot-linux-amd64.zip",
+            "rel_path": "loki-reshoot",
+            "sha256_url": "https://github.com/SteveCastle/loki/releases/latest/download/loki-reshoot-linux-amd64.zip.sha256",
+            "os": "linux",
+            "size_bytes": 55000000,
+            "archive": "zip",
+            "archive_member": "loki-reshoot-linux-amd64/loki-reshoot",
+            "exec": true
+          }
+        ]
+      },
+      {
+        "id": "minimax-h3-ref2va",
+        "name": "MiniMax H3 reference-to-video (int8)",
+        "feature": "AI video from references",
+        "description": "Diffusion model, Qwen3-VL-32B text encoder and video/audio VAEs used by loki-reshoot. Needs an NVIDIA RTX 40-series (or newer) GPU with 24 GB of VRAM; Windows or Linux.",
+        "version": "1.0.0",
+        "consumers": [
+          "reshoot"
+        ],
+        "size_bytes": 42470585471,
+        "files": [
+          {
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+            "rel_path": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+            "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779",
+            "size_bytes": 20970379616
+          },
+          {
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "rel_path": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "sha256": "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6",
+            "size_bytes": 15687142551
+          },
+          {
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors",
+            "rel_path": "minimax_h3_video_vae_fp16.safetensors",
+            "sha256": "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522",
+            "size_bytes": 5207808496
+          },
+          {
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors",
+            "rel_path": "minimax_h3_audio_vae_fp32.safetensors",
+            "sha256": "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48",
+            "size_bytes": 605254808
+          }
+        ]
+      }
   ]
 }

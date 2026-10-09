@@ -15,6 +15,8 @@ on:
       - '.erb/**' # webpack / build configuration
       - 'scripts/**' # build helpers (build-server.js, etc.)
       - 'media-server/**' # Go media server
+      - 'tools/**' # standalone CUDA CLIs (loki-retouch, loki-reshoot)
+      - '.github/actions/**' # composite actions the jobs below use
       - 'package.json'
       - 'package-lock.json'
       - 'tsconfig.json'
@@ -528,6 +530,43 @@ jobs:
             release/lowkey-media-server-${{ matrix.target }}.*
             release/lowkey-media-server-setup-windows-amd64.exe
 
+  # Standalone CUDA CLIs under tools/. Builds need only nvcc (no GPU on the runner), so they run on stock
+  # hosted runners; the GPU-free tests run here, GPU tests are run by hand (tools/README.md). Job-level
+  # continue-on-error: a toolchain-install hiccup must not block the Electron/server release; the tools
+  # simply won't be attached to that release. Drop it once these jobs have proven stable.
+  build-tools:
+    name: Build AI tools (${{ matrix.tool }}, ${{ matrix.target }})
+    needs: version-and-tag
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tool: loki-retouch, os: windows-2022, target: windows-amd64 }
+          - { tool: loki-retouch, os: ubuntu-latest, target: linux-amd64 }
+          - { tool: loki-reshoot, os: windows-2022, target: windows-amd64 }
+          - { tool: loki-reshoot, os: ubuntu-latest, target: linux-amd64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build, test, package
+        id: tool
+        uses: ./.github/actions/build-ai-tool
+        with:
+          tool: ${{ matrix.tool }}
+          target: ${{ matrix.target }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tools-${{ matrix.tool }}-${{ matrix.target }}
+          path: |
+            tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}
+            tools/${{ matrix.tool }}/dist/${{ steps.tool.outputs.archive }}.sha256
+          if-no-files-found: error
+
   # Container image — the easiest install path for Linux/NAS users. Publishes
   # to GHCR with both a version tag and :latest.
   publish-docker:
@@ -597,11 +636,12 @@ jobs:
           echo "# What's Changed in $CURRENT_TAG" > changelog.md
           echo "" >> changelog.md
 
-          # Get commit messages - use HEAD if PREV_TAG is a commit hash
+          # Get commit messages - use HEAD if PREV_TAG is a commit hash. --first-parent follows the mainline only,
+          # so a subtree import (tools/) shows up as one line instead of its whole history.
           if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
-            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.md
+            git log --first-parent --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> changelog.md
           else
-            git log --pretty=format:"- %s (%h)" >> changelog.md
+            git log --first-parent --pretty=format:"- %s (%h)" >> changelog.md
           fi
 
           # Get contributors — strip spaces from author names so @-mentions
@@ -610,9 +650,9 @@ jobs:
           echo "" >> changelog.md
           echo "## Contributors" >> changelog.md
           if git rev-parse --verify "$PREV_TAG" >/dev/null 2>&1; then
-            git log $PREV_TAG..HEAD --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
+            git log --first-parent $PREV_TAG..HEAD --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
           else
-            git log --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
+            git log --first-parent --format='%aN' | sed 's/ //g' | sort -u | sed 's/^/- @/' >> changelog.md
           fi
 
           # Output for next step
@@ -636,6 +676,7 @@ jobs:
         build-electron-macos,
         build-electron-linux,
         build-media-server,
+        build-tools,
         generate-changelog,
       ]
     runs-on: ubuntu-latest
@@ -651,7 +692,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: '{electron-*,server-*,changelog}'
+          pattern: '{electron-*,server-*,tools-*,changelog}'
 
       - name: Display structure of downloaded files
         run: ls -R artifacts
@@ -659,7 +700,7 @@ jobs:
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
+          find artifacts -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.zip" -o -name "*.zip.sha256" -o -name "*.tar.gz" \) -exec cp {} release-assets/ \;
           ls -lh release-assets/
 
       # v2: re-running for an existing tag must replace assets. v1's
@@ -677,3 +718,54 @@ jobs:
           files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The docs site's download buttons point at release assets, so they are only
+  # updated once the release (and its binaries) exist. The push uses
+  # GITHUB_TOKEN, which does not start another workflow run; docs/** is not a
+  # release path anyway.
+  update-docs:
+    name: Update docs download links
+    needs: [version-and-tag, create-release]
+    runs-on: ubuntu-latest
+    if: needs.version-and-tag.outputs.tag != ''
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Re-running an old release must not roll the site back.
+      - name: Is this the newest release?
+        id: newest
+        run: |
+          LATEST=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
+          if [ "$LATEST" = "v${{ needs.version-and-tag.outputs.version }}" ]; then
+            echo "newest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "newest=false" >> "$GITHUB_OUTPUT"
+            echo "v${{ needs.version-and-tag.outputs.version }} is not the newest tag ($LATEST); leaving the docs alone"
+          fi
+
+      - name: Point the docs at this release
+        if: steps.newest.outputs.newest == 'true'
+        run: node .github/scripts/update-docs-version.js "${{ needs.version-and-tag.outputs.version }}"
+
+      - name: Commit and push
+        if: steps.newest.outputs.newest == 'true'
+        run: |
+          if git diff --quiet -- docs; then
+            echo "Docs already point at ${{ needs.version-and-tag.outputs.version }}"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs
+          git commit -m "docs: download links for v${{ needs.version-and-tag.outputs.version }}"
+          for i in 1 2 3; do
+            git pull --rebase origin master && git push origin HEAD:master && exit 0
+            sleep 5
+          done
+          echo "::error::could not push the docs update (is master protected?)"
+          exit 1

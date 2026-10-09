@@ -13,6 +13,8 @@ export interface DepStatus {
   path?: string;
   error?: string;
   detail?: any;
+  /** 'user' when this is the user's own copy (PATH binary etc.), not a managed download. */
+  source?: string;
 }
 
 /** True for the states where a download can be started. */

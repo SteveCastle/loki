@@ -53,6 +53,11 @@ func InstallModel(ctx context.Context, id string, progress ProgressFn) error {
 
 	for _, f := range m.EffectiveFiles() {
 		dst := filepath.Join(ModelDir(id), f.RelPath)
+		sum, err := resolveChecksum(ctx, f)
+		if err != nil {
+			return fmt.Errorf("file %s: %w", f.RelPath, err)
+		}
+		f.SHA256 = sum
 		if f.Archive != "" {
 			if err := installArchiveFile(ctx, f, dst, progress); err != nil {
 				return fmt.Errorf("file %s: %w", f.RelPath, err)

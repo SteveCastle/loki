@@ -1,7 +1,7 @@
 import React from 'react';
 import type { IntentId } from './intents';
 
-// Stroke icons (24x24) for the Transform intents. Kept inline so the studio
+// Stroke icons (24x24) for the Transform intents. Kept inline so the flow
 // has no asset dependencies in either the Electron or web build.
 const P: Record<IntentId, React.ReactNode> = {
   restore: (

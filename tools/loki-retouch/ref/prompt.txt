@@ -1,0 +1,9 @@
+Restore <image1> into a clean, clear, high-resolution version of the original photograph. Remove grain, unwanted noise, compression artifacts, blockiness, and muddy detail. Correct unintended softness and defocus so the main subject appears naturally in focus, with believable texture and smooth tonal transitions. Preserve intentional depth of field and background blur.
+
+Keep the original subject identity, facial features, expression, pose, proportions, clothing, objects, and scene details. Preserve the photograph’s original lighting, colors, exposure, and atmosphere. Use faithful restoration without beauty retouching, stylization, artificial textures, digital sharpening, halos, or exaggerated contrast.
+
+Expand the canvas into a 9:16 portrait desktop wallpaper by outpainting beyond the boundaries of <image1>. Keep the original image region intact in its content and geometry, applying only the requested restoration within it. Preserve the subjects’ original size and spatial relationships. Do not stretch, squeeze, warp, crop, reposition, or redraw the original scene to fit the new ratio.
+
+Create the additional space by extending the surrounding environment above and below the original image, and along the sides where needed. Continue the existing perspective, lighting, textures, depth of field, and background structures seamlessly. Add only plausible environmental continuation, without introducing new focal subjects or duplicating existing people or objects.
+
+Deliver a clean, faithfully restored photograph within a naturally expanded portrait composition, with seamless transitions between the original image and the added surroundings.

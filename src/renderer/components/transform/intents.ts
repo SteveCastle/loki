@@ -2,7 +2,7 @@
 // selected media, and the pure logic that turns a choice + settings into job
 // requests for the media server's `retouch` (loki-retouch, images) and
 // `reshoot` (loki-reshoot, video) tasks. No React in here: it is unit-tested
-// and shared by the palette's one-click chips and the Transform Studio.
+// and shared by the palette's one-click chips and the Transform flow.
 
 export type EngineId = 'retouch' | 'reshoot';
 export type IntentId =

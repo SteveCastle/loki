@@ -9,12 +9,13 @@ import {
   settingsFor,
   type IntentId,
 } from './intents';
-import { loadRemembered, openTransformStudio, submitJobs } from './store';
+import { EngineSetupDeferred } from './engine-setup';
+import { loadRemembered, openTransformFlow, submitJobs } from './store';
 import { IntentIcon } from './icons';
 import './transform-section.css';
 
 // The palette's "Transform" row: one-click presets (run with the settings you
-// used last time) and an entry to the Transform Studio for everything that
+// used last time) and an entry to the Transform flow for everything that
 // needs a prompt or finer control. Shift-click any chip to tune it first.
 const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'edit', 'alive'];
 
@@ -24,9 +25,9 @@ export interface TransformSectionProps {
   authToken: string | null;
   /** Seconds into the on-screen video when the single target is the one playing. */
   getVideoTime: () => number | undefined;
-  /** Close the palette (after a job is queued or the studio opened). */
+  /** Close the palette (after a job is queued or the flow opened). */
   onDone: () => void;
-  notify: (type: 'success' | 'error', title: string, message: string) => void;
+  notify: (type: 'success' | 'error' | 'info', title: string, message: string) => void;
 }
 
 export default function TransformSection(props: TransformSectionProps) {
@@ -37,7 +38,7 @@ export default function TransformSection(props: TransformSectionProps) {
   const hasVideoOnly = inputs.images.length === 0 && inputs.videos.length === 1;
 
   const open = (intent: IntentId | undefined) => {
-    openTransformStudio({
+    openTransformFlow({
       paths,
       videoTime: getVideoTime(),
       intent,
@@ -56,10 +57,13 @@ export default function TransformSection(props: TransformSectionProps) {
     setBusy(id);
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
-      notify('success', 'Queued', built.jobs.length > 1 ? `${built.jobs.length} ${intentById(id).title} jobs` : built.jobs[0].label);
       onDone();
-    } catch {
-      notify('error', 'Failed to Create Job', 'Could not communicate with job service');
+    } catch (e) {
+      if (e instanceof EngineSetupDeferred) {
+        if (e.result === 'background') notify('info', 'Downloading', 'The download continues in the background. Run this again when it has finished.');
+      } else {
+        notify('error', 'Failed to Create Job', 'Could not communicate with job service');
+      }
       onDone();
     } finally {
       setBusy(null);
@@ -81,9 +85,9 @@ export default function TransformSection(props: TransformSectionProps) {
           type="button"
           className="person-rename-btn"
           onClick={() => open(undefined)}
-          title="Open the Transform Studio: every option, step by step"
+          title="Customize: every option, step by step"
         >
-          Studio ▸
+          Customize ▸
         </button>
       </div>
       <div className="type-chips" role="group" aria-label="Transform presets">
@@ -94,7 +98,7 @@ export default function TransformSection(props: TransformSectionProps) {
             className="type-chip transform-chip"
             disabled={busy !== null}
             onClick={(e) => onChip(e, c.id)}
-            title={`${c.tagline}${c.oneClick ? ' — click to run, Shift-click to tune' : ' — opens the studio'}`}
+            title={`${c.tagline}${c.oneClick ? ' — click to run, Shift-click to tune' : ' — opens the full options'}`}
           >
             <IntentIcon id={c.id} size={13} />
             {busy === c.id ? 'Queuing…' : chipLabel(c.id, hasVideoOnly)}

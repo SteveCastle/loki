@@ -1175,7 +1175,7 @@ export default function ContextPalette() {
   // Transform: the local AI engines (`retouch` = loki-retouch for images,
   // `reshoot` = loki-reshoot for video). Acts on the discrete selection, or the
   // single right-clicked file. The section offers one-click presets and opens
-  // the Transform Studio (see ../transform) for everything else.
+  // the Transform flow (see ../transform) for everything else.
   const transformCandidates = hasSelection ? selection : [similarTargetPath];
   const transformPaths = transformCandidates.filter(
     (p) => !!p && mediaKind(p) !== 'other'

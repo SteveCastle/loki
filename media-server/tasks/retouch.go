@@ -314,8 +314,11 @@ func (w *lineWriter) Flush() {
 // runAICLI runs one loki-* CLI invocation, streaming stderr into the job log
 // (prefixed with tag, step lines throttled) and reporting step progress via
 // onStep. Returns the stdout lines (the written path).
-func runAICLI(ctx context.Context, q *jobqueue.Queue, jobID, tag, bin string, args []string, onStep func(i, n int)) ([]string, error) {
-	cmd := exec.CommandContext(ctx, bin, args...)
+func runAICLI(ctx context.Context, q *jobqueue.Queue, jobID, tag string, tool aiToolRun, args []string, onStep func(i, n int)) ([]string, error) {
+	cmd := exec.CommandContext(ctx, tool.Bin, args...)
+	if len(tool.Env) > 0 {
+		cmd.Env = append(os.Environ(), tool.Env...)
+	}
 	platform.HideSubprocessWindow(cmd)
 	cmd.WaitDelay = 10 * time.Second
 
@@ -410,9 +413,9 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 		return fail("unknown preset "+strconv.Quote(p.Preset)+" (choose 4kify, 4kify-phone, upscale or restore)", nil)
 	}
 
-	bin, err := exec.LookPath("loki-retouch")
+	bin, err := resolveAITool(ctx, q, j.ID, tag, retouchTool)
 	if err != nil {
-		return fail(`loki-retouch not found on PATH (install it to C:\Users\steph\bin or any PATH folder; models go in a models/ folder next to it)`, fmt.Errorf("loki-retouch not found on PATH: %w", err))
+		return fail(err.Error(), err)
 	}
 
 	res, rerr := resolveJobItemsRaw(j, q)

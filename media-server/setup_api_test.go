@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -198,8 +199,13 @@ func TestSetupState(t *testing.T) {
 	if state.SetupComplete || state.HasRealUsers {
 		t.Fatalf("fresh install state = %+v, want incomplete with no real users", state)
 	}
-	if len(state.ModelGroups) != 4 {
-		t.Fatalf("model groups = %d, want 4", len(state.ModelGroups))
+	// Four everywhere, plus the CUDA image/video engines on Windows and Linux.
+	wantGroups := 4
+	if runtime.GOOS == "windows" || runtime.GOOS == "linux" {
+		wantGroups = 6
+	}
+	if len(state.ModelGroups) != wantGroups {
+		t.Fatalf("model groups = %d, want %d", len(state.ModelGroups), wantGroups)
 	}
 	for _, g := range state.ModelGroups {
 		if g.SizeBytes <= 0 {

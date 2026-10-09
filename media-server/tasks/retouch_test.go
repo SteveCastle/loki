@@ -603,6 +603,7 @@ func TestRetouchTaskChainedFake(t *testing.T) {
 
 func TestRetouchTaskMissingBinary(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	offlineInstalls(t)
 	db := setupItemOpsDB(t)
 	in := writeFileForTest(t, filepath.Join(t.TempDir(), "a.png"), "x")
 	q, j := newItemOpsJob(t, db, "retouch", []string{"--preset", "upscale"}, in)
@@ -612,7 +613,7 @@ func TestRetouchTaskMissingBinary(t *testing.T) {
 	if q.GetJob(j.ID).State != jobqueue.StateError {
 		t.Errorf("state = %v; want error", q.GetJob(j.ID).State)
 	}
-	if !strings.Contains(jobLog(q, j.ID), "retouch: loki-retouch not found on PATH") {
+	if !strings.Contains(jobLog(q, j.ID), "retouch: could not install loki-retouch") {
 		t.Errorf("log:\n%s", jobLog(q, j.ID))
 	}
 
@@ -621,7 +622,7 @@ func TestRetouchTaskMissingBinary(t *testing.T) {
 	if err := fourKifyTask(j, q, &sync.Mutex{}); err == nil {
 		t.Fatal("4kify: expected error")
 	}
-	if !strings.Contains(jobLog(q, j.ID), "loki-retouch not found on PATH") {
+	if !strings.Contains(jobLog(q, j.ID), "could not install loki-retouch") {
 		t.Errorf("4kify log:\n%s", jobLog(q, j.ID))
 	}
 }

@@ -18,9 +18,9 @@ import {
   type Shake,
   type TransformSettings,
 } from './intents';
-import type { StudioPhase } from './store';
+import type { FlowPhase } from './store';
 import { GlyphCheck, GlyphDie, GlyphMusic, IntentIcon } from './icons';
-import './transform-studio.css';
+import './transform-flow.css';
 
 // ---------------------------------------------------------------------------
 // Small controls
@@ -115,15 +115,35 @@ function Thumb({
   role,
   thumbUrl,
   onRemove,
+  onPick,
 }: {
   path: string;
   role?: string;
   thumbUrl: (p: string) => string;
   onRemove?: () => void;
+  /** Makes the thumbnail a button (used to put its prompt token into the prompt). */
+  onPick?: () => void;
 }) {
   const kind = mediaKind(path);
+  const pick = onPick
+    ? {
+        role: 'button' as const,
+        tabIndex: 0,
+        onClick: onPick,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onPick();
+          }
+        },
+      }
+    : {};
   return (
-    <div className={`ts-thumb ts-thumb-${kind}`} title={baseName(path)}>
+    <div
+      className={`ts-thumb ts-thumb-${kind}${onPick ? ' ts-thumb-pick' : ''}`}
+      title={onPick && role ? `${baseName(path)}: click to put ${role} in the prompt` : baseName(path)}
+      {...pick}
+    >
       {kind === 'image' && <img src={thumbUrl(path)} alt="" draggable={false} />}
       {kind === 'video' && (
         <video src={`${thumbUrl(path)}#t=0.1`} preload="metadata" muted playsInline />
@@ -136,12 +156,32 @@ function Thumb({
       {kind === 'other' && <span className="ts-thumb-glyph">?</span>}
       {role ? <span className="ts-thumb-role">{role}</span> : null}
       {onRemove ? (
-        <button type="button" className="ts-thumb-x" onClick={onRemove} aria-label={`Remove ${baseName(path)}`}>
+        <button
+          type="button"
+          className="ts-thumb-x"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          aria-label={`Remove ${baseName(path)}`}
+        >
           ×
         </button>
       ) : null}
     </div>
   );
+}
+
+/** Put `token` into `text` at the caret / over the selection, with a space on each side where it would touch a word. */
+export function insertToken(text: string, token: string, start: number, end: number): { text: string; caret: number } {
+  const s = Math.max(0, Math.min(start, text.length));
+  const e = Math.max(s, Math.min(end, text.length));
+  const before = text.slice(0, s);
+  const after = text.slice(e);
+  const lead = before && !/\s$/.test(before) ? ' ' : '';
+  const trail = after && !/^\s/.test(after) ? ' ' : after ? '' : ' ';
+  const out = `${before}${lead}${token}${trail}${after}`;
+  return { text: out, caret: before.length + lead.length + token.length + trail.length };
 }
 
 /** Role tags the model sees: <image1>… for retouch, <Picture 1>/<Video 1>/<Audio 1> for reshoot. */
@@ -171,10 +211,10 @@ export function roleLabels(intent: IntentId | null, paths: string[]): Record<str
 // The view
 // ---------------------------------------------------------------------------
 
-export interface StudioViewProps {
+export interface FlowViewProps {
   paths: string[];
   intent: IntentId | null;
-  phase: StudioPhase;
+  phase: FlowPhase;
   settings: TransformSettings;
   source: { width: number; height: number } | null;
   videoTime?: number;
@@ -185,14 +225,14 @@ export interface StudioViewProps {
   thumbUrl: (p: string) => string;
   onSettings: (patch: Partial<TransformSettings>) => void;
   onIntent: (id: IntentId) => void;
-  onPhase: (p: StudioPhase) => void;
+  onPhase: (p: FlowPhase) => void;
   onRun: () => void;
   onClose: () => void;
   onRemovePath: (p: string) => void;
   onAgain: () => void;
 }
 
-const PHASES: Array<{ id: StudioPhase; label: string }> = [
+const PHASES: Array<{ id: FlowPhase; label: string }> = [
   { id: 'choose', label: 'Choose' },
   { id: 'shape', label: 'Shape' },
   { id: 'review', label: 'Review' },
@@ -207,7 +247,7 @@ function summarizeInputs(paths: string[]): string {
   return parts.join(' · ') || 'nothing selected';
 }
 
-export function TransformStudioView(props: StudioViewProps) {
+export function TransformFlowView(props: FlowViewProps) {
   const { paths, intent, phase, status } = props;
   const inputs = useMemo(() => classify(paths), [paths]);
   const def = intent ? intentById(intent) : null;
@@ -272,7 +312,7 @@ export function TransformStudioView(props: StudioViewProps) {
 
 // ---- Phase 1: choose -------------------------------------------------------
 
-function ChooseView(props: StudioViewProps & { inputs: ReturnType<typeof classify> }) {
+function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify> }) {
   const { inputs, intent } = props;
   const groups: Array<{ id: 'image' | 'video'; title: string; sub: string }> = [
     { id: 'image', title: 'Images', sub: 'loki-retouch · Qwen Image 2.1' },
@@ -331,7 +371,7 @@ const QUALITY_OPTIONS = (engine: 'retouch' | 'reshoot'): Array<SegOption<Quality
   { value: 'fine', label: 'Fine', sub: 'slow' },
 ];
 
-function ShapeView(props: StudioViewProps & { def: ReturnType<typeof intentById> }) {
+function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
   const { def, settings: s, onSettings, source, paths } = props;
   const inputs = classify(paths);
   const [more, setMore] = useState(false);
@@ -353,7 +393,21 @@ function ShapeView(props: StudioViewProps & { def: ReturnType<typeof intentById>
     { value: 'custom', label: 'Custom' },
   ];
   const sizeValue = s.sizeMode === 'same' ? 'same' : s.sizeMode === 'custom' ? 'custom' : String(s.scale);
-  const customParts = parseSize(s.customSize) || [0, 0];
+  // The raw "WxH" text, not parseSize(): a half-typed "1x" is not a size yet, and re-deriving the inputs from
+  // it would blank the field under the user's fingers.
+  const [customW = '', customH = ''] = (s.customSize || '').split('x');
+  const promptField: 'prompt' | null = def.needsText === 'prompt' ? 'prompt' : null;
+  const pickToken = (token: string) => {
+    if (!promptField) return;
+    const ta = textRef.current;
+    const at = ta && document.activeElement === ta ? [ta.selectionStart, ta.selectionEnd] : [s.prompt.length, s.prompt.length];
+    const r = insertToken(s.prompt, token, at[0] ?? s.prompt.length, at[1] ?? s.prompt.length);
+    onSettings({ prompt: r.text });
+    window.setTimeout(() => {
+      ta?.focus();
+      ta?.setSelectionRange(r.caret, r.caret);
+    }, 0);
+  };
 
   return (
     <div className="ts-shape">
@@ -459,9 +513,9 @@ function ShapeView(props: StudioViewProps & { def: ReturnType<typeof intentById>
             />
             {s.sizeMode === 'custom' && (
               <div className="ts-size-inputs">
-                <input type="number" min={16} value={customParts[0] || ''} placeholder="width" onChange={(e) => onSettings({ customSize: `${e.target.value}x${customParts[1] || ''}` })} />
+                <input type="number" inputMode="numeric" min={16} value={customW} placeholder="width" onChange={(e) => onSettings({ customSize: `${e.target.value}x${customH}` })} />
                 <span>×</span>
-                <input type="number" min={16} value={customParts[1] || ''} placeholder="height" onChange={(e) => onSettings({ customSize: `${customParts[0] || ''}x${e.target.value}` })} />
+                <input type="number" inputMode="numeric" min={16} value={customH} placeholder="height" onChange={(e) => onSettings({ customSize: `${customW}x${e.target.value}` })} />
                 <small>any size: the model works in multiples of 16 and the result is resampled to exactly this</small>
               </div>
             )}
@@ -602,10 +656,17 @@ function ShapeView(props: StudioViewProps & { def: ReturnType<typeof intentById>
           </div>
         </div>
         <div className="ts-preview-inputs">
-          <div className="ts-preview-title">Using</div>
+          <div className="ts-preview-title">Using{promptField && Object.values(roles).some((r) => r.startsWith('<')) ? ' · click one to put its tag in the prompt' : ''}</div>
           <div className="ts-thumbs">
             {shown.slice(0, 8).map((p) => (
-              <Thumb key={p} path={p} role={roles[p]} thumbUrl={props.thumbUrl} onRemove={paths.length > 1 ? () => props.onRemovePath(p) : undefined} />
+              <Thumb
+                key={p}
+                path={p}
+                role={roles[p]}
+                thumbUrl={props.thumbUrl}
+                onRemove={paths.length > 1 ? () => props.onRemovePath(p) : undefined}
+                onPick={promptField && roles[p]?.startsWith('<') ? () => pickToken(roles[p]) : undefined}
+              />
             ))}
             {shown.length > 8 ? <div className="ts-thumb ts-thumb-more">+{shown.length - 8}</div> : null}
           </div>
@@ -616,7 +677,7 @@ function ShapeView(props: StudioViewProps & { def: ReturnType<typeof intentById>
   );
 }
 
-function ShapeFooter(props: StudioViewProps) {
+function ShapeFooter(props: FlowViewProps) {
   const err = props.intent ? validateForRun(props.intent, props.settings, props.paths) : 'Pick something to do';
   return (
     <div className="ts-footer">
@@ -633,7 +694,7 @@ function ShapeFooter(props: StudioViewProps) {
 
 // ---- Phase 3: review -------------------------------------------------------
 
-function ReviewView(props: StudioViewProps & { def: ReturnType<typeof intentById> }) {
+function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
   const { def, settings: s, paths, source, status } = props;
   const plan = planFor(def.id, s, paths, source);
   const eta = estimateSeconds(plan);
@@ -709,7 +770,7 @@ function ReviewView(props: StudioViewProps & { def: ReturnType<typeof intentById
   );
 }
 
-function DoneView(props: StudioViewProps) {
+function DoneView(props: FlowViewProps) {
   const n = props.queuedCount || 1;
   return (
     <div className="ts-done">

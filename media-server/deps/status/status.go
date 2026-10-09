@@ -4,6 +4,8 @@ package status
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/stevecastle/shrike/appconfig"
@@ -24,6 +26,41 @@ type Item struct {
 	Path        string `json:"path,omitempty"`
 	Error       string `json:"error,omitempty"`
 	Detail      any    `json:"detail,omitempty"`
+	// Source is "user" when the item is the user's own copy (see UserProvided)
+	// rather than something this server downloaded; empty means managed.
+	Source string `json:"source,omitempty"`
+}
+
+// SourceUser marks an item the user supplied themselves.
+const SourceUser = "user"
+
+// UserProvided reports whether m is satisfied by the user's own copy instead
+// of a managed download, and where it lives (the file for a tool, the folder
+// holding the files for a model).
+func UserProvided(m models.Model) (string, bool) {
+	// A user-configured faster-whisper binary satisfies the transcription tool.
+	if m.ID == "faster-whisper" {
+		if p := strings.TrimSpace(appconfig.Get().FasterWhisperPath); p != "" {
+			if _, err := os.Stat(p); err == nil {
+				return p, true
+			}
+		}
+		return "", false
+	}
+	// A loki-* engine on PATH (a developer build, or installed by hand).
+	if m.EffectiveCategory() == "tool" && strings.HasPrefix(m.ID, "loki-") {
+		if p, err := exec.LookPath(m.ID); err == nil {
+			return p, true
+		}
+		return "", false
+	}
+	// Weights an engine on PATH already has where it looks for them.
+	if m.EffectiveCategory() == "model" {
+		if dir := engineModelsDir(m); dir != "" {
+			return dir, true
+		}
+	}
+	return "", false
 }
 
 func Snapshot() []Item {
@@ -71,18 +108,50 @@ func Snapshot() []Item {
 			out = append(out, item)
 			continue
 		}
-		// A user-configured faster-whisper binary satisfies the transcription
-		// tool without the assisted download.
-		if m.ID == "faster-whisper" && item.State == string(models.StatusMissing) {
-			if p := strings.TrimSpace(appconfig.Get().FasterWhisperPath); p != "" {
-				if _, err := os.Stat(p); err == nil {
-					item.State = string(models.StatusInstalled)
-					item.Path = p
-					item.Detail = map[string]string{"source": "configured_path"}
-				}
+		// Ejected from management: the user supplied their own copy (a PATH
+		// binary, weights beside it, or a configured Whisper path). It is used
+		// as-is and never downloaded, replaced or deleted by the server.
+		if item.State == string(models.StatusMissing) {
+			if loc, ok := UserProvided(m); ok {
+				item.State = string(models.StatusInstalled)
+				item.Path = loc
+				item.Source = SourceUser
+				item.Detail = map[string]string{"source": "path"}
 			}
 		}
 		out = append(out, item)
 	}
 	return out
+}
+
+// engineModelsDir returns the folder holding every file of m when m belongs to
+// a loki-* engine found on PATH, mirroring the engines' own model search
+// order, or "" when the engine isn't on PATH or some file is absent.
+func engineModelsDir(m models.Model) string {
+	if len(m.Consumers) == 0 {
+		return ""
+	}
+	exe, err := exec.LookPath("loki-" + m.Consumers[0])
+	if err != nil {
+		return ""
+	}
+	base := filepath.Dir(exe)
+	dirs := []string{base, filepath.Join(base, "models")}
+	if d := os.Getenv("LOKI_MODELS"); d != "" {
+		dirs = append(dirs, d)
+	}
+	files := m.EffectiveFiles()
+	for _, d := range dirs {
+		all := len(files) > 0
+		for _, f := range files {
+			if _, err := os.Stat(filepath.Join(d, f.RelPath)); err != nil {
+				all = false
+				break
+			}
+		}
+		if all {
+			return d
+		}
+	}
+	return ""
 }
