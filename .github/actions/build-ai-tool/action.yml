@@ -38,7 +38,11 @@ runs:
         sub-packages: '["nvcc", "cudart-dev", "cccl"]'
         log-file-suffix: ${{ inputs.tool }}-${{ inputs.target }}.txt
 
-    # Windows: the full toolkit. The installer's component names for the CCCL headers differ between CUDA
+    # Windows: run on windows-2022 (callers pick the runner). CUDA 12.6's nvcc rejects MSVC 19.50+
+    # ("unsupported Microsoft Visual Studio version", _MSC_VER >= 1950), which is what windows-latest
+    # (the windows-2025-vs2026 image) ships; windows-2022 has Visual Studio 2022.
+    #
+    # The full toolkit. The installer's component names for the CCCL headers differ between CUDA
     # releases and were not verifiable off-runner; once a run has shown which components are needed, a
     # `sub-packages` list here will cut several minutes.
     - name: Install CUDA toolkit (Windows)

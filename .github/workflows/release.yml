@@ -542,9 +542,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { tool: loki-retouch, os: windows-latest, target: windows-amd64 }
+          - { tool: loki-retouch, os: windows-2022, target: windows-amd64 }
           - { tool: loki-retouch, os: ubuntu-latest, target: linux-amd64 }
-          - { tool: loki-reshoot, os: windows-latest, target: windows-amd64 }
+          - { tool: loki-reshoot, os: windows-2022, target: windows-amd64 }
           - { tool: loki-reshoot, os: ubuntu-latest, target: linux-amd64 }
     runs-on: ${{ matrix.os }}
     steps:

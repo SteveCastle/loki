@@ -58,7 +58,9 @@ fn main() -> anyhow::Result<()> {
             println!("cargo:warning=[nvcc {stem}] {line}");
         }
         if !output.status.success() {
-            anyhow::bail!("nvcc failed on {}:\n{}", cu.display(), stderr);
+            // cl.exe (and nvcc's own fatal errors) report on stdout, so include both.
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            anyhow::bail!("nvcc failed on {}:\n{}\n{}", cu.display(), stdout, stderr);
         }
     }
     Ok(())
