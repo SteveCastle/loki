@@ -2485,8 +2485,7 @@
                 if (!r) return;
                 const lines = Object.entries(r.files || {}).map(([f, v]) => f + ': ' + v);
                 const head = r.source === 'user' ? 'Your own copy' + (r.location ? ' at ' + r.location : '') : 'Managed install';
-                alert([head, '', ...lines, ...(r.note ? ['', r.note] : [])].join('
-'));
+                alert([head, '', ...lines, ...(r.note ? ['', r.note] : [])].join('\n'));
               });
           });
         });
