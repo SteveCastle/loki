@@ -8,6 +8,7 @@ import {
   classify,
   intentById,
   mediaKind,
+  remapTokens,
   settingsFor,
   type IntentId,
   type TransformSettings,
@@ -21,7 +22,7 @@ import {
   type FlowPhase,
 } from './store';
 import { EngineSetupDeferred } from './engine-setup';
-import { TransformFlowView, validateForRun } from './flow-view';
+import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
 
 // ---------------------------------------------------------------------------
 // Host (container): owns phase/intent/settings state, talks to the server
@@ -110,12 +111,71 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     return () => ctl.abort();
   }, [phase, authToken]);
 
+  // The prompt the engine will run, for the review step: the first job as /create would get it, minus any
+  // hand-written override (the panel shows that itself; the generated prompt is what "Edit" starts from).
+  const previewBody = useMemo(() => {
+    if (phase !== 'review' || !intent) return null;
+    const built = buildJobs(intent, { ...settings, manualPrompt: null }, paths, { videoTime: req.videoTime, random: () => 0.5 });
+    const job = built.jobs[0];
+    if (!job) return null;
+    return JSON.stringify({ input: job.input, fields: job.fields });
+  }, [phase, intent, settings, paths, req.videoTime]);
+  const [preview, setPreview] = useState<PromptPreviewState>({ status: 'idle' });
+  useEffect(() => {
+    if (!previewBody) return undefined;
+    const ctl = new AbortController();
+    setPreview((prev) => ({ status: 'loading', data: prev.data }));
+    // Debounced (an Edit prompt typed in the review step changes the body), and bounded like every server call.
+    let timedOut = false;
+    const start = window.setTimeout(async () => {
+      const giveUp = window.setTimeout(() => {
+        timedOut = true;
+        ctl.abort();
+      }, 25000);
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (authToken) headers.Authorization = `Bearer ${authToken}`;
+        const res = await fetch(`${mediaServerBase}/api/transform/prompt`, { method: 'POST', headers, body: previewBody, signal: ctl.signal });
+        const body = await res.json().catch(() => null);
+        if (!res.ok) setPreview({ status: 'error', error: (body && body.error) || `HTTP ${res.status}` });
+        else setPreview({ status: 'ok', data: body });
+      } catch (e) {
+        // Aborted by the cleanup = superseded by a newer request: say nothing.
+        if (timedOut) setPreview({ status: 'error', error: 'timed out' });
+        else if (!ctl.signal.aborted) setPreview({ status: 'error', error: e instanceof Error ? e.message : String(e) });
+      } finally {
+        window.clearTimeout(giveUp);
+      }
+    }, 250);
+    return () => {
+      window.clearTimeout(start);
+      ctl.abort();
+    };
+  }, [previewBody, authToken]);
+
+  // Reorder / remove inputs; the prompt's reference tokens follow their files.
+  const changePaths = useCallback(
+    (next: string[]) => {
+      if (next.length === 0) return;
+      if (intent) {
+        setSettings((prev) => ({
+          ...prev,
+          prompt: remapTokens(prev.prompt, intent, paths, next),
+          manualPrompt: prev.manualPrompt === null ? null : remapTokens(prev.manualPrompt, intent, paths, next),
+        }));
+      }
+      setPaths(next);
+    },
+    [intent, paths]
+  );
+
   const run = useCallback(async () => {
     if (!intent) return;
     const problem = validateForRun(intent, settings, paths);
     if (problem) {
       setError(problem);
-      setPhase('shape');
+      // A Shape problem is fixed there; a hand-written prompt's problem in the review step itself.
+      if (validateShape(intent, settings, paths)) setPhase('shape');
       return;
     }
     const built = buildJobs(intent, settings, paths, { videoTime: req.videoTime });
@@ -184,7 +244,9 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       }}
       onRun={run}
       onClose={closeTransformFlow}
-      onRemovePath={(p) => setPaths((prev) => (prev.length > 1 ? prev.filter((x) => x !== p) : prev))}
+      onRemovePath={(p) => paths.length > 1 && changePaths(paths.filter((x) => x !== p))}
+      onMakeFirst={(p) => changePaths([p, ...paths.filter((x) => x !== p)])}
+      preview={preview}
       onAgain={() => {
         setStatus('idle');
         setPhase('shape');

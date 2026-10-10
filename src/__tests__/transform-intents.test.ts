@@ -8,10 +8,14 @@ import {
   nativeCanvas,
   parseSize,
   planFor,
+  referenceTokens,
+  remapTokens,
   reshootFrames,
   retouchPreset,
   settingsFor,
   stepsFor,
+  tokenIssues,
+  usesReferences,
 } from '../renderer/components/transform/intents';
 
 const IMG = 'C:/media/photo.jpg';
@@ -37,8 +41,9 @@ describe('availability', () => {
   it('gates intents on the selection', () => {
     const one = classify([IMG]);
     expect(availability('restore', one).ok).toBe(true);
-    expect(availability('combine', one).ok).toBe(false);
-    expect(availability('combine', classify([IMG, IMG2])).ok).toBe(true);
+    expect(usesReferences('edit', one)).toBe(false);
+    expect(usesReferences('edit', classify([IMG, IMG2]))).toBe(true);
+    expect(usesReferences('restore', classify([IMG, IMG2]))).toBe(false);
     expect(availability('alive', classify([VID])).ok).toBe(false);
     expect(availability('direct', classify([AUD])).ok).toBe(true);
     // retouch takes a single video (a frame is sampled), not several
@@ -89,12 +94,27 @@ describe('buildJobs: retouch', () => {
     expect(c.scale).toBeUndefined();
   });
 
-  it('combine sends every image in one job with the combine flag', () => {
-    const s = { ...settingsFor('combine'), prompt: 'put <image2> into <image1>' };
-    const r = buildJobs('combine', s, [IMG, IMG2], fixed);
+  it('edit with several images makes ONE run that shows the model all of them as references', () => {
+    const s = { ...settingsFor('edit'), prompt: 'put <image2> into <image1>' };
+    const r = buildJobs('edit', s, [IMG, IMG2], fixed);
     expect(r.jobs).toHaveLength(1);
     expect(r.jobs[0].input).toBe('retouch "C:/media/photo.jpg\nC:/media/other.png"');
     expect(r.jobs[0].fields.combine).toBe('1');
+    expect(r.jobs[0].fields.prompt).toBe('put <image2> into <image1>');
+    expect(r.jobs[0].label).toMatch(/2 images as references/);
+    // one image: a plain edit
+    expect(buildJobs('edit', s, [IMG], fixed).jobs[0].fields.combine).toBeUndefined();
+    // presets stay per-image batches
+    expect(buildJobs('restore', settingsFor('restore'), [IMG, IMG2], fixed).jobs[0].fields.combine).toBeUndefined();
+  });
+
+  it('a manual prompt replaces a preset\'s built-in text but keeps the preset (size, references)', () => {
+    const s = { ...settingsFor('wallpaper'), append: 'keep grain', manualPrompt: 'Outpaint <image1> to 16:9' };
+    const f = buildJobs('wallpaper', s, [IMG], fixed).jobs[0].fields;
+    expect(f.preset).toBe('4kify');
+    expect(f.prompt).toBe('Outpaint <image1> to 16:9');
+    expect(f.append).toBeUndefined();
+    expect(buildJobs('wallpaper', { ...s, manualPrompt: '  ' }, [IMG], fixed).error).toMatch(/Write the prompt/);
   });
 
   it('a single video carries the sampled frame time', () => {
@@ -181,7 +201,8 @@ describe('plan and estimate', () => {
     const three = [IMG, IMG2, 'C:/media/c.png'];
     expect(planFor('restore', settingsFor('restore'), three)).toMatchObject({ jobCount: 1, outputs: 3 });
     expect(planFor('restore', settingsFor('restore', { variations: 2 }), three)).toMatchObject({ jobCount: 2, outputs: 6 });
-    expect(planFor('combine', { ...settingsFor('combine'), prompt: 'x' }, three)).toMatchObject({ outputs: 1 });
+    expect(planFor('edit', { ...settingsFor('edit'), prompt: 'x' }, three)).toMatchObject({ jobCount: 1, outputs: 1 });
+    expect(planFor('edit', { ...settingsFor('edit'), prompt: 'x', variations: 2 }, three)).toMatchObject({ jobCount: 2, outputs: 2 });
     expect(planFor('alive', settingsFor('alive'), three)).toMatchObject({ jobCount: 3, outputs: 3 });
   });
 
@@ -202,5 +223,45 @@ describe('plan and estimate', () => {
     expect(formatDuration(12)).toBe('10 s');
     expect(formatDuration(100)).toBe('2 min');
     expect(formatDuration(4000)).toBe('1 h 7 min');
+  });
+});
+
+describe('reference tokens', () => {
+  const C = 'C:/media/c.png';
+
+  it('names every image of a multi-image edit, and only <image1> for a per-image run', () => {
+    expect(referenceTokens('edit', [IMG, IMG2, C])).toEqual({ [IMG]: '<image1>', [IMG2]: '<image2>', [C]: '<image3>' });
+    expect(referenceTokens('edit', [IMG])).toEqual({ [IMG]: '<image1>' });
+    expect(referenceTokens('restore', [IMG, IMG2])).toEqual({ [IMG]: '', [IMG2]: '' });
+    expect(referenceTokens('restore', [IMG, IMG2], true)).toEqual({ [IMG]: '<image1>', [IMG2]: '<image1>' });
+    expect(referenceTokens('direct', [IMG, VID, AUD])).toEqual({ [IMG]: '<Picture 1>', [VID]: '<Video 1>', [AUD]: '<Audio 1>' });
+    expect(referenceTokens('alive', [IMG], true)).toEqual({ [IMG]: '<Picture 1>' });
+  });
+
+  it('tokens follow their files when the inputs are reordered or one is removed', () => {
+    const prompt = 'put the jacket of <image2> on <image1>, lit like <image3>';
+    expect(remapTokens(prompt, 'edit', [IMG, IMG2, C], [IMG2, IMG, C])).toBe('put the jacket of <image1> on <image2>, lit like <image3>');
+    // IMG2 removed: <image3> becomes <image2>; the removed file's token is left for validation to flag
+    expect(remapTokens(prompt, 'edit', [IMG, IMG2, C], [IMG, C])).toBe('put the jacket of <image2> on <image1>, lit like <image2>');
+  });
+
+  it('reports unknown and unused tokens', () => {
+    expect(tokenIssues('use <image3> with <image1>', ['<image1>', '<image2>'])).toEqual({ unknown: ['<image3>'], unused: ['<image2>'] });
+    expect(tokenIssues('no tokens', ['', 'photo'])).toEqual({ unknown: [], unused: [] });
+  });
+});
+
+describe('buildJobs: manual prompt on reshoot', () => {
+  it('bring to life with a hand-written prompt drops the living-photo expansion', () => {
+    const s = { ...settingsFor('alive'), describe: 'a dog', manualPrompt: '<Picture 1> wags its tail' };
+    const f = buildJobs('alive', s, [IMG], { random: () => 0.5 }).jobs[0].fields;
+    expect(f.animate).toBeUndefined();
+    expect(f.describe).toBeUndefined();
+    expect(f.prompt).toBe('<Picture 1> wags its tail');
+  });
+
+  it('direct uses the manual prompt over the shape prompt', () => {
+    const s = { ...settingsFor('direct'), prompt: 'a', manualPrompt: 'b' };
+    expect(buildJobs('direct', s, [IMG], { random: () => 0.5 }).jobs[0].fields.prompt).toBe('b');
   });
 });

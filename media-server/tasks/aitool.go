@@ -81,15 +81,35 @@ func resolveAITool(ctx context.Context, q *jobqueue.Queue, jobID, tag string, sp
 		}
 	}
 
+	run.Env = aiToolEnv(spec)
+	return run, nil
+}
+
+// aiToolEnv is the extra environment every engine run gets.
+func aiToolEnv(spec aiToolSpec) []string {
+	var env []string
 	// Share the dependency-managed weights with the engine when present.
 	if dir := models.ModelDir(spec.Model); dirHasModel(spec.Model) {
-		run.Env = append(run.Env, "LOKI_MODELS="+dir)
+		env = append(env, "LOKI_MODELS="+dir)
 	}
 	// The server bundles ffmpeg/ffprobe; hand them to engines that need them.
 	if ff := deps.BundledOrEmpty("ffmpeg"); ff != "" {
-		run.Env = append(run.Env, "PATH="+filepath.Dir(ff)+string(os.PathListSeparator)+os.Getenv("PATH"))
+		env = append(env, "PATH="+filepath.Dir(ff)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
-	return run, nil
+	return env
+}
+
+// locateAITool finds an engine the way resolveAITool does but never installs
+// anything: for quick, side-effect-free calls such as the prompt preview. A
+// variable so tests can stand in a fake engine.
+var locateAITool = func(spec aiToolSpec) (aiToolRun, bool) {
+	if p, err := exec.LookPath(spec.Bin); err == nil {
+		return aiToolRun{Bin: p, Env: aiToolEnv(spec)}, true
+	}
+	if p, err := deps.ModelPath(spec.Bin, spec.Bin+platform.BinaryExtension()); err == nil {
+		return aiToolRun{Bin: p, Env: aiToolEnv(spec)}, true
+	}
+	return aiToolRun{}, false
 }
 
 // dirHasModel reports whether a model dependency is completely installed.

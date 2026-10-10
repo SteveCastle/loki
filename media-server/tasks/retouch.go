@@ -384,6 +384,45 @@ type retouchItem struct {
 	refs []string
 }
 
+// planRetouchRuns turns a job's files into loki-retouch invocations. Without
+// combine every file is its own run; with combine (several files) the first
+// is <image1> and the other still images ride along as references of ONE
+// run. refs are the `refs` option's extra references (existing still images
+// only), appended to every run after the item's own. Shared by the task and
+// the prompt preview so both always agree on what the model sees. logf gets
+// one line per skipped file.
+func planRetouchRuns(files []string, p retouchParams, logf func(string)) (items []retouchItem, refs []string) {
+	for _, r := range p.Refs {
+		r = absPath(r)
+		if !isImageExt(filepath.Ext(r)) {
+			logf("skipping reference (not a still image): " + r)
+			continue
+		}
+		if _, err := os.Stat(r); err != nil {
+			logf("skipping missing reference: " + r)
+			continue
+		}
+		refs = append(refs, r)
+	}
+	if p.Combine && len(files) > 1 {
+		first := absPath(files[0])
+		var extra []string
+		for _, f := range files[1:] {
+			f = absPath(f)
+			if !isImageExt(filepath.Ext(f)) {
+				logf("combine: skipping non-image reference " + filepath.Base(f))
+				continue
+			}
+			extra = append(extra, f)
+		}
+		return []retouchItem{{src: first, refs: extra}}, refs
+	}
+	for _, f := range files {
+		items = append(items, retouchItem{src: f})
+	}
+	return items, refs
+}
+
 // runRetouchJob is the shared per-file loop behind `retouch` and the legacy
 // `4kify` alias. tag prefixes every log line.
 func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchParams) error {
@@ -427,39 +466,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 	}
 	files := res.Paths
 
-	// Extra references: still images only, and they must exist.
-	var refs []string
-	for _, r := range p.Refs {
-		r = absPath(r)
-		if !isImageExt(filepath.Ext(r)) {
-			q.PushJobStdout(j.ID, tag+": skipping reference (not a still image): "+r)
-			continue
-		}
-		if _, err := os.Stat(r); err != nil {
-			q.PushJobStdout(j.ID, tag+": skipping missing reference: "+r)
-			continue
-		}
-		refs = append(refs, r)
-	}
-
-	var items []retouchItem
-	if p.Combine && len(files) > 1 {
-		first := absPath(files[0])
-		var extra []string
-		for _, f := range files[1:] {
-			f = absPath(f)
-			if !isImageExt(filepath.Ext(f)) {
-				q.PushJobStdout(j.ID, tag+": combine: skipping non-image reference "+filepath.Base(f))
-				continue
-			}
-			extra = append(extra, f)
-		}
-		items = []retouchItem{{src: first, refs: extra}}
-	} else {
-		for _, f := range files {
-			items = append(items, retouchItem{src: f})
-		}
-	}
+	items, refs := planRetouchRuns(files, p, func(msg string) { q.PushJobStdout(j.ID, tag+": "+msg) })
 
 	if len(items) == 0 {
 		q.PushJobStdout(j.ID, tag+": no files to process")
