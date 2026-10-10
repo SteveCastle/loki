@@ -985,6 +985,20 @@ body.mask-editing #mask-overlay.paint-preview-hidden {
   overflow-wrap: anywhere;
 }
 .param-row input[type=range] { width: 100%; accent-color: var(--accent); min-width: 0; height: 16px; }
+/* Motion blur row: toggle + shutter angle + samples in the slider columns. */
+.param-row.mb-row > .mb-controls { grid-column: 3 / span 4; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.param-row .mb-controls input[type=checkbox] { accent-color: var(--accent); margin: 0; }
+.param-row .mb-controls .val { width: 44px; }
+.param-row .mb-controls select { flex: 1; min-width: 0; }
+.param-row .mb-unit { color: var(--dim); font-size: 11px; margin-left: -2px; }
+.param-row label.mb-idle { color: var(--dim); font-style: italic; }
+/* Angle rows: the range is only the dial face; the drag wraps past ±180°. */
+.param-row .angle-cell { position: relative; display: block; min-width: 0; }
+.param-row .angle-cell input[type=range] { display: block; cursor: ew-resize; }
+.param-row .angle-turns {
+  position: absolute; right: 0; top: -9px; font-size: 9px; line-height: 1;
+  color: var(--dim); pointer-events: none; font-variant-numeric: tabular-nums;
+}
 .param-row select {
   width: 100%;
   background: var(--bg3);
