@@ -54,6 +54,13 @@ func UserProvided(m models.Model) (string, bool) {
 		}
 		return "", false
 	}
+	// A third-party tool the user installed themselves (see PathBinary).
+	if m.PathBinary != "" {
+		if p, err := exec.LookPath(m.PathBinary); err == nil {
+			return p, true
+		}
+		return "", false
+	}
 	// Weights an engine on PATH already has where it looks for them.
 	if m.EffectiveCategory() == "model" {
 		if dir := engineModelsDir(m); dir != "" {

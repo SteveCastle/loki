@@ -22,13 +22,17 @@ type Model struct {
 	Consumers   []string `json:"consumers"`
 	SizeBytes   int64    `json:"size_bytes"`
 	Files       []File   `json:"files"`
+	// PathBinary names an executable that, found on PATH, satisfies this
+	// tool without a download (e.g. a distro-packaged colmap on Linux,
+	// where no prebuilt release exists). loki-* tools match by ID instead.
+	PathBinary string `json:"path_binary,omitempty"`
 }
 
 // File is one downloadable file within a model. When OS is set the file only
 // applies to that GOOS. When Archive is set the download is an archive whose
 // ArchiveMember gets extracted to RelPath (and the archive is discarded);
 // SHA256 covers the archive as downloaded. An ArchiveMember ending in "/"
-// extracts that whole subtree into RelPath as a directory (7z only); Exec
+// extracts that whole subtree into RelPath as a directory (7z or zip); Exec
 // then marks the extracted root-level binaries executable.
 type File struct {
 	URL     string `json:"url"`
@@ -39,7 +43,7 @@ type File struct {
 	SHA256URL     string `json:"sha256_url,omitempty"`
 	OS            string `json:"os,omitempty"`
 	SizeBytes     int64  `json:"size_bytes,omitempty"`
-	Archive       string `json:"archive,omitempty"` // "zip" (single member) or "7z" (directory member)
+	Archive       string `json:"archive,omitempty"` // "zip" (member or directory), "7z" (directory), "tar.xz" (single member)
 	ArchiveMember string `json:"archive_member,omitempty"`
 	Exec          bool   `json:"exec,omitempty"` // chmod +x after install
 }

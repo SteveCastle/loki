@@ -204,6 +204,13 @@ func setupModelGroups() []setupModelGroup {
 				Models: []string{"loki-reshoot", "minimax-h3-ref2va"}},
 		)
 	}
+	// Splat training (Lowkey Studio's "3D scene from video / photos"): COLMAP
+	// ships a Windows CUDA build only; on Linux it comes from PATH.
+	if runtime.GOOS == "windows" {
+		groups = append(groups, setupModelGroup{ID: "splats", Title: "3D scenes from video (NVIDIA GPU)",
+			Desc:   "Turn a walk-around video or photo set into a Gaussian splat you can fly through in Lowkey Studio. COLMAP finds the camera path, Brush trains the scene.",
+			Models: []string{"colmap", "brush"}})
+	}
 	sizes := map[string]int64{}
 	for _, m := range models.Manifest {
 		sizes[m.ID] = m.EffectiveSizeBytes()

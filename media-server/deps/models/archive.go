@@ -1,7 +1,9 @@
 package models
 
 import (
+	"archive/tar"
 	"archive/zip"
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -11,17 +13,19 @@ import (
 	"strings"
 
 	"github.com/bodgit/sevenzip"
+	"github.com/ulikunitz/xz"
 )
 
 // installArchiveFile downloads f's archive (with resume + SHA-256 over the
 // archive bytes), extracts f.ArchiveMember to dst atomically, then removes
 // the archive. A member ending in "/" means "extract that whole subtree into
-// dst as a directory" (7z only) — used for multi-file tool bundles like
-// Faster-Whisper-XXL. If dst already exists it is left alone only when the
+// dst as a directory" (7z and zip) — used for multi-file tool bundles like
+// Faster-Whisper-XXL and COLMAP. tar.xz archives (Brush's Linux release)
+// support a single member only. If dst already exists it is left alone only when the
 // archive step is re-run after a partial failure — the extract simply
 // overwrites.
 func installArchiveFile(ctx context.Context, f File, dst string, progress ProgressFn) error {
-	if f.Archive != "zip" && f.Archive != "7z" {
+	if f.Archive != "zip" && f.Archive != "7z" && f.Archive != "tar.xz" {
 		return fmt.Errorf("models: unsupported archive type %q", f.Archive)
 	}
 	archivePath := dst + ".archive." + f.Archive
@@ -33,10 +37,14 @@ func installArchiveFile(ctx context.Context, f File, dst string, progress Progre
 	switch {
 	case isDir && f.Archive == "7z":
 		err = extractSevenZipDir(ctx, archivePath, f.ArchiveMember, dst, f.Exec, progress)
+	case isDir && f.Archive == "zip":
+		err = extractZipDir(ctx, archivePath, f.ArchiveMember, dst, f.Exec, progress)
 	case isDir:
-		err = fmt.Errorf("models: directory extraction is only supported for 7z archives, not %q", f.Archive)
+		err = fmt.Errorf("models: directory extraction is not supported for %q archives", f.Archive)
 	case f.Archive == "7z":
 		err = fmt.Errorf("models: 7z archives require a directory member (ending in \"/\"), got %q", f.ArchiveMember)
+	case f.Archive == "tar.xz":
+		err = extractTarXzMember(archivePath, f.ArchiveMember, dst)
 	default:
 		err = extractZipMember(archivePath, f.ArchiveMember, dst)
 	}
@@ -104,7 +112,43 @@ func extractSevenZipDir(ctx context.Context, archivePath, memberPrefix string, d
 		return fmt.Errorf("models: open archive: %w", err)
 	}
 	defer zr.Close()
+	entries := make([]dirEntry, 0, len(zr.File))
+	for _, e := range zr.File {
+		e := e
+		entries = append(entries, dirEntry{name: e.Name, info: e.FileInfo(), size: int64(e.UncompressedSize),
+			open: func() (io.ReadCloser, error) { return e.Open() }})
+	}
+	return extractEntriesDir(ctx, entries, filepath.Base(archivePath), memberPrefix, dst, exec, progress)
+}
 
+// extractZipDir is extractSevenZipDir for zip archives (COLMAP's Windows
+// release: bin/ holds the executable and every DLL it loads).
+func extractZipDir(ctx context.Context, archivePath, memberPrefix string, dst string, exec bool, progress ProgressFn) error {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("models: open archive: %w", err)
+	}
+	defer zr.Close()
+	entries := make([]dirEntry, 0, len(zr.File))
+	for _, e := range zr.File {
+		e := e
+		entries = append(entries, dirEntry{name: e.Name, info: e.FileInfo(), size: int64(e.UncompressedSize64),
+			open: func() (io.ReadCloser, error) { return e.Open() }})
+	}
+	return extractEntriesDir(ctx, entries, filepath.Base(archivePath), memberPrefix, dst, exec, progress)
+}
+
+// dirEntry is one archive member, whatever the archive format.
+type dirEntry struct {
+	name string
+	info os.FileInfo
+	size int64
+	open func() (io.ReadCloser, error)
+}
+
+// extractEntriesDir does the work for the directory extractors: every
+// entry under memberPrefix lands in dst, atomically (dst.partial/ → rename).
+func extractEntriesDir(ctx context.Context, entries []dirEntry, archiveName, memberPrefix, dst string, exec bool, progress ProgressFn) error {
 	prefix := strings.TrimSuffix(filepath.ToSlash(memberPrefix), "/") + "/"
 	match := func(name string) (rel string, ok bool) {
 		slash := filepath.ToSlash(name)
@@ -128,19 +172,19 @@ func extractSevenZipDir(ctx context.Context, archivePath, memberPrefix string, d
 
 	// Total uncompressed size under the prefix, for extraction progress.
 	var total, done int64
-	for _, entry := range zr.File {
-		if _, ok := match(entry.Name); ok && !entry.FileInfo().IsDir() {
-			total += int64(entry.UncompressedSize)
+	for _, entry := range entries {
+		if _, ok := match(entry.name); ok && !entry.info.IsDir() {
+			total += entry.size
 		}
 	}
 	progressName := filepath.Base(dst) + " (extracting)"
 
 	found := false
-	for _, entry := range zr.File {
+	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return fail(err)
 		}
-		rel, ok := match(entry.Name)
+		rel, ok := match(entry.name)
 		if !ok || rel == "" {
 			continue
 		}
@@ -148,9 +192,9 @@ func extractSevenZipDir(ctx context.Context, archivePath, memberPrefix string, d
 		target := filepath.Join(partial, filepath.FromSlash(rel))
 		// Reject entries that would escape the extraction root ("../", absolute).
 		if cleaned := filepath.Clean(target); cleaned != partial && !strings.HasPrefix(cleaned, partial+string(filepath.Separator)) {
-			return fail(fmt.Errorf("models: archive member %q escapes extraction dir", entry.Name))
+			return fail(fmt.Errorf("models: archive member %q escapes extraction dir", entry.name))
 		}
-		if entry.FileInfo().IsDir() {
+		if entry.info.IsDir() {
 			if err := os.MkdirAll(target, 0o755); err != nil {
 				return fail(err)
 			}
@@ -159,9 +203,9 @@ func extractSevenZipDir(ctx context.Context, archivePath, memberPrefix string, d
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fail(err)
 		}
-		rc, err := entry.Open()
+		rc, err := entry.open()
 		if err != nil {
-			return fail(fmt.Errorf("models: open archive member %q: %w", entry.Name, err))
+			return fail(fmt.Errorf("models: open archive member %q: %w", entry.name, err))
 		}
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
 		if err != nil {
@@ -174,28 +218,28 @@ func extractSevenZipDir(ctx context.Context, archivePath, memberPrefix string, d
 			err = cerr
 		}
 		if err != nil {
-			return fail(fmt.Errorf("models: extract %s: %w", entry.Name, err))
+			return fail(fmt.Errorf("models: extract %s: %w", entry.name, err))
 		}
 		done += n
 		// Preserve stored unix exec bits when the archive has them.
 		if runtime.GOOS != "windows" {
-			if mode := entry.FileInfo().Mode().Perm(); mode&0o111 != 0 {
+			if mode := entry.info.Mode().Perm(); mode&0o111 != 0 {
 				_ = os.Chmod(target, mode|0o644)
 			}
 		}
 	}
 	if !found {
-		return fail(fmt.Errorf("models: member %q not found in %s", memberPrefix, filepath.Base(archivePath)))
+		return fail(fmt.Errorf("models: member %q not found in %s", memberPrefix, archiveName))
 	}
 
 	// Windows-packed bundles store no unix modes; make the root-level
 	// launchers runnable.
 	if exec && runtime.GOOS != "windows" {
-		entries, err := os.ReadDir(partial)
+		dirEntries, err := os.ReadDir(partial)
 		if err != nil {
 			return fail(err)
 		}
-		for _, e := range entries {
+		for _, e := range dirEntries {
 			if e.Type().IsRegular() {
 				if err := markExecutable(filepath.Join(partial, e.Name())); err != nil {
 					return fail(err)
@@ -209,6 +253,44 @@ func extractSevenZipDir(ctx context.Context, archivePath, memberPrefix string, d
 		return fail(fmt.Errorf("models: remove previous install: %w", err))
 	}
 	return os.Rename(partial, dst)
+}
+
+// extractTarXzMember streams a .tar.xz to its one wanted member and writes
+// it to dst atomically (tar has no index, so this reads up to the member).
+func extractTarXzMember(archivePath, member, dst string) error {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("models: open archive: %w", err)
+	}
+	defer f.Close()
+	xr, err := xz.NewReader(bufio.NewReader(f))
+	if err != nil {
+		return fmt.Errorf("models: open xz stream: %w", err)
+	}
+	tr := tar.NewReader(xr)
+	want := strings.ToLower(filepath.ToSlash(member))
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("models: read archive: %w", err)
+		}
+		if h.Typeflag != tar.TypeReg || strings.ToLower(filepath.ToSlash(h.Name)) != want {
+			continue
+		}
+		w, err := NewAtomicWriter(dst)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(w, tr); err != nil {
+			_ = w.Abort()
+			return fmt.Errorf("models: extract %s: %w", member, err)
+		}
+		return w.Commit()
+	}
+	return fmt.Errorf("models: member %q not found in %s", member, filepath.Base(archivePath))
 }
 
 // markExecutable sets the executable bits on non-Windows platforms.

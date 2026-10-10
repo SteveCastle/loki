@@ -44,6 +44,8 @@ position. Both are called out where they appear.
 | `shader-editor.js` | 155 | Zero-dependency slang code editor (textarea over a highlighted `<pre>`). |
 | `roto.js` | 250 | AI rotoscoping, auto engine: BiRefNet (dichotomous segmentation / matting) via onnxruntime-web, loaded from CDN on demand and cached. Stateless per call; the temporal story lives in app.js. |
 | `roto-sam.js` | 530 | AI rotoscoping, prompt engine: MobileSAM encoder/decoder + OWL-ViT text detection via onnxruntime-web / transformers.js, for cutting out a SPECIFIC object with clicks, strokes, or a text query. Same on-demand CDN + Cache API story. |
+| `splat.js` | 1.0k | Gaussian splat layers: `.ply` / `.splat` / `.spz` parsing, scene framing, and the WebGPU renderer (compute projection + SH colour, bitonic depth sort, indirect instanced draw, straight-alpha resolve). UI-free; app.js owns the clips and the camera UI. |
+| `server.js` | 130 | The Lowkey Media Server client: connection settings (URL + API key in localStorage), header-auth fetches, uploads with progress, job polling, file download. Used for work a tab can't do — splat training. |
 | `engine/` | 2.4k | **slangfx-web** — the WebGPU multi-pass shader engine. Vendored from the [slangfx](https://github.com/SteveCastle/slangfx) repo. |
 | `shaders/` | — | The bundled `.slangp` presets, one directory per effect. Also vendored. |
 | `effects.json` | — | The manifest the add-effect picker reads: categories + preset paths. |
@@ -86,6 +88,34 @@ and `audioEffectsOf` split them, and nothing ever mixes them.
 A **shape layer** is a media clip with `clip.shapes` and a synthetic
 `shape:<clipId>` asset: a 1024² canvas regenerated from the model on load,
 never stored in IndexedDB.
+
+A **splat layer** is a media clip with `clip.splat` (`{upAxis, background,
+quality, orbitDist}`) whose asset has kind `'splat'` — a 3D gaussian scene
+parsed once and uploaded to the GPU (`asset.gpu`), stored in IndexedDB like
+any import. Each splat clip renders the scene through its OWN camera
+(`clip.props.camX/Y/Z`, `camYaw/Pitch/Roll`, `camFov`, `splatSize` — ordinary
+keyframable, driveable PropTracks) into its own comp-sized texture
+(`splatRenderers`, keyed by clip id). `renderSplats(t)` runs before masks
+and the isolate pass in both the preview tick and the exporter, and
+`drawForClip` hands that texture to everything downstream — so the 2D
+transform, masks, the clip's own effects and the adjustment layers above it
+treat a splat exactly like footage. A renderer skips the GPU work when its
+camera and settings haven't changed. 🎥 Navigate (orbit / look / pan /
+dolly / WASD fly) writes the camera props at the playhead; camera writes
+deliberately skip `onModelChange` per move (its `markChainDirty` rebuilt
+the effect chain every frame) and fan out once at the gesture's end.
+
+**Making a splat** (+ Layer → *3D scene from video / photos…*) is the one
+thing Studio hands off: training needs COLMAP + Brush and minutes of GPU,
+so it runs as the media server's `splat` task. The dialog uploads the
+capture (`/api/upload`, no library ingest), queues `splat "<paths>"` on
+`/create`, polls `/api/job/{id}`, then downloads the `.ply` from
+`/media/file` and imports it like a dropped file. Pending jobs live in
+localStorage, so polling resumes after a reload. Server-trained files carry
+`comment lowkey_capture_camera` / `lowkey_capture_up` header lines: the
+layer opens on the capture's first frame, and the *Capture (level)* up axis
+rotates the scene so the capture's mean camera-up is world +Y. The server
+answers Studio origins with header-credential CORS only (no cookies).
 
 ### Property tracks
 

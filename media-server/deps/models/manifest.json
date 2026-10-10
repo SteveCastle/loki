@@ -275,6 +275,66 @@
         ]
       },
       {
+        "id": "colmap",
+        "name": "COLMAP",
+        "category": "tool",
+        "feature": "3D scenes from video (Gaussian splats)",
+        "description": "Structure-from-motion: works out where the camera was for every frame of a capture, the first half of turning a video or photo set into a Gaussian splat. CUDA build for NVIDIA GPUs (BSD license). ~415 MB download, ~690 MB installed. No prebuilt Linux release exists: on Linux install colmap with your package manager (or build it) and put it on PATH.",
+        "version": "4.2.1",
+        "consumers": [
+          "splat"
+        ],
+        "size_bytes": 414666626,
+        "path_binary": "colmap",
+        "files": [
+          {
+            "url": "https://github.com/colmap/colmap/releases/download/4.2.1/colmap-x64-windows-cuda.zip",
+            "rel_path": "colmap",
+            "sha256": "e9c5cbd84c2ea986d2e970a2473fc2d2e6b34a2cdcf5d3df2765c319a63af881",
+            "os": "windows",
+            "size_bytes": 414666626,
+            "archive": "zip",
+            "archive_member": "bin/",
+            "exec": true
+          }
+        ]
+      },
+      {
+        "id": "brush",
+        "name": "Brush",
+        "category": "tool",
+        "feature": "3D scenes from video (Gaussian splats)",
+        "description": "Gaussian-splat trainer: turns the posed frames of a capture into a 3D scene (.ply) that Lowkey Studio can fly through. GPU via Vulkan/DirectX (Apache-2.0 license). ~160 MB download on Windows, ~45 MB on Linux.",
+        "version": "v0.3.0",
+        "consumers": [
+          "splat"
+        ],
+        "size_bytes": 158791348,
+        "path_binary": "brush_app",
+        "files": [
+          {
+            "url": "https://github.com/ArthurBrussee/brush/releases/download/v0.3.0/brush-app-x86_64-pc-windows-msvc.zip",
+            "rel_path": "brush_app.exe",
+            "sha256": "b68e3e9cf052d51bf3ee30776fa5a364de7f2ba13b58443128ff797bb7bcfcd6",
+            "os": "windows",
+            "size_bytes": 158791348,
+            "archive": "zip",
+            "archive_member": "brush_app.exe",
+            "exec": true
+          },
+          {
+            "url": "https://github.com/ArthurBrussee/brush/releases/download/v0.3.0/brush-app-x86_64-unknown-linux-gnu.tar.xz",
+            "rel_path": "brush_app",
+            "sha256": "4f0f9a8785d1951c62df26aae247c02c5bba32b00f40b06df4e1c9b867399e20",
+            "os": "linux",
+            "size_bytes": 44242224,
+            "archive": "tar.xz",
+            "archive_member": "brush-app-x86_64-unknown-linux-gnu/brush_app",
+            "exec": true
+          }
+        ]
+      },
+      {
         "id": "minimax-h3-ref2va",
         "name": "MiniMax H3 reference-to-video (int8)",
         "feature": "AI video from references",

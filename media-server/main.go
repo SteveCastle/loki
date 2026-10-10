@@ -2531,6 +2531,7 @@ func main() {
 	mux.HandleFunc("/job/{id}/remove", renderer.ApplyMiddlewares(removeHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/jobs/clear", renderer.ApplyMiddlewares(clearNonRunningJobsHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/api/jobs/for-path", renderer.ApplyMiddlewares(jobsForPathHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/job/{id}", renderer.ApplyMiddlewares(jobAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/stream", streamHandler())
 	mux.HandleFunc("/health", healthHandler(deps))
 	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))

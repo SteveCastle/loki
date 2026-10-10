@@ -23,6 +23,12 @@ const svg = (body, extra = '') =>
      stroke-linejoin="round" aria-hidden="true"${extra}>${body}</svg>`;
 
 export const LAYER_ICONS = {
+  /* Gaussian splat: overlapping soft ellipses — a cloud with depth. */
+  splat: svg(`
+    <ellipse cx="6" cy="9.2" rx="3.6" ry="2.4" transform="rotate(-20 6 9.2)"/>
+    <ellipse cx="10.4" cy="6.4" rx="3" ry="1.9" transform="rotate(25 10.4 6.4)"/>
+    <circle cx="10.6" cy="11.2" r="1.3" fill="currentColor" stroke="none"/>`),
+
   /* Video: a frame with a play mark — the frame alone reads as "image". */
   video: svg(`
     <rect x="1.6" y="3.1" width="12.8" height="9.8" rx="2"/>
@@ -71,6 +77,7 @@ export function clipIcon(clip, asset) {
   if (clip.kind === 'track') return LAYER_ICONS.track;
   if (clip.kind === 'audio') return LAYER_ICONS.audio;
   if (Array.isArray(clip.shapes) && clip.shapes.length) return LAYER_ICONS.shape;
+  if (clip.splat || asset?.kind === 'splat') return LAYER_ICONS.splat;
   if (asset?.kind === 'audio') return LAYER_ICONS.audio;
   return asset?.kind === 'image' || asset?.kind === 'gif'
     ? LAYER_ICONS.image
