@@ -10,7 +10,6 @@ export type IntentId =
   | 'upscale'
   | 'wallpaper'
   | 'edit'
-  | 'combine'
   | 'alive'
   | 'direct';
 
@@ -53,8 +52,13 @@ export type Shake = 'none' | 'subtle' | 'handheld';
 export type WallpaperTarget = 'desktop' | 'phone';
 
 export interface TransformSettings {
-  /** Free-form instruction (edit / combine / direct). */
+  /** Free-form instruction (edit / direct). */
   prompt: string;
+  /**
+   * A hand-written replacement for the WHOLE prompt the engine would expand (a preset's built-in text, the
+   * living-photo prompt), written in the review step. null = use the generated prompt. Never remembered.
+   */
+  manualPrompt: string | null;
   /** One sentence naming the subject (alive). */
   describe: string;
   /** Extra direction appended to a preset's built-in prompt. */
@@ -93,10 +97,13 @@ export interface IntentDef {
   defaults: Partial<TransformSettings>;
   /** Example prompts shown as hints / "surprise me". */
   examples: string[];
+  /** Examples for a multi-image selection (the images become references). */
+  referenceExamples?: string[];
 }
 
 export const BASE_SETTINGS: TransformSettings = {
   prompt: '',
+  manualPrompt: null,
   describe: '',
   append: '',
   sizeMode: 'same',
@@ -161,7 +168,7 @@ export const INTENTS: IntentDef[] = [
     title: 'Edit with words',
     tagline: 'Change anything by describing it',
     blurb:
-      'Write what should change and the model edits the image, keeping the rest. It can also resize in the same pass.',
+      'Write what should change and the model edits the image, keeping the rest. It can also resize in the same pass. With several images selected the model sees them all as references: <image1> is the one edited, <image2>, <image3>… the others.',
     oneClick: false,
     needsText: 'prompt',
     defaults: { sizeMode: 'same' },
@@ -171,19 +178,7 @@ export const INTENTS: IntentDef[] = [
       'Remove the person on the left and fill in the background',
       'Change the jacket to red leather',
     ],
-  },
-  {
-    id: 'combine',
-    engine: 'retouch',
-    group: 'image',
-    title: 'Combine',
-    tagline: 'Blend several images into one',
-    blurb:
-      'Use the selected images together: the first is <image1>, the others <image2>, <image3>… Describe how they combine.',
-    oneClick: false,
-    needsText: 'prompt',
-    defaults: { sizeMode: 'same' },
-    examples: [
+    referenceExamples: [
       'Put the person from <image2> into the scene of <image1>',
       'Dress the person in <image1> in the jacket from <image2>',
       'Use the style of <image2> for <image1>',
@@ -253,9 +248,6 @@ export function availability(id: IntentId, inputs: Inputs): Availability {
     case 'edit':
       if (stills > 0 || videos.length === 1) return { ok: true };
       return { ok: false, reason: 'Select an image' };
-    case 'combine':
-      if (stills >= 2) return { ok: true };
-      return { ok: false, reason: 'Select 2 or more images' };
     case 'alive':
       if (stills > 0) return { ok: true };
       return { ok: false, reason: 'Select an image' };
@@ -265,6 +257,86 @@ export function availability(id: IntentId, inputs: Inputs): Availability {
     default:
       return { ok: false };
   }
+}
+
+/**
+ * Whether a retouch intent shows the model every selected image at once (ONE run: the first is <image1>, the rest
+ * references) instead of running once per image. Only a free-form edit does: presets are per-image treatments.
+ */
+export function usesReferences(id: IntentId, inputs: Inputs): boolean {
+  return id === 'edit' && inputs.images.length > 1;
+}
+
+/** Whether the intent's prompt field IS the whole prompt the engine runs (nothing is expanded around it). */
+export function promptIsVerbatim(id: IntentId): boolean {
+  return id === 'edit' || id === 'direct';
+}
+
+/**
+ * The reference token the model knows each input by: <image1>… for retouch, <Picture 1>/<Video 1>/<Audio 1> for
+ * reshoot. Inputs a prompt cannot refer to map to '' (a preset's batch) or a plain label ('photo').
+ * `manual` = the prompt is hand-written, so every input the model sees gets its token.
+ */
+export function referenceTokens(id: IntentId | null, paths: string[], manual = false): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!id) return out;
+  const inputs = classify(paths);
+  if (intentById(id).engine === 'retouch') {
+    const targets = inputs.images.length ? inputs.images : inputs.videos.slice(0, 1);
+    const shared = usesReferences(id, inputs);
+    targets.forEach((p, i) => {
+      // A per-image run sees only its own image, always as <image1>.
+      if (id === 'edit' || manual) out[p] = shared ? `<image${i + 1}>` : '<image1>';
+      else out[p] = '';
+    });
+    return out;
+  }
+  inputs.images.forEach((p, i) => {
+    // Bring to life runs once per photo: each is that run's <Picture 1>.
+    if (id === 'alive') out[p] = manual ? '<Picture 1>' : 'photo';
+    else out[p] = `<Picture ${i + 1}>`;
+  });
+  inputs.videos.forEach((p, i) => {
+    out[p] = `<Video ${i + 1}>`;
+  });
+  inputs.audios.forEach((p, i) => {
+    out[p] = `<Audio ${i + 1}>`;
+  });
+  return out;
+}
+
+const TOKEN_RE = /<image\d+>|<(?:Picture|Video|Audio) \d+>/g;
+
+/**
+ * Rewrite the reference tokens in `text` after the inputs were reordered or removed, so every token keeps pointing
+ * at the same file. Tokens of removed files are left as written (validation flags them).
+ */
+export function remapTokens(text: string, id: IntentId, before: string[], after: string[]): string {
+  if (!text) return text;
+  const was = referenceTokens(id, before, true);
+  const now = referenceTokens(id, after, true);
+  const map: Record<string, string> = {};
+  Object.keys(was).forEach((p) => {
+    if (was[p] && now[p]) map[was[p]] = now[p];
+  });
+  return text.replace(TOKEN_RE, (t) => map[t] || t);
+}
+
+export interface TokenIssues {
+  /** Tokens in the prompt that match no input. */
+  unknown: string[];
+  /** Tokens of inputs the prompt never mentions. */
+  unused: string[];
+}
+
+/** Compare the tokens a prompt uses with the ones its inputs have. */
+export function tokenIssues(prompt: string, tokens: string[]): TokenIssues {
+  const used = new Set(prompt.match(TOKEN_RE) || []);
+  const known = new Set(tokens.filter((t) => t.startsWith('<')));
+  return {
+    unknown: Array.from(used).filter((t) => !known.has(t)),
+    unused: Array.from(known).filter((t) => !used.has(t)),
+  };
 }
 
 export const QUALITY_STEPS: Record<EngineId, Record<Quality, number>> = {
@@ -394,15 +466,18 @@ export function buildJobs(
   const jobs: JobRequest[] = [];
 
   if (def.engine === 'retouch') {
-    const prompt = s.prompt.trim();
-    if ((id === 'edit' || id === 'combine') && !prompt)
-      return { jobs: [], error: 'Describe what should change' };
+    const manual = s.manualPrompt !== null ? s.manualPrompt.trim() : null;
+    const prompt = manual ?? s.prompt.trim();
+    if (manual === '') return { jobs: [], error: 'Write the prompt, or reset it to the generated one' };
+    if (id === 'edit' && !prompt) return { jobs: [], error: 'Describe what should change' };
     // Stills, or the single video (a frame is sampled from it).
     const targets = inputs.images.length > 0 ? inputs.images : inputs.videos.slice(0, 1);
+    const shared = usesReferences(id, inputs);
     seedList.forEach((seed) => {
       const f: Record<string, string> = {};
+      // A manual prompt replaces the preset's text; the preset still sets the size and reference handling.
       put(f, 'preset', retouchPreset(id, s));
-      if (id === 'edit' || id === 'combine') put(f, 'prompt', prompt);
+      if (id === 'edit' || manual !== null) put(f, 'prompt', prompt);
       else put(f, 'append', s.append.trim());
       if (id !== 'wallpaper') {
         if (s.sizeMode === 'scale' && s.scale > 0 && s.scale !== 1) put(f, 'scale', s.scale);
@@ -410,19 +485,24 @@ export function buildJobs(
       }
       put(f, 'steps', steps);
       put(f, 'seed', seed);
-      if (id === 'combine') put(f, 'combine', true);
+      // One run: targets[0] is <image1>, the others ride along as <image2>… (loki-retouch --ref).
+      if (shared) put(f, 'combine', true);
       if (ctx.videoTime && inputs.images.length === 0) put(f, 'time', ctx.videoTime.toFixed(3));
       jobs.push({
         input: `retouch ${q(targets)}`,
         fields: f,
-        label: `${def.title} · ${targets.length} ${targets.length === 1 ? 'item' : 'items'}`,
+        label: shared
+          ? `${def.title} · ${targets.length} images as references`
+          : `${def.title} · ${targets.length} ${targets.length === 1 ? 'item' : 'items'}`,
       });
     });
     return { jobs };
   }
 
   // reshoot
-  if (id === 'direct' && !s.prompt.trim())
+  const manual = s.manualPrompt !== null ? s.manualPrompt.trim() : null;
+  if (manual === '') return { jobs: [], error: 'Write the prompt, or reset it to the generated one' };
+  if (id === 'direct' && !(manual ?? s.prompt.trim()))
     return { jobs: [], error: 'Describe the scene' };
   const common = (f: Record<string, string>, seed: number) => {
     put(f, 'duration', Math.min(MAX_DURATION, Math.max(MIN_DURATION, s.duration)));
@@ -436,10 +516,15 @@ export function buildJobs(
     inputs.images.slice(0, 12).forEach((img) => {
       seedList.forEach((seed) => {
         const f: Record<string, string> = {};
-        put(f, 'animate', true);
-        put(f, 'describe', s.describe.trim());
-        put(f, 'shake', s.shake);
-        put(f, 'prompt', s.prompt.trim());
+        if (manual !== null) {
+          // The whole prompt is hand-written: no living-photo expansion, the photo is a plain <Picture 1>.
+          put(f, 'prompt', manual);
+        } else {
+          put(f, 'animate', true);
+          put(f, 'describe', s.describe.trim());
+          put(f, 'shake', s.shake);
+          put(f, 'prompt', s.prompt.trim());
+        }
         common(f, seed);
         jobs.push({ input: `reshoot ${q([img])}`, fields: f, label: `Bring to life · ${img.split(/[\\/]/).pop()}` });
       });
@@ -449,7 +534,7 @@ export function buildJobs(
   const all = [...inputs.images, ...inputs.videos, ...inputs.audios];
   seedList.forEach((seed) => {
     const f: Record<string, string> = {};
-    put(f, 'prompt', s.prompt.trim());
+    put(f, 'prompt', manual ?? s.prompt.trim());
     common(f, seed);
     jobs.push({ input: `reshoot ${q(all)}`, fields: f, label: `Direct · ${all.length} references` });
   });
@@ -501,7 +586,7 @@ export function planFor(
   const variations = Math.min(MAX_VARIATIONS, Math.max(1, Math.round(s.variations)));
   const outputs =
     def.engine === 'retouch'
-      ? (id === 'combine' ? 1 : Math.max(1, inputs.images.length || 1)) * variations
+      ? (usesReferences(id, inputs) ? 1 : Math.max(1, inputs.images.length || 1)) * variations
       : jobCount;
   if (def.engine === 'reshoot') {
     const canvas = source ? nativeCanvas(source.width, source.height) : undefined;

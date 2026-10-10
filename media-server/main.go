@@ -2534,6 +2534,7 @@ func main() {
 	mux.HandleFunc("/stream", streamHandler())
 	mux.HandleFunc("/health", healthHandler(deps))
 	mux.HandleFunc("/create", renderer.ApplyMiddlewares(createJobHandler(deps), renderer.RoleAdmin))
+	mux.HandleFunc("/api/transform/prompt", renderer.ApplyMiddlewares(transformPromptHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media", renderer.ApplyMiddlewares(mediaHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/api", renderer.ApplyMiddlewares(mediaAPIHandler(deps), renderer.RoleAdmin))
 	mux.HandleFunc("/media/file", renderer.ApplyMiddlewares(mediaFileHandler(deps), renderer.RolePublicRead))

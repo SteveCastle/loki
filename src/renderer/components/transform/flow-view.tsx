@@ -12,7 +12,11 @@ import {
   mediaKind,
   parseSize,
   planFor,
+  promptIsVerbatim,
+  referenceTokens,
   retouchPreset,
+  tokenIssues,
+  usesReferences,
   type IntentId,
   type Quality,
   type Shake,
@@ -184,27 +188,103 @@ export function insertToken(text: string, token: string, start: number, end: num
   return { text: out, caret: before.length + lead.length + token.length + trail.length };
 }
 
-/** Role tags the model sees: <image1>… for retouch, <Picture 1>/<Video 1>/<Audio 1> for reshoot. */
-export function roleLabels(intent: IntentId | null, paths: string[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!intent) return out;
-  const inputs = classify(paths);
-  if (intentById(intent).engine === 'retouch') {
-    (inputs.images.length ? inputs.images : inputs.videos.slice(0, 1)).forEach((p, i) => {
-      out[p] = intent === 'combine' ? `<image${i + 1}>` : '';
-    });
-    return out;
-  }
-  inputs.images.forEach((p, i) => {
-    out[p] = intent === 'alive' ? 'photo' : `<Picture ${i + 1}>`;
-  });
-  inputs.videos.forEach((p, i) => {
-    out[p] = `<Video ${i + 1}>`;
-  });
-  inputs.audios.forEach((p, i) => {
-    out[p] = `<Audio ${i + 1}>`;
+/** A prompt textarea's "insert this token at the caret" action (keeps focus and puts the caret after it). */
+function useTokenInsert(ref: React.RefObject<HTMLTextAreaElement>, value: string, setValue: (v: string) => void) {
+  return (token: string) => {
+    const ta = ref.current;
+    const at = ta && document.activeElement === ta ? [ta.selectionStart, ta.selectionEnd] : [value.length, value.length];
+    const r = insertToken(value, token, at[0] ?? value.length, at[1] ?? value.length);
+    setValue(r.text);
+    window.setTimeout(() => {
+      ta?.focus();
+      ta?.setSelectionRange(r.caret, r.caret);
+    }, 0);
+  };
+}
+
+export interface RefItem {
+  token: string;
+  path: string;
+}
+
+/** The reference tokens of a prompt as chips (thumbnail · token · file name); clicking one inserts its token. */
+function ReferenceChips({
+  refs,
+  thumbUrl,
+  onPick,
+  onMakeFirst,
+}: {
+  refs: RefItem[];
+  thumbUrl: (p: string) => string;
+  onPick?: (token: string) => void;
+  /** Offered on every chip but the first: make that file <image1>. */
+  onMakeFirst?: (path: string) => void;
+}) {
+  return (
+    <div className="ts-refs">
+      {refs.map((r, i) => {
+        const kind = mediaKind(r.path);
+        return (
+          <div key={`${r.token}|${r.path}`} className="ts-ref">
+            <button
+              type="button"
+              className="ts-ref-token"
+              disabled={!onPick}
+              onClick={() => onPick?.(r.token)}
+              title={onPick ? `Insert ${r.token} (${baseName(r.path)}) into the prompt` : `${r.token} is ${baseName(r.path)}`}
+            >
+              <span className="ts-ref-thumb">
+                {kind === 'image' && <img src={thumbUrl(r.path)} alt="" draggable={false} />}
+                {kind === 'video' && <video src={`${thumbUrl(r.path)}#t=0.1`} preload="metadata" muted playsInline />}
+                {kind === 'audio' && <GlyphMusic />}
+              </span>
+              <code>{r.token}</code>
+              <span className="ts-ref-name">{baseName(r.path)}</span>
+            </button>
+            {onMakeFirst && i > 0 ? (
+              <button type="button" className="ts-ref-main" onClick={() => onMakeFirst(r.path)} title={`Edit ${baseName(r.path)} instead (it becomes ${refs[0].token}; the prompt's tokens follow their files)`}>
+                make {refs[0].token}
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Token chips for the selection (deduplicated: a per-image batch shows its one <image1>). */
+function refItems(intent: IntentId, paths: string[], manual: boolean): RefItem[] {
+  const tokens = referenceTokens(intent, paths, manual);
+  const seen = new Set<string>();
+  const out: RefItem[] = [];
+  Object.keys(tokens).forEach((p) => {
+    const t = tokens[p];
+    if (!t.startsWith('<') || seen.has(t)) return;
+    seen.add(t);
+    out.push({ token: t, path: p });
   });
   return out;
+}
+
+/** Warnings about the tokens a prompt uses (unknown = blocks the run, unused = a hint). */
+function TokenWarnings({ prompt, refs, shared }: { prompt: string; refs: RefItem[]; shared: boolean }) {
+  const issues = tokenIssues(prompt, refs.map((r) => r.token));
+  return (
+    <>
+      {issues.unknown.length > 0 && (
+        <p className="ts-note warn">
+          {issues.unknown.join(', ')} {issues.unknown.length > 1 ? 'match' : 'matches'} none of the selected files.
+        </p>
+      )}
+      {shared && prompt.trim() && issues.unused.length > 0 && (
+        <p className="ts-note">
+          The prompt doesn’t mention {issues.unused.join(', ')} yet. The model still sees {issues.unused.length > 1 ? 'them' : 'it'}, but naming each reference
+          says what to take from it.
+        </p>
+      )}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +309,28 @@ export interface FlowViewProps {
   onRun: () => void;
   onClose: () => void;
   onRemovePath: (p: string) => void;
+  /** Make this file the first input (<image1>, the one an edit changes). */
+  onMakeFirst?: (p: string) => void;
   onAgain: () => void;
+  /** The engine-expanded prompt, fetched for the review step. */
+  preview?: PromptPreviewState;
+}
+
+/** POST /api/transform/prompt's answer (media-server/tasks/prompt_preview.go). */
+export interface PromptPreviewData {
+  engine: string;
+  prompt: string;
+  modelInput?: string;
+  references: Array<RefItem & { kind: string }>;
+  runs: number;
+  fromEngine: boolean;
+  note?: string;
+}
+
+export interface PromptPreviewState {
+  status: 'idle' | 'loading' | 'ok' | 'error';
+  data?: PromptPreviewData;
+  error?: string;
 }
 
 const PHASES: Array<{ id: FlowPhase; label: string }> = [
@@ -254,7 +355,7 @@ export function TransformFlowView(props: FlowViewProps) {
 
   const phaseIndex = PHASES.findIndex((p) => p.id === phase);
   const canGoShape = !!intent;
-  const canGoReview = !!intent && validateForRun(intent, props.settings, paths) === null;
+  const canGoReview = !!intent && validateShape(intent, props.settings, paths) === null;
 
   return (
     <div className="ts-backdrop" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
@@ -344,7 +445,9 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
                   </span>
                   <span className="ts-card-text">
                     <strong>{i.title}</strong>
-                    <small>{a.ok ? i.tagline : a.reason}</small>
+                    <small>
+                      {!a.ok ? a.reason : usesReferences(i.id, inputs) ? `Uses all ${inputs.images.length} images as references` : i.tagline}
+                    </small>
                   </span>
                 </button>
               );
@@ -384,9 +487,13 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const plan = planFor(def.id, s, paths, source);
   const eta = estimateSeconds(plan);
   const isRetouch = def.engine === 'retouch';
-  const roles = roleLabels(def.id, paths);
+  const manual = s.manualPrompt !== null;
+  const roles = referenceTokens(def.id, paths, manual);
   const shown = Object.keys(roles).length ? Object.keys(roles) : paths;
   const stills = inputs.images.length;
+  const shared = usesReferences(def.id, inputs);
+  const refs = refItems(def.id, paths, manual);
+  const examples = shared && def.referenceExamples ? def.referenceExamples : def.examples;
   const sizeOptions: Array<SegOption<string>> = [
     ...(def.id === 'upscale' ? [] : [{ value: 'same', label: 'Same' }]),
     ...SCALE_OPTIONS.map((o) => ({ value: String(o.value), label: o.label })),
@@ -397,16 +504,9 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   // it would blank the field under the user's fingers.
   const [customW = '', customH = ''] = (s.customSize || '').split('x');
   const promptField: 'prompt' | null = def.needsText === 'prompt' ? 'prompt' : null;
+  const insertPromptToken = useTokenInsert(textRef, s.prompt, (v) => onSettings({ prompt: v }));
   const pickToken = (token: string) => {
-    if (!promptField) return;
-    const ta = textRef.current;
-    const at = ta && document.activeElement === ta ? [ta.selectionStart, ta.selectionEnd] : [s.prompt.length, s.prompt.length];
-    const r = insertToken(s.prompt, token, at[0] ?? s.prompt.length, at[1] ?? s.prompt.length);
-    onSettings({ prompt: r.text });
-    window.setTimeout(() => {
-      ta?.focus();
-      ta?.setSelectionRange(r.caret, r.caret);
-    }, 0);
+    if (promptField) insertPromptToken(token);
   };
 
   return (
@@ -423,13 +523,16 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
         </div>
 
         {def.needsText === 'prompt' && (
-          <Field label={def.id === 'direct' ? 'Describe the scene' : def.id === 'combine' ? 'How should they combine?' : 'What should change?'} hint="Enter ▸ review">
+          <Field
+            label={def.id === 'direct' ? 'Describe the scene' : shared ? `What should change? Refer to the ${stills} images by their tokens` : 'What should change?'}
+            hint="sent as written · Enter ▸ review"
+          >
             <textarea
               ref={textRef}
               className="ts-text"
               rows={3}
               value={s.prompt}
-              placeholder={def.examples[0]}
+              placeholder={examples[0]}
               onChange={(e) => onSettings({ prompt: e.target.value })}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || !e.shiftKey)) {
@@ -439,7 +542,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
               }}
             />
             <div className="ts-chips">
-              {def.examples.slice(0, 3).map((ex) => (
+              {examples.slice(0, 3).map((ex) => (
                 <button key={ex} type="button" className="ts-chip ts-chip-idea" title={ex} onClick={() => onSettings({ prompt: ex })}>
                   {ex.length > 46 ? `${ex.slice(0, 44)}…` : ex}
                 </button>
@@ -451,12 +554,32 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                   </button>
                 ))}
             </div>
-            {def.id === 'direct' && (
-              <p className="ts-note">
-                Refer to references with <code>&lt;Picture 1&gt;</code>, <code>&lt;Video 1&gt;</code>, <code>&lt;Audio 1&gt;</code>; say which one drives what.
-              </p>
+            {refs.length > 0 && (
+              <div className="ts-refblock">
+                <div className="ts-refblock-head">
+                  {refs.length > 1 ? 'What the model calls each reference' : 'What the model calls the image'} · click a token to insert it
+                </div>
+                <ReferenceChips refs={refs} thumbUrl={props.thumbUrl} onPick={pickToken} onMakeFirst={shared ? props.onMakeFirst : undefined} />
+                {shared && (
+                  <p className="ts-note">
+                    <code>&lt;image1&gt;</code> is the image being edited (the result keeps its size); the others are references the model can take
+                    people, objects or style from.
+                  </p>
+                )}
+                {def.id === 'direct' && <p className="ts-note">Say which reference drives what: who appears, whose motion, which music.</p>}
+                <TokenWarnings prompt={s.prompt} refs={refs} shared={shared || def.id === 'direct'} />
+              </div>
             )}
           </Field>
+        )}
+
+        {manual && (
+          <p className="ts-note warn ts-manual-note">
+            The full prompt is hand-written (in Review), so it replaces what these settings would generate.{' '}
+            <button type="button" className="ts-linkbtn" onClick={() => onSettings({ manualPrompt: null })}>
+              Discard it
+            </button>
+          </p>
         )}
 
         {def.needsText === 'describe' && (
@@ -602,7 +725,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
         </button>
         {more && (
           <div className="ts-more">
-            {isRetouch && def.id !== 'edit' && def.id !== 'combine' && (
+            {isRetouch && def.id !== 'edit' && (
               <Field label="Extra direction" hint="appended to the built-in prompt">
                 <textarea className="ts-text" rows={2} value={s.append} placeholder="e.g. keep the film grain" onChange={(e) => onSettings({ append: e.target.value })} />
               </Field>
@@ -632,8 +755,8 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 )}
               </>
             )}
-            {isRetouch && stills > 1 && def.id !== 'combine' && (
-              <p className="ts-note">{stills} images → {stills} separate results (use “Combine” to merge them into one).</p>
+            {isRetouch && stills > 1 && !shared && (
+              <p className="ts-note">{stills} images → {stills} separate results, each processed on its own with these settings.</p>
             )}
           </div>
         )}
@@ -678,7 +801,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
 }
 
 function ShapeFooter(props: FlowViewProps) {
-  const err = props.intent ? validateForRun(props.intent, props.settings, props.paths) : 'Pick something to do';
+  const err = props.intent ? validateShape(props.intent, props.settings, props.paths) : 'Pick something to do';
   return (
     <div className="ts-footer">
       <button type="button" className="ts-btn ghost" onClick={() => props.onPhase('choose')}>
@@ -694,19 +817,124 @@ function ShapeFooter(props: FlowViewProps) {
 
 // ---- Phase 3: review -------------------------------------------------------
 
+/**
+ * "Prompt sent to the model": the engine's own expansion of the prompt (presets, living photo, --append), the
+ * reference tokens it can use, and a full manual override. Edit and Direct prompts are already sent verbatim, so
+ * editing them edits the prompt itself; anything else switches to a hand-written manualPrompt.
+ */
+function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
+  const { def, settings: s, onSettings, paths, preview } = props;
+  const verbatim = promptIsVerbatim(def.id);
+  const manual = s.manualPrompt !== null;
+  const [editingVerbatim, setEditingVerbatim] = useState(false);
+  const [raw, setRaw] = useState(false);
+  const editing = manual || editingVerbatim;
+  const textRef = useRef<HTMLTextAreaElement>(null);
+  const value = manual ? (s.manualPrompt as string) : s.prompt;
+  const setValue = (v: string) => onSettings(manual ? { manualPrompt: v } : { prompt: v });
+  const insert = useTokenInsert(textRef, value, setValue);
+
+  const data = preview?.status === 'ok' ? preview.data : undefined;
+  const engine = def.engine === 'retouch' ? 'loki-retouch' : 'loki-reshoot';
+  const local = refItems(def.id, paths, true);
+  // The engine's list when we have it (it is what the run will use); with a manual prompt the photo of Bring to
+  // life is a plain <Picture 1> either way.
+  const refs: RefItem[] = data && data.references.length ? data.references.map((r) => ({ token: r.token, path: r.path })) : local;
+  const shared = usesReferences(def.id, classify(paths)) || def.id === 'direct';
+
+  const preset = def.engine === 'retouch' ? retouchPreset(def.id, s) : '';
+  let shownText = '';
+  if (data?.prompt) shownText = data.prompt;
+  else if (verbatim) shownText = s.prompt.trim();
+  else if (preview?.status === 'loading') shownText = '';
+  else shownText = preset ? `(the built-in “${preset}” prompt${s.append.trim() ? `, then: ${s.append.trim()}` : ''})` : def.id === 'alive' ? '(the living-photo prompt)' : '';
+
+  const startEdit = () => {
+    if (verbatim) setEditingVerbatim(true);
+    else onSettings({ manualPrompt: data?.prompt ?? '' });
+    window.setTimeout(() => textRef.current?.focus(), 0);
+  };
+
+  let source = '';
+  if (manual) source = 'written by you · replaces the generated prompt';
+  else if (verbatim) source = 'your words, sent as written';
+  else if (data?.fromEngine) source = `as ${engine} expands it`;
+
+  return (
+    <section className="ts-prompt" aria-label="Prompt sent to the model">
+      <div className="ts-prompt-head">
+        <span className="ts-field-label">Prompt sent to the model</span>
+        {source ? <span className="ts-field-hint">{source}</span> : null}
+        <span className="ts-prompt-actions">
+          {!editing && (
+            <button type="button" className="ts-chip" onClick={startEdit} disabled={preview?.status === 'loading' && !verbatim}>
+              Edit full prompt
+            </button>
+          )}
+          {editingVerbatim && (
+            <button type="button" className="ts-chip" onClick={() => setEditingVerbatim(false)}>
+              Done
+            </button>
+          )}
+          {manual && (
+            <button type="button" className="ts-chip" onClick={() => onSettings({ manualPrompt: null })}>
+              Reset to generated
+            </button>
+          )}
+          {!editing && data?.modelInput ? (
+            <button type="button" className="ts-chip" aria-pressed={raw} onClick={() => setRaw((r) => !r)}>
+              {raw ? 'Hide raw model input' : 'Raw model input'}
+            </button>
+          ) : null}
+        </span>
+      </div>
+
+      {refs.length > 0 && (
+        <>
+          <ReferenceChips refs={refs} thumbUrl={props.thumbUrl} onPick={editing ? insert : undefined} />
+          {editing ? <p className="ts-note">Click a token to insert it at the cursor.</p> : null}
+        </>
+      )}
+
+      {editing ? (
+        <textarea
+          ref={textRef}
+          className="ts-text ts-prompt-edit"
+          rows={manual ? 12 : 5}
+          value={value}
+          placeholder="Write the whole prompt, using the tokens above for the references"
+          onChange={(e) => setValue(e.target.value)}
+          aria-label="Full prompt"
+        />
+      ) : raw && data?.modelInput ? (
+        <pre className="ts-prompt-text raw">{data.modelInput}</pre>
+      ) : (
+        <pre className="ts-prompt-text">{preview?.status === 'loading' && !shownText ? `Asking ${engine}…` : shownText}</pre>
+      )}
+
+      {editing && <TokenWarnings prompt={value} refs={refs} shared={shared || manual} />}
+      {manual && def.id === 'alive' ? (
+        <p className="ts-note">Runs without the living-photo expansion: the subject and camera settings no longer apply; the photo is <code>&lt;Picture 1&gt;</code>.</p>
+      ) : null}
+      {manual && def.engine === 'retouch' && preset ? (
+        <p className="ts-note">The “{preset}” preset still sets the output size; its built-in prompt and the extra direction are replaced.</p>
+      ) : null}
+      {data?.note ? <p className="ts-note">{data.note}</p> : null}
+      {preview?.status === 'error' ? <p className="ts-note warn">Could not ask {engine} for its prompt ({preview.error}); showing what is known here.</p> : null}
+    </section>
+  );
+}
+
 function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> }) {
   const { def, settings: s, paths, source, status } = props;
   const plan = planFor(def.id, s, paths, source);
   const eta = estimateSeconds(plan);
-  const roles = roleLabels(def.id, paths);
+  const manual = s.manualPrompt !== null;
+  const roles = referenceTokens(def.id, paths, manual);
   const shown = Object.keys(roles).length ? Object.keys(roles) : paths;
-  const preset = def.engine === 'retouch' ? retouchPreset(def.id, s) : '';
-  const instruction =
-    def.id === 'alive'
-      ? s.describe.trim() || '(no description — add one to help keep identity)'
-      : s.prompt.trim() || (preset ? `Built-in “${preset}” prompt${s.append.trim() ? ` + “${s.append.trim()}”` : ''}` : '');
   const total = eta * plan.outputs;
   const busy = status === 'submitting';
+  const problem = validateForRun(def.id, s, paths);
   return (
     <div className="ts-review">
       <div className="ts-review-main">
@@ -719,12 +947,17 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
               {def.title}
               {plan.outputs > 1 ? ` × ${plan.outputs}` : ''}
             </h2>
-            <p>{def.tagline}</p>
+            <p>{usesReferences(def.id, classify(paths)) ? `One result from ${classify(paths).images.length} images` : def.tagline}</p>
           </div>
         </div>
+        <PromptPanel {...props} />
         <dl className="ts-summary">
-          <dt>{def.id === 'alive' ? 'Subject' : 'Instruction'}</dt>
-          <dd className="ts-quote">{instruction}</dd>
+          {def.id === 'alive' && !manual ? (
+            <>
+              <dt>Subject</dt>
+              <dd className="ts-quote">{s.describe.trim() || '(no description — add one to help keep identity)'}</dd>
+            </>
+          ) : null}
           <dt>Result</dt>
           <dd>
             <strong>{plan.outputName}</strong>
@@ -736,7 +969,7 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
           <dd>
             {s.quality} quality ({plan.steps} steps) · {s.seedMode === 'fixed' ? `seed ${s.seed}` : 'random seed'}
             {s.variations > 1 ? ` · ${s.variations} variations` : ''}
-            {def.id === 'alive' ? ` · camera ${s.shake === 'none' ? 'locked' : s.shake}` : ''}
+            {def.id === 'alive' && !manual ? ` · camera ${s.shake === 'none' ? 'locked' : s.shake}` : ''}
           </dd>
           <dt>Time</dt>
           <dd>
@@ -760,10 +993,11 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
           <button type="button" className="ts-btn ghost" onClick={() => props.onPhase('shape')} disabled={busy}>
             ← Adjust
           </button>
-          <button type="button" className="ts-btn primary big" onClick={props.onRun} disabled={busy} autoFocus>
+          <button type="button" className="ts-btn primary big" onClick={props.onRun} disabled={busy || !!problem} title={problem || undefined} autoFocus>
             {busy ? 'Queuing…' : `Queue ${plan.jobCount > 1 ? `${plan.jobCount} jobs` : 'it'}`}
             <kbd>Ctrl ⏎</kbd>
           </button>
+          {problem ? <span className="ts-footer-note">{problem}</span> : null}
         </div>
       </aside>
     </div>
@@ -797,11 +1031,37 @@ function DoneView(props: FlowViewProps) {
 // Validation
 // ---------------------------------------------------------------------------
 
-export function validateForRun(id: IntentId, s: TransformSettings, paths: string[]): string | null {
+/** A token in the prompt that names none of the inputs (the model would see the bare text). */
+function unknownTokenProblem(prompt: string, id: IntentId, paths: string[], manual: boolean): string | null {
+  const tokens = Object.values(referenceTokens(id, paths, manual));
+  const { unknown } = tokenIssues(prompt, tokens);
+  if (unknown.length === 0) return null;
+  return `${unknown.join(', ')} ${unknown.length > 1 ? 'match' : 'matches'} none of the selected files`;
+}
+
+/** Whether the Shape step is complete (what Review needs before it opens). */
+export function validateShape(id: IntentId, s: TransformSettings, paths: string[]): string | null {
   const a = availability(id, classify(paths));
   if (!a.ok) return a.reason || 'Not available for this selection';
   const def = intentById(id);
-  if (def.needsText === 'prompt' && !s.prompt.trim()) return def.id === 'direct' ? 'Describe the scene to continue' : def.id === 'combine' ? 'Describe how to combine them' : 'Describe what should change';
+  if (s.manualPrompt === null) {
+    if (def.needsText === 'prompt' && !s.prompt.trim()) return def.id === 'direct' ? 'Describe the scene to continue' : 'Describe what should change';
+    if (promptIsVerbatim(id)) {
+      const bad = unknownTokenProblem(s.prompt, id, paths, false);
+      if (bad) return bad;
+    }
+  }
   if (s.sizeMode === 'custom' && def.engine === 'retouch' && def.id !== 'wallpaper' && !parseSize(s.customSize)) return 'Enter a width and height';
+  return null;
+}
+
+/** Everything a run needs: the Shape checks plus the review step's hand-written prompt, if any. */
+export function validateForRun(id: IntentId, s: TransformSettings, paths: string[]): string | null {
+  const shape = validateShape(id, s, paths);
+  if (shape) return shape;
+  if (s.manualPrompt !== null) {
+    if (!s.manualPrompt.trim()) return 'Write the prompt, or reset it to the generated one';
+    return unknownTokenProblem(s.manualPrompt, id, paths, true);
+  }
   return null;
 }

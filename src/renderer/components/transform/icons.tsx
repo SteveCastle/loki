@@ -33,12 +33,6 @@ const P: Record<IntentId, React.ReactNode> = {
       <path d="M4 20h5" />
     </>
   ),
-  combine: (
-    <>
-      <rect x="3" y="7" width="12" height="12" rx="2" />
-      <path d="M9 7V5a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2h-2" />
-    </>
-  ),
   alive: (
     <>
       <circle cx="12" cy="12" r="9" />

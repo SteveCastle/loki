@@ -9,7 +9,7 @@ if (typeof (AbortSignal as any).timeout !== 'function') {
 import TransformSection from '../renderer/components/transform/transform-section';
 import { TransformFlowView } from '../renderer/components/transform/flow-view';
 import { getFlowRequest, closeTransformFlow } from '../renderer/components/transform/store';
-import { settingsFor, type TransformSettings } from '../renderer/components/transform/intents';
+import { settingsFor, type IntentId, type TransformSettings } from '../renderer/components/transform/intents';
 import { insertToken } from '../renderer/components/transform/flow-view';
 
 const IMG = 'C:/media/photo.jpg';
@@ -125,11 +125,11 @@ describe('TransformFlowView', () => {
   });
 
   it('choose: unavailable intents are disabled with a reason; picking one reports it', () => {
-    const props = baseProps();
+    const props = baseProps({ paths: [IMG2] });
     render(<TransformFlowView {...props} />);
-    const combine = screen.getByText('Combine').closest('button') as HTMLButtonElement;
-    expect(combine.disabled).toBe(true);
-    expect(screen.getByText('Select 2 or more images')).toBeTruthy();
+    const direct = screen.getByText('Bring to life').closest('button') as HTMLButtonElement;
+    expect(direct.disabled).toBe(false);
+    expect(screen.queryByText('Combine')).toBeNull();
     fireEvent.click(screen.getByText('Upscale').closest('button') as HTMLButtonElement);
     expect(props.onIntent).toHaveBeenCalledWith('upscale');
   });
@@ -183,7 +183,7 @@ describe('TransformFlowView', () => {
     });
     render(<TransformFlowView {...props} />);
     expect(screen.getByText(/2 GPU jobs already queued ahead/)).toBeTruthy();
-    expect(screen.getByText(/Built-in “upscale” prompt/)).toBeTruthy();
+    expect(screen.getByText(/built-in “upscale” prompt/)).toBeTruthy();
     expect(screen.getByText(/photo_up\.png/)).toBeTruthy();
     fireEvent.click(screen.getByText(/Queue it/).closest('button') as HTMLButtonElement);
     expect(props.onRun).toHaveBeenCalled();
@@ -263,7 +263,7 @@ describe('TransformFlowView: typing and prompt tokens', () => {
   });
 
   it('clicking a reference thumbnail puts its tag into the prompt, spaced from the words around it', () => {
-    render(<Harness intent="combine" paths={[IMG, IMG2]} initial={{ prompt: 'put the jacket of' }} />);
+    render(<Harness intent="edit" paths={[IMG, IMG2]} initial={{ prompt: 'put the jacket of' }} />);
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
     expect(ta.value).toBe('put the jacket of');
     fireEvent.click(screen.getByTitle(/click to put <image2> in the prompt/));
@@ -276,5 +276,114 @@ describe('TransformFlowView: typing and prompt tokens', () => {
     expect(insertToken('', '<Picture 1>', 0, 0)).toEqual({ text: '<Picture 1> ', caret: 12 });
     expect(insertToken('a b', '<Video 1>', 1, 1).text).toBe('a <Video 1> b');
     expect(insertToken('make X glow', '<Picture 2>', 5, 6).text).toBe('make <Picture 2> glow');
+  });
+});
+
+describe('TransformFlowView: references and the full prompt', () => {
+  const noop = jest.fn();
+  function Harness({
+    intent,
+    paths,
+    phase = 'shape',
+    initial,
+    preview,
+    onMakeFirst,
+  }: {
+    intent: IntentId;
+    paths: string[];
+    phase?: 'shape' | 'review';
+    initial: Partial<TransformSettings>;
+    preview?: React.ComponentProps<typeof TransformFlowView>['preview'];
+    onMakeFirst?: (p: string) => void;
+  }) {
+    const [settings, setSettings] = React.useState({ ...settingsFor(intent), ...initial });
+    return (
+      <>
+        <TransformFlowView
+          paths={paths}
+          intent={intent}
+          phase={phase}
+          settings={settings}
+          source={{ width: 1000, height: 500 }}
+          queueAhead={0}
+          status="idle"
+          thumbUrl={(p: string) => p}
+          onSettings={(patch: Partial<TransformSettings>) => setSettings((cur) => ({ ...cur, ...patch }))}
+          onIntent={noop}
+          onPhase={noop}
+          onRun={noop}
+          onClose={noop}
+          onRemovePath={noop}
+          onMakeFirst={onMakeFirst}
+          onAgain={noop}
+          preview={preview}
+        />
+        <output data-testid="manual">{settings.manualPrompt === null ? '<null>' : settings.manualPrompt}</output>
+      </>
+    );
+  }
+
+  it('shape (edit, 2 images): token chips name each image and insert their token; the second can become <image1>', () => {
+    const onMakeFirst = jest.fn();
+    render(<Harness intent="edit" paths={[IMG, IMG2]} initial={{ prompt: 'use the sky of' }} onMakeFirst={onMakeFirst} />);
+    expect(screen.getByText(/Refer to the 2 images by their tokens/)).toBeTruthy();
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
+    fireEvent.click(screen.getByTitle('Insert <image2> (other.png) into the prompt'));
+    expect(ta.value).toBe('use the sky of <image2> ');
+    expect(screen.getByText(/is the image being edited/)).toBeTruthy();
+    fireEvent.click(screen.getByText('make <image1>'));
+    expect(onMakeFirst).toHaveBeenCalledWith(IMG2);
+  });
+
+  it('shape: a token that names no selected file blocks the review', () => {
+    render(<Harness intent="edit" paths={[IMG, IMG2]} initial={{ prompt: 'put <image3> on <image1>' }} />);
+    expect(screen.getAllByText(/<image3> matches none of the selected files/).length).toBeGreaterThan(0);
+    expect((screen.getByText(/Review →/).closest('button') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  const upscalePreview = {
+    status: 'ok' as const,
+    data: {
+      engine: 'loki-retouch',
+      prompt: 'Enlarge <image1> faithfully.',
+      modelInput: '<|im_start|>system\n...<image1><|vision_start|><|image_pad|><|vision_end|>Enlarge <image1> faithfully.',
+      references: [{ token: '<image1>', path: IMG, kind: 'image' }],
+      runs: 1,
+      fromEngine: true,
+    },
+  };
+
+  it('review: shows the prompt the engine expands, and the raw model input on request', () => {
+    render(<Harness intent="upscale" phase="review" paths={[IMG]} initial={{}} preview={upscalePreview} />);
+    expect(screen.getByText('Enlarge <image1> faithfully.')).toBeTruthy();
+    expect(screen.getByText(/as loki-retouch expands it/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Raw model input'));
+    expect(screen.getByText(/<\|vision_start\|>/)).toBeTruthy();
+  });
+
+  it('review: "Edit full prompt" starts from the expanded prompt, tokens insert into it, reset discards it', () => {
+    render(<Harness intent="upscale" phase="review" paths={[IMG]} initial={{}} preview={upscalePreview} />);
+    fireEvent.click(screen.getByText('Edit full prompt'));
+    const ta = screen.getByLabelText('Full prompt') as HTMLTextAreaElement;
+    expect(ta.value).toBe('Enlarge <image1> faithfully.');
+    fireEvent.change(ta, { target: { value: 'Sharpen' } });
+    fireEvent.click(screen.getByTitle('Insert <image1> (photo.jpg) into the prompt'));
+    expect(screen.getByTestId('manual').textContent).toBe('Sharpen <image1> ');
+    fireEvent.change(ta, { target: { value: '' } });
+    expect((screen.getByText(/Queue it/).closest('button') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByText('Reset to generated'));
+    expect(screen.getByTestId('manual').textContent).toBe('<null>');
+    expect(screen.getByText('Enlarge <image1> faithfully.')).toBeTruthy();
+  });
+
+  it('review (edit): the prompt is verbatim, so editing it edits the prompt itself', () => {
+    render(<Harness intent="edit" phase="review" paths={[IMG]} initial={{ prompt: 'make it night' }} />);
+    expect(screen.getByText(/your words, sent as written/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Edit full prompt'));
+    const ta = screen.getByLabelText('Full prompt') as HTMLTextAreaElement;
+    expect(ta.value).toBe('make it night');
+    fireEvent.change(ta, { target: { value: 'make it dawn' } });
+    expect(ta.value).toBe('make it dawn');
+    expect(screen.getByTestId('manual').textContent).toBe('<null>');
   });
 });

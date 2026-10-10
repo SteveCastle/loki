@@ -200,6 +200,31 @@ func buildReshootArgs(p reshootParams, images, videos, audios []string, output, 
 	return args
 }
 
+// planReshootInputs resolves a job's paths plus the `refs` option into the
+// kept reference lists (missing, unsupported and over-the-limit files are
+// reported through logf and dropped). all is every existing file in input
+// order (the output is named after the first kept one). Shared by the task
+// and the prompt preview.
+func planReshootInputs(paths []string, p reshootParams, logf func(string)) (images, videos, audios, all []string) {
+	for _, f := range append(append([]string{}, paths...), p.Refs...) {
+		f = absPath(f)
+		if _, err := os.Stat(f); err != nil {
+			logf("skipping missing file " + f)
+			continue
+		}
+		all = append(all, f)
+	}
+	images, videos, audios, skipped := classifyReshootInputs(all)
+	for _, s := range skipped {
+		logf("skipping unsupported file " + filepath.Base(s))
+	}
+	images, videos, audios, dropped := capReshootInputs(images, videos, audios)
+	for _, d := range dropped {
+		logf(fmt.Sprintf("dropping %s (limit: %d images, %d videos, %d audio clips)", filepath.Base(d), reshootMaxImages, reshootMaxVideos, reshootMaxAudios))
+	}
+	return images, videos, audios, all
+}
+
 func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	const tag = "reshoot"
 	ctx := j.Ctx
@@ -230,23 +255,7 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 		q.PushJobStdout(j.ID, fmt.Sprintf("%s: query: %s", tag, res.Query))
 	}
 
-	var all []string
-	for _, f := range append(append([]string{}, res.Paths...), p.Refs...) {
-		f = absPath(f)
-		if _, err := os.Stat(f); err != nil {
-			q.PushJobStdout(j.ID, tag+": skipping missing file "+f)
-			continue
-		}
-		all = append(all, f)
-	}
-	images, videos, audios, skipped := classifyReshootInputs(all)
-	for _, s := range skipped {
-		q.PushJobStdout(j.ID, tag+": skipping unsupported file "+filepath.Base(s))
-	}
-	images, videos, audios, dropped := capReshootInputs(images, videos, audios)
-	for _, d := range dropped {
-		q.PushJobStdout(j.ID, fmt.Sprintf("%s: dropping %s (limit: %d images, %d videos, %d audio clips)", tag, filepath.Base(d), reshootMaxImages, reshootMaxVideos, reshootMaxAudios))
-	}
+	images, videos, audios, all := planReshootInputs(res.Paths, p, func(msg string) { q.PushJobStdout(j.ID, tag+": "+msg) })
 
 	if len(images)+len(videos)+len(audios) == 0 {
 		return fail("needs at least one reference image, video or audio file", nil)

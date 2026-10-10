@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,6 +56,20 @@ func fakeAIMain(argv []string) int {
 	if os.Getenv("FAKE_AI_FAIL") == "1" {
 		fmt.Fprintln(os.Stderr, "error: fake failure")
 		return 1
+	}
+	// --show-prompt: print the "expanded" prompt (the inline or file prompt,
+	// else a stand-in for a preset's) and exit, like the real CLIs.
+	if slices.Contains(args, "--show-prompt") {
+		prompt, ok := argValue(args, "--prompt")
+		if f, isFile := argValue(args, "--prompt-file"); isFile {
+			b, _ := os.ReadFile(f)
+			prompt, ok = string(b), true
+		}
+		if !ok {
+			prompt = "built-in prompt"
+		}
+		fmt.Println("EXPANDED " + prompt)
+		return 0
 	}
 	out, steps := "", 20
 	for i := 0; i < len(args); i++ {
