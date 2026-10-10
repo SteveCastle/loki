@@ -45,6 +45,7 @@ position. Both are called out where they appear.
 | `roto.js` | 250 | AI rotoscoping, auto engine: BiRefNet (dichotomous segmentation / matting) via onnxruntime-web, loaded from CDN on demand and cached. Stateless per call; the temporal story lives in app.js. |
 | `roto-sam.js` | 530 | AI rotoscoping, prompt engine: MobileSAM encoder/decoder + OWL-ViT text detection via onnxruntime-web / transformers.js, for cutting out a SPECIFIC object with clicks, strokes, or a text query. Same on-demand CDN + Cache API story. |
 | `splat.js` | 1.0k | Gaussian splat layers: `.ply` / `.splat` / `.spz` parsing, scene framing, and the WebGPU renderer (compute projection + SH colour, bitonic depth sort, indirect instanced draw, straight-alpha resolve). UI-free; app.js owns the clips and the camera UI. |
+| `motion-blur.js` | 250 | Per-layer motion blur: N sub-frame draws across the shutter, averaged in float, resolved to straight alpha. |
 | `server.js` | 130 | The Lowkey Media Server client: connection settings (URL + API key in localStorage), header-auth fetches, uploads with progress, job polling, file download. Used for work a tab can't do — splat training. |
 | `engine/` | 2.4k | **slangfx-web** — the WebGPU multi-pass shader engine. Vendored from the [slangfx](https://github.com/SteveCastle/slangfx) repo. |
 | `shaders/` | — | The bundled `.slangp` presets, one directory per effect. Also vendored. |
@@ -184,6 +185,23 @@ free-running playback or reverse seeks for the current leg. Reverse audio
 is silent in preview, as with reversed clips; the offline mix bakes one
 forward/backward audio cycle and repeats it. Clearing the loop removes
 both fields; applying a detected seamless loop removes `loopMode`.
+
+### Angles, resets, motion blur
+
+Rotation-like props (`cyclic: true` on the def: Rotation, a splat's Yaw/Roll,
+shader params whose name says angle/rotation/hue… and span ≥ 180) are
+unbounded degrees — 720 is two turns and keyframing 0 → 720 spins twice.
+Their inspector row (`angleSlider`) drives the value itself: 1°/px drags
+(Shift 0.1°) that wrap past ±180°, a thumb showing the angle within the turn
+and an `N×+D°` readout; `applyParamsFor` wraps (not clamps) angle shader
+params. ↺ in the inspector header / *Reset properties* in the clip menu
+(`resetClipProps`) returns every prop to its default (scale to the
+fit-to-frame size, a splat camera to its home view, effect params to the
+shader defaults) and drops keys and drivers, one undo step.
+`clip.motionBlur = {on, shutter, samples}` blurs a layer along its
+timeline motion (transform keys/drivers, a splat's camera): `prepareMotionBlur`
+runs after `renderSplats`, and `motionDraw` swaps the averaged picture in for
+the composite draw and the isolate (own-effects) input.
 
 ### Undo
 

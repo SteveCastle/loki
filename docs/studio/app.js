@@ -69,6 +69,7 @@ import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 import * as roto from './roto.js';
 import * as rotoSam from './roto-sam.js';
 import * as server from './server.js';
+import { MotionBlur, shutterTimes } from './motion-blur.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -279,6 +280,7 @@ async function boot() {
     throw e;
   }
   compositor = new Compositor(fx.device);
+  motionBlur = new MotionBlur(fx.device);
   // Media stacked above an adjustment layer is layered onto that layer's
   // output so only effects higher in the stack process it (see
   // compositeFrame). One clip contributes several engine layers, so this
@@ -433,6 +435,7 @@ function tick() {
   const activeAudio = activeClips(comp, t, 'audio');
   syncMedia(t, activeMedia, activeAudio);
   renderSplats(t, activeMedia);   // before anything samples a splat clip's texture
+  prepareMotionBlur(t, activeMedia.filter(({ track }) => !track.hidden));
   prepareMasks(t);       // media masks must compose before compositeFrame samples them
   prepareMediaFx(t, activeMedia.filter(({ track }) => !track.hidden));
   compositeFrame(t);
@@ -957,7 +960,7 @@ function compositeDrawForClip(clip, t) {
   const d = drawForClip(clip, t);
   if (!d) return null;
   const processed = mediaFxViews.get(clip.id);
-  if (!processed) return d;
+  if (!processed) return motionDraw(clip, d);
   return {
     ...d,
     clipId: `${clip.id}:fxout`,
@@ -1357,7 +1360,7 @@ function prepareMediaFx(t, activeMedia) {
     // ':iso' / ':matte' key their own compositor items so these draws
     // don't fight the clip's on-screen draw over one uniform buffer.
     const iso = {
-      ...d, opacity: 1, blend: 'normal',
+      ...motionDraw(clip, d), opacity: 1, blend: 'normal',
       maskView: null, covView: null,
     };
     compositor.composite(encoder, chain.inputView, comp.width, comp.height,
@@ -1396,7 +1399,14 @@ function applyParamsFor(engine, t, isMatte = false) {
       // tint, dim — anything purely colorimetric) are forced off so they
       // can't punch holes in the white coverage silhouette.
       if (isMatte && meta.matteIgnore) v = 0;
-      if (meta.max > meta.min) v = clamp(v, meta.min, meta.max);
+      // Angle params wrap (720° is two turns, not "stuck at max"); the
+      // rest clamp to the range the shader declares.
+      if (meta.max > meta.min) {
+        const span = meta.max - meta.min;
+        v = span >= 180 && ANGLE_PARAM_RE.test(`${meta.name} ${meta.desc ?? ''}`)
+          ? meta.min + (((v - meta.min) % span) + span) % span
+          : clamp(v, meta.min, meta.max);
+      }
       rt.paramValues.set(meta.name, v);
     }
   }
@@ -1456,7 +1466,7 @@ function mediaPropDefs() {
     { key: 'y', label: 'Position Y', min: -H, max: 2 * H, step: 1, unit: 'px', def: H / 2 },
     { key: 'scaleX', label: 'Scale X', min: -400, max: 400, step: 0.1, unit: '%', def: 100 },
     { key: 'scaleY', label: 'Scale Y', min: -400, max: 400, step: 0.1, unit: '%', def: 100 },
-    { key: 'rot', label: 'Rotation', min: -360, max: 360, step: 0.1, unit: '°', def: 0 },
+    { key: 'rot', label: 'Rotation', min: -180, max: 180, step: 0.1, unit: '°', def: 0, cyclic: true },
     { key: 'opacity', label: 'Opacity', min: 0, max: 100, step: 0.1, unit: '%', def: 100 },
     { key: 'volume', label: 'Volume', min: 0, max: 100, step: 0.1, unit: '%', def: 100 },
   ];
@@ -1479,6 +1489,8 @@ function audioClipPropDefs() {
  * saturation effect keeps its name, and "Exposure (stops)" keeps its,
  * since "(stops)" alone says nothing.
  */
+const ANGLE_PARAM_RE = /\b(angle|rotation|rotate|rot|hue|spin|twist|heading|bearing)\b/i;
+
 function trimParamLabel(label, effectName) {
   const words = String(effectName || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   let rest = String(label).trim();
@@ -1524,6 +1536,8 @@ function effectPropDefs(clip, effect) {
   return metas.map((m) => {
     const full = m.desc || m.name;
     return {
+      // An angle-like parameter that spans degrees wraps like Rotation.
+      cyclic: ANGLE_PARAM_RE.test(`${m.name} ${full}`) && m.max - m.min >= 180,
       key: effectPropKey(effect.id, m.name),
       effectId: effect.id,
       effectName: effect.name,
@@ -1632,6 +1646,49 @@ function toggleKey(clip, key) {
   onModelChange({ structural: false });
 }
 
+/** Every property of `clips` back to its default — transform (scale to the
+ * fit-to-frame size the layer had when it was placed), a splat's camera to
+ * its opening view, effect parameters to the shader's own defaults — with
+ * keyframes and drivers cleared. One undo step for the lot. */
+function resetClipProps(clips) {
+  const list = clips.filter(Boolean);
+  if (!list.length) return;
+  history.record(comp, () => {
+    for (const clip of list) {
+      const fresh = (p, v) => {
+        if (!p) return;
+        p.v = v;
+        p.anim = false;
+        p.keys = [];
+        delete p.driver;
+      };
+      const asset = hasSource(clip) ? assets.get(clip.assetId) : null;
+      for (const d of propDefs(clip)) {
+        if (parsePropKey(d.key).effectId) continue;   // effects below
+        fresh(clip.props?.[d.key], d.def);
+      }
+      if (clip.kind === 'media' && asset?.w && asset.kind !== 'splat'
+          && (asset.w !== comp.width || asset.h !== comp.height) && !isShapeClip(clip)) {
+        const fit = Math.round(Math.min(comp.width / asset.w, comp.height / asset.h) * 10000) / 100;
+        clip.props.scaleX.v = fit;
+        clip.props.scaleY.v = fit;
+      }
+      if (isSplatClip(clip) && asset?.scene) {
+        const cam = splatHomeCamera(asset, clip.splat.upAxis);
+        for (const k of SPLAT_CAM_KEYS) clip.props[k].v = cam[CAM_FIELD[k]];
+        clip.splat.orbitDist = cam.dist;
+      }
+      if (clip.kind === 'media') clip.blend = 'normal';
+      // Dropping a param's PropTrack IS its default: params are created on
+      // touch from the shader's (or audio effect's) own default value.
+      for (const eff of effectsOf(clip)) eff.params = {};
+    }
+  });
+  for (const clip of list) markChainDirty(clip.id);
+  onModelChange({ structural: false });
+  setStatus(list.length > 1 ? `reset ${list.length} clips to their defaults` : `reset ${list[0].name} to its defaults`);
+}
+
 /* ---- model change fan-out ------------------------------------------ */
 
 /** `propKey` marks the change as one property's value — a slider let go of,
@@ -1653,6 +1710,7 @@ function onModelChange({ structural = false, transient = false, propKey = null }
   gcMediaChains();           // clips that lost their effects release theirs
   gcAudioChains();           // …and their audio graphs
   gcSplatRenderers();        // deleted splat clips release their sort buffers
+  gcMotionBlur();            // …and clips that turned motion blur off, its targets
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
   syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   if (comp.grid && !findClip(comp, comp.grid.clipId)) delete comp.grid;   // snap track deleted
@@ -1749,6 +1807,7 @@ const timelineHost = {
   },
   status: setStatus,
   retime: (clips) => openRetimeDialog(clips),
+  resetProps: (clips) => resetClipProps(clips),
   findLoop: (clip) => openLoopFinder(clip),
   setSnapTrack: (clip) => setSnapTrack(clip),
   clearSnapTrack,
@@ -7087,6 +7146,148 @@ gizmo.addEventListener('contextmenu', (e) => {
 });
 
 /* =====================================================================
+ * Motion blur — per layer, from timeline motion (motion-blur.js).
+ * clip.motionBlur = { on, shutter (degrees of a 360° frame), samples }.
+ * prepareMotionBlur runs after renderSplats and before the isolate pass,
+ * in the preview tick and the exporter alike; a blurred layer then
+ * composites (or feeds its own effect stack) the averaged picture.
+ * =================================================================== */
+
+let motionBlur = null;
+const motionBlurViews = new Map();   // clipId -> blurred view, this frame
+const MB_DEFAULTS = { shutter: 180, samples: 12 };
+const MOTION_KEYS = ['x', 'y', 'scaleX', 'scaleY', 'rot'];
+
+/** Props whose animation moves the picture: the transform, plus a splat's
+ * camera (and splat size). */
+function motionKeys(clip) {
+  return isSplatClip(clip) ? [...MOTION_KEYS, ...SPLAT_CAM_KEYS, 'splatSize'] : MOTION_KEYS;
+}
+
+/** Anything on the timeline that could move this layer? */
+function clipMoves(clip) {
+  return motionKeys(clip).some((k) => {
+    const p = clip.props?.[k];
+    return p && ((p.anim && p.keys.length > 1) || p.driver?.enabled);
+  });
+}
+
+function prepareMotionBlur(t, entries) {
+  motionBlurViews.clear();
+  if (!motionBlur) return;
+  for (const { clip } of entries) {
+    const mb = clip.motionBlur;
+    if (clip.kind !== 'media' || !mb?.on || !clipMoves(clip)) continue;
+    const asset = assets.get(clip.assetId);
+    if (!asset?.ready) continue;
+    const times = shutterTimes(t, comp.fps, mb.shutter ?? MB_DEFAULTS.shutter, mb.samples ?? MB_DEFAULTS.samples);
+    const splat = isSplatClip(clip) && asset.kind === 'splat' ? splatRenderers.get(clip.id) : null;
+    // Nothing moving across this shutter interval (between keys, say):
+    // the plain draw is already exact.
+    const sig = (tt) => {
+      const d = drawForClip(clip, tt);
+      return d && JSON.stringify([d.x, d.y, d.scaleX, d.scaleY, d.rot,
+        splat ? splatCameraAt(clip, tt) : 0]);
+    };
+    const first = sig(times[0]);
+    if (!first || first === sig(times[times.length - 1])) continue;
+    const opts = splat ? splatRenderOpts(clip, asset) : null;
+    const view = motionBlur.render(clip.id, comp.width, comp.height, times.length, (i, enc) => {
+      if (splat) splat.render(enc, splatCameraAt(clip, times[i]), opts);
+      return drawForClip(clip, times[i]);
+    });
+    if (splat) {
+      // Leave the splat's own texture at the frame time for anything else
+      // that samples it (layer-sourced mattes).
+      const enc = fx.device.createCommandEncoder();
+      splat.render(enc, splatCameraAt(clip, t), opts);
+      fx.device.queue.submit([enc.finish()]);
+    }
+    motionBlurViews.set(clip.id, view);
+  }
+}
+
+/** The draw a blurred layer composites: the averaged picture as a
+ * full-frame quad, keeping the layer's opacity, blend mode and mask. */
+function motionDraw(clip, d) {
+  const view = motionBlurViews.get(clip.id);
+  if (!view) return d;
+  return {
+    ...d,
+    clipId: `${clip.id}:mb`,
+    view,
+    w: comp.width, h: comp.height,
+    x: comp.width / 2, y: comp.height / 2,
+    scaleX: 1, scaleY: 1, rot: 0,
+  };
+}
+
+function gcMotionBlur() {
+  if (!motionBlur) return;
+  for (const clipId of [...motionBlur.targets.keys()]) {
+    const clip = findClip(comp, clipId)?.clip;
+    if (!clip?.motionBlur?.on) motionBlur.release(clipId);
+  }
+}
+
+/** The Motion blur row under Transform: on/off, shutter angle, samples. */
+function motionBlurRow(clip) {
+  const mb = clip.motionBlur ?? {};
+  const row = document.createElement('div');
+  row.className = 'param-row sel mb-row';
+  const label = document.createElement('label');
+  label.textContent = 'Motion blur';
+  label.title = 'smear the layer along its keyframed / driven motion, like a camera shutter';
+  const box = document.createElement('span');
+  box.className = 'mb-controls';
+  const on = document.createElement('input');
+  on.type = 'checkbox';
+  on.checked = !!mb.on;
+  on.title = 'motion blur on / off';
+  const shutter = document.createElement('input');
+  shutter.type = 'number';
+  shutter.className = 'val';
+  shutter.min = '1';
+  shutter.max = '720';
+  shutter.step = '15';
+  shutter.value = String(mb.shutter ?? MB_DEFAULTS.shutter);
+  shutter.title = 'shutter angle — 180° is the film look; 360° blurs across the whole frame';
+  const samples = document.createElement('select');
+  samples.title = 'samples per frame — more is smoother and slower';
+  for (const n of [4, 8, 12, 16, 24, 32]) {
+    const o = document.createElement('option');
+    o.value = String(n);
+    o.textContent = `${n}×`;
+    samples.appendChild(o);
+  }
+  samples.value = String(mb.samples ?? MB_DEFAULTS.samples);
+  shutter.disabled = samples.disabled = !mb.on;
+  const set = (patch) => {
+    history.record(comp, () => {
+      clip.motionBlur = { ...MB_DEFAULTS, ...(clip.motionBlur ?? {}), ...patch };
+    });
+    onModelChange({ structural: false });
+  };
+  on.addEventListener('change', () => set({ on: on.checked }));
+  shutter.addEventListener('keydown', (e) => e.stopPropagation());
+  shutter.addEventListener('change', () => {
+    const v = clamp(parseFloat(shutter.value) || MB_DEFAULTS.shutter, 1, 720);
+    set({ shutter: v });
+  });
+  samples.addEventListener('change', () => set({ samples: +samples.value }));
+  const deg = document.createElement('span');
+  deg.className = 'mb-unit';
+  deg.textContent = '°';
+  box.append(on, shutter, deg, samples);
+  if (mb.on && !clipMoves(clip)) {
+    box.title = 'nothing on this layer is animated yet — keyframe or drive its transform to see the blur';
+    label.classList.add('mb-idle');
+  }
+  row.append(label, box);
+  return row;
+}
+
+/* =====================================================================
  * Splat layers — a gaussian-splat scene (.ply / .spz / .splat) is a media
  * asset whose picture depends on a camera. Each splat CLIP renders the
  * scene through its own keyframable camera (clip.props.cam*) into its own
@@ -7196,16 +7397,20 @@ function renderSplats(t, entries) {
       r.assetId = asset.id;
       splatRenderers.set(clip.id, r);
     }
-    const q = clamp(clip.splat.quality ?? 1, 0.25, 2);
     encoder ??= fx.device.createCommandEncoder({ label: 'splats' });
-    r.render(encoder, splatCameraAt(clip, t), {
-      upAxis: resolveUp(clip.splat.upAxis ?? '-y', asset.scene),
-      background: clip.splat.background ? hexToRgb01(clip.splat.background) : null,
-      w: Math.max(2, Math.round(comp.width * q)),
-      h: Math.max(2, Math.round(comp.height * q)),
-    });
+    r.render(encoder, splatCameraAt(clip, t), splatRenderOpts(clip, asset));
   }
   if (encoder) fx.device.queue.submit([encoder.finish()]);
+}
+
+function splatRenderOpts(clip, asset) {
+  const q = clamp(clip.splat.quality ?? 1, 0.25, 2);
+  return {
+    upAxis: resolveUp(clip.splat.upAxis ?? '-y', asset.scene),
+    background: clip.splat.background ? hexToRgb01(clip.splat.background) : null,
+    w: Math.max(2, Math.round(comp.width * q)),
+    h: Math.max(2, Math.round(comp.height * q)),
+  };
 }
 
 function gcSplatRenderers() {
@@ -7233,9 +7438,9 @@ function splatPropDefs(clip) {
     pos('camX', 'Camera X', b.center[0]),
     pos('camY', 'Camera Y', b.center[1]),
     pos('camZ', 'Camera Z', b.center[2]),
-    { key: 'camYaw', label: 'Yaw', min: -180, max: 180, step: 0.01, unit: '°', def: 0, scale: 'cubic' },
+    { key: 'camYaw', label: 'Yaw', min: -180, max: 180, step: 0.01, unit: '°', def: 0, cyclic: true },
     { key: 'camPitch', label: 'Pitch', min: -89, max: 89, step: 0.01, unit: '°', def: 0, scale: 'cubic' },
-    { key: 'camRoll', label: 'Roll', min: -180, max: 180, step: 0.01, unit: '°', def: 0, scale: 'cubic' },
+    { key: 'camRoll', label: 'Roll', min: -180, max: 180, step: 0.01, unit: '°', def: 0, cyclic: true },
     { key: 'camFov', label: 'Field of view', min: 5, max: 140, step: 0.1, unit: '°', def: 50 },
     { key: 'splatSize', label: 'Splat size', min: 0, max: 300, step: 0.1, unit: '%', def: 100 },
   ];
@@ -8979,6 +9184,12 @@ function renderInspector() {
     en.append(cb, 'on');
     head.appendChild(en);
   }
+  const reset = document.createElement('button');
+  reset.className = 'tl-mini insp-reset';
+  reset.textContent = '↺';
+  reset.title = 'reset every property to its default (clears keyframes and drivers)';
+  reset.addEventListener('click', () => resetClipProps([clip]));
+  head.appendChild(reset);
   const del = document.createElement('button');
   del.className = 'tl-mini insp-del';
   del.textContent = '✕';
@@ -9029,6 +9240,7 @@ function renderInspector() {
     for (const def of mediaPropDefs().filter((d) => d.key !== 'volume'))
       addParamRow(body, clip, def);
     body.appendChild(blendRow(clip));
+    body.appendChild(motionBlurRow(clip));
     inspectorEl.appendChild(sec);
   } else if (clip.kind === 'track') {
     // The baked track values, editable like any other keyframed props.
@@ -9645,6 +9857,8 @@ function paramRow(clip, def) {
 
   const binding = { clip, key: def.key, slider, num, scale, dragging: false };
   if (anim) inspLive.push(binding);
+  // Angles: a wrapping slider (see angleSlider) replaces the plain one.
+  const sliderCell = def.cyclic ? angleSlider(clip, def, binding) : slider;
 
   slider.addEventListener('pointerdown', () => {
     binding.dragging = true;
@@ -9688,7 +9902,7 @@ function paramRow(clip, def) {
   keyBtn.title = 'add / remove keyframe at playhead';
   keyBtn.addEventListener('click', () => toggleKey(clip, def.key));
 
-  inspRows.set(def.key, { clip, slider, num, scale, keyBtn });
+  inspRows.set(def.key, { clip, slider, num, scale: binding.scale, keyBtn });
 
   const drv = document.createElement('button');
   drv.className = 'tl-mini drv-toggle' + (prop?.driver?.enabled ? ' on' : '');
@@ -9698,8 +9912,99 @@ function paramRow(clip, def) {
     : 'drive this value with an oscillator or audio (beats, levels)';
   drv.addEventListener('click', () => toggleDriver(clip, def));
 
-  row.append(sw, label, slider, num, keyBtn, drv);
+  row.append(sw, label, sliderCell, num, keyBtn, drv);
   return row;
+}
+
+/* ---- angles ------------------------------------------------------------
+ * Rotation-like properties are unbounded degrees: 720 is two full turns,
+ * and keyframing 0 → 720 spins twice. A bounded slider can't say that, so
+ * a cyclic row keeps the native range only as the dial face — its thumb
+ * shows the angle within the current turn — and takes the drag itself:
+ * horizontal motion adds degrees (1°/px, Shift 0.1°/px) without limit,
+ * the thumb wrapping as it crosses ±180°. A click without a drag lands on
+ * that angle within the current turn. The readout on the track says
+ * where you are in AE style: 2×+45°. */
+const wrap180 = (v) => ((((v + 180) % 360) + 360) % 360) - 180;
+
+function fmtTurns(v) {
+  const turns = Math.trunc(v / 360);
+  const rest = +(v - turns * 360).toFixed(1);
+  if (!turns) return `${rest}°`;
+  return `${turns}×${rest >= 0 ? '+' : ''}${rest}°`;
+}
+
+function angleSlider(clip, def, binding) {
+  const { slider, num } = binding;
+  slider.min = '-180';
+  slider.max = '180';
+  slider.step = String(def.step || 0.1);
+  const cell = document.createElement('span');
+  cell.className = 'angle-cell';
+  const readout = document.createElement('span');
+  readout.className = 'angle-turns';
+  cell.append(slider, readout);
+  const show = (v) => {
+    slider.value = String(wrap180(v));
+    readout.textContent = fmtTurns(v);
+  };
+  // Live updates (playback, undo, driver) go through the binding's scale.
+  binding.scale = { toPos: (v) => { readout.textContent = fmtTurns(v); return wrap180(v); }, fromPos: (p) => p, log: false };
+  show(valueAt(clip, def.key));
+
+  let drag = null;
+  slider.addEventListener('pointerdown', (e) => {
+    e.preventDefault();   // the native thumb would clamp at ±180
+    e.stopImmediatePropagation();
+    slider.setPointerCapture(e.pointerId);
+    const r = slider.getBoundingClientRect();
+    const v0 = valueAt(clip, def.key);
+    // Grabbing the thumb drags from the current value (like a native
+    // slider); a press elsewhere lands on that angle within the turn.
+    const thumbX = r.left + ((wrap180(v0) + 180) / 360) * r.width;
+    const a = ((e.clientX - r.left) / Math.max(1, r.width)) * 360 - 180;
+    const start = Math.abs(e.clientX - thumbX) <= 8 ? v0 : v0 - wrap180(v0) + a;
+    drag = { x: e.clientX, v: start, moved: false, t: relTime(clip) };
+    binding.dragging = true;
+    binding.tFrozen = drag.t;
+    history.begin(comp);
+    setPropValueLive(clip, def.key, start, drag.t);
+    num.value = fmtVal(start);
+    show(start);
+  }, true);
+  slider.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    const v = +(drag.v + dx * (e.shiftKey ? 0.1 : 1)).toFixed(2);
+    setPropValueLive(clip, def.key, v, drag.t);
+    num.value = fmtVal(v);
+    show(v);
+    refreshInspWidgets();
+  });
+  const end = () => {
+    if (!drag) return;
+    drag = null;
+    binding.dragging = false;
+    history.commit(comp);
+    onModelChange({ structural: false, propKey: def.key });
+  };
+  slider.addEventListener('pointerup', end);
+  slider.addEventListener('pointercancel', end);
+  // Keyboard arrows move the native thumb inside ±180: keep the turn.
+  slider.addEventListener('input', (e) => {
+    if (drag) return;
+    e.stopImmediatePropagation();
+    const v0 = valueAt(clip, def.key);
+    let v = v0 - wrap180(v0) + parseFloat(slider.value);
+    if (Math.abs(v - v0) > 180) v += v < v0 ? 360 : -360;   // stepped across the seam
+    setPropValue(clip, def.key, v);
+    show(v);
+  }, true);
+  num.addEventListener('change', () => {
+    const v = parseFloat(num.value);
+    if (!Number.isNaN(v)) show(v);
+  });
+  return cell;
 }
 
 /* ---- driver editor --------------------------------------------------- */
@@ -11521,6 +11826,7 @@ async function renderCompOffline(job, formatId = 'webm') {
     await prepareRotoFramesExact(t);   // exact roto mask frames (preview tolerates staleness; this must not)
     uploadMediaFrames(t, activeMedia);
     renderSplats(t, [...activeMedia, ...matteSourceClips(t)]);
+    prepareMotionBlur(t, activeMedia);
     prepareMasks(t);   // media masks must compose before compositeFrame samples them
     await prepareMediaFxSettled(t, activeMedia);
     compositeFrame(t);

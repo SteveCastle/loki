@@ -1203,6 +1203,11 @@ export class Timeline {
             (hasSource(clip) ? ' (loops past its source length)' : ''));
         },
       },
+      {
+        label: sel.length > 1 ? `Reset properties of ${sel.length} clips` : 'Reset properties',
+        detail: 'every value back to its default — clears keyframes and drivers',
+        action: () => this.host.resetProps?.(sel.length > 1 ? sel.map((s) => s.clip) : [clip]),
+      },
       // Retiming is the other way to change a clip's length: instead of
       // showing more or less of the source, it plays the same source over
       // a different span of the comp.
