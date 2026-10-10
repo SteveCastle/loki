@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -139,6 +140,24 @@ func enableCors(w *http.ResponseWriter, r *http.Request) {
 	// It must be the exact origin of the requesting page.
 	// Support browser extensions (chrome-extension://, moz-extension://) and Electron renderer
 	origin := r.Header.Get("Origin")
+	if IsStudioOrigin(origin) {
+		// Lowkey Studio (docs site, local dev server, the viewer's studio://
+		// window) talks to the server with an API key in a header, never a
+		// cookie: its origin is echoed WITHOUT Allow-Credentials, so a
+		// session cookie can never ride one of these cross-origin calls.
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Vary", "Origin")
+		h.Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Authorization, X-API-Key")
+		h.Set("Access-Control-Expose-Headers", "Content-Length")
+		h.Set("Access-Control-Max-Age", "600")
+		// Chrome Private Network Access: the public docs site calling a
+		// server on this machine must be explicitly allowed.
+		if r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+			h.Set("Access-Control-Allow-Private-Network", "true")
+		}
+		return
+	}
 	if strings.HasPrefix(origin, "chrome-extension://") || strings.HasPrefix(origin, "moz-extension://") {
 		h.Set("Access-Control-Allow-Origin", origin)
 	} else {
@@ -149,4 +168,26 @@ func enableCors(w *http.ResponseWriter, r *http.Request) {
 	h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 	h.Set("Access-Control-Allow-Credentials", "true")
 	h.Set("Access-Control-Expose-Headers", "Content-Length")
+}
+
+// IsStudioOrigin reports whether a request comes from a Lowkey Studio page:
+// the published docs site, the Electron viewer's studio:// window, or a page
+// served from this machine (the studio dev server). Those origins get
+// header-credential CORS only (see enableCors).
+func IsStudioOrigin(origin string) bool {
+	// The Electron renderer's dev server is localhost too, but it logs in
+	// with the session cookie and needs the credentialed CORS below.
+	if origin == "" || origin == "http://localhost:1212" {
+		return false
+	}
+	switch origin {
+	case "studio://app", "https://lowkeyviewer.com", "https://www.lowkeyviewer.com":
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Path != "" {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }

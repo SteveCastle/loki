@@ -238,6 +238,23 @@ export const TRACK_PROPS = [
   ['rot', 'Rotation', () => 0, '°'],
 ];
 
+/** A splat layer (a media clip with `clip.splat`) renders a 3D gaussian
+ * scene through its own camera; these ride alongside the media transform.
+ * Camera position is in scene units, world y-up; yaw 0 looks down -Z. The
+ * 2D transform above still applies to the rendered picture afterwards. */
+export const SPLAT_PROPS = [
+  ['camX', 'Camera X', () => 0, 'u'],
+  ['camY', 'Camera Y', () => 0, 'u'],
+  ['camZ', 'Camera Z', () => 5, 'u'],
+  ['camYaw', 'Yaw', () => 0, '°'],
+  ['camPitch', 'Pitch', () => 0, '°'],
+  ['camRoll', 'Roll', () => 0, '°'],
+  ['camFov', 'Field of view', () => 50, '°'],
+  ['splatSize', 'Splat size', () => 100, '%'],
+];
+
+export const isSplatClip = (clip) => clip?.kind === 'media' && !!clip.splat;
+
 /** Clips that own a source file on the timeline (and therefore a trim
  * offset), as opposed to adjustment layers. */
 export const hasSource = (clip) => clip.kind === 'media' || clip.kind === 'audio';
@@ -383,6 +400,8 @@ export function migrateComp(comp) {
         delete clip.props.scale;
       }
       for (const [key, , def] of MEDIA_PROPS) clip.props[key] ??= newProp(def(comp));
+      if (clip.splat)
+        for (const [key, , def] of SPLAT_PROPS) clip.props[key] ??= newProp(def(comp));
     }
   return comp;
 }

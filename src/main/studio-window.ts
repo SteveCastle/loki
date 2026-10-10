@@ -7,6 +7,7 @@ import { pipeline } from 'stream/promises';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { app, BrowserWindow, net, protocol, shell } from 'electron';
+import { detectMediaServerBase } from './media-server-base';
 
 const execFileP = promisify(execFile);
 
@@ -431,6 +432,9 @@ export function openStudioWindow(mediaPaths: string[]) {
   // own URL cleanup, so it survives reloads.
   const params = new URLSearchParams({ app: '1' });
   if (entries.length) params.set('import', JSON.stringify(entries));
+  // The studio hands work it can't do in the tab (splat training) to this
+  // machine's media server; tell it where that is (custom ports included).
+  params.set('server', detectMediaServerBase());
   const target = `studio://app/index.html?${params.toString()}`;
 
   if (studioWindow && !studioWindow.isDestroyed()) {

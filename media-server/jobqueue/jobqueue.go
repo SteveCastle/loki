@@ -1131,6 +1131,25 @@ func (q *Queue) GetJobs() []Job {
 	return jobs
 }
 
+// JobSnapshot copies one job under the queue lock, with up to `tail` of its
+// most recent stdout lines (which the Job's JSON omits). For pollers such as
+// GET /api/job/{id}; GetJob's pointer must not be read without the lock.
+func (q *Queue) JobSnapshot(id string, tail int) (Job, []string, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	job, exists := q.Jobs[id]
+	if !exists {
+		return Job{}, nil, false
+	}
+	snap := *job
+	snap.OutputFiles = append([]string(nil), job.OutputFiles...)
+	lines := job.Stdout
+	if tail >= 0 && len(lines) > tail {
+		lines = lines[len(lines)-tail:]
+	}
+	return snap, append([]string(nil), lines...), true
+}
+
 func (q *Queue) GetJob(id string) *Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()

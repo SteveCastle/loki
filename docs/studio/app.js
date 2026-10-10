@@ -44,8 +44,13 @@ import {
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
   clipRate, clipReversed, clipLoopSpan, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc,
-  newTrackClip, resolveOverlaps,
+  newTrackClip, resolveOverlaps, SPLAT_PROPS, isSplatClip,
 } from './comp.js';
+import {
+  SPLAT_EXTS, parseSplatFile, uploadScene, SplatRenderer, frameCamera, sceneBounds,
+  captureCamera, resolveUp,
+  cameraBasis, paintSplatThumb,
+} from './splat.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
 import {
   DRIVER_WAVES, DRIVER_BANDS, DRIVER_FOLLOWS, DRIVER_MODES,
@@ -63,6 +68,7 @@ import { Timeline, fmtTimecode, fmtSpeed, showMenu } from './timeline.js';
 import { makeShaderEditor, CHEAT_HTML } from './shader-editor.js';
 import * as roto from './roto.js';
 import * as rotoSam from './roto-sam.js';
+import * as server from './server.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -241,7 +247,18 @@ async function boot() {
   const rootUrl = (p) => new URL(p.replace(/^\/+/, ''), ROOT);
   try {
     const toolchain = await loadToolchain();
+    // Splat scenes are big storage buffers (48 B a splat + SH): ask for
+    // whatever the adapter allows instead of the 128 MB default binding.
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+    if (!adapter) throw new Error('No WebGPU adapter found');
+    const device = await adapter.requestDevice({
+      requiredLimits: {
+        maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+        maxBufferSize: adapter.limits.maxBufferSize,
+      },
+    });
     fx = await SlangFx.create({
+      device,
       canvas,
       toolchain,
       readFile: async (p) => {
@@ -340,6 +357,9 @@ async function boot() {
 async function applyCompSize() {
   canvas.width = comp.width;
   canvas.height = comp.height;
+  // A splat renders at the comp's size, so its "source" is the frame.
+  for (const a of assets.values())
+    if (a.kind === 'splat') { a.w = comp.width; a.h = comp.height; }
   await fx.setSourceSize(comp.width, comp.height);
   chainDirty = true;
   rescaleMasks();
@@ -412,6 +432,7 @@ function tick() {
   const activeMedia = activeClips(comp, t, 'media');
   const activeAudio = activeClips(comp, t, 'audio');
   syncMedia(t, activeMedia, activeAudio);
+  renderSplats(t, activeMedia);   // before anything samples a splat clip's texture
   prepareMasks(t);       // media masks must compose before compositeFrame samples them
   prepareMediaFx(t, activeMedia.filter(({ track }) => !track.hidden));
   compositeFrame(t);
@@ -903,9 +924,15 @@ function drawForClip(clip, t) {
   // which would blank the whole clip rather than leave it alone.
   const masked = mm?.view
     && maskState?.nodes?.some((n) => n.enabled !== false && n.active !== false);
+  // A splat clip shows its own camera's render, not a shared asset texture.
+  let view = asset.view;
+  if (asset.kind === 'splat') {
+    view = splatRenderers.get(clip.id)?.view;
+    if (!view) return null;
+  }
   return {
     clipId: clip.id,
-    view: asset.view,
+    view,
     w: asset.w,
     h: asset.h,
     x: drivenEval(clip.props.x, tc, t),
@@ -1519,6 +1546,7 @@ function propDefs(clip) {
     // Volume only makes sense (and sound) for video assets.
     const video = assets.get(clip.assetId)?.kind === 'video';
     for (const d of mediaPropDefs()) if (video || d.key !== 'volume') defs.push(d);
+    if (isSplatClip(clip)) defs.push(...splatPropDefs(clip));
   } else if (clip.kind === 'track') {
     // A null has no picture: no opacity, no volume — just the transform.
     defs.push(...mediaPropDefs().filter((d) => d.key !== 'opacity' && d.key !== 'volume'));
@@ -1624,6 +1652,7 @@ function onModelChange({ structural = false, transient = false, propKey = null }
   gcEffectState();           // deleted effects release their compiled state
   gcMediaChains();           // clips that lost their effects release theirs
   gcAudioChains();           // …and their audio graphs
+  gcSplatRenderers();        // deleted splat clips release their sort buffers
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
   syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   if (comp.grid && !findClip(comp, comp.grid.clipId)) delete comp.grid;   // snap track deleted
@@ -1655,6 +1684,7 @@ function afterModelReplace(what) {
   gcEffectState();
   gcMediaChains();
   gcAudioChains();
+  gcSplatRenderers();
   chainKey = '';
   markChainDirty();
   tCur = clamp(tCur, 0, lastFrame(comp));
@@ -1753,6 +1783,7 @@ async function decodeGifFrames(file) {
 }
 
 async function createAsset(file, id = null) {
+  if (SPLAT_EXTS.test(file.name)) return createSplatAsset(file, id);
   const isGif = file.type === 'image/gif' || GIF_EXT.test(file.name);
   const isAudio = !isGif && (file.type.startsWith('audio/') || AUDIO_EXTS.test(file.name));
   const isVideo = !isGif && !isAudio
@@ -1876,7 +1907,14 @@ async function maybeAdoptCompSize(asset) {
  * bin onto a specific spot. Returns the new clip. */
 function placeAssetClip(asset, at, trackIdx = null, { imageFull = false } = {}) {
   let clip;
-  if (asset.kind === 'audio') {
+  if (asset.kind === 'splat') {
+    // A splat is a still scene: like an image it spans the comp on import,
+    // and gets the starter length when placed deliberately.
+    clip = imageFull
+      ? newMediaClip(comp, asset, 0, Math.max(1 / comp.fps, comp.dur))
+      : newMediaClip(comp, asset, quantize(at, comp.fps), DEFAULT_VIDEO_DUR);
+    initSplatClip(clip, asset);
+  } else if (asset.kind === 'audio') {
     const dur = quantize(Math.max(asset.duration ?? DEFAULT_VIDEO_DUR, 1 / comp.fps), comp.fps);
     clip = newAudioClip(asset, quantize(at, comp.fps), dur);
   } else if (asset.kind === 'video') {
@@ -1912,7 +1950,8 @@ function placeAssetClip(asset, at, trackIdx = null, { imageFull = false } = {}) 
 async function importFiles(files, { t = null, trackIdx = null, binOnly = false } = {}) {
   const media = [...files].filter((f) =>
     f.type.startsWith('video/') || f.type.startsWith('image/') || f.type.startsWith('audio/')
-    || VIDEO_EXTS.test(f.name) || GIF_EXT.test(f.name) || AUDIO_EXTS.test(f.name));
+    || VIDEO_EXTS.test(f.name) || GIF_EXT.test(f.name) || AUDIO_EXTS.test(f.name)
+    || SPLAT_EXTS.test(f.name));
   if (!media.length) return;
   let at = t ?? tCur;
   let reused = 0;
@@ -2099,6 +2138,12 @@ function binCard(asset) {
  * from the media element's current frame (waiting for first data if
  * needed), audio from its waveform peaks. Falls back to a kind glyph. */
 function paintBinThumb(asset, holder) {
+  if (asset.kind === 'splat') {
+    holder.textContent = '';
+    if (asset.scene) holder.appendChild(paintSplatThumb(asset.scene, asset.defaultUp, 200, 64));
+    else holder.textContent = '✦';
+    return;
+  }
   if (asset.kind === 'audio') {
     const img = document.createElement('img');
     img.alt = '';
@@ -3420,6 +3465,11 @@ function disposeAsset(a) {
   }
   for (const f of a.frames ?? []) f.bitmap.close();
   a.texture?.destroy();
+  if (a.kind === 'splat') {
+    for (const [clipId, r] of splatRenderers)
+      if (r.assetId === a.id) { r.destroy(); splatRenderers.delete(clipId); }
+    a.gpu?.destroy();
+  }
   try { URL.revokeObjectURL(a.url); } catch {}
 }
 
@@ -3431,6 +3481,9 @@ function unloadAssets() {
 
 /** Make `data` ({comp, assets, t, name}) the current project. */
 async function applyProjectData(data) {
+  stopSplatNav();
+  for (const r of splatRenderers.values()) r.destroy();
+  splatRenderers.clear();
   stopMaskEdit();
   stopRotoEdit();
   if (rotoJob) rotoJob.cancel = true;   // the clips it reads are going away
@@ -6184,6 +6237,7 @@ function gizmoTarget() {
   // While a shape draw is armed the pointer belongs to the draw, not to the
   // selected layer's handles.
   if (shapeDraw) return null;
+  if (splatNav) return null;   // the pointer flies the camera
   if (trackOf(comp, clip)?.hidden) return null;
   const asset = assets.get(clip.assetId);
   if (!asset?.ready) return null;
@@ -7031,6 +7085,689 @@ gizmo.addEventListener('contextmenu', (e) => {
     },
   ]);
 });
+
+/* =====================================================================
+ * Splat layers — a gaussian-splat scene (.ply / .spz / .splat) is a media
+ * asset whose picture depends on a camera. Each splat CLIP renders the
+ * scene through its own keyframable camera (clip.props.cam*) into its own
+ * texture (splatRenderers, keyed by clip id), and from drawForClip on it
+ * is an ordinary 2D layer: transform, masks, its own effect stack and the
+ * adjustment layers above it all see that texture like any other media.
+ *
+ * clip.splat = { upAxis, background: null | '#rrggbb', quality, orbitDist }
+ * — static settings, not animated. The scene is parsed + uploaded once per
+ * asset (asset.gpu, shared by every clip of it); the renderer re-runs only
+ * when the clip's camera or settings change, so a parked camera is free.
+ * =================================================================== */
+
+const splatRenderers = new Map();   // clipId -> SplatRenderer (+ .assetId)
+
+async function createSplatAsset(file, id = null) {
+  const asset = {
+    id: id ?? uid('asset'),
+    kind: 'splat',
+    name: file.name,
+    file,
+    url: null,
+    ready: false,
+    // The render is comp-sized: its "source" is the frame (applyCompSize).
+    w: comp.width, h: comp.height,
+    duration: null,
+    el: null, texture: null, view: null,
+  };
+  assets.set(asset.id, asset);
+  try {
+    setStatus(`reading splat ${file.name}…`);
+    const scene = await parseSplatFile(file);
+    asset.gpu = uploadScene(fx.device, scene);
+    asset.splatCount = scene.count;
+    asset.shDegree = asset.gpu.shDegree;
+    asset.defaultUp = scene.upAxis;
+    // Keep positions + colours for framing and thumbnails; the covariances
+    // and SH live on the GPU only.
+    scene.cov = null;
+    scene.sh = null;
+    asset.scene = scene;
+    asset.bounds = sceneBounds(scene, scene.upAxis);
+  } catch (e) {
+    assets.delete(asset.id);
+    asset.gpu?.destroy();
+    throw new Error(`could not load ${file.name}: ${e.message}`);
+  }
+  asset.ready = true;
+  return asset;
+}
+
+/** Fresh splat settings + an opening camera: where the capture started
+ * when the file records it (server-trained splats), else a framing view. */
+function initSplatClip(clip, asset) {
+  const up = asset.defaultUp ?? '-y';
+  const cam = splatHomeCamera(asset, up);
+  clip.splat = { upAxis: up, background: null, quality: 1, orbitDist: cam.dist };
+  for (const [key, , def] of SPLAT_PROPS) clip.props[key] = newProp(def(comp));
+  clip.props.camX.v = cam.x;
+  clip.props.camY.v = cam.y;
+  clip.props.camZ.v = cam.z;
+  clip.props.camYaw.v = cam.yaw;
+  clip.props.camPitch.v = cam.pitch;
+  clip.props.camRoll.v = cam.roll;
+  clip.props.camFov.v = cam.fov;
+}
+
+function splatHomeCamera(asset, up) {
+  return captureCamera(asset.scene, up) ?? frameCamera(asset.scene, up);
+}
+
+const SPLAT_CAM_KEYS = ['camX', 'camY', 'camZ', 'camYaw', 'camPitch', 'camRoll', 'camFov'];
+const CAM_FIELD = { camX: 'x', camY: 'y', camZ: 'z', camYaw: 'yaw', camPitch: 'pitch', camRoll: 'roll', camFov: 'fov' };
+
+/** The clip's camera at COMP time t (drivers included). */
+function splatCameraAt(clip, t) {
+  const tc = t - clip.start;
+  const v = (k) => drivenEval(clip.props[k], tc, t);
+  return {
+    x: v('camX'), y: v('camY'), z: v('camZ'),
+    yaw: v('camYaw'), pitch: v('camPitch'), roll: v('camRoll'),
+    fov: clamp(v('camFov'), 1, 170),
+    size: Math.max(0, v('splatSize') / 100),
+  };
+}
+
+/** Render every active splat clip's camera view into its texture. Runs
+ * before masks / isolate passes / compositing, in the preview tick and in
+ * the offline exporter alike — same function, same time value. */
+function renderSplats(t, entries) {
+  let encoder = null;
+  const seen = new Set();
+  for (const { clip } of entries) {
+    if (!isSplatClip(clip) || seen.has(clip.id)) continue;
+    seen.add(clip.id);
+    const asset = assets.get(clip.assetId);
+    if (!asset?.ready || asset.kind !== 'splat') continue;
+    let r = splatRenderers.get(clip.id);
+    if (r && r.assetId !== asset.id) { r.destroy(); r = null; }
+    if (!r) {
+      try {
+        r = new SplatRenderer(fx.device, asset.gpu);
+      } catch (e) {
+        console.warn('slangfx: splat renderer failed:', e);
+        continue;
+      }
+      r.assetId = asset.id;
+      splatRenderers.set(clip.id, r);
+    }
+    const q = clamp(clip.splat.quality ?? 1, 0.25, 2);
+    encoder ??= fx.device.createCommandEncoder({ label: 'splats' });
+    r.render(encoder, splatCameraAt(clip, t), {
+      upAxis: resolveUp(clip.splat.upAxis ?? '-y', asset.scene),
+      background: clip.splat.background ? hexToRgb01(clip.splat.background) : null,
+      w: Math.max(2, Math.round(comp.width * q)),
+      h: Math.max(2, Math.round(comp.height * q)),
+    });
+  }
+  if (encoder) fx.device.queue.submit([encoder.finish()]);
+}
+
+function gcSplatRenderers() {
+  for (const [clipId, r] of splatRenderers) {
+    const clip = findClip(comp, clipId)?.clip;
+    if (!clip || !isSplatClip(clip) || clip.assetId !== r.assetId) {
+      r.destroy();
+      splatRenderers.delete(clipId);
+    }
+  }
+}
+
+/** Camera prop defs, ranged to the scene's scale. */
+function splatPropDefs(clip) {
+  const asset = assets.get(clip.assetId);
+  const b = asset?.bounds ?? { center: [0, 0, 0], radius: 5 };
+  // Centred-cubic sliders (sliderScale): a nudge near the middle is a
+  // fraction of a percent of the scene, the ends still reach 3 radii out.
+  const R = b.radius * 3;
+  const step = +(b.radius / 2000).toPrecision(1);
+  const pos = (key, label, c) => ({
+    key, label, min: c - R, max: c + R, step, unit: 'u', def: c, scale: 'cubic',
+  });
+  return [
+    pos('camX', 'Camera X', b.center[0]),
+    pos('camY', 'Camera Y', b.center[1]),
+    pos('camZ', 'Camera Z', b.center[2]),
+    { key: 'camYaw', label: 'Yaw', min: -180, max: 180, step: 0.01, unit: '°', def: 0, scale: 'cubic' },
+    { key: 'camPitch', label: 'Pitch', min: -89, max: 89, step: 0.01, unit: '°', def: 0, scale: 'cubic' },
+    { key: 'camRoll', label: 'Roll', min: -180, max: 180, step: 0.01, unit: '°', def: 0, scale: 'cubic' },
+    { key: 'camFov', label: 'Field of view', min: 5, max: 140, step: 0.1, unit: '°', def: 50 },
+    { key: 'splatSize', label: 'Splat size', min: 0, max: 300, step: 0.1, unit: '%', def: 100 },
+  ];
+}
+
+/* ---- camera navigation in the viewport --------------------------------
+ * 🎥 Navigate hands the preview to the camera (gizmo off):
+ *   drag            orbit around the point orbitDist ahead
+ *   Shift+drag /
+ *   right-drag      look around (turn the camera in place)
+ *   middle / Alt    pan
+ *   wheel           dolly toward / away from the orbit point
+ *   Ctrl+wheel      field of view
+ *   W A S D Q E     fly (Shift = faster)
+ *   Esc             done
+ * Every move writes the camera props at the playhead — a keyframe where
+ * the prop is animated (◆ Key camera), the static value otherwise — and
+ * one gesture is one undo step. */
+
+let splatNav = null;   // { clipId } while navigating
+
+function splatNavClip() {
+  const clip = splatNav ? findClip(comp, splatNav.clipId)?.clip : null;
+  return clip && isSplatClip(clip) ? clip : null;
+}
+
+function startSplatNav(clip) {
+  splatNav = { clipId: clip.id };
+  viewer.classList.add('splat-nav');
+  setStatus('camera: drag orbits · Shift/right-drag looks · middle/Alt pans · wheel dollies · WASD QE flies · Esc done');
+  renderInspector();
+}
+
+function stopSplatNav() {
+  if (!splatNav) return;
+  splatNav = null;
+  flyKeys.clear();
+  viewer.classList.remove('splat-nav');
+  renderInspector();
+}
+
+function camNow(clip) {
+  const cam = {};
+  for (const k of SPLAT_CAM_KEYS) cam[CAM_FIELD[k]] = valueAt(clip, k);
+  return cam;
+}
+
+function writeCam(clip, cam) {
+  for (const k of SPLAT_CAM_KEYS)
+    if (cam[CAM_FIELD[k]] != null) setPropValueLive(clip, k, cam[CAM_FIELD[k]]);
+  // No onModelChange here: a camera move changes no structure, and its
+  // markChainDirty would rebuild the effect chain on every frame of a
+  // drag (measured: 60 → 18 fps). The renderer re-reads the props each
+  // tick, the inspector follows via updateInspectorLive, and the gesture's
+  // end runs the full fan-out once.
+}
+
+function orbitPivot(cam, dist) {
+  const { f } = cameraBasis(cam.yaw, cam.pitch, cam.roll);
+  return [cam.x + f[0] * dist, cam.y + f[1] * dist, cam.z + f[2] * dist];
+}
+
+const clipLiveNow = (clip) => tCur >= clip.start && tCur < clipEnd(clip);
+
+let navDrag = null;
+viewer.addEventListener('pointerdown', (e) => {
+  const clip = splatNavClip();
+  if (!clip) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (!clipLiveNow(clip)) {
+    setStatus('camera: move the playhead onto the splat clip first');
+    return;
+  }
+  const mode = e.button === 1 || e.altKey ? 'pan'
+    : e.button === 2 || e.shiftKey ? 'look' : 'orbit';
+  const cam = camNow(clip);
+  const dist = Math.max(1e-4, clip.splat.orbitDist ?? 1);
+  navDrag = { mode, x: e.clientX, y: e.clientY, cam, dist, pivot: orbitPivot(cam, dist) };
+  history.begin(comp);
+  viewer.setPointerCapture(e.pointerId);
+}, true);
+
+viewer.addEventListener('pointermove', (e) => {
+  const clip = splatNavClip();
+  if (!clip || !navDrag) return;
+  e.stopImmediatePropagation();
+  const dx = e.clientX - navDrag.x, dy = e.clientY - navDrag.y;
+  const c0 = navDrag.cam;
+  if (navDrag.mode === 'orbit' || navDrag.mode === 'look') {
+    const yaw = c0.yaw + dx * 0.25;
+    const pitch = clamp(c0.pitch - dy * 0.25, -89, 89);
+    if (navDrag.mode === 'look') {
+      writeCam(clip, { yaw, pitch });
+    } else {
+      const { f } = cameraBasis(yaw, pitch, c0.roll);
+      const p = navDrag.pivot, d = navDrag.dist;
+      writeCam(clip, { x: p[0] - f[0] * d, y: p[1] - f[1] * d, z: p[2] - f[2] * d, yaw, pitch });
+    }
+  } else {
+    // Pan: one screen pixel = the world size of a pixel at the orbit point.
+    const ds = canvasDisplayRect().s;
+    const k = (2 * Math.tan((c0.fov * Math.PI) / 360) * navDrag.dist) / (comp.height * ds);
+    const { r, u } = cameraBasis(c0.yaw, c0.pitch, c0.roll);
+    writeCam(clip, {
+      x: c0.x - (r[0] * dx - u[0] * dy) * k,
+      y: c0.y - (r[1] * dx - u[1] * dy) * k,
+      z: c0.z - (r[2] * dx - u[2] * dy) * k,
+    });
+  }
+}, true);
+
+function endNavDrag(e) {
+  if (!navDrag) return;
+  e?.stopImmediatePropagation();
+  navDrag = null;
+  history.commit(comp);
+  onModelChange({ structural: false });
+}
+viewer.addEventListener('pointerup', endNavDrag, true);
+viewer.addEventListener('pointercancel', endNavDrag, true);
+viewer.addEventListener('contextmenu', (e) => {
+  if (splatNav) { e.preventDefault(); e.stopImmediatePropagation(); }
+}, true);
+
+let wheelCommit = 0;
+viewer.addEventListener('wheel', (e) => {
+  const clip = splatNavClip();
+  if (!clip) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (!clipLiveNow(clip)) return;
+  // A burst of wheel ticks is one undo step.
+  if (!wheelCommit) history.begin(comp);
+  clearTimeout(wheelCommit);
+  wheelCommit = setTimeout(() => {
+    wheelCommit = 0;
+    history.commit(comp);
+    onModelChange({ structural: false });
+  }, 400);
+  const cam = camNow(clip);
+  const step = Math.exp(clamp(e.deltaY, -200, 200) * 0.0015);
+  if (e.ctrlKey) { writeCam(clip, { fov: clamp(cam.fov * step, 5, 140) }); return; }
+  const d0 = Math.max(1e-4, clip.splat.orbitDist ?? 1);
+  const pivot = orbitPivot(cam, d0);
+  const d1 = Math.max(d0 * 0.02, d0 * step);
+  const { f } = cameraBasis(cam.yaw, cam.pitch, cam.roll);
+  clip.splat.orbitDist = d1;
+  writeCam(clip, { x: pivot[0] - f[0] * d1, y: pivot[1] - f[1] * d1, z: pivot[2] - f[2] * d1 });
+}, { capture: true, passive: false });
+
+/* Fly keys: held keys move the camera every animation frame. */
+const flyKeys = new Set();
+let flyLast = 0;
+const FLY = { KeyW: [0, 0, 1], KeyS: [0, 0, -1], KeyA: [-1, 0, 0], KeyD: [1, 0, 0], KeyE: [0, 1, 0], KeyQ: [0, -1, 0] };
+const flying = () => [...flyKeys].some((k) => FLY[k]);
+
+function flyStep(now) {
+  const clip = splatNavClip();
+  if (!clip || !flying()) return;
+  const dt = Math.min(0.1, (now - flyLast) / 1000);
+  flyLast = now;
+  const fast = flyKeys.has('ShiftLeft') || flyKeys.has('ShiftRight');
+  const speed = Math.max(1e-4, clip.splat.orbitDist ?? 1) * 0.6 * (fast ? 4 : 1);
+  const cam = camNow(clip);
+  const { r, u, f } = cameraBasis(cam.yaw, cam.pitch, cam.roll);
+  const m = [0, 0, 0];
+  for (const k of flyKeys) {
+    const v = FLY[k];
+    if (!v) continue;
+    for (let i = 0; i < 3; i++) m[i] += r[i] * v[0] + u[i] * v[1] + f[i] * v[2];
+  }
+  writeCam(clip, { x: cam.x + m[0] * speed * dt, y: cam.y + m[1] * speed * dt, z: cam.z + m[2] * speed * dt });
+  requestAnimationFrame(flyStep);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (!splatNav || e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+  if (e.code === 'Escape') { e.preventDefault(); stopSplatNav(); setStatus('camera navigation off'); return; }
+  if (!FLY[e.code] && !e.code.startsWith('Shift')) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  const clip = splatNavClip();
+  if (!clip || !clipLiveNow(clip)) return;
+  const wasFlying = flying();
+  flyKeys.add(e.code);
+  if (!wasFlying && FLY[e.code]) {
+    history.begin(comp);
+    flyLast = performance.now();
+    requestAnimationFrame(flyStep);
+  }
+}, true);
+
+document.addEventListener('keyup', (e) => {
+  if (!flyKeys.has(e.code)) return;
+  const wasFlying = flying();
+  flyKeys.delete(e.code);
+  if (wasFlying && !flying()) {
+    history.commit(comp);
+    onModelChange({ structural: false });
+  }
+}, true);
+
+/** ◆ Key camera: a keyframe on every camera prop at the playhead (turning
+ * animation on), so the next navigation at another time makes a move. */
+function keySplatCamera(clip) {
+  history.record(comp, () => {
+    const t = relTime(clip);
+    for (const k of SPLAT_CAM_KEYS) upsertKey(clip.props[k], t, evalProp(clip.props[k], tCur - clip.start));
+  });
+  onModelChange({ structural: false });
+  setStatus('camera keyed — move the playhead and navigate to add the next key');
+}
+
+function frameSplatCamera(clip) {
+  const asset = assets.get(clip.assetId);
+  if (!asset?.scene) return;
+  const cam = splatHomeCamera(asset, clip.splat.upAxis);
+  history.record(comp, () => {
+    clip.splat.orbitDist = cam.dist;
+    writeCam(clip, cam);
+  });
+  onModelChange({ structural: false });
+}
+
+/* ---- splat capture: video / photos → a trained splat, on the server ----
+ * Training needs COLMAP + Brush and minutes of GPU, so it runs as the media
+ * server's `splat` task (server.js is the client). The flow: upload the
+ * capture → queue the job → poll it → download the .ply → import it like any
+ * dropped file, which makes the splat layer. Jobs survive a reload: the
+ * pending list lives in localStorage and polling resumes at boot. */
+
+const SPLAT_JOBS_KEY = 'lowkey-studio.splat-jobs';
+const SPLAT_QUALITIES = [
+  ['draft', 'Draft — a few minutes, softer detail'],
+  ['standard', 'Standard — ~5–10 minutes'],
+  ['high', 'High — slowest, sharpest'],
+];
+
+function loadSplatJobs() {
+  try { return JSON.parse(localStorage.getItem(SPLAT_JOBS_KEY)) ?? []; } catch { return []; }
+}
+function saveSplatJobs(list) {
+  try { localStorage.setItem(SPLAT_JOBS_KEY, JSON.stringify(list)); } catch {}
+}
+
+/** Live job state for the dialog: id -> {name, frac, stage, state, error} */
+const splatJobState = new Map();
+let splatPollTimer = 0;
+let splatDialogRefresh = null;   // set while the dialog is open
+
+function splatJobsSummary() {
+  const live = [...splatJobState.values()].filter((j) => j.state === 'running');
+  if (!live.length) return null;
+  const j = live[0];
+  return { text: `training splat “${j.name}” — ${j.stage || 'queued'}${live.length > 1 ? ` (+${live.length - 1} more)` : ''}`, frac: j.frac };
+}
+
+/** One poll of every pending job; reschedules itself while any remain. */
+async function pollSplatJobs() {
+  clearTimeout(splatPollTimer);
+  const list = loadSplatJobs();
+  if (!list.length) return;
+  for (const job of list) {
+    const st = splatJobState.get(job.id) ?? { name: job.name, state: 'running', frac: 0, stage: '' };
+    splatJobState.set(job.id, st);
+    try {
+      const s = await server.jobStatus(job.id);
+      st.frac = s.progress_total ? s.progress_done / s.progress_total : 0;
+      const last = [...(s.log ?? [])].reverse().find((l) => /^splat: /.test(l));
+      if (last) st.stage = last.replace(/^splat: /, '');
+      if (s.state === 'completed') {
+        const ply = (s.output_files ?? []).find((p) => /\.ply$/i.test(p));
+        st.state = 'importing';
+        st.stage = 'downloading the splat…';
+        finishSplatJob(job, ply).catch((e) => {
+          st.state = 'error';
+          st.error = e.message;
+          setStatus(`splat “${job.name}”: ${e.message}`);
+        });
+        saveSplatJobs(loadSplatJobs().filter((j) => j.id !== job.id));
+      } else if (s.state === 'error' || s.state === 'cancelled') {
+        st.state = 'error';
+        st.error = s.state === 'cancelled' ? 'cancelled' : (st.stage || 'failed — see the job log on the server');
+        setStatus(`splat “${job.name}” ${s.state === 'cancelled' ? 'was cancelled' : `failed: ${st.error}`}`);
+        saveSplatJobs(loadSplatJobs().filter((j) => j.id !== job.id));
+      }
+    } catch (e) {
+      if (e.status === 404) {   // the server forgot it (cleared / restarted fresh)
+        st.state = 'error';
+        st.error = 'the server no longer knows this job';
+        saveSplatJobs(loadSplatJobs().filter((j) => j.id !== job.id));
+      } else {
+        st.stage = e.message;   // transient: server down, retry next poll
+      }
+    }
+  }
+  const sum = splatJobsSummary();
+  if (sum && !offlineJob) setStatus(sum.text, sum.frac);
+  splatDialogRefresh?.();
+  if (loadSplatJobs().length) splatPollTimer = setTimeout(pollSplatJobs, 2500);
+}
+
+async function finishSplatJob(job, plyPath) {
+  if (!plyPath) throw new Error('the job finished without a .ply');
+  const blob = await server.fetchServerFile(plyPath);
+  const name = plyPath.split(/[\\/]/).pop();
+  const file = new File([blob], name, { type: 'application/octet-stream' });
+  await importFiles([file], { t: tCur });
+  const st = splatJobState.get(job.id);
+  if (st) { st.state = 'done'; st.frac = 1; st.stage = 'imported'; }
+  splatDialogRefresh?.();
+  setStatus(`splat “${job.name}” is in — 🎥 Navigate in the Camera section to fly through it`);
+}
+
+/** Upload a capture and queue its training job. */
+async function startSplatJob(files, quality, onUpload) {
+  const name = files[0].name.replace(/\.[^.]+$/, '');
+  const paths = await server.uploadFiles(files, onUpload);
+  const id = await server.createJob('splat', paths, { quality });
+  saveSplatJobs([...loadSplatJobs(), { id, name, at: Date.now() }]);
+  splatJobState.set(id, { name, state: 'running', frac: 0, stage: 'queued' });
+  pollSplatJobs();
+  return id;
+}
+
+function openSplatCaptureDialog() {
+  document.querySelector('.modal-wrap')?.remove();
+  const srv = server.getServer();
+  const binMedia = binAssets().filter((a) => (a.kind === 'video' || a.kind === 'image') && a.file);
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-wrap';
+  wrap.innerHTML = `
+    <div class="modal splat-capture">
+      <h3>3D scene from video or photos</h3>
+      <p class="retime-hint">Walk slowly around (or through) the subject keeping it in view —
+      one steady video, or 20+ overlapping photos. Your Lowkey Media Server works out the
+      camera path and trains a Gaussian splat on its GPU, then it lands here as a layer.</p>
+      <label>Video or photos <span class="retime-field">
+        <button type="button" class="btn" id="sc-pick">Choose files…</button>
+        <input id="sc-files" type="file" accept="video/*,image/*" multiple hidden></span></label>
+      ${binMedia.length ? `<label>…or from the media bin <select id="sc-bin">
+        <option value="">—</option>
+        ${binMedia.map((a) => `<option value="${a.id}">${a.kind === 'video' ? '🎞' : '🖼'} ${a.name.replace(/[<&]/g, '')}</option>`).join('')}
+      </select></label>` : ''}
+      <p class="retime-hint" id="sc-picked">nothing chosen yet</p>
+      <label>Quality <select id="sc-quality">${SPLAT_QUALITIES.map(([v, l]) =>
+    `<option value="${v}"${v === 'standard' ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <details class="sc-server"${srv.key ? '' : ' open'}>
+        <summary>Media server · <span id="sc-conn">${srv.key ? srv.url : 'not connected'}</span></summary>
+        <label>Server <input id="sc-url" type="url" value="${srv.url}" spellcheck="false"></label>
+        <label>API key <input id="sc-key" type="password" value="${srv.key}" placeholder="lk_…" autocomplete="off" spellcheck="false"></label>
+        <p class="retime-hint">Create a key on the server's <a id="sc-keys" href="#" target="_blank" rel="noopener">Config page</a> (API keys).
+        <button type="button" class="btn" id="sc-test">Test</button> <span id="sc-test-out"></span></p>
+      </details>
+      <div class="sc-jobs" id="sc-jobs"></div>
+      <div class="modal-actions">
+        <span style="flex:1"></span>
+        <button class="btn" id="sc-close">Close</button>
+        <button class="btn" id="sc-start" disabled>Train splat</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const $w = (sel) => wrap.querySelector(sel);
+  let chosen = [];
+
+  const keysLink = () => { $w('#sc-keys').href = `${$w('#sc-url').value.replace(/\/+$/, '')}/config`; };
+  keysLink();
+  const saveConn = () => {
+    server.setServer({ url: $w('#sc-url').value, key: $w('#sc-key').value });
+    $w('#sc-conn').textContent = server.serverConfigured() ? server.getServer().url : 'not connected';
+    keysLink();
+  };
+  $w('#sc-url').addEventListener('change', saveConn);
+  $w('#sc-key').addEventListener('change', saveConn);
+  for (const i of wrap.querySelectorAll('input, select')) i.addEventListener('keydown', (e) => e.stopPropagation());
+  $w('#sc-test').addEventListener('click', async () => {
+    saveConn();
+    const out = $w('#sc-test-out');
+    out.textContent = 'checking…';
+    try { await server.testConnection(); out.textContent = '✓ connected'; }
+    catch (e) { out.textContent = `✕ ${e.message}`; }
+  });
+
+  const describe = () => {
+    const vids = chosen.filter((f) => f.type.startsWith('video/') || VIDEO_EXTS.test(f.name));
+    const imgs = chosen.length - vids.length;
+    let msg = 'nothing chosen yet', ok = false;
+    if (vids.length === 1 && !imgs) { msg = `video: ${vids[0].name}`; ok = true; }
+    else if (vids.length) msg = 'choose ONE video, or photos — not both';
+    else if (imgs >= 3) { msg = `${imgs} photos${imgs < 20 ? ' — more (20+) usually works much better' : ''}`; ok = true; }
+    else if (imgs) msg = 'at least 3 photos (20+ recommended)';
+    $w('#sc-picked').textContent = msg;
+    $w('#sc-start').disabled = !ok;
+  };
+  $w('#sc-pick').addEventListener('click', () => $w('#sc-files').click());
+  $w('#sc-files').addEventListener('change', (e) => {
+    chosen = [...e.target.files];
+    if ($w('#sc-bin')) $w('#sc-bin').value = '';
+    describe();
+  });
+  $w('#sc-bin')?.addEventListener('change', (e) => {
+    const a = assets.get(e.target.value);
+    chosen = a?.file ? [a.file] : [];
+    describe();
+  });
+
+  const renderJobs = () => {
+    const box = $w('#sc-jobs');
+    if (!box) return;
+    box.textContent = '';
+    for (const [id, j] of splatJobState) {
+      const row = document.createElement('div');
+      row.className = 'sc-job';
+      const pct = Math.round((j.frac ?? 0) * 100);
+      row.innerHTML = `<div class="sc-job-head"><b></b><span>${j.state === 'running' ? `${pct}%` : j.state}</span></div>
+        <div class="sc-bar"><i style="width:${pct}%"></i></div><div class="sc-job-stage"></div>`;
+      row.querySelector('b').textContent = j.name;
+      row.querySelector('.sc-job-stage').textContent = j.error ?? j.stage ?? '';
+      if (j.state === 'running') {
+        const c = document.createElement('button');
+        c.className = 'tl-mini';
+        c.textContent = '✕';
+        c.title = 'cancel this job on the server';
+        c.onclick = () => server.cancelJob(id).then(pollSplatJobs).catch((e) => setStatus(e.message));
+        row.querySelector('.sc-job-head').appendChild(c);
+      }
+      box.appendChild(row);
+    }
+  };
+  splatDialogRefresh = renderJobs;
+  renderJobs();
+
+  const close = () => { splatDialogRefresh = null; wrap.remove(); };
+  $w('#sc-close').addEventListener('click', close);
+  wrap.addEventListener('pointerdown', (e) => { if (e.target === wrap) close(); });
+  $w('#sc-start').addEventListener('click', async () => {
+    saveConn();
+    if (!server.serverConfigured()) {
+      $w('.sc-server').open = true;
+      $w('#sc-test-out').textContent = 'add an API key first';
+      return;
+    }
+    const btn = $w('#sc-start');
+    btn.disabled = true;
+    try {
+      await startSplatJob(chosen, $w('#sc-quality').value, (f) => {
+        btn.textContent = `Uploading ${Math.round(f * 100)}%`;
+        setStatus(`uploading capture… ${Math.round(f * 100)}%`, f);
+      });
+      btn.textContent = 'Train splat';
+      setStatus('splat job queued — you can close this; it imports itself when done');
+      chosen = [];
+      $w('#sc-files').value = '';
+      describe();
+    } catch (e) {
+      btn.textContent = 'Train splat';
+      btn.disabled = false;
+      setStatus(`splat: ${e.message}`);
+      $w('#sc-test-out').textContent = `✕ ${e.message}`;
+      if (e.status === 401 || /reach/.test(e.message)) $w('.sc-server').open = true;
+    }
+  });
+}
+
+/* -- inspector ---------------------------------------------------------- */
+
+function renderSplatSection(clip) {
+  const asset = assets.get(clip.assetId);
+  const navOn = splatNav?.clipId === clip.id;
+  const nav = secBtn(navOn ? '🎥 Done' : '🎥 Navigate',
+    'fly the camera in the preview (Esc when done)',
+    () => (navOn ? stopSplatNav() : startSplatNav(clip)));
+  nav.classList.toggle('active', navOn);
+  const key = secBtn('◆ Key', 'keyframe the whole camera at the playhead', () => keySplatCamera(clip));
+  const frame = secBtn('⌖ Frame', asset?.scene?.capture
+    ? 'back to where the capture started (its first frame)'
+    : 'reset the camera to frame the whole scene', () => frameSplatCamera(clip));
+  const { sec, body, collapsed } = inspSection('splat', 'Camera', { actions: [nav, key, frame] });
+  if (collapsed) { inspectorEl.appendChild(sec); return; }
+  for (const def of splatPropDefs(clip)) addParamRow(body, clip, def);
+
+  const setSetting = (fn) => {
+    history.record(comp, fn);
+    onModelChange({ structural: false });
+  };
+  const selRow = (label, title, options, value, onChange, extra = null) => {
+    const row = document.createElement('div');
+    row.className = 'param-row sel';
+    const l = document.createElement('label');
+    l.textContent = label;
+    l.title = title;
+    const sel = document.createElement('select');
+    for (const [v, text] of options) {
+      const o = document.createElement('option');
+      o.value = v;
+      o.textContent = text;
+      sel.appendChild(o);
+    }
+    sel.value = value;
+    sel.onchange = () => onChange(sel.value);
+    row.append(l, sel);
+    if (extra) row.appendChild(extra);
+    body.appendChild(row);
+  };
+  selRow('Up axis', 'which way is up in the scene file — COLMAP-trained .ply scenes are usually −Y',
+    [...(asset?.scene?.captureUp ? [['capture', 'Capture (level)']] : []),
+      ['-y', '−Y (COLMAP)'], ['+y', '+Y'], ['+z', '+Z'], ['-z', '−Z']],
+    clip.splat.upAxis ?? '-y', (v) => setSetting(() => { clip.splat.upAxis = v; }));
+  selRow('Quality', 'render resolution relative to the comp',
+    [['0.5', 'Half'], ['1', 'Full'], ['2', 'Supersampled 2×']],
+    String(clip.splat.quality ?? 1), (v) => setSetting(() => { clip.splat.quality = +v; }));
+  const col = document.createElement('input');
+  col.type = 'color';
+  col.value = clip.splat.background ?? '#000000';
+  col.hidden = !clip.splat.background;
+  col.title = 'background colour';
+  col.onchange = () => setSetting(() => { clip.splat.background = col.value; });
+  selRow('Background', 'transparent lets the layers below show through empty space',
+    [['', 'Transparent'], ['solid', 'Solid colour']],
+    clip.splat.background ? 'solid' : '',
+    (v) => setSetting(() => { clip.splat.background = v ? col.value : null; }), col);
+
+  if (asset?.ready) {
+    const info = document.createElement('div');
+    info.className = 'insp-hint';
+    info.textContent = `${asset.splatCount.toLocaleString()} splats · SH degree ${asset.shDegree}`
+      + ' · 🎥 Navigate, then ◆ Key at each point of the move';
+    body.appendChild(info);
+  }
+  inspectorEl.appendChild(sec);
+}
 
 /* =====================================================================
  * Shape layers — media clips whose texture is a canvas-drawn vector
@@ -7930,6 +8667,11 @@ function showAddLayerMenu(anchor) {
       label: 'Text / title layer',
       action: () => addFxLayer('__title__'),
     },
+    {
+      icon: LAYER_ICONS.splat,
+      label: '3D scene from video / photos…',
+      action: () => openSplatCaptureDialog(),
+    },
     '-',
     {
       icon: LAYER_ICONS.import,
@@ -8254,6 +8996,8 @@ function renderInspector() {
   meta.className = 'insp-src';
   if (isShapeClip(clip)) {
     meta.textContent = `shape layer · ${clip.shapes.length} shape${clip.shapes.length > 1 ? 's' : ''}`;
+  } else if (isSplatClip(clip) && asset?.kind === 'splat') {
+    meta.textContent = `${asset.name} · gaussian splat · ${asset.splatCount.toLocaleString()} splats`;
   } else if (hasSource(clip)) {
     meta.textContent = asset
       ? [asset.name,
@@ -8274,6 +9018,9 @@ function renderInspector() {
 
   /* -- shape settings (preset + fill color) -- */
   if (isShapeClip(clip)) renderShapeSection(clip);
+
+  /* -- splat camera: the 3D move through the scene -- */
+  if (isSplatClip(clip)) renderSplatSection(clip);
 
   /* -- transform: where the layer sits and how it merges down -- */
   if (clip.kind === 'media') {
@@ -8810,6 +9557,20 @@ function removeEffect(clip, effect) {
  * model) keeps working in real units. */
 function sliderScale(def) {
   const lin = { toPos: (v) => v, fromPos: (p) => p, log: false };
+  if (def.scale === 'cubic' && def.max > def.min) {
+    // Centred cubic: fine control around the middle of the range, the
+    // full reach still at the ends (camera props — scene units vary wildly).
+    const c = (def.min + def.max) / 2, h = (def.max - def.min) / 2;
+    const step = def.step || 0.001;
+    return {
+      log: true,   // the slider runs in normalized 0..1 positions
+      toPos: (v) => 0.5 + 0.5 * Math.cbrt(clamp((v - c) / h, -1, 1)),
+      fromPos: (p) => {
+        const u = clamp(p, 0, 1) * 2 - 1;
+        return clamp(Math.round((c + h * u * u * u) / step) * step, def.min, def.max);
+      },
+    };
+  }
   if (def.scale !== 'log' || !(def.min > 0) || !(def.max > def.min)) return lin;
   const k = Math.log(def.max / def.min);
   return {
@@ -10759,6 +11520,7 @@ async function renderCompOffline(job, formatId = 'webm') {
     await seekMediaExact(t, [...activeMedia, ...matteSourceClips(t)]);
     await prepareRotoFramesExact(t);   // exact roto mask frames (preview tolerates staleness; this must not)
     uploadMediaFrames(t, activeMedia);
+    renderSplats(t, [...activeMedia, ...matteSourceClips(t)]);
     prepareMasks(t);   // media masks must compose before compositeFrame samples them
     await prepareMediaFxSettled(t, activeMedia);
     compositeFrame(t);
@@ -10794,4 +11556,5 @@ async function renderCompOffline(job, formatId = 'webm') {
   return new Blob([muxer.target.buffer], { type: fmt.mime });
 }
 
-boot();
+// Splat training jobs outlive a reload: pick up polling once the GPU is up.
+boot().then(() => pollSplatJobs());

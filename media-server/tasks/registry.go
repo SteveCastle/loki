@@ -127,6 +127,9 @@ func init() {
 	RegisterHostResolver("retouch", gpuDiffusion)
 	RegisterHostResolver("reshoot", gpuDiffusion)
 	RegisterHostResolver("4kify", gpuDiffusion)
+	// Splat training holds the GPU for minutes too; it shares the bucket so
+	// it never contends with a diffusion run for VRAM.
+	RegisterHostResolver("splat", gpuDiffusion)
 
 	RegisterTask("ffmpeg", "ffmpeg", ffmpegCustomOptions, ffmpegTask)
 	RegisterTask("ffmpeg-scale", "FFmpeg Scale", ffmpegScaleOptions, ffmpegScaleTask)
@@ -144,6 +147,7 @@ func init() {
 	RegisterTask("ffmpeg-rotate", "FFmpeg Rotate", ffmpegRotateOptions, ffmpegRotateTask)
 	RegisterTask("retouch", "Retouch (AI image edit)", retouchOptions, retouchTask)
 	RegisterTask("reshoot", "Reshoot (AI video)", reshootOptions, reshootTask)
+	RegisterTask("splat", "Gaussian Splat (3D scene)", splatOptions, splatTask)
 	// Deprecated alias of retouch --preset 4kify|4kify-phone (saved workflows).
 	RegisterTask("4kify", "4K Upscale + Outpaint", fourKifyOptions, fourKifyTask)
 	RegisterTask("ffmpeg-caption","FFmpeg Caption", ffmpegCaptionOptions, ffmpegCaptionTask)

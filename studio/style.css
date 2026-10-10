@@ -2175,6 +2175,10 @@ body.roto-analyzing #gizmo { display: none; }
 /* Draw-to-create mode: crosshair over the whole preview pane + the live
  * rubber-band rect while dragging. */
 #viewer.shape-drawing, #viewer.shape-drawing canvas { cursor: crosshair; }
+/* Splat camera navigation owns the preview pointer. */
+#viewer.splat-nav, #viewer.splat-nav canvas { cursor: grab; }
+#viewer.splat-nav:active, #viewer.splat-nav:active canvas { cursor: grabbing; }
+.insp-hint { font-size: 11px; opacity: 0.6; padding: 4px 2px 2px; line-height: 1.4; }
 #shape-draw-rect {
   position: absolute;
   border: 1px dashed var(--accent);
@@ -2298,3 +2302,16 @@ body.roto-analyzing #gizmo { display: none; }
 }
 .snapgrid-row input[type=number] { width: 62px; }
 .snapgrid-row input:focus, .snapgrid-row select:focus { outline: none; border-color: var(--accent); }
+
+/* Splat capture dialog (3D scene from video / photos). */
+.modal.splat-capture { width: min(460px, calc(100vw - 32px)); }
+.modal .sc-server { margin: 10px 0 4px; border-top: 1px solid var(--border); padding-top: 8px; }
+.modal .sc-server summary { cursor: pointer; font-size: 12px; color: var(--dim); margin-bottom: 6px; }
+.modal .sc-server a { color: var(--accent); }
+.sc-jobs { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.sc-job { font-size: 12px; }
+.sc-job-head { display: flex; gap: 8px; align-items: center; }
+.sc-job-head b { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; margin: 4px 0; }
+.sc-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.4s; }
+.sc-job-stage { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
