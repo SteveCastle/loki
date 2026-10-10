@@ -924,6 +924,52 @@
   display: grid;
 }
 
+/* pinned references: the toggle shows on hover, and stays (lit) once pinned */
+.ts-thumb-pin {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  display: none;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: white;
+  background: rgba(0, 0, 0, 0.75);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.ts-thumb:hover .ts-thumb-pin,
+.ts-thumb-pin.on,
+.ts-thumb-pin:focus-visible {
+  display: grid;
+}
+
+.ts-thumb-pin.on {
+  color: #000;
+  background: var(--ts-accent);
+}
+
+.ts-thumb.pinned {
+  border-color: var(--ts-accent);
+}
+
+.ts-pin-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.65;
+}
+
+.ts-ref-pinned {
+  display: inline-flex;
+  margin-right: 3px;
+  vertical-align: -1px;
+  color: var(--ts-accent);
+}
+
 /* footer + buttons — the .merge-selection-btn / .person-rename-btn look */
 
 .ts-footer {

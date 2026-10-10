@@ -72,6 +72,11 @@ export interface TransformSettings {
   quality: Quality;
   seedMode: 'random' | 'fixed';
   seed: number;
+  /**
+   * Pinned references (Edit, Direct): files kept from one flow to the next that ride along with whatever is
+   * selected, after it, so a saved prompt can name them by the same tokens every time. See runGroups.
+   */
+  pinned: string[];
   /** How many alternatives to queue (different seeds). */
   variations: number;
   shake: Shake;
@@ -119,6 +124,7 @@ export const BASE_SETTINGS: TransformSettings = {
   refSize: 'match',
   noAudio: false,
   keepSoundtrack: true,
+  pinned: [],
 };
 
 export const INTENTS: IntentDef[] = [
@@ -165,8 +171,8 @@ export const INTENTS: IntentDef[] = [
     id: 'edit',
     engine: 'retouch',
     group: 'image',
-    title: 'Edit with words',
-    tagline: 'Change anything by describing it',
+    title: 'Edit',
+    tagline: 'Describe a change and the model paints it in',
     blurb:
       'Write what should change and the model edits the image, keeping the rest. It can also resize in the same pass. With several images selected the model sees them all as references: <image1> is the one edited, <image2>, <image3>… the others.',
     oneClick: false,
@@ -188,7 +194,7 @@ export const INTENTS: IntentDef[] = [
     id: 'alive',
     engine: 'reshoot',
     group: 'video',
-    title: 'Bring to life',
+    title: 'Animate',
     tagline: 'A still becomes a living photo',
     blurb:
       'Natural ambient life, subtle resting movement and an optional hand-held camera feel, keeping identity and framing. One video per image.',
@@ -205,8 +211,8 @@ export const INTENTS: IntentDef[] = [
     id: 'direct',
     engine: 'reshoot',
     group: 'video',
-    title: 'Direct a scene',
-    tagline: 'Images, clips and music in, video out',
+    title: 'Direct',
+    tagline: 'Direct a scene: images, clips and music in, video out',
     blurb:
       'Full control: reference images (<Picture 1>…), clips (<Video 1>…) and audio (<Audio 1>…) plus a prompt become one video with generated sound.',
     oneClick: false,
@@ -255,6 +261,8 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
   parts.push(s.quality);
   if (s.variations > 1) parts.push(`${s.variations} variations`);
   if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
+  const pins = pinnable(id) ? (s.pinned || []).length : 0;
+  if (pins) parts.push(`${pins} pinned`);
   return parts.join(' · ');
 }
 
@@ -302,6 +310,32 @@ export function usesReferences(id: IntentId, inputs: Inputs): boolean {
   return id === 'edit' && inputs.images.length > 1;
 }
 
+/** Whether the intent can keep pinned references: the custom ones that take references (Edit images, Direct a video). */
+export function pinnable(id: IntentId | null): boolean {
+  return id === 'edit' || id === 'direct';
+}
+
+/** The pins that count for an intent: Edit references are images; Direct takes any image, clip or audio. */
+export function activePins(id: IntentId | null, pinned: string[] | undefined): string[] {
+  if (!pinnable(id) || !pinned || !pinned.length) return [];
+  return id === 'edit' ? classify(pinned).images : pinned.filter((p) => mediaKind(p) !== 'other');
+}
+
+/**
+ * With pinned references in play, the runs to make: one per selected item, each `[target, ...pins]`, so the
+ * selected item is always first (<image1>, or the first of its kind for Direct) and the pins follow it in pinned
+ * order. A selected file that is also pinned counts as a pin. Direct with nothing but pins selected is one run of
+ * the pins. null = no pins (the selection alone decides, as before).
+ */
+export function runGroups(id: IntentId, paths: string[], pinned: string[] | undefined): string[][] | null {
+  const pins = activePins(id, pinned);
+  if (!pins.length) return null;
+  const rest = paths.filter((p) => !pins.includes(p));
+  if (id === 'edit') return classify(rest).images.map((t) => [t, ...pins]);
+  const targets = rest.filter((p) => mediaKind(p) !== 'other');
+  return targets.length ? targets.map((t) => [t, ...pins]) : [pins];
+}
+
 /** Whether the intent's prompt field IS the whole prompt the engine runs (nothing is expanded around it). */
 export function promptIsVerbatim(id: IntentId): boolean {
   return id === 'edit' || id === 'direct';
@@ -312,9 +346,21 @@ export function promptIsVerbatim(id: IntentId): boolean {
  * reshoot. Inputs a prompt cannot refer to map to '' (a preset's batch) or a plain label ('photo').
  * `manual` = the prompt is hand-written, so every input the model sees gets its token.
  */
-export function referenceTokens(id: IntentId | null, paths: string[], manual = false): Record<string, string> {
+export function referenceTokens(id: IntentId | null, paths: string[], manual = false, pinned: string[] = []): Record<string, string> {
   const out: Record<string, string> = {};
   if (!id) return out;
+  const groups = runGroups(id, paths, pinned);
+  if (groups) {
+    // Every run's target has the same token (it is first in its own run); the pins' come from the first run.
+    groups.forEach((g, i) => {
+      const t = referenceTokens(id, g, manual);
+      if (i === 0) Object.assign(out, t);
+      else out[g[0]] = t[g[0]];
+    });
+    // Edit with no image to edit yet: the pins keep the tokens they will have once one is selected.
+    if (!groups.length) activePins(id, pinned).forEach((p, i) => (out[p] = `<image${i + 2}>`));
+    return out;
+  }
   const inputs = classify(paths);
   if (intentById(id).engine === 'retouch') {
     const targets = inputs.images.length ? inputs.images : inputs.videos.slice(0, 1);
@@ -327,7 +373,7 @@ export function referenceTokens(id: IntentId | null, paths: string[], manual = f
     return out;
   }
   inputs.images.forEach((p, i) => {
-    // Bring to life runs once per photo: each is that run's <Picture 1>.
+    // Animate runs once per photo: each is that run's <Picture 1>.
     if (id === 'alive') out[p] = manual ? '<Picture 1>' : 'photo';
     else out[p] = `<Picture ${i + 1}>`;
   });
@@ -346,10 +392,17 @@ const TOKEN_RE = /<image\d+>|<(?:Picture|Video|Audio) \d+>/g;
  * Rewrite the reference tokens in `text` after the inputs were reordered or removed, so every token keeps pointing
  * at the same file. Tokens of removed files are left as written (validation flags them).
  */
-export function remapTokens(text: string, id: IntentId, before: string[], after: string[]): string {
+export function remapTokens(
+  text: string,
+  id: IntentId,
+  before: string[],
+  after: string[],
+  pinsBefore: string[] = [],
+  pinsAfter: string[] = pinsBefore
+): string {
   if (!text) return text;
-  const was = referenceTokens(id, before, true);
-  const now = referenceTokens(id, after, true);
+  const was = referenceTokens(id, before, true, pinsBefore);
+  const now = referenceTokens(id, after, true, pinsAfter);
   const map: Record<string, string> = {};
   Object.keys(was).forEach((p) => {
     if (was[p] && now[p]) map[was[p]] = now[p];
@@ -485,6 +538,9 @@ export interface BuildResult {
   error?: string;
 }
 
+/** Edit with pins but no image of its own selected. */
+export const NO_TARGET = 'Select the image to edit: the pinned references ride along with it';
+
 /** Turn an intent + settings + selected paths into the jobs to queue. */
 export function buildJobs(
   id: IntentId,
@@ -493,6 +549,19 @@ export function buildJobs(
   ctx: BuildContext = {}
 ): BuildResult {
   const def = intentById(id);
+  const groups = runGroups(id, paths, s.pinned);
+  if (groups) {
+    // Pinned references: one run per selected item, each with the pins after it.
+    if (!groups.length) return { jobs: [], error: NO_TARGET };
+    const pins = activePins(id, s.pinned).length;
+    const out: JobRequest[] = [];
+    for (const g of groups) {
+      const b = buildJobs(id, { ...s, pinned: [] }, g, ctx);
+      if (b.error) return b;
+      b.jobs.forEach((j) => out.push({ ...j, label: `${def.title} · ${g[0].split(/[\\/]/).pop()} + ${pins} pinned` }));
+    }
+    return { jobs: out };
+  }
   const inputs = classify(paths);
   const avail = availability(id, inputs);
   if (!avail.ok) return { jobs: [], error: avail.reason || 'Not available' };
@@ -561,7 +630,7 @@ export function buildJobs(
           put(f, 'prompt', s.prompt.trim());
         }
         common(f, seed);
-        jobs.push({ input: `reshoot ${q([img])}`, fields: f, label: `Bring to life · ${img.split(/[\\/]/).pop()}` });
+        jobs.push({ input: `reshoot ${q([img])}`, fields: f, label: `Animate · ${img.split(/[\\/]/).pop()}` });
       });
     });
     return { jobs };
@@ -620,7 +689,7 @@ export function planFor(
   const jobCount = built.jobs.length;
   const variations = Math.min(MAX_VARIATIONS, Math.max(1, Math.round(s.variations)));
   const outputs =
-    def.engine === 'retouch'
+    def.engine === 'retouch' && !runGroups(id, paths, s.pinned)
       ? (usesReferences(id, inputs) ? 1 : Math.max(1, inputs.images.length || 1)) * variations
       : jobCount;
   if (def.engine === 'reshoot') {

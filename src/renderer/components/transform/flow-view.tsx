@@ -14,7 +14,11 @@ import {
   parseSize,
   planFor,
   promptIsVerbatim,
+  activePins,
+  NO_TARGET,
+  pinnable,
   referenceTokens,
+  runGroups,
   retouchPreset,
   runSummary,
   tokenIssues,
@@ -26,7 +30,7 @@ import {
   type TransformSettings,
 } from './intents';
 import { deleteTemplate, saveTemplate, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
-import { GlyphCheck, GlyphDie, GlyphMusic, IntentIcon } from './icons';
+import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, IntentIcon } from './icons';
 import './transform-flow.css';
 
 // ---------------------------------------------------------------------------
@@ -155,15 +159,16 @@ export function suggestTemplateName(prompt: string): string {
 
 /**
  * "☆ Save prompt": always shown where a custom prompt is written or reviewed (greyed out while empty, "★ Saved"
- * once it is), opening an inline name field. Esc there cancels only the naming (see data-ts-local-esc).
+ * once it is), opening an inline name field. Esc there cancels only the naming (see data-ts-local-esc). The prompt
+ * is saved with the rest of its configuration (output size, quality…), so bringing it back restores both.
  */
-export function SavePrompt({ intent, prompt }: { intent: IntentId; prompt: string }) {
+export function SavePrompt({ intent, settings }: { intent: IntentId; settings: TransformSettings }) {
   const list = useTemplates(intent);
   const [naming, setNaming] = useState<string | null>(null);
-  const trimmed = prompt.trim();
+  const trimmed = settings.prompt.trim();
   const current = list.find((t) => t.prompt === trimmed);
   const commit = () => {
-    if (naming !== null && saveTemplate(intent, naming, trimmed)) setNaming(null);
+    if (naming !== null && saveTemplate(intent, naming, trimmed, settings)) setNaming(null);
   };
   if (naming !== null) {
     return (
@@ -208,15 +213,15 @@ export function SavePrompt({ intent, prompt }: { intent: IntentId; prompt: strin
       className="ts-chip ts-template-save"
       disabled={!trimmed}
       onClick={() => setNaming(suggestTemplateName(trimmed))}
-      title={trimmed ? 'Keep this prompt to start from next time' : 'Write a prompt to save it'}
+      title={trimmed ? 'Keep this prompt, and its size and quality settings, to start from next time' : 'Write a prompt to save it'}
     >
       ☆ Save prompt
     </button>
   );
 }
 
-// The user's saved prompts for an intent, as a labelled chip row: click one to start from it.
-function SavedPrompts({ intent, prompt, onUse }: { intent: IntentId; prompt: string; onUse: (prompt: string) => void }) {
+// The user's saved prompts for an intent, as a labelled chip row: click one to start from it (and its settings).
+function SavedPrompts({ intent, prompt, onUse }: { intent: IntentId; prompt: string; onUse: (t: PromptTemplate) => void }) {
   const list = useTemplates(intent);
   const trimmed = prompt.trim();
   if (!list.length) return null;
@@ -224,7 +229,7 @@ function SavedPrompts({ intent, prompt, onUse }: { intent: IntentId; prompt: str
     <ChipRow label="Saved" hint="Your saved prompts: click one to start from it">
       {list.map((t) => (
         <span key={t.id} className={`ts-template${t.prompt === trimmed ? ' active' : ''}`}>
-          <button type="button" className="ts-template-use" title={`Start from your saved prompt:\n${t.prompt}`} onClick={() => onUse(t.prompt)}>
+          <button type="button" className="ts-template-use" title={`Start from your saved prompt:\n${t.prompt}`} onClick={() => onUse(t)}>
             ☆ {t.name}
           </button>
           <button type="button" className="ts-template-x" onClick={() => deleteTemplate(intent, t.id)} aria-label={`Delete saved prompt ${t.name}`} title="Delete">
@@ -246,11 +251,16 @@ function Thumb({
   thumbUrl,
   onRemove,
   onPick,
+  pinned,
+  onPin,
 }: {
   path: string;
   role?: string;
   thumbUrl: (p: string) => string;
   onRemove?: () => void;
+  pinned?: boolean;
+  /** Offers the pin toggle (pinnable intents). */
+  onPin?: (on: boolean) => void;
   /** Makes the thumbnail a button (used to put its prompt token into the prompt). */
   onPick?: () => void;
 }) {
@@ -270,7 +280,7 @@ function Thumb({
     : {};
   return (
     <div
-      className={`ts-thumb ts-thumb-${kind}${onPick ? ' ts-thumb-pick' : ''}`}
+      className={`ts-thumb ts-thumb-${kind}${onPick ? ' ts-thumb-pick' : ''}${pinned ? ' pinned' : ''}`}
       title={onPick && role ? `${baseName(path)}: click to insert ${role} into the prompt` : baseName(path)}
       {...pick}
     >
@@ -285,6 +295,25 @@ function Thumb({
       )}
       {kind === 'other' && <span className="ts-thumb-glyph">?</span>}
       {role ? <span className="ts-thumb-role">{role}</span> : null}
+      {onPin ? (
+        <button
+          type="button"
+          className={`ts-thumb-pin${pinned ? ' on' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPin(!pinned);
+          }}
+          aria-pressed={!!pinned}
+          aria-label={pinned ? `Unpin ${baseName(path)}` : `Pin ${baseName(path)} as a reference`}
+          title={
+            pinned
+              ? 'Pinned: comes along every time, after whatever you select. Click to unpin.'
+              : 'Pin as a reference: it comes along every time, after whatever you select'
+          }
+        >
+          <GlyphPin />
+        </button>
+      ) : null}
       {onRemove ? (
         <button
           type="button"
@@ -339,8 +368,11 @@ function ReferenceChips({
   thumbUrl,
   onPick,
   onMakeFirst,
+  pinned = [],
 }: {
   refs: RefItem[];
+  /** Pinned files, marked on their chips. */
+  pinned?: string[];
   thumbUrl: (p: string) => string;
   onPick?: (token: string) => void;
   /** Offered on every chip but the first: make that file <image1>. */
@@ -365,7 +397,14 @@ function ReferenceChips({
                 {kind === 'audio' && <GlyphMusic />}
               </span>
               <code>{r.token}</code>
-              <span className="ts-ref-name">{baseName(r.path)}</span>
+              <span className="ts-ref-name">
+                {pinned.includes(r.path) ? (
+                  <span className="ts-ref-pinned" title="Pinned reference">
+                    <GlyphPin />
+                  </span>
+                ) : null}
+                {baseName(r.path)}
+              </span>
             </button>
             {onMakeFirst && i > 0 ? (
               <button type="button" className="ts-ref-main" onClick={() => onMakeFirst(r.path)} title={`Edit ${baseName(r.path)} instead (it becomes ${refs[0].token}; the prompt's tokens follow their files)`}>
@@ -380,8 +419,8 @@ function ReferenceChips({
 }
 
 /** Token chips for the selection (deduplicated: a per-image batch shows its one <image1>). */
-function refItems(intent: IntentId, paths: string[], manual: boolean): RefItem[] {
-  const tokens = referenceTokens(intent, paths, manual);
+function refItems(intent: IntentId, paths: string[], manual: boolean, pinned: string[] = []): RefItem[] {
+  const tokens = referenceTokens(intent, paths, manual, pinned);
   const seen = new Set<string>();
   const out: RefItem[] = [];
   Object.keys(tokens).forEach((p) => {
@@ -432,7 +471,7 @@ export interface FlowViewProps {
   onSettings: (patch: Partial<TransformSettings>) => void;
   onIntent: (id: IntentId) => void;
   /** Start a custom intent from one of the user's saved prompts. */
-  onTemplate?: (id: IntentId, prompt: string) => void;
+  onTemplate?: (id: IntentId, t: PromptTemplate) => void;
   /** Load the last run (its intent and every setting) to adjust and run again. */
   onLoadRun?: (run: LastRun) => void;
   onPhase: (p: FlowPhase) => void;
@@ -441,6 +480,8 @@ export interface FlowViewProps {
   onRemovePath: (p: string) => void;
   /** Make this file the first input (<image1>, the one an edit changes). */
   onMakeFirst?: (p: string) => void;
+  /** Pin / unpin a reference (Edit, Direct). */
+  onPin?: (p: string, on: boolean) => void;
   onAgain: () => void;
   /** The engine-expanded prompt, fetched for the review step. */
   preview?: PromptPreviewState;
@@ -501,7 +542,10 @@ export function TransformFlowView(props: FlowViewProps) {
         <header className="ts-header">
           <div className="ts-title">
             <span className="ts-title-main">Transform</span>
-            <span className="ts-title-sub">{summarizeInputs(paths)}</span>
+            <span className="ts-title-sub">
+              {summarizeInputs(paths)}
+              {intent && activePins(intent, props.settings.pinned).length ? ` · ${activePins(intent, props.settings.pinned).length} pinned` : ''}
+            </span>
           </div>
           <ol className="ts-stepper" aria-label="Steps">
             {PHASES.map((p, i) => {
@@ -592,7 +636,7 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
               </span>
               <span className="ts-card-text">
                 <strong>
-                  ↻ {intentById(last.intent).title} <KindBadge kind={last.settings.manualPrompt !== null ? 'custom' : intentKind(last.intent)} />
+                  {intentById(last.intent).title} again <KindBadge kind={last.settings.manualPrompt !== null ? 'custom' : intentKind(last.intent)} />
                 </strong>
                 <small>{lastOk.ok ? runSummary(last.intent, last.settings) : lastOk.reason}</small>
               </span>
@@ -643,7 +687,7 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
           </div>
           <div className="ts-cards">
             {saved.map(({ intent: id, t }) => (
-              <button key={t.id} type="button" className="ts-card ts-card-saved" onClick={() => props.onTemplate?.(id, t.prompt)} title={t.prompt}>
+              <button key={t.id} type="button" className="ts-card ts-card-saved" onClick={() => props.onTemplate?.(id, t)} title={t.prompt}>
                 <span className="ts-card-icon">
                   <IntentIcon id={id} />
                 </span>
@@ -693,11 +737,16 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
   const eta = estimateSeconds(plan);
   const isRetouch = def.engine === 'retouch';
   const manual = s.manualPrompt !== null;
-  const roles = referenceTokens(def.id, paths, manual);
-  const shown = Object.keys(roles).length ? Object.keys(roles) : paths;
+  const pins = activePins(def.id, s.pinned);
+  const groups = runGroups(def.id, paths, s.pinned);
+  const roles = referenceTokens(def.id, paths, manual, s.pinned);
+  // The selection, then pins that are not part of it.
+  const shown = [...(Object.keys(roles).length ? paths.filter((p) => p in roles) : paths), ...pins.filter((p) => !paths.includes(p))];
   const stills = inputs.images.length;
-  const shared = usesReferences(def.id, inputs);
-  const refs = refItems(def.id, paths, manual);
+  const shared = usesReferences(def.id, inputs) || !!groups;
+  const refs = refItems(def.id, paths, manual, s.pinned);
+  // What may be pinned: Edit pins images, Direct anything it takes.
+  const canPin = (p: string) => pinnable(def.id) && (def.id === 'edit' ? mediaKind(p) === 'image' : mediaKind(p) !== 'other');
   const examples = shared && def.referenceExamples ? def.referenceExamples : def.examples;
   const sizeOptions: Array<SegOption<string>> = [
     ...(def.id === 'upscale' ? [] : [{ value: 'same', label: 'Same' }]),
@@ -733,7 +782,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           <Field
             label={def.id === 'direct' ? 'Describe the scene' : shared ? `What should change? Refer to the ${stills} images by their tokens` : 'What should change?'}
             hint="sent as written · Enter ▸ review"
-            action={<SavePrompt intent={def.id} prompt={s.prompt} />}
+            action={<SavePrompt intent={def.id} settings={s} />}
           >
             <textarea
               ref={textRef}
@@ -752,8 +801,9 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             <SavedPrompts
               intent={def.id}
               prompt={s.prompt}
-              onUse={(prompt) => {
-                onSettings({ prompt });
+              onUse={(t) => {
+                const { prompt } = t;
+                onSettings({ ...(t.settings || {}), prompt, manualPrompt: null });
                 window.setTimeout(() => {
                   const ta = textRef.current;
                   ta?.focus();
@@ -784,7 +834,12 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 <div className="ts-refblock-head">
                   {refs.length > 1 ? 'Tokens for each image' : 'Token for the image'} · click one to insert it into the prompt
                 </div>
-                <ReferenceChips refs={refs} thumbUrl={props.thumbUrl} onPick={pickToken} onMakeFirst={shared ? props.onMakeFirst : undefined} />
+                <ReferenceChips refs={refs} thumbUrl={props.thumbUrl} onPick={pickToken} onMakeFirst={shared && !groups ? props.onMakeFirst : undefined} pinned={pins} />
+                {groups && groups.length > 1 && (
+                  <p className="ts-note">
+                    {groups.length} selected → {groups.length} separate runs, each with the {pins.length} pinned reference{pins.length > 1 ? 's' : ''} after it.
+                  </p>
+                )}
                 {shared && (
                   <p className="ts-note">
                     <code>&lt;image1&gt;</code> is the image being edited (the result keeps its size); the others are references the model can take
@@ -981,7 +1036,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 )}
               </>
             )}
-            {isRetouch && stills > 1 && !shared && (
+            {isRetouch && stills > 1 && !shared && !groups && (
               <p className="ts-note">{stills} images → {stills} separate results, each processed on its own with these settings.</p>
             )}
           </div>
@@ -1007,18 +1062,32 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
         <div className="ts-preview-inputs">
           <div className="ts-preview-title">Inputs{promptField && Object.values(roles).some((r) => r.startsWith('<')) ? ' · click one to insert its token' : ''}</div>
           <div className="ts-thumbs">
-            {shown.slice(0, 8).map((p) => (
-              <Thumb
-                key={p}
-                path={p}
-                role={roles[p]}
-                thumbUrl={props.thumbUrl}
-                onRemove={paths.length > 1 ? () => props.onRemovePath(p) : undefined}
-                onPick={promptField && roles[p]?.startsWith('<') ? () => pickToken(roles[p]) : undefined}
-              />
-            ))}
+            {shown.slice(0, 8).map((p) => {
+              const isPin = pins.includes(p);
+              const selected = paths.includes(p);
+              return (
+                <Thumb
+                  key={p}
+                  path={p}
+                  role={roles[p]}
+                  thumbUrl={props.thumbUrl}
+                  // A pin that is not part of the selection goes away by unpinning it.
+                  onRemove={!selected ? undefined : paths.length > 1 ? () => props.onRemovePath(p) : undefined}
+                  onPick={promptField && roles[p]?.startsWith('<') ? () => pickToken(roles[p]) : undefined}
+                  pinned={isPin}
+                  onPin={props.onPin && canPin(p) ? (on) => props.onPin?.(p, on) : undefined}
+                />
+              );
+            })}
             {shown.length > 8 ? <div className="ts-thumb ts-thumb-more">+{shown.length - 8}</div> : null}
           </div>
+          {pinnable(def.id) && props.onPin ? (
+            <p className="ts-pin-hint">
+              {pins.length
+                ? 'Pinned references come along every time, after whatever you select. They are saved with your prompts.'
+                : 'Pin a reference (top-left of its thumbnail) to keep it for next time, even with one image selected.'}
+            </p>
+          ) : null}
         </div>
         <ShapeFooter {...props} />
       </aside>
@@ -1062,11 +1131,11 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
 
   const data = preview?.status === 'ok' ? preview.data : undefined;
   const engine = def.engine === 'retouch' ? 'loki-retouch' : 'loki-reshoot';
-  const local = refItems(def.id, paths, true);
+  const local = refItems(def.id, paths, true, s.pinned);
   // The engine's list when we have it (it is what the run will use); with a manual prompt the photo of Bring to
   // life is a plain <Picture 1> either way.
   const refs: RefItem[] = data && data.references.length ? data.references.map((r) => ({ token: r.token, path: r.path })) : local;
-  const shared = usesReferences(def.id, classify(paths)) || def.id === 'direct';
+  const shared = usesReferences(def.id, classify(paths)) || def.id === 'direct' || !!runGroups(def.id, paths, s.pinned);
 
   const preset = def.engine === 'retouch' ? retouchPreset(def.id, s) : '';
   let shownText = '';
@@ -1109,7 +1178,7 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
               Done
             </button>
           )}
-          {verbatim && <SavePrompt intent={def.id} prompt={s.prompt} />}
+          {verbatim && <SavePrompt intent={def.id} settings={s} />}
           {manual && (
             <button type="button" className="ts-chip" onClick={() => onSettings({ manualPrompt: null })}>
               Use the preset prompt
@@ -1164,9 +1233,11 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
   const plan = planFor(def.id, s, paths, source);
   const eta = estimateSeconds(plan);
   const manual = s.manualPrompt !== null;
-  const roles = referenceTokens(def.id, paths, manual);
+  const roles = referenceTokens(def.id, paths, manual, s.pinned);
   const shown = Object.keys(roles).length ? Object.keys(roles) : paths;
   const total = eta * plan.outputs;
+  const groups = runGroups(def.id, paths, s.pinned);
+  const pins = activePins(def.id, s.pinned).length;
   const busy = status === 'submitting';
   const problem = validateForRun(def.id, s, paths);
   return (
@@ -1181,7 +1252,13 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
               {def.title}
               {plan.outputs > 1 ? ` × ${plan.outputs}` : ''} <KindBadge kind={manual ? 'custom' : intentKind(def.id)} />
             </h2>
-            <p>{usesReferences(def.id, classify(paths)) ? `One result from ${classify(paths).images.length} images` : def.tagline}</p>
+            <p>
+              {groups
+                ? `${groups.length > 1 ? `Each of ${groups.length} selected` : 'The selection'}, with ${pins} pinned reference${pins > 1 ? 's' : ''} after it`
+                : usesReferences(def.id, classify(paths))
+                ? `One result from ${classify(paths).images.length} images`
+                : def.tagline}
+            </p>
           </div>
         </div>
         <PromptPanel {...props} />
@@ -1249,11 +1326,11 @@ function DoneView(props: FlowViewProps) {
       <h2>{n > 1 ? `${n} jobs queued` : 'Queued'}</h2>
       <p>
         The results appear next to the originals when they finish, and the library jumps to the first new file. Follow progress in the job queue.
-        This run is remembered as your <strong>last run</strong>: re-run it on other files from the palette’s ↻ chip.
+        This run is remembered as your <strong>last run</strong>: re-run it on other files from the palette’s “{props.intent ? intentById(props.intent).title : 'Last run'} again” chip.
       </p>
       {custom && props.intent ? (
         <div className="ts-done-save">
-          <SavePrompt intent={props.intent} prompt={props.settings.prompt} />
+          <SavePrompt intent={props.intent} settings={props.settings} />
         </div>
       ) : null}
       <div className="ts-footer center">
@@ -1273,8 +1350,8 @@ function DoneView(props: FlowViewProps) {
 // ---------------------------------------------------------------------------
 
 /** A token in the prompt that names none of the inputs (the model would see the bare text). */
-function unknownTokenProblem(prompt: string, id: IntentId, paths: string[], manual: boolean): string | null {
-  const tokens = Object.values(referenceTokens(id, paths, manual));
+function unknownTokenProblem(prompt: string, id: IntentId, paths: string[], manual: boolean, pinned: string[] = []): string | null {
+  const tokens = Object.values(referenceTokens(id, paths, manual, pinned));
   const { unknown } = tokenIssues(prompt, tokens);
   if (unknown.length === 0) return null;
   return `${unknown.join(', ')} ${unknown.length > 1 ? 'match' : 'matches'} none of the selected files`;
@@ -1284,11 +1361,13 @@ function unknownTokenProblem(prompt: string, id: IntentId, paths: string[], manu
 export function validateShape(id: IntentId, s: TransformSettings, paths: string[]): string | null {
   const a = availability(id, classify(paths));
   if (!a.ok) return a.reason || 'Not available for this selection';
+  const groups = runGroups(id, paths, s.pinned);
+  if (groups && !groups.length) return NO_TARGET;
   const def = intentById(id);
   if (s.manualPrompt === null) {
     if (def.needsText === 'prompt' && !s.prompt.trim()) return def.id === 'direct' ? 'Describe the scene to continue' : 'Describe what should change';
     if (promptIsVerbatim(id)) {
-      const bad = unknownTokenProblem(s.prompt, id, paths, false);
+      const bad = unknownTokenProblem(s.prompt, id, paths, false, s.pinned);
       if (bad) return bad;
     }
   }
@@ -1302,7 +1381,7 @@ export function validateForRun(id: IntentId, s: TransformSettings, paths: string
   if (shape) return shape;
   if (s.manualPrompt !== null) {
     if (!s.manualPrompt.trim()) return 'Write the prompt, or reset it to the generated one';
-    return unknownTokenProblem(s.manualPrompt, id, paths, true);
+    return unknownTokenProblem(s.manualPrompt, id, paths, true, s.pinned);
   }
   return null;
 }

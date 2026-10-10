@@ -2,7 +2,7 @@
 // contents when it hides) opens the full options through here, and a root-level host
 // renders it. Also persists the last-used settings per intent.
 import { useSyncExternalStore } from 'react';
-import type { IntentId, TransformSettings, JobRequest } from './intents';
+import { pinnable, settingsFor, type IntentId, type TransformSettings, type JobRequest } from './intents';
 import { EngineSetupDeferred, ensureEngines } from './engine-setup';
 
 export type FlowPhase = 'choose' | 'shape' | 'review';
@@ -73,13 +73,41 @@ const REMEMBER_KEYS: Array<keyof TransformSettings> = [
 ];
 
 export function loadRemembered(id: IntentId): Partial<TransformSettings> {
+  const pins = pinnable(id) ? { pinned: loadPins(id) } : {};
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
+    if (!raw) return pins;
     const all = JSON.parse(raw) as Remembered;
-    return all[id] || {};
+    return { ...(all[id] || {}), ...pins };
   } catch {
-    return {};
+    return pins;
+  }
+}
+
+// --- pinned references ------------------------------------------------------------
+
+// Per intent (Edit, Direct), saved the moment they change: a pinned reference is there the next time the flow
+// opens, whatever is selected.
+const PINS_KEY = 'loki.transform.pins.v1';
+
+export function loadPins(id: IntentId): string[] {
+  try {
+    const raw = window.localStorage.getItem(PINS_KEY);
+    const all = raw ? (JSON.parse(raw) as Partial<Record<IntentId, string[]>>) : {};
+    return Array.isArray(all[id]) ? (all[id] as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePins(id: IntentId, pins: string[]): void {
+  try {
+    const raw = window.localStorage.getItem(PINS_KEY);
+    const all = raw ? (JSON.parse(raw) as Partial<Record<IntentId, string[]>>) : {};
+    all[id] = pins;
+    window.localStorage.setItem(PINS_KEY, JSON.stringify(all));
+  } catch {
+    // storage unavailable: pins last for this flow only
   }
 }
 
@@ -108,6 +136,24 @@ export interface PromptTemplate {
   id: string;
   name: string;
   prompt: string;
+  /**
+   * The rest of the configuration the prompt goes with (output size, quality, variations, seed…), captured when it
+   * is saved and refreshed each time it runs. Absent on prompts saved before this existed.
+   */
+  settings?: Partial<TransformSettings>;
+}
+
+// Everything but the prompt text itself (the template's own field) and the per-run preset rewrites.
+function templateConfig(s: TransformSettings): Partial<TransformSettings> {
+  const rest: Partial<TransformSettings> = { ...s };
+  delete rest.prompt;
+  delete rest.manualPrompt;
+  return rest;
+}
+
+/** The settings to start from for a saved prompt: its saved configuration, else this intent's remembered one. */
+export function templateSettings(id: IntentId, t: PromptTemplate): TransformSettings {
+  return { ...settingsFor(id, loadRemembered(id)), ...(t.settings || {}), prompt: t.prompt, manualPrompt: null };
 }
 
 type TemplateStore = Partial<Record<IntentId, PromptTemplate[]>>;
@@ -141,15 +187,28 @@ export function loadTemplates(id: IntentId): PromptTemplate[] {
   return readTemplates()[id] || NO_TEMPLATES;
 }
 
-/** Saves `prompt` under `name`; a template with the same name (case-insensitive) is replaced. */
-export function saveTemplate(id: IntentId, name: string, prompt: string): PromptTemplate | null {
+/**
+ * Saves `prompt` under `name`, with the configuration it goes with when `settings` is given; a template with the
+ * same name (case-insensitive) is replaced.
+ */
+export function saveTemplate(id: IntentId, name: string, prompt: string, settings?: TransformSettings): PromptTemplate | null {
   const n = name.trim();
   const p = prompt.trim();
   if (!n || !p) return null;
   const tpl: PromptTemplate = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: n, prompt: p };
+  if (settings) tpl.settings = templateConfig(settings);
   const list = loadTemplates(id).filter((t) => t.name.toLowerCase() !== n.toLowerCase());
   writeTemplates({ ...readTemplates(), [id]: [...list, tpl] });
   return tpl;
+}
+
+/** After a run: saved prompts with exactly this text take on the configuration it ran with (size, quality…). */
+export function rememberTemplateRun(id: IntentId, settings: TransformSettings): void {
+  const p = settings.prompt.trim();
+  const list = loadTemplates(id);
+  if (!p || !list.some((t) => t.prompt === p)) return;
+  const config = templateConfig(settings);
+  writeTemplates({ ...readTemplates(), [id]: list.map((t) => (t.prompt === p ? { ...t, settings: config } : t)) });
 }
 
 export function deleteTemplate(id: IntentId, templateId: string): void {

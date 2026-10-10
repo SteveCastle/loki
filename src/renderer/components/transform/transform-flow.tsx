@@ -8,6 +8,7 @@ import {
   classify,
   intentById,
   mediaKind,
+  pinnable,
   remapTokens,
   settingsFor,
   type IntentId,
@@ -16,12 +17,16 @@ import {
 import {
   closeTransformFlow,
   loadRemembered,
+  rememberTemplateRun,
   saveLastRun,
+  savePins,
   saveRemembered,
+  templateSettings,
   submitJobs,
   useFlowRequest,
   type FlowPhase,
   type LastRun,
+  type PromptTemplate,
 } from './store';
 import { EngineSetupDeferred } from './engine-setup';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
@@ -98,10 +103,10 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     []
   );
 
-  // A saved prompt picked in the Choose step: its intent, starting from its text.
-  const chooseTemplate = useCallback((id: IntentId, prompt: string) => {
+  // A saved prompt picked in the Choose step: its intent, its text and the configuration saved with it.
+  const chooseTemplate = useCallback((id: IntentId, t: PromptTemplate) => {
     setIntent(id);
-    setSettings({ ...settingsFor(id, loadRemembered(id)), prompt });
+    setSettings(templateSettings(id, t));
     setPhase('shape');
   }, []);
 
@@ -180,14 +185,36 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       if (intent) {
         setSettings((prev) => ({
           ...prev,
-          prompt: remapTokens(prev.prompt, intent, paths, next),
-          manualPrompt: prev.manualPrompt === null ? null : remapTokens(prev.manualPrompt, intent, paths, next),
+          prompt: remapTokens(prev.prompt, intent, paths, next, prev.pinned),
+          manualPrompt: prev.manualPrompt === null ? null : remapTokens(prev.manualPrompt, intent, paths, next, prev.pinned),
         }));
       }
       setPaths(next);
     },
     [intent, paths]
   );
+
+  // Pin / unpin a reference; tokens follow their files here too.
+  const pin = useCallback(
+    (p: string, on: boolean) => {
+      if (!intent) return;
+      setSettings((prev) => {
+        const next = on ? [...prev.pinned.filter((x) => x !== p), p] : prev.pinned.filter((x) => x !== p);
+        return {
+          ...prev,
+          pinned: next,
+          prompt: remapTokens(prev.prompt, intent, paths, paths, prev.pinned, next),
+          manualPrompt: prev.manualPrompt === null ? null : remapTokens(prev.manualPrompt, intent, paths, paths, prev.pinned, next),
+        };
+      });
+    },
+    [intent, paths]
+  );
+
+  // Pins stay for the next flow (also when they arrive with a saved prompt or the last run).
+  useEffect(() => {
+    if (intent && pinnable(intent)) savePins(intent, settings.pinned || []);
+  }, [intent, settings.pinned]);
 
   const run = useCallback(async () => {
     if (!intent) return;
@@ -209,6 +236,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       await submitJobs(built.jobs, { mediaServerBase, authToken });
       saveRemembered(intent, settings);
       saveLastRun(intent, settings);
+      rememberTemplateRun(intent, settings);
       setQueuedCount(built.jobs.length);
       setStatus('done');
     } catch (e) {
@@ -271,6 +299,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       onClose={closeTransformFlow}
       onRemovePath={(p) => paths.length > 1 && changePaths(paths.filter((x) => x !== p))}
       onMakeFirst={(p) => changePaths([p, ...paths.filter((x) => x !== p)])}
+      onPin={pin}
       preview={preview}
       onAgain={() => {
         setStatus('idle');

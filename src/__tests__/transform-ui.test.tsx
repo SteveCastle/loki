@@ -15,10 +15,24 @@ import {
   loadTemplates,
   resetLastRunCache,
   resetTemplateCache,
+  rememberTemplateRun,
   saveLastRun,
   saveTemplate,
+  savePins,
+  loadRemembered,
+  templateSettings,
 } from '../renderer/components/transform/store';
-import { runSummary, settingsFor, type IntentId, type TransformSettings } from '../renderer/components/transform/intents';
+import {
+  buildJobs,
+  NO_TARGET,
+  referenceTokens,
+  remapTokens,
+  runSummary,
+  settingsFor,
+  type IntentId,
+  type TransformSettings,
+} from '../renderer/components/transform/intents';
+import { validateShape } from '../renderer/components/transform/flow-view';
 import { insertToken, suggestTemplateName } from '../renderer/components/transform/flow-view';
 
 const IMG = 'C:/media/photo.jpg';
@@ -49,7 +63,7 @@ describe('TransformSection (palette chips)', () => {
     expect(screen.getByRole('button', { name: /Upscale 2×/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Wallpaper/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Edit…/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Bring to life/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Animate/ })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Combine/ })).toBeNull();
   });
 
@@ -111,7 +125,7 @@ describe('TransformSection (palette chips)', () => {
     const onDone = jest.fn();
     render(<TransformSection paths={[VID]} authToken="tok" getVideoTime={() => 12.5} onDone={onDone} notify={() => {}} />);
     expect(screen.getByRole('button', { name: /Edit frame…/ })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /Bring to life/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Animate/ })).toBeNull();
   });
 });
 
@@ -138,7 +152,7 @@ describe('TransformFlowView', () => {
   it('choose: unavailable intents are disabled with a reason; picking one reports it', () => {
     const props = baseProps({ paths: [IMG2] });
     render(<TransformFlowView {...props} />);
-    const direct = screen.getByText('Bring to life').closest('button') as HTMLButtonElement;
+    const direct = screen.getByText('Animate').closest('button') as HTMLButtonElement;
     expect(direct.disabled).toBe(false);
     expect(screen.queryByText('Combine')).toBeNull();
     fireEvent.click(screen.getByText('Upscale').closest('button') as HTMLButtonElement);
@@ -515,9 +529,9 @@ describe('Transform: presets, custom and saved prompts are told apart', () => {
     render(<TransformFlowView {...chooseProps()} />);
     const card = (title: string) => screen.getByText(title, { exact: false, selector: 'strong' });
     expect(card('Restore').textContent).toMatch(/Preset/);
-    expect(card('Bring to life').textContent).toMatch(/Preset/);
-    expect(card('Edit with words').textContent).toMatch(/Custom/);
-    expect(card('Direct a scene').textContent).toMatch(/Custom/);
+    expect(card('Animate').textContent).toMatch(/Preset/);
+    expect(card('Edit').textContent).toMatch(/Custom/);
+    expect(card('Direct').textContent).toMatch(/Custom/);
     expect(screen.queryByText('Saved prompts')).toBeNull();
   });
 
@@ -527,7 +541,7 @@ describe('Transform: presets, custom and saved prompts are told apart', () => {
     render(<TransformFlowView {...props} />);
     expect(screen.getByText('Saved prompts')).toBeTruthy();
     fireEvent.click(screen.getByText(/☆ Watercolor/).closest('button') as HTMLButtonElement);
-    expect(props.onTemplate).toHaveBeenCalledWith('edit', 'turn it into a watercolor painting');
+    expect(props.onTemplate).toHaveBeenCalledWith('edit', expect.objectContaining({ prompt: 'turn it into a watercolor painting' }));
   });
 
   it('shape: chip rows are labelled by what they do', () => {
@@ -548,7 +562,7 @@ describe('Transform: presets, custom and saved prompts are told apart', () => {
     const onDone = jest.fn();
     render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={onDone} notify={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: /☆ Watercolor/ }));
-    expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape', prompt: 'turn it into a watercolor painting' });
+    expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape', settings: expect.objectContaining({ prompt: 'turn it into a watercolor painting' }) });
     expect(onDone).toHaveBeenCalled();
   });
 });
@@ -583,7 +597,7 @@ describe('Transform: the last run', () => {
     saveLastRun('edit', editRun());
     const onDone = jest.fn();
     render(<TransformSection paths={[IMG2]} authToken="tok" getVideoTime={() => undefined} onDone={onDone} notify={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /↻ Edit with words again/ }));
+    fireEvent.click(screen.getByRole('button', { name: /^Edit again$/ }));
     const created = () => fetchMock.mock.calls.filter((c) => /\/create$/.test(String(c[0])));
     await waitFor(() => expect(created()).toHaveLength(2));
     const body = JSON.parse(created()[0][1].body);
@@ -595,7 +609,7 @@ describe('Transform: the last run', () => {
   it('palette ↻ with Shift loads the last run into the flow to adjust', () => {
     saveLastRun('edit', editRun());
     render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /↻ Edit with words again/ }), { shiftKey: true });
+    fireEvent.click(screen.getByRole('button', { name: /^Edit again$/ }), { shiftKey: true });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape', settings: expect.objectContaining({ prompt: 'make it night', quality: 'fine' }) });
   });
@@ -653,5 +667,172 @@ describe('Transform: the last run', () => {
     const name = screen.getByLabelText('Saved prompt name') as HTMLInputElement;
     fireEvent.keyDown(name, { key: 'Enter' });
     expect(loadTemplates('edit')).toEqual([expect.objectContaining({ name: 'make it night', prompt: 'make it night' })]);
+  });
+});
+
+describe('Transform: saved prompts keep their settings', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetTemplateCache();
+    resetLastRunCache();
+    closeTransformFlow();
+    fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'job-1' }) });
+    (global as any).fetch = fetchMock;
+  });
+
+  const sized = (): TransformSettings => ({ ...settingsFor('edit'), prompt: 'make it night', sizeMode: 'custom', customSize: '1920x1080', quality: 'fine' });
+
+  it('saving a prompt keeps its custom size and quality, and bringing it back restores them', () => {
+    const t = saveTemplate('edit', 'Night', 'make it night', sized()) as any;
+    expect(t.settings).toMatchObject({ sizeMode: 'custom', customSize: '1920x1080', quality: 'fine' });
+    expect(t.settings).not.toHaveProperty('prompt');
+    expect(templateSettings('edit', t)).toMatchObject({ prompt: 'make it night', sizeMode: 'custom', customSize: '1920x1080', quality: 'fine' });
+  });
+
+  it('running a saved prompt refreshes the settings saved with it (older saves included)', () => {
+    saveTemplate('edit', 'Night', 'make it night');
+    saveTemplate('edit', 'Other', 'something else');
+    rememberTemplateRun('edit', sized());
+    const [night, other] = loadTemplates('edit');
+    expect(night.settings).toMatchObject({ sizeMode: 'custom', customSize: '1920x1080' });
+    expect(other.settings).toBeUndefined();
+  });
+
+  it('the palette chip opens the saved prompt with its saved size', () => {
+    saveTemplate('edit', 'Night', 'make it night', sized());
+    render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /☆ Night/ }));
+    expect(getFlowRequest()).toMatchObject({
+      intent: 'edit',
+      settings: expect.objectContaining({ prompt: 'make it night', sizeMode: 'custom', customSize: '1920x1080' }),
+    });
+  });
+
+  it('set up: picking a saved chip restores its size too', () => {
+    saveTemplate('edit', 'Night', 'make it night', sized());
+    const onSettings = jest.fn();
+    render(
+      <TransformFlowView
+        paths={[IMG]}
+        intent="edit"
+        phase="shape"
+        settings={{ ...settingsFor('edit'), prompt: '' }}
+        source={null}
+        queueAhead={0}
+        status="idle"
+        thumbUrl={(p: string) => p}
+        onSettings={onSettings}
+        onIntent={jest.fn()}
+        onPhase={jest.fn()}
+        onRun={jest.fn()}
+        onClose={jest.fn()}
+        onRemovePath={jest.fn()}
+        onAgain={jest.fn()}
+      />
+    );
+    fireEvent.click(screen.getByText('☆ Night'));
+    expect(onSettings).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'make it night', sizeMode: 'custom', customSize: '1920x1080' }));
+  });
+});
+
+describe('Transform: pinned references', () => {
+  const R1 = 'C:/refs/style.png';
+  const R2 = 'C:/refs/face.jpg';
+  const editWith = (pinned: string[], prompt = '<image1> in the style of <image2>'): TransformSettings => ({ ...settingsFor('edit'), prompt, pinned });
+  const inputsOf = (input: string) => (input.match(/"([^"]*)"/) as RegExpMatchArray)[1].split(String.fromCharCode(10));
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetTemplateCache();
+    resetLastRunCache();
+    closeTransformFlow();
+  });
+
+  it('edit: each selected image is <image1> of its own run, the pins follow it', () => {
+    const built = buildJobs('edit', editWith([R1, R2]), [IMG, IMG2], { random: () => 0.5 });
+    expect(built.error).toBeUndefined();
+    expect(built.jobs).toHaveLength(2);
+    expect(inputsOf(built.jobs[0].input)).toEqual([IMG, R1, R2]);
+    expect(inputsOf(built.jobs[1].input)).toEqual([IMG2, R1, R2]);
+    expect(built.jobs[0].fields).toMatchObject({ combine: '1' });
+    expect(referenceTokens('edit', [IMG, IMG2], false, [R1, R2])).toEqual({ [IMG]: '<image1>', [IMG2]: '<image1>', [R1]: '<image2>', [R2]: '<image3>' });
+  });
+
+  it('edit: a single selected image plus pins is one run', () => {
+    const built = buildJobs('edit', editWith([R1]), [IMG], { random: () => 0.5 });
+    expect(built.jobs).toHaveLength(1);
+    expect(inputsOf(built.jobs[0].input)).toEqual([IMG, R1]);
+  });
+
+  it('edit: selecting only a pinned image asks for the image to edit', () => {
+    expect(buildJobs('edit', editWith([R1]), [R1]).error).toBe(NO_TARGET);
+    expect(validateShape('edit', editWith([R1]), [R1])).toBe(NO_TARGET);
+  });
+
+  it('direct: the selected item comes first, then the pins', () => {
+    const s = { ...settingsFor('direct'), prompt: '<Picture 1> walks into <Picture 2>', pinned: [R1] };
+    const built = buildJobs('direct', s, [IMG], { random: () => 0.5 });
+    expect(built.jobs).toHaveLength(1);
+    expect(inputsOf(built.jobs[0].input)).toEqual([IMG, R1]);
+    expect(referenceTokens('direct', [IMG], false, [R1])).toEqual({ [IMG]: '<Picture 1>', [R1]: '<Picture 2>' });
+    expect(referenceTokens('direct', [VID], false, [R1])).toEqual({ [VID]: '<Video 1>', [R1]: '<Picture 1>' });
+  });
+
+  it('presets ignore pins', () => {
+    const built = buildJobs('restore', { ...settingsFor('restore'), pinned: [R1] }, [IMG]);
+    expect(built.jobs).toHaveLength(1);
+    expect(inputsOf(built.jobs[0].input)).toEqual([IMG]);
+  });
+
+  it('pins are remembered per intent and come back with the intent', () => {
+    savePins('edit', [R1]);
+    expect(loadRemembered('edit').pinned).toEqual([R1]);
+    expect(loadRemembered('direct').pinned).toEqual([]);
+    expect(loadRemembered('restore').pinned).toBeUndefined();
+  });
+
+  it('a saved prompt keeps its pins', () => {
+    const t = saveTemplate('edit', 'Styled', '<image1> in the style of <image2>', editWith([R1])) as any;
+    expect(templateSettings('edit', t).pinned).toEqual([R1]);
+  });
+
+  it('pinning a selected image keeps the prompt pointing at the same files', () => {
+    // [A, B, C] as one run: C is <image3>. Pin B: A and C are each <image1> of their run, B is <image2>.
+    const C = 'C:/media/third.png';
+    expect(remapTokens('<image3> wearing <image2>', 'edit', [IMG, IMG2, C], [IMG, IMG2, C], [], [IMG2])).toBe('<image1> wearing <image2>');
+  });
+
+  it('set up: thumbnails offer the pin, and pinned references show with the selection', () => {
+    const onPin = jest.fn();
+    render(
+      <TransformFlowView
+        paths={[IMG]}
+        intent="edit"
+        phase="shape"
+        settings={editWith([R1])}
+        source={null}
+        queueAhead={0}
+        status="idle"
+        thumbUrl={(p: string) => p}
+        onSettings={jest.fn()}
+        onIntent={jest.fn()}
+        onPhase={jest.fn()}
+        onRun={jest.fn()}
+        onClose={jest.fn()}
+        onRemovePath={jest.fn()}
+        onPin={onPin}
+        onAgain={jest.fn()}
+      />
+    );
+    expect(screen.getByText(/1 pinned/)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Unpin style.png'));
+    expect(onPin).toHaveBeenCalledWith(R1, false);
+    fireEvent.click(screen.getByLabelText('Pin photo.jpg as a reference'));
+    expect(onPin).toHaveBeenCalledWith(IMG, true);
+  });
+
+  it('runSummary mentions the pins', () => {
+    expect(runSummary('edit', editWith([R1, R2], 'x'))).toMatch(/2 pinned$/);
   });
 });

@@ -13,14 +13,23 @@ import {
   type TransformSettings,
 } from './intents';
 import { EngineSetupDeferred } from './engine-setup';
-import { loadRemembered, openTransformFlow, saveLastRun, submitJobs, useLastRun, useTemplates } from './store';
+import {
+  loadRemembered,
+  openTransformFlow,
+  rememberTemplateRun,
+  saveLastRun,
+  submitJobs,
+  templateSettings,
+  useLastRun,
+  useTemplates,
+} from './store';
 import { validateForRun } from './flow-view';
-import { IntentIcon } from './icons';
+import { GlyphReplay, IntentIcon } from './icons';
 import './transform-section.css';
 
 // The palette's "Transform" row: one-click presets (run with the settings you
 // used last time), the custom intents (open the flow at their prompt), the
-// user's saved prompts, the last run (↻: same action and settings on this
+// user's saved prompts, the last run (“… again”: same action and settings on this
 // selection), and "All options" for the full flow. Shift-click a preset or
 // the last run to adjust it first.
 const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'edit', 'alive'];
@@ -73,6 +82,7 @@ export default function TransformSection(props: TransformSectionProps) {
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
       saveLastRun(id, settings);
+      rememberTemplateRun(id, settings);
       onDone();
     } catch (e) {
       if (e instanceof EngineSetupDeferred) {
@@ -124,8 +134,8 @@ export default function TransformSection(props: TransformSectionProps) {
             onClick={onLast}
             title={`Last run: ${intentById(last.intent).title} · ${runSummary(last.intent, last.settings)}\nClick to run it again on this selection, Shift-click to adjust first.`}
           >
-            <IntentIcon id={last.intent} size={13} />
-            {busy === 'last' ? 'Queuing…' : `↻ ${intentById(last.intent).title} again`}
+            <GlyphReplay size={13} />
+            {busy === 'last' ? 'Queuing…' : `${intentById(last.intent).title} again`}
           </button>
         )}
         {chips.map((c) => (
@@ -147,7 +157,7 @@ export default function TransformSection(props: TransformSectionProps) {
             type="button"
             className="type-chip transform-chip transform-chip-saved"
             disabled={busy !== null}
-            onClick={() => open(intent, { prompt: t.prompt })}
+            onClick={() => open(intent, { settings: templateSettings(intent, t) })}
             title={`Saved prompt (${intentById(intent).title}): opens it to check and run\n${t.prompt}`}
           >
             ☆ {t.name}
@@ -156,7 +166,7 @@ export default function TransformSection(props: TransformSectionProps) {
       </div>
       <span className="merge-selection-note">
         {hasVideoOnly ? 'acts on the frame you are looking at · ' : ''}
-        {last && lastOk ? '↻ repeats your last run · ' : ''}presets run with your last settings · Shift-click to adjust first
+        {last && lastOk ? '“again” repeats your last run · ' : ''}presets run with your last settings · Shift-click to adjust first
         {saved.length ? ' · ☆ your saved prompts' : ''}
       </span>
     </div>
@@ -176,7 +186,8 @@ function chipLabel(id: IntentId, videoFrame: boolean): string {
     return `Upscale ${s.scale}×`;
   }
   if (id === 'edit') return videoFrame ? 'Edit frame…' : 'Edit…';
-  if (id === 'alive') return 'Bring to life…';
+  if (id === 'alive') return 'Animate…';
+  if (id === 'direct') return 'Direct…';
   if (id === 'wallpaper') {
     const s = settingsFor('wallpaper', loadRemembered('wallpaper'));
     return s.wallpaperTarget === 'phone' ? 'Phone wallpaper' : 'Wallpaper';
