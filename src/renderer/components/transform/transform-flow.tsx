@@ -16,10 +16,12 @@ import {
 import {
   closeTransformFlow,
   loadRemembered,
+  saveLastRun,
   saveRemembered,
   submitJobs,
   useFlowRequest,
   type FlowPhase,
+  type LastRun,
 } from './store';
 import { EngineSetupDeferred } from './engine-setup';
 import { TransformFlowView, validateForRun, validateShape, type PromptPreviewState } from './flow-view';
@@ -62,7 +64,7 @@ function useSourceSize(path: string | undefined, thumbUrl: (p: string) => string
 export default function TransformFlow() {
   const req = useFlowRequest();
   if (!req) return null;
-  return <FlowSession key={`${req.paths.join('|')}|${req.intent || ''}|${req.prompt || ''}`} req={req} />;
+  return <FlowSession key={`${req.paths.join('|')}|${req.intent || ''}|${req.prompt || ''}|${req.settings ? 'run' : ''}`} req={req} />;
 }
 
 function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowRequest>> }) {
@@ -71,10 +73,11 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   const [paths, setPaths] = useState<string[]>(req.paths);
   const [intent, setIntent] = useState<IntentId | null>(req.intent || null);
   const [phase, setPhase] = useState<FlowPhase>(req.phase || (req.intent ? 'shape' : 'choose'));
-  const [settings, setSettings] = useState<TransformSettings>(() => ({
-    ...settingsFor(req.intent || 'restore', req.intent ? loadRemembered(req.intent) : null),
-    prompt: req.prompt || '',
-  }));
+  const [settings, setSettings] = useState<TransformSettings>(() =>
+    req.settings && req.intent
+      ? { ...settingsFor(req.intent), ...req.settings }
+      : { ...settingsFor(req.intent || 'restore', req.intent ? loadRemembered(req.intent) : null), prompt: req.prompt || '' }
+  );
   const [status, setStatus] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle');
   const [error, setError] = useState<string | undefined>();
   const [queuedCount, setQueuedCount] = useState(0);
@@ -99,6 +102,13 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   const chooseTemplate = useCallback((id: IntentId, prompt: string) => {
     setIntent(id);
     setSettings({ ...settingsFor(id, loadRemembered(id)), prompt });
+    setPhase('shape');
+  }, []);
+
+  // The last run, loaded to adjust: its intent with every setting it used.
+  const loadRun = useCallback((r: LastRun) => {
+    setIntent(r.intent);
+    setSettings({ ...settingsFor(r.intent), ...r.settings });
     setPhase('shape');
   }, []);
 
@@ -198,6 +208,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     try {
       await submitJobs(built.jobs, { mediaServerBase, authToken });
       saveRemembered(intent, settings);
+      saveLastRun(intent, settings);
       setQueuedCount(built.jobs.length);
       setStatus('done');
     } catch (e) {
@@ -251,6 +262,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       onSettings={patch}
       onIntent={chooseIntent}
       onTemplate={chooseTemplate}
+      onLoadRun={loadRun}
       onPhase={(p) => {
         setError(undefined);
         setPhase(p);

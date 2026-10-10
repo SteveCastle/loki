@@ -16,6 +16,7 @@ import {
   promptIsVerbatim,
   referenceTokens,
   retouchPreset,
+  runSummary,
   tokenIssues,
   usesReferences,
   type IntentId,
@@ -24,7 +25,7 @@ import {
   type Shake,
   type TransformSettings,
 } from './intents';
-import { deleteTemplate, saveTemplate, useTemplates, type FlowPhase, type PromptTemplate } from './store';
+import { deleteTemplate, saveTemplate, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
 import { GlyphCheck, GlyphDie, GlyphMusic, IntentIcon } from './icons';
 import './transform-flow.css';
 
@@ -71,10 +72,13 @@ function Segmented<T extends string | number>({
 function Field({
   label,
   hint,
+  action,
   children,
 }: {
   label: string;
   hint?: string;
+  /** A control at the right of the header (e.g. Save prompt). */
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -82,6 +86,7 @@ function Field({
       <div className="ts-field-head">
         <span className="ts-field-label">{label}</span>
         {hint ? <span className="ts-field-hint">{hint}</span> : null}
+        {action ? <span className="ts-field-action">{action}</span> : null}
       </div>
       {children}
     </div>
@@ -148,8 +153,11 @@ export function suggestTemplateName(prompt: string): string {
   return `${(sp > 12 ? cut.slice(0, sp) : cut).replace(/[.,;:]+$/, '')}…`;
 }
 
-// Saved starting prompts for an intent: click one to load it, or save the current prompt as a new one.
-function PromptTemplates({ intent, prompt, onUse }: { intent: IntentId; prompt: string; onUse: (prompt: string) => void }) {
+/**
+ * "☆ Save prompt": always shown where a custom prompt is written or reviewed (greyed out while empty, "★ Saved"
+ * once it is), opening an inline name field. Esc there cancels only the naming (see data-ts-local-esc).
+ */
+export function SavePrompt({ intent, prompt }: { intent: IntentId; prompt: string }) {
   const list = useTemplates(intent);
   const [naming, setNaming] = useState<string | null>(null);
   const trimmed = prompt.trim();
@@ -157,11 +165,65 @@ function PromptTemplates({ intent, prompt, onUse }: { intent: IntentId; prompt: 
   const commit = () => {
     if (naming !== null && saveTemplate(intent, naming, trimmed)) setNaming(null);
   };
-  if (!list.length && !trimmed) return null;
+  if (naming !== null) {
+    return (
+      <span className="ts-template-name" data-ts-local-esc>
+        <input
+          autoFocus
+          value={naming}
+          placeholder="Name"
+          aria-label="Saved prompt name"
+          onChange={(e) => setNaming(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.stopPropagation();
+              commit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setNaming(null);
+            }
+          }}
+        />
+        <button type="button" className="ts-chip" disabled={!naming.trim()} onClick={commit}>
+          Save
+        </button>
+        <button type="button" className="ts-chip" onClick={() => setNaming(null)}>
+          Cancel
+        </button>
+      </span>
+    );
+  }
+  if (current) {
+    return (
+      <span className="ts-chip ts-template-saved" title={`Saved as “${current.name}”`}>
+        ★ Saved
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="ts-chip ts-template-save"
+      disabled={!trimmed}
+      onClick={() => setNaming(suggestTemplateName(trimmed))}
+      title={trimmed ? 'Keep this prompt to start from next time' : 'Write a prompt to save it'}
+    >
+      ☆ Save prompt
+    </button>
+  );
+}
+
+// The user's saved prompts for an intent, as a labelled chip row: click one to start from it.
+function SavedPrompts({ intent, prompt, onUse }: { intent: IntentId; prompt: string; onUse: (prompt: string) => void }) {
+  const list = useTemplates(intent);
+  const trimmed = prompt.trim();
+  if (!list.length) return null;
   return (
     <ChipRow label="Saved" hint="Your saved prompts: click one to start from it">
       {list.map((t) => (
-        <span key={t.id} className={`ts-template${t === current ? ' active' : ''}`}>
+        <span key={t.id} className={`ts-template${t.prompt === trimmed ? ' active' : ''}`}>
           <button type="button" className="ts-template-use" title={`Start from your saved prompt:\n${t.prompt}`} onClick={() => onUse(t.prompt)}>
             ☆ {t.name}
           </button>
@@ -170,37 +232,6 @@ function PromptTemplates({ intent, prompt, onUse }: { intent: IntentId; prompt: 
           </button>
         </span>
       ))}
-      {naming !== null ? (
-        <span className="ts-template-name" data-ts-local-esc>
-          <input
-            autoFocus
-            value={naming}
-            placeholder="Name"
-            aria-label="Saved prompt name"
-            onChange={(e) => setNaming(e.target.value)}
-            onFocus={(e) => e.target.select()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                commit();
-              } else if (e.key === 'Escape') {
-                e.preventDefault();
-                setNaming(null);
-              }
-            }}
-          />
-          <button type="button" className="ts-chip" disabled={!naming.trim()} onClick={commit}>
-            Save
-          </button>
-          <button type="button" className="ts-chip" onClick={() => setNaming(null)}>
-            Cancel
-          </button>
-        </span>
-      ) : trimmed && !current ? (
-        <button type="button" className="ts-chip ts-template-save" onClick={() => setNaming(suggestTemplateName(trimmed))} title="Keep this prompt to start from next time">
-          + Save prompt
-        </button>
-      ) : null}
     </ChipRow>
   );
 }
@@ -402,6 +433,8 @@ export interface FlowViewProps {
   onIntent: (id: IntentId) => void;
   /** Start a custom intent from one of the user's saved prompts. */
   onTemplate?: (id: IntentId, prompt: string) => void;
+  /** Load the last run (its intent and every setting) to adjust and run again. */
+  onLoadRun?: (run: LastRun) => void;
   onPhase: (p: FlowPhase) => void;
   onRun: () => void;
   onClose: () => void;
@@ -514,6 +547,8 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
   const { inputs, intent } = props;
   const savedEdit = useTemplates('edit');
   const savedDirect = useTemplates('direct');
+  const last = useLastRun();
+  const lastOk = last ? availability(last.intent, inputs) : null;
   const saved: Array<{ intent: IntentId; t: PromptTemplate }> = [
     ...(availability('edit', inputs).ok ? savedEdit.map((t) => ({ intent: 'edit' as IntentId, t })) : []),
     ...(availability('direct', inputs).ok ? savedDirect.map((t) => ({ intent: 'direct' as IntentId, t })) : []),
@@ -538,6 +573,33 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
           </span>
         ) : null}
       </p>
+      {last && lastOk && (
+        <section className="ts-group">
+          <div className="ts-group-head">
+            <h3>Last run</h3>
+            <span>the same action and settings, on this selection · adjust anything before it runs</span>
+          </div>
+          <div className="ts-cards">
+            <button
+              type="button"
+              className={`ts-card ts-card-last${lastOk.ok ? '' : ' disabled'}`}
+              disabled={!lastOk.ok}
+              onClick={() => props.onLoadRun?.(last)}
+              data-intent="last"
+            >
+              <span className="ts-card-icon">
+                <IntentIcon id={last.intent} />
+              </span>
+              <span className="ts-card-text">
+                <strong>
+                  ↻ {intentById(last.intent).title} <KindBadge kind={last.settings.manualPrompt !== null ? 'custom' : intentKind(last.intent)} />
+                </strong>
+                <small>{lastOk.ok ? runSummary(last.intent, last.settings) : lastOk.reason}</small>
+              </span>
+            </button>
+          </div>
+        </section>
+      )}
       {groups.map((g) => (
         <section key={g.id} className="ts-group">
           <div className="ts-group-head">
@@ -671,6 +733,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           <Field
             label={def.id === 'direct' ? 'Describe the scene' : shared ? `What should change? Refer to the ${stills} images by their tokens` : 'What should change?'}
             hint="sent as written · Enter ▸ review"
+            action={<SavePrompt intent={def.id} prompt={s.prompt} />}
           >
             <textarea
               ref={textRef}
@@ -686,7 +749,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 }
               }}
             />
-            <PromptTemplates
+            <SavedPrompts
               intent={def.id}
               prompt={s.prompt}
               onUse={(prompt) => {
@@ -1046,6 +1109,7 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
               Done
             </button>
           )}
+          {verbatim && <SavePrompt intent={def.id} prompt={s.prompt} />}
           {manual && (
             <button type="button" className="ts-chip" onClick={() => onSettings({ manualPrompt: null })}>
               Use the preset prompt
@@ -1176,6 +1240,7 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
 
 function DoneView(props: FlowViewProps) {
   const n = props.queuedCount || 1;
+  const custom = props.intent && promptIsVerbatim(props.intent) && props.settings.prompt.trim();
   return (
     <div className="ts-done">
       <span className="ts-done-badge">
@@ -1184,10 +1249,16 @@ function DoneView(props: FlowViewProps) {
       <h2>{n > 1 ? `${n} jobs queued` : 'Queued'}</h2>
       <p>
         The results appear next to the originals when they finish, and the library jumps to the first new file. Follow progress in the job queue.
+        This run is remembered as your <strong>last run</strong>: re-run it on other files from the palette’s ↻ chip.
       </p>
+      {custom && props.intent ? (
+        <div className="ts-done-save">
+          <SavePrompt intent={props.intent} prompt={props.settings.prompt} />
+        </div>
+      ) : null}
       <div className="ts-footer center">
         <button type="button" className="ts-btn ghost" onClick={props.onAgain}>
-          Tweak and run again
+          Adjust and run again
         </button>
         <button type="button" className="ts-btn primary" onClick={props.onClose} autoFocus>
           Done

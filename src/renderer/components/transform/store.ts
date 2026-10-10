@@ -16,6 +16,8 @@ export interface FlowRequest {
   phase?: FlowPhase;
   /** A saved prompt to start from (custom intents). */
   prompt?: string;
+  /** A whole configuration to start from (the last run), instead of the intent's defaults. */
+  settings?: TransformSettings;
 }
 
 let current: FlowRequest | null = null;
@@ -168,6 +170,59 @@ export function useTemplates(id: IntentId): PromptTemplate[] {
 /** Tests: forget the in-memory copy so the next read goes back to localStorage. */
 export function resetTemplateCache(): void {
   templates = null;
+}
+
+// --- last run -------------------------------------------------------------------
+
+// The most recent run's intent and every setting (prompt included), so it can be re-run on a new selection or
+// loaded and adjusted. Only used when the user picks it: it never pre-fills an ordinary flow.
+const LAST_RUN_KEY = 'loki.transform.lastRun.v1';
+
+export interface LastRun {
+  intent: IntentId;
+  settings: TransformSettings;
+  at: number;
+}
+
+let lastRun: LastRun | null | undefined;
+const lastRunListeners = new Set<() => void>();
+
+export function loadLastRun(): LastRun | null {
+  if (lastRun !== undefined) return lastRun;
+  try {
+    const raw = window.localStorage.getItem(LAST_RUN_KEY);
+    const parsed = raw ? (JSON.parse(raw) as LastRun) : null;
+    lastRun = parsed && parsed.intent && parsed.settings ? parsed : null;
+  } catch {
+    lastRun = null;
+  }
+  return lastRun;
+}
+
+export function saveLastRun(intent: IntentId, settings: TransformSettings): void {
+  lastRun = { intent, settings: { ...settings }, at: Date.now() };
+  try {
+    window.localStorage.setItem(LAST_RUN_KEY, JSON.stringify(lastRun));
+  } catch {
+    // storage unavailable: remembered for this session only
+  }
+  lastRunListeners.forEach((l) => l());
+}
+
+export function useLastRun(): LastRun | null {
+  return useSyncExternalStore(
+    (cb) => {
+      lastRunListeners.add(cb);
+      return () => lastRunListeners.delete(cb);
+    },
+    loadLastRun,
+    () => null
+  );
+}
+
+/** Tests: forget the in-memory copy so the next read goes back to localStorage. */
+export function resetLastRunCache(): void {
+  lastRun = undefined;
 }
 
 // --- submission ---------------------------------------------------------------

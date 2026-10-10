@@ -8,8 +8,17 @@ if (typeof (AbortSignal as any).timeout !== 'function') {
 
 import TransformSection from '../renderer/components/transform/transform-section';
 import { TransformFlowView } from '../renderer/components/transform/flow-view';
-import { getFlowRequest, closeTransformFlow, loadTemplates, resetTemplateCache, saveTemplate } from '../renderer/components/transform/store';
-import { settingsFor, type IntentId, type TransformSettings } from '../renderer/components/transform/intents';
+import {
+  getFlowRequest,
+  closeTransformFlow,
+  loadLastRun,
+  loadTemplates,
+  resetLastRunCache,
+  resetTemplateCache,
+  saveLastRun,
+  saveTemplate,
+} from '../renderer/components/transform/store';
+import { runSummary, settingsFor, type IntentId, type TransformSettings } from '../renderer/components/transform/intents';
 import { insertToken, suggestTemplateName } from '../renderer/components/transform/flow-view';
 
 const IMG = 'C:/media/photo.jpg';
@@ -20,6 +29,8 @@ describe('TransformSection (palette chips)', () => {
   let fetchMock: jest.Mock;
   beforeEach(() => {
     window.localStorage.clear();
+    resetLastRunCache();
+    resetTemplateCache();
     closeTransformFlow();
     fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'job-1' }) });
     (global as any).fetch = fetchMock;
@@ -193,7 +204,7 @@ describe('TransformFlowView', () => {
     const props = baseProps({ intent: 'restore', phase: 'review', status: 'done', queuedCount: 3 });
     render(<TransformFlowView {...props} />);
     expect(screen.getByText('3 jobs queued')).toBeTruthy();
-    fireEvent.click(screen.getByText('Tweak and run again'));
+    fireEvent.click(screen.getByText('Adjust and run again'));
     expect(props.onAgain).toHaveBeenCalled();
     fireEvent.click(screen.getByText('Done'));
     expect(props.onClose).toHaveBeenCalled();
@@ -420,7 +431,8 @@ describe('TransformFlowView: saved prompts', () => {
 
   it('saves the current prompt under a name, then loads it back from the list', () => {
     const { unmount } = render(<Harness intent="edit" initial="" />);
-    expect(screen.queryByText(/Save prompt/)).toBeNull();
+    // Always visible next to the prompt, usable once there is something to save.
+    expect((screen.getByText(/Save prompt/) as HTMLButtonElement).disabled).toBe(true);
     const ta = document.querySelector('textarea.ts-text') as HTMLTextAreaElement;
     fireEvent.change(ta, { target: { value: 'turn it into a watercolor painting with soft edges and paper texture' } });
     fireEvent.click(screen.getByText(/Save prompt/));
@@ -429,8 +441,9 @@ describe('TransformFlowView: saved prompts', () => {
     fireEvent.change(name, { target: { value: 'Watercolor' } });
     fireEvent.keyDown(name, { key: 'Enter' });
     expect(screen.queryByLabelText('Saved prompt name')).toBeNull();
-    // Already saved: no second save button while the prompt matches.
+    // Already saved: the button says so while the prompt matches.
     expect(screen.queryByText(/Save prompt/)).toBeNull();
+    expect(screen.getByText('★ Saved')).toBeTruthy();
     expect(JSON.parse(window.localStorage.getItem('loki.transform.templates.v1') || '{}').edit).toEqual([
       expect.objectContaining({ name: 'Watercolor', prompt: 'turn it into a watercolor painting with soft edges and paper texture' }),
     ]);
@@ -474,6 +487,7 @@ describe('Transform: presets, custom and saved prompts are told apart', () => {
   beforeEach(() => {
     window.localStorage.clear();
     resetTemplateCache();
+    resetLastRunCache();
     closeTransformFlow();
   });
 
@@ -536,5 +550,108 @@ describe('Transform: presets, custom and saved prompts are told apart', () => {
     fireEvent.click(screen.getByRole('button', { name: /☆ Watercolor/ }));
     expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape', prompt: 'turn it into a watercolor painting' });
     expect(onDone).toHaveBeenCalled();
+  });
+});
+
+describe('Transform: the last run', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetTemplateCache();
+    resetLastRunCache();
+    closeTransformFlow();
+    fetchMock = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ id: 'job-1' }) });
+    (global as any).fetch = fetchMock;
+  });
+
+  const editRun = (): TransformSettings => ({ ...settingsFor('edit'), prompt: 'make it night', quality: 'fine', variations: 2 });
+
+  it('runSummary says what the run did and how', () => {
+    expect(runSummary('edit', editRun())).toBe('“make it night” · fine · 2 variations');
+    expect(runSummary('upscale', settingsFor('upscale', { scale: 4 }))).toBe('4× · balanced');
+    expect(runSummary('wallpaper', settingsFor('wallpaper', { wallpaperTarget: 'phone' }))).toBe('phone · balanced');
+    expect(runSummary('restore', { ...settingsFor('restore'), manualPrompt: 'clean it up' })).toMatch(/^your prompt “clean it up”/);
+  });
+
+  it('a one-click preset becomes the last run', async () => {
+    render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Restore$/ }));
+    await waitFor(() => expect(loadLastRun()).toMatchObject({ intent: 'restore' }));
+  });
+
+  it('palette ↻ re-runs the last run, prompt and settings included, on the new selection', async () => {
+    saveLastRun('edit', editRun());
+    const onDone = jest.fn();
+    render(<TransformSection paths={[IMG2]} authToken="tok" getVideoTime={() => undefined} onDone={onDone} notify={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /↻ Edit with words again/ }));
+    const created = () => fetchMock.mock.calls.filter((c) => /\/create$/.test(String(c[0])));
+    await waitFor(() => expect(created()).toHaveLength(2));
+    const body = JSON.parse(created()[0][1].body);
+    expect(body.input).toContain('C:/media/other.png');
+    expect(body.fields).toMatchObject({ prompt: 'make it night' });
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+  });
+
+  it('palette ↻ with Shift loads the last run into the flow to adjust', () => {
+    saveLastRun('edit', editRun());
+    render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /↻ Edit with words again/ }), { shiftKey: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape', settings: expect.objectContaining({ prompt: 'make it night', quality: 'fine' }) });
+  });
+
+  it('choose: the last run is a card that loads it', () => {
+    saveLastRun('edit', editRun());
+    const onLoadRun = jest.fn();
+    render(
+      <TransformFlowView
+        paths={[IMG]}
+        intent={null}
+        phase="choose"
+        settings={settingsFor('restore')}
+        source={null}
+        queueAhead={0}
+        status="idle"
+        thumbUrl={(p: string) => p}
+        onSettings={jest.fn()}
+        onIntent={jest.fn()}
+        onLoadRun={onLoadRun}
+        onPhase={jest.fn()}
+        onRun={jest.fn()}
+        onClose={jest.fn()}
+        onRemovePath={jest.fn()}
+        onAgain={jest.fn()}
+      />
+    );
+    expect(screen.getByText('Last run')).toBeTruthy();
+    fireEvent.click(screen.getByText(/“make it night” · fine/).closest('button') as HTMLButtonElement);
+    expect(onLoadRun).toHaveBeenCalledWith(expect.objectContaining({ intent: 'edit', settings: expect.objectContaining({ prompt: 'make it night' }) }));
+  });
+
+  it('done: offers to save the prompt that just ran', () => {
+    render(
+      <TransformFlowView
+        paths={[IMG]}
+        intent="edit"
+        phase="review"
+        settings={editRun()}
+        source={null}
+        queueAhead={0}
+        status="done"
+        queuedCount={2}
+        thumbUrl={(p: string) => p}
+        onSettings={jest.fn()}
+        onIntent={jest.fn()}
+        onPhase={jest.fn()}
+        onRun={jest.fn()}
+        onClose={jest.fn()}
+        onRemovePath={jest.fn()}
+        onAgain={jest.fn()}
+      />
+    );
+    fireEvent.click(screen.getByText(/Save prompt/));
+    const name = screen.getByLabelText('Saved prompt name') as HTMLInputElement;
+    fireEvent.keyDown(name, { key: 'Enter' });
+    expect(loadTemplates('edit')).toEqual([expect.objectContaining({ name: 'make it night', prompt: 'make it night' })]);
   });
 });

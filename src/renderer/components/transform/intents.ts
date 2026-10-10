@@ -234,6 +234,30 @@ export function intentKind(id: IntentId): IntentKind {
   return intentById(id).needsText === 'prompt' ? 'custom' : 'preset';
 }
 
+function quoteSnippet(text: string, max = 48): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return `“${flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat}”`;
+}
+
+/** One line describing a run's configuration, for "Last run" (what it did and how, not which files). */
+export function runSummary(id: IntentId, s: TransformSettings): string {
+  const parts: string[] = [];
+  const manual = s.manualPrompt !== null && s.manualPrompt.trim() ? s.manualPrompt : null;
+  if (manual) parts.push(`your prompt ${quoteSnippet(manual)}`);
+  else if (id === 'edit' || id === 'direct') parts.push(quoteSnippet(s.prompt));
+  else if (id === 'alive' && s.describe.trim()) parts.push(quoteSnippet(s.describe));
+  else if (s.append.trim()) parts.push(`+ ${quoteSnippet(s.append, 32)}`);
+  if (id === 'wallpaper') parts.push(s.wallpaperTarget === 'phone' ? 'phone' : 'desktop');
+  else if (intentById(id).engine === 'retouch') {
+    if (s.sizeMode === 'scale') parts.push(`${s.scale}×`);
+    else if (s.sizeMode === 'custom' && parseSize(s.customSize)) parts.push(s.customSize);
+  } else parts.push(`${s.duration.toFixed(1).replace(/\.0$/, '')} s`);
+  parts.push(s.quality);
+  if (s.variations > 1) parts.push(`${s.variations} variations`);
+  if (s.seedMode === 'fixed') parts.push(`seed ${s.seed}`);
+  return parts.join(' · ');
+}
+
 /** Defaults for an intent, with any remembered overrides on top. */
 export function settingsFor(
   id: IntentId,

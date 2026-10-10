@@ -16,6 +16,7 @@
   cursor: default;
 }
 
-.transform-chip-saved {
+.transform-chip-saved,
+.transform-chip-last {
   border-style: dashed;
 }

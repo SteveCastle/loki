@@ -507,11 +507,6 @@
   color: white;
 }
 
-.ts-template-save {
-  color: var(--ts-dim);
-  border-style: dashed;
-}
-
 .ts-template-name {
   display: inline-flex;
   align-items: center;
@@ -1328,4 +1323,40 @@
 
 .ts-prompt-edit {
   max-height: 320px;
+}
+
+/* "☆ Save prompt" in a field header / the review prompt / the done screen */
+
+.ts-field-action {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.ts-template-save {
+  color: var(--ts-caution);
+  border-color: rgba(230, 162, 60, 0.45);
+}
+
+.ts-template-save:hover:not(:disabled) {
+  color: white;
+  background: rgba(230, 162, 60, 0.18);
+  border-color: var(--ts-caution);
+}
+
+.ts-template-saved {
+  color: var(--ts-caution);
+  border-color: transparent;
+  background: none;
+  cursor: default;
+}
+
+.ts-done-save {
+  margin-top: 4px;
+}
+
+/* the last run, at the top of the Choose step */
+
+.ts-card-last {
+  border-style: dashed;
 }
