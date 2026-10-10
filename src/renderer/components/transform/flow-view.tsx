@@ -9,6 +9,7 @@ import {
   estimateSeconds,
   formatDuration,
   intentById,
+  intentKind,
   mediaKind,
   parseSize,
   planFor,
@@ -18,11 +19,12 @@ import {
   tokenIssues,
   usesReferences,
   type IntentId,
+  type IntentKind,
   type Quality,
   type Shake,
   type TransformSettings,
 } from './intents';
-import type { FlowPhase } from './store';
+import { deleteTemplate, saveTemplate, useTemplates, type FlowPhase, type PromptTemplate } from './store';
 import { GlyphCheck, GlyphDie, GlyphMusic, IntentIcon } from './icons';
 import './transform-flow.css';
 
@@ -106,8 +108,101 @@ function appendPhrase(prompt: string, phrase: string): string {
   return `${base.replace(/[.,;]+$/, '')}, ${phrase}`;
 }
 
+// What each kind of starting point is called, everywhere in the flow and the palette.
+const KIND: Record<IntentKind | 'saved', { label: string; title: string }> = {
+  preset: { label: 'Preset', title: 'Preset: runs a built-in prompt. You can add to it, or replace it in Review.' },
+  custom: { label: 'Custom', title: 'Custom: runs the prompt you write.' },
+  saved: { label: 'Saved', title: 'Saved: a custom prompt you saved to start from again.' },
+};
+
+export function KindBadge({ kind }: { kind: IntentKind | 'saved' }) {
+  return (
+    <span className={`ts-kind ts-kind-${kind}`} title={KIND[kind].title}>
+      {KIND[kind].label}
+    </span>
+  );
+}
+
+/** A labelled row of chips under a prompt (Saved / Ideas / Add), so each row says what its chips do. */
+function ChipRow({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
+  return (
+    <div className="ts-chiprow" role="group" aria-label={label}>
+      <span className="ts-chiprow-label" title={hint}>
+        {label}
+      </span>
+      <div className="ts-chips">{children}</div>
+    </div>
+  );
+}
+
 function baseName(p: string): string {
   return p.split(/[\\/]/).pop() || p;
+}
+
+/** A name for a new saved prompt: its first few words. */
+export function suggestTemplateName(prompt: string): string {
+  const flat = prompt.replace(/\s+/g, ' ').trim();
+  if (flat.length <= 32) return flat;
+  const cut = flat.slice(0, 32);
+  const sp = cut.lastIndexOf(' ');
+  return `${(sp > 12 ? cut.slice(0, sp) : cut).replace(/[.,;:]+$/, '')}…`;
+}
+
+// Saved starting prompts for an intent: click one to load it, or save the current prompt as a new one.
+function PromptTemplates({ intent, prompt, onUse }: { intent: IntentId; prompt: string; onUse: (prompt: string) => void }) {
+  const list = useTemplates(intent);
+  const [naming, setNaming] = useState<string | null>(null);
+  const trimmed = prompt.trim();
+  const current = list.find((t) => t.prompt === trimmed);
+  const commit = () => {
+    if (naming !== null && saveTemplate(intent, naming, trimmed)) setNaming(null);
+  };
+  if (!list.length && !trimmed) return null;
+  return (
+    <ChipRow label="Saved" hint="Your saved prompts: click one to start from it">
+      {list.map((t) => (
+        <span key={t.id} className={`ts-template${t === current ? ' active' : ''}`}>
+          <button type="button" className="ts-template-use" title={`Start from your saved prompt:\n${t.prompt}`} onClick={() => onUse(t.prompt)}>
+            ☆ {t.name}
+          </button>
+          <button type="button" className="ts-template-x" onClick={() => deleteTemplate(intent, t.id)} aria-label={`Delete saved prompt ${t.name}`} title="Delete">
+            ×
+          </button>
+        </span>
+      ))}
+      {naming !== null ? (
+        <span className="ts-template-name" data-ts-local-esc>
+          <input
+            autoFocus
+            value={naming}
+            placeholder="Name"
+            aria-label="Saved prompt name"
+            onChange={(e) => setNaming(e.target.value)}
+            onFocus={(e) => e.target.select()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                commit();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setNaming(null);
+              }
+            }}
+          />
+          <button type="button" className="ts-chip" disabled={!naming.trim()} onClick={commit}>
+            Save
+          </button>
+          <button type="button" className="ts-chip" onClick={() => setNaming(null)}>
+            Cancel
+          </button>
+        </span>
+      ) : trimmed && !current ? (
+        <button type="button" className="ts-chip ts-template-save" onClick={() => setNaming(suggestTemplateName(trimmed))} title="Keep this prompt to start from next time">
+          + Save prompt
+        </button>
+      ) : null}
+    </ChipRow>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +240,7 @@ function Thumb({
   return (
     <div
       className={`ts-thumb ts-thumb-${kind}${onPick ? ' ts-thumb-pick' : ''}`}
-      title={onPick && role ? `${baseName(path)}: click to put ${role} in the prompt` : baseName(path)}
+      title={onPick && role ? `${baseName(path)}: click to insert ${role} into the prompt` : baseName(path)}
       {...pick}
     >
       {kind === 'image' && <img src={thumbUrl(path)} alt="" draggable={false} />}
@@ -305,6 +400,8 @@ export interface FlowViewProps {
   thumbUrl: (p: string) => string;
   onSettings: (patch: Partial<TransformSettings>) => void;
   onIntent: (id: IntentId) => void;
+  /** Start a custom intent from one of the user's saved prompts. */
+  onTemplate?: (id: IntentId, prompt: string) => void;
   onPhase: (p: FlowPhase) => void;
   onRun: () => void;
   onClose: () => void;
@@ -335,7 +432,7 @@ export interface PromptPreviewState {
 
 const PHASES: Array<{ id: FlowPhase; label: string }> = [
   { id: 'choose', label: 'Choose' },
-  { id: 'shape', label: 'Shape' },
+  { id: 'shape', label: 'Set up' },
   { id: 'review', label: 'Review' },
 ];
 
@@ -415,6 +512,12 @@ export function TransformFlowView(props: FlowViewProps) {
 
 function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify> }) {
   const { inputs, intent } = props;
+  const savedEdit = useTemplates('edit');
+  const savedDirect = useTemplates('direct');
+  const saved: Array<{ intent: IntentId; t: PromptTemplate }> = [
+    ...(availability('edit', inputs).ok ? savedEdit.map((t) => ({ intent: 'edit' as IntentId, t })) : []),
+    ...(availability('direct', inputs).ok ? savedDirect.map((t) => ({ intent: 'direct' as IntentId, t })) : []),
+  ];
   const groups: Array<{ id: 'image' | 'video'; title: string; sub: string }> = [
     { id: 'image', title: 'Images', sub: 'loki-retouch · Qwen Image 2.1' },
     { id: 'video', title: 'Video', sub: 'loki-reshoot · MiniMax H3, with sound' },
@@ -422,6 +525,19 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
   return (
     <div className="ts-choose">
       <p className="ts-lead">What do you want to do with {summarizeInputs(props.paths)}?</p>
+      <p className="ts-legend">
+        <span>
+          <KindBadge kind="preset" /> built-in prompt, ready to run
+        </span>
+        <span>
+          <KindBadge kind="custom" /> you write the prompt
+        </span>
+        {saved.length ? (
+          <span>
+            <KindBadge kind="saved" /> a prompt you saved
+          </span>
+        ) : null}
+      </p>
       {groups.map((g) => (
         <section key={g.id} className="ts-group">
           <div className="ts-group-head">
@@ -444,7 +560,9 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
                     <IntentIcon id={i.id} />
                   </span>
                   <span className="ts-card-text">
-                    <strong>{i.title}</strong>
+                    <strong>
+                      {i.title} <KindBadge kind={intentKind(i.id)} />
+                    </strong>
                     <small>
                       {!a.ok ? a.reason : usesReferences(i.id, inputs) ? `Uses all ${inputs.images.length} images as references` : i.tagline}
                     </small>
@@ -455,6 +573,31 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
           </div>
         </section>
       ))}
+      {saved.length > 0 && (
+        <section className="ts-group">
+          <div className="ts-group-head">
+            <h3>Saved prompts</h3>
+            <span>your custom prompts · save one from the prompt box</span>
+          </div>
+          <div className="ts-cards">
+            {saved.map(({ intent: id, t }) => (
+              <button key={t.id} type="button" className="ts-card ts-card-saved" onClick={() => props.onTemplate?.(id, t.prompt)} title={t.prompt}>
+                <span className="ts-card-icon">
+                  <IntentIcon id={id} />
+                </span>
+                <span className="ts-card-text">
+                  <strong>
+                    ☆ {t.name} <KindBadge kind="saved" />
+                  </strong>
+                  <small>
+                    {intentById(id).title} · {t.prompt}
+                  </small>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
@@ -517,7 +660,9 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             <IntentIcon id={def.id} />
           </span>
           <div>
-            <h2>{def.title}</h2>
+            <h2>
+              {def.title} <KindBadge kind={intentKind(def.id)} />
+            </h2>
             <p>{def.blurb}</p>
           </div>
         </div>
@@ -541,23 +686,40 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
                 }
               }}
             />
-            <div className="ts-chips">
-              {examples.slice(0, 3).map((ex) => (
-                <button key={ex} type="button" className="ts-chip ts-chip-idea" title={ex} onClick={() => onSettings({ prompt: ex })}>
-                  {ex.length > 46 ? `${ex.slice(0, 44)}…` : ex}
-                </button>
-              ))}
-              {def.id === 'edit' &&
-                STYLE_CHIPS.map((c) => (
-                  <button key={c.label} type="button" className="ts-chip" onClick={() => onSettings({ prompt: appendPhrase(s.prompt, c.text) })}>
+            <PromptTemplates
+              intent={def.id}
+              prompt={s.prompt}
+              onUse={(prompt) => {
+                onSettings({ prompt });
+                window.setTimeout(() => {
+                  const ta = textRef.current;
+                  ta?.focus();
+                  ta?.setSelectionRange(prompt.length, prompt.length);
+                }, 0);
+              }}
+            />
+            {examples.length > 0 && (
+              <ChipRow label="Ideas" hint="Example prompts: click one to replace the prompt with it">
+                {examples.slice(0, 3).map((ex) => (
+                  <button key={ex} type="button" className="ts-chip ts-chip-idea" title={`Replace the prompt with:\n${ex}`} onClick={() => onSettings({ prompt: ex })}>
+                    {ex.length > 46 ? `${ex.slice(0, 44)}…` : ex}
+                  </button>
+                ))}
+              </ChipRow>
+            )}
+            {def.id === 'edit' && (
+              <ChipRow label="Add" hint="Click to add the phrase to the end of the prompt">
+                {STYLE_CHIPS.map((c) => (
+                  <button key={c.label} type="button" className="ts-chip" title={`Add “${c.text}”`} onClick={() => onSettings({ prompt: appendPhrase(s.prompt, c.text) })}>
                     + {c.label}
                   </button>
                 ))}
-            </div>
+              </ChipRow>
+            )}
             {refs.length > 0 && (
               <div className="ts-refblock">
                 <div className="ts-refblock-head">
-                  {refs.length > 1 ? 'What the model calls each reference' : 'What the model calls the image'} · click a token to insert it
+                  {refs.length > 1 ? 'Tokens for each image' : 'Token for the image'} · click one to insert it into the prompt
                 </div>
                 <ReferenceChips refs={refs} thumbUrl={props.thumbUrl} onPick={pickToken} onMakeFirst={shared ? props.onMakeFirst : undefined} />
                 {shared && (
@@ -575,11 +737,17 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
 
         {manual && (
           <p className="ts-note warn ts-manual-note">
-            The full prompt is hand-written (in Review), so it replaces what these settings would generate.{' '}
+            You wrote your own prompt in Review: it replaces the {def.title} preset prompt and anything added to it here.{' '}
             <button type="button" className="ts-linkbtn" onClick={() => onSettings({ manualPrompt: null })}>
-              Discard it
+              Use the preset prompt again
             </button>
           </p>
+        )}
+
+        {isRetouch && def.id !== 'edit' && !manual && (
+          <Field label="Add to the preset" hint="optional · follows the built-in prompt">
+            <textarea className="ts-text" rows={2} value={s.append} placeholder="e.g. keep the film grain" onChange={(e) => onSettings({ append: e.target.value })} />
+          </Field>
         )}
 
         {def.needsText === 'describe' && (
@@ -725,11 +893,6 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
         </button>
         {more && (
           <div className="ts-more">
-            {isRetouch && def.id !== 'edit' && (
-              <Field label="Extra direction" hint="appended to the built-in prompt">
-                <textarea className="ts-text" rows={2} value={s.append} placeholder="e.g. keep the film grain" onChange={(e) => onSettings({ append: e.target.value })} />
-              </Field>
-            )}
             {!isRetouch && (
               <>
                 <Field label="Reference image detail">
@@ -779,7 +942,7 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </div>
         </div>
         <div className="ts-preview-inputs">
-          <div className="ts-preview-title">Using{promptField && Object.values(roles).some((r) => r.startsWith('<')) ? ' · click one to put its tag in the prompt' : ''}</div>
+          <div className="ts-preview-title">Inputs{promptField && Object.values(roles).some((r) => r.startsWith('<')) ? ' · click one to insert its token' : ''}</div>
           <div className="ts-thumbs">
             {shown.slice(0, 8).map((p) => (
               <Thumb
@@ -847,7 +1010,7 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
   if (data?.prompt) shownText = data.prompt;
   else if (verbatim) shownText = s.prompt.trim();
   else if (preview?.status === 'loading') shownText = '';
-  else shownText = preset ? `(the built-in “${preset}” prompt${s.append.trim() ? `, then: ${s.append.trim()}` : ''})` : def.id === 'alive' ? '(the living-photo prompt)' : '';
+  else shownText = preset || def.id === 'alive' ? `(the ${def.title} preset prompt${s.append.trim() ? `, then: ${s.append.trim()}` : ''})` : '';
 
   const startEdit = () => {
     if (verbatim) setEditingVerbatim(true);
@@ -856,9 +1019,10 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
   };
 
   let source = '';
-  if (manual) source = 'written by you · replaces the generated prompt';
-  else if (verbatim) source = 'your words, sent as written';
-  else if (data?.fromEngine) source = `as ${engine} expands it`;
+  if (manual) source = `custom · yours, replaces the ${def.title} preset prompt`;
+  else if (verbatim) source = 'custom · your words, sent as written';
+  else if (data?.fromEngine) source = `preset · as ${engine} expands it`;
+  else source = 'preset';
 
   return (
     <section className="ts-prompt" aria-label="Prompt sent to the model">
@@ -867,8 +1031,14 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
         {source ? <span className="ts-field-hint">{source}</span> : null}
         <span className="ts-prompt-actions">
           {!editing && (
-            <button type="button" className="ts-chip" onClick={startEdit} disabled={preview?.status === 'loading' && !verbatim}>
-              Edit full prompt
+            <button
+              type="button"
+              className="ts-chip"
+              onClick={startEdit}
+              disabled={preview?.status === 'loading' && !verbatim}
+              title={verbatim ? 'Edit your prompt' : 'Start from the preset prompt and write your own; it replaces the preset prompt for this run'}
+            >
+              {verbatim ? 'Edit prompt' : 'Write my own'}
             </button>
           )}
           {editingVerbatim && (
@@ -878,7 +1048,7 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
           )}
           {manual && (
             <button type="button" className="ts-chip" onClick={() => onSettings({ manualPrompt: null })}>
-              Reset to generated
+              Use the preset prompt
             </button>
           )}
           {!editing && data?.modelInput ? (
@@ -917,7 +1087,7 @@ function PromptPanel(props: FlowViewProps & { def: ReturnType<typeof intentById>
         <p className="ts-note">Runs without the living-photo expansion: the subject and camera settings no longer apply; the photo is <code>&lt;Picture 1&gt;</code>.</p>
       ) : null}
       {manual && def.engine === 'retouch' && preset ? (
-        <p className="ts-note">The “{preset}” preset still sets the output size; its built-in prompt and the extra direction are replaced.</p>
+        <p className="ts-note">The {def.title} preset still sets the output size; your prompt replaces its built-in prompt and anything added to it.</p>
       ) : null}
       {data?.note ? <p className="ts-note">{data.note}</p> : null}
       {preview?.status === 'error' ? <p className="ts-note warn">Could not ask {engine} for its prompt ({preview.error}); showing what is known here.</p> : null}
@@ -945,7 +1115,7 @@ function ReviewView(props: FlowViewProps & { def: ReturnType<typeof intentById> 
           <div>
             <h2>
               {def.title}
-              {plan.outputs > 1 ? ` × ${plan.outputs}` : ''}
+              {plan.outputs > 1 ? ` × ${plan.outputs}` : ''} <KindBadge kind={manual ? 'custom' : intentKind(def.id)} />
             </h2>
             <p>{usesReferences(def.id, classify(paths)) ? `One result from ${classify(paths).images.length} images` : def.tagline}</p>
           </div>

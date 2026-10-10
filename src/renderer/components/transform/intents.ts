@@ -223,6 +223,17 @@ export function intentById(id: IntentId): IntentDef {
   return INTENTS.find((i) => i.id === id) as IntentDef;
 }
 
+/**
+ * The two kinds of intent, named the same everywhere in the UI: a preset runs a built-in prompt (you can add to it,
+ * or replace it in Review); a custom one runs the prompt you write. Prompts you save are a third, "saved", kind of
+ * starting point for custom intents (store.ts).
+ */
+export type IntentKind = 'preset' | 'custom';
+
+export function intentKind(id: IntentId): IntentKind {
+  return intentById(id).needsText === 'prompt' ? 'custom' : 'preset';
+}
+
 /** Defaults for an intent, with any remembered overrides on top. */
 export function settingsFor(
   id: IntentId,

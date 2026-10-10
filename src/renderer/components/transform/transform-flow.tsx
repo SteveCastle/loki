@@ -62,7 +62,7 @@ function useSourceSize(path: string | undefined, thumbUrl: (p: string) => string
 export default function TransformFlow() {
   const req = useFlowRequest();
   if (!req) return null;
-  return <FlowSession key={req.paths.join('|') + (req.intent || '')} req={req} />;
+  return <FlowSession key={`${req.paths.join('|')}|${req.intent || ''}|${req.prompt || ''}`} req={req} />;
 }
 
 function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowRequest>> }) {
@@ -71,7 +71,10 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   const [paths, setPaths] = useState<string[]>(req.paths);
   const [intent, setIntent] = useState<IntentId | null>(req.intent || null);
   const [phase, setPhase] = useState<FlowPhase>(req.phase || (req.intent ? 'shape' : 'choose'));
-  const [settings, setSettings] = useState<TransformSettings>(() => settingsFor(req.intent || 'restore', req.intent ? loadRemembered(req.intent) : null));
+  const [settings, setSettings] = useState<TransformSettings>(() => ({
+    ...settingsFor(req.intent || 'restore', req.intent ? loadRemembered(req.intent) : null),
+    prompt: req.prompt || '',
+  }));
   const [status, setStatus] = useState<'idle' | 'submitting' | 'done' | 'error'>('idle');
   const [error, setError] = useState<string | undefined>();
   const [queuedCount, setQueuedCount] = useState(0);
@@ -91,6 +94,13 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
     },
     []
   );
+
+  // A saved prompt picked in the Choose step: its intent, starting from its text.
+  const chooseTemplate = useCallback((id: IntentId, prompt: string) => {
+    setIntent(id);
+    setSettings({ ...settingsFor(id, loadRemembered(id)), prompt });
+    setPhase('shape');
+  }, []);
 
   const patch = useCallback((p: Partial<TransformSettings>) => setSettings((prev) => ({ ...prev, ...p })), []);
 
@@ -211,6 +221,8 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // A field that uses Esc itself (naming a saved prompt) cancels that, not the whole flow.
+        if (e.target instanceof Element && e.target.closest('[data-ts-local-esc]')) return;
         e.stopPropagation();
         closeTransformFlow();
       } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && phase === 'review' && status !== 'submitting' && status !== 'done') {
@@ -238,6 +250,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       thumbUrl={thumbUrl}
       onSettings={patch}
       onIntent={chooseIntent}
+      onTemplate={chooseTemplate}
       onPhase={(p) => {
         setError(undefined);
         setPhase(p);

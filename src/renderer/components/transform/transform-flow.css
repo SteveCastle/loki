@@ -384,6 +384,157 @@
   font-style: italic;
 }
 
+/* kind badges: Preset (built-in prompt) / Custom (your prompt) / Saved (a prompt you saved) */
+
+.ts-kind {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: 2px;
+  border-radius: 4px;
+  border: 1px solid var(--ts-hairline);
+  color: var(--ts-faint);
+}
+
+.ts-kind-custom {
+  color: var(--ts-accent);
+  border-color: var(--ts-accent-strong);
+}
+
+.ts-kind-saved {
+  color: var(--ts-caution);
+  border-color: rgba(230, 162, 60, 0.35);
+}
+
+.ts-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: -4px 0 4px;
+  font-size: 11px;
+  color: var(--ts-faint);
+}
+
+.ts-legend .ts-kind {
+  margin: 0 4px 0 0;
+}
+
+.ts-card-saved small {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* labelled chip rows under a prompt: Saved / Ideas / Add */
+
+.ts-chiprow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ts-chiprow-label {
+  flex: 0 0 40px;
+  padding-top: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ts-faint);
+  cursor: help;
+}
+
+.ts-chiprow .ts-chips {
+  flex: 1;
+  min-width: 0;
+}
+
+/* saved prompts: chips with a delete ×, plus "Save prompt" / inline name field */
+
+.ts-template {
+  display: inline-flex;
+  align-items: stretch;
+  font-size: 11px;
+  background: rgba(230, 162, 60, 0.1);
+  border: 1px solid rgba(230, 162, 60, 0.3);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.ts-template.active {
+  border-color: var(--ts-caution);
+}
+
+.ts-template button {
+  font: inherit;
+  color: rgba(255, 255, 255, 0.85);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.ts-template-use {
+  max-width: 220px;
+  padding: 3px 4px 3px 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-template-x {
+  padding: 0 7px 0 4px;
+  color: var(--ts-faint) !important;
+  opacity: 0;
+  transition: opacity 0.1s, color 0.1s;
+}
+
+.ts-template:hover .ts-template-x,
+.ts-template-x:focus-visible {
+  opacity: 1;
+}
+
+.ts-template-x:hover {
+  color: var(--ts-danger) !important;
+}
+
+.ts-template-use:hover {
+  color: white;
+}
+
+.ts-template-save {
+  color: var(--ts-dim);
+  border-style: dashed;
+}
+
+.ts-template-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ts-template-name input {
+  width: 180px;
+  padding: 3px 7px;
+  font: inherit;
+  font-size: 11px;
+  color: white;
+  background: var(--ts-field);
+  border: 1px solid var(--ts-accent);
+  border-radius: 5px;
+  outline: none;
+}
+
+.ts-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .ts-note {
   margin: 0;
   font-size: 11px;

@@ -14,6 +14,8 @@ export interface FlowRequest {
   videoTime?: number;
   intent?: IntentId;
   phase?: FlowPhase;
+  /** A saved prompt to start from (custom intents). */
+  prompt?: string;
 }
 
 let current: FlowRequest | null = null;
@@ -92,6 +94,80 @@ export function saveRemembered(id: IntentId, s: TransformSettings): void {
   } catch {
     // storage unavailable: settings just don't stick
   }
+}
+
+// --- saved prompt templates ---------------------------------------------------
+
+// Prompts the user saved to start from again, per intent: tags like <image1> or
+// <Picture 1> only mean something to the engine they were written for.
+const TEMPLATES_KEY = 'loki.transform.templates.v1';
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  prompt: string;
+}
+
+type TemplateStore = Partial<Record<IntentId, PromptTemplate[]>>;
+
+const NO_TEMPLATES: PromptTemplate[] = [];
+let templates: TemplateStore | null = null;
+const templateListeners = new Set<() => void>();
+
+function readTemplates(): TemplateStore {
+  if (templates) return templates;
+  try {
+    const raw = window.localStorage.getItem(TEMPLATES_KEY);
+    templates = raw ? (JSON.parse(raw) as TemplateStore) : {};
+  } catch {
+    templates = {};
+  }
+  return templates;
+}
+
+function writeTemplates(next: TemplateStore): void {
+  templates = next;
+  try {
+    window.localStorage.setItem(TEMPLATES_KEY, JSON.stringify(next));
+  } catch {
+    // storage unavailable: templates last for this session only
+  }
+  templateListeners.forEach((l) => l());
+}
+
+export function loadTemplates(id: IntentId): PromptTemplate[] {
+  return readTemplates()[id] || NO_TEMPLATES;
+}
+
+/** Saves `prompt` under `name`; a template with the same name (case-insensitive) is replaced. */
+export function saveTemplate(id: IntentId, name: string, prompt: string): PromptTemplate | null {
+  const n = name.trim();
+  const p = prompt.trim();
+  if (!n || !p) return null;
+  const tpl: PromptTemplate = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: n, prompt: p };
+  const list = loadTemplates(id).filter((t) => t.name.toLowerCase() !== n.toLowerCase());
+  writeTemplates({ ...readTemplates(), [id]: [...list, tpl] });
+  return tpl;
+}
+
+export function deleteTemplate(id: IntentId, templateId: string): void {
+  writeTemplates({ ...readTemplates(), [id]: loadTemplates(id).filter((t) => t.id !== templateId) });
+}
+
+export function useTemplates(id: IntentId): PromptTemplate[] {
+  return useSyncExternalStore(
+    (cb) => {
+      templateListeners.add(cb);
+      return () => templateListeners.delete(cb);
+    },
+    () => loadTemplates(id),
+    () => NO_TEMPLATES
+  );
+}
+
+/** Tests: forget the in-memory copy so the next read goes back to localStorage. */
+export function resetTemplateCache(): void {
+  templates = null;
 }
 
 // --- submission ---------------------------------------------------------------

@@ -6,17 +6,19 @@ import {
   buildJobs,
   classify,
   intentById,
+  intentKind,
   settingsFor,
   type IntentId,
 } from './intents';
 import { EngineSetupDeferred } from './engine-setup';
-import { loadRemembered, openTransformFlow, submitJobs } from './store';
+import { loadRemembered, openTransformFlow, submitJobs, useTemplates } from './store';
 import { IntentIcon } from './icons';
 import './transform-section.css';
 
 // The palette's "Transform" row: one-click presets (run with the settings you
-// used last time) and an entry to the Transform flow for everything that
-// needs a prompt or finer control. Shift-click any chip to tune it first.
+// used last time), the custom intents (open the flow at their prompt), the
+// user's saved prompts, and "All options" for the full flow. Shift-click a
+// preset to adjust it first.
 const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'edit', 'alive'];
 
 export interface TransformSectionProps {
@@ -36,13 +38,20 @@ export default function TransformSection(props: TransformSectionProps) {
   const inputs = classify(paths);
   const chips = CHIP_ORDER.map(intentById).filter((i) => availability(i.id, inputs).ok);
   const hasVideoOnly = inputs.images.length === 0 && inputs.videos.length === 1;
+  const savedEdit = useTemplates('edit');
+  const savedDirect = useTemplates('direct');
+  const saved = [
+    ...(availability('edit', inputs).ok ? savedEdit.map((t) => ({ intent: 'edit' as IntentId, t })) : []),
+    ...(availability('direct', inputs).ok ? savedDirect.map((t) => ({ intent: 'direct' as IntentId, t })) : []),
+  ];
 
-  const open = (intent: IntentId | undefined) => {
+  const open = (intent: IntentId | undefined, prompt?: string) => {
     openTransformFlow({
       paths,
       videoTime: getVideoTime(),
       intent,
       phase: intent ? 'shape' : 'choose',
+      prompt,
     });
     onDone();
   };
@@ -85,12 +94,12 @@ export default function TransformSection(props: TransformSectionProps) {
           type="button"
           className="person-rename-btn"
           onClick={() => open(undefined)}
-          title="Customize: every option, step by step"
+          title="Every preset, custom prompt and option, step by step"
         >
-          Customize ▸
+          All options ▸
         </button>
       </div>
-      <div className="type-chips" role="group" aria-label="Transform presets">
+      <div className="type-chips" role="group" aria-label="Transform">
         {chips.map((c) => (
           <button
             key={c.id}
@@ -98,19 +107,38 @@ export default function TransformSection(props: TransformSectionProps) {
             className="type-chip transform-chip"
             disabled={busy !== null}
             onClick={(e) => onChip(e, c.id)}
-            title={`${c.tagline}${c.oneClick ? ' — click to run, Shift-click to tune' : ' — opens the full options'}`}
+            title={chipTitle(c.id)}
           >
             <IntentIcon id={c.id} size={13} />
             {busy === c.id ? 'Queuing…' : chipLabel(c.id, hasVideoOnly)}
           </button>
         ))}
+        {saved.map(({ intent, t }) => (
+          <button
+            key={t.id}
+            type="button"
+            className="type-chip transform-chip transform-chip-saved"
+            disabled={busy !== null}
+            onClick={() => open(intent, t.prompt)}
+            title={`Saved prompt (${intentById(intent).title}): opens it to check and run\n${t.prompt}`}
+          >
+            ☆ {t.name}
+          </button>
+        ))}
       </div>
       <span className="merge-selection-note">
         {hasVideoOnly ? 'acts on the frame you are looking at · ' : ''}
-        click runs with your last settings · Shift-click to tune
+        presets run with your last settings · Shift-click to adjust first{saved.length ? ' · ☆ your saved prompts' : ''}
       </span>
     </div>
   );
+}
+
+function chipTitle(id: IntentId): string {
+  const def = intentById(id);
+  if (intentKind(id) === 'custom') return `Custom: ${def.tagline}. Opens the prompt box.`;
+  if (def.oneClick) return `Preset: ${def.tagline}. Click to run with your last settings, Shift-click to adjust first.`;
+  return `Preset: ${def.tagline}. Opens its settings.`;
 }
 
 function chipLabel(id: IntentId, videoFrame: boolean): string {

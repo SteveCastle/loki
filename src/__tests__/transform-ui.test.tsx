@@ -8,9 +8,9 @@ if (typeof (AbortSignal as any).timeout !== 'function') {
 
 import TransformSection from '../renderer/components/transform/transform-section';
 import { TransformFlowView } from '../renderer/components/transform/flow-view';
-import { getFlowRequest, closeTransformFlow } from '../renderer/components/transform/store';
+import { getFlowRequest, closeTransformFlow, loadTemplates, resetTemplateCache, saveTemplate } from '../renderer/components/transform/store';
 import { settingsFor, type IntentId, type TransformSettings } from '../renderer/components/transform/intents';
-import { insertToken } from '../renderer/components/transform/flow-view';
+import { insertToken, suggestTemplateName } from '../renderer/components/transform/flow-view';
 
 const IMG = 'C:/media/photo.jpg';
 const IMG2 = 'C:/media/other.png';
@@ -79,12 +79,12 @@ describe('TransformSection (palette chips)', () => {
     expect(onDone).toHaveBeenCalled();
   });
 
-  it('prompt-driven chips open the flow, and "Customize" opens the chooser', () => {
+  it('prompt-driven chips open the flow, and "All options" opens the chooser', () => {
     setup([IMG]);
     fireEvent.click(screen.getByRole('button', { name: /Edit…/ }));
     expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape' });
     closeTransformFlow();
-    fireEvent.click(screen.getByRole('button', { name: /Customize/ }));
+    fireEvent.click(screen.getByRole('button', { name: /All options/ }));
     expect(getFlowRequest()).toMatchObject({ phase: 'choose' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -183,7 +183,7 @@ describe('TransformFlowView', () => {
     });
     render(<TransformFlowView {...props} />);
     expect(screen.getByText(/2 GPU jobs already queued ahead/)).toBeTruthy();
-    expect(screen.getByText(/built-in “upscale” prompt/)).toBeTruthy();
+    expect(screen.getByText(/Upscale preset prompt/)).toBeTruthy();
     expect(screen.getByText(/photo_up\.png/)).toBeTruthy();
     fireEvent.click(screen.getByText(/Queue it/).closest('button') as HTMLButtonElement);
     expect(props.onRun).toHaveBeenCalled();
@@ -266,9 +266,9 @@ describe('TransformFlowView: typing and prompt tokens', () => {
     render(<Harness intent="edit" paths={[IMG, IMG2]} initial={{ prompt: 'put the jacket of' }} />);
     const ta = screen.getByRole('textbox') as HTMLTextAreaElement;
     expect(ta.value).toBe('put the jacket of');
-    fireEvent.click(screen.getByTitle(/click to put <image2> in the prompt/));
+    fireEvent.click(screen.getByTitle(/click to insert <image2> into the prompt/));
     expect(ta.value).toBe('put the jacket of <image2> ');
-    fireEvent.click(screen.getByTitle(/click to put <image1> in the prompt/));
+    fireEvent.click(screen.getByTitle(/click to insert <image1> into the prompt/));
     expect(ta.value).toBe('put the jacket of <image2> <image1> ');
   });
 
@@ -361,9 +361,9 @@ describe('TransformFlowView: references and the full prompt', () => {
     expect(screen.getByText(/<\|vision_start\|>/)).toBeTruthy();
   });
 
-  it('review: "Edit full prompt" starts from the expanded prompt, tokens insert into it, reset discards it', () => {
+  it('review: "Write my own" starts from the expanded prompt, tokens insert into it, reset discards it', () => {
     render(<Harness intent="upscale" phase="review" paths={[IMG]} initial={{}} preview={upscalePreview} />);
-    fireEvent.click(screen.getByText('Edit full prompt'));
+    fireEvent.click(screen.getByText('Write my own'));
     const ta = screen.getByLabelText('Full prompt') as HTMLTextAreaElement;
     expect(ta.value).toBe('Enlarge <image1> faithfully.');
     fireEvent.change(ta, { target: { value: 'Sharpen' } });
@@ -371,7 +371,7 @@ describe('TransformFlowView: references and the full prompt', () => {
     expect(screen.getByTestId('manual').textContent).toBe('Sharpen <image1> ');
     fireEvent.change(ta, { target: { value: '' } });
     expect((screen.getByText(/Queue it/).closest('button') as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByText('Reset to generated'));
+    fireEvent.click(screen.getByText('Use the preset prompt'));
     expect(screen.getByTestId('manual').textContent).toBe('<null>');
     expect(screen.getByText('Enlarge <image1> faithfully.')).toBeTruthy();
   });
@@ -379,11 +379,162 @@ describe('TransformFlowView: references and the full prompt', () => {
   it('review (edit): the prompt is verbatim, so editing it edits the prompt itself', () => {
     render(<Harness intent="edit" phase="review" paths={[IMG]} initial={{ prompt: 'make it night' }} />);
     expect(screen.getByText(/your words, sent as written/)).toBeTruthy();
-    fireEvent.click(screen.getByText('Edit full prompt'));
+    fireEvent.click(screen.getByText('Edit prompt'));
     const ta = screen.getByLabelText('Full prompt') as HTMLTextAreaElement;
     expect(ta.value).toBe('make it night');
     fireEvent.change(ta, { target: { value: 'make it dawn' } });
     expect(ta.value).toBe('make it dawn');
     expect(screen.getByTestId('manual').textContent).toBe('<null>');
+  });
+});
+
+describe('TransformFlowView: saved prompts', () => {
+  const noop = jest.fn();
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetTemplateCache();
+  });
+
+  function Harness({ intent, initial }: { intent: any; initial: string }) {
+    const [settings, setSettings] = React.useState({ ...settingsFor(intent), prompt: initial });
+    return (
+      <TransformFlowView
+        paths={[IMG]}
+        intent={intent}
+        phase="shape"
+        settings={settings}
+        source={{ width: 1000, height: 500 }}
+        queueAhead={0}
+        status="idle"
+        thumbUrl={(p: string) => p}
+        onSettings={(patch: Partial<TransformSettings>) => setSettings((cur) => ({ ...cur, ...patch }))}
+        onIntent={noop}
+        onPhase={noop}
+        onRun={noop}
+        onClose={noop}
+        onRemovePath={noop}
+        onAgain={noop}
+      />
+    );
+  }
+
+  it('saves the current prompt under a name, then loads it back from the list', () => {
+    const { unmount } = render(<Harness intent="edit" initial="" />);
+    expect(screen.queryByText(/Save prompt/)).toBeNull();
+    const ta = document.querySelector('textarea.ts-text') as HTMLTextAreaElement;
+    fireEvent.change(ta, { target: { value: 'turn it into a watercolor painting with soft edges and paper texture' } });
+    fireEvent.click(screen.getByText(/Save prompt/));
+    const name = screen.getByLabelText('Saved prompt name') as HTMLInputElement;
+    expect(name.value).toBe('turn it into a watercolor…');
+    fireEvent.change(name, { target: { value: 'Watercolor' } });
+    fireEvent.keyDown(name, { key: 'Enter' });
+    expect(screen.queryByLabelText('Saved prompt name')).toBeNull();
+    // Already saved: no second save button while the prompt matches.
+    expect(screen.queryByText(/Save prompt/)).toBeNull();
+    expect(JSON.parse(window.localStorage.getItem('loki.transform.templates.v1') || '{}').edit).toEqual([
+      expect.objectContaining({ name: 'Watercolor', prompt: 'turn it into a watercolor painting with soft edges and paper texture' }),
+    ]);
+    unmount();
+
+    render(<Harness intent="edit" initial="" />);
+    fireEvent.click(screen.getByText('☆ Watercolor'));
+    expect((document.querySelector('textarea.ts-text') as HTMLTextAreaElement).value).toBe(
+      'turn it into a watercolor painting with soft edges and paper texture'
+    );
+  });
+
+  it('keeps saved prompts per intent, replaces by name, and deletes', () => {
+    saveTemplate('edit', 'Night', 'make it night');
+    saveTemplate('edit', 'night', 'make it night, with stars');
+    saveTemplate('direct', 'Dolly', 'slow dolly in on <Picture 1>');
+    expect(loadTemplates('edit')).toEqual([expect.objectContaining({ name: 'night', prompt: 'make it night, with stars' })]);
+    render(<Harness intent="edit" initial="" />);
+    expect(screen.getByText('☆ night')).toBeTruthy();
+    expect(screen.queryByText('☆ Dolly')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Delete saved prompt night'));
+    expect(screen.queryByText('☆ night')).toBeNull();
+    expect(loadTemplates('edit')).toEqual([]);
+  });
+
+  it('Esc in the name field cancels naming only', () => {
+    render(<Harness intent="edit" initial="make it night" />);
+    fireEvent.click(screen.getByText(/Save prompt/));
+    fireEvent.keyDown(screen.getByLabelText('Saved prompt name'), { key: 'Escape' });
+    expect(screen.queryByLabelText('Saved prompt name')).toBeNull();
+    expect(screen.getByText(/Save prompt/)).toBeTruthy();
+  });
+
+  it('suggestTemplateName trims long prompts at a word', () => {
+    expect(suggestTemplateName('  make   it night ')).toBe('make it night');
+    expect(suggestTemplateName('replace the sky with a dramatic sunset over the ocean')).toBe('replace the sky with a dramatic…');
+  });
+});
+
+describe('Transform: presets, custom and saved prompts are told apart', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetTemplateCache();
+    closeTransformFlow();
+  });
+
+  const chooseProps = (over: Partial<React.ComponentProps<typeof TransformFlowView>> = {}) => ({
+    paths: [IMG],
+    intent: null as any,
+    phase: 'choose' as const,
+    settings: settingsFor('restore'),
+    source: { width: 1000, height: 500 },
+    queueAhead: 0,
+    status: 'idle' as const,
+    thumbUrl: (p: string) => p,
+    onSettings: jest.fn(),
+    onIntent: jest.fn(),
+    onTemplate: jest.fn(),
+    onPhase: jest.fn(),
+    onRun: jest.fn(),
+    onClose: jest.fn(),
+    onRemovePath: jest.fn(),
+    onAgain: jest.fn(),
+    ...over,
+  });
+
+  it('choose: every card says whether it is a preset or custom', () => {
+    render(<TransformFlowView {...chooseProps()} />);
+    const card = (title: string) => screen.getByText(title, { exact: false, selector: 'strong' });
+    expect(card('Restore').textContent).toMatch(/Preset/);
+    expect(card('Bring to life').textContent).toMatch(/Preset/);
+    expect(card('Edit with words').textContent).toMatch(/Custom/);
+    expect(card('Direct a scene').textContent).toMatch(/Custom/);
+    expect(screen.queryByText('Saved prompts')).toBeNull();
+  });
+
+  it('choose: saved prompts get their own section and start their intent with the prompt', () => {
+    saveTemplate('edit', 'Watercolor', 'turn it into a watercolor painting');
+    const props = chooseProps();
+    render(<TransformFlowView {...props} />);
+    expect(screen.getByText('Saved prompts')).toBeTruthy();
+    fireEvent.click(screen.getByText(/☆ Watercolor/).closest('button') as HTMLButtonElement);
+    expect(props.onTemplate).toHaveBeenCalledWith('edit', 'turn it into a watercolor painting');
+  });
+
+  it('shape: chip rows are labelled by what they do', () => {
+    saveTemplate('edit', 'Watercolor', 'turn it into a watercolor painting');
+    render(<TransformFlowView {...chooseProps({ intent: 'edit', phase: 'shape', settings: { ...settingsFor('edit'), prompt: '' } })} />);
+    expect(screen.getByRole('group', { name: 'Saved' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Ideas' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Add' })).toBeTruthy();
+  });
+
+  it('shape (preset): "Add to the preset" is up front, not hidden under More options', () => {
+    render(<TransformFlowView {...chooseProps({ intent: 'restore', phase: 'shape' })} />);
+    expect(screen.getByText('Add to the preset')).toBeTruthy();
+  });
+
+  it('palette: saved prompts are chips that open the flow with the prompt filled in', () => {
+    saveTemplate('edit', 'Watercolor', 'turn it into a watercolor painting');
+    const onDone = jest.fn();
+    render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={onDone} notify={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /☆ Watercolor/ }));
+    expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape', prompt: 'turn it into a watercolor painting' });
+    expect(onDone).toHaveBeenCalled();
   });
 });
