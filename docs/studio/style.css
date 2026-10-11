@@ -992,12 +992,32 @@ body.mask-editing #mask-overlay.paint-preview-hidden {
 .param-row .mb-controls select { flex: 1; min-width: 0; }
 .param-row .mb-unit { color: var(--dim); font-size: 11px; margin-left: -2px; }
 .param-row label.mb-idle { color: var(--dim); font-style: italic; }
-/* Angle rows: the range is only the dial face; the drag wraps past ±180°. */
-.param-row .angle-cell { position: relative; display: block; min-width: 0; }
-.param-row .angle-cell input[type=range] { display: block; cursor: ew-resize; }
-.param-row .angle-turns {
-  position: absolute; right: 0; top: -9px; font-size: 9px; line-height: 1;
-  color: var(--dim); pointer-events: none; font-variant-numeric: tabular-nums;
+/* Angle rows: a dial in the slider column, the turn count spelled out under
+   the name. Taller than a slider row so the dial is big enough to grab. */
+.param-row.angle-row { min-height: 52px; padding: 2px 0; }
+.param-row .angle-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.param-row .angle-sub {
+  font-size: 10px; line-height: 1.2; color: var(--accent);
+  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.param-row .angle-sub:empty { display: none; }
+.angle-dial {
+  justify-self: center; width: 44px; height: 44px; border-radius: 50%;
+  cursor: grab; touch-action: none; outline: none;
+}
+.angle-dial.dragging { cursor: grabbing; }
+.angle-dial svg { display: block; overflow: visible; }
+.angle-dial .ad-track { fill: var(--bg); stroke: var(--border); stroke-width: 2; }
+.angle-dial:hover .ad-track { stroke: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.angle-dial:focus-visible .ad-track { stroke: var(--accent); }
+.angle-dial .ad-tick { stroke: var(--dim); stroke-width: 1; opacity: 0.5; }
+.angle-dial .ad-tick.zero { stroke-width: 1.5; opacity: 0.9; }
+.angle-dial .ad-arc { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round; }
+.angle-dial .ad-hub { fill: var(--dim); opacity: 0.6; }
+.angle-dial .ad-knob { fill: var(--fg); stroke: var(--bg); stroke-width: 1.5; }
+.angle-dial .ad-count {
+  font-size: 12px; font-weight: 600; fill: var(--accent);
+  font-variant-numeric: tabular-nums; pointer-events: none; user-select: none;
 }
 .param-row select {
   width: 100%;

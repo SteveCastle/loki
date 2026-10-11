@@ -7861,6 +7861,8 @@ function openSplatCaptureDialog() {
         ${binMedia.map((a) => `<option value="${a.id}">${a.kind === 'video' ? '🎞' : '🖼'} ${a.name.replace(/[<&]/g, '')}</option>`).join('')}
       </select></label>` : ''}
       <p class="retime-hint" id="sc-picked">nothing chosen yet</p>
+      <p class="retime-hint">Frames are picked for you from the video's length (about 4 per second, up to 600),
+      so keep a capture under ~2½ minutes — split a big space into separate videos.</p>
       <label>Quality <select id="sc-quality">${SPLAT_QUALITIES.map(([v, l]) =>
     `<option value="${v}"${v === 'standard' ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
       <details class="sc-server"${srv.key ? '' : ' open'}>
@@ -10002,8 +10004,11 @@ function paramRow(clip, def) {
 
   const binding = { clip, key: def.key, slider, num, scale, dragging: false };
   if (anim) inspLive.push(binding);
-  // Angles: a wrapping slider (see angleSlider) replaces the plain one.
-  const sliderCell = def.cyclic ? angleSlider(clip, def, binding) : slider;
+  // Angles: a dial (see angleDial) replaces the plain slider, and the turn
+  // count reads under the name.
+  const dial = def.cyclic ? angleDial(clip, def, binding) : null;
+  const sliderCell = dial ? dial.cell : slider;
+  if (dial) row.classList.add('angle-row');
 
   slider.addEventListener('pointerdown', () => {
     binding.dragging = true;
@@ -10057,7 +10062,13 @@ function paramRow(clip, def) {
     : 'drive this value with an oscillator or audio (beats, levels)';
   drv.addEventListener('click', () => toggleDriver(clip, def));
 
-  row.append(sw, label, sliderCell, num, keyBtn);
+  let labelCell = label;
+  if (dial) {
+    labelCell = document.createElement('div');
+    labelCell.className = 'angle-label';
+    labelCell.append(label, dial.sub);
+  }
+  row.append(sw, labelCell, sliderCell, num, keyBtn);
   if (!def.noDriver) row.appendChild(drv);
   return row;
 }
@@ -10065,92 +10076,177 @@ function paramRow(clip, def) {
 /* ---- angles ------------------------------------------------------------
  * Rotation-like properties are unbounded degrees: 720 is two full turns,
  * and keyframing 0 → 720 spins twice. A bounded slider can't say that, so
- * a cyclic row keeps the native range only as the dial face — its thumb
- * shows the angle within the current turn — and takes the drag itself:
- * horizontal motion adds degrees (1°/px, Shift 0.1°/px) without limit,
- * the thumb wrapping as it crosses ±180°. A click without a drag lands on
- * that angle within the current turn. The readout on the track says
- * where you are in AE style: 2×+45°. */
+ * a cyclic row gets a dial: 0° at the top, clockwise positive (like the
+ * canvas), the arc showing the angle within the current turn and the
+ * number of whole turns in the middle. Dragging around it keeps counting
+ * past a full circle (Shift: a tenth of the speed); a press away from the
+ * handle lands on that angle within the current turn. Wheel / arrow keys
+ * step 1° (Shift 15°); double-click resets. The number box keeps the total
+ * in degrees and the line under the name spells it out: "2 turns + 45°". */
 const wrap180 = (v) => ((((v + 180) % 360) + 360) % 360) - 180;
 
-function fmtTurns(v) {
+/** v → whole turns (toward zero) and the remainder, e.g. 765 → {2, 45}, -400 → {-1, -40}. */
+function splitTurns(v) {
   const turns = Math.trunc(v / 360);
-  const rest = +(v - turns * 360).toFixed(1);
-  if (!turns) return `${rest}°`;
-  return `${turns}×${rest >= 0 ? '+' : ''}${rest}°`;
+  let rest = +(v - turns * 360).toFixed(2);
+  if (Math.abs(rest) >= 360) rest = 0;
+  return { turns, rest };
 }
 
-function angleSlider(clip, def, binding) {
+function fmtTurns(v) {
+  const { turns, rest } = splitTurns(v);
+  const deg = `${+Math.abs(rest).toFixed(1)}°`;
+  if (!turns) return `${rest < 0 ? '−' : ''}${deg}`;
+  const n = Math.abs(turns);
+  const sign = turns < 0 ? '−' : '';
+  return `${sign}${n} turn${n > 1 ? 's' : ''}${rest ? ` ${rest < 0 ? '−' : '+'} ${deg}` : ''}`;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const DIAL = 44, DIAL_R = 17;   // px: the face, and the ring radius
+
+function angleDial(clip, def, binding) {
   const { slider, num } = binding;
-  slider.min = '-180';
-  slider.max = '180';
-  slider.step = String(def.step || 0.1);
-  const cell = document.createElement('span');
-  cell.className = 'angle-cell';
-  const readout = document.createElement('span');
-  readout.className = 'angle-turns';
-  cell.append(slider, readout);
+  slider.hidden = true;   // kept as the binding's live target; the dial draws
+
+  const cell = document.createElement('div');
+  cell.className = 'angle-dial';
+  cell.tabIndex = 0;
+  cell.setAttribute('role', 'slider');
+  cell.setAttribute('aria-label', def.label);
+  cell.title = 'drag around to rotate — keeps counting past a full turn · Shift: fine · double-click: reset';
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', `${-DIAL / 2} ${-DIAL / 2} ${DIAL} ${DIAL}`);
+  svg.setAttribute('width', DIAL);
+  svg.setAttribute('height', DIAL);
+  const el = (tag, attrs) => {
+    const n = document.createElementNS(SVG_NS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    svg.append(n);
+    return n;
+  };
+  el('circle', { r: DIAL_R, class: 'ad-track' });
+  for (let i = 0; i < 4; i++) {   // quarter ticks; the top one marks 0°
+    const t = (i * Math.PI) / 2;
+    const inner = DIAL_R - (i ? 3 : 5);
+    el('line', {
+      x1: Math.sin(t) * inner, y1: -Math.cos(t) * inner,
+      x2: Math.sin(t) * (DIAL_R + 1), y2: -Math.cos(t) * (DIAL_R + 1),
+      class: i ? 'ad-tick' : 'ad-tick zero',
+    });
+  }
+  const arc = el('path', { class: 'ad-arc' });
+  const hub = el('circle', { r: 1.75, class: 'ad-hub' });   // the centre, while no turn count sits there
+  const knob = el('circle', { r: 3.5, class: 'ad-knob' });
+  const count = el('text', { x: 0, y: 0, class: 'ad-count', 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+  cell.append(svg, slider);
+
+  const sub = document.createElement('span');
+  sub.className = 'angle-sub';
+
+  const pt = (deg, r) => [Math.sin((deg * Math.PI) / 180) * r, -Math.cos((deg * Math.PI) / 180) * r];
   const show = (v) => {
-    slider.value = String(wrap180(v));
-    readout.textContent = fmtTurns(v);
+    const { turns, rest } = splitTurns(v);
+    // The arc runs from 0° to the angle within this turn, the way it went.
+    const [x, y] = pt(rest, DIAL_R);
+    if (Math.abs(rest) < 0.05) arc.setAttribute('d', '');
+    else {
+      const large = Math.abs(rest) > 180 ? 1 : 0;
+      arc.setAttribute('d', `M 0 ${-DIAL_R} A ${DIAL_R} ${DIAL_R} 0 ${large} ${rest > 0 ? 1 : 0} ${x} ${y}`);
+    }
+    hub.style.display = turns ? 'none' : '';
+    knob.setAttribute('cx', x);
+    knob.setAttribute('cy', y);
+    count.textContent = turns ? `${turns < 0 ? '−' : ''}${Math.abs(turns)}×` : '';
+    sub.textContent = turns ? fmtTurns(v) : '';
+    cell.setAttribute('aria-valuenow', String(v));
+    cell.setAttribute('aria-valuetext', fmtTurns(v));
   };
   // Live updates (playback, undo, driver) go through the binding's scale.
-  binding.scale = { toPos: (v) => { readout.textContent = fmtTurns(v); return wrap180(v); }, fromPos: (p) => p, log: false };
+  binding.scale = { toPos: (v) => { show(v); return wrap180(v); }, fromPos: (p) => p, log: false };
   show(valueAt(clip, def.key));
 
+  const commit = (v) => {
+    setPropValue(clip, def.key, v);
+    num.value = fmtVal(v);
+    show(v);
+  };
+  const centre = () => {
+    const r = svg.getBoundingClientRect();
+    return [r.left + r.width / 2, r.top + r.height / 2];
+  };
+  // Pointer angle around the dial's centre, degrees clockwise from the top.
+  const angleOf = (e) => {
+    const [cx, cy] = centre();
+    const dx = e.clientX - cx, dy = e.clientY - cy;
+    return { a: (Math.atan2(dx, -dy) * 180) / Math.PI, d: Math.hypot(dx, dy) };
+  };
+
   let drag = null;
-  slider.addEventListener('pointerdown', (e) => {
-    e.preventDefault();   // the native thumb would clamp at ±180
-    e.stopImmediatePropagation();
-    slider.setPointerCapture(e.pointerId);
-    const r = slider.getBoundingClientRect();
+  cell.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    cell.focus();
+    cell.setPointerCapture(e.pointerId);
     const v0 = valueAt(clip, def.key);
-    // Grabbing the thumb drags from the current value (like a native
-    // slider); a press elsewhere lands on that angle within the turn.
-    const thumbX = r.left + ((wrap180(v0) + 180) / 360) * r.width;
-    const a = ((e.clientX - r.left) / Math.max(1, r.width)) * 360 - 180;
-    const start = Math.abs(e.clientX - thumbX) <= 8 ? v0 : v0 - wrap180(v0) + a;
-    drag = { x: e.clientX, v: start, moved: false, t: relTime(clip) };
+    const { a, d } = angleOf(e);
+    // On the handle: drag from the current value. Elsewhere on the face:
+    // land on that angle within this turn (the nearer way round).
+    const [cx, cy] = centre();
+    const [kx, ky] = pt(splitTurns(v0).rest, DIAL_R);
+    const onKnob = Math.hypot(e.clientX - (cx + kx), e.clientY - (cy + ky)) <= 7;
+    const start = !onKnob && d > 6 ? +(v0 + wrap180(a - v0)).toFixed(2) : v0;
+    drag = { last: a, v: start, t: relTime(clip) };
     binding.dragging = true;
     binding.tFrozen = drag.t;
     history.begin(comp);
     setPropValueLive(clip, def.key, start, drag.t);
     num.value = fmtVal(start);
     show(start);
-  }, true);
-  slider.addEventListener('pointermove', (e) => {
+    cell.classList.add('dragging');
+  });
+  cell.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const dx = e.clientX - drag.x;
-    const v = +(drag.v + dx * (e.shiftKey ? 0.1 : 1)).toFixed(2);
-    setPropValueLive(clip, def.key, v, drag.t);
-    num.value = fmtVal(v);
-    show(v);
+    const { a, d } = angleOf(e);
+    if (d < 4) return;   // too near the centre: the angle is noise
+    // Unwrapped step since the last move, so circling keeps adding turns.
+    const step = wrap180(a - drag.last) * (e.shiftKey ? 0.1 : 1);
+    drag.last = a;
+    drag.v = +(drag.v + step).toFixed(2);
+    setPropValueLive(clip, def.key, drag.v, drag.t);
+    num.value = fmtVal(drag.v);
+    show(drag.v);
     refreshInspWidgets();
   });
   const end = () => {
     if (!drag) return;
     drag = null;
     binding.dragging = false;
+    cell.classList.remove('dragging');
     history.commit(comp);
     onModelChange({ structural: false, propKey: def.key });
   };
-  slider.addEventListener('pointerup', end);
-  slider.addEventListener('pointercancel', end);
-  // Keyboard arrows move the native thumb inside ±180: keep the turn.
-  slider.addEventListener('input', (e) => {
-    if (drag) return;
-    e.stopImmediatePropagation();
+  cell.addEventListener('pointerup', end);
+  cell.addEventListener('pointercancel', end);
+  cell.addEventListener('dblclick', () => commit(def.def ?? 0));
+  cell.addEventListener('wheel', (e) => {
+    e.preventDefault();
     const v0 = valueAt(clip, def.key);
-    let v = v0 - wrap180(v0) + parseFloat(slider.value);
-    if (Math.abs(v - v0) > 180) v += v < v0 ? 360 : -360;   // stepped across the seam
-    setPropValue(clip, def.key, v);
-    show(v);
-  }, true);
+    commit(+(v0 + (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 15 : 1)).toFixed(2));
+  }, { passive: false });
+  cell.addEventListener('keydown', (e) => {
+    const dir = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (!dir) return;
+    e.preventDefault();
+    e.stopPropagation();
+    commit(+(valueAt(clip, def.key) + dir * (e.shiftKey ? 15 : 1)).toFixed(2));
+  });
   num.addEventListener('change', () => {
     const v = parseFloat(num.value);
     if (!Number.isNaN(v)) show(v);
   });
-  return cell;
+  return { cell, sub };
 }
 
 /* ---- driver editor --------------------------------------------------- */
