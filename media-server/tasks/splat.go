@@ -27,7 +27,7 @@ import (
 
 var splatOptions = []TaskOption{
 	{Name: "quality", Label: "Quality", Type: "enum", Choices: []string{"draft", "standard", "high"}, Default: "standard", Description: "Training length: draft ~5k steps (minutes), standard ~15k, high ~30k (best detail, slowest)"},
-	{Name: "frames", Label: "Max Video Frames", Type: "number", Default: 200.0, Description: "Frames sampled from a video input (the sharpest frame of each stretch is kept; 30-600)"},
+	{Name: "frames", Label: "Video Frames", Type: "number", Default: 0.0, Description: "Frames sampled from a video input (the sharpest of each stretch is kept). 0 = auto: about 4 per second of video, 100-600; or a fixed 30-600"},
 	{Name: "maxres", Label: "Max Resolution", Type: "number", Default: 1600.0, Description: "Longest image side used for poses and training, in px (512-4096)"},
 	{Name: "shdegree", Label: "SH Degree", Type: "number", Default: 3.0, Description: "View-dependent colour detail, 0 (flat colour, smallest file) to 3 (reflections and sheen)"},
 	{Name: "steps", Label: "Steps", Type: "number", Default: 0.0, Description: "Exact training steps; 0 = from Quality"},
@@ -58,7 +58,10 @@ func splatParamsFromOptions(opts map[string]any) splatParams {
 		}
 		return v
 	}
-	p.Frames = clampInt(int(num("frames", 200)), 30, 600)
+	// 0 = auto, sized to the video's length once it is probed (splatAutoFrames).
+	if f := int(optFloat(opts, "frames")); f > 0 {
+		p.Frames = clampInt(f, 30, 600)
+	}
 	p.MaxRes = clampInt(int(num("maxres", 1600)), 512, 4096)
 	p.SHDegree = 3
 	if _, ok := opts["shdegree"]; ok {

@@ -225,6 +225,39 @@ func sharpness(path string) float64 {
 	return sum2/float64(n) - mean*mean
 }
 
+// Auto frame count: ~4 kept frames per second of footage. The poses come
+// from matching each frame with its 10 neighbours only (sequential matcher,
+// no loop closure), so what matters is how far the camera moves between kept
+// frames, not the total: a fixed count spreads thin over a long room
+// walkthrough (200 over 3 min = one per 0.9 s, which breaks at turns and
+// close-ups) and is more than a 15 s orbit needs.
+const (
+	splatFramesPerSecond = 4.0
+	splatAutoMinFrames   = 100
+	splatAutoMaxFrames   = 600
+	// Below this many kept frames per second the log warns that the capture
+	// is thin (a long video at the cap, or a fixed count set too low).
+	splatSparseFPS = 2.5
+)
+
+// splatAutoFrames sizes the frame count to a video: ~4 per second, at least
+// 100 (or every frame of a very short clip), at most 600.
+func splatAutoFrames(dur, srcFPS float64) int {
+	n := int(math.Round(dur * splatFramesPerSecond))
+	if n < splatAutoMinFrames {
+		n = splatAutoMinFrames
+	}
+	if n > splatAutoMaxFrames {
+		n = splatAutoMaxFrames
+	}
+	if srcFPS > 0 && dur > 0 {
+		if all := int(dur * srcFPS); all > 0 && n > all {
+			n = all
+		}
+	}
+	return n
+}
+
 // splatFramesFromVideo samples ~3×want candidates evenly and keeps the
 // sharpest of each consecutive run of three (motion blur is the main thing
 // that sinks feature matching on handheld video).
@@ -232,6 +265,15 @@ func splatFramesFromVideo(ctx context.Context, t splatTools, logf func(string, .
 	dur, srcFPS, err := probeVideo(ctx, t.FFprobe, video)
 	if err != nil {
 		return 0, fmt.Errorf("could not read the video's duration: %w", err)
+	}
+	if want <= 0 {
+		want = splatAutoFrames(dur, srcFPS)
+		logf("auto: %d frames for %.0f s of video", want, dur)
+	}
+	if dur > 0 {
+		if per := float64(want) / dur; per < splatSparseFPS {
+			logf("warning: %.1f frames per second of video (%.1f s apart) is thin for a handheld capture — expect gaps at turns and close-ups; a shorter clip, or splitting a long walkthrough, works better", per, 1/per)
+		}
 	}
 	cand := filepath.Join(filepath.Dir(imagesDir), "candidates")
 	if err := os.MkdirAll(cand, 0o755); err != nil {

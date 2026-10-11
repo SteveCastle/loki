@@ -13,7 +13,7 @@ import (
 
 func TestSplatParamsDefaultsAndClamps(t *testing.T) {
 	p := splatParamsFromOptions(map[string]any{})
-	if p.Quality != "standard" || p.Frames != 200 || p.MaxRes != 1600 || p.SHDegree != 3 || p.Steps != 0 {
+	if p.Quality != "standard" || p.Frames != 0 || p.MaxRes != 1600 || p.SHDegree != 3 || p.Steps != 0 {
 		t.Errorf("defaults = %+v", p)
 	}
 	p = splatParamsFromOptions(map[string]any{
@@ -24,6 +24,24 @@ func TestSplatParamsDefaultsAndClamps(t *testing.T) {
 	}
 	if p := splatParamsFromOptions(map[string]any{"quality": "bogus", "shdegree": 0.0}); p.Quality != "standard" || p.SHDegree != 0 {
 		t.Errorf("bogus quality / sh 0 = %+v", p)
+	}
+}
+
+func TestSplatAutoFrames(t *testing.T) {
+	for _, c := range []struct {
+		dur, fps float64
+		want     int
+	}{
+		{10, 30, 100},  // short orbit: the floor
+		{20, 30, 100},  // 80 → floor
+		{45, 30, 180},  // ~4 per second
+		{90, 30, 360},  // room walkthrough
+		{300, 30, 600}, // long: the cap
+		{2, 24, 48},    // tiny clip: every frame there is
+	} {
+		if got := splatAutoFrames(c.dur, c.fps); got != c.want {
+			t.Errorf("splatAutoFrames(%v s, %v fps) = %d, want %d", c.dur, c.fps, got, c.want)
+		}
 	}
 }
 
