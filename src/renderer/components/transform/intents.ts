@@ -9,6 +9,7 @@ export type IntentId =
   | 'restore'
   | 'upscale'
   | 'wallpaper'
+  | 'angle'
   | 'edit'
   | 'alive'
   | 'direct';
@@ -50,6 +51,46 @@ export type Quality = 'draft' | 'balanced' | 'fine';
 export type SizeMode = 'same' | 'scale' | 'custom';
 export type Shake = 'none' | 'subtle' | 'handheld';
 export type WallpaperTarget = 'desktop' | 'phone';
+export type CameraElevation = 'eye' | 'high' | 'low';
+
+/**
+ * The camera-angle presets (media-server/tasks/retouch_views.go): an orbit in 45° steps, measured toward the right
+ * of the original frame (0 = where the photo was taken from, 180 = directly behind), at eye level, high or low.
+ * The ids must match the server's.
+ */
+export const CAMERA_AZIMUTHS: Array<{ az: number; id: string; label: string }> = [
+  { az: 0, id: 'front', label: 'Front' },
+  { az: 45, id: 'right-45', label: '45° right' },
+  { az: 90, id: 'right-90', label: '90° right' },
+  { az: 135, id: 'right-135', label: '135° right' },
+  { az: 180, id: 'reverse', label: 'Reverse' },
+  { az: 225, id: 'left-135', label: '135° left' },
+  { az: 270, id: 'left-90', label: '90° left' },
+  { az: 315, id: 'left-45', label: '45° left' },
+];
+
+/** Snap any angle to the nearest orbit position (0…315). */
+export function snapAzimuth(deg: number): number {
+  return ((Math.round(deg / 45) * 45) % 360 + 360) % 360;
+}
+
+function azimuthEntry(az: number) {
+  return CAMERA_AZIMUTHS.find((a) => a.az === snapAzimuth(az)) || CAMERA_AZIMUTHS[0];
+}
+
+/** The retouch preset for a camera position; '' for the original view (front, eye level). */
+export function cameraViewPreset(az: number, elev: CameraElevation): string {
+  const a = azimuthEntry(az);
+  if (elev === 'eye') return a.az === 0 ? '' : a.id;
+  return `${a.id}-${elev}`;
+}
+
+/** e.g. "Reverse, high angle"; "Original view" for front at eye level. */
+export function cameraViewLabel(az: number, elev: CameraElevation): string {
+  const a = azimuthEntry(az);
+  if (elev === 'eye') return a.az === 0 ? 'Original view' : a.label;
+  return `${a.label}, ${elev} angle`;
+}
 
 export interface TransformSettings {
   /** Free-form instruction (edit / direct). */
@@ -69,6 +110,10 @@ export interface TransformSettings {
   /** `WxH` (sizeMode = custom). */
   customSize: string;
   wallpaperTarget: WallpaperTarget;
+  /** New angle: camera orbit in degrees toward the right of the original frame (multiples of 45). */
+  cameraAzimuth: number;
+  /** New angle: camera height. */
+  cameraElevation: CameraElevation;
   quality: Quality;
   seedMode: 'random' | 'fixed';
   seed: number;
@@ -115,6 +160,8 @@ export const BASE_SETTINGS: TransformSettings = {
   scale: 2,
   customSize: '',
   wallpaperTarget: 'desktop',
+  cameraAzimuth: 180,
+  cameraElevation: 'eye',
   quality: 'balanced',
   seedMode: 'random',
   seed: 0,
@@ -165,6 +212,19 @@ export const INTENTS: IntentDef[] = [
     oneClick: true,
     needsText: null,
     defaults: { sizeMode: 'same', wallpaperTarget: 'desktop' },
+    examples: [],
+  },
+  {
+    id: 'angle',
+    engine: 'retouch',
+    group: 'image',
+    title: 'New angle',
+    tagline: 'Re-shoot the subject from another camera position',
+    blurb:
+      'Moves the camera around the subject — a full turn in 45° steps, at eye level, from above or from below — while the subject keeps exactly the same spot and pose. The model paints the sides and background the new viewpoint reveals.',
+    oneClick: false,
+    needsText: null,
+    defaults: { sizeMode: 'same', cameraAzimuth: 180, cameraElevation: 'eye' },
     examples: [],
   },
   {
@@ -253,6 +313,7 @@ export function runSummary(id: IntentId, s: TransformSettings): string {
   else if (id === 'edit' || id === 'direct') parts.push(quoteSnippet(s.prompt));
   else if (id === 'alive' && s.describe.trim()) parts.push(quoteSnippet(s.describe));
   else if (s.append.trim()) parts.push(`+ ${quoteSnippet(s.append, 32)}`);
+  if (id === 'angle') parts.unshift(cameraViewLabel(s.cameraAzimuth, s.cameraElevation));
   if (id === 'wallpaper') parts.push(s.wallpaperTarget === 'phone' ? 'phone' : 'desktop');
   else if (intentById(id).engine === 'retouch') {
     if (s.sizeMode === 'scale') parts.push(`${s.scale}×`);
@@ -288,6 +349,7 @@ export function availability(id: IntentId, inputs: Inputs): Availability {
     case 'restore':
     case 'upscale':
     case 'wallpaper':
+    case 'angle':
     case 'edit':
       if (stills > 0 || videos.length === 1) return { ok: true };
       return { ok: false, reason: 'Select an image' };
@@ -530,6 +592,7 @@ export function retouchPreset(id: IntentId, s: TransformSettings): string {
   if (id === 'restore') return 'restore';
   if (id === 'upscale') return 'upscale';
   if (id === 'wallpaper') return s.wallpaperTarget === 'phone' ? '4kify-phone' : '4kify';
+  if (id === 'angle') return cameraViewPreset(s.cameraAzimuth, s.cameraElevation);
   return '';
 }
 
@@ -537,6 +600,9 @@ export interface BuildResult {
   jobs: JobRequest[];
   error?: string;
 }
+
+/** New angle with the camera still where the photo was taken from. */
+export const SAME_VIEW = 'Move the camera: this is the view the photo already has';
 
 /** Edit with pins but no image of its own selected. */
 export const NO_TARGET = 'Select the image to edit: the pinned references ride along with it';
@@ -574,6 +640,7 @@ export function buildJobs(
     const prompt = manual ?? s.prompt.trim();
     if (manual === '') return { jobs: [], error: 'Write the prompt, or reset it to the generated one' };
     if (id === 'edit' && !prompt) return { jobs: [], error: 'Describe what should change' };
+    if (id === 'angle' && !retouchPreset(id, s) && manual === null) return { jobs: [], error: SAME_VIEW };
     // Stills, or the single video (a frame is sampled from it).
     const targets = inputs.images.length > 0 ? inputs.images : inputs.videos.slice(0, 1);
     const shared = usesReferences(id, inputs);
@@ -706,7 +773,8 @@ export function planFor(
     };
   }
   const preset = retouchPreset(id, s);
-  const out: Plan = { jobCount, outputs, outputName: `${stem(first)}${SUFFIX[preset] || '_edit'}.png`, engine: 'retouch', steps };
+  const suffix = id === 'angle' && preset ? `_${preset}` : SUFFIX[preset] || '_edit';
+  const out: Plan = { jobCount, outputs, outputName: `${stem(first)}${suffix}.png`, engine: 'retouch', steps };
   if (id === 'wallpaper') {
     const [w, h] = s.wallpaperTarget === 'phone' ? [1296, 2800] : [3840, 2160];
     out.outWidth = w;

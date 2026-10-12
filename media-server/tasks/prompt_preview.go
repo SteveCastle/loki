@@ -141,8 +141,8 @@ func previewRetouch(ctx context.Context, p retouchParams, files []string) (Promp
 			return out, err
 		}
 		out.Prompt, out.FromEngine = prompt, true
-	} else if p.Preset == "" {
-		// A free-form prompt is used verbatim; only --append is added.
+	} else if p.Preset == "" || isRetouchView(p.Preset) {
+		// A free-form (or camera-angle) prompt is used verbatim; only --append is added.
 		out.Prompt = p.Prompt
 		if p.Append != "" {
 			out.Prompt += "\n\n" + p.Append

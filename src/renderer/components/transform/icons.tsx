@@ -26,6 +26,14 @@ const P: Record<IntentId, React.ReactNode> = {
       <path d="M3 13l4-4 4 4 3-3 7 6" />
     </>
   ),
+  angle: (
+    <>
+      <ellipse cx="12" cy="15" rx="9" ry="4" />
+      <circle cx="12" cy="7" r="2.5" />
+      <path d="M12 9.5v5" />
+      <path d="M17.5 4.5l2.5 2-2.5 2" />
+    </>
+  ),
   edit: (
     <>
       <path d="M4 20l1-4L16.5 4.5a2 2 0 013 3L8 19z" />

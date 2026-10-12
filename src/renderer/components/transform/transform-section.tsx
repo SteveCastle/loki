@@ -32,7 +32,7 @@ import './transform-section.css';
 // user's saved prompts, the last run (“… again”: same action and settings on this
 // selection), and "All options" for the full flow. Shift-click a preset or
 // the last run to adjust it first.
-const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'edit', 'alive'];
+const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'edit', 'alive'];
 
 export interface TransformSectionProps {
   /** The working set: the right-clicked file plus any multi-selection. */
@@ -187,6 +187,7 @@ function chipLabel(id: IntentId, videoFrame: boolean): string {
   }
   if (id === 'edit') return videoFrame ? 'Edit frame…' : 'Edit…';
   if (id === 'alive') return 'Animate…';
+  if (id === 'angle') return 'New angle…';
   if (id === 'direct') return 'Direct…';
   if (id === 'wallpaper') {
     const s = settingsFor('wallpaper', loadRemembered('wallpaper'));

@@ -64,6 +64,8 @@ const REMEMBER_KEYS: Array<keyof TransformSettings> = [
   'sizeMode',
   'scale',
   'wallpaperTarget',
+  'cameraAzimuth',
+  'cameraElevation',
   'quality',
   'shake',
   'duration',

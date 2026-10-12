@@ -21,6 +21,7 @@ import {
   runGroups,
   retouchPreset,
   runSummary,
+  SAME_VIEW,
   tokenIssues,
   usesReferences,
   type IntentId,
@@ -31,6 +32,7 @@ import {
 } from './intents';
 import { deleteTemplate, saveTemplate, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
 import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, IntentIcon } from './icons';
+import CameraRig from './camera-rig';
 import './transform-flow.css';
 
 // ---------------------------------------------------------------------------
@@ -862,6 +864,17 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
           </p>
         )}
 
+        {def.id === 'angle' && (
+          <Field label="Camera position" hint={stills > 1 ? `same angle for all ${stills} images` : undefined}>
+            <CameraRig
+              azimuth={s.cameraAzimuth}
+              elevation={s.cameraElevation}
+              onChange={onSettings}
+              thumbUrl={inputs.images[0] ? props.thumbUrl(inputs.images[0]) : undefined}
+            />
+          </Field>
+        )}
+
         {isRetouch && def.id !== 'edit' && !manual && (
           <Field label="Add to the preset" hint="optional · follows the built-in prompt">
             <textarea className="ts-text" rows={2} value={s.append} placeholder="e.g. keep the film grain" onChange={(e) => onSettings({ append: e.target.value })} />
@@ -1371,6 +1384,7 @@ export function validateShape(id: IntentId, s: TransformSettings, paths: string[
       if (bad) return bad;
     }
   }
+  if (id === 'angle' && s.manualPrompt === null && !retouchPreset(id, s)) return SAME_VIEW;
   if (s.sizeMode === 'custom' && def.engine === 'retouch' && def.id !== 'wallpaper' && !parseSize(s.customSize)) return 'Enter a width and height';
   return null;
 }

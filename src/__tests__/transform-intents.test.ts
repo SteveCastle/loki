@@ -1,6 +1,10 @@
 import {
   availability,
   buildJobs,
+  cameraViewLabel,
+  cameraViewPreset,
+  runSummary,
+  snapAzimuth,
   classify,
   estimateSeconds,
   formatDuration,
@@ -263,5 +267,38 @@ describe('buildJobs: manual prompt on reshoot', () => {
   it('direct uses the manual prompt over the shape prompt', () => {
     const s = { ...settingsFor('direct'), prompt: 'a', manualPrompt: 'b' };
     expect(buildJobs('direct', s, [IMG], { random: () => 0.5 }).jobs[0].fields.prompt).toBe('b');
+  });
+});
+
+describe('New angle (camera-angle presets)', () => {
+  const fixed = { random: () => 0.5 };
+  it('maps orbit + height to the server preset ids', () => {
+    expect(cameraViewPreset(180, 'eye')).toBe('reverse');
+    expect(cameraViewPreset(90, 'eye')).toBe('right-90');
+    expect(cameraViewPreset(315, 'high')).toBe('left-45-high');
+    expect(cameraViewPreset(225, 'low')).toBe('left-135-low');
+    expect(cameraViewPreset(0, 'high')).toBe('front-high');
+    expect(cameraViewPreset(0, 'eye')).toBe('');
+    expect(snapAzimuth(-40)).toBe(315);
+    expect(snapAzimuth(200)).toBe(180);
+    expect(cameraViewLabel(180, 'high')).toBe('Reverse, high angle');
+  });
+  it('queues a retouch job with the view preset and names the output after it', () => {
+    const s = settingsFor('angle', { cameraAzimuth: 90, cameraElevation: 'low', append: 'keep the scarf' });
+    const f = buildJobs('angle', s, [IMG], fixed).jobs[0].fields;
+    expect(f.preset).toBe('right-90-low');
+    expect(f.append).toBe('keep the scarf');
+    expect(f.prompt).toBeUndefined();
+    expect(planFor('angle', s, [IMG]).outputName).toBe('photo_right-90-low.png');
+    expect(runSummary('angle', s)).toMatch(/^90° right, low angle/);
+  });
+  it('defaults to reverse and refuses the original view', () => {
+    expect(retouchPreset('angle', settingsFor('angle'))).toBe('reverse');
+    const same = settingsFor('angle', { cameraAzimuth: 0, cameraElevation: 'eye' });
+    expect(buildJobs('angle', same, [IMG], fixed).error).toMatch(/Move the camera/);
+  });
+  it('runs once per image, each as its own <image1>', () => {
+    expect(buildJobs('angle', settingsFor('angle'), [IMG, IMG2], fixed).jobs[0].fields.combine).toBeUndefined();
+    expect(usesReferences('angle', classify([IMG, IMG2]))).toBe(false);
   });
 });

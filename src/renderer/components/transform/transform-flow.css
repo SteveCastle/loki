@@ -1406,3 +1406,151 @@
 .ts-card-last {
   border-style: dashed;
 }
+
+/* ---- New angle: camera placement rig ---------------------------------- */
+
+.ts-rig {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ts-rig-views {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ts-rig-views figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--ts-hairline);
+  border-radius: 6px;
+  background: var(--ts-field);
+}
+
+.ts-rig-views figcaption {
+  font-size: 11px;
+  color: var(--ts-faint);
+}
+
+.ts-rig-svg {
+  width: 236px;
+  height: 236px;
+  max-width: 100%;
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  border-radius: 6px;
+  outline: none;
+}
+
+.ts-rig-svg.ts-rig-side {
+  width: 170px;
+}
+
+.ts-rig-svg.dragging {
+  cursor: grabbing;
+}
+
+.ts-rig-svg:focus-visible {
+  box-shadow: 0 0 0 2px var(--ts-accent);
+}
+
+.ts-rig-ring,
+.ts-rig-ground {
+  fill: none;
+  stroke: var(--ts-hairline);
+  stroke-width: 1.5;
+}
+
+.ts-rig-ring {
+  stroke-dasharray: 3 4;
+  stroke: rgba(255, 255, 255, 0.22);
+}
+
+.ts-rig-cone {
+  fill: var(--ts-accent);
+  fill-opacity: 0.12;
+  stroke: var(--ts-accent);
+  stroke-opacity: 0.35;
+  stroke-width: 1;
+  transition: d 0.15s ease;
+}
+
+.ts-rig-stop circle {
+  fill: rgba(255, 255, 255, 0.25);
+}
+
+.ts-rig-stop.active circle {
+  fill: var(--ts-accent);
+}
+
+.ts-rig-stop text {
+  font-size: 9px;
+  fill: var(--ts-faint);
+  pointer-events: none;
+}
+
+.ts-rig-stop.active text {
+  fill: var(--ts-accent);
+}
+
+.ts-rig-subject {
+  fill: rgba(255, 255, 255, 0.12);
+  stroke: var(--ts-dim);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ts-rig-cam rect,
+.ts-rig-cam path {
+  fill: var(--ts-accent);
+  stroke: #0b1a15;
+  stroke-width: 1.2;
+}
+
+.ts-rig-cam.ghost rect,
+.ts-rig-cam.ghost path {
+  fill: none;
+  stroke: var(--ts-faint);
+  stroke-dasharray: 2 2;
+}
+
+.ts-rig-readout {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ts-rig-readout > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ts-rig-readout strong {
+  font-size: 14px;
+}
+
+.ts-rig-readout strong.warn {
+  color: var(--ts-caution);
+}
+
+.ts-rig-readout small {
+  color: var(--ts-faint);
+  font-size: 12px;
+}
+
+.ts-rig-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--ts-hairline);
+}

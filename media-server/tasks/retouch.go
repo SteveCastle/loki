@@ -37,10 +37,14 @@ import (
 // temp file (--prompt-file) instead of the command line.
 const aiLongPromptBytes = 4000
 
-var retouchPresetChoices = []string{"", "4kify", "4kify-phone", "upscale", "restore"}
+// retouchEnginePresets are the presets loki-retouch expands itself; the
+// camera-angle presets (retouch_views.go) are expanded here.
+var retouchEnginePresets = []string{"", "4kify", "4kify-phone", "upscale", "restore"}
+
+var retouchPresetChoices = append(append([]string{}, retouchEnginePresets...), retouchViewIDs()...)
 
 var retouchOptions = []TaskOption{
-	{Name: "preset", Label: "Preset", Type: "enum", Choices: retouchPresetChoices, Default: "", Description: "4kify (3840x2160 wallpaper), 4kify-phone (1296x2800), upscale (faithful super-resolution), restore (denoise/deblock at the same size); empty = plain edit by prompt"},
+	{Name: "preset", Label: "Preset", Type: "enum", Choices: retouchPresetChoices, Default: "", Description: "4kify (3840x2160 wallpaper), 4kify-phone (1296x2800), upscale (faithful super-resolution), restore (denoise/deblock at the same size); camera angles: front-high, front-low, right-45/90/135, reverse, left-135/90/45, each also -high / -low (re-photograph the subject from that orbit position); empty = plain edit by prompt"},
 	{Name: "prompt", Label: "Prompt", Type: "string", Default: "", Description: "Edit instruction (replaces the preset's prompt). <image1> is the input, <image2>... the references"},
 	{Name: "append", Label: "Append to Prompt", Type: "string", Default: "", Description: "Text appended to the final prompt (extends a preset)"},
 	{Name: "scale", Label: "Scale", Type: "number", Default: 0.0, Description: "Output size as a multiple of the input (2 = 2x each side); 0 = default"},
@@ -137,6 +141,10 @@ func retouchParamsFromOptions(opts map[string]any) retouchParams {
 	if p.Preset == "none" {
 		p.Preset = ""
 	}
+	// A camera-angle preset is its prompt; an explicit prompt replaces it.
+	if v, ok := retouchViewByID(p.Preset); ok && p.Prompt == "" {
+		p.Prompt = v.Prompt()
+	}
 	if p.Scale < 0 {
 		p.Scale = 0
 	}
@@ -182,6 +190,9 @@ func retouchSuffix(preset string, isVideo bool, t float64) string {
 		s = "_restored"
 	default:
 		s = "_edit"
+		if isRetouchView(preset) {
+			s = "_" + preset
+		}
 	}
 	if isVideo {
 		return fmt.Sprintf("_t%.2f%s", t, s)
@@ -199,7 +210,7 @@ func formatFloatArg(f float64) string {
 // prompt is read from it (--prompt-file) instead of passed inline.
 func buildRetouchArgs(p retouchParams, input string, refs []string, output, promptFile string) []string {
 	var args []string
-	if p.Preset != "" {
+	if p.Preset != "" && !isRetouchView(p.Preset) {
 		args = append(args, "--preset", p.Preset)
 	}
 	if promptFile != "" {
@@ -449,7 +460,7 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 		}
 	}
 	if !validPreset {
-		return fail("unknown preset "+strconv.Quote(p.Preset)+" (choose 4kify, 4kify-phone, upscale or restore)", nil)
+		return fail("unknown preset "+strconv.Quote(p.Preset)+" (choose 4kify, 4kify-phone, upscale, restore or a camera angle such as reverse or right-90-high)", nil)
 	}
 
 	bin, err := resolveAITool(ctx, q, j.ID, tag, retouchTool)
