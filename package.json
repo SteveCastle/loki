@@ -118,7 +118,7 @@
     "js-base64": "^3.7.8",
     "lodash": "^4.17.21",
     "lodash.memoize": "^4.1.2",
-    "moment": "^2.29.4",
+    "moment": "^2.31.0",
     "natural-compare": "^1.4.0",
     "natural-compare-lite": "^1.4.0",
     "path-browserify": "^1.0.1",
