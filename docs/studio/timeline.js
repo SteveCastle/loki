@@ -34,6 +34,7 @@ import {
   quantize, clamp, trackOf, findClip, EASING_LABELS, sortKeys, upsertKey,
   eachClipProp, effectsOf, reidEffects, hasSource, isAudioEffect,
   clipRate, clipReversed, clipLoopSpan, clipPingPong, clipSourceSpan, retimeClip,
+  clipTimeRemap, srcTime, loopSrc, TIME_PROP,
   fitStart, trackWalls, newTrack,
 } from './comp.js';
 import { clipIcon } from './icons.js';
@@ -1064,13 +1065,17 @@ export class Timeline {
     const rate = clipRate(clip);
     const rev = clipReversed(clip);
     const lspan = clipLoopSpan(clip);
+    const remap = clipTimeRemap(clip);
     const isSnap = comp.grid?.clipId === clip.id;
     if (isSnap) el.classList.add('snap-track');
+    if (remap) el.classList.add('remapped');
     label.textContent = clip.name + (isSnap ? ` · ♩ ${gridSummary(comp.grid)}` : '')
       + (effects.length ? ` · ${effects.length} fx` : '')
-      + (rate !== 1 ? ` · ${fmtSpeed(rate)}` : '') + (rev ? ' · ◀' : '') + (lspan ? ' · ⟳' : '');
+      + (rate !== 1 ? ` · ${fmtSpeed(rate)}` : '') + (rev ? ' · ◀' : '') + (lspan ? ' · ⟳' : '')
+      + (remap ? (remap.anim ? ' · ⧗' : ' · ❚❚') : '');
     label.title = [
       clip.name,
+      remap ? (remap.anim ? `time remapped · ${remap.keys.length} keys` : 'freeze frame') : null,
       rate !== 1 ? `${fmtSpeed(rate)} speed` : null,
       rev ? 'plays in reverse' : null,
       clipPingPong(clip) ? `forward & backward over ${lspan.toFixed(2)}s` : lspan ? `cycles a ${lspan.toFixed(2)}s loop` : null,
@@ -1119,6 +1124,7 @@ export class Timeline {
   _paintWaveform(el, clip) {
     const asset = this.host.assetOf(clip.assetId);
     if (!asset?.waveform || !(asset.duration > 0)) return;
+    if (clipTimeRemap(clip)) return this._paintRemappedWaveform(el, clip, asset);
     // Retiming squeezes the source into fewer (or more) clip pixels, so the
     // whole mapping is in CLIP seconds: one source second is 1/rate of them.
     const perSec = this._timeToX(1) / clipRate(clip);
@@ -1129,6 +1135,39 @@ export class Timeline {
     const trim = ((clip.in % asset.duration) + asset.duration) % asset.duration;
     el.style.backgroundPosition = `${-trim * perSec}px center`;
     el.style.backgroundRepeat = 'repeat-x';
+  }
+
+  /* Under a time curve the source no longer maps to clip pixels at one
+   * rate, so the peaks image can't be windowed with background tricks:
+   * each clip pixel column copies the column of the source second the
+   * curve shows there. The decoded image is cached on the asset; the first
+   * paint after import waits for it and repaints once it lands. */
+  _paintRemappedWaveform(el, clip, asset) {
+    let img = asset._waveImg;
+    if (!img || img.src !== asset.waveform) {
+      img = asset._waveImg = new Image();
+      img.onload = () => this.render();
+      img.src = asset.waveform;
+      return;
+    }
+    if (!img.complete || !img.naturalWidth) return;
+    const w = Math.max(1, Math.round(this._timeToX(clip.dur)));
+    const h = Math.max(1, img.naturalHeight);
+    const cv = document.createElement('canvas');
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext('2d');
+    const kx = img.naturalWidth / asset.duration;
+    const secPerPx = clip.dur / w;
+    for (let x = 0; x < w; x++) {
+      const src = loopSrc(srcTime(clip, clip.start + (x + 0.5) * secPerPx), asset.duration);
+      const sx = Math.min(img.naturalWidth - 1, Math.floor(src * kx));
+      ctx.drawImage(img, sx, 0, 1, h, x, 0, 1, h);
+    }
+    el.style.backgroundImage = `url(${cv.toDataURL()})`;
+    el.style.backgroundSize = `${w}px 100%`;
+    el.style.backgroundPosition = '0 center';
+    el.style.backgroundRepeat = 'no-repeat';
   }
 
   _keyframeCount(clip) {
@@ -1212,6 +1251,25 @@ export class Timeline {
           : `${fmtSpeed(clipRate(clip))}${clipReversed(clip) ? ' ◀' : ''} · ${fmtTimecode(clip.dur, comp.fps)}`,
         action: () => this.host.retime?.(sel.length > 1 ? sel.map((s) => s.clip) : [clip]),
       },
+      // Time remapping: the After Effects model — the source time becomes
+      // a keyframed property, so a frame can be pinned to a moment on the
+      // timeline and everything between re-paces itself.
+      ...(hasSource(clip) && asset?.kind !== 'image' ? (clipTimeRemap(clip) ? [{
+        label: 'Hold frame at playhead',
+        detail: 'time remap',
+        action: () => this.host.timeRemap?.(clip, 'hold'),
+      }, {
+        label: 'Disable time remapping',
+        detail: clipTimeRemap(clip).anim ? `${clipTimeRemap(clip).keys.length} keys` : 'freeze frame',
+        action: () => this.host.timeRemap?.(clip, 'off'),
+      }] : [{
+        label: 'Enable time remapping',
+        detail: 'keyframe source time',
+        action: () => this.host.timeRemap?.(clip, 'on'),
+      }, {
+        label: 'Freeze frame at playhead',
+        action: () => this.host.timeRemap?.(clip, 'freeze'),
+      }]) : []),
       ...(clipRate(clip) !== 1 ? [{
         label: 'Reset speed to 100%',
         action: () => {
@@ -1236,7 +1294,7 @@ export class Timeline {
       }] : []),
       // The loop finder trims the clip to footage that cycles invisibly —
       // the automated version of an editor hunting for two matching frames.
-      ...(clip.kind === 'media' && (asset?.kind === 'video' || asset?.kind === 'gif') ? [{
+      ...(clip.kind === 'media' && !clipTimeRemap(clip) && (asset?.kind === 'video' || asset?.kind === 'gif') ? [{
         label: 'Loop video…',
         detail: clipPingPong(clip) ? 'forward & backward' : clipLoopSpan(clip) ? `cycling ${clipLoopSpan(clip).toFixed(2)}s` : null,
         action: () => this.host.findLoop?.(clip),
@@ -1455,10 +1513,13 @@ export class Timeline {
         // srcTime anchors on the clip end, so `in` stays put and pulling
         // left reaches deeper (looping past the source, like a forward
         // clip's right edge does). A LOOP-CYCLED clip never runs out and
-        // its `in` IS the loop point — both edges leave it alone.
+        // its `in` IS the loop point — both edges leave it alone. So does
+        // a TIME-REMAPPED clip: its keys stay put in comp time (shifted
+        // below with the rest) and hold beyond the first/last, so the
+        // edges reveal or hide the curve rather than moving it.
         const rate = clipRate(clip);
         const rev = clipReversed(clip);
-        const looped = clipLoopSpan(clip) > 0;
+        const looped = clipLoopSpan(clip) > 0 || !!clipTimeRemap(clip);
         let ns = this._snapTime(orig.start + dxT, { excludeClip: clip });
         const wallL = trackWalls(trackOf(comp, clip), { ...clip, start: orig.start, dur: orig.dur }).left;
         ns = clamp(ns, Math.max(wallL, rev || looped ? 0 : orig.start - orig.in / rate),
@@ -1478,7 +1539,7 @@ export class Timeline {
         // cycles a loop region, which repeats forever and keeps `in`.
         const rate = clipRate(clip);
         const rev = clipReversed(clip);
-        const looped = clipLoopSpan(clip) > 0;
+        const looped = clipLoopSpan(clip) > 0 || !!clipTimeRemap(clip);
         let ne = this._snapTime(orig.start + orig.dur + dxT, { excludeClip: clip });
         if (rev && !looped) ne = Math.min(ne, orig.start + orig.dur + orig.in / rate);
         const wallR = trackWalls(trackOf(comp, clip), { ...clip, start: orig.start, dur: orig.dur }).right;
@@ -1630,7 +1691,10 @@ export class Timeline {
     const el = document.createElement('div');
     el.className = 'tl-kf' + (this.selKeys.has(key) ? ' sel' : '') + (key.e === 'hold' ? ' hold' : '');
     el.style.left = `${this._timeToX(clip.start + key.t)}px`;
-    el.title = `${def.label} = ${fmtNum(key.v)} @ ${fmtTimecode(clip.start + key.t, this.host.comp().fps)} · ${key.e}`;
+    const fps = this.host.comp().fps;
+    // A time-remap key's value is a source time — show it as one.
+    const shown = def.key === TIME_PROP ? `source ${fmtTimecode(key.v, fps)}` : fmtNum(key.v);
+    el.title = `${def.label} = ${shown} @ ${fmtTimecode(clip.start + key.t, fps)} · ${key.e}`;
     el._key = key;
     this.keyOwners.set(key, { clip, prop });
 

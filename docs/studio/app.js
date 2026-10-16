@@ -44,6 +44,7 @@ import {
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
   clipRate, clipReversed, clipLoopSpan, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc,
+  clipTimeRemap, enableTimeRemap, disableTimeRemap, freezeClipAt, clipSpeedAt, TIME_PROP,
   newTrackClip, resolveOverlaps,
 } from './comp.js';
 import { Compositor, BLEND_MODES } from './compositor.js';
@@ -495,8 +496,10 @@ function audioDriveKey() {
   const parts = [comp.dur, comp.fps];
   for (const { clip, asset } of audioEntries(true)) {
     const vol = clip.props.volume;
+    const remap = clipTimeRemap(clip);
     parts.push(asset.id, clip.start, clip.dur, clip.in, clipRate(clip),
       clipReversed(clip) ? 'rev' : 'fwd', clipLoopSpan(clip), clip.loopMode,
+      remap ? JSON.stringify({ v: remap.v, anim: remap.anim, keys: remap.keys }) : '',
       vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '',
       // Effects colour the mix the analysis hears, so they belong in its
       // fingerprint: adding a reverb has to re-derive the envelopes.
@@ -643,14 +646,19 @@ function syncMedia(t, activeMedia, activeAudio = []) {
     const desired = loopSrc(src, len);
     // A retimed clip plays its element fast or slow; the drift correction
     // below then keeps it locked to the comp clock. Browsers accept
-    // 0.0625–16 and throw outside it, so the rate is clamped.
-    const rate = clamp(clipRate(clip), 0.0625, 16);
+    // 0.0625–16 and throw outside it, so the rate is clamped. Under a
+    // time remap the speed is the curve's slope over the coming frame,
+    // so a ramp re-paces the element as it goes.
+    const speed = clipSpeedAt(clip, t, 1 / comp.fps);
+    const rate = clamp(speed, 0.0625, 16);
     if (el.playbackRate !== rate) el.playbackRate = rate;
     // No browser plays media backwards: while the transport runs, a
     // reversed clip stays paused and chases the comp clock with seeks,
     // exactly like scrubbing (its audio is silent in the preview — the
-    // export mix plays a reversed buffer and is the real thing).
-    const rev = clipPlayingBackward(clip, t);
+    // export mix plays a reversed buffer and is the real thing). A
+    // freeze frame or a crawl below the rate floor can't free-run either
+    // and is chased the same way.
+    const rev = speed < 0.0625;
     let proxyScrub = false;
     if (playing && !rev) {
       if (el.paused) {
@@ -1513,8 +1521,25 @@ function effectPropDefs(clip, effect) {
 
 /** Every editable property of a clip: its transform (media) followed by the
  * parameters of each effect in its stack, in stack order. */
+/** The time-remap row: its value is a source time, so the slider spans
+ * the file (and any key already pointing past it) in frame steps.
+ * Not drivable — the curve is the one thing that must stay exact. */
+function timePropDef(clip) {
+  const asset = assets.get(clip.assetId);
+  const prop = clipTimeRemap(clip);
+  let max = asset?.duration ?? 0;
+  if (prop) for (const k of prop.keys) max = Math.max(max, k.v);
+  max = Math.max(max, prop?.v ?? 0, 1);
+  return {
+    key: TIME_PROP, label: 'Time Remap', min: 0, max, step: 1 / comp.fps,
+    unit: 's', def: 0, noDriver: true,
+  };
+}
+
 function propDefs(clip) {
   const defs = [];
+  // The time curve leads: it decides which source frame the rest see.
+  if (clipTimeRemap(clip)) defs.push(timePropDef(clip));
   if (clip.kind === 'media') {
     // Volume only makes sense (and sound) for video assets.
     const video = assets.get(clip.assetId)?.kind === 'video';
@@ -1719,6 +1744,7 @@ const timelineHost = {
   },
   status: setStatus,
   retime: (clips) => openRetimeDialog(clips),
+  timeRemap: (clip, what) => timeRemapAction(clip, what),
   findLoop: (clip) => openLoopFinder(clip),
   setSnapTrack: (clip) => setSnapTrack(clip),
   clearSnapTrack,
@@ -2750,7 +2776,11 @@ function openRetimeDialog(clips) {
   document.querySelector('.modal-wrap')?.remove();
   const primary = list[0];
   const minDur = 1 / comp.fps;
-  const span = clipSourceSpan(primary);
+  // A time-remapped clip has no single speed: its "source span" for the
+  // dialog is its own length, so 200% means the curve plays twice as fast.
+  const remapped = !!clipTimeRemap(primary);
+  const baseSpan = (clip) => (clipTimeRemap(clip) ? clip.dur : clipSourceSpan(clip));
+  const span = baseSpan(primary);
   const many = list.length > 1;
 
   const wrap = document.createElement('div');
@@ -2763,7 +2793,7 @@ function openRetimeDialog(clips) {
       <label>Speed <span class="retime-field"><input id="rt-speed" type="number" min="1" max="10000" step="1"> %</span></label>
       <label>Duration <span class="retime-field"><input id="rt-dur" type="number" min="${minDur.toFixed(4)}" max="7200" step="0.05"> s</span></label>
       <p class="retime-hint"></p>
-      ${list.some(hasSource) ? `
+      ${list.some((c) => hasSource(c) && !clipTimeRemap(c)) ? `
       <label class="retime-check"><span>Play in reverse</span>
         <input id="rt-rev" type="checkbox"${clipReversed(primary) ? ' checked' : ''}></label>` : ''}
       <label class="retime-check"><span>Stretch keyframes &amp; oscillators</span>
@@ -2786,13 +2816,14 @@ function openRetimeDialog(clips) {
   const readDur = () => Math.max(minDur, parseFloat(durInput.value) || minDur);
   /** The length `clip` ends up with under the current field values. */
   const targetDur = (clip) => (mode === 'speed'
-    ? Math.max(minDur, quantize(clipSourceSpan(clip) / readSpeed(), comp.fps))
+    ? Math.max(minDur, quantize(baseSpan(clip) / readSpeed(), comp.fps))
     : Math.max(minDur, quantize(readDur(), comp.fps)));
 
   const refreshHint = () => {
     const dur = targetDur(primary);
     const parts = [`${many ? 'first clip: ' : ''}${fmtTimecode(dur, comp.fps)}`];
-    if (hasSource(primary)) parts.push(clipLoopSpan(primary)
+    if (remapped) parts.push('time-remapped — the speed curve stretches with the clip');
+    else if (hasSource(primary)) parts.push(clipLoopSpan(primary)
       ? `${clipPingPong(primary) ? 'forward & backward over' : 'cycles a'} ${clipLoopSpan(primary).toFixed(2)}s${clipPingPong(primary) ? '' : ' loop'}`
       : `plays ${span.toFixed(2)}s of source`);
     if (revInput?.checked) parts.push('reversed — audio audible in export only');
@@ -2834,7 +2865,7 @@ function openRetimeDialog(clips) {
         retimeClip(clip, durs[i], { scaleAnim });
         // Direction is speed's sibling edit; absent stays absent so older
         // projects' clips don't all sprout a `reversed: false`.
-        if (rev != null && hasSource(clip)) {
+        if (rev != null && hasSource(clip) && !clipTimeRemap(clip)) {
           if (rev) clip.reversed = true;
           else delete clip.reversed;
         }
@@ -2845,7 +2876,8 @@ function openRetimeDialog(clips) {
     onModelChange({ structural: true });
     setStatus(many
       ? `retimed ${list.length} clips`
-      : `${primary.name}: ${fmtSpeed(clipRate(primary))}${clipReversed(primary) ? ' reversed' : ''} speed · ${fmtTimecode(primary.dur, comp.fps)}`);
+      : remapped ? `${primary.name}: time curve now spans ${fmtTimecode(primary.dur, comp.fps)}`
+        : `${primary.name}: ${fmtSpeed(clipRate(primary))}${clipReversed(primary) ? ' reversed' : ''} speed · ${fmtTimecode(primary.dur, comp.fps)}`);
   };
   const onKey = (e) => {
     if (e.key !== 'Escape' && e.key !== 'Enter') return;
@@ -4137,6 +4169,58 @@ async function rotoBlobsFor(node) {
   return node._rotoLoad;
 }
 
+/** The frames an analysis walks and the grid the masks are stored on.
+ * Masks are keyed by SOURCE time: ordinarily the comp frames of the clip
+ * map onto a uniform source grid (one slot per comp frame, `srcStep`
+ * signed for a reversed clip). Under a time remap that no longer holds —
+ * a hold shows one source frame for many comp frames, a 4× burst skips
+ * three in four — so the grid becomes the source's own frame step over
+ * the span the curve reaches, each slot visited once at the first comp
+ * frame that lands on it. Slots nothing lands on stay empty; lookups
+ * (rotoFrameIndex) round to the same slots, so every comp frame finds
+ * the mask of the picture it shows.
+ * @returns {{still, f0, total, src0, srcStep, frames:[{fi,t}], tAt(fi)}} */
+function rotoWalkPlan(clip, asset) {
+  const fps = comp.fps;
+  const t0 = clip.start;
+  const t1 = Math.min(clipEnd(clip), comp.dur);
+  const f0 = Math.max(0, Math.ceil(t0 * fps - 1e-6));
+  const fN = Math.max(f0, Math.ceil(t1 * fps - 1e-6) - 1);
+  const still = asset.kind !== 'video' && asset.kind !== 'gif';
+  if (still) {
+    const t = f0 / fps;
+    return { still, f0, total: 1, src0: 0, srcStep: 0, frames: [{ fi: 0, t }], tAt: (fi) => (fi === 0 ? t : null) };
+  }
+  if (!clipTimeRemap(clip)) {
+    const total = fN - f0 + 1;
+    // Signed: a reversed clip's walk descends through the source.
+    const srcStep = srcTime(clip, (f0 + 1) / fps) - srcTime(clip, f0 / fps);
+    const src0 = srcTime(clip, f0 / fps);
+    const frames = [];
+    for (let fi = 0; fi < total; fi++) frames.push({ fi, t: (f0 + fi) / fps });
+    return { still, f0, total, src0, srcStep, frames, tAt: (fi) => (fi >= 0 && fi < total ? (f0 + fi) / fps : null) };
+  }
+  const srcStep = 1 / fps;
+  const srcs = [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let f = f0; f <= fN; f++) {
+    const s = srcTime(clip, f / fps);
+    srcs.push(s);
+    lo = Math.min(lo, s);
+    hi = Math.max(hi, s);
+  }
+  const src0 = lo;
+  const total = Math.max(1, Math.round((hi - lo) / srcStep) + 1);
+  const first = new Map();
+  srcs.forEach((s, i) => {
+    const fi = clamp(Math.round((s - src0) / srcStep), 0, total - 1);
+    if (!first.has(fi)) first.set(fi, (f0 + i) / fps);
+  });
+  const frames = [...first.entries()].sort((a, b) => a[0] - b[0]).map(([fi, t]) => ({ fi, t }));
+  return { still, f0, total, src0, srcStep, frames, tAt: (fi) => first.get(fi) ?? null };
+}
+
 /** Which stored mask covers comp time t. Keyed by source time — see the
  * section comment. -1 = no sequence. */
 function rotoFrameIndex(node, clip, t) {
@@ -4516,16 +4600,9 @@ async function analyzeRotoAutoNode(ownerClip, ctx, node) {
   try {
     const rt = await roto.loadRoto(setStatus);
     const { sw, sh } = rotoStoreDims(asset);
-    const fps = comp.fps;
-    const t0 = clip.start;
-    const t1 = Math.min(clipEnd(clip), comp.dur);
-    const f0 = Math.max(0, Math.ceil(t0 * fps - 1e-6));
-    const fN = Math.max(f0, Math.ceil(t1 * fps - 1e-6) - 1);
-    // Signed: a reversed clip's walk descends through the source.
-    const srcStep = srcTime(clip, (f0 + 1) / fps) - srcTime(clip, f0 / fps);
-    const src0 = srcTime(clip, f0 / fps);
-    const still = asset.kind !== 'video' && asset.kind !== 'gif';
-    const total = still ? 1 : fN - f0 + 1;
+    const plan = rotoWalkPlan(clip, asset);
+    const { still, total, src0, srcStep } = plan;
+    const walkTotal = plan.frames.length;
     const blobs = new Array(total).fill(null);
     // The subject box starts where the user framed it and follows the
     // matte from there; node.region itself is never mutated by analysis.
@@ -4535,9 +4612,8 @@ async function analyzeRotoAutoNode(ownerClip, ctx, node) {
     const kw = sw / asset.w;
     const kh = sh / asset.h;
     let done = 0;
-    for (let fi = 0; fi < total; fi++) {
+    for (const { fi, t } of plan.frames) {
       if (job.cancel) break;
-      const t = (f0 + fi) / fps;
       // The playhead follows the walk so the timeline shows where the
       // analysis is. tick() is parked while rotoJob is set, so nothing
       // fights over tCur.
@@ -4555,7 +4631,7 @@ async function analyzeRotoAutoNode(ownerClip, ctx, node) {
       if (roi) roi = rotoNextRoi(roi, rect, probs, asset);
       drawRotoAnalysisMonitor(asset, clip, t, stage, roi);
       done++;
-      setStatus(`roto: matting ${done}/${total}`, Math.min(1, done / total));
+      setStatus(`roto: matting ${done}/${walkTotal}`, Math.min(1, done / walkTotal));
       await nextTask();   // let the UI paint the monitor (never setTimeout)
     }
 
@@ -5280,16 +5356,8 @@ async function analyzeRotoSamNode(ownerClip, ctx, node, opts = {}) {
     const rt = await rotoSam.loadRoto(setStatus);
     const dt = query ? await rotoSam.loadDetector(setStatus) : null;
     const { s, rw, rh, sw, sh } = rotoAnalysisDims(asset);
-    const fps = comp.fps;
-    const t0 = clip.start;
-    const t1 = Math.min(clipEnd(clip), comp.dur);
-    const f0 = Math.max(0, Math.ceil(t0 * fps - 1e-6));
-    const fN = Math.max(f0, Math.ceil(t1 * fps - 1e-6) - 1);
-    // Signed: a reversed clip's walk descends through the source.
-    const srcStep = srcTime(clip, (f0 + 1) / fps) - srcTime(clip, f0 / fps);
-    const src0 = srcTime(clip, f0 / fps);
-    const still = asset.kind !== 'video' && asset.kind !== 'gif';
-    const total = still ? 1 : fN - f0 + 1;
+    const plan = rotoWalkPlan(clip, asset);
+    const { still, total, src0, srcStep } = plan;
 
     // Snap prompt groups to frame indices; later groups win a collision.
     const anchors = new Map();
@@ -5365,7 +5433,13 @@ async function analyzeRotoSamNode(ownerClip, ctx, node, opts = {}) {
           anchors.set(cfi, group);
           fi = cfi;
         }
-        const t = (f0 + fi) / fps;
+        // A grid slot no comp frame lands on (fast time-remap legs) has
+        // nothing to analyze — step over it.
+        const t = plan.tAt(fi);
+        if (t == null) {
+          if (fi === to) return;
+          continue;
+        }
         // The playhead follows the walk (and rewinds with corrections) so
         // the timeline shows where the analysis is. tick() is parked while
         // rotoJob is set, so nothing fights over tCur.
@@ -8121,6 +8195,8 @@ function updateInspectorLive() {
   // A response curve tracks its parameters, so an animated filter sweep
   // draws itself moving. Static ones are left alone.
   for (const w of inspWidgets) if (w.live) w.redraw();
+  // The time-remap header reads the curve's speed at the playhead.
+  if (timeRemapHint?.el.isConnected) timeRemapHint.el.textContent = timeRemapHintText(timeRemapHint.clip);
 }
 
 /** Redraw every curve widget now (a slider moved under one). */
@@ -8272,6 +8348,9 @@ function renderInspector() {
    * judge against the ruler, so the timeline owns them (drag the clip,
    * drag its edges, split at the playhead). */
 
+  /* -- time remap: the source-time curve, when the clip has one -- */
+  if (clipTimeRemap(clip)) renderTimeRemapSection(clip);
+
   /* -- shape settings (preset + fill color) -- */
   if (isShapeClip(clip)) renderShapeSection(clip);
 
@@ -8390,6 +8469,72 @@ function addParamRow(parent, clip, def) {
   parent.appendChild(paramRow(clip, def));
   const dp = driverPanel(clip, def);
   if (dp) parent.appendChild(dp);
+}
+
+/* ---- time remap section ----------------------------------------------
+ * The clip's source-time curve as a property row — the slider scrubs
+ * which source frame shows at the playhead, so "this frame, here" is:
+ * park the playhead, pick the frame, set a key. The keys themselves are
+ * dragged on the timeline lane. Header actions are the two things people
+ * reach for: hold this frame, and the way back out. */
+let timeRemapHint = null;   // {clip, el} of the open section, for live speed
+
+function timeRemapHintText(clip) {
+  const prop = clipTimeRemap(clip);
+  if (!prop) return '';
+  if (!prop.anim) return 'freeze frame';
+  const speed = clipSpeedAt(clip, tCur, 1 / comp.fps);
+  if (tCur < clip.start || tCur >= clipEnd(clip)) return `${prop.keys.length} keys`;
+  if (Math.abs(speed) < 1e-6) return 'held';
+  return `${fmtSpeed(Math.abs(speed))}${speed < 0 ? ' ◀' : ''} at playhead`;
+}
+
+function renderTimeRemapSection(clip) {
+  const prop = clipTimeRemap(clip);
+  const hold = secBtn('hold', 'freeze this frame from here until the next keyframe',
+    () => timeRemapAction(clip, 'hold'));
+  const off = secBtn('off', 'remove the time curve — the clip keeps the constant speed that fits its first and last keys',
+    () => timeRemapAction(clip, 'off'));
+  const { sec, body } = inspSection('time', 'Time Remap',
+    { hint: timeRemapHintText(clip), actions: [hold, off] });
+  timeRemapHint = { clip, el: sec.querySelector('.insp-sec-hint') };
+  addParamRow(body, clip, timePropDef(clip));
+  const note = document.createElement('div');
+  note.className = 'insp-note';
+  note.textContent = prop.anim
+    ? 'a key pins a source time to the playhead — drag keys on the timeline to compress or stretch; linear = steady, ease = ramp, hold = freeze'
+    : 'one frame for the whole clip — ⏱ starts keyframing it';
+  body.appendChild(note);
+  inspectorEl.appendChild(sec);
+}
+
+/** The time-remap commands shared by the inspector and the clip menu:
+ * 'on' (keys reproduce the current playback), 'freeze' (whole clip on
+ * the playhead's frame), 'hold' (a hold key at the playhead) and 'off'. */
+function timeRemapAction(clip, what) {
+  if (!hasSource(clip)) return;
+  const fps = comp.fps;
+  let msg = '';
+  history.record(comp, () => {
+    if (what === 'on') {
+      enableTimeRemap(clip, fps);
+      msg = `${clip.name}: time remapping on — drag the Time Remap keys to re-pace it`;
+    } else if (what === 'freeze') {
+      const prop = freezeClipAt(clip, tCur, fps);
+      msg = `${clip.name}: frozen on ${fmtTimecode(prop.v, fps)} of the source`;
+    } else if (what === 'hold') {
+      const prop = enableTimeRemap(clip, fps);
+      const t = relTime(clip);
+      upsertKey(prop, t, evalProp(prop, tCur - clip.start), 'hold');
+      msg = `${clip.name}: holds ${fmtTimecode(evalProp(prop, t), fps)} from ${fmtTimecode(clip.start + t, fps)}`;
+    } else if (what === 'off') {
+      disableTimeRemap(clip);
+      msg = `${clip.name}: time remapping off — ${fmtSpeed(clipRate(clip))}${clipReversed(clip) ? ' reversed' : ''}`;
+    }
+  });
+  if (what !== 'off') timeline.expanded.add(clip.id);
+  onModelChange({ structural: true });
+  if (msg) setStatus(msg);
 }
 
 /** Blend mode, shaped like a param row so it lines up with Opacity above
@@ -8569,7 +8714,7 @@ function snapGridSection(clip) {
   const row2 = document.createElement('div');
   row2.className = 'snapgrid-row';
   row2.appendChild(secBtn('Bar line = playhead', 'shift the grid so a bar line lands on the playhead', () => {
-    const src = (clip.in ?? 0) + (tCur - clip.start) * clipRate(clip);
+    const src = srcTime(clip, tCur);
     const bar = 60 / g.bpm * Math.max(1, Math.round(g.beatsPerBar));
     edit((gr) => { gr.offset = +(((src % bar) + bar) % bar).toFixed(4); });
   }));
@@ -8937,7 +9082,8 @@ function paramRow(clip, def) {
     : 'drive this value with an oscillator or audio (beats, levels)';
   drv.addEventListener('click', () => toggleDriver(clip, def));
 
-  row.append(sw, label, slider, num, keyBtn, drv);
+  row.append(sw, label, slider, num, keyBtn);
+  if (!def.noDriver) row.appendChild(drv);
   return row;
 }
 
@@ -10502,9 +10648,15 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
     if (!buf) continue;
     const rev = clipReversed(clip);
     const pingpong = clipPingPong(clip);
+    const remap = clipTimeRemap(clip);
     const src = ctx.createBufferSource();
     src.buffer = rev ? reversedAudioBuf(asset) : buf;
-    if (pingpong) {
+    if (remap) {
+      // A time curve is baked straight into a buffer the length of the
+      // clip: holds, ramps and backward legs all fall out of the one
+      // mapping, resampled (pitch and all) like the element does live.
+      src.buffer = remappedAudioBuf(ctx, buf, clip, Math.min(clipEnd(clip), comp.dur) - clip.start);
+    } else if (pingpong) {
       // Bake one complete out-and-back cycle, including reversed clips'
       // phase, then let the buffer source repeat it at the clip's rate.
       const cycle = ctx.createBuffer(buf.numberOfChannels,
@@ -10519,10 +10671,10 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
       }
       src.buffer = cycle;
     }
-    src.loop = true;   // clips longer than their source wrap, like syncMedia
+    src.loop = !remap;   // clips longer than their source wrap, like syncMedia
     // Retiming resamples, pitch and all — the same thing the preview's
     // element playbackRate does, so the export matches what was auditioned.
-    src.playbackRate.value = clipRate(clip);
+    src.playbackRate.value = remap ? 1 : clipRate(clip);
     const gain = ctx.createGain();
     const start = clip.start;
     const len = Math.min(clipEnd(clip), comp.dur) - start;
@@ -10587,12 +10739,52 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
       const o0 = rev ? loopSrc(clip.dur * clipRate(clip), lspan) : 0;
       offset = clamp(region0 + (rev ? lspan - o0 : 0), 0, Math.max(0, buf.duration - 1e-4));
     }
-    src.start(start, pingpong ? 0 : offset);
+    src.start(start, pingpong || remap ? 0 : offset);
     // Reverb and delay tails are part of the clip's sound: the source
     // stops, the graph keeps ringing until the render ends.
     src.stop(start + len);
   }
   return ctx.startRendering();
+}
+
+/** The clip's audio under its time curve, one output sample per comp
+ * sample: the source position is read off srcTime per 32-sample block
+ * and interpolated inside it (the curve is smooth at that scale), then
+ * the source is linearly interpolated at that position. Wraps into the
+ * file like every other path. */
+function remappedAudioBuf(ctx, buf, clip, len) {
+  const sr = buf.sampleRate;
+  const n = Math.max(1, Math.ceil(len * sr));
+  const out = ctx.createBuffer(buf.numberOfChannels, n, sr);
+  const dur = buf.duration;
+  const BLOCK = 32;
+  const pos = new Float64Array(n);
+  let p0 = loopSrc(srcTime(clip, clip.start), dur) * sr;
+  for (let b = 0; b < n; b += BLOCK) {
+    const b1 = Math.min(n, b + BLOCK);
+    const p1 = loopSrc(srcTime(clip, clip.start + b1 / sr), dur) * sr;
+    // A wrap or a key inside the block: fall back to exact samples.
+    const straight = Math.abs(p1 - p0) <= BLOCK * 16;
+    for (let i = b; i < b1; i++) {
+      pos[i] = straight
+        ? p0 + (p1 - p0) * (i - b) / (b1 - b)
+        : loopSrc(srcTime(clip, clip.start + i / sr), dur) * sr;
+    }
+    p0 = p1;
+  }
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const input = buf.getChannelData(ch);
+    const output = out.getChannelData(ch);
+    const last = input.length - 1;
+    for (let i = 0; i < n; i++) {
+      const j = Math.floor(pos[i]);
+      const f = pos[i] - j;
+      const a = input[clamp(j, 0, last)];
+      const c = input[clamp(j + 1, 0, last)];
+      output[i] = a + (c - a) * f;
+    }
+  }
+  return out;
 }
 
 /* The export mix: audible clips only, driven volume included. Preview-only

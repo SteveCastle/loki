@@ -111,7 +111,9 @@ export function evalProp(prop, t) {
   return a.v + (b.v - a.v) * f(u);
 }
 
-/** Add or replace a keyframe at time t (seconds, clip-relative). */
+/** Add or replace a keyframe at time t (seconds, clip-relative). A new
+ * key eases in-out unless the track names its own default (`prop.ease` —
+ * time remapping wants linear, i.e. constant speed). */
 export function upsertKey(prop, t, v, e = null) {
   const EPS = 1e-4;
   const existing = prop.keys.find((k) => Math.abs(k.t - t) < EPS);
@@ -119,7 +121,7 @@ export function upsertKey(prop, t, v, e = null) {
     existing.v = v;
     if (e) existing.e = e;
   } else {
-    prop.keys.push({ t, v, e: e ?? 'inout' });
+    prop.keys.push({ t, v, e: e ?? prop.ease ?? 'inout' });
     sortKeys(prop);
   }
   prop.anim = true;
@@ -271,6 +273,7 @@ export const clipPingPong = (clip) => clipLoopSpan(clip) > 0 && clip.loopMode ==
 
 /** Instantaneous direction, including the return leg of a ping-pong loop. */
 export function clipPlayingBackward(clip, t) {
+  if (clipTimeRemap(clip)) return clipSpeedAt(clip, t) < 0;
   const reversed = clipReversed(clip);
   if (!clipPingPong(clip)) return reversed;
   const span = clipLoopSpan(clip);
@@ -279,12 +282,123 @@ export function clipPlayingBackward(clip, t) {
   return reversed ? phase > 0 && phase <= span : phase >= span;
 }
 
+/* ---- time remapping ---------------------------------------------------
+ * After Effects style: `clip.props.time` is a PropTrack whose VALUE is the
+ * source time (seconds into the file) shown at each clip-relative instant.
+ * A key pins a source frame to a moment on the timeline; the segment
+ * between two keys is the speed curve — linear is constant speed, `hold`
+ * is a freeze frame, an ease is a speed ramp, a descending segment plays
+ * backward. While the track exists it IS the mapping: enabling it bakes
+ * the clip's rate / direction / loop region into keys (so nothing moves
+ * on screen) and neutralizes those fields; removing it fits a constant
+ * speed back through the first and last keys. A static (un-animated)
+ * track is a freeze frame. Source clips only. */
+export const TIME_PROP = 'time';
+
+export const clipTimeRemap = (clip) =>
+  (hasSource(clip) && clip.props?.[TIME_PROP]) || null;
+
+/** The keys that reproduce the clip's CURRENT mapping, frame for frame.
+ * A straight-through clip needs just its two ends (forward or reversed);
+ * a loop-cycled clip is sampled per frame and keyed wherever the slope
+ * changes or the source jumps back, so linear segments between the keys
+ * land every frame exactly where srcTime put it. */
+export function bakeTimeKeys(clip, fps) {
+  if (!clipLoopSpan(clip)) {
+    return [
+      { t: 0, v: srcTime(clip, clip.start), e: 'linear' },
+      { t: clip.dur, v: srcTime(clip, clip.start + clip.dur), e: 'linear' },
+    ];
+  }
+  const n = Math.max(2, Math.round(clip.dur * fps) + 1);
+  const s = [];
+  for (let i = 0; i < n; i++) s.push(srcTime(clip, clip.start + i / fps));
+  const keys = [];
+  for (let i = 0; i < n; i++) {
+    const edge = i === 0 || i === n - 1
+      || Math.abs((s[i] - s[i - 1]) - (s[i + 1] - s[i])) > 1e-6;
+    if (edge) keys.push({ t: i / fps, v: s[i], e: 'linear' });
+  }
+  return keys;
+}
+
+/** Switch time remapping on, picture-identical to the clip's current
+ * playback. Returns the time track (the existing one if already on). */
+export function enableTimeRemap(clip, fps) {
+  if (!hasSource(clip)) return null;
+  const have = clipTimeRemap(clip);
+  if (have) return have;
+  const keys = bakeTimeKeys(clip, fps);
+  const prop = newProp(keys[0].v);
+  prop.ease = 'linear';
+  prop.keys = keys;
+  prop.anim = true;
+  (clip.props ??= {})[TIME_PROP] = prop;
+  // The keys now carry speed, direction and cycling; the plain fields go
+  // neutral so trims, waveforms and the retime dialog read the clip as
+  // 1× forward (which, under the remap, it is).
+  clip.rate = 1;
+  delete clip.reversed;
+  delete clip.loopSpan;
+  delete clip.loopMode;
+  return prop;
+}
+
+/** Freeze the whole clip on the source frame it shows at comp time t. */
+export function freezeClipAt(clip, t, fps) {
+  if (!hasSource(clip)) return null;
+  const src = srcTime(clip, t);
+  const prop = enableTimeRemap(clip, fps);
+  prop.v = src;
+  prop.keys = [];
+  prop.anim = false;
+  return prop;
+}
+
+/** Switch time remapping off. The clip gets the constant speed that runs
+ * through the first and last keys (reversed when they descend); a freeze
+ * frame or a lone key becomes 1× from that frame. */
+export function disableTimeRemap(clip) {
+  const prop = clipTimeRemap(clip);
+  if (!prop) return;
+  const keys = prop.anim ? prop.keys : [];
+  let rate = 1;
+  let reversed = false;
+  let inPoint = prop.anim && keys.length ? keys[0].v : prop.v;
+  if (keys.length >= 2) {
+    const a = keys[0];
+    const b = keys[keys.length - 1];
+    const dt = b.t - a.t;
+    if (dt > 1e-6) {
+      rate = Math.min(100, Math.max(0.01, Math.abs(b.v - a.v) / dt));
+      reversed = b.v < a.v;
+      inPoint = reversed ? b.v - (clip.dur - b.t) * rate : a.v - a.t * rate;
+    }
+  }
+  delete clip.props[TIME_PROP];
+  clip.rate = rate;
+  clip.in = Math.max(0, inPoint);
+  if (reversed) clip.reversed = true;
+  else delete clip.reversed;
+}
+
+/** Source seconds per comp second at t, signed: the clip's rate (negated
+ * on a backward leg) or, remapped, the slope of the time curve over the
+ * next `dt` — zero across a freeze frame. */
+export function clipSpeedAt(clip, t, dt = 1 / 60) {
+  if (!clipTimeRemap(clip)) return clipRate(clip) * (clipPlayingBackward(clip, t) ? -1 : 1);
+  return (srcTime(clip, t + dt) - srcTime(clip, t)) / dt;
+}
+
 /** Source-file time for a source clip at COMP time t, before asset-length
  * wrapping. The ONE place trim, speed, direction and the loop region
  * meet: a reversed clip anchors on the far end of its footage and runs
  * back down toward `in`; a loop-cycled clip folds its offset into the
- * region so the same span repeats however long the clip is stretched. */
+ * region so the same span repeats however long the clip is stretched.
+ * A time-remapped clip reads its curve instead — the keys ARE the map. */
 export const srcTime = (clip, t) => {
+  const remap = clipTimeRemap(clip);
+  if (remap) return evalProp(remap, t - clip.start);
   const o = (clipReversed(clip) ? clip.dur - (t - clip.start) : t - clip.start)
     * clipRate(clip);
   const span = clipLoopSpan(clip);
@@ -320,8 +434,12 @@ export const clipSourceSpan = (clip) => clip.dur * clipRate(clip);
 export function retimeClip(clip, newDur, { scaleAnim = true } = {}) {
   const factor = newDur / clip.dur;
   if (!(factor > 0) || !Number.isFinite(factor)) return;
-  if (hasSource(clip)) clip.rate = clipRate(clip) / factor;
+  const remap = clipTimeRemap(clip);
+  if (hasSource(clip) && !remap) clip.rate = clipRate(clip) / factor;
   clip.dur = newDur;
+  // A time curve is the speed, so it always stretches with the clip —
+  // left alone, the new length would just hold the last frame.
+  if (remap && !scaleAnim) for (const k of remap.keys) k.t *= factor;
   if (!scaleAnim) return;
   eachClipProp(clip, (p) => {
     for (const k of p.keys) k.t *= factor;
@@ -484,6 +602,14 @@ export function clipPropAt(clip, key, tComp, defaultValue = 0) {
 export function splitClip(clip, t) {
   if (t <= clip.start + 1e-6 || t >= clipEnd(clip) - 1e-6) return null;
   const offset = t - clip.start;
+  // A time curve must not change shape at the cut: pin the source time
+  // there on both halves (a key inside a hold stays a hold), or the
+  // right half would open on its first key instead of mid-segment.
+  const remap = clipTimeRemap(clip);
+  if (remap?.anim && remap.keys.length) {
+    const before = remap.keys.filter((k) => k.t < offset - 1e-4).pop();
+    upsertKey(remap, offset, evalProp(remap, offset), before?.e ?? 'linear');
+  }
   const right = structuredClone(clip);
   right.id = uid('clip');
   right.start = t;
@@ -496,7 +622,7 @@ export function splitClip(clip, t) {
   // A LOOP-CYCLED clip keeps `in`/`loopSpan` on both halves: phase is
   // anchored to clip.start, so the right half restarts its cycle at the
   // cut (mid-cycle continuation would need a phase field).
-  if (hasSource(clip) && !clipLoopSpan(clip)) {
+  if (hasSource(clip) && !clipLoopSpan(clip) && !remap) {
     if (clipReversed(clip)) clip.in += right.dur * clipRate(clip);
     else right.in = clip.in + offset * clipRate(clip);
   }

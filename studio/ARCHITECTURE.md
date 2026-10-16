@@ -155,6 +155,46 @@ is silent in preview, as with reversed clips; the offline mix bakes one
 forward/backward audio cycle and repeats it. Clearing the loop removes
 both fields; applying a detected seamless loop removes `loopMode`.
 
+### Time remapping
+
+The After Effects model, on top of the same `srcTime`: `clip.props.time`
+is a PropTrack whose **value is a source time**. A key says "this source
+frame shows here"; the easing between two keys is the speed curve
+(`linear` = constant speed, `hold` = freeze frame, an ease = speed ramp,
+descending keys = backward). While the track exists it *is* the mapping —
+`srcTime` returns `evalProp(time, t − start)` and nothing else — and a
+static (un-animated) track is a whole-clip freeze frame.
+
+```js
+clipTimeRemap(clip)        // the time track, or null
+enableTimeRemap(clip, fps) // bakeTimeKeys: keys that reproduce the current
+                           // playback frame for frame (two ends for a plain
+                           // clip; per-frame slope changes for a loop /
+                           // ping-pong), then rate=1, no reversed/loopSpan
+freezeClipAt(clip, t, fps) // static track = the frame shown at t
+disableTimeRemap(clip)     // constant speed fitted through first/last keys
+clipSpeedAt(clip, t, dt)   // signed source-sec per comp-sec: ±rate, or the
+                           // curve's forward slope (0 across a hold)
+```
+
+Right-click a source clip → *Enable time remapping* / *Freeze frame at
+playhead*; remapped clips get *Hold frame at playhead* and *Disable*. The
+**Time Remap** inspector section's slider scrubs which source frame shows
+at the playhead (set a key, move the playhead, set another); keys are
+dragged on the timeline lane like any other, and new keys default to
+linear (`prop.ease`, read by `upsertKey`). What the rest of the app does
+with it: `syncMedia` sets `playbackRate` to the local slope and chase-seeks
+(like reversed) wherever the slope is negative or below the browser's
+0.0625 floor, so holds and crawls are seeks, not throws; the export mix
+bakes a buffer the length of the clip by resampling the source along the
+curve (`remappedAudioBuf`); `splitClip` pins a key at the cut so both
+halves keep the curve; trims never touch `in` and shift the keys like any
+other property (the curve holds beyond its ends); `retimeClip` always
+stretches the time keys, even with "stretch keyframes" off, because the
+curve *is* the speed; roto analysis walks a source-frame grid
+(`rotoWalkPlan`) — one slot per distinct source frame the curve reaches —
+since comp frames no longer map one-to-one onto source frames.
+
 ### Undo
 
 `History` (in `comp.js`) keeps **deep JSON snapshots of the whole comp**.
