@@ -61,7 +61,9 @@ for bin in $bins; do
 
     archive_path="$tmpdir/$bin.archive"
     echo "fetching $bin ($url) ..."
-    curl -fsSL "$url" -o "$archive_path"
+    # Retry transient failures (429 rate limits, resets) with a pause: the
+    # macOS matrix jobs fetch the same hosts concurrently.
+    curl -fsSL --retry 5 --retry-delay 15 --retry-all-errors "$url" -o "$archive_path"
     got_sum=$(shasum -a 256 "$archive_path" | awk '{print $1}')
 
     if [ "$MODE" = "update" ]; then

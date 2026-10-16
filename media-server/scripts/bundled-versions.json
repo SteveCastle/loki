@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "_comment": "URLs must be immutable (dated release tags, versioned files) so the sha256 pins stay valid. Never point at 'latest' rolling URLs — the hash breaks on the next upstream push. exiftool is pinned via SourceForge because exiftool.org deletes old versions. ffmpeg MUST use a MONTH-END BtbN autobuild tag (autobuild-YYYY-MM-<last day of month>-HH-MM): BtbN keeps daily autobuilds for only ~2 weeks but retains the month-end build for 2+ years, so a mid-month pin 404s the release build a fortnight later (it did, on 2026-07-25). Note the archives are not byte-reproducible — the same filename and git rev rebuilt on another day hashes differently, so re-pin url AND sha256 together. To bump a dependency: update url+version, run fetch-bundled-deps with -Mode update to print the new hashes, paste them in, re-run with verify.",
+  "_comment": "URLs must be immutable (dated release tags, versioned files) so the sha256 pins stay valid. Never point at 'latest' rolling URLs — the hash breaks on the next upstream push. exiftool is pinned via SourceForge because exiftool.org deletes old versions. ffmpeg MUST use a MONTH-END BtbN autobuild tag (autobuild-YYYY-MM-<last day of month>-HH-MM): BtbN keeps daily autobuilds for only ~2 weeks but retains the month-end build for 2+ years, so a mid-month pin 404s the release build a fortnight later (it did, on 2026-07-25). Note the archives are not byte-reproducible — the same filename and git rev rebuilt on another day hashes differently, so re-pin url AND sha256 together. To bump a dependency: update url+version, run fetch-bundled-deps with -Mode update to print the new hashes, paste them in, re-run with verify. macOS ffmpeg/ffprobe come from ffmpeg.martin-riedl.de's per-build directories (download/macos/<arch>/<buildid>_<version>/), which are immutable and keep history; evermeet.cx was dropped on 2026-10-16 because it rate-limits CI (HTTP 429 on the second download, and the macOS jobs fetch concurrently).",
   "binaries": {
     "ffmpeg": {
       "windows-amd64": {
@@ -26,32 +26,32 @@
         ]
       },
       "darwin-arm64": {
-        "version": "7.1",
-        "url": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
-        "sha256": "5a1303c7babaffff3c32c141ff49c7f44bd3b3b3e7dcea992fd7d04b6558ef43",
+        "version": "9.0.2",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+        "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
         "archive": "zip",
         "extract": [{"from": "ffmpeg", "to": "ffmpeg"}]
       },
       "darwin-amd64": {
-        "version": "7.1",
-        "url": "https://evermeet.cx/ffmpeg/ffmpeg-7.1.zip",
-        "sha256": "5a1303c7babaffff3c32c141ff49c7f44bd3b3b3e7dcea992fd7d04b6558ef43",
+        "version": "9.0.2",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+        "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
         "archive": "zip",
         "extract": [{"from": "ffmpeg", "to": "ffmpeg"}]
       }
     },
     "ffprobe-macos": {
       "darwin-arm64": {
-        "version": "7.1",
-        "url": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
-        "sha256": "fc289c963346d7dc0891cbaed02ba270e8abec54df9259e22d59559018b25709",
+        "version": "9.0.2",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
+        "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
         "archive": "zip",
         "extract": [{"from": "ffprobe", "to": "ffprobe"}]
       },
       "darwin-amd64": {
-        "version": "7.1",
-        "url": "https://evermeet.cx/ffmpeg/ffprobe-7.1.zip",
-        "sha256": "fc289c963346d7dc0891cbaed02ba270e8abec54df9259e22d59559018b25709",
+        "version": "9.0.2",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip",
+        "sha256": "2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd",
         "archive": "zip",
         "extract": [{"from": "ffprobe", "to": "ffprobe"}]
       }

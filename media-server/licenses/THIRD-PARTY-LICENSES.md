@@ -29,8 +29,11 @@ Corresponding source code:
   <https://github.com/FFmpeg/FFmpeg/commit/7d0e842004> /
   <https://git.ffmpeg.org/ffmpeg.git>; build scripts and dependency
   versions at <https://github.com/BtbN/FFmpeg-Builds> (same tag).
-- **macOS builds** (evermeet.cx, version 7.1): sources and build information
-  at <https://evermeet.cx/ffmpeg/> and <https://ffmpeg.org/download.html>.
+- **macOS builds** (ffmpeg.martin-riedl.de static release builds, version
+  9.0.2, build directories `macos/arm64/1789931890_9.0.2` and
+  `macos/amd64/1789931006_9.0.2`): build information, dependency versions
+  and per-build `versions.txt` at <https://ffmpeg.martin-riedl.de/>;
+  FFmpeg 9.0.2 release source at <https://ffmpeg.org/download.html>.
 - FFmpeg project source: <https://ffmpeg.org/download.html#get-sources>.
 
 Upon request, the Lowkey Media Server project will provide a copy of the

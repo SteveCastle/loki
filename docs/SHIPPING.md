@@ -107,7 +107,7 @@ What only you can decide/do:
 
 - [ ] **GPL corresponding-source hosting (recommended, 5 min per release).**
       The notice file currently points at the upstream source (exact FFmpeg
-      commit + BtbN build scripts + evermeet). The bulletproof reading of
+      commit + BtbN build scripts + ffmpeg.martin-riedl.de for macOS). The bulletproof reading of
       GPL §6 wants *you* to provide the source. Easy compliance: when a
       release goes out, download the FFmpeg source tarball for the pinned
       commit and attach it to the same GitHub Release (or keep a

@@ -51,7 +51,7 @@ cd src/main/resources/bin/linux
 ## Binary Sources
 
 - **FFmpeg (Windows)**: Builds from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-- **FFmpeg (macOS)**: Builds from [evermeet.cx](https://evermeet.cx/ffmpeg/)
+- **FFmpeg (macOS)**: Static release builds from [ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de/), pinned per architecture with SHA-256 (evermeet.cx rate-limits CI downloads)
 - **FFmpeg (Linux)**: Static builds from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds)
 
 ## Removed Dependencies
