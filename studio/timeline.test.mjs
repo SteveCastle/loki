@@ -122,6 +122,7 @@ test('hide and mute independently control preview visuals and preview/export aud
       clock: { t: 1, perf: 0 }, performance: { now: () => 0 },
       requestAnimationFrame: noop, fx: { inputTexture: {}, render: noop },
       offlineJob: null, rotoJob: null, loopJob: null, trimPreviewT: null, rotoEdit: null,
+      renderSplats: noop, prepareMotionBlur: noop,
       prepareMasks: noop, prepareMediaFx: (t, clips) => { visualClips = clips; },
       compositeFrame: noop, syncFxChain: noop, applyParams: noop,
       timeline: { updatePlayhead: noop }, updateInspectorLive: noop, updateGizmo: noop,
