@@ -10,6 +10,7 @@ import Skeleton, { SkeletonTheme } from 'react-loading-skeleton';
 import { Description } from './description';
 import Embeddings from './embeddings';
 import PathActions from './path-actions';
+import GenerationInfo from './generation-info';
 import { useCanWrite } from '../../hooks/useCanWrite';
 import { useContext } from 'react';
 import { GlobalStateContext } from '../../state';
@@ -144,14 +145,7 @@ export default function FileMetadata({ item }: { item: any }) {
         </div>
       </div>
 
-      {data.stableDiffusionMetaData && (
-        <div className="section">
-          <h2>Stable Diffusion</h2>
-          <div className={``}>
-            <InfoTable data={data.stableDiffusionMetaData} />
-          </div>
-        </div>
-      )}
+      <GenerationInfo chunks={data.textChunks} />
 
       {item?.path && <Embeddings path={item.path} key={item.path} />}
 

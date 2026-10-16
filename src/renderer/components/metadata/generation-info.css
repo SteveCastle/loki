@@ -1,0 +1,120 @@
+.GenerationInfo .gen-block {
+  margin-bottom: 0.8em;
+}
+
+.GenerationInfo .gen-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  font-weight: bold;
+  text-transform: capitalize;
+  margin-bottom: 0.25em;
+}
+
+.GenerationInfo .gen-dim {
+  font-weight: normal;
+  opacity: 0.6;
+  text-transform: none;
+}
+
+.GenerationInfo .gen-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+  max-height: 14em;
+  overflow: auto;
+  padding: 0.4em 0.5em;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
+}
+
+.GenerationInfo .gen-text.gen-mono {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.GenerationInfo .gen-empty {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.GenerationInfo .gen-params {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.3em 0.8em;
+  margin-bottom: 0.8em;
+}
+
+.GenerationInfo .gen-param {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0.3em 0.5em;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 3px;
+}
+
+.GenerationInfo .gen-param-key {
+  opacity: 0.6;
+  text-transform: capitalize;
+  font-size: 0.9em;
+}
+
+.GenerationInfo .gen-param-val {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.GenerationInfo .gen-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4em;
+  margin-bottom: 0.6em;
+}
+
+.GenerationInfo .gen-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  opacity: 0.8;
+}
+
+.GenerationInfo .gen-copy img {
+  width: 14px;
+  height: 14px;
+}
+
+.GenerationInfo .gen-copy.labelled {
+  padding: 0.35em 0.6em;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border-color);
+}
+
+.GenerationInfo .gen-copy:hover {
+  opacity: 1;
+  background-color: rgba(255, 255, 255, 0.12);
+}
+
+.GenerationInfo .gen-raw-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.7;
+  margin-bottom: 0.4em;
+}
+
+.GenerationInfo .gen-raw-toggle:hover {
+  opacity: 1;
+}

@@ -6,6 +6,7 @@ const isDev = require('electron-is-dev');
 import { promisify } from 'util';
 import { IpcMainInvokeEvent } from 'electron';
 import { Database } from './database';
+import { readGenerationText, TextChunks } from './generation-text';
 
 const platform = os.platform();
 const isWindows = platform === 'win32';
@@ -43,17 +44,15 @@ function formatFileSize(size: number): string {
 const stat = promisify(fs.stat);
 const execPromisified = promisify(exec);
 
-export interface StableDiffusionMetaData {
-  [key: string]: string | number | boolean | undefined;
-}
-
 export interface Metadata {
   fileMetadata: FileMetadata;
   description?: string;
   transcript?: string;
   hash: string;
   extendedMetadata?: ExtendedMetadata;
-  stableDiffusionMetaData?: StableDiffusionMetaData;
+  /** Text records embedded by AI image tools (PNG text chunks, Exif,
+   * container tags), keyword → text. The renderer interprets them. */
+  textChunks?: TextChunks;
 }
 
 export interface FileMetadata {
@@ -162,14 +161,19 @@ const loadFileMetaData =
       absolutePath,
     ]);
 
-    // Get media dimensions using ffprobe
+    // Get media dimensions using ffprobe, and whatever an AI generator
+    // wrote into the file, side by side.
     let dimensions;
+    let textChunks;
     try {
-      dimensions = await getMediaDimensions(absolutePath);
+      [dimensions, textChunks] = await Promise.all([
+        getMediaDimensions(absolutePath),
+        readGenerationText(absolutePath, ffprobePath),
+      ]);
     } catch (e) {
       dimensions = null;
     }
-    
+
     return {
       description: media?.description,
       transcript: media?.transcript,
@@ -181,6 +185,7 @@ const loadFileMetaData =
         width: dimensions ? dimensions.width : 0,
       },
       extendedMetadata,
+      textChunks,
     };
   };
 

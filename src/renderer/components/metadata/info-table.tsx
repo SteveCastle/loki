@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileMetadata, StableDiffusionMetaData } from '../../../main/metadata';
+import { FileMetadata } from '../../../main/metadata';
 import copyIcon from '../../../../assets/copy.svg';
 
 import './info-table.css';
@@ -56,7 +56,7 @@ function formatDate(value: unknown): string | null {
 }
 
 type Props = {
-  data: FileMetadata | StableDiffusionMetaData;
+  data: FileMetadata | Record<string, string | number | boolean | undefined>;
 };
 
 const InfoTable: React.FC<Props> = ({ data }) => {

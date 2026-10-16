@@ -794,6 +794,11 @@ func lokiMediaMetadataHandler(deps *Dependencies) http.HandlerFunc {
 		if hash.Valid {
 			resp["hash"] = hash.String
 		}
+		// What an AI generator wrote into the file (ComfyUI workflow, WebUI
+		// parameters…) — local files only; a remote object just has none.
+		if chunks := readGenerationText(req.Path); chunks != nil {
+			resp["textChunks"] = chunks
+		}
 		writeJSON(w, resp)
 	}
 }
