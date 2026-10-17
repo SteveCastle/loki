@@ -7,7 +7,7 @@ const model = readFileSync(new URL('./comp.js', import.meta.url), 'utf8');
 const {
   srcTime, clipTimeRemap, enableTimeRemap, disableTimeRemap, freezeClipAt,
   clipSpeedAt, clipPlayingBackward, splitClip, retimeClip, upsertKey, evalProp,
-  clipRate, clipReversed, clipLoopSpan, TIME_PROP,
+  clipRate, clipReversed, clipLoopSpan, TIME_PROP, loopSrc, wrappedSrcTime,
 } = await import(`data:text/javascript;base64,${Buffer.from(model).toString('base64')}`);
 
 const FPS = 30;
@@ -170,4 +170,19 @@ test('the remap survives JSON round-trips and reads as the mapping afterwards', 
   assert.equal(copy.props.time.ease, 'linear');
   upsertKey(copy.props.time, 3, 1);
   assert.equal(copy.props.time.keys.find((k) => k.t === 3).e, 'linear');
+});
+
+test('a forward wrap lands on frame 0, a reversed first frame on the end of the footage', () => {
+  // 2 s source in a 6 s clip: every exact multiple is the wrap back to 0.
+  const fwd = makeClip({ start: 0, dur: 6 });
+  for (const t of [2, 4]) near(wrappedSrcTime(fwd, t, 2), 0);
+  near(wrappedSrcTime(fwd, 1.5, 2), 1.5);
+  // Reversed full-source clip: its first frame is the very last sample.
+  const rev = makeClip({ start: 0, dur: 2, reversed: true });
+  near(wrappedSrcTime(rev, 0, 2), 2);
+  near(loopSrc(4, 2), 0);
+  near(loopSrc(4, 2, true), 2);
+  // A forward loop region restarts at `in` on every cycle boundary.
+  const loop = makeClip({ start: 0, dur: 4, in: 1, loopSpan: 1 });
+  for (const t of [1, 2, 3]) near(srcTime(loop, t), 1);
 });

@@ -423,18 +423,23 @@ export const srcTime = (clip, t) => {
     const phase = ((o % (2 * span)) + 2 * span) % (2 * span);
     return clip.in + Math.min(phase, 2 * span - phase);
   }
-  return clip.in + (span ? loopSrc(o, span) : o);
+  return clip.in + (span ? loopSrc(o, span, clipReversed(clip)) : o);
 };
 
 /** Loop a source time into the asset: [0, len]. A clip longer than its
- * source wraps; `len` itself is a valid landing (the very last sample) —
- * a reversed full-source clip's FIRST frame computes src = len exactly,
- * which means the end of the footage, not a wrap back to frame 0. */
-export function loopSrc(src, len) {
+ * source wraps. An exact multiple of `len` is ambiguous: playing forward
+ * it is the wrap back to frame 0, but playing BACKWARD it is the end of
+ * the footage — a reversed full-source clip's first frame computes
+ * src = len exactly — so `len` is a landing only when descending. */
+export function loopSrc(src, len, descending = false) {
   if (!(len > 0.02)) return 0;
   const m = ((src % len) + len) % len;
-  return m < 1e-6 && src >= len - 1e-6 ? len : m;
+  return descending && m < 1e-6 && src >= len - 1e-6 ? len : m;
 }
+
+/** srcTime wrapped into an asset of length `len`, honouring direction. */
+export const wrappedSrcTime = (clip, t, len) =>
+  loopSrc(srcTime(clip, t), len, clipPlayingBackward(clip, t));
 
 /** How much source a clip consumes, in source seconds. Retiming holds this
  * constant: the same footage, played over a different span of the comp. */

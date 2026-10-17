@@ -43,7 +43,7 @@ import {
   allClipsBottomUp,
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
-  clipRate, clipReversed, clipLoopSpan, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc,
+  clipRate, clipReversed, clipLoopSpan, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc, wrappedSrcTime,
   clipTimeRemap, enableTimeRemap, disableTimeRemap, freezeClipAt, clipSpeedAt, TIME_PROP,
   newTrackClip, resolveOverlaps, SPLAT_PROPS, isSplatClip,
 } from './comp.js';
@@ -689,6 +689,9 @@ function mediaInstance(asset, clipId) {
   if (!inst) {
     const el = document.createElement(asset.kind === 'audio' ? 'audio' : 'video');
     el.playsInline = true;
+    // A retimed clip shifts pitch, as the export mix does (its
+    // AudioBufferSourceNode.playbackRate can't preserve it).
+    el.preservesPitch = false;
     el.preload = 'auto';
     el.loop = true;
     el.crossOrigin = 'anonymous';
@@ -813,7 +816,7 @@ function syncMediaElement(asset, slot, track, clip, t) {
   // Source time, wrapped so clips longer than their source loop.
   const src = srcTime(clip, t);
   const len = asset.duration ?? 0;
-  const desired = loopSrc(src, len);
+  const desired = loopSrc(src, len, clipPlayingBackward(clip, t));
   // A retimed clip plays its element fast or slow; the drift correction
   // below then keeps it locked to the comp clock. Browsers accept
   // 0.0625–16 and throw outside it, so the rate is clamped. Under a
@@ -892,7 +895,7 @@ function syncMediaElement(asset, slot, track, clip, t) {
 function syncGifFrame(asset, clip, t) {
   const src = srcTime(clip, t);
   const len = asset.duration || 1;
-  const local = loopSrc(src, len);
+  const local = loopSrc(src, len, clipPlayingBackward(clip, t));
   let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
   if (idx < 0) idx = asset.frames.length - 1;
   if (idx !== asset._frameIdx) {
@@ -1019,13 +1022,28 @@ async function transcodeScrubProxy(asset) {
   });
   let encError = null;
   const enc = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    // A muxer throw here would otherwise surface as an uncaught error and
+    // leave the build to the watchdog.
+    output: (chunk, meta) => { try { muxer.addVideoChunk(chunk, meta); } catch (e) { encError = e; } },
     error: (e) => { encError = e; },
   });
   enc.configure({ codec: 'vp8', width: w, height: h, bitrate: 8_000_000, latencyMode: 'realtime' });
   const cnv = new OffscreenCanvas(w, h);
   const c2 = cnv.getContext('2d');
-  let last = -1;
+  // Frame 0 explicitly: the first rVFC can land well into the file (a busy
+  // main thread drops frames at 3× speed), and WebM's first chunk must be
+  // at timestamp 0 — the muxer rejected anything else, failing the proxy.
+  if (src.readyState < 2) {
+    await new Promise((res, rej) => {
+      const timer = setTimeout(() => rej(new Error('first frame timeout')), 12_000);
+      src.addEventListener('loadeddata', () => { clearTimeout(timer); res(); }, { once: true });
+    });
+  }
+  c2.drawImage(src, 0, 0, w, h);
+  const first = new VideoFrame(cnv, { timestamp: 0 });
+  enc.encode(first, { keyFrame: true });
+  first.close();
+  let last = 0;
   await new Promise((res, rej) => {
     // Watchdog so a wedged decode (or a window hidden mid-build, which
     // stops rVFC) can't hang the proxy queue forever.
@@ -2039,6 +2057,9 @@ async function createAsset(file, id = null) {
     // loop, drift correction) — only with an <audio> element and no frames.
     const el = document.createElement(isAudio ? 'audio' : 'video');
     el.playsInline = true;
+    // A retimed clip shifts pitch, as the export mix does (its
+    // AudioBufferSourceNode.playbackRate can't preserve it).
+    el.preservesPitch = false;
     el.preload = 'auto';
     el.loop = true;                 // clips longer than their source loop
     el.crossOrigin = 'anonymous';
@@ -4333,17 +4354,12 @@ function prepareNodeSources(nodes, t, getEncoder) {
       node.active = false;
       continue;
     }
-    if (asset.kind === 'gif') {
-      syncGifFrame(asset, clip, t);
-    } else if (asset.kind === 'video') {
-      // Keep mask-source frames aligned with the comp clock, including
-      // hidden sources (the offline exporter seeks exactly).
-      const el = asset.el;
-      const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
-      if (!el.seeking && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
-        el.currentTime = desired;
-      if (el.readyState >= 2) uploadVideoFrame(asset);
-    }
+    // A video source's frames are already in its slot: syncMedia drives
+    // every live clip, hidden tracks included, and the exporter seeks and
+    // uploads matte sources exactly. Seeking here too fought syncMedia's
+    // drift tolerance (a playing source re-seeked every frame) and, with
+    // copies of a file on separate slots, drove another clip's element.
+    if (asset.kind === 'gif') syncGifFrame(asset, clip, t);
     const d = drawForClip(clip, t);
     if (!d) { node.active = false; continue; }
     node.active = true;
@@ -4498,18 +4514,18 @@ function rotoFrameIndex(node, clip, t) {
  * off it made the index jitter ±1, flickering at every frame boundary.
  * The rVFC loop re-arms itself and survives element swaps (latest element
  * wins; a stale loop sees the mismatch and stops). */
-function rotoPresentedTime(asset) {
-  const el = asset.el;
-  if (asset._rotoRvfcEl !== el && el?.requestVideoFrameCallback) {
-    asset._rotoRvfcEl = el;
+function rotoPresentedTime(slot) {
+  const el = slot.el;
+  if (slot._rotoRvfcEl !== el && el?.requestVideoFrameCallback) {
+    slot._rotoRvfcEl = el;
     const loop = (_, meta) => {
-      if (asset._rotoRvfcEl !== el) return;   // element was replaced
-      asset._rotoPresented = meta.mediaTime;
+      if (slot._rotoRvfcEl !== el) return;   // element was replaced
+      slot._rotoPresented = meta.mediaTime;
       el.requestVideoFrameCallback(loop);
     };
     el.requestVideoFrameCallback(loop);
   }
-  return asset._rotoPresented ?? null;
+  return slot._rotoPresented ?? null;
 }
 
 /** Playback-time mask index: keyed to the frame the element is PRESENTING,
@@ -4526,10 +4542,13 @@ function rotoFrameIndexLive(node, clip, asset, t) {
   // so the clock index already matches the presented frame.
   if (!playing || idx < 0 || asset.kind !== 'video' || clipPlayingBackward(clip, t)
     || !(seq.srcStep > 1e-9)) return idx;
-  const el = asset.el;
+  // The element whose frames this clip is showing (a copy of a file may
+  // play on its own instance).
+  const slot = clipSlot(clip, asset);
+  const el = slot.el;
   if (!el || el.readyState < 2) return idx;
   // Fall back to the clock-position only until the first presentation lands.
-  const pt = rotoPresentedTime(asset) ?? el.currentTime;
+  const pt = rotoPresentedTime(slot) ?? el.currentTime;
   const len = asset.duration ?? 0;
   const src = srcTime(clip, t);
   const desired = len > 0.02 ? ((src % len) + len) % len : 0;
@@ -4721,7 +4740,7 @@ async function rotoSeekSource(asset, clip, t) {
   if (asset.kind !== 'video') return;
   const el = asset.el;
   if (!el.paused) el.pause();
-  const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
+  const desired = wrappedSrcTime(clip, t, asset.duration ?? 0);
   if (Math.abs(el.currentTime - desired) < 1e-4 && el.readyState >= 2) return;
   await new Promise((resolve) => {
     // The timeout is a stuck-seek guard, same as seekMediaExact's.
@@ -4740,7 +4759,7 @@ async function rotoSeekSource(asset, clip, t) {
  * bitmap, or still). Videos must already be seeked. */
 function rotoSourceHandle(asset, clip, t) {
   if (asset.kind === 'gif') {
-    const local = loopSrc(srcTime(clip, t), asset.duration || 1);
+    const local = wrappedSrcTime(clip, t, asset.duration || 1);
     let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
     if (idx < 0) idx = asset.frames.length - 1;
     return asset.frames[idx].bitmap;
@@ -11582,6 +11601,10 @@ function saveBlob(blob, name) {
   a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
+  // Holding the URL would pin the whole export in memory for the session;
+  // revoking at once can cancel the download in some browsers, so give it
+  // a minute. (Outside any render loop — a timer here is fine.)
+  setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
 }
 
 /* ---- export file names ----------------------------------------------
@@ -11940,17 +11963,24 @@ function seekMediaExact(t, activeMedia) {
     if (!asset?.ready || asset.kind !== 'video') continue;
     const el = clipSlot(clip, asset).el;
     if (!el.paused) el.pause();
-    const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
-    if (Math.abs(el.currentTime - desired) < 1e-4) continue;
+    const desired = wrappedSrcTime(clip, t, asset.duration ?? 0);
+    const loading = el.readyState < 2;
+    if (!loading && Math.abs(el.currentTime - desired) < 1e-4) continue;
     waits.push(new Promise((resolve) => {
-      // Stuck-seek guard so one bad source can't stall the whole render.
-      const timer = setTimeout(done, 1000);
+      // Stuck-seek guard so one bad source can't stall the whole render —
+      // longer for an element still opening (a copy's fresh instance).
+      const timer = setTimeout(done, loading ? 5000 : 1000);
       function done() {
         clearTimeout(timer);
         el.removeEventListener('seeked', done);
+        el.removeEventListener('loadeddata', done);
         resolve();
       }
       el.addEventListener('seeked', done);
+      // An element with no data yet takes currentTime as its start position:
+      // landing on the time it already holds fires no 'seeked', only
+      // 'loadeddata' once the first frame decodes.
+      if (loading) el.addEventListener('loadeddata', done);
       el.currentTime = desired;
     }));
   }
@@ -11985,7 +12015,11 @@ async function syncFxChainSettled(t) {
 async function prepareMediaFxSettled(t, activeMedia) {
   for (let i = 0; i < 10; i++) {
     prepareMediaFx(t, activeMedia);
-    const pending = [...mediaChains.values()].filter((e) => e.building || e.dirty);
+    // Only stacks live at t: an off-screen clip's chain stays dirty until it
+    // is next on screen, so counting it spun all ten rounds every frame.
+    const live = new Set(activeMedia.map(({ clip }) => clip.id));
+    const pending = [...mediaChains.entries()]
+      .filter(([id, e]) => live.has(id) && (e.building || e.dirty)).map(([, e]) => e);
     if (!pending.length) return;
     await Promise.allSettled(pending.map((e) => e.promise));
   }
@@ -12141,7 +12175,7 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
         0, buf.duration);
       const region1 = clamp(region0 + lspan, 0, buf.duration);
       if (region1 - region0 > 0.01) { src.loopStart = region0; src.loopEnd = region1; }
-      const o0 = rev ? loopSrc(clip.dur * clipRate(clip), lspan) : 0;
+      const o0 = rev ? loopSrc(clip.dur * clipRate(clip), lspan, true) : 0;
       offset = clamp(region0 + (rev ? lspan - o0 : 0), 0, Math.max(0, buf.duration - 1e-4));
     }
     src.start(start, pingpong || remap ? 0 : offset);
@@ -12355,7 +12389,7 @@ async function renderCompOffline(job, formatId = 'webm') {
     const activeMedia = activeClips(comp, t, 'media').filter(({ track }) => !track.hidden);
     await seekMediaExact(t, [...activeMedia, ...matteSourceClips(t)]);
     await prepareRotoFramesExact(t);   // exact roto mask frames (preview tolerates staleness; this must not)
-    uploadMediaFrames(t, activeMedia);
+    uploadMediaFrames(t, [...activeMedia, ...matteSourceClips(t)]);
     renderSplats(t, [...activeMedia, ...matteSourceClips(t)]);
     prepareMotionBlur(t, activeMedia);
     prepareMasks(t);   // media masks must compose before compositeFrame samples them

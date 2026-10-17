@@ -25,7 +25,8 @@ function appFunction(name, context) {
   const start = app.indexOf(`function ${name}(`);
   assert.ok(start >= 0);
   const end = app.indexOf('\n}', start) + 2;
-  return vm.runInNewContext(`(${app.slice(start, end)})`, context);
+  const async = app.slice(start - 6, start) === 'async ' ? 'async ' : '';
+  return vm.runInNewContext(`(${async}${app.slice(start, end)})`, context);
 }
 const noop = () => {};
 
@@ -193,6 +194,51 @@ test('a copy in step with its original draws the original element’s frames', (
   copy.in = 1;                                           // out of step: its own decoder
   context.syncMedia(1, model.activeClips(comp, 1, 'media'));
   assert.equal(context.clipSlots.get('copy'), asset.instances.get('copy'));
+});
+
+test('Ctrl+S does not split clips', () => {
+  const { comp, timeline } = setup();
+  comp.tracks.push({ clips: [{ id: 'a', kind: 'media', start: 20, dur: 10, in: 0, props: {} }] });
+  let splits = 0;
+  timeline.splitAtPlayhead = () => { splits++; };
+  for (const mod of [{ ctrlKey: true }, { metaKey: true }])
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 's', ...mod, bubbles: true }));
+  assert.equal(splits, 0);
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 's', bubbles: true }));
+  assert.equal(splits, 1);
+});
+
+test('export settling waits only on effect stacks of clips live at t', async () => {
+  const live = { building: false, dirty: true, promise: Promise.resolve() };
+  const offscreen = { building: false, dirty: true, promise: Promise.resolve() };
+  const mediaChains = new Map([['live', live], ['off', offscreen]]);
+  let renders = 0;
+  const settle = appFunction('prepareMediaFxSettled', {
+    mediaChains, Promise, Set,
+    prepareMediaFx: () => { renders++; live.dirty = false; },   // only live stacks get synced
+  });
+  await settle(0, [{ clip: { id: 'live' } }]);
+  assert.equal(renders, 1);
+});
+
+test('a video matte source never seeks a media element (syncMedia owns them)', () => {
+  const clip = { id: 'src', assetId: 'asset', kind: 'media', start: 0, dur: 5, in: 1, props: {} };
+  const comp = model.newComp({ dur: 5 });
+  comp.tracks.push({ hidden: true, clips: [clip] });
+  let seeks = 0;
+  const el = { readyState: 4, seeking: false, get currentTime() { return 0; }, set currentTime(v) { seeks++; } };
+  const node = { kind: 'layer', sourceClipId: 'src' };
+  let composited = 0;
+  const prepare = appFunction('prepareNodeSources', {
+    ...model, comp, assets: new Map([['asset', { id: 'asset', kind: 'video', ready: true, duration: 5, el }]]),
+    syncGifFrame: noop, uploadVideoFrame: () => { throw new Error('matte path must not upload'); },
+    drawForClip: () => ({ clipId: 'src' }), ensureMatteTarget: () => ({ view: {} }),
+    compositor: { composite: () => { composited++; } }, prepareRotoNode: noop,
+  });
+  prepare([node], 2, () => ({}));
+  assert.equal(seeks, 0);
+  assert.equal(node.active, true);
+  assert.equal(composited, 1);
 });
 
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {

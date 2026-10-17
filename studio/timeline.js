@@ -400,7 +400,7 @@ export class Timeline {
         e.preventDefault();   // the browser's own Ctrl+D is "bookmark this page"
         this.duplicateSelection();
       }
-      else if (e.key === 's' || e.key === 'S') this.splitAtPlayhead();
+      else if ((e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey) this.splitAtPlayhead();
       else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelection(); }
       else if ((e.key === '=' || e.key === '+') && !e.ctrlKey) this._setZoom(this.pps * 1.5, h.time());
       else if (e.key === '-' && !e.ctrlKey) this._setZoom(this.pps / 1.5, h.time());
