@@ -186,9 +186,15 @@ export function sampleLevel(env, fps, t, release = 0.25) {
   for (let k = 0; k <= back; k++) {
     const j = i - k;
     if (j < 0) break;
-    const w = env[j] * Math.exp(-(k / fps) / release);
+    // Envelopes peak at 1, so the decay factor bounds what this frame or
+    // any earlier one can still add: stop once it can't beat v, or once
+    // the tail is below visibility. (The old test stopped on the first
+    // SILENT frame — env 0 ≤ v 0 — so every release tail vanished the
+    // moment a hit ended: a bass-driven shake stopped dead between kicks.)
+    const fall = Math.exp(-(k / fps) / release);
+    if (fall <= v || fall < 0.01) break;
+    const w = env[j] * fall;
     if (w > v) v = w;
-    if (env[j] <= v && w < 0.01) break;   // tail below visibility — done
   }
   return v;
 }

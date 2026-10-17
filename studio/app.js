@@ -353,6 +353,7 @@ async function boot() {
     importFiles, addAssetAt, setBinOpen, removeAsset,
     renderCompAudio, mixCompAudio, audioEntries, audioChains,
     audioDrive, audioSignal, syncAudioDrive: () => syncAudioDrive(),
+    mediaChains,
     // Roto is network + model driven — the console handle is how tests
     // drive it without clicking through the picker.
     clipMasks, analyzeRotoNode, startRotoEdit, stopRotoEdit,

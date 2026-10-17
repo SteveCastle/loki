@@ -8,6 +8,9 @@
 //     -t 6 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest .playwright-mcp/tone.mp4
 //   ffmpeg -f lavfi -i "sine=frequency=440:duration=4:sample_rate=48000" \
 //     -af "volume=enable='not(between(t,1,1.1))':volume=0" .playwright-mcp/burst.wav
+//   ffmpeg -f lavfi -i "sine=frequency=60:duration=6:sample_rate=48000" -af \
+//     "volume=enable='lt(mod(t-0.25\,0.5)\,0.08)':volume=1,volume=enable='gte(mod(t-0.25\,0.5)\,0.08)+lt(t\,0.25)':volume=0" \
+//     .playwright-mcp/basshits.wav        (60 Hz bass hits, 80 ms long, every 0.5 s from 0.25 s)
 //
 // Returns { results: {check: 'PASS' | 'FAIL …'}, errors: [...] }. Exports land
 // in .playwright-mcp/ for ffprobe.
@@ -28,20 +31,29 @@ async (page) => {
   // Tap the master bus (first node wired to the speakers) and count seeks
   // per media element, before any app code runs.
   await page.addInitScript(() => {
+    // Tap every LIVE context's speaker feed (the driver analysis renders
+    // through OfflineAudioContexts, and a page can hold more than one live
+    // context over its life) and read whichever are running.
     const connect = AudioNode.prototype.connect;
+    window.__ans = [];
     AudioNode.prototype.connect = function (dst, ...rest) {
-      if (dst instanceof AudioDestinationNode && !window.__an) {
+      if (dst instanceof AudioDestinationNode && !(this.context instanceof OfflineAudioContext) && !this.__tapped) {
+        this.__tapped = true;
         const an = this.context.createAnalyser();
+        an.fftSize = 512;
         connect.call(this, an);
-        window.__an = an;
+        window.__ans.push(an);
       }
       return connect.call(this, dst, ...rest);
     };
     window.__level = () => {
-      if (!window.__an) return 0;
-      const b = new Float32Array(window.__an.fftSize);
-      window.__an.getFloatTimeDomainData(b);
-      let m = 0; for (const v of b) m = Math.max(m, Math.abs(v));
+      let m = 0;
+      for (const an of window.__ans) {
+        if (an.context.state !== 'running') continue;
+        const b = new Float32Array(an.fftSize);
+        an.getFloatTimeDomainData(b);
+        for (const v of b) m = Math.max(m, Math.abs(v));
+      }
       return m;
     };
     document.addEventListener('seeking', (e) => { e.target.__seeks = (e.target.__seeks ?? 0) + 1; }, true);
@@ -469,6 +481,74 @@ async (page) => {
   const undone = await settle(30);
   check('audio drivers follow a slid clip and its undo', atStart && slid && undone,
     { atStart, slid, undone, peakFrame: await drvPeak() });
+
+  // 15. The camera-shake case: shake on the VISUAL clip, its hit driven by
+  // the bass band of a separate audio track that was trimmed at the front
+  // and slid to the start. The hit uniform must rise on the hits you hear,
+  // and the release tail must ring on after each hit.
+  await page.evaluate(() => new Promise((r) => {
+    localStorage.clear();
+    const q = indexedDB.deleteDatabase('lowkey-studio');
+    q.onsuccess = q.onerror = q.onblocked = () => r();
+  }));
+  await page.reload();
+  await page.waitForFunction(() => window.studio && window.fx?.inputTexture, null, { timeout: 30000 });
+  for (const f of ['tone.mp4', 'basshits.wav']) {
+    await page.setInputFiles('#file-input', `C:/Users/steph/dev/loki/.playwright-mcp/${f}`);
+    await page.waitForFunction((n) => [...window.studio.assets.values()].some((a) => a.name === n && a.ready), f, { timeout: 20000 });
+  }
+  const videoId = await page.evaluate(() => {
+    const c = window.comp();
+    const byName = (n) => [...window.studio.assets.values()].find((a) => a.name === n);
+    const tone = byName('tone.mp4');
+    const bass = byName('basshits.wav');
+    c.tracks = c.tracks.filter((tr) => tr.clips.some((k) => k.assetId === tone.id || k.assetId === bass.id));
+    const video = c.tracks.flatMap((tr) => tr.clips).find((k) => k.assetId === tone.id);
+    const audio = c.tracks.flatMap((tr) => tr.clips).find((k) => k.assetId === bass.id);
+    c.tracks.find((tr) => tr.clips.includes(video)).muted = true;   // hear only the bass
+    video.start = 0; video.in = 0; video.dur = 5;
+    video.effects = [{ id: 'fx_shake', name: 'camera-shake', fxKind: 'preset',
+      path: 'shaders/motion/camera-shake/camera-shake.slangp', enabled: true, overlay: null,
+      params: { hit: { v: 0, anim: false, keys: [], driver: { enabled: true, source: 'audio', band: 'bass',
+        follow: 'level', release: 0.25, sensitivity: 1.5, decay: 0.35, amount: 1, offset: 0, mode: 'add',
+        wave: 'sin', freq: 1, phase: 0, width: 0.5 } } } }];
+    audio.in = 0.37; audio.dur = 4.63; audio.start = 0;   // 0.37 s trimmed off, slid to 0
+    c.dur = 5;
+    window.studio.onModelChange({ structural: true });
+    return video.id;
+  });
+  await page.waitForFunction((vid) => window.studio.mediaChains.get(vid)?.fx?.layers?.[0]?.runtime
+    && window.studio.audioSignal({ source: 'audio', band: 'bass', follow: 'level', release: 0 }, 0.4) > 0.3,
+  videoId, { timeout: 15000, polling: 200 }).catch(() => {});
+  await host('setTime', 0);
+  await playBtn.click();
+  const trace = await page.evaluate((vid) => new Promise((res) => {
+    const out = []; const t0 = performance.now();
+    const poll = () => {
+      const rt = window.studio.mediaChains.get(vid)?.fx?.layers?.[0]?.runtime;
+      out.push([window.studio.timeline.host.time(), window.__level(), rt?.paramValues?.get('hit') ?? 0]);
+      if (performance.now() - t0 > 2300) return res(out);
+      requestAnimationFrame(poll);
+    };
+    poll();
+  }), videoId);
+  await pause();
+  const edges = (col, thr) => {
+    const o = []; let prev = 0;
+    for (const r of trace) { if (r[col] > thr && prev <= thr) o.push(r[0]); prev = r[col]; }
+    return o;
+  };
+  const expectHits = [0.38, 0.88, 1.38, 1.88];   // 0.25 - 0.37 + 0.5k
+  const heard = edges(1, 0.03).slice(0, 4);
+  const shook = edges(2, 0.5).slice(0, 4);
+  const near = (got, tol) => got.length === 4 && got.every((v, k) => Math.abs(v - expectHits[k]) <= tol);
+  // tail: 120 ms after a hit ENDS (hit lasts 80 ms) the 0.25 s release still reads well above 0
+  const tail = trace.filter((r) => r[0] > 0.38 + 0.08 + 0.1 && r[0] < 0.38 + 0.08 + 0.14).map((r) => r[2]);
+  check('camera-shake hit lines up with a trimmed, slid bass track',
+    near(heard, 0.08) && near(shook, 0.08),
+    { heard: heard.map((v) => +v.toFixed(3)), shook: shook.map((v) => +v.toFixed(3)), expectHits });
+  check('bass release tail rings on after each hit', tail.length > 0 && tail.every((v) => v > 0.3),
+    { tail: tail.map((v) => +v.toFixed(2)) });
 
   check('no page errors', errors.length === 0, errors.slice(0, 5));
   return { results, errors };
