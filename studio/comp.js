@@ -843,6 +843,7 @@ export class History {
     this.redoStack = [];
     this.limit = limit;
     this.pending = null;
+    this.depth = 0;
   }
 
   /** Forget everything (e.g. when switching projects). */
@@ -850,15 +851,33 @@ export class History {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     this.pending = null;
+    this.depth = 0;
   }
 
-  /** Capture the pre-change state; call before mutating. */
+  /** True while a gesture holds an open step (between begin and commit). */
+  get open() { return this.depth > 0; }
+
+  /** Capture the pre-change state; call before mutating. Steps nest: an
+   * edit recorded while a gesture is open (a shortcut pressed mid-drag)
+   * folds into that gesture's step instead of overwriting its snapshot —
+   * which used to drop the drag from the undo stack entirely. */
   begin(comp) {
+    if (this.depth++ > 0) return;
     this.pending = JSON.stringify(comp);
   }
 
-  /** Push the captured state (no-op if nothing changed). */
+  /** Abandon the open step without recording it (a click that never
+   * became a drag). */
+  cancel() {
+    this.pending = null;
+    this.depth = 0;
+  }
+
+  /** Push the captured state (no-op if nothing changed). Only the
+   * outermost commit records. */
   commit(comp) {
+    if (this.depth > 0 && --this.depth > 0) return;
+    this.depth = 0;
     if (this.pending == null) return;
     if (this.pending !== JSON.stringify(comp)) {
       this.undoStack.push(this.pending);

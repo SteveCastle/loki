@@ -643,6 +643,63 @@ async (page) => {
   check('bass release tail rings on after each hit', tail.length > 0 && tail.every((v) => v > 0.3),
     { tail: tail.map((v) => +v.toFixed(2)) });
 
+  // 21. An arrow key on a focused inspector slider is an undoable edit.
+  const keyUndo = await page.evaluate(async (vid) => {
+    window.studio.timeline.selectClip(vid);
+    await new Promise((r) => setTimeout(r, 200));
+    const slider = [...document.querySelectorAll('#inspector input[type=range]')][0];
+    if (!slider) return { slider: false };
+    const h = window.studio.timeline.host.history;
+    const before = h.undoStack.length;
+    slider.focus();
+    return { slider: true, before };
+  }, videoId);
+  await page.keyboard.press('ArrowRight');
+  const keyUndo2 = await page.evaluate(() => window.studio.timeline.host.history.undoStack.length);
+  check('keyboard slider changes are undoable', keyUndo.slider && keyUndo2 === keyUndo.before + 1, { ...keyUndo, after: keyUndo2 });
+
+  // 22. The gizmo sits where a driven layer is drawn, not at its base value.
+  const giz = await page.evaluate(async (vid) => {
+    const clip = window.comp().tracks.flatMap((tr) => tr.clips).find((k) => k.id === vid);
+    window.studio.timeline.selectClip(vid);
+    const read = () => { const g = document.getElementById('gizmo'); return { left: parseFloat(g.style.left), w: parseFloat(g.style.width) }; };
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 1, clientY: 1 }));
+    await new Promise((r) => setTimeout(r, 150));
+    const base = read();
+    clip.props.x.driver = { enabled: true, source: 'osc', wave: 'sin', freq: 0, phase: 0, width: 0.5, amount: 0, offset: 200, mode: 'add' };
+    window.dispatchEvent(new PointerEvent('pointermove', { clientX: 2, clientY: 1 }));
+    await new Promise((r) => setTimeout(r, 150));
+    const driven = read();
+    delete clip.props.x.driver;
+    const asset = window.studio.assets.get(clip.assetId);
+    const scale = (driven.w / (asset.w * Math.abs(clip.props.scaleX.v) / 100));   // screen px per comp px
+    return { shift: +(driven.left - base.left).toFixed(2), expect: +(200 * scale).toFixed(2) };
+  }, videoId);
+  check('the gizmo follows a driven layer', Math.abs(giz.shift - giz.expect) < 1, giz);
+
+  // 23. Beat analysis runs in a worker; the UI keeps painting meanwhile.
+  const beat = await page.evaluate(async () => {
+    let workers = 0;
+    const W = window.Worker;
+    window.Worker = function (...a) { workers++; return new W(...a); };
+    const bass = [...window.studio.assets.values()].find((a) => a.name === 'basshits.wav');
+    const clip = window.comp().tracks.flatMap((tr) => tr.clips).find((k) => k.assetId === bass.id);
+    window.studio.timeline.selectClip(clip.id);
+    await new Promise((r) => setTimeout(r, 200));
+    const btn = [...document.querySelectorAll('#inspector button')].find((b) => /snap track/i.test(b.textContent));
+    if (!btn) { window.Worker = W; return { btn: false }; }
+    let worst = 0; let last = performance.now(); let run = true;
+    const frame = () => { const n = performance.now(); worst = Math.max(worst, n - last); last = n; if (run) requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
+    btn.click();
+    const t0 = performance.now();
+    while (!window.comp().grid && performance.now() - t0 < 15000) await new Promise((r) => setTimeout(r, 50));
+    run = false;
+    window.Worker = W;
+    return { btn: true, workers, grid: !!window.comp().grid, worstFrameMs: Math.round(worst) };
+  });
+  check('beat analysis runs off the main thread', beat.btn && beat.grid && beat.workers >= 1, beat);
+
   // 20. Adding and removing an effect returns every GPU texture it made
   // (torn-down per-clip chains used to leak their runtimes, preset
   // textures and mask state).

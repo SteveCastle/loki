@@ -492,6 +492,45 @@ test('shape assets whose clip is gone free their texture', () => {
   assert.equal(assets.has('v'), true);
 });
 
+test('an edit recorded mid-drag folds into the drag instead of erasing it', () => {
+  const comp = model.newComp({ dur: 10 });
+  comp.tracks.push({ clips: [{ id: 'a', kind: 'media', start: 0, dur: 2, props: {} }] });
+  const h = new model.History();
+  h.begin(comp);                                   // drag starts
+  comp.tracks[0].clips[0].start = 1;
+  h.record(comp, () => { comp.tracks[0].clips[0].dur = 3; });   // shortcut mid-drag
+  assert.equal(h.undoStack.length, 0);             // not recorded on its own…
+  assert.equal(h.open, true);
+  comp.tracks[0].clips[0].start = 2;
+  h.commit(comp);                                  // drag ends
+  assert.equal(h.undoStack.length, 1);             // …one step for the whole gesture
+  assert.equal(JSON.parse(h.undoStack[0]).tracks[0].clips[0].start, 0);
+  h.begin(comp);
+  h.cancel();                                      // a click that never dragged
+  assert.equal(h.open, false);
+  h.record(comp, () => { comp.tracks[0].clips[0].start = 4; });
+  assert.equal(h.undoStack.length, 2);
+});
+
+test('the inspector fallback focus is not a selection to delete or split', () => {
+  const { comp, host, timeline } = setup();
+  const a = { id: 'a', kind: 'media', start: 20, dur: 10, in: 0, props: {}, effects: [] };
+  const b = { id: 'b', kind: 'media', start: 20, dur: 10, in: 0, props: {}, effects: [] };
+  comp.tracks.push({ clips: [a] }, { clips: [b] });
+  let fallback = true;
+  Object.assign(host, { isFallbackSelection: () => fallback, onModelChange: noop, status: noop, onSelect: noop });
+  timeline.render = noop;
+  timeline.selClips = new Set(['a']);               // parked by the inspector
+  timeline.deleteSelection();
+  assert.equal(comp.tracks.flatMap((tr) => tr.clips).length, 2);   // nothing deleted
+  timeline.splitAtPlayhead();                       // no real selection: split everything under the playhead
+  assert.equal(comp.tracks.flatMap((tr) => tr.clips).length, 4);
+  fallback = false;                                 // a real pick acts as before
+  timeline.selClips = new Set(['b']);
+  timeline.deleteSelection();
+  assert.ok(!comp.tracks.flatMap((tr) => tr.clips).some((c) => c.id === 'b'));
+});
+
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {
   const { comp, timeline } = setup();
   const a = model.newTrack('A'), b = model.newTrack('B');

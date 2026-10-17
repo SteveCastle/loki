@@ -1384,12 +1384,21 @@ export class Timeline {
   /** Selected clips in visual order: top track first, then left to right.
    * Track index is the primary key, so it is resolved from comp.tracks here
    * rather than trusting the Set's (click-order) iteration. */
+  /** The selection the user actually made. The inspector parks a fallback
+   * focus on some clip when nothing is picked (so its panel isn't empty);
+   * that is NOT a selection to delete, split or duplicate — Delete used to
+   * remove a layer the user never chose. */
+  _actSel() {
+    return this.host.isFallbackSelection?.() ? new Set() : this.selClips;
+  }
+
   _selectionInOrder() {
     const comp = this.host.comp();
+    const sel = this._actSel();
     const out = [];
     comp.tracks.forEach((track, trackIdx) => {
       for (const clip of track.clips)
-        if (this.selClips.has(clip.id)) out.push({ clip, trackIdx });
+        if (sel.has(clip.id)) out.push({ clip, trackIdx });
     });
     return out.sort((a, b) => a.trackIdx - b.trackIdx || a.clip.start - b.clip.start);
   }
@@ -1634,7 +1643,7 @@ export class Timeline {
         this.host.onModelChange({ structural: true });
         this.render();
       } else {
-        this.host.history.pending = null;
+        this.host.history.cancel();
         if (wasSelected && additive) this._select(clip.id, true);   // toggle off
         else if (wasSelected) this._select(clip.id, false);
       }
@@ -1811,7 +1820,7 @@ export class Timeline {
           this.host.onModelChange({ structural: false });
           this.render();
         } else {
-          this.host.history.pending = null;
+          this.host.history.cancel();
         }
       };
       window.addEventListener('pointermove', onMove);
@@ -1870,8 +1879,9 @@ export class Timeline {
   splitAtPlayhead() {
     const comp = this.host.comp();
     const t = quantize(this.host.time(), comp.fps);
-    const targets = this.selClips.size
-      ? [...this.selClips].map((id) => findClip(comp, id)).filter(Boolean)
+    const sel = this._actSel();
+    const targets = sel.size
+      ? [...sel].map((id) => findClip(comp, id)).filter(Boolean)
       : comp.tracks.flatMap((track) =>
           track.clips.filter((c) => t > c.start && t < clipEnd(c)).map((clip) => ({ track, clip })));
     let n = 0;
@@ -1942,10 +1952,11 @@ export class Timeline {
       this.host.onModelChange({ structural: false });
       return;
     }
-    if (this.selClips.size) {
+    const sel = this._actSel();
+    if (sel.size) {
       this.host.history.record(comp, () => {
         for (const track of comp.tracks)
-          track.clips = track.clips.filter((c) => !this.selClips.has(c.id));
+          track.clips = track.clips.filter((c) => !sel.has(c.id));
         removeEmptyTracks(comp);
       });
       this.selClips.clear();

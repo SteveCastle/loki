@@ -1999,12 +1999,17 @@ function onModelChange({ structural = false, transient = false, propKey = null }
 }
 
 function appUndo() {
+  // Mid-gesture the gesture still mutates the current comp and commits when
+  // it ends; undoing under it would replace the comp it's editing and let
+  // its commit wipe the redo stack.
+  if (history.open) { setStatus('finish the current drag first'); return; }
   const prev = history.undo(comp);
   if (prev) { comp = prev; afterModelReplace('undo'); }
   else setStatus('nothing to undo');
 }
 
 function appRedo() {
+  if (history.open) { setStatus('finish the current drag first'); return; }
   const next = history.redo(comp);
   if (next) { comp = next; afterModelReplace('redo'); }
   else setStatus('nothing to redo');
@@ -2084,6 +2089,7 @@ const timelineHost = {
   toggleKey,
   onModelChange,
   onSelect: () => { focusIsFallback = false; renderInspector(); },
+  isFallbackSelection: () => focusIsFallback,
   addMediaAt: (files, t, trackIdx) => importFiles(files, { t, trackIdx }),
   addAssetAt: (assetId, t, trackIdx) => addAssetAt(assetId, t, trackIdx),
   setTrimPreview: (t) => {
@@ -7060,16 +7066,25 @@ function updateGizmo() {
   const tc = tCur - clip.start;
   const d = canvasDisplayRect();
   const innerR = $('canvas-inner').getBoundingClientRect();
-  const w = asset.w * Math.abs(evalProp(clip.props.scaleX, tc)) / 100 * d.s;
-  const h = asset.h * Math.abs(evalProp(clip.props.scaleY, tc)) / 100 * d.s;
-  const cx = d.left - innerR.left + evalProp(clip.props.x, tc) * d.s;
-  const cy = d.top - innerR.top + evalProp(clip.props.y, tc) * d.s;
+  // Where the layer IS (drivers included — a layer pinned to a tracker or
+  // wobbled by an oscillator), not its base value. Drags still edit the
+  // base; the driver's offset rides along.
+  const w = asset.w * Math.abs(shown(clip, 'scaleX', tc)) / 100 * d.s;
+  const h = asset.h * Math.abs(shown(clip, 'scaleY', tc)) / 100 * d.s;
+  const cx = d.left - innerR.left + shown(clip, 'x', tc) * d.s;
+  const cy = d.top - innerR.top + shown(clip, 'y', tc) * d.s;
   gizmo.style.left = `${cx - w / 2}px`;
   gizmo.style.top = `${cy - h / 2}px`;
   gizmo.style.width = `${w}px`;
   gizmo.style.height = `${h}px`;
-  gizmo.style.transform = `rotate(${evalProp(clip.props.rot, tc)}deg)`;
+  gizmo.style.transform = `rotate(${shown(clip, 'rot', tc)}deg)`;
   gizmo.hidden = false;
+}
+
+/** A clip transform property as rendered at clip time tc: base keys plus
+ * its driver (drawForClip's evaluation). */
+function shown(clip, key, tc) {
+  return drivenEval(clip.props[key], tc, clip.start + tc);
 }
 
 let gzDrag = null;
@@ -7325,12 +7340,14 @@ function clipAtViewportPoint(clientX, clientY) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready) continue;
     const tc = tCur - clip.start;
-    const sx = Math.abs(evalProp(clip.props.scaleX, tc)) / 100;
-    const sy = Math.abs(evalProp(clip.props.scaleY, tc)) / 100;
+    // Hit-test where the layer is drawn (drivers included), so a driven
+    // layer can be clicked where you see it.
+    const sx = Math.abs(shown(clip, 'scaleX', tc)) / 100;
+    const sy = Math.abs(shown(clip, 'scaleY', tc)) / 100;
     if (sx < 1e-4 || sy < 1e-4) continue;
-    const dx = px - evalProp(clip.props.x, tc);
-    const dy = py - evalProp(clip.props.y, tc);
-    const r = evalProp(clip.props.rot, tc) * Math.PI / 180;
+    const dx = px - shown(clip, 'x', tc);
+    const dy = py - shown(clip, 'y', tc);
+    const r = shown(clip, 'rot', tc) * Math.PI / 180;
     const lx = (dx * Math.cos(r) + dy * Math.sin(r)) / sx;
     const ly = (-dx * Math.sin(r) + dy * Math.cos(r)) / sy;
     if (Math.abs(lx) <= asset.w / 2 && Math.abs(ly) <= asset.h / 2) return clip;
@@ -10210,6 +10227,32 @@ const openEffects = new Set();   // effect ids twirled open in the inspector
 
 let snapJob = false;
 
+/** analyzeTrack in a worker: its resample, FFT and tempo search over a
+ * whole song froze the UI for seconds. Falls back to the main thread if
+ * module workers are unavailable. */
+function analyzeTrackOffThread(samples, sr, opts) {
+  let worker;
+  try {
+    worker = new Worker(new URL('./beat-grid-worker.js', import.meta.url), { type: 'module' });
+  } catch {
+    return Promise.resolve(analyzeTrack(samples, sr, opts));
+  }
+  return new Promise((resolve, reject) => {
+    worker.onmessage = ({ data }) => {
+      worker.terminate();
+      if (data.error) reject(new Error(data.error));
+      else resolve(data.result);
+    };
+    worker.onerror = (e) => {
+      worker.terminate();
+      e.preventDefault?.();
+      // A worker that can't start (no module workers): do it here instead.
+      try { resolve(analyzeTrack(samples, sr, opts)); } catch (err) { reject(err); }
+    };
+    worker.postMessage({ samples, sr, opts }, [samples.buffer]);
+  });
+}
+
 async function setSnapTrack(clip) {
   if (snapJob) { setStatus('beat analysis already running…'); return; }
   const asset = assets.get(clip.assetId);
@@ -10232,7 +10275,7 @@ async function setSnapTrack(clip) {
     const prev = comp.grid?.clipId === clip.id ? comp.grid : null;
     // Drum hits, tracked beats and a steady tempo all come out of the one
     // analysis; the grid keeps all three and `mode` picks which one snaps.
-    const found = analyzeTrack(mono, buf.sampleRate, { beatsPerBar: prev?.beatsPerBar ?? 4 });
+    const found = await analyzeTrackOffThread(mono, buf.sampleRate, { beatsPerBar: prev?.beatsPerBar ?? 4 });
     if (!found) { setStatus(`no beats or drum hits found in ${clip.name}`); return; }
     history.record(comp, () => {
       comp.grid = {
@@ -10255,6 +10298,11 @@ async function setSnapTrack(clip) {
     onModelChange({ structural: false });
     setStatus(`snap track: ${clip.name} — ${gridSummary(comp.grid)} · ${found.hits.length} drum hits, ${found.beats.length} beats` +
       (found.confidence < 0.25 ? ' (steady tempo is low confidence — drum hits are still exact)' : ''));
+  } catch (e) {
+    // A decode or analysis failure used to escape as an unhandled rejection
+    // and leave "analyzing beats…" in the status bar.
+    console.error('slangfx: beat analysis failed:', e);
+    setStatus(`beat analysis failed — ${e?.message ?? e}`);
   } finally {
     snapJob = false;
   }
@@ -10771,7 +10819,11 @@ function paramRow(clip, def) {
   slider.addEventListener('input', () => {
     // Param-only change — applied every frame by applyParams, no rebuild.
     const v = scale.fromPos(parseFloat(slider.value));
-    setPropValueLive(clip, def.key, v, binding.dragging ? binding.tFrozen : null);
+    // Not a pointer drag: arrow/Page/Home keys on the focused slider. Each
+    // step is its own undoable, saved edit (it used to change the model
+    // with no undo entry and no autosave).
+    if (!binding.dragging) setPropValue(clip, def.key, v);
+    else setPropValueLive(clip, def.key, v, binding.tFrozen);
     num.value = fmtVal(v);
     refreshInspWidgets();
   });
