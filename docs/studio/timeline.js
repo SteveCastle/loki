@@ -283,6 +283,7 @@ export class Timeline {
     });
 
     this.scrollEl.addEventListener('scroll', () => {
+      this._rowBottoms = null;   // cached drag hit-test rects moved
       this.headRows.style.transform = `translateY(${-this.scrollEl.scrollTop}px)`;
       this._drawRuler();
       this._syncNav();
@@ -420,12 +421,23 @@ export class Timeline {
   }
 
   _trackIndexAtClientY(clientY) {
-    const rows = [...this.rowsEl.querySelectorAll('.tl-row.track')];
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i].getBoundingClientRect();
-      if (clientY < r.bottom) return i;
-    }
-    return rows.length ? rows.length - 1 : null;
+    // Row bottoms are cached until the next render or scroll: reading them
+    // after a render forced a full timeline layout on every pointermove.
+    this._rowBottoms ??= [...this.rowsEl.querySelectorAll('.tl-row.track')]
+      .map((row) => row.getBoundingClientRect().bottom);
+    const bottoms = this._rowBottoms;
+    for (let i = 0; i < bottoms.length; i++) if (clientY < bottoms[i]) return i;
+    return bottoms.length ? bottoms.length - 1 : null;
+  }
+
+  /** Re-render at most once per frame (drags fire pointermove far faster —
+   * up to 1000 Hz on gaming mice — and each render rebuilds the rows). */
+  _renderSoon() {
+    if (this._renderQueued) return;
+    this._renderQueued = requestAnimationFrame(() => {
+      this._renderQueued = 0;
+      this.render();
+    });
   }
 
   /** Nearest magnet target (clip edges / playhead / comp bounds) within
@@ -836,6 +848,8 @@ export class Timeline {
 
   /** Full rebuild of tracks, clips, and property lanes. */
   render() {
+    if (this._renderQueued) { cancelAnimationFrame(this._renderQueued); this._renderQueued = 0; }
+    this._rowBottoms = null;
     const comp = this.host.comp();
     this._layout();
     this._syncZoomSlider();
@@ -1595,12 +1609,16 @@ export class Timeline {
       }
       ensureDur(comp);
       this.host.onModelChange({ structural: false, transient: true });
-      this.render();
+      this._renderSoon();
     };
 
+    // pointercancel (touch, OS gesture, focus loss) ends the drag like a
+    // release — it used to leave the listeners attached, the clip following
+    // the mouse on hover.
     const onUp = (ev) => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
       this.host.setTrimPreview?.(null);
       if (moved) {
         this.host.history.commit(comp);
@@ -1614,6 +1632,7 @@ export class Timeline {
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }
 
   /* On left trim the drag applies a running delta from `orig`; recompute key
@@ -1768,11 +1787,12 @@ export class Timeline {
           if (owner) sortKeys(owner.prop);
         }
         this.host.onModelChange({ structural: false, transient: true });
-        this.render();
+        this._renderSoon();
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
         if (moved) {
           this.host.history.commit(comp);
           this.host.onModelChange({ structural: false });
@@ -1783,6 +1803,7 @@ export class Timeline {
       };
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
     });
 
     el.addEventListener('contextmenu', (e) => {

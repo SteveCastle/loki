@@ -103,8 +103,8 @@ transform, masks, the clip's own effects and the adjustment layers above it
 treat a splat exactly like footage. A renderer skips the GPU work when its
 camera and settings haven't changed. 🎥 Navigate (orbit / look / pan /
 dolly / WASD fly) writes the camera props at the playhead; camera writes
-deliberately skip `onModelChange` per move (its `markChainDirty` rebuilt
-the effect chain every frame) and fan out once at the gesture's end.
+deliberately skip `onModelChange` per move and fan out once at the
+gesture's end.
 
 **Making a splat** (+ Layer → *3D scene from video / photos…*) is the one
 thing Studio hands off: training needs COLMAP + Brush and minutes of GPU,
@@ -309,6 +309,22 @@ Order matters at three points, and each is a rule worth keeping:
    *output* of its private chain, so that has to run first.
 3. **`syncFxChain` before `applyParams`.** Params are written into live
    runtimes; a runtime that hasn't been built yet has nowhere to put them.
+
+**Chains rebuild by identity, not on every edit.** `syncFxChain` /
+`syncMediaChain` compare a stack key (which effects, in which order, under
+which clip) every frame and rebuild only when it changes; parameters are
+live uniforms. Changes the key can't see — overlay textures, custom shader
+source, an fx clip's mask structure, comp size, undo/redo — call
+`markChainDirty` themselves. `onModelChange` deliberately does not: a
+blanket rebuild on every edit (drag ticks included) blinked effects off
+while the async rebuild ran.
+
+**Idle frames.** Paused with nothing happening, `idleFrame()` skips
+everything from `syncMedia` on. Input events, landed seeks / frame uploads,
+finished chain builds and decoded roto frames call `noteActivity()`, which
+keeps full-rate rendering for 600 ms; otherwise the pipeline runs at 4 fps
+as a keep-alive that also heals any change no hook reports. A paused video
+whose texture already holds its current frame isn't re-uploaded.
 
 ### Where the picture actually comes from
 

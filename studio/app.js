@@ -392,6 +392,31 @@ function setTime(t) {
 
 const isScrubbing = () => !playing && performance.now() < scrubUntil;
 
+/* Idle frames: paused, with nothing happening, the frame can't change — yet
+ * every rAF used to re-upload each video frame, recompose masks, run every
+ * effect chain and blit, 60–144 times a second. Activity (any input event,
+ * a landed seek or frame upload, a finished chain build, media coming
+ * ready) keeps full-rate rendering for IDLE_AFTER_MS; past that the
+ * pipeline runs at IDLE_FPS only — a keep-alive that also heals any change
+ * no hook reports, so a missed source costs at most a quarter second. */
+const IDLE_AFTER_MS = 600;
+const IDLE_FRAME_MS = 250;
+let lastActivity = 0;
+let lastIdleFrame = 0;
+function noteActivity() { lastActivity = performance.now(); }
+for (const ev of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'input', 'change', 'resize', 'focus'])
+  addEventListener(ev, noteActivity, { capture: true, passive: true });
+
+/** True when this tick can skip the pipeline: paused, no interaction in
+ * flight, nothing reported recently, and the keep-alive isn't due. */
+function idleFrame(now) {
+  if (playing || isScrubbing() || trimPreviewT != null || recorder || maskEdit || shapeDraw || splatNav)
+    return false;
+  if (now - lastActivity < IDLE_AFTER_MS) return false;
+  if (now - lastIdleFrame >= IDLE_FRAME_MS) { lastIdleFrame = now; return false; }
+  return true;
+}
+
 function togglePlay() { playing ? pause() : play(); }
 
 function play() {
@@ -435,6 +460,8 @@ function tick() {
       }
     }
   }
+
+  if (idleFrame(performance.now())) return;
 
   // While a trim handle is being dragged, render the frame at the cut
   // point instead of the playhead (the playhead UI itself stays put).
@@ -887,7 +914,10 @@ function syncMediaElement(asset, slot, track, clip, t) {
       }
     }
   }
-  if (frames && !proxyScrub && el.readyState >= 2) uploadVideoFrame(slot);
+  // Paused on the frame already in the texture: nothing to upload.
+  if (frames && !proxyScrub && el.readyState >= 2
+      && (playing || el.seeking || slot._uploadedAt !== el.currentTime))
+    uploadVideoFrame(slot);
 }
 
 /* A GIF is a pre-decoded frame strip, not a <video>: pick the loop frame
@@ -911,6 +941,10 @@ function syncGifFrame(asset, clip, t) {
 let videoNeedsCanvasHop = false;
 
 function uploadVideoFrame(asset, sourceEl = asset.el, scale = false) {
+  noteActivity();   // a new picture is in: render it (see idleFrame)
+  // What's in the texture now: a paused element at the same time needn't
+  // upload again. A proxy (or other source) frame is never "current".
+  asset._uploadedAt = sourceEl === asset.el ? sourceEl.currentTime : null;
   if (!videoNeedsCanvasHop && !scale) {
     try {
       fx.device.queue.copyExternalImageToTexture(
@@ -1343,7 +1377,7 @@ function syncFxChain(t) {
   fx.layers = entries.flatMap(({ clip }) => specsForStack(clip));
   chainPromise = fx.rebuild()
     .catch((e) => console.error('slangfx: chain rebuild failed:', e))
-    .finally(() => { chainBuilding = false; });
+    .finally(() => { chainBuilding = false; noteActivity(); });
   return chainPromise;
 }
 
@@ -1396,7 +1430,7 @@ function mediaChainFor(clip) {
       entry.matte = matte;
     }).catch((e) => {
       console.error('slangfx: media chain create failed:', e);
-    }).finally(() => { entry.building = false; });
+    }).finally(() => { entry.building = false; noteActivity(); });
   }
   return entry.fx && entry.matte ? entry : null;
 }
@@ -1487,7 +1521,7 @@ function syncMediaChain(clip, entry) {
   }));
   entry.promise = Promise.all([entry.fx.rebuild(), entry.matte.rebuild()])
     .catch((e) => console.error('slangfx: media chain rebuild failed:', e))
-    .finally(() => { entry.building = false; });
+    .finally(() => { entry.building = false; noteActivity(); });
   return entry.promise;
 }
 
@@ -1885,7 +1919,14 @@ function resetClipProps(clips) {
  * middle of adjusting. */
 function onModelChange({ structural = false, transient = false, propKey = null } = {}) {
   ensureDur(comp);
-  markChainDirty();
+  // No blanket markChainDirty(): it rebuilt EVERY effect chain on every
+  // edit — every drag tick included — and a rebuild drops the runtimes
+  // before the async rebuild lands, so effects blinked off mid-drag.
+  // Chains re-sync by stack identity (syncFxChain / syncMediaChain compare
+  // stackKey every frame: effect added, removed, reordered, toggled, or an
+  // fx clip moved), parameters are live uniforms, and the in-place changes a
+  // key can't see (overlays, shader source, mask structure, comp size,
+  // undo/redo) mark their chain explicitly.
   if (transient) return;
   // One lane, one clip at a time: anything the edit pushed onto another
   // clip (retime, stretch, import…) moves to its own track. Clips the user
@@ -4792,6 +4833,7 @@ async function ensureRotoBitmap(node, idx) {
     if (!blob) return null;
     const bm = await createImageBitmap(blob);
     cache.set(idx, bm);
+    noteActivity();   // a mask frame landed: render it
     while (cache.size > ROTO_CACHE_MAX) {
       const [k, v] = cache.entries().next().value;
       cache.delete(k);

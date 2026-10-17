@@ -135,7 +135,7 @@ test('hide and mute independently control preview visuals and preview/export aud
       ...model, comp, syncMedia, tCur: 1, playing: true,
       clock: { t: 1, perf: 0 }, performance: { now: () => 0 },
       requestAnimationFrame: noop, fx: { inputTexture: {}, render: noop },
-      offlineJob: null, rotoJob: null, loopJob: null, trimPreviewT: null, rotoEdit: null,
+      offlineJob: null, rotoJob: null, loopJob: null, trimPreviewT: null, rotoEdit: null, idleFrame: () => false,
       renderSplats: noop, prepareMotionBlur: noop,
       prepareMasks: noop, prepareMediaFx: (t, clips) => { visualClips = clips; },
       compositeFrame: noop, syncFxChain: noop, applyParams: noop,
@@ -310,6 +310,25 @@ test('the payload keeps media that failed to restore', () => {
     serializeMaskState: noop,
   })();
   assert.equal(JSON.stringify(payload.assets.map((a) => a.id)), '["ok","gone"]');
+});
+
+test('idle frames: paused and quiet skips the pipeline, with a keep-alive', () => {
+  const context = {
+    playing: false, isScrubbing: () => false, trimPreviewT: null, recorder: null,
+    maskEdit: null, shapeDraw: null, splatNav: null,
+    IDLE_AFTER_MS: 600, IDLE_FRAME_MS: 250, lastActivity: 0, lastIdleFrame: 0,
+  };
+  const idle = appFunction('idleFrame', context);
+  assert.equal(idle(300), false);          // just active: render
+  assert.equal(idle(1000), false);         // quiet, keep-alive due: render…
+  assert.equal(idle(1016), true);          // …then skip
+  assert.equal(idle(1200), true);
+  assert.equal(idle(1251), false);         // next keep-alive
+  context.playing = true;
+  assert.equal(idle(1300), false);         // playback always renders
+  context.playing = false;
+  context.lastActivity = 1290;
+  assert.equal(idle(1300), false);         // fresh input: render
 });
 
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {

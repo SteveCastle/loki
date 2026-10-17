@@ -166,6 +166,91 @@ async (page) => {
   const size = (await (await dl.createReadStream()).toArray()).reduce((n, b) => n + b.length, 0);
   check('offline render', size > 10000, { size });
 
+  // ---- performance ------------------------------------------------------
+  // Count effect-chain rebuilds (every SlangFx: the adjustment chain and each
+  // clip's private colour + matte chains) and pipeline runs.
+  await page.evaluate(() => {
+    const proto = Object.getPrototypeOf(window.fx);
+    if (!proto.__counted) {
+      const rebuild = proto.rebuild;
+      proto.rebuild = function (...a) { window.__rebuilds = (window.__rebuilds ?? 0) + 1; return rebuild.apply(this, a); };
+      const render = window.fx.render;
+      window.fx.render = function (...a) { window.__renders = (window.__renders ?? 0) + 1; return render.apply(this, a); };
+      proto.__counted = true;
+    }
+  });
+  await page.waitForTimeout(1500);   // let the blur stack finish building
+
+  // 11. Drag-style transient edits and a property change rebuild nothing.
+  const rebuilds = await page.evaluate(async () => {
+    window.__rebuilds = 0;
+    const clip = window.comp().tracks[0].clips[0];
+    for (let i = 0; i < 30; i++) {
+      clip.start = (i % 2) * 0.01;
+      window.studio.onModelChange({ structural: false, transient: true });
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    clip.start = 0;
+    clip.props.opacity.v = 80;
+    window.studio.onModelChange({ propKey: 'opacity' });
+    for (let i = 0; i < 10; i++) await new Promise((r) => requestAnimationFrame(r));
+    return window.__rebuilds;
+  });
+  check('edits do not rebuild effect chains', rebuilds === 0, { rebuilds });
+
+  // 12. Paused and quiet: the pipeline idles; input brings it back.
+  await pause();
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(1200);   // past the idle threshold
+  const idleRuns = await page.evaluate(async () => {
+    window.__renders = 0;
+    await new Promise((r) => setTimeout(r, 1000));
+    return window.__renders;
+  });
+  check('idle paused frames skip the pipeline', idleRuns <= 6, { idleRuns });
+  const activeRuns = await page.evaluate(async () => {
+    window.__renders = 0;
+    const end = performance.now() + 500;
+    while (performance.now() < end) {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: Math.random() * 100, clientY: 10 }));
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    return window.__renders;
+  });
+  check('input renders at full rate', activeRuns >= 15, { activeRuns });
+  // A change no input event reports still reaches the screen (keep-alive).
+  await page.waitForTimeout(1200);
+  const healed = await page.evaluate(async () => {
+    window.__renders = 0;
+    window.comp().tracks[0].clips[0].props.opacity.v = 60;
+    await new Promise((r) => setTimeout(r, 400));
+    return window.__renders;
+  });
+  check('silent changes render within the keep-alive', healed >= 1, { healed });
+
+  // 13. A burst of drag pointermoves re-renders the timeline once per frame.
+  const tlRenders = await page.evaluate(async () => {
+    const tl = window.studio.timeline;
+    const clipEl = document.querySelector('.tl-clip');
+    if (!clipEl) return -1;
+    const r = clipEl.getBoundingClientRect();
+    let n = 0;
+    const render = tl.render;
+    tl.render = function (...a) { n++; return render.apply(this, a); };
+    const opts = (x) => ({ clientX: x, clientY: r.top + r.height / 2, bubbles: true, pointerId: 1, button: 0, buttons: 1 });
+    clipEl.dispatchEvent(new PointerEvent('pointerdown', opts(r.left + 20)));
+    for (let i = 0; i < 60; i++) window.dispatchEvent(new PointerEvent('pointermove', opts(r.left + 20 + (i % 10) + 6)));
+    const during = n;
+    await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
+    const afterFrame = n;
+    window.dispatchEvent(new PointerEvent('pointerup', opts(r.left + 20)));
+    tl.render = render;
+    return { during, afterFrame };
+  });
+  check('timeline drag renders once per frame', tlRenders.during <= 1 && tlRenders.afterFrame <= 3, tlRenders);
+  // put the clip back where the persistence steps expect it
+  await page.evaluate(() => { const c = window.comp().tracks[0].clips[0]; c.start = 0; c.props.opacity.v = 100; window.studio.onModelChange({}); });
+
   // ---- persistence ------------------------------------------------------
   const readIdb = (key) => page.evaluate((k) => new Promise((res) => {
     const r = indexedDB.open('lowkey-studio', 1);
