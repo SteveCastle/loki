@@ -60,6 +60,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.InferenceConcurrency.LlamaCpp != 1 {
 		t.Errorf("Default InferenceConcurrency.LlamaCpp = %d; want 1", cfg.InferenceConcurrency.LlamaCpp)
 	}
+	if cfg.InferenceConcurrency.Strata != 1 {
+		t.Errorf("Default InferenceConcurrency.Strata = %d; want 1", cfg.InferenceConcurrency.Strata)
+	}
 
 	// Defaults for the OpenAI-compatible local backends point at their
 	// upstream default ports.
@@ -68,6 +71,9 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.LlamaCppBaseURL != "http://localhost:8080" {
 		t.Errorf("Default LlamaCppBaseURL = %q; want %q", cfg.LlamaCppBaseURL, "http://localhost:8080")
+	}
+	if cfg.StrataBaseURL != "http://127.0.0.1:8080" {
+		t.Errorf("Default StrataBaseURL = %q; want %q", cfg.StrataBaseURL, "http://127.0.0.1:8080")
 	}
 }
 
@@ -490,6 +496,10 @@ func TestApplyEnvOverrides(t *testing.T) {
 		"LOWKEY_LLAMACPP_API_KEY":               "env-llamacpp-key",
 		"LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY": "3",
 		"LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY": "5",
+		"LOWKEY_STRATA_BASE_URL":                "http://env-strata:8080",
+		"LOWKEY_STRATA_MODEL":                   "env-qwen",
+		"LOWKEY_STRATA_API_KEY":                 "env-strata-key",
+		"LOWKEY_INFERENCE_STRATA_CONCURRENCY":   "2",
 		"LOWKEY_JWT_SECRET":                     "env-secret",
 		"LOWKEY_DISCORD_TOKEN":                  "env-discord",
 		"LOWKEY_FASTER_WHISPER_PATH":            "/env/whisper",
@@ -553,6 +563,18 @@ func TestApplyEnvOverrides(t *testing.T) {
 	}
 	if c.InferenceConcurrency.LlamaCpp != 5 {
 		t.Errorf("InferenceConcurrency.LlamaCpp = %d; want 5", c.InferenceConcurrency.LlamaCpp)
+	}
+	if c.StrataBaseURL != "http://env-strata:8080" {
+		t.Errorf("StrataBaseURL = %q; want %q", c.StrataBaseURL, "http://env-strata:8080")
+	}
+	if c.StrataModel != "env-qwen" {
+		t.Errorf("StrataModel = %q; want %q", c.StrataModel, "env-qwen")
+	}
+	if c.StrataAPIKey != "env-strata-key" {
+		t.Errorf("StrataAPIKey = %q; want %q", c.StrataAPIKey, "env-strata-key")
+	}
+	if c.InferenceConcurrency.Strata != 2 {
+		t.Errorf("InferenceConcurrency.Strata = %d; want 2", c.InferenceConcurrency.Strata)
 	}
 	if c.JWTSecret != "env-secret" {
 		t.Errorf("JWTSecret = %q; want %q", c.JWTSecret, "env-secret")

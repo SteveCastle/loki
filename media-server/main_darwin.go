@@ -1273,11 +1273,15 @@ type updateConfigRequest struct {
 	LlamaCppBaseURL      string `json:"llamacppBaseUrl"`
 	LlamaCppModel        string `json:"llamacppModel"`
 	LlamaCppAPIKey       string `json:"llamacppApiKey"`
+	StrataBaseURL        string `json:"strataBaseUrl"`
+	StrataModel          string `json:"strataModel"`
+	StrataAPIKey         string `json:"strataApiKey"`
 	InferenceConcurrency struct {
 		Ollama   int `json:"ollama"`
 		RunPod   int `json:"runpod"`
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
+		Strata   int `json:"strata"`
 	} `json:"inferenceConcurrency"`
 	LocalComputeConcurrency   int     `json:"localComputeConcurrency"`
 	OnnxModelPath             string  `json:"onnxModelPath"`
@@ -1549,6 +1553,15 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			if v := keepStoredIfRedacted(req.LlamaCppAPIKey, newCfg.LlamaCppAPIKey); v != "" {
 				newCfg.LlamaCppAPIKey = v
 			}
+			if v := strings.TrimSpace(req.StrataBaseURL); v != "" {
+				newCfg.StrataBaseURL = v
+			}
+			if v := strings.TrimSpace(req.StrataModel); v != "" {
+				newCfg.StrataModel = v
+			}
+			if v := keepStoredIfRedacted(req.StrataAPIKey, newCfg.StrataAPIKey); v != "" {
+				newCfg.StrataAPIKey = v
+			}
 			if req.InferenceConcurrency.Ollama > 0 {
 				newCfg.InferenceConcurrency.Ollama = req.InferenceConcurrency.Ollama
 			}
@@ -1560,6 +1573,9 @@ func configHandler(deps *Dependencies) http.HandlerFunc {
 			}
 			if req.InferenceConcurrency.LlamaCpp > 0 {
 				newCfg.InferenceConcurrency.LlamaCpp = req.InferenceConcurrency.LlamaCpp
+			}
+			if req.InferenceConcurrency.Strata > 0 {
+				newCfg.InferenceConcurrency.Strata = req.InferenceConcurrency.Strata
 			}
 			if req.LocalComputeConcurrency > 0 {
 				newCfg.LocalComputeConcurrency = req.LocalComputeConcurrency

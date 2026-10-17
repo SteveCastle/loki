@@ -17,6 +17,7 @@ func TestRedactConfig(t *testing.T) {
 	cfg.RunPodAPIKey = "rp"
 	cfg.LMStudioAPIKey = "lm"
 	cfg.LlamaCppAPIKey = "lc"
+	cfg.StrataAPIKey = "st"
 	cfg.Roots = []appconfig.StorageRoot{
 		{Type: "s3", Label: "bucket", AccessKey: "AK", SecretKey: "SK"},
 		{Type: "local", Label: "disk", Path: "D:/media"},
@@ -30,6 +31,7 @@ func TestRedactConfig(t *testing.T) {
 		"RunPodAPIKey":       got.RunPodAPIKey,
 		"LMStudioAPIKey":     got.LMStudioAPIKey,
 		"LlamaCppAPIKey":     got.LlamaCppAPIKey,
+		"StrataAPIKey":       got.StrataAPIKey,
 		"Roots[0].AccessKey": got.Roots[0].AccessKey,
 		"Roots[0].SecretKey": got.Roots[0].SecretKey,
 	} {

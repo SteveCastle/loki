@@ -109,7 +109,8 @@ type Config struct {
 	// Overridable via the LOWKEY_EXTRACTORS env var.
 	ExtractorsPath string `json:"extractorsPath,omitempty"`
 
-	// Active vision-inference backend. One of: "off", "ollama", "runpod".
+	// Active vision-inference backend. One of: "off", "ollama", "runpod",
+	// "lmstudio", "llamacpp", "strata".
 	// Drives the routing in tasks.callVisionLLM — provider-specific fields
 	// below (OllamaBaseURL/Model, RunPodEndpoint/APIKey) are only consulted
 	// for the matching provider. New engines slot in by adding a constant
@@ -146,6 +147,16 @@ type Config struct {
 	LlamaCppModel   string `json:"llamacppModel"`
 	LlamaCppAPIKey  string `json:"llamacppApiKey"`
 
+	// Strata vision settings. Active when InferenceProvider == "strata".
+	// Strata (github.com/Niko1221/Strata) serves Qwen3.8-Flash-Next behind an
+	// OpenAI-compatible /v1/chat/completions endpoint (default base
+	// http://127.0.0.1:8080); images need its "vision" setup. The API key is
+	// required only when Strata's config sets "api_key". The model name is
+	// informational — Strata serves whatever model it loaded.
+	StrataBaseURL string `json:"strataBaseUrl"`
+	StrataModel   string `json:"strataModel"`
+	StrataAPIKey  string `json:"strataApiKey"`
+
 	// Per-provider concurrency caps. Drives the jobqueue host-bucket limit
 	// for the corresponding inference bucket — a single GPU local install
 	// typically wants 1 at a time, while RunPod serverless can absorb many
@@ -156,6 +167,7 @@ type Config struct {
 		RunPod   int `json:"runpod"`
 		LMStudio int `json:"lmstudio"`
 		LlamaCpp int `json:"llamacpp"`
+		Strata   int `json:"strata"`
 	} `json:"inferenceConcurrency"`
 
 	// AutoProcessOps is the comma-separated per-item op list the scheduled
@@ -417,16 +429,19 @@ func defaultConfig() Config {
 		DescribePrompt:         "Please describe this image, paying special attention to the people, the color of hair, clothing, items, text and captions, and actions being performed.",
 		LMStudioBaseURL:        "http://localhost:1234",
 		LlamaCppBaseURL:        "http://localhost:8080",
+		StrataBaseURL:          "http://127.0.0.1:8080",
 		InferenceConcurrency: struct {
 			Ollama   int `json:"ollama"`
 			RunPod   int `json:"runpod"`
 			LMStudio int `json:"lmstudio"`
 			LlamaCpp int `json:"llamacpp"`
+			Strata   int `json:"strata"`
 		}{
 			Ollama:   1, // local single-GPU Ollama: one at a time
 			RunPod:   4, // serverless scales out per request
 			LMStudio: 1, // local single-GPU LM Studio: one at a time
 			LlamaCpp: 1, // local single-GPU llama.cpp: one at a time
+			Strata:   1, // Strata answers one request at a time by default
 		},
 		LocalComputeConcurrency: 1, // one heavy local model workload at a time
 		OnnxTagger: struct {
@@ -741,6 +756,9 @@ func Load() (Config, string, error) {
 	if c.InferenceConcurrency.LlamaCpp <= 0 {
 		c.InferenceConcurrency.LlamaCpp = def.InferenceConcurrency.LlamaCpp
 	}
+	if c.InferenceConcurrency.Strata <= 0 {
+		c.InferenceConcurrency.Strata = def.InferenceConcurrency.Strata
+	}
 	if c.LocalComputeConcurrency <= 0 {
 		c.LocalComputeConcurrency = def.LocalComputeConcurrency
 	}
@@ -749,6 +767,9 @@ func Load() (Config, string, error) {
 	}
 	if c.LlamaCppBaseURL == "" {
 		c.LlamaCppBaseURL = def.LlamaCppBaseURL
+	}
+	if c.StrataBaseURL == "" {
+		c.StrataBaseURL = def.StrataBaseURL
 	}
 	if c.JWTSecret == "" {
 		c.JWTSecret = uuid.New().String()
@@ -883,6 +904,15 @@ func applyEnvOverrides(c *Config) {
 	if v := os.Getenv("LOWKEY_LLAMACPP_API_KEY"); v != "" {
 		c.LlamaCppAPIKey = v
 	}
+	if v := os.Getenv("LOWKEY_STRATA_BASE_URL"); v != "" {
+		c.StrataBaseURL = v
+	}
+	if v := os.Getenv("LOWKEY_STRATA_MODEL"); v != "" {
+		c.StrataModel = v
+	}
+	if v := os.Getenv("LOWKEY_STRATA_API_KEY"); v != "" {
+		c.StrataAPIKey = v
+	}
 	if v := os.Getenv("LOWKEY_INFERENCE_LMSTUDIO_CONCURRENCY"); v != "" {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
 			c.InferenceConcurrency.LMStudio = n
@@ -895,6 +925,13 @@ func applyEnvOverrides(c *Config) {
 			c.InferenceConcurrency.LlamaCpp = n
 		} else {
 			log.Printf("Warning: LOWKEY_INFERENCE_LLAMACPP_CONCURRENCY=%q is not a positive integer; ignored", v)
+		}
+	}
+	if v := os.Getenv("LOWKEY_INFERENCE_STRATA_CONCURRENCY"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n > 0 {
+			c.InferenceConcurrency.Strata = n
+		} else {
+			log.Printf("Warning: LOWKEY_INFERENCE_STRATA_CONCURRENCY=%q is not a positive integer; ignored", v)
 		}
 	}
 	if v := os.Getenv("LOWKEY_TRANSCRIPTION_PROVIDER"); v != "" {

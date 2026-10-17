@@ -32,6 +32,7 @@ const (
 	InferenceProviderRunPod   = "runpod"
 	InferenceProviderLMStudio = "lmstudio"
 	InferenceProviderLlamaCpp = "llamacpp"
+	InferenceProviderStrata   = "strata"
 )
 
 // Host buckets used for jobqueue concurrency on inference work. Each
@@ -45,6 +46,7 @@ const (
 	HostBucketRunPod   = "runpod"
 	HostBucketLMStudio = "lmstudio"
 	HostBucketLlamaCpp = "llamacpp"
+	HostBucketStrata   = "strata"
 	// HostBucketEmbed is the local visual-embedding bucket. It is intentionally
 	// separate from the LLM inference buckets so embedding doesn't compete with
 	// autotag/description jobs and isn't capped by the LLM provider's setting.
@@ -86,18 +88,20 @@ func InferenceHost() string {
 		return HostBucketLMStudio
 	case InferenceProviderLlamaCpp:
 		return HostBucketLlamaCpp
+	case InferenceProviderStrata:
+		return HostBucketStrata
 	default:
 		return "localhost"
 	}
 }
 
 // InferenceHostIsLocal reports whether the configured vision provider runs
-// on this machine (Ollama/LM Studio/llama.cpp) — those jobs consume the
-// shared local-compute slot. RunPod is remote and does not; "off"/unknown
+// on this machine (Ollama/LM Studio/llama.cpp/Strata) — those jobs consume
+// the shared local-compute slot. RunPod is remote and does not; "off"/unknown
 // jobs fail fast inside callVisionLLM so holding no slot is fine.
 func InferenceHostIsLocal() bool {
 	switch InferenceHost() {
-	case HostBucketOllama, HostBucketLMStudio, HostBucketLlamaCpp:
+	case HostBucketOllama, HostBucketLMStudio, HostBucketLlamaCpp, HostBucketStrata:
 		return true
 	default:
 		return false
@@ -139,12 +143,17 @@ func callVisionLLM(ctx context.Context, imagePath, prompt string) (string, error
 		if strings.TrimSpace(cfg.LMStudioBaseURL) == "" {
 			return "", fmt.Errorf("lmstudio provider selected but base URL is empty")
 		}
-		return callOpenAICompatibleVision(ctx, imagePath, prompt, cfg.LMStudioBaseURL, cfg.LMStudioAPIKey, cfg.LMStudioModel)
+		return callOpenAICompatibleVision(ctx, imagePath, prompt, cfg.LMStudioBaseURL, cfg.LMStudioAPIKey, cfg.LMStudioModel, nil)
 	case InferenceProviderLlamaCpp:
 		if strings.TrimSpace(cfg.LlamaCppBaseURL) == "" {
 			return "", fmt.Errorf("llamacpp provider selected but base URL is empty")
 		}
-		return callOpenAICompatibleVision(ctx, imagePath, prompt, cfg.LlamaCppBaseURL, cfg.LlamaCppAPIKey, cfg.LlamaCppModel)
+		return callOpenAICompatibleVision(ctx, imagePath, prompt, cfg.LlamaCppBaseURL, cfg.LlamaCppAPIKey, cfg.LlamaCppModel, nil)
+	case InferenceProviderStrata:
+		if strings.TrimSpace(cfg.StrataBaseURL) == "" {
+			return "", fmt.Errorf("strata provider selected but base URL is empty")
+		}
+		return callOpenAICompatibleVision(ctx, imagePath, prompt, cfg.StrataBaseURL, cfg.StrataAPIKey, cfg.StrataModel, strataRequestExtras)
 	default:
 		return "", fmt.Errorf("unknown inference provider %q", cfg.InferenceProvider)
 	}
@@ -160,7 +169,10 @@ func callVisionLLM(ctx context.Context, imagePath, prompt string) (string, error
 // Distinct from callRunPodVision, which wraps the same payload in RunPod's
 // {input: ...} envelope and supports async /run polling. If we ever pick up
 // more OpenAI-shaped providers (vLLM, TGI, etc.) they reuse this helper.
-func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL, apiKey, model string) (string, error) {
+//
+// extra holds provider-specific top-level payload fields (nil for none);
+// they never override the core fields set here.
+func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL, apiKey, model string, extra map[string]any) (string, error) {
 	img, err := loadImageForInference(imagePath)
 	if err != nil {
 		return "", fmt.Errorf("inference: %w", err)
@@ -181,6 +193,11 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 				},
 			},
 		},
+	}
+	for k, v := range extra {
+		if _, taken := payload[k]; !taken {
+			payload[k] = v
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -236,6 +253,14 @@ func callOpenAICompatibleVision(ctx context.Context, imagePath, prompt, baseURL,
 	}
 	return content, nil
 }
+
+// strataRequestExtras turns thinking off for Strata requests. Strata's model
+// (Qwen3.8-Flash-Next) reasons by default and its server applies the shared
+// Chat setting (often "high") to any request without its own effort; the
+// thinking tokens count against max_tokens, so a 1024-token cap could end
+// mid-thought with an empty answer. "none" is Strata's thinking-off value
+// (serve/frontend.py effort_kwargs).
+var strataRequestExtras = map[string]any{"reasoning_effort": "none"}
 
 // callOllamaVisionRaw issues an /api/generate request to a local-or-remote
 // Ollama server and returns the model's response field. Equivalent to the

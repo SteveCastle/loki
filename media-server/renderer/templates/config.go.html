@@ -1044,6 +1044,14 @@
                 >
                   llama.cpp
                 </button>
+                <button
+                  type="button"
+                  class="inference-tab"
+                  data-provider="strata"
+                  role="tab"
+                >
+                  Strata
+                </button>
               </div>
 
               <input
@@ -1258,6 +1266,64 @@
                       type="number"
                       min="1"
                       value="{{.Config.InferenceConcurrency.LlamaCpp}}"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div
+                class="inference-panel"
+                data-provider="strata"
+                role="tabpanel"
+              >
+                <div class="fields">
+                  <div class="field">
+                    <label class="label">Base URL</label>
+                    <input
+                      id="strata-base-url"
+                      class="input"
+                      type="text"
+                      placeholder="http://127.0.0.1:8080"
+                      value="{{.Config.StrataBaseURL}}"
+                    />
+                    <small class="hint">
+                      Strata must be set up with images ("Images?" in its
+                      setup). Thinking is turned off for these requests so
+                      answers fit the output cap.
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">Model (optional)</label>
+                    <input
+                      id="strata-model"
+                      class="input"
+                      type="text"
+                      placeholder="leave empty to use the loaded model"
+                      value="{{.Config.StrataModel}}"
+                    />
+                  </div>
+                  <div class="field">
+                    <label class="label">API key</label>
+                    <input
+                      id="strata-api-key"
+                      class="input"
+                      type="password"
+                      autocomplete="off"
+                      value="{{.Config.StrataAPIKey}}"
+                    />
+                    <small class="hint">
+                      Required when Strata's config sets "api_key"
+                      (strata-api-key.txt in the Strata folder).
+                    </small>
+                  </div>
+                  <div class="field">
+                    <label class="label">Max concurrent jobs</label>
+                    <input
+                      id="strata-concurrency"
+                      class="input"
+                      type="number"
+                      min="1"
+                      value="{{.Config.InferenceConcurrency.Strata}}"
                     />
                   </div>
                 </div>
@@ -2567,6 +2633,15 @@
           llamacppApiKey: document
             .getElementById('llamacpp-api-key')
             .value.trim(),
+          strataBaseUrl: document
+            .getElementById('strata-base-url')
+            .value.trim(),
+          strataModel: document
+            .getElementById('strata-model')
+            .value.trim(),
+          strataApiKey: document
+            .getElementById('strata-api-key')
+            .value.trim(),
           inferenceConcurrency: {
             ollama:
               parseInt(
@@ -2586,6 +2661,11 @@
             llamacpp:
               parseInt(
                 document.getElementById('llamacpp-concurrency').value,
+                10
+              ) || 0,
+            strata:
+              parseInt(
+                document.getElementById('strata-concurrency').value,
                 10
               ) || 0,
           },

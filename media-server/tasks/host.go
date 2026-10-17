@@ -182,6 +182,9 @@ func ApplyHostLimits(q *jobqueue.Queue, cfg appconfig.Config) {
 	if n := cfg.InferenceConcurrency.LlamaCpp; n > 0 {
 		q.SetHostLimit(HostBucketLlamaCpp, n)
 	}
+	if n := cfg.InferenceConcurrency.Strata; n > 0 {
+		q.SetHostLimit(HostBucketStrata, n)
+	}
 	// One embed job at a time; the job parallelizes internally via its worker
 	// pool, so additional concurrent embed jobs would just oversubscribe.
 	q.SetHostLimit(HostBucketEmbed, 1)
