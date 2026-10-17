@@ -334,6 +334,9 @@ async function boot() {
   timeline.render();
   renderInspector();
   setStatus('ready — import media or add an effect');
+  // Once per boot, after the session has settled: free stored media nothing
+  // references any more (see sweepStorage).
+  setTimeout(sweepStorage, 3000);
   window.fx = fx;                 // console/debug access
   window.comp = () => comp;
   // Console/test handle. Sound especially needs one: a mixdown has no
@@ -353,7 +356,7 @@ async function boot() {
     importFiles, addAssetAt, setBinOpen, removeAsset,
     renderCompAudio, mixCompAudio, audioEntries, audioChains,
     audioDrive, audioSignal, syncAudioDrive: () => syncAudioDrive(),
-    mediaChains,
+    mediaChains, parkedMasks, sweepStorage, projectJSON,
     // Roto is network + model driven — the console handle is how tests
     // drive it without clicking through the picker.
     clipMasks, analyzeRotoNode, startRotoEdit, stopRotoEdit,
@@ -1473,9 +1476,10 @@ function destroyMediaChain(clipId) {
   mediaChains.delete(clipId);
   mediaFxViews.delete(clipId);
   Promise.resolve(entry.promise).finally(() => {
-    // The engine owns these runtimes; null the specs' pointers so a spec
-    // that outlives the chain can't hand out a destroyed runtime.
-    for (const layer of entry.fx?.layers ?? []) layer.runtime = null;
+    // destroy() frees each layer's runtime and nulls the spec's pointer, so
+    // a spec that outlives the chain can't hand out a destroyed runtime.
+    // (The pointers used to be nulled FIRST, so destroy() found nothing to
+    // free and every torn-down chain leaked its runtimes.)
     entry.fx?.destroy();
     entry.matte?.destroy();
     compositor.release(`${clipId}:iso`);
@@ -1498,6 +1502,15 @@ function resizeMediaChains() {
       .catch((e) => console.error('slangfx: media chain resize failed:', e))
       .finally(() => { entry.building = false; });
   }
+}
+
+/** Release compositor uniforms keyed by clips that no longer exist (keys are
+ * `<clipId>` or `<clipId>:<role>`). */
+function gcCompositorItems() {
+  const live = new Set();
+  for (const track of comp.tracks) for (const clip of track.clips) live.add(clip.id);
+  for (const key of [...compositor.items.keys()])
+    if (!live.has(String(key).split(':')[0])) compositor.release(key);
 }
 
 /** Drop chains for clips that were deleted or lost their effects. */
@@ -1972,6 +1985,8 @@ function onModelChange({ structural = false, transient = false, propKey = null }
   gcMediaInstances();        // …and copies of a file their extra decoders
   gcSplatRenderers();        // deleted splat clips release their sort buffers
   gcMotionBlur();            // …and clips that turned motion blur off, its targets
+  gcClipMasks();             // deleted clips park their masks (GPU freed); undone ones return
+  gcCompositorItems();       // …and release their compositor uniforms
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
   syncAudioDrive();          // no-op unless audio drivers exist + audio changed
   if (comp.grid && !findClip(comp, comp.grid.clipId)) delete comp.grid;   // snap track deleted
@@ -2011,6 +2026,8 @@ function afterModelReplace(what) {
   gcMediaInstances();
   gcSplatRenderers();
   gcMotionBlur();
+  gcClipMasks();
+  gcCompositorItems();
   chainKey = '';
   markChainDirty();
   tCur = clamp(tCur, 0, lastFrame(comp));
@@ -2214,6 +2231,111 @@ async function createAsset(file, id = null) {
 
 /** An already-imported asset that is plausibly the same file — the
  * re-import guard that keeps one source from piling up in the bin. */
+/* ---- stored-media identity and the storage sweep ----------------------
+ * Blobs live in IndexedDB keyed asset:<id>, shared by every project. A
+ * content fingerprint (size + SHA-256 of the first and last 2 MB) maps a
+ * file to the blob already stored for it, so re-importing — or launching
+ * Studio again on the same file — reuses it. At boot, once the session is
+ * saved, sweepStorage deletes blobs, proxies and roto records that neither
+ * the autosave nor any saved project references (nothing else could ever
+ * load them: undo history starts empty at boot). */
+const ASSET_INDEX_KEY = 'asset-index';   // fingerprint -> asset id
+
+async function mediaFingerprint(file) {
+  try {
+    const span = 2 * 1024 * 1024;
+    const head = await file.slice(0, span).arrayBuffer();
+    const tail = file.size > span ? await file.slice(Math.max(span, file.size - span)).arrayBuffer() : new ArrayBuffer(0);
+    const buf = new Uint8Array(head.byteLength + tail.byteLength);
+    buf.set(new Uint8Array(head), 0);
+    buf.set(new Uint8Array(tail), head.byteLength);
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', buf));
+    return `${file.size}:${[...digest].map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+  } catch {
+    return null;   // no fingerprint: just store a fresh copy
+  }
+}
+
+async function storedAssetFor(fp) {
+  try {
+    const id = (await idbGet(ASSET_INDEX_KEY))?.[fp];
+    return id && (await idbGet(`asset:${id}`)) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function rememberStoredAsset(fp, id) {
+  const index = (await idbGet(ASSET_INDEX_KEY)) ?? {};
+  index[fp] = id;
+  await idbSet(ASSET_INDEX_KEY, index);
+}
+
+function idbKeys() {
+  return idbOpen().then((db) => new Promise((resolve, reject) => {
+    const rq = db.transaction('media', 'readonly').objectStore('media').getAllKeys();
+    rq.onsuccess = () => resolve(rq.result);
+    rq.onerror = () => reject(rq.error);
+  }));
+}
+
+/** Every asset id and mask node id a saved payload references. */
+function payloadRefs(data, refs) {
+  for (const meta of data?.assets ?? []) refs.assets.add(meta.id);
+  for (const track of data?.comp?.tracks ?? [])
+    for (const clip of track.clips ?? []) {
+      if (clip.assetId) refs.assets.add(clip.assetId);
+      for (const node of clip.mask?.nodes ?? []) refs.nodes.add(node.id);
+    }
+}
+
+async function sweepStorage() {
+  try {
+    await saveProject();   // the autosave must reflect this session first
+    const refs = { assets: new Set(), nodes: new Set() };
+    payloadRefs(await readAutosave(), refs);
+    // Live state too, in case a write is still landing.
+    for (const a of assets.values()) refs.assets.add(a.id);
+    for (const st of [...clipMasks.values(), ...parkedMasks.values()])
+      for (const node of st.nodes) refs.nodes.add(node.id);
+    const keys = (await idbKeys()).map(String);
+    for (const key of keys.filter((k) => k.startsWith('project:'))) {
+      try {
+        const raw = await idbGet(key);
+        payloadRefs(typeof raw === 'string' ? JSON.parse(raw) : raw, refs);
+      } catch (e) {
+        console.warn('slangfx: storage sweep skipped (unreadable project):', key, e);
+        return;   // can't know what it references — delete nothing
+      }
+    }
+    let freed = 0;
+    for (const key of keys) {
+      const [kind, ...rest] = key.split(':');
+      const id = rest[rest.length - 1];
+      const dead = (kind === 'asset' && !refs.assets.has(id))
+        || (kind === 'proxy' && !refs.assets.has(id))
+        || (kind === 'roto' && !refs.nodes.has(id));
+      if (dead) { await idbDelete(key); freed++; }
+    }
+    const index = (await idbGet(ASSET_INDEX_KEY)) ?? {};
+    let pruned = false;
+    for (const [fp, id] of Object.entries(index))
+      if (!refs.assets.has(id)) { delete index[fp]; pruned = true; }
+    if (pruned) await idbSet(ASSET_INDEX_KEY, index);
+    // Projects the old 20-entry index forgot become listed again.
+    const listed = new Set(projectIndex().map((p) => p.name));
+    const lost = keys.filter((k) => k.startsWith('project:')).map((k) => k.slice(8)).filter((n) => !listed.has(n));
+    if (lost.length) {
+      try {
+        localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify([...projectIndex(), ...lost.map((name) => ({ name, savedAt: 0 }))]));
+      } catch {}
+    }
+    if (freed) console.info(`slangfx: storage sweep freed ${freed} unreferenced record(s)`);
+  } catch (e) {
+    console.warn('slangfx: storage sweep failed:', e);
+  }
+}
+
 function findExistingAsset(file) {
   for (const a of assets.values())
     if (a.kind !== 'shape' && a.name === file.name && a.file?.size === file.size)
@@ -2296,13 +2418,22 @@ async function importFiles(files, { t = null, trackIdx = null, binOnly = false }
       reused++;
     } else {
       setStatus(`importing ${file.name}…`);
+      // Already stored (an earlier import, another project, a previous
+      // "Open in Studio" launch)? Reuse that blob instead of storing another
+      // full copy of the same media.
+      const fp = await mediaFingerprint(file);
+      const storedId = fp ? await storedAssetFor(fp) : null;
       try {
-        asset = await createAsset(file);
+        asset = await createAsset(file, storedId && !assets.has(storedId) ? storedId : null);
       } catch (e) {
         setStatus(`import failed: ${e.message}`);
         continue;
       }
-      idbSet(`asset:${asset.id}`, file).catch(() => {});
+      if (asset.id !== storedId) {
+        idbSet(`asset:${asset.id}`, file)
+          .then(() => fp && rememberStoredAsset(fp, asset.id))
+          .catch((e) => setStatus(`⚠ could not store ${file.name} — it will be missing after a reload (${e?.message ?? e})`));
+      }
       if (asset.kind === 'video') ensureScrubProxy(asset);   // background build
     }
     if (binOnly) continue;               // into the media bin, no clip
@@ -3727,7 +3858,7 @@ function flushSaveNow() {
   saveTimer = null;
   let json;
   try {
-    json = JSON.stringify({ ...projectPayload(), savedAt: Date.now() });
+    json = projectJSON({ savedAt: Date.now() });
   } catch (e) {
     console.error('slangfx: final autosave failed:', e);
     return;
@@ -3859,27 +3990,39 @@ async function loadClipMasks() {
       });
       if (clip.kind === 'media') buildMediaMaskGpu(clip.id);
     }
+  // Hydrated: clipMasks is the truth from here on (projectJSON serializes
+  // it into every save). The persisted copies leave the live comp, or every
+  // undo snapshot — a JSON copy of the comp — would carry each painted
+  // mask's PNG again.
+  for (const track of comp.tracks)
+    for (const clip of track.clips) if (clip.mask) clip.mask = null;
   masksLoaded = true;
   chainDirty = true;
 }
 
 function projectPayload() {
-  // Sync live mask state (painted canvases + node params) into the model
-  // before serializing. clipMasks is authoritative for every clip that has
-  // been touched this session; a clip missing from it kept whatever it
-  // loaded with.
-  for (const track of comp.tracks)
-    for (const clip of track.clips) {
-      const m = clipMasks.get(clip.id);
-      if (m) clip.mask = serializeMaskState(m);
-      else if (masksLoaded) clip.mask = null;
-    }
   const assetMeta = [...assets.values()].map((a) => ({ id: a.id, name: a.name, kind: a.kind }));
   // Media that failed to restore stays in the project: its blob may load
   // next time, and dropping it would orphan its clips for good.
   for (const meta of offlineAssets.values())
     if (!assets.has(meta.id)) assetMeta.push(meta);
   return { comp, assets: assetMeta, t: tCur, name: projectName };
+}
+
+/** The project as JSON. Live mask state (painted canvases + node params)
+ * is serialized straight into the output — clipMasks is authoritative for
+ * every clip touched this session; one missing from it keeps what it loaded
+ * with. It used to be written into the live comp first, so every undo
+ * snapshot (a JSON copy of the comp, up to 100 kept) carried every painted
+ * mask's PNG. */
+function projectJSON(extra = {}) {
+  const clips = new Set(comp.tracks.flatMap((tr) => tr.clips));
+  return JSON.stringify({ ...projectPayload(), ...extra }, (key, value) => {
+    if (!clips.has(value)) return value;
+    const m = clipMasks.get(value.id);
+    if (m) return { ...value, mask: serializeMaskState(m) };
+    return masksLoaded ? { ...value, mask: null } : value;
+  });
 }
 
 /** Write the autosave. The payload is taken NOW (synchronously); the
@@ -3891,7 +4034,7 @@ function saveProject() {
   if (restoring) { saveAfterRestore = true; return saveChain; }
   let json;
   try {
-    json = JSON.stringify({ ...projectPayload(), savedAt: Date.now() });
+    json = projectJSON({ savedAt: Date.now() });
   } catch (e) {
     reportSaveError(e);
     return saveChain;
@@ -4036,6 +4179,7 @@ async function applyProjectDataInner(data) {
   paramMetaCache.clear();
   masksLoaded = false;
   for (const clipId of [...clipMasks.keys()]) destroyClipMask(clipId);
+  parkedMasks.clear();
   for (const [id, t] of matteTargets) { t.tex.destroy(); matteTargets.delete(id); }
   comp = migrateComp(data.comp);
   removeEmptyTracks(comp);
@@ -4158,7 +4302,7 @@ async function stashAutosavedProject() {
     await idbSet(`project:${name}`, JSON.stringify(data));
     const idx = projectIndex().filter((p) => p.name !== name);
     idx.unshift({ name, savedAt: Date.now() });
-    localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx.slice(0, 20)));
+    localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx));
   } catch (e) {
     console.warn('slangfx: could not stash previous session:', e);
   }
@@ -4283,10 +4427,10 @@ async function saveNamedProject(name, { silent = false } = {}) {
   }
   projectName = name;
   saveProject();                       // autosave slot follows the name too
-  await idbSet(`project:${name}`, JSON.stringify(projectPayload()));
+  await idbSet(`project:${name}`, projectJSON());
   const idx = projectIndex().filter((p) => p.name !== name);
   idx.unshift({ name, savedAt: Date.now() });
-  try { localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx.slice(0, 20))); } catch {}
+  try { localStorage.setItem(PROJECT_INDEX_KEY, JSON.stringify(idx)); } catch {}
   updateProjectButton();
   if (!silent) setStatus(`saved project '${name}'`);
 }
@@ -4455,16 +4599,20 @@ $('btn-project').addEventListener('click', (e) => {
     },
   ];
   const idx = projectIndex();
+  const projectItem = (p) => ({
+    label: `${p.name}${p.savedAt ? ` · ${relTimeLabel(p.savedAt)}` : ''}`,
+    icon: FOLDER_ICON,
+    checked: p.name === projectName,
+    action: () => openProject(p.name),
+    trailing: { label: '✕', title: 'delete project', danger: true, action: () => deleteProject(p.name) },
+  });
   if (idx.length) {
     items.push('-');
-    for (const p of idx.slice(0, 8))
-      items.push({
-        label: `${p.name} · ${relTimeLabel(p.savedAt)}`,
-        icon: FOLDER_ICON,
-        checked: p.name === projectName,
-        action: () => openProject(p.name),
-        trailing: { label: '✕', title: 'delete project', danger: true, action: () => deleteProject(p.name) },
-      });
+    for (const p of idx.slice(0, 8)) items.push(projectItem(p));
+    // Every saved project stays reachable (the list used to stop at 8, and
+    // the index dropped anything past 20 for good).
+    if (idx.length > 8)
+      items.push({ label: `All projects (${idx.length})…`, action: () => showMenu(r.left, r.bottom + 4, idx.map(projectItem)) });
   }
   showMenu(r.left, r.bottom + 4, items);
 });
@@ -4614,6 +4762,39 @@ function destroyMaskNodeGpu(node) {
   const t = matteTargets.get(node.id);
   if (t) { t.tex.destroy(); matteTargets.delete(node.id); }
   if (node.kind === 'roto') resetRotoRuntime(node);
+}
+
+/* Masks of DELETED clips are parked: their GPU state (mask targets, node
+ * textures, matte targets, roto runtime) is freed and the stack leaves
+ * clipMasks — so the export's matte and roto walks stop visiting it — but
+ * the CPU side (paint canvases, roto settings) is kept, because undo can
+ * bring the clip back. Parked stacks return, with fresh GPU state, when
+ * their clip reappears. The oldest beyond PARKED_MAX are dropped. */
+const parkedMasks = new Map();   // clipId -> mask state
+const PARKED_MAX = 24;
+
+function gcClipMasks() {
+  for (const clipId of [...clipMasks.keys()]) {
+    if (findClip(comp, clipId)) continue;
+    const st = clipMasks.get(clipId);
+    for (const node of st?.nodes ?? []) destroyMaskNodeGpu(node);
+    if (st) fx?.maskComposer?.destroyPost(st);
+    const target = mediaMaskTargets.get(clipId);
+    if (target) { target.tex?.destroy(); mediaMaskTargets.delete(clipId); }
+    clipMasks.delete(clipId);
+    parkedMasks.delete(clipId);
+    parkedMasks.set(clipId, st);
+    while (parkedMasks.size > PARKED_MAX) parkedMasks.delete(parkedMasks.keys().next().value);
+  }
+  for (const [clipId, st] of [...parkedMasks]) {
+    const hit = findClip(comp, clipId);
+    if (!hit || clipMasks.has(clipId)) continue;
+    parkedMasks.delete(clipId);
+    for (const node of st.nodes) prepareMaskNode(node);
+    clipMasks.set(clipId, st);
+    if (hit.clip.kind === 'media') buildMediaMaskGpu(clipId);
+    else markChainDirty();
+  }
 }
 
 /** Drop a clip's mask entirely: node GPU state (whoever owns it), the
@@ -8702,9 +8883,14 @@ function ensureShapeAsset(clip) {
  * asset and redraw stale ones. Cheap: one string compare per shape clip. */
 function reconcileShapeAssets() {
   if (!fx?.device) return;
+  const live = new Set();
   for (const track of comp.tracks)
     for (const clip of track.clips)
-      if (isShapeClip(clip)) ensureShapeAsset(clip);
+      if (isShapeClip(clip)) { ensureShapeAsset(clip); live.add(clip.assetId); }
+  // A shape asset is regenerated from its clip whenever needed, so one whose
+  // clip is gone (deleted, or undone away) just frees its texture.
+  for (const a of [...assets.values()])
+    if (a.kind === 'shape' && !live.has(a.id)) { disposeAsset(a); assets.delete(a.id); }
 }
 
 /* -- layer footprint ---------------------------------------------------
@@ -12360,28 +12546,62 @@ async function prepareMediaFxSettled(t, activeMedia) {
 
 const AUDIO_SR = 48000;   // Opus native rate
 
-/** Decode an asset's audio once and cache it on the asset (null = no
- * decodable audio stream). decodeAudioData demuxes the audio straight out
- * of the video container; a video with no audio track simply rejects. */
-async function decodeAssetAudio(asset) {
-  if (asset._audioBuf !== undefined) return asset._audioBuf;
-  try {
-    const file = asset.file ?? await idbGet(`asset:${asset.id}`);
-    const decodeCtx = new OfflineAudioContext(2, 1, AUDIO_SR);
-    asset._audioBuf = await decodeCtx.decodeAudioData(await file.arrayBuffer());
-  } catch (e) {
-    console.warn(`slangfx: no audio for '${asset.name}':`, e);
-    asset._audioBuf = null;
-  }
-  return asset._audioBuf;
+/** Decode an asset's audio (null = no decodable audio stream).
+ * decodeAudioData demuxes the audio straight out of the video container; a
+ * video with no audio track simply rejects.
+ *
+ * Decoded PCM is big (48 kHz stereo float ≈ 23 MB a minute), so it is not
+ * kept for the session: concurrent callers share one in-flight decode, and
+ * the buffer (plus any reversed copy) is dropped once nothing has used it
+ * for AUDIO_KEEP_MS. A failure to READ the file is not cached — only "this
+ * file has no audio" is. */
+const AUDIO_KEEP_MS = 60_000;
+function decodeAssetAudio(asset) {
+  touchAssetAudio(asset);
+  if (asset._audioBuf !== undefined) return Promise.resolve(asset._audioBuf);
+  asset._audioDecode ??= (async () => {
+    let file;
+    try {
+      file = asset.file ?? await idbGet(`asset:${asset.id}`);
+    } catch (e) {
+      console.warn(`slangfx: could not read '${asset.name}':`, e);
+      return null;   // transient: the next call tries again
+    }
+    if (!file) return null;
+    try {
+      const decodeCtx = new OfflineAudioContext(2, 1, AUDIO_SR);
+      asset._audioBuf = await decodeCtx.decodeAudioData(await file.arrayBuffer());
+    } catch (e) {
+      console.warn(`slangfx: no audio for '${asset.name}':`, e);
+      asset._audioBuf = null;
+    }
+    touchAssetAudio(asset);
+    return asset._audioBuf;
+  })().finally(() => { asset._audioDecode = null; });
+  return asset._audioDecode;
+}
+
+/** Note a use of an asset's decoded audio; it is released AUDIO_KEEP_MS
+ * after the last one. (A timer outside any render loop — fine here.) */
+function touchAssetAudio(asset) {
+  asset._audioUsedAt = performance.now();
+  if (asset._audioTimer) return;
+  const check = () => {
+    const idle = performance.now() - asset._audioUsedAt;
+    if (idle < AUDIO_KEEP_MS) { asset._audioTimer = setTimeout(check, AUDIO_KEEP_MS - idle + 50); return; }
+    asset._audioTimer = null;
+    if (asset._audioBuf) delete asset._audioBuf;   // re-decoded on demand
+    asset._audioBufRev = null;
+  };
+  asset._audioTimer = setTimeout(check, AUDIO_KEEP_MS + 50);
 }
 
 /** Sample-reversed copy of an asset's decoded audio, built once. Media
  * elements can't play backwards, so a reversed clip is silent in the live
  * preview — this buffer is how the offline mix makes it real. */
-function reversedAudioBuf(asset) {
+function reversedAudioBuf(asset, buf = asset._audioBuf) {
+  touchAssetAudio(asset);
   if (asset._audioBufRev) return asset._audioBufRev;
-  const buf = asset._audioBuf;
   const out = new AudioBuffer({
     numberOfChannels: buf.numberOfChannels,
     length: buf.length,
@@ -12405,24 +12625,27 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
   // One decode per asset however many clips use it — and the slow part of
   // the whole mix the first time a song is touched, so it is worth naming.
   const sources = [...new Set(entries.map((e) => e.asset))];
+  // Hold the decoded buffers locally for the whole mix: the asset's cached
+  // copy can be released by its idle timer while a long mix runs.
+  const bufs = new Map();
   for (let i = 0; i < sources.length; i++) {
     onStage?.({ phase: 'decode', done: i, total: sources.length, name: sources[i].name });
-    await decodeAssetAudio(sources[i]);
+    bufs.set(sources[i], await decodeAssetAudio(sources[i]));
   }
   onStage?.({ phase: 'mix', done: sources.length, total: sources.length });
-  if (!entries.some(({ asset }) => asset._audioBuf)) return null;
+  if (![...bufs.values()].some(Boolean)) return null;
 
   const ctx = new OfflineAudioContext(channels, Math.max(1, Math.ceil(comp.dur * sampleRate)), sampleRate);
   const step = 1 / comp.fps;
 
   for (const { clip, asset } of entries) {
-    const buf = asset._audioBuf;
+    const buf = bufs.get(asset);
     if (!buf) continue;
     const rev = clipReversed(clip);
     const pingpong = clipPingPong(clip);
     const remap = clipTimeRemap(clip);
     const src = ctx.createBufferSource();
-    src.buffer = rev ? reversedAudioBuf(asset) : buf;
+    src.buffer = rev ? reversedAudioBuf(asset, buf) : buf;
     if (remap) {
       // A time curve is baked straight into a buffer the length of the
       // clip: holds, ramps and backward legs all fall out of the one

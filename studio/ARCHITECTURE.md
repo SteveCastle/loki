@@ -743,6 +743,15 @@ stored. Media that fails to restore stays in the project as an offline
 entry (never silently dropped), and removing media keeps its blob so undo
 can bring it back (`rehydrateMissingAssets`).
 
+Masks are serialized only into saved JSON (`projectJSON`), never into the
+live comp, so undo snapshots stay small. Re-imported media is matched to an
+existing blob by content (size + SHA-256 of the first/last 2 MB, the
+`asset-index` record); a boot-time `sweepStorage` deletes `asset:`,
+`proxy:` and `roto:` records that neither the autosave nor any saved project
+references. Decoded audio is shared per in-flight decode and released after a
+minute unused. Deleted clips park their masks (GPU freed, CPU kept) until
+undo brings them back.
+
 Two guards worth knowing about, because both fix real data-loss bugs:
 `masksLoaded` stays false until `loadClipMasks` has hydrated the project,
 so a save racing the restore can't blank out masks it hasn't read yet

@@ -269,7 +269,7 @@ test('autosave: held while restoring, written in order, failures reported', asyn
     Promise, JSON, setTimeout, clearTimeout,
     restoring: false, saveAfterRestore: false, saveTimer: null, saveError: null,
     legacyAutosaveCleared: true, saveChain: Promise.resolve(), AUTOSAVE_KEY: 'autosave',
-    projectPayload: () => ({ n: ++payload }),
+    projectJSON: (extra) => JSON.stringify({ n: ++payload, ...extra }),
     idbSet: (key, val) => new Promise((r) => setTimeout(() => { writes.push(JSON.parse(val).n); r(); }, 5 - writes.length)),
     reportSaveError: (e) => errors.push(e), updateProjectButton: noop, setStatus: noop,
     localStorage: { removeItem: noop }, UNLOAD_JOURNAL_KEY: 'j', Date,
@@ -416,6 +416,80 @@ test('roto masks on loop-cycled clips map every frame to its own source frame', 
     // each source frame analyzed once, not once per cycle
     assert.ok(plan.frames.length <= Math.round(1.5 * 30) + 2, `${plan.frames.length} frames walked`);
   }
+});
+
+test('saving serializes live masks without writing them into the comp', () => {
+  const clip = { id: 'c', kind: 'media', start: 0, dur: 1, props: {}, mask: { stale: true } };
+  const other = { id: 'd', kind: 'media', start: 0, dur: 1, props: {} };
+  const comp = { tracks: [{ clips: [clip, other] }] };
+  const ctx = {
+    comp, JSON, Set, clipMasks: new Map([['c', { nodes: [1] }]]), masksLoaded: true,
+    serializeMaskState: (m) => ({ fresh: m.nodes.length }),
+    projectPayload: () => ({ comp, assets: [] }),
+  };
+  const json = appFunction('projectJSON', ctx)({ savedAt: 5 });
+  const out = JSON.parse(json);
+  assert.deepEqual(out.comp.tracks[0].clips[0].mask, { fresh: 1 });
+  assert.equal(out.comp.tracks[0].clips[1].mask, null);   // no live mask: none saved
+  assert.equal(out.savedAt, 5);
+  assert.deepEqual(clip.mask, { stale: true });            // the live comp is untouched
+  assert.equal('mask' in other, false);
+});
+
+test('decoded audio: one shared decode, transient read failures not cached', async () => {
+  let decodes = 0;
+  let reads = 0;
+  const ctx = {
+    Promise, console, performance, setTimeout, clearTimeout, AUDIO_SR: 48000, AUDIO_KEEP_MS: 60000,
+    idbGet: async () => { reads++; if (reads === 1) throw new Error('transient'); return { arrayBuffer: async () => new ArrayBuffer(8) }; },
+    OfflineAudioContext: class { decodeAudioData() { decodes++; return Promise.resolve({ duration: 1 }); } },
+  };
+  ctx.touchAssetAudio = appFunction('touchAssetAudio', ctx);
+  const decode = appFunction('decodeAssetAudio', ctx);
+  const asset = { id: 'a', name: 'a.wav' };
+  assert.equal(await decode(asset), null);       // read failed…
+  assert.equal(asset._audioBuf, undefined);      // …and is not remembered
+  const [x, y] = await Promise.all([decode(asset), decode(asset)]);
+  assert.equal(decodes, 1);                      // concurrent callers share it
+  assert.equal(x, y);
+  clearTimeout(asset._audioTimer);
+});
+
+test('a deleted clip parks its mask (GPU freed) and gets it back on undo', () => {
+  const clip = { id: 'm', kind: 'media', start: 0, dur: 1, props: {} };
+  const comp = { tracks: [{ clips: [clip] }] };
+  const node = { id: 'n1', kind: 'paint' };
+  const st = { nodes: [node] };
+  const freed = [];
+  const built = [];
+  const ctx = {
+    ...model, comp, clipMasks: new Map([['m', st]]), parkedMasks: new Map(), PARKED_MAX: 24,
+    mediaMaskTargets: new Map([['m', { tex: { destroy: () => freed.push('target') } }]]),
+    destroyMaskNodeGpu: (n) => freed.push(n.id), fx: { maskComposer: { destroyPost: noop } },
+    prepareMaskNode: noop, buildMediaMaskGpu: (id) => built.push(id), markChainDirty: noop,
+  };
+  const gc = appFunction('gcClipMasks', ctx);
+  comp.tracks[0].clips = [];          // delete
+  gc();
+  assert.equal(ctx.clipMasks.has('m'), false);
+  assert.deepEqual(freed, ['n1', 'target']);
+  assert.equal(ctx.parkedMasks.get('m'), st);
+  comp.tracks[0].clips = [clip];      // undo
+  gc();
+  assert.equal(ctx.clipMasks.get('m'), st);
+  assert.deepEqual(built, ['m']);
+});
+
+test('shape assets whose clip is gone free their texture', () => {
+  const disposed = [];
+  const assets = new Map([['shape:gone', { id: 'shape:gone', kind: 'shape' }], ['v', { id: 'v', kind: 'video' }]]);
+  const ctx = {
+    fx: { device: {} }, comp: { tracks: [] }, assets, Set,
+    isShapeClip: () => false, ensureShapeAsset: noop, disposeAsset: (a) => disposed.push(a.id),
+  };
+  appFunction('reconcileShapeAssets', ctx)();
+  assert.deepEqual(disposed, ['shape:gone']);
+  assert.equal(assets.has('v'), true);
 });
 
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {

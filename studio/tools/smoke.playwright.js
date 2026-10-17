@@ -57,6 +57,19 @@ async (page) => {
       return m;
     };
     document.addEventListener('seeking', (e) => { e.target.__seeks = (e.target.__seeks ?? 0) + 1; }, true);
+    // Count GPU textures still alive (created minus destroyed) for leak checks.
+    window.__texLive = 0;
+    if (window.GPUDevice) {
+      const create = GPUDevice.prototype.createTexture;
+      GPUDevice.prototype.createTexture = function (...a) {
+        const tex = create.apply(this, a);
+        window.__texLive++;
+        const destroy = tex.destroy.bind(tex);
+        let gone = false;
+        tex.destroy = () => { if (!gone) { gone = true; window.__texLive--; } return destroy(); };
+        return tex;
+      };
+    }
   });
 
   // Fresh origin state: no autosave, no stored assets. A background window
@@ -402,6 +415,34 @@ async (page) => {
   check('big paint mask survives reload (exact pixels)', after.sum === paintBytes.sum && after.splitMaskKept,
     { ...after, expected: paintBytes.sum });
 
+  // 16. Undo snapshots don't carry painted-mask PNGs (saves used to write
+  // them into the live comp, so every later snapshot copied them).
+  await page.evaluate(() => window.studio.onModelChange({}));
+  await page.waitForTimeout(1500);   // a save lands
+  const snap = await page.evaluate(() => {
+    const h = window.studio.timeline.host.history;
+    const c = window.comp();
+    h.record(c, () => { c.tracks[0].name = 'snapshot-probe'; });
+    const last = h.undoStack[h.undoStack.length - 1] ?? '';
+    return { bytes: last.length, png: last.includes('data:image/png') };
+  });
+  check('undo snapshots carry no mask PNGs', !snap.png && snap.bytes < 200_000, snap);
+
+  // 17. Deleting a masked clip frees its mask GPU state (parked for undo);
+  // undo brings the mask back.
+  const parked = await page.evaluate(async (id) => {
+    window.studio.timeline.selectClip(id);
+    document.activeElement?.blur();
+    window.studio.timeline.deleteSelection();
+    const gone = !window.studio.clipMasks.has(id) && window.studio.parkedMasks.has(id);
+    window.studio.timeline.host.undo();
+    await new Promise((r) => setTimeout(r, 100));
+    const back = window.studio.clipMasks.has(id) && !window.studio.parkedMasks.has(id)
+      && window.comp().tracks.some((tr) => tr.clips.some((k) => k.id === id));
+    return { gone, back };
+  }, origId);
+  check('a deleted clip parks its mask; undo restores it', parked.gone && parked.back, parked);
+
   // 9. Removing media is undoable: the clips AND the media come back.
   const assetId = await page.evaluate(() => [...window.studio.assets.values()].find((a) => a.name === 'tone.mp4').id);
   const clipsOf = () => page.evaluate((a) => window.comp().tracks.flatMap((t) => t.clips).filter((c) => c.assetId === a).length, assetId);
@@ -482,6 +523,58 @@ async (page) => {
   check('audio drivers follow a slid clip and its undo', atStart && slid && undone,
     { atStart, slid, undone, peakFrame: await drvPeak() });
 
+  // 18. The storage sweep frees records nothing references and keeps the rest.
+  const swept = await page.evaluate(async () => {
+    const tx = (mode, fn) => new Promise((res) => {
+      const r = indexedDB.open('lowkey-studio', 1);
+      r.onsuccess = () => {
+        const t = r.result.transaction('media', mode);
+        const out = fn(t.objectStore('media'));
+        t.oncomplete = () => { r.result.close(); res(out?.result ?? null); };
+      };
+    });
+    await tx('readwrite', (s) => { s.put(new Blob(['x']), 'asset:orphan_smoke'); s.put({ blobs: [] }, 'roto:orphan_node'); });
+    await window.studio.sweepStorage();
+    const keys = await tx('readonly', (s) => s.getAllKeys());
+    const burst = [...window.studio.assets.values()].find((a) => a.name === 'burst.wav');
+    return { orphanGone: !keys.includes('asset:orphan_smoke') && !keys.includes('roto:orphan_node'),
+      liveKept: keys.includes(`asset:${burst.id}`) };
+  });
+  check('storage sweep frees unreferenced records only', swept.orphanGone && swept.liveKept, swept);
+
+  // 19. Re-importing the same file reuses its stored blob (no second copy).
+  const dedupe = await page.evaluate(async () => {
+    const keyCount = () => new Promise((res) => {
+      const r = indexedDB.open('lowkey-studio', 1);
+      r.onsuccess = () => {
+        const q = r.result.transaction('media').objectStore('media').getAllKeys();
+        q.onsuccess = () => { r.result.close(); res(q.result.filter((k) => String(k).startsWith('asset:')).length); };
+      };
+    });
+    const before = await keyCount();
+    const old = [...window.studio.assets.values()].find((a) => a.name === 'burst.wav');
+    window.studio.removeAsset(old);   // gone from the project, blob kept
+    return { before, oldId: old.id };
+  });
+  await page.setInputFiles('#file-input', 'C:/Users/steph/dev/loki/.playwright-mcp/burst.wav');
+  await page.waitForFunction(() => [...window.studio.assets.values()].some((a) => a.name === 'burst.wav' && a.ready),
+    null, { timeout: 20000 });
+  await page.waitForTimeout(500);
+  const dedupe2 = await page.evaluate(async () => {
+    const ids = [...window.studio.assets.values()].filter((a) => a.name === 'burst.wav').map((a) => a.id);
+    const n = await new Promise((res) => {
+      const r = indexedDB.open('lowkey-studio', 1);
+      r.onsuccess = () => {
+        const q = r.result.transaction('media').objectStore('media').getAllKeys();
+        q.onsuccess = () => { r.result.close(); res(q.result.filter((k) => String(k).startsWith('asset:')).length); };
+      };
+    });
+    return { ids, after: n };
+  });
+  check('re-importing a file reuses its stored copy',
+    dedupe2.ids.length === 1 && dedupe2.ids[0] === dedupe.oldId && dedupe2.after === dedupe.before,
+    { ...dedupe, ...dedupe2 });
+
   // 15. The camera-shake case: shake on the VISUAL clip, its hit driven by
   // the bass band of a separate audio track that was trimmed at the front
   // and slid to the start. The hit uniform must rise on the hits you hear,
@@ -549,6 +642,29 @@ async (page) => {
     { heard: heard.map((v) => +v.toFixed(3)), shook: shook.map((v) => +v.toFixed(3)), expectHits });
   check('bass release tail rings on after each hit', tail.length > 0 && tail.every((v) => v > 0.3),
     { tail: tail.map((v) => +v.toFixed(2)) });
+
+  // 20. Adding and removing an effect returns every GPU texture it made
+  // (torn-down per-clip chains used to leak their runtimes, preset
+  // textures and mask state).
+  const settleChains = () => page.waitForFunction((vid) => {
+    const e = window.studio.mediaChains.get(vid);
+    return !e || (!e.building && !e.dirty);
+  }, videoId, { timeout: 15000, polling: 100 }).catch(() => {});
+  const cycleShake = async (on) => {
+    await page.evaluate(([vid, on]) => {
+      const clip = window.comp().tracks.flatMap((tr) => tr.clips).find((k) => k.id === vid);
+      clip.effects = on ? [{ id: `fx_${Math.random().toString(36).slice(2)}`, name: 'camera-shake', fxKind: 'preset',
+        path: 'shaders/motion/camera-shake/camera-shake.slangp', enabled: true, overlay: null, params: {} }] : [];
+      window.studio.onModelChange({ structural: true });
+    }, [videoId, on]);
+    await settleChains();
+    await page.waitForTimeout(400);
+  };
+  await cycleShake(false);
+  const texBefore = await page.evaluate(() => window.__texLive);
+  for (let i = 0; i < 3; i++) { await cycleShake(true); await cycleShake(false); }
+  const texAfter = await page.evaluate(() => window.__texLive);
+  check('adding and removing an effect frees its GPU textures', texAfter - texBefore <= 2, { texBefore, texAfter });
 
   check('no page errors', errors.length === 0, errors.slice(0, 5));
   return { results, errors };

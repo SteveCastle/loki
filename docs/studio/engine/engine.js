@@ -264,6 +264,7 @@ class PresetRuntime {
         });
         device.queue.copyExternalImageToTexture({ source: bitmap }, { texture: gpuTex }, [bitmap.width, bitmap.height]);
         this.extTextures.set(tex.name, {
+          tex: gpuTex,   // kept so destroy() can free it (only the view was, a leak per rebuild)
           view: gpuTex.createView(),
           sampler: device.createSampler({
             magFilter: tex.filterLinear ? 'linear' : 'nearest',
@@ -560,6 +561,8 @@ class PresetRuntime {
       ps.uboBuf?.destroy();
       ps.pushBuf?.destroy();
     }
+    for (const ext of this.extTextures?.values() ?? []) ext.tex?.destroy();
+    this.extTextures?.clear();
   }
 }
 
@@ -609,13 +612,13 @@ export class SlangFx {
       magFilter: 'linear', minFilter: 'linear',
       addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge',
     });
-    const dummy = fx.device.createTexture({
+    const dummy = fx._dummyTex = fx.device.createTexture({
       size: [1, 1], format: 'rgba8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
     fx.device.queue.writeTexture({ texture: dummy }, new Uint8Array([0, 0, 0, 255]), {}, [1, 1]);
     fx.dummyView = dummy.createView();
-    const white = fx.device.createTexture({
+    const white = fx._whiteTex = fx.device.createTexture({
       size: [1, 1], format: 'rgba8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
@@ -1078,8 +1081,20 @@ export class SlangFx {
     return canvas.convertToBlob({ type: 'image/png' });
   }
 
+  /** Free everything this engine created: layer runtimes and their mask
+   * GPU state, the input texture, the shared-shape quad and 1×1 textures.
+   * (A per-clip chain pair used to leak all but the runtimes and input.) */
   destroy() {
-    for (const layer of this.layers) layer.runtime?.destroy();
+    for (const layer of this.layers) {
+      this._destroyLayerMaskGpu(layer);
+      layer.runtime?.destroy();
+      layer.runtime = null;
+    }
     this.inputTexture?.destroy();
+    this.inputTexture = null;
+    this.quad?.vbuf.destroy();
+    this.quad?.ibuf.destroy();
+    this._dummyTex?.destroy();
+    this._whiteTex?.destroy();
   }
 }
