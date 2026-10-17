@@ -28,6 +28,22 @@ function appFunction(name, context) {
   return vm.runInNewContext(`(${app.slice(start, end)})`, context);
 }
 const noop = () => {};
+
+/** syncMedia plus the slot helpers it leans on, sharing one context. */
+function mediaContext(extra) {
+  const context = {
+    ...model, playing: true, audioState: {}, drivenEval: noop,
+    loopSrc: (t, len) => t % len, clipSlots: new Map(), slotOwners: new Map(), audioCtx: null,
+    document, $: () => document.body, applyAudioPrefsTo: noop,
+    uploadVideoFrame: noop, isScrubbing: () => false,
+    fx: { device: { createTexture: () => ({ createView: () => ({}), destroy: noop }) } },
+    GPUTextureUsage: {},
+    ...extra,
+  };
+  for (const name of ['assignMediaSlots', 'sameFrames', 'mediaInstance', 'syncMediaElement', 'syncMedia'])
+    context[name] = appFunction(name, context);
+  return context;
+}
 function setup() {
   const comp = model.newComp({ dur: 30 });
   const history = new model.History();
@@ -111,11 +127,8 @@ test('hide and mute independently control preview visuals and preview/export aud
     comp.tracks.push({ hidden, muted, clips: [clip] });
     const el = { paused: true, currentTime: 0, play() { this.paused = false; return Promise.resolve(); }, pause() { this.paused = true; } };
     const assets = new Map([['asset', { id: 'asset', kind: kind === 'media' ? 'video' : 'audio', ready: true, duration: 5, el }]]);
-    const context = {
-      ...model, comp, assets, playing: true, audioState: {}, drivenEval: noop,
-      loopSrc: (t, len) => t % len,
-    };
-    const syncMedia = appFunction('syncMedia', context);
+    const context = mediaContext({ comp, assets });
+    const syncMedia = context.syncMedia;
     let visualClips;
     const tick = appFunction('tick', {
       ...model, comp, syncMedia, tCur: 1, playing: true,
@@ -135,6 +148,51 @@ test('hide and mute independently control preview visuals and preview/export aud
     assert.equal(audioEntries(false).length, muted ? 0 : 1);
     assert.equal(audioEntries(true).length, 1);
   }
+});
+
+test('two clips of one video play at once through separate elements', () => {
+  // A muted visible copy over a hidden audio-only copy (and the reverse):
+  // each keeps its own element, so neither's mute or seek leaks into the other.
+  for (const [topMuted, bottomMuted] of [[true, false], [false, true]]) {
+    const top = { id: 'top', assetId: 'asset', kind: 'media', start: 0, dur: 5, in: 0, props: {} };
+    const bottom = { id: 'bottom', assetId: 'asset', kind: 'media', start: 0, dur: 5, in: 2, props: {} };
+    const comp = model.newComp({ dur: 5 });
+    comp.tracks.push({ muted: topMuted, clips: [top] }, { hidden: true, muted: bottomMuted, clips: [bottom] });
+    const el = document.createElement('video');
+    const assets = new Map([['asset', { id: 'asset', kind: 'video', ready: true, duration: 5, el, w: 4, h: 4 }]]);
+    const context = mediaContext({ comp, assets });
+    dom.window.HTMLMediaElement.prototype.play = function () { this._playing = true; return Promise.resolve(); };
+    context.syncMedia(1, model.activeClips(comp, 1, 'media'));
+    const topEl = context.clipSlots.get('top').el;
+    const bottomEl = context.clipSlots.get('bottom').el;
+    assert.notEqual(topEl, bottomEl);
+    assert.equal(topEl.muted, topMuted);
+    assert.equal(bottomEl.muted, bottomMuted);
+    assert.ok(topEl._playing && bottomEl._playing);
+    assert.equal(topEl.currentTime, 1);
+    assert.equal(bottomEl.currentTime, 3);
+    // The asset's own element stays with the clip that already had it.
+    const owner = assets.get('asset')._ownerClip;
+    context.syncMedia(1.1, model.activeClips(comp, 1.1, 'media'));
+    assert.equal(assets.get('asset')._ownerClip, owner);
+    assert.equal(context.clipSlots.get(owner).el, el);
+  }
+});
+
+test('a copy in step with its original draws the original element’s frames', () => {
+  const orig = { id: 'orig', assetId: 'asset', kind: 'media', start: 0, dur: 5, in: 0, props: {} };
+  const copy = { id: 'copy', assetId: 'asset', kind: 'media', start: 0, dur: 5, in: 0, props: {} };
+  const comp = model.newComp({ dur: 5 });
+  comp.tracks.push({ muted: true, clips: [copy] }, { clips: [orig] });
+  const el = document.createElement('video');
+  const asset = { id: 'asset', kind: 'video', ready: true, duration: 5, el, w: 4, h: 4, _ownerClip: 'orig' };
+  const context = mediaContext({ comp, assets: new Map([['asset', asset]]) });
+  context.syncMedia(1, model.activeClips(comp, 1, 'media'));
+  assert.equal(context.clipSlots.get('copy'), asset);   // exact frames, no ghosting
+  assert.ok(asset.instances.get('copy').el.paused);      // muted: no second decode
+  copy.in = 1;                                           // out of step: its own decoder
+  context.syncMedia(1, model.activeClips(comp, 1, 'media'));
+  assert.equal(context.clipSlots.get('copy'), asset.instances.get('copy'));
 });
 
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {

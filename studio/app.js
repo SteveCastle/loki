@@ -410,10 +410,14 @@ function pause() {
 function tick() {
   requestAnimationFrame(tick);
   if (!fx?.inputTexture) return;
-  if (offlineJob) return;   // the offline render loop owns the pipeline
-  if (rotoJob) return;      // roto analysis owns the media elements' seek position
-  if (loopJob?.busy) return;   // ...as does the loop finder's sampling walk
-                               // (its candidate preview plays normally)
+  // The offline render loop owns the pipeline; roto analysis owns the media
+  // elements' seek position, as does the loop finder's sampling walk (its
+  // candidate preview plays normally). Copies' extra decoders aren't theirs
+  // to drive, so they hold still rather than play on unsynced.
+  if (offlineJob || rotoJob || loopJob?.busy) {
+    pauseMediaInstances();
+    return;
+  }
 
   if (playing) {
     tCur = clock.t + (performance.now() - clock.perf) / 1000;
@@ -636,115 +640,251 @@ function drivenEval(prop, tc, tComp) {
 
 /* ---- media sync ---------------------------------------------------- */
 
+/* ---- media slots ----------------------------------------------------
+ * A clip plays through a SLOT: a media element plus (for video) the
+ * texture its frames land in. The asset itself is the first slot. When
+ * several clips of one file are live at once — a blurred copy over the
+ * original, a masked copy, an audio-only copy on a hidden track — each
+ * further clip gets an instance of its own (element, texture, audio
+ * source), so every layer keeps its own time, frames, mute and audio
+ * chain instead of fighting over one element. */
+
+const clipSlots = new Map();   // clipId -> slot it played through this frame
+const slotOwners = new Map();  // assetId -> clip on the asset's own element
+
+/** Two clips showing the same source frames now and a frame on — a copy
+ * stacked in step with its original (blurred over it, masked over it). */
+function sameFrames(a, b, t) {
+  const tol = 0.25 / comp.fps;
+  return Math.abs(srcTime(a, t) - srcTime(b, t)) < tol
+    && Math.abs(srcTime(a, t + 1 / comp.fps) - srcTime(b, t + 1 / comp.fps)) < tol;
+}
+
+/** Hand each live clip of a timed asset a slot. The asset's own element
+ * stays with the clip that already has it, so a copy starting mid-play
+ * never steals it (and its decode position) from the original. */
+function assignMediaSlots(entries) {
+  clipSlots.clear();
+  slotOwners.clear();
+  const live = new Map();   // assetId -> clipIds live this frame
+  for (const { clip } of entries) {
+    const asset = assets.get(clip.assetId);
+    if (!asset?.ready || !asset.el || (asset.kind !== 'video' && asset.kind !== 'audio')) continue;
+    if (!live.has(asset.id)) live.set(asset.id, []);
+    live.get(asset.id).push(clip.id);
+  }
+  for (const [assetId, clipIds] of live) {
+    const asset = assets.get(assetId);
+    if (!clipIds.includes(asset._ownerClip)) asset._ownerClip = clipIds[0];
+    slotOwners.set(assetId, entries.find((e) => e.clip.id === asset._ownerClip).clip);
+    for (const id of clipIds)
+      clipSlots.set(id, id === asset._ownerClip ? asset : mediaInstance(asset, id));
+  }
+}
+
+/** The extra slot for one clip of an asset (built on first use). */
+function mediaInstance(asset, clipId) {
+  asset.instances ??= new Map();
+  let inst = asset.instances.get(clipId);
+  if (!inst) {
+    const el = document.createElement(asset.kind === 'audio' ? 'audio' : 'video');
+    el.playsInline = true;
+    el.preload = 'auto';
+    el.loop = true;
+    el.crossOrigin = 'anonymous';
+    el.src = asset.url;
+    $('media-pool').appendChild(el);
+    applyAudioPrefsTo(el);
+    inst = { name: asset.name, el, w: asset.w, h: asset.h, audioNode: null };
+    if (asset.kind === 'video') {
+      inst.texture = fx.device.createTexture({
+        label: `asset ${asset.name} (clip ${clipId})`,
+        size: [asset.w, asset.h],
+        format: 'rgba8unorm',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      inst.view = inst.texture.createView();
+      // Until its own decode lands, show the asset's current frame rather
+      // than a blank texture.
+      if (asset.el.readyState >= 2) uploadVideoFrame(inst, asset.el);
+    }
+    asset.instances.set(clipId, inst);
+  }
+  if (audioCtx && !inst.audioNode) {
+    try {
+      inst.audioNode = audioCtx.createMediaElementSource(inst.el);
+    } catch (e) {
+      console.warn('slangfx: could not attach audio for', asset.name, e);
+    }
+  }
+  return inst;
+}
+
+function disposeMediaInstance(inst) {
+  inst.el.pause();
+  inst.el.removeAttribute('src');
+  inst.el.load();
+  inst.el.remove();
+  try { inst.audioNode?.disconnect(); } catch {}
+  inst.texture?.destroy();
+}
+
+/** Drop instances whose clip is gone. */
+function gcMediaInstances() {
+  for (const asset of assets.values())
+    for (const [clipId, inst] of asset.instances ?? [])
+      if (findClip(comp, clipId)?.clip?.assetId !== asset.id) {
+        disposeMediaInstance(inst);
+        asset.instances.delete(clipId);
+      }
+}
+
+function pauseMediaInstances() {
+  for (const asset of assets.values())
+    for (const inst of asset.instances?.values() ?? [])
+      if (!inst.el.paused) inst.el.pause();
+}
+
+/** The slot a clip draws from: its instance while it shares the file with
+ * another live clip, else the asset. */
+function clipSlot(clip, asset) {
+  return clipSlots.get(clip.id) ?? asset;
+}
+
 function syncMedia(t, activeMedia, activeAudio = []) {
+  const entries = [...activeMedia, ...activeAudio];
+  assignMediaSlots(entries);
   const used = new Set();
-  for (const { track, clip } of [...activeMedia, ...activeAudio]) {
+  for (const { track, clip } of entries) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready) continue;
-    used.add(asset.id);
     if (asset.kind === 'gif') {
       syncGifFrame(asset, clip, t);
       continue;
     }
     if (asset.kind !== 'video' && asset.kind !== 'audio') continue;
-    const el = asset.el;
     // A timed asset always builds its element before it reports ready, but
     // this runs every frame: one missing element must not become a storm
     // of exceptions that takes the whole render loop down.
-    if (!el) continue;
-    // Audio: master prefs × track mute × the clip's animated Volume. With
-    // the Web Audio mixer up, level and effects live in the clip's chain
-    // and the element runs wide open; without it, fall back to the
-    // element's own volume (no effects, but still audible).
-    el.muted = !!audioState.muted || !!track.muted;
-    const clipVol = clip.props.volume
-      ? clamp(drivenEval(clip.props.volume, t - clip.start, t) / 100, 0, 1) : 1;
-    const chain = asset.audioNode ? audioChainFor(clip) : null;
-    if (chain) {
-      el.volume = 1;
-      routeAssetToChain(asset, chain);
-      applyAudioChain(chain, clip, t, clipVol);
-    } else {
-      el.volume = clamp((audioState.volume ?? 1) * clipVol, 0, 1);
+    const slot = clipSlots.get(clip.id);
+    if (!slot) continue;
+    if (slot !== asset && asset.kind === 'video' && sameFrames(clip, slotOwners.get(asset.id), t)) {
+      // In step with the clip on the asset's own element: draw that
+      // element's frames — exact (two free-running decoders drift apart
+      // within the drift tolerance, which ghosts a copy stacked on its
+      // original) and one decode cheaper. The instance carries only sound.
+      clipSlots.set(clip.id, asset);
+      if (track.muted) continue;
     }
-    // Source time, wrapped so clips longer than their source loop.
-    const src = srcTime(clip, t);
-    const len = asset.duration ?? 0;
-    const desired = loopSrc(src, len);
-    // A retimed clip plays its element fast or slow; the drift correction
-    // below then keeps it locked to the comp clock. Browsers accept
-    // 0.0625–16 and throw outside it, so the rate is clamped. Under a
-    // time remap the speed is the curve's slope over the coming frame,
-    // so a ramp re-paces the element as it goes.
-    const speed = clipSpeedAt(clip, t, 1 / comp.fps);
-    const rate = clamp(speed, 0.0625, 16);
-    if (el.playbackRate !== rate) el.playbackRate = rate;
-    // No browser plays media backwards: while the transport runs, a
-    // reversed clip stays paused and chases the comp clock with seeks,
-    // exactly like scrubbing (its audio is silent in the preview — the
-    // export mix plays a reversed buffer and is the real thing). A
-    // freeze frame or a crawl below the rate floor can't free-run either
-    // and is chased the same way.
-    const rev = speed < 0.0625;
-    let proxyScrub = false;
-    if (playing && !rev) {
-      if (el.paused) {
-        el.currentTime = desired;
-        el.play().catch(() => {});
-      } else {
-        // Drift correction, measured around the loop seam.
-        let drift = Math.abs(el.currentTime - desired);
-        if (len > 0.02) drift = Math.min(drift, len - drift);
-        if (drift > 0.15) el.currentTime = desired;
-      }
-    } else if (asset.kind === 'audio') {
-      // Nothing to show for sound: park the element on the scrub position
-      // so hitting play starts from the right sample. (A reversed clip
-      // lands here while playing too — parked, not chased: seeking an
-      // audio element every tick buys nothing audible.)
-      if (!el.paused) el.pause();
-      if (!playing && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
-        el.currentTime = desired;
-    } else {
-      if (!el.paused) el.pause();
-      if (!asset._seekedHook) {
-        asset._seekedHook = true;
-        // Upload the moment a seek lands (the per-tick poll below can be a
-        // frame late) and clear the latest-wins target.
-        el.addEventListener('seeked', () => {
-          asset._seekTarget = null;
-          if (asset.ready && el.readyState >= 2) uploadVideoFrame(asset);
-        });
-      }
-      // Reversed playback chases the same way a scrub does — and wants
-      // the proxy for the same reason: full-res long-GOP seeks can't keep
-      // frame pace.
-      const chasing = isScrubbing() || (playing && rev);
-      const proxyOk = chasing && proxiesEnabled;
-      if (proxyOk) ensureScrubProxy(asset);
-      if (proxyOk && asset.proxyEl?.readyState >= 2) {
-        // Scrub against the all-intra proxy — its seeks land in
-        // milliseconds. The full-res element stays put; once the scrub
-        // settles the branch below re-seeks it and its 'seeked' upload
-        // sharpens the frame.
-        proxyScrub = true;
-        scrubProxyTo(asset, desired);
-      } else if (Math.abs(el.currentTime - desired) > 0.5 / comp.fps) {
-        // Latest-wins: while scrubbing, retargeting mid-seek cancels the
-        // stale seek instead of queueing behind it.
-        const tgt = asset._seekTarget;
-        if ((chasing || !el.seeking) && (tgt == null || Math.abs(tgt - desired) > 0.5 / comp.fps)) {
-          asset._seekTarget = desired;
-          el.currentTime = desired;
-        }
-      }
-    }
-    if (asset.kind === 'video' && !proxyScrub && el.readyState >= 2) uploadVideoFrame(asset);
+    used.add(slot);
+    syncMediaElement(asset, slot, track, clip, t);
   }
-  for (const asset of assets.values())
+  for (const asset of assets.values()) {
     if ((asset.kind === 'video' || asset.kind === 'audio')
-      && asset.ready && !used.has(asset.id) && asset.el && !asset.el.paused)
+      && asset.ready && !used.has(asset) && asset.el && !asset.el.paused)
       asset.el.pause();
+    for (const inst of asset.instances?.values() ?? [])
+      if (!used.has(inst) && !inst.el.paused) inst.el.pause();
+  }
+}
+
+/** Sync one slot's element to its clip. Only the asset's own slot has a
+ * scrub proxy; an instance seeks its full-res element. */
+function syncMediaElement(asset, slot, track, clip, t) {
+  const el = slot.el;
+  // An instance standing in only for sound (its clip draws the asset's
+  // frames) has nothing to upload.
+  const frames = asset.kind === 'video' && clipSlots.get(clip.id) === slot;
+  // Audio: master prefs × track mute × the clip's animated Volume. With
+  // the Web Audio mixer up, level and effects live in the clip's chain
+  // and the element runs wide open; without it, fall back to the
+  // element's own volume (no effects, but still audible).
+  el.muted = !!audioState.muted || !!track.muted;
+  const clipVol = clip.props.volume
+    ? clamp(drivenEval(clip.props.volume, t - clip.start, t) / 100, 0, 1) : 1;
+  const chain = slot.audioNode ? audioChainFor(clip) : null;
+  if (chain) {
+    el.volume = 1;
+    routeAssetToChain(slot, chain);
+    applyAudioChain(chain, clip, t, clipVol);
+  } else {
+    el.volume = clamp((audioState.volume ?? 1) * clipVol, 0, 1);
+  }
+  // Source time, wrapped so clips longer than their source loop.
+  const src = srcTime(clip, t);
+  const len = asset.duration ?? 0;
+  const desired = loopSrc(src, len);
+  // A retimed clip plays its element fast or slow; the drift correction
+  // below then keeps it locked to the comp clock. Browsers accept
+  // 0.0625–16 and throw outside it, so the rate is clamped. Under a
+  // time remap the speed is the curve's slope over the coming frame,
+  // so a ramp re-paces the element as it goes.
+  const speed = clipSpeedAt(clip, t, 1 / comp.fps);
+  const rate = clamp(speed, 0.0625, 16);
+  if (el.playbackRate !== rate) el.playbackRate = rate;
+  // No browser plays media backwards: while the transport runs, a
+  // reversed clip stays paused and chases the comp clock with seeks,
+  // exactly like scrubbing (its audio is silent in the preview — the
+  // export mix plays a reversed buffer and is the real thing). A
+  // freeze frame or a crawl below the rate floor can't free-run either
+  // and is chased the same way.
+  const rev = speed < 0.0625;
+  let proxyScrub = false;
+  if (playing && !rev) {
+    if (el.paused) {
+      el.currentTime = desired;
+      el.play().catch(() => {});
+    } else {
+      // Drift correction, measured around the loop seam.
+      let drift = Math.abs(el.currentTime - desired);
+      if (len > 0.02) drift = Math.min(drift, len - drift);
+      if (drift > 0.15) el.currentTime = desired;
+    }
+  } else if (asset.kind === 'audio') {
+    // Nothing to show for sound: park the element on the scrub position
+    // so hitting play starts from the right sample. (A reversed clip
+    // lands here while playing too — parked, not chased: seeking an
+    // audio element every tick buys nothing audible.)
+    if (!el.paused) el.pause();
+    if (!playing && Math.abs(el.currentTime - desired) > 0.5 / comp.fps)
+      el.currentTime = desired;
+  } else {
+    if (!el.paused) el.pause();
+    if (!slot._seekedHook) {
+      slot._seekedHook = true;
+      // Upload the moment a seek lands (the per-tick poll below can be a
+      // frame late) and clear the latest-wins target.
+      el.addEventListener('seeked', () => {
+        slot._seekTarget = null;
+        // (an instance's clip is fixed; the asset's own slot changes hands)
+        if (asset.ready && el.readyState >= 2
+          && (slot === asset || clipSlots.get(clip.id) === slot)) uploadVideoFrame(slot);
+      });
+    }
+    // Reversed playback chases the same way a scrub does — and wants
+    // the proxy for the same reason: full-res long-GOP seeks can't keep
+    // frame pace.
+    const chasing = isScrubbing() || (playing && rev);
+    const proxyOk = chasing && proxiesEnabled && slot === asset;
+    if (proxyOk) ensureScrubProxy(asset);
+    if (proxyOk && asset.proxyEl?.readyState >= 2) {
+      // Scrub against the all-intra proxy — its seeks land in
+      // milliseconds. The full-res element stays put; once the scrub
+      // settles the branch below re-seeks it and its 'seeked' upload
+      // sharpens the frame.
+      proxyScrub = true;
+      scrubProxyTo(asset, desired);
+    } else if (Math.abs(el.currentTime - desired) > 0.5 / comp.fps) {
+      // Latest-wins: while scrubbing, retargeting mid-seek cancels the
+      // stale seek instead of queueing behind it.
+      const tgt = slot._seekTarget;
+      if ((chasing || !el.seeking) && (tgt == null || Math.abs(tgt - desired) > 0.5 / comp.fps)) {
+        slot._seekTarget = desired;
+        el.currentTime = desired;
+      }
+    }
+  }
+  if (frames && !proxyScrub && el.readyState >= 2) uploadVideoFrame(slot);
 }
 
 /* A GIF is a pre-decoded frame strip, not a <video>: pick the loop frame
@@ -938,8 +1078,9 @@ function drawForClip(clip, t) {
   // which would blank the whole clip rather than leave it alone.
   const masked = mm?.view
     && maskState?.nodes?.some((n) => n.enabled !== false && n.active !== false);
-  // A splat clip shows its own camera's render, not a shared asset texture.
-  let view = asset.view;
+  // A splat clip shows its own camera's render, not a shared asset texture;
+  // a copy of a file playing alongside another shows its own instance's.
+  let view = clipSlot(clip, asset).view;
   if (asset.kind === 'splat') {
     view = splatRenderers.get(clip.id)?.view;
     if (!view) return null;
@@ -1737,6 +1878,7 @@ function onModelChange({ structural = false, transient = false, propKey = null }
   gcEffectState();           // deleted effects release their compiled state
   gcMediaChains();           // clips that lost their effects release theirs
   gcAudioChains();           // …and their audio graphs
+  gcMediaInstances();        // …and copies of a file their extra decoders
   gcSplatRenderers();        // deleted splat clips release their sort buffers
   gcMotionBlur();            // …and clips that turned motion blur off, its targets
   reconcileShapeAssets();    // duplicated/split shape clips get their own asset
@@ -1770,6 +1912,7 @@ function afterModelReplace(what) {
   gcEffectState();
   gcMediaChains();
   gcAudioChains();
+  gcMediaInstances();
   gcSplatRenderers();
   chainKey = '';
   markChainDirty();
@@ -2371,10 +2514,10 @@ function attachAudio(asset) {
 /* ---- per-clip audio chains -------------------------------------------
  * source → [audio effects, in stack order] → volume fader → master.
  *
- * The chain belongs to the CLIP but the source belongs to the ASSET (one
- * media element per file, so two clips of the same file can never play at
- * once anyway) — hence the routing step: whichever clip is live re-points
- * the asset's source node at its own chain input.
+ * The chain belongs to the CLIP but the source belongs to the SLOT (the
+ * asset's element, or an instance when copies of one file play at once —
+ * see media slots) — hence the routing step: whichever clip a slot is
+ * playing re-points that slot's source node at its own chain input.
  *
  * Rebuilds are keyed on the stack, so dragging a parameter never touches
  * the graph — only the AudioParams it drives. */
@@ -2432,7 +2575,8 @@ function destroyAudioChain(clipId) {
   }
   entry.gain.disconnect();
   for (const asset of assets.values())
-    if (asset._routedTo === clipId) asset._routedTo = null;
+    for (const slot of [asset, ...(asset.instances?.values() ?? [])])
+      if (slot._routedTo === clipId) slot._routedTo = null;
 }
 
 /** Drop chains whose clip is gone (or lost its audio). */
@@ -3552,6 +3696,8 @@ function saveProject() {
 /** Release one asset's runtime handles (element, proxy, bitmaps, texture). */
 function disposeAsset(a) {
   if (a.el) { a.el.pause(); a.el.remove(); }
+  for (const inst of a.instances?.values() ?? []) disposeMediaInstance(inst);
+  a.instances?.clear();
   if (a.proxyEl) {
     a.proxyEl.pause();
     try { URL.revokeObjectURL(a.proxyEl.src); } catch {}
@@ -8813,7 +8959,7 @@ function renderChoiceList(list, {
       group('Audio effects', 'audio');
       for (const def of AUDIO_EFFECTS)
         if (def.label.toLowerCase().includes(q) || def.id.includes(q)
-          || def.hint.toLowerCase().includes(q) || 'audio sound'.includes(q))
+          || (def.hint ?? '').toLowerCase().includes(q) || 'audio sound'.includes(q))
           addAudioItem(def);
     }
     if (!list.querySelector('.menu-item')) {
@@ -11788,10 +11934,11 @@ function nextTask() {
  * drift-tolerant sync in syncMedia is what causes recording stutter). */
 function seekMediaExact(t, activeMedia) {
   const waits = [];
+  assignMediaSlots(activeMedia);
   for (const { clip } of activeMedia) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready || asset.kind !== 'video') continue;
-    const el = asset.el;
+    const el = clipSlot(clip, asset).el;
     if (!el.paused) el.pause();
     const desired = loopSrc(srcTime(clip, t), asset.duration ?? 0);
     if (Math.abs(el.currentTime - desired) < 1e-4) continue;
@@ -11815,7 +11962,10 @@ function uploadMediaFrames(t, activeMedia) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready) continue;
     if (asset.kind === 'gif') syncGifFrame(asset, clip, t);
-    else if (asset.kind === 'video' && asset.el.readyState >= 2) uploadVideoFrame(asset);
+    else if (asset.kind === 'video') {
+      const slot = clipSlot(clip, asset);
+      if (slot.el.readyState >= 2) uploadVideoFrame(slot);
+    }
   }
 }
 
