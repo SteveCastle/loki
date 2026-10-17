@@ -280,11 +280,17 @@ export const clipReversed = (clip) => hasSource(clip) && clip.reversed === true;
 /** Loop region: source-seconds the clip cycles through (measured from
  * `in`) once its duration outruns them. 0/absent is the classic model —
  * the clip plays ALL its footage and wraps at the asset ends. Set by the
- * seamless-loop finder; source time, so retiming leaves it alone. Cycle
- * phase is anchored to clip.start (there is no phase field). */
+ * seamless-loop finder; source time, so retiming leaves it alone. */
 export const clipLoopSpan = (clip) =>
   (hasSource(clip) && Number.isFinite(clip?.loopSpan) && clip.loopSpan > 0.02
     ? clip.loopSpan : 0);
+
+/** Where in its cycle a loop-cycled clip starts, in source seconds (added
+ * to the clip's offset before folding into the region). Cycles anchor on
+ * clip.start (clip end, reversed); split and trim move that anchor, and the
+ * phase is what keeps the picture where it was. 0 for unlooped clips. */
+export const clipLoopPhase = (clip) =>
+  (clipLoopSpan(clip) && Number.isFinite(clip.loopPhase) ? clip.loopPhase : 0);
 
 export const clipPingPong = (clip) => clipLoopSpan(clip) > 0 && clip.loopMode === 'pingpong';
 
@@ -294,7 +300,8 @@ export function clipPlayingBackward(clip, t) {
   const reversed = clipReversed(clip);
   if (!clipPingPong(clip)) return reversed;
   const span = clipLoopSpan(clip);
-  const o = (reversed ? clip.dur - (t - clip.start) : t - clip.start) * clipRate(clip);
+  const o = (reversed ? clip.dur - (t - clip.start) : t - clip.start) * clipRate(clip)
+    + clipLoopPhase(clip);
   const phase = ((o % (2 * span)) + 2 * span) % (2 * span);
   return reversed ? phase > 0 && phase <= span : phase >= span;
 }
@@ -358,6 +365,7 @@ export function enableTimeRemap(clip, fps) {
   delete clip.reversed;
   delete clip.loopSpan;
   delete clip.loopMode;
+  delete clip.loopPhase;
   return prop;
 }
 
@@ -417,7 +425,7 @@ export const srcTime = (clip, t) => {
   const remap = clipTimeRemap(clip);
   if (remap) return evalProp(remap, t - clip.start);
   const o = (clipReversed(clip) ? clip.dur - (t - clip.start) : t - clip.start)
-    * clipRate(clip);
+    * clipRate(clip) + clipLoopPhase(clip);
   const span = clipLoopSpan(clip);
   if (clipPingPong(clip)) {
     const phase = ((o % (2 * span)) + 2 * span) % (2 * span);
@@ -434,7 +442,10 @@ export const srcTime = (clip, t) => {
 export function loopSrc(src, len, descending = false) {
   if (!(len > 0.02)) return 0;
   const m = ((src % len) + len) % len;
-  return descending && m < 1e-6 && src >= len - 1e-6 ? len : m;
+  if (descending) return m < 1e-6 && src >= len - 1e-6 ? len : m;
+  // Float noise can land a forward wrap a hair BELOW the multiple (7.7999…
+  // for 7.8): that is still the wrap to frame 0, not the last frame.
+  return len - m < 1e-6 ? 0 : m;
 }
 
 /** srcTime wrapped into an asset of length `len`, honouring direction. */
@@ -629,10 +640,16 @@ export function splitClip(clip, t) {
   // A time curve must not change shape at the cut: pin the source time
   // there on both halves (a key inside a hold stays a hold), or the
   // right half would open on its first key instead of mid-segment.
+  // Only where the pin is exact: inside a linear or hold segment a key at
+  // the cut changes nothing, but inside an EASED segment it splits one
+  // curve into two eased curves and bends the mapping (by most of a second
+  // on a long ease). Unpinned, each half still reads the original curve —
+  // evalProp interpolates keys lying outside a clip just the same.
   const remap = clipTimeRemap(clip);
   if (remap?.anim && remap.keys.length) {
     const before = remap.keys.filter((k) => k.t < offset - 1e-4).pop();
-    upsertKey(remap, offset, evalProp(remap, offset), before?.e ?? 'linear');
+    const e = before?.e ?? 'linear';
+    if (e === 'linear' || e === 'hold') upsertKey(remap, offset, evalProp(remap, offset), e);
   }
   const right = structuredClone(clip);
   right.id = uid('clip');
@@ -643,12 +660,18 @@ export function splitClip(clip, t) {
   // SOURCE for a retimed clip; both halves keep the speed. Forward, the
   // right half starts deeper into the footage; REVERSED, the left half
   // plays the later source, so IT moves up while the right keeps `in`.
-  // A LOOP-CYCLED clip keeps `in`/`loopSpan` on both halves: phase is
-  // anchored to clip.start, so the right half restarts its cycle at the
-  // cut (mid-cycle continuation would need a phase field).
-  if (hasSource(clip) && !clipLoopSpan(clip) && !remap) {
-    if (clipReversed(clip)) clip.in += right.dur * clipRate(clip);
-    else right.in = clip.in + offset * clipRate(clip);
+  // A LOOP-CYCLED clip keeps `in`/`loopSpan` on both halves and carries
+  // its place in the cycle in loopPhase instead: forward, the right half's
+  // anchor moved `offset` in; reversed (anchored on the clip end), the LEFT
+  // half's end moved `right.dur` in.
+  if (hasSource(clip) && !remap) {
+    const rate = clipRate(clip);
+    if (clipLoopSpan(clip)) {
+      const phase = clipLoopPhase(clip);
+      if (clipReversed(clip)) clip.loopPhase = phase + right.dur * rate;
+      else right.loopPhase = phase + offset * rate;
+    } else if (clipReversed(clip)) clip.in += right.dur * rate;
+    else right.in = clip.in + offset * rate;
   }
   reidEffects(right);   // the halves' effects are independent from here on
   // Re-anchor the right half's keys to its new start, and advance any

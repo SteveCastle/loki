@@ -11,7 +11,8 @@ const model = await import(modelURL);
 const dom = new JSDOM('<body></body>');
 Object.assign(globalThis, {
   document: dom.window.document, window: dom.window,
-  innerWidth: 1280, innerHeight: 720,
+  innerWidth: 1280, innerHeight: 720, devicePixelRatio: 1,
+  requestAnimationFrame: (f) => setTimeout(f, 0), cancelAnimationFrame: (id) => clearTimeout(id),
   ResizeObserver: class { observe() {} },
 });
 const { Timeline } = await import(moduleURL(read('./timeline.js')
@@ -136,6 +137,7 @@ test('hide and mute independently control preview visuals and preview/export aud
       clock: { t: 1, perf: 0 }, performance: { now: () => 0 },
       requestAnimationFrame: noop, fx: { inputTexture: {}, render: noop },
       offlineJob: null, rotoJob: null, loopJob: null, trimPreviewT: null, rotoEdit: null, idleFrame: () => false,
+      compFrame: (t) => Math.round(t * 30),
       renderSplats: noop, prepareMotionBlur: noop,
       prepareMasks: noop, prepareMediaFx: (t, clips) => { visualClips = clips; },
       compositeFrame: noop, syncFxChain: noop, applyParams: noop,
@@ -329,6 +331,91 @@ test('idle frames: paused and quiet skips the pipeline, with a keep-alive', () =
   context.playing = false;
   context.lastActivity = 1290;
   assert.equal(idle(1300), false);         // fresh input: render
+});
+
+test('trimming a loop-cycled clip keeps the picture under the playhead', async () => {
+  for (const [rev, edge] of [[false, 'l'], [true, 'r']]) {
+    const { comp, host, timeline } = setup();
+    Object.assign(host, { looping: () => false, playing: () => false, setTrimPreview: noop, onModelChange: noop, onSelect: noop });
+    timeline.snap = false;
+    const clip = { id: 'loop', kind: 'media', assetId: 'a', start: 2, dur: 8, in: 1, rate: 1,
+      loopSpan: 1.5, loopPhase: 0.4, reversed: rev, props: {}, effects: [] };
+    comp.tracks.push({ clips: [clip] });
+    const ref = structuredClone(clip);
+    timeline.render = noop;   // jsdom has no canvas; the drag math is what's under test
+    const handle = document.createElement('div');
+    handle.className = `tl-handle ${edge}`;
+    const px = 0.7 * timeline.pps;
+    const at = (x) => ({ clientX: x, clientY: 5, bubbles: true, pointerId: 1, button: 0, buttons: 1 });
+    const x0 = 100;
+    timeline._clipPointerDown({ ...at(x0), target: handle, preventDefault: noop }, handle, comp.tracks[0], clip, 0);
+    window.dispatchEvent(new window.MouseEvent('pointermove', at(x0 + (edge === 'l' ? px : -px))));
+    window.dispatchEvent(new window.MouseEvent('pointerup', at(x0 + (edge === 'l' ? px : -px))));
+    assert.ok(Math.abs((clip.dur) - 7.3) < 1e-6, `trimmed (${edge}): dur ${clip.dur}`);
+    for (let i = 0; i < 7.3 * 30; i++) {
+      const tt = clip.start + i / 30;
+      const got = model.srcTime(clip, tt);
+      const want = model.srcTime(ref, tt);
+      assert.ok(Math.abs(got - want) < 1e-6, `${rev ? 'reversed' : 'forward'} ${tt}: ${got} vs ${want}`);
+    }
+  }
+});
+
+test('GIF copies on separate clips get separate frames', () => {
+  const frames = [0, 1, 2, 3].map((i) => ({ start: i * 0.5, dur: 0.5, bitmap: { i } }));
+  const a = { id: 'g1', assetId: 'gif', kind: 'media', start: 0, dur: 2, in: 0, props: {} };
+  const b = { id: 'g2', assetId: 'gif', kind: 'media', start: 0, dur: 2, in: 1, props: {} };
+  const comp = model.newComp({ dur: 2 });
+  comp.tracks.push({ clips: [a] }, { clips: [b] });
+  const uploads = [];
+  const gif = { id: 'gif', kind: 'gif', ready: true, duration: 2, frames, w: 4, h: 4, texture: { id: 'asset' } };
+  const context = mediaContext({ comp, assets: new Map([['gif', gif]]) });
+  context.fx = {
+    device: {
+      createTexture: () => ({ createView: () => ({}), destroy: noop }),
+      queue: { copyExternalImageToTexture: (src, dst) => uploads.push([src.source.i, dst.texture]) },
+    },
+  };
+  context.noteActivity = noop;
+  for (const name of ['syncGifFrame', 'clipSlot']) context[name] = appFunction(name, context);
+  context.syncMedia(0.1, model.activeClips(comp, 0.1, 'media'));
+  const slotA = context.clipSlots.get('g1');
+  const slotB = context.clipSlots.get('g2');
+  assert.notEqual(slotA, slotB);
+  assert.notEqual(slotA.texture, slotB.texture);
+  assert.equal(slotA._frameIdx === 0 ? slotB._frameIdx : slotA._frameIdx, 2);   // in = 1 s → frame 2
+});
+
+test('a cancelled loop-finder walk stops even after the finder let go of it', async () => {
+  const frames = [{ start: 0, dur: 1, bitmap: {} }];
+  const context = {
+    loopJob: null, LOOP_FEAT_W: 4, LOOP_FEAT_H: 4, loopSrc: model.loopSrc, clamp: model.clamp, Promise,
+    OffscreenCanvas: class { getContext() { return { drawImage: noop, getImageData: () => ({ data: new Uint8ClampedArray(64) }) }; } },
+    loopAnalysisElement: async () => ({}), Array, Math, Float32Array, nextTask: async () => {},
+  };
+  const sample = appFunction('sampleLoopFeatures', context);
+  const out = await sample({ kind: 'gif', duration: 1, frames }, [0, 0.5], null, { cancel: true });
+  assert.equal(out, null);
+});
+
+test('roto masks on loop-cycled clips map every frame to its own source frame', () => {
+  for (const extra of [{ reversed: true }, { loopMode: 'pingpong' }, { loopMode: 'pingpong', reversed: true }, {}]) {
+    const clip = { id: 'c', kind: 'media', assetId: 'a', start: 0, dur: 4, in: 0.5, rate: 1, loopSpan: 1.5, props: {}, ...extra };
+    const comp = model.newComp({ dur: 4, fps: 30 });
+    const ctx = { ...model, comp, Map, Math };
+    const plan = appFunction('rotoWalkPlan', ctx)(clip, { kind: 'video' });
+    const node = { seq: { count: plan.total, src0: plan.src0, srcStep: plan.srcStep } };
+    const index = appFunction('rotoFrameIndex', ctx);
+    for (let f = 0; f < 120; f++) {
+      const tt = f / 30;
+      const i = index(node, clip, tt);
+      const slotSrc = plan.src0 + i * plan.srcStep;
+      assert.ok(Math.abs(slotSrc - model.srcTime(clip, tt)) <= Math.abs(plan.srcStep) / 2 + 1e-9,
+        `${JSON.stringify(extra)} frame ${f}: slot ${slotSrc.toFixed(3)} vs src ${model.srcTime(clip, tt).toFixed(3)}`);
+    }
+    // each source frame analyzed once, not once per cycle
+    assert.ok(plan.frames.length <= Math.round(1.5 * 30) + 2, `${plan.frames.length} frames walked`);
+  }
 });
 
 test('duplicating a multi-selection keeps the gaps between clips and selects the copies', () => {

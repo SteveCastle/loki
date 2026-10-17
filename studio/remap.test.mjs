@@ -7,7 +7,7 @@ const model = readFileSync(new URL('./comp.js', import.meta.url), 'utf8');
 const {
   srcTime, clipTimeRemap, enableTimeRemap, disableTimeRemap, freezeClipAt,
   clipSpeedAt, clipPlayingBackward, splitClip, retimeClip, upsertKey, evalProp,
-  clipRate, clipReversed, clipLoopSpan, TIME_PROP, loopSrc, wrappedSrcTime,
+  clipRate, clipReversed, clipLoopSpan, TIME_PROP, loopSrc, wrappedSrcTime, splitClip: split2,
 } = await import(`data:text/javascript;base64,${Buffer.from(model).toString('base64')}`);
 
 const FPS = 30;
@@ -185,4 +185,37 @@ test('a forward wrap lands on frame 0, a reversed first frame on the end of the 
   // A forward loop region restarts at `in` on every cycle boundary.
   const loop = makeClip({ start: 0, dur: 4, in: 1, loopSpan: 1 });
   for (const t of [1, 2, 3]) near(srcTime(loop, t), 1);
+});
+
+test('splitting a loop-cycled clip keeps both halves on the original picture', () => {
+  for (const extra of [
+    { loopSpan: 1.3, in: 0.5 },
+    { loopSpan: 1.3, in: 0.5, reversed: true },
+    { loopSpan: 1.3, in: 0.5, loopMode: 'pingpong' },
+    { loopSpan: 1.3, in: 0.5, loopMode: 'pingpong', reversed: true },
+    { loopSpan: 1.3, in: 0.5, rate: 1.5 },
+    { loopSpan: 1.3, in: 0.5, rate: 0.75, reversed: true },
+  ]) {
+    const clip = makeClip({ start: 2, dur: 6, ...extra });
+    const ref = structuredClone(clip);
+    const right = splitClip(clip, 2 + 2.4);
+    assert.ok(right);
+    const n = Math.round(6 * FPS);
+    for (let i = 0; i < n; i++) {
+      const t = 2 + i / FPS;
+      near(srcTime(t < right.start ? clip : right, t), srcTime(ref, t), 1e-6);
+    }
+  }
+});
+
+test('splitting a remap inside an eased segment keeps the curve', () => {
+  const clip = makeClip({ start: 0, dur: 10 });
+  const prop = enableTimeRemap(clip, FPS);
+  prop.keys = [{ t: 0, v: 1, e: 'inout' }, { t: 5, v: 4, e: 'linear' }, { t: 10, v: 2, e: 'linear' }];
+  const ref = structuredClone(clip);
+  const right = splitClip(clip, 2.5);
+  for (let i = 0; i < 10 * FPS; i++) {
+    const t = i / FPS;
+    near(srcTime(t < right.start ? clip : right, t), srcTime(ref, t), 1e-6);
+  }
 });

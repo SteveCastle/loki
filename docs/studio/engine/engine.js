@@ -430,6 +430,15 @@ class PresetRuntime {
 
   get finalPass() { return this.passes[this.passes.length - 1]; }
 
+  /** Pin FrameCount to a comp frame (null: count renders). Feedback copies
+   * advance only when the frame changes. */
+  setFrame(frameIndex) {
+    if (frameIndex == null) { this.pinnedFrame = null; this.advance = true; return; }
+    this.advance = frameIndex !== this.pinnedFrame;
+    this.pinnedFrame = frameIndex;
+    this.frameCount = frameIndex;
+  }
+
   writeUniforms(timeSec) {
     const { queue } = this.fx.device;
     const frameCount = this.frameCount;
@@ -528,16 +537,20 @@ class PresetRuntime {
       if (ps.mipLevels > 1) blitter.generateMips(encoder, ps.outTex, ps.format, ps.mipLevels);
     }
 
-    for (const ps of this.passes) {
-      if (!ps.isFeedbackProducer) continue;
-      encoder.copyTextureToTexture(
-        { texture: ps.outTex, mipLevel: 0 },
-        { texture: ps.feedbackTex },
-        [ps.outW, ps.outH]
-      );
+    // Feedback is "the previous comp frame": re-rendering the same frame
+    // (paused, scrubbing in place) must not feed this output back in.
+    if (this.advance !== false) {
+      for (const ps of this.passes) {
+        if (!ps.isFeedbackProducer) continue;
+        encoder.copyTextureToTexture(
+          { texture: ps.outTex, mipLevel: 0 },
+          { texture: ps.feedbackTex },
+          [ps.outW, ps.outH]
+        );
+      }
     }
 
-    this.frameCount++;
+    if (this.pinnedFrame == null) this.frameCount++;
   }
 
   destroy() {
@@ -976,7 +989,11 @@ export class SlangFx {
    *        (null = reuse the current input contents)
    * @param {number} [timeSec] shader Time; defaults to a wall clock
    */
-  render(source = null, timeSec = undefined) {
+  /** @param {number} [frameIndex] comp frame being drawn: presets see it as
+   *        FrameCount, and feedback only advances when it changes (so a
+   *        paused frame re-rendered stays put). Omitted, FrameCount counts
+   *        renders as before. */
+  render(source = null, timeSec = undefined, frameIndex = null) {
     if (!this.inputTexture) return;
     if (timeSec == null) {
       if (this.startTime == null) this.startTime = performance.now();
@@ -1001,6 +1018,7 @@ export class SlangFx {
       // submission.
       if (layer.maskGroup?.state && layer === layer.maskGroup.head && layer.maskView)
         this.maskComposer.encode(encoder, layer);
+      layer.runtime.setFrame(frameIndex);
       layer.runtime.writeUniforms(timeSec);
       layer.runtime.encode(encoder);
       if (layer.blendBindGroup)

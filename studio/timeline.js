@@ -1355,7 +1355,7 @@ export class Timeline {
       ...(clipLoopSpan(clip) ? [{
         label: 'Clear loop',
         action: () => {
-          this.host.history.record(comp, () => { delete clip.loopSpan; delete clip.loopMode; });
+          this.host.history.record(comp, () => { delete clip.loopSpan; delete clip.loopMode; delete clip.loopPhase; });
           this.host.onModelChange({ structural: true });
           this.host.status(`${clip.name} plays straight through again`);
         },
@@ -1484,7 +1484,7 @@ export class Timeline {
       : 'move';
     const startX = e.clientX;
     const startY = e.clientY;
-    const orig = { start: clip.start, dur: clip.dur, in: clip.in ?? 0, trackIdx };
+    const orig = { start: clip.start, dur: clip.dur, in: clip.in ?? 0, loopPhase: clip.loopPhase ?? 0, trackIdx };
     const minDur = MIN_CLIP_FRAMES / comp.fps;
     let moved = false;
     this.host.history.begin(comp);
@@ -1581,7 +1581,13 @@ export class Timeline {
         clip.start = ns;
         clip.dur = orig.dur - d;
         if (hasSource(clip) && !rev && !looped) clip.in = orig.in + d * rate;
-        // Keys stay put in comp time: shift clip-relative times by -d.
+        // A forward loop-cycled clip anchors its cycle on the left edge:
+        // the phase moves with it so the picture stays put.
+        if (clipLoopSpan(clip) && !rev && !clipTimeRemap(clip))
+          clip.loopPhase = (orig.loopPhase ?? 0) + d * rate;
+        // Keys stay put in comp time: shift clip-relative times by -d —
+        // and oscillators, which run on clip time, advance their phase to
+        // match (as splitClip does).
         this._shiftKeys(clip, -d, orig);
       } else {
         // Right trim stops at the comp end; videos longer than their
@@ -1599,6 +1605,9 @@ export class Timeline {
         ne = Math.min(ne, wallR);
         clip.dur = clamp(ne - orig.start, minDur, Math.max(minDur, Math.min(wallR, comp.dur) - orig.start));
         if (hasSource(clip) && rev && !looped) clip.in = orig.in - (clip.dur - orig.dur) * rate;
+        // A reversed loop-cycled clip anchors its cycle on the right edge.
+        if (clipLoopSpan(clip) && rev && !clipTimeRemap(clip))
+          clip.loopPhase = (orig.loopPhase ?? 0) + (orig.dur - clip.dur) * rate;
       }
       // While trimming, preview the frame at the cut point so you can see
       // exactly where the clip will start / end when released.
@@ -1641,10 +1650,14 @@ export class Timeline {
     if (!orig._keySnapshot) {
       orig._keySnapshot = [];
       eachClipProp(clip, (p) =>
-        orig._keySnapshot.push({ p, times: p.keys.map((k) => k.t) }));
+        orig._keySnapshot.push({ p, times: p.keys.map((k) => k.t), phase: p.driver?.phase ?? 0 }));
     }
-    for (const snap of orig._keySnapshot)
+    for (const snap of orig._keySnapshot) {
       snap.p.keys.forEach((k, i) => { k.t = snap.times[i] + delta; });
+      // Oscillators run on clip time too (audio drivers sample comp time).
+      const drv = snap.p.driver;
+      if (drv && drv.source !== 'audio') drv.phase = snap.phase - delta * (drv.freq ?? 0);
+    }
   }
 
   /* ---- property rows ---- */

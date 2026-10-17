@@ -6,6 +6,8 @@
 //     the test wipes its storage, so never point it at your working 8790)
 //   ffmpeg -f lavfi -i testsrc=size=320x240:rate=30 -f lavfi -i sine=frequency=440 \
 //     -t 6 -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest .playwright-mcp/tone.mp4
+//   ffmpeg -f lavfi -i "sine=frequency=440:duration=4:sample_rate=48000" \
+//     -af "volume=enable='not(between(t,1,1.1))':volume=0" .playwright-mcp/burst.wav
 //
 // Returns { results: {check: 'PASS' | 'FAIL …'}, errors: [...] }. Exports land
 // in .playwright-mcp/ for ffprobe.
@@ -248,6 +250,60 @@ async (page) => {
     return { during, afterFrame };
   });
   check('timeline drag renders once per frame', tlRenders.during <= 1 && tlRenders.afterFrame <= 3, tlRenders);
+  // 13b. FrameCount is the comp frame: paused re-renders don't advance it.
+  await page.evaluate(() => {
+    const c = window.comp();
+    c.tracks.unshift({ id: 'smoke_fx_track', name: 'adjust', clips: [{
+      id: 'smoke_fx', kind: 'fx', name: 'blur', enabled: true, start: 0, dur: 3, mask: null,
+      effects: [{ id: 'smoke_fx_eff', name: 'gaussian-blur', fxKind: 'preset',
+        path: 'shaders/blur-bloom/gaussian-blur/gaussian-blur.slangp', enabled: true, params: {}, overlay: null }],
+    }] });
+    window.studio.onModelChange({ structural: true });
+    window.studio.timeline.host.setTime(1.0);
+  });
+  await page.waitForFunction(() => window.fx.layers?.[0]?.runtime, null, { timeout: 15000 }).catch(() => {});
+  const fc = await page.evaluate(async () => {
+    const rt = () => window.fx.layers?.[0]?.runtime;
+    for (let i = 0; i < 20; i++) {   // keep it active: renders at full rate
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: i, clientY: 1 }));
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    const a = rt()?.frameCount;
+    for (let i = 0; i < 20; i++) {
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: i, clientY: 2 }));
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    return { a, b: rt()?.frameCount };
+  });
+  check('FrameCount is the comp frame and holds while paused', fc.a === 30 && fc.b === 30, fc);
+  await page.evaluate(() => {
+    const c = window.comp();
+    c.tracks = c.tracks.filter((tr) => tr.id !== 'smoke_fx_track');
+    window.studio.onModelChange({ structural: true });
+  });
+
+  // 13c. The comp holds still while an offline render runs; Escape cancels.
+  const count0 = await clipCount();
+  let downloaded = false;
+  const onDl = () => { downloaded = true; };
+  page.on('download', onDl);
+  await page.evaluate(() => window.studio.timeline.selectClip(window.comp().tracks[0].clips[0].id));
+  await page.getByRole('button', { name: /Export/ }).click();
+  await page.getByText('Render video · WebM').click();
+  const rendering = () => document.querySelector('#btn-export').textContent.includes('Cancel');
+  await page.waitForFunction(rendering, null, { timeout: 5000 });
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('Control+z');
+  await page.locator('.tl-clip').first().click({ force: true }).catch(() => {});
+  const midCount = await clipCount();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('#btn-export').textContent.includes('Cancel'), null, { timeout: 30000 });
+  await page.waitForTimeout(500);
+  page.off('download', onDl);
+  check('edits are locked during a render; Escape cancels it',
+    midCount === count0 && (await clipCount()) === count0 && !downloaded, { count0, midCount, downloaded });
+
   // put the clip back where the persistence steps expect it
   await page.evaluate(() => { const c = window.comp().tracks[0].clips[0]; c.start = 0; c.props.opacity.v = 100; window.studio.onModelChange({}); });
 
@@ -367,6 +423,52 @@ async (page) => {
   const kept = saved?.assets?.find((m) => m.id === assetId);
   const clipsKept = saved?.comp?.tracks.flatMap((t) => t.clips).filter((c) => c.assetId === assetId).length;
   check('offline media kept in the project', !!kept?.offline && clipsKept === before9, { kept, clipsKept });
+
+  // 14. Audio drivers follow an audio clip that slides — and its undo.
+  // burst.wav is silent but for a 100 ms tone at exactly 1.0 s.
+  if (!await page.evaluate(() => typeof window.studio.audioSignal === 'function')) {
+    check('audio drivers follow a slid clip and its undo', false, 'this build does not expose window.studio.audioSignal');
+    return { results, errors };
+  }
+  await page.setInputFiles('#file-input', 'C:/Users/steph/dev/loki/.playwright-mcp/burst.wav');
+  await page.waitForFunction(() => [...window.studio.assets.values()].some((a) => a.name === 'burst.wav' && a.ready),
+    null, { timeout: 20000 });
+  const burstId = await page.evaluate(() => {
+    const c = window.comp();
+    const asset = [...window.studio.assets.values()].find((a) => a.name === 'burst.wav');
+    const clip = c.tracks.flatMap((t) => t.clips).find((k) => k.assetId === asset.id);
+    clip.start = 0; clip.in = 0;
+    const host = c.tracks.flatMap((t) => t.clips).find((k) => k.kind === 'media') ?? clip;
+    host.props.opacity ??= { v: 100, anim: false, keys: [] };
+    (host.props.volume ??= { v: 100, anim: false, keys: [] }).driver =
+      { enabled: true, source: 'audio', band: 'level', follow: 'level', release: 0, amount: 0, mode: 'add' };
+    window.studio.onModelChange({ structural: true });
+    return clip.id;
+  });
+  const drvPeak = () => page.evaluate(() => {
+    const d = { source: 'audio', band: 'level', follow: 'level', release: 0 };
+    let best = -1, at = null;
+    for (let i = 0; i < 120; i++) { const t = i / 30; const v = window.studio.audioSignal(d, t); if (v > best) { best = v; at = t; } }
+    return Math.round(at * 30);   // comp frame of the loudest envelope sample
+  });
+  const settle = (frame) => page.waitForFunction(async (f) => {
+    const d = { source: 'audio', band: 'level', follow: 'level', release: 0 };
+    let best = -1, at = null;
+    for (let i = 0; i < 120; i++) { const t = i / 30; const v = window.studio.audioSignal(d, t); if (v > best) { best = v; at = t; } }
+    return Math.abs(Math.round(at * 30) - f) <= 1;
+  }, frame, { timeout: 8000, polling: 200 }).then(() => true, () => false);
+  const atStart = await settle(30);
+  await page.evaluate((id) => {
+    const clip = window.comp().tracks.flatMap((t) => t.clips).find((k) => k.id === id);
+    window.studio.timeline.host.history.record(window.comp(), () => { clip.start = 0.5; });
+    window.studio.onModelChange({ structural: true });
+  }, burstId);
+  const slid = await settle(45);
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press('Control+z');
+  const undone = await settle(30);
+  check('audio drivers follow a slid clip and its undo', atStart && slid && undone,
+    { atStart, slid, undone, peakFrame: await drvPeak() });
 
   check('no page errors', errors.length === 0, errors.slice(0, 5));
   return { results, errors };

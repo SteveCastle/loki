@@ -173,9 +173,11 @@ scored by SAD(i, j) + SAD(i+1, j+1) — the successor term carries MOTION
 across the cut, not just the pose — normalized against the clip's median
 frame-to-frame change (1.00× = as smooth as ordinary playback). Among
 invisible seams the longest loop wins; the chosen cut is re-searched at
-frame granularity before it is applied. Cycle phase is anchored to
-`clip.start` (no phase field), so splitting a looped clip restarts the
-cycle on the right half, and trims never move `in` on a looped clip.
+frame granularity before it is applied. Cycles anchor on `clip.start`
+(the clip end, reversed); `clip.loopPhase` (source seconds, `clipLoopPhase`)
+records where in the cycle that anchor sits, so a split or trim moves the
+anchor and adjusts the phase instead — the picture under the playhead never
+jumps. Trims never move `in` on a looped clip.
 
 The same dialog offers **Forward & backward** (`clip.loopMode = 'pingpong'`).
 This skips analysis, resets `in` to zero, sets `loopSpan` to the full asset
@@ -415,7 +417,10 @@ single-mip textures these effects sample.
 
 Per-frame uniforms are written by name at reflected offsets: `MVP`,
 `SourceSize`, `OriginalSize`, `OutputSize`, `FinalViewportSize`,
-`FrameCount` (honouring `frame_count_modN`), `FrameDirection`, `Rotation`,
+`FrameCount` (honouring `frame_count_modN`; the comp frame index —
+`render(src, t, frameIndex)` — so grain and feedback advance per comp frame,
+hold while paused, and match the export; feedback copies only advance when
+the frame does), `FrameDirection`, `Rotation`,
 `Time`, any `<TexName>Size`, and then every `#pragma parameter` value.
 
 **`Time` is comp time, not wall time.** `app.js` calls

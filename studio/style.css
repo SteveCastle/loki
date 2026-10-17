@@ -2353,3 +2353,8 @@ body.roto-analyzing #gizmo { display: none; }
 /* Snap grid: the hit-strength floor and its live count. */
 .snapgrid-row input[type=range] { width: 70px; accent-color: var(--accent); }
 .snapgrid-count { font-variant-numeric: tabular-nums; opacity: 0.8; }
+
+/* Offline render: the comp is locked (see holdStillDuringRender). */
+body.offline-rendering #timeline,
+body.offline-rendering #inspector,
+body.offline-rendering #media-bin { opacity: 0.55; }

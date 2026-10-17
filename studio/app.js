@@ -43,7 +43,7 @@ import {
   allClipsBottomUp,
   newEffect, effectsOf, findEffect, effectPropKey, parsePropKey, eachClipProp,
   isAudioEffect, visualEffectsOf, audioEffectsOf,
-  clipRate, clipReversed, clipLoopSpan, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc, wrappedSrcTime,
+  clipRate, clipReversed, clipLoopSpan, clipLoopPhase, clipPingPong, clipPlayingBackward, srcTime, clipSourceSpan, retimeClip, loopSrc, wrappedSrcTime,
   clipTimeRemap, enableTimeRemap, disableTimeRemap, freezeClipAt, clipSpeedAt, TIME_PROP,
   newTrackClip, resolveOverlaps, SPLAT_PROPS, isSplatClip,
 } from './comp.js';
@@ -352,6 +352,7 @@ async function boot() {
     timeline, assets, onModelChange,
     importFiles, addAssetAt, setBinOpen, removeAsset,
     renderCompAudio, mixCompAudio, audioEntries, audioChains,
+    audioDrive, audioSignal, syncAudioDrive: () => syncAudioDrive(),
     // Roto is network + model driven — the console handle is how tests
     // drive it without clicking through the picker.
     clipMasks, analyzeRotoNode, startRotoEdit, stopRotoEdit,
@@ -391,6 +392,11 @@ function setTime(t) {
 }
 
 const isScrubbing = () => !playing && performance.now() < scrubUntil;
+
+/** The comp frame index at t — what presets see as FrameCount, so grain,
+ * flicker and feedback advance per comp frame (not per display refresh),
+ * freeze while paused, and match the export frame for frame. */
+const compFrame = (t) => Math.round(t * comp.fps);
 
 /* Idle frames: paused, with nothing happening, the frame can't change — yet
  * every rAF used to re-upload each video frame, recompose masks, run every
@@ -476,7 +482,7 @@ function tick() {
   compositeFrame(t);
   syncFxChain(t);
   applyParams(t);
-  fx.render(null, t);
+  fx.render(null, t, compFrame(t));
   timeline.updatePlayhead();
   updateInspectorLive();
   updateGizmo();
@@ -556,7 +562,7 @@ function audioDriveKey() {
     const vol = clip.props.volume;
     const remap = clipTimeRemap(clip);
     parts.push(asset.id, clip.start, clip.dur, clip.in, clipRate(clip),
-      clipReversed(clip) ? 'rev' : 'fwd', clipLoopSpan(clip), clip.loopMode,
+      clipReversed(clip) ? 'rev' : 'fwd', clipLoopSpan(clip), clip.loopMode, clipLoopPhase(clip),
       remap ? JSON.stringify({ v: remap.v, anim: remap.anim, keys: remap.keys }) : '',
       vol ? JSON.stringify({ v: vol.v, anim: vol.anim, keys: vol.keys }) : '',
       // Effects colour the mix the analysis hears, so they belong in its
@@ -616,7 +622,13 @@ function syncAudioDrive() {
     setStatus(mix ? 'audio analysis ready — drivers are live'
       : 'no audio in the comp — audio drivers read 0');
   })().catch((e) => {
-    if (audioDrive.key === key) setAudioDriveProgress(null);
+    if (audioDrive.key === key) {
+      setAudioDriveProgress(null);
+      // Release the claim: a failed run left its key in place, so every
+      // later sync saw "already analyzed" and the drivers stayed on stale
+      // data until some unrelated audio edit changed the key.
+      audioDrive.key = '';
+    }
     console.warn('slangfx: audio analysis failed:', e);
   });
   return audioDriveJob;
@@ -696,7 +708,9 @@ function assignMediaSlots(entries) {
   const live = new Map();   // assetId -> clipIds live this frame
   for (const { clip } of entries) {
     const asset = assets.get(clip.assetId);
-    if (!asset?.ready || !asset.el || (asset.kind !== 'video' && asset.kind !== 'audio')) continue;
+    if (!asset?.ready) continue;
+    if (asset.kind === 'gif' ? !asset.frames?.length
+      : (!asset.el || (asset.kind !== 'video' && asset.kind !== 'audio'))) continue;
     if (!live.has(asset.id)) live.set(asset.id, []);
     live.get(asset.id).push(clip.id);
   }
@@ -713,6 +727,20 @@ function assignMediaSlots(entries) {
 function mediaInstance(asset, clipId) {
   asset.instances ??= new Map();
   let inst = asset.instances.get(clipId);
+  if (!inst && asset.kind === 'gif') {
+    // A decoded frame strip has no element — a copy just needs its own
+    // texture and frame index.
+    inst = { name: asset.name, w: asset.w, h: asset.h, _frameIdx: -1 };
+    inst.texture = fx.device.createTexture({
+      label: `asset ${asset.name} (clip ${clipId})`,
+      size: [asset.w, asset.h],
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    inst.view = inst.texture.createView();
+    asset.instances.set(clipId, inst);
+    return inst;
+  }
   if (!inst) {
     const el = document.createElement(asset.kind === 'audio' ? 'audio' : 'video');
     el.playsInline = true;
@@ -751,10 +779,12 @@ function mediaInstance(asset, clipId) {
 }
 
 function disposeMediaInstance(inst) {
-  inst.el.pause();
-  inst.el.removeAttribute('src');
-  inst.el.load();
-  inst.el.remove();
+  if (inst.el) {
+    inst.el.pause();
+    inst.el.removeAttribute('src');
+    inst.el.load();
+    inst.el.remove();
+  }
   try { inst.audioNode?.disconnect(); } catch {}
   inst.texture?.destroy();
 }
@@ -772,7 +802,7 @@ function gcMediaInstances() {
 function pauseMediaInstances() {
   for (const asset of assets.values())
     for (const inst of asset.instances?.values() ?? [])
-      if (!inst.el.paused) inst.el.pause();
+      if (inst.el && !inst.el.paused) inst.el.pause();
 }
 
 /** The slot a clip draws from: its instance while it shares the file with
@@ -789,7 +819,7 @@ function syncMedia(t, activeMedia, activeAudio = []) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready) continue;
     if (asset.kind === 'gif') {
-      syncGifFrame(asset, clip, t);
+      syncGifFrame(asset, clip, t, clipSlot(clip, asset));
       continue;
     }
     if (asset.kind !== 'video' && asset.kind !== 'audio') continue;
@@ -814,7 +844,7 @@ function syncMedia(t, activeMedia, activeAudio = []) {
       && asset.ready && !used.has(asset) && asset.el && !asset.el.paused)
       asset.el.pause();
     for (const inst of asset.instances?.values() ?? [])
-      if (!used.has(inst) && !inst.el.paused) inst.el.pause();
+      if (inst.el && !used.has(inst) && !inst.el.paused) inst.el.pause();
   }
 }
 
@@ -922,16 +952,17 @@ function syncMediaElement(asset, slot, track, clip, t) {
 
 /* A GIF is a pre-decoded frame strip, not a <video>: pick the loop frame
  * for the clip's local time, upload only when it changes. */
-function syncGifFrame(asset, clip, t) {
+function syncGifFrame(asset, clip, t, slot = asset) {
   const src = srcTime(clip, t);
   const len = asset.duration || 1;
   const local = loopSrc(src, len, clipPlayingBackward(clip, t));
   let idx = asset.frames.findIndex((f) => local < f.start + f.dur);
   if (idx < 0) idx = asset.frames.length - 1;
-  if (idx !== asset._frameIdx) {
-    asset._frameIdx = idx;
+  if (idx !== slot._frameIdx) {
+    slot._frameIdx = idx;
     fx.device.queue.copyExternalImageToTexture(
-      { source: asset.frames[idx].bitmap }, { texture: asset.texture }, [asset.w, asset.h]);
+      { source: asset.frames[idx].bitmap }, { texture: slot.texture }, [asset.w, asset.h]);
+    noteActivity();
   }
 }
 
@@ -1574,9 +1605,9 @@ function prepareMediaFx(t, activeMedia) {
     fx.device.queue.submit([encoder.finish()]);
 
     applyParamsFor(chain, t);
-    chain.render(null, t);
+    chain.render(null, t, compFrame(t));
     applyParamsFor(matte, t, /* isMatte */ true);
-    matte.render(null, t);
+    matte.render(null, t, compFrame(t));
 
     const view = chain.finalView;
     if (view === chain.inputView) continue;   // nothing built yet
@@ -1965,6 +1996,10 @@ function appRedo() {
 
 function afterModelReplace(what) {
   rehydrateMissingAssets();   // undoing "remove media" brings its clips back
+  // Undo/redo can move, retime or re-volume audio like any edit: the
+  // driver envelopes follow (they used to stay on the pre-undo mix, so a
+  // slid-then-undone track left audio-reactive effects out of sync).
+  syncAudioDrive();
   stopMaskEdit();
   stopRotoEdit();
   syncCustomSources();
@@ -1974,6 +2009,7 @@ function afterModelReplace(what) {
   gcAudioChains();
   gcMediaInstances();
   gcSplatRenderers();
+  gcMotionBlur();
   chainKey = '';
   markChainDirty();
   tCur = clamp(tCur, 0, lastFrame(comp));
@@ -3263,7 +3299,10 @@ async function loopAnalysisElement(asset) {
 }
 
 /** Downsampled RGB per source time; null when the job is cancelled. */
-async function sampleLoopFeatures(asset, times, onProgress) {
+/** `job` is the finder walk this sampling belongs to: closing the finder
+ * nulls the global loopJob, so a check against it would never see the
+ * cancel and the walk would keep seeking under the restarted preview. */
+async function sampleLoopFeatures(asset, times, onProgress, job = loopJob) {
   const canvas = new OffscreenCanvas(LOOP_FEAT_W, LOOP_FEAT_H);
   const c2d = canvas.getContext('2d', { willReadFrequently: true });
   let el = null;
@@ -3273,7 +3312,7 @@ async function sampleLoopFeatures(asset, times, onProgress) {
   }
   const out = new Array(times.length);
   for (let k = 0; k < times.length; k++) {
-    if (loopJob?.cancel) return null;
+    if (!job || job.cancel) return null;
     let handle;
     if (asset.kind === 'gif') {
       const local = loopSrc(times[k], asset.duration || 1);
@@ -3346,7 +3385,7 @@ async function scoreLoopSeams(feats, step, minLoopSrc, onProgress) {
 
 /** Re-search a coarse candidate at frame granularity: fine grids around
  * both ends, best pair wins. Returns { ta, tb, r } or null on cancel. */
-async function refineLoopSeam(asset, cand, step, base, range, minLoopSrc, onProgress) {
+async function refineLoopSeam(asset, cand, step, base, range, minLoopSrc, onProgress, job = loopJob) {
   const fine = Math.max(1 / comp.fps, (2 * step) / 24);
   const grid = (t0) => {
     const ts = [];
@@ -3358,9 +3397,9 @@ async function refineLoopSeam(asset, cand, step, base, range, minLoopSrc, onProg
   const gridA = grid(cand.ta);
   const gridB = grid(cand.tb);
   const total = gridA.length + gridB.length;
-  const A = await sampleLoopFeatures(asset, gridA, (d) => onProgress?.(d, total));
+  const A = await sampleLoopFeatures(asset, gridA, (d) => onProgress?.(d, total), job);
   if (!A) return null;
-  const B = await sampleLoopFeatures(asset, gridB, (d) => onProgress?.(gridA.length + d, total));
+  const B = await sampleLoopFeatures(asset, gridB, (d) => onProgress?.(gridA.length + d, total), job);
   if (!B) return null;
   let best = null;
   for (let u = 0; u + 1 < A.length; u++)
@@ -3424,6 +3463,7 @@ async function openLoopFinder(clip, mode = null) {
         clip.in = 0;
         clip.loopSpan = srcLen;
         clip.loopMode = 'pingpong';
+        delete clip.loopPhase;
         clip.reversed = false;
         clip.dur = cycles * cycle;
         ensureDur(comp);
@@ -3473,6 +3513,8 @@ async function openLoopFinder(clip, mode = null) {
     else clip.loopSpan = snapshot.loopSpan;
     if (snapshot.loopMode === undefined) delete clip.loopMode;
     else clip.loopMode = snapshot.loopMode;
+    if (snapshot.loopPhase === undefined) delete clip.loopPhase;
+    else clip.loopPhase = snapshot.loopPhase;
     clip.dur = snapshot.dur;
     comp.dur = snapshot.compDur;
     setTime(Math.min(snapshot.t, lastFrame(comp)));
@@ -3498,11 +3540,12 @@ async function openLoopFinder(clip, mode = null) {
   /** Audition a candidate in place: cycle the clip and drop the playhead
    * just ahead of the seam so it crosses within a second. */
   const preview = (ta, tb) => {
-    snapshot ??= { in: clip.in, loopSpan: clip.loopSpan, loopMode: clip.loopMode, dur: clip.dur, compDur: comp.dur, t: tCur };
+    snapshot ??= { in: clip.in, loopSpan: clip.loopSpan, loopMode: clip.loopMode, loopPhase: clip.loopPhase, dur: clip.dur, compDur: comp.dur, t: tCur };
     touched = true;
     clip.in = ta;
     clip.loopSpan = tb - ta;
     delete clip.loopMode;
+    delete clip.loopPhase;
     const cycle = (tb - ta) / rate;
     // Long enough to cross the seam a couple of times, whatever dur was.
     clip.dur = Math.max(snapshot.dur, Math.min(cycle * 2.5, 7200));
@@ -3523,7 +3566,7 @@ async function openLoopFinder(clip, mode = null) {
       btn.disabled = true;
       job.busy = true;
       const fine = await refineLoopSeam(asset, cand, step, base, range, minLoopSrc,
-        (d, t) => prog(`refining the cut to frame precision — ${d}/${t}…`))
+        (d, t) => prog(`refining the cut to frame precision — ${d}/${t}…`), job)
         .finally(() => { job.busy = false; });
       if (job.cancel) return;
       if (fine) final = fine;
@@ -3539,6 +3582,7 @@ async function openLoopFinder(clip, mode = null) {
       clip.in = final.ta;
       clip.loopSpan = span;
       delete clip.loopMode;
+      delete clip.loopPhase;
       clip.dur = cycles * cycle;
       ensureDur(comp);
     });
@@ -3557,7 +3601,7 @@ async function openLoopFinder(clip, mode = null) {
     const times = Array.from({ length: N }, (_, k) => range[0] + k * step);
     job.busy = true;   // parks tick() — syncMedia must not fight the walk's seeks
     const feats = await sampleLoopFeatures(asset, times,
-      (d, t) => prog(`sampling frames ${d}/${t}…`))
+      (d, t) => prog(`sampling frames ${d}/${t}…`), job)
       .finally(() => { job.busy = false; });
     if (!feats || job.cancel) return;
     const minLoopSrc = Math.max(LOOP_MIN_SRC, 3 * step);
@@ -4617,7 +4661,7 @@ function prepareNodeSources(nodes, t, getEncoder) {
     // uploads matte sources exactly. Seeking here too fought syncMedia's
     // drift tolerance (a playing source re-seeked every frame) and, with
     // copies of a file on separate slots, drove another clip's element.
-    if (asset.kind === 'gif') syncGifFrame(asset, clip, t);
+    if (asset.kind === 'gif') syncGifFrame(asset, clip, t, clipSlot(clip, asset));
     const d = drawForClip(clip, t);
     if (!d) { node.active = false; continue; }
     node.active = true;
@@ -4726,7 +4770,12 @@ function rotoWalkPlan(clip, asset) {
     const t = f0 / fps;
     return { still, f0, total: 1, src0: 0, srcStep: 0, frames: [{ fi: 0, t }], tAt: (fi) => (fi === 0 ? t : null) };
   }
-  if (!clipTimeRemap(clip)) {
+  // The linear grid needs source time to move steadily with comp time. A
+  // loop-cycled clip wraps (and a reversed one enters its region mid-cycle,
+  // so the first step can straddle the seam): it takes the source-frame
+  // grid below, like a remap — each source frame analyzed once, however
+  // many cycles show it.
+  if (!clipTimeRemap(clip) && !clipLoopSpan(clip)) {
     const total = fN - f0 + 1;
     // Signed: a reversed clip's walk descends through the source.
     const srcStep = srcTime(clip, (f0 + 1) / fps) - srcTime(clip, f0 / fps);
@@ -12153,14 +12202,16 @@ saveBackBtn.addEventListener('click', () => {
 });
 
 async function runOfflineRender({ saveBack = null, format = 'webm' } = {}) {
+  if (offlineJob) { setStatus('a render is already running'); return null; }
   if (rotoJob) { setStatus('finish or cancel the roto analysis first'); return null; }
   if (loopJob) { setStatus('close the loop finder first'); return null; }
   pause();
   stopRotoEdit();
-  // Audio drivers must have their envelopes before frames render — the
-  // export samples the same precomputed data as the preview.
-  await syncAudioDrive();
+  // Claimed before the first await: the audio analysis below can take
+  // seconds, and a second Export click in that window started a parallel
+  // render that fought this one over tCur, the media and the GPU.
   const job = (offlineJob = { cancel: false, error: null });
+  document.body.classList.add('offline-rendering');
   const tRestore = tCur;
   // Whichever button started it becomes its cancel.
   if (saveBack) {
@@ -12171,7 +12222,10 @@ async function runOfflineRender({ saveBack = null, format = 'webm' } = {}) {
   }
   const started = performance.now();
   try {
-    const blob = await renderCompOffline(job, format);
+    // Audio drivers must have their envelopes before frames render — the
+    // export samples the same precomputed data as the preview.
+    await syncAudioDrive();
+    const blob = job.cancel ? null : await renderCompOffline(job, format);
     if (!blob) {
       setStatus('render cancelled');
     } else if (saveBack) {
@@ -12194,12 +12248,31 @@ async function runOfflineRender({ saveBack = null, format = 'webm' } = {}) {
     setStatus(`${saveBack ? 'save' : 'render'} failed: ${e.message ?? e}`);
   } finally {
     offlineJob = null;
+    document.body.classList.remove('offline-rendering');
     setExportBusy(null);
     saveBackBtn.textContent = '💾 Save';
     saveBackBtn.classList.remove('recording');
     setTime(tRestore);
   }
 }
+
+/* While an offline render runs the comp must hold still: an edit, undo or
+ * comp resize mid-render captured a half-edited state (or resized the
+ * canvas under the encoder), and deleting a clip disposed media the render
+ * was seeking. Input is swallowed except on the buttons that are now
+ * Cancel; Escape cancels. */
+function holdStillDuringRender(e) {
+  if (!offlineJob) return;
+  if (e.type === 'keydown') {
+    if (e.key === 'Escape') offlineJob.cancel = true;
+  } else if (e.target?.closest?.('#btn-export, #btn-save-back')) {
+    return;
+  }
+  e.preventDefault();
+  e.stopImmediatePropagation();
+}
+for (const ev of ['pointerdown', 'mousedown', 'click', 'dblclick', 'contextmenu', 'keydown', 'drop', 'dragover'])
+  document.addEventListener(ev, holdStillDuringRender, true);
 
 /* Throttling-proof macrotask yield (setTimeout is clamped to ~1s in
  * occluded windows; MessageChannel messages are not). */
@@ -12250,7 +12323,7 @@ function uploadMediaFrames(t, activeMedia) {
   for (const { clip } of activeMedia) {
     const asset = assets.get(clip.assetId);
     if (!asset?.ready) continue;
-    if (asset.kind === 'gif') syncGifFrame(asset, clip, t);
+    if (asset.kind === 'gif') syncGifFrame(asset, clip, t, clipSlot(clip, asset));
     else if (asset.kind === 'video') {
       const slot = clipSlot(clip, asset);
       if (slot.el.readyState >= 2) uploadVideoFrame(slot);
@@ -12434,8 +12507,9 @@ async function mixCompAudio(sampleRate, entries, channels, { driven = true, onSt
         0, buf.duration);
       const region1 = clamp(region0 + lspan, 0, buf.duration);
       if (region1 - region0 > 0.01) { src.loopStart = region0; src.loopEnd = region1; }
-      const o0 = rev ? loopSrc(clip.dur * clipRate(clip), lspan, true) : 0;
-      offset = clamp(region0 + (rev ? lspan - o0 : 0), 0, Math.max(0, buf.duration - 1e-4));
+      const phase = clipLoopPhase(clip);
+      const o0 = rev ? loopSrc(clip.dur * clipRate(clip) + phase, lspan, true) : loopSrc(phase, lspan);
+      offset = clamp(region0 + (rev ? lspan - o0 : o0), 0, Math.max(0, buf.duration - 1e-4));
     }
     src.start(start, pingpong || remap ? 0 : offset);
     // Reverb and delay tails are part of the clip's sound: the source
@@ -12584,6 +12658,7 @@ async function encodeAudioTrack(muxer, buf, job, audioFmt) {
   });
   const CH = buf.numberOfChannels;
   const CHUNK = 9600;   // 200ms at 48k
+  try {
   for (let off = 0; off < buf.length && !job.cancel; off += CHUNK) {
     const n = Math.min(CHUNK, buf.length - off);
     const data = new Float32Array(n * CH);
@@ -12597,13 +12672,16 @@ async function encodeAudioTrack(muxer, buf, job, audioFmt) {
       timestamp: Math.round(off / buf.sampleRate * 1e6),
       data,
     });
-    enc.encode(ad);
-    ad.close();
+    try { enc.encode(ad); } finally { ad.close(); }
     while (enc.encodeQueueSize > 16)
       await new Promise((r) => enc.addEventListener('dequeue', r, { once: true }));
   }
-  await enc.flush();
-  enc.close();
+  if (!job.cancel) await enc.flush();
+  } catch (e) {
+    job.error ??= e;
+  } finally {
+    if (enc.state !== 'closed') try { enc.close(); } catch {}
+  }
 }
 
 async function renderCompOffline(job, formatId = 'webm') {
@@ -12637,6 +12715,10 @@ async function renderCompOffline(job, formatId = 'webm') {
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => { job.error = e; job.cancel = true; },
   });
+  // Every exit closes the encoder (hardware sessions are scarce, and an
+  // errored one used to leak along with the frame in flight), and a codec
+  // error wins over the InvalidStateError it causes on the next encode().
+  try {
   encoder.configure({
     codec, width, height, bitrate: EXPORT_BITRATE, framerate: fps, ...(fmt.encoderExtra ?? {}),
   });
@@ -12656,15 +12738,19 @@ async function renderCompOffline(job, formatId = 'webm') {
     compositeFrame(t);
     await syncFxChainSettled(t);
     applyParams(t);
-    fx.render(null, t);
+    fx.render(null, t, f);
     // Snapshot synchronously after render() — the WebGPU canvas only holds
     // this frame until the current task yields.
+    if (job.error) break;
     const frame = new VideoFrame(canvas, {
       timestamp: Math.round(f * frameUs),
       duration: Math.round(frameUs),
     });
-    encoder.encode(frame, { keyFrame: f % (2 * fps) === 0 });
-    frame.close();
+    try {
+      encoder.encode(frame, { keyFrame: f % (2 * fps) === 0 });
+    } finally {
+      frame.close();
+    }
     // No setTimeout anywhere in this loop: Chrome throttles timers to ~1/s
     // in occluded/background windows, which turns a 4s render into minutes.
     // Event- and message-based waits are exempt, so an offline render keeps
@@ -12678,12 +12764,16 @@ async function renderCompOffline(job, formatId = 'webm') {
     }
   }
 
-  if (job.error) { try { encoder.close(); } catch {} throw job.error; }
-  if (job.cancel) { try { encoder.close(); } catch {} return null; }
+  if (job.error) throw job.error;
+  if (job.cancel) return null;
   await encoder.flush();
-  encoder.close();
   muxer.finalize();
   return new Blob([muxer.target.buffer], { type: fmt.mime });
+  } catch (e) {
+    throw job.error ?? e;
+  } finally {
+    if (encoder.state !== 'closed') try { encoder.close(); } catch {}
+  }
 }
 
 // Splat training jobs outlive a reload: pick up polling once the GPU is up.
