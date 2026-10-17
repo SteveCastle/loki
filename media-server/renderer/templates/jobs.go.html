@@ -73,6 +73,7 @@
         display: flex;
         align-items: center;
         overflow: hidden;
+        min-width: 0;
         font-size: var(--text-sm);
       }
 
@@ -134,22 +135,30 @@
         color: var(--text-primary);
       }
 
-      .jobs-cell.arguments {
-        color: var(--accent-purple);
+      /* Long arguments (prompts, the Transform recipe JSON) and long input
+         lists scroll inside a short box instead of stretching the row. Block,
+         not flex: a centred flex scroller clips its top, out of reach. */
+      .jobs-cell.arguments,
+      .jobs-cell.input {
+        display: block;
+        align-self: center;
+        min-width: 0;
+        max-height: 6.5em;
+        overflow-y: auto;
+        overscroll-behavior: contain;
         white-space: normal;
-        word-break: break-word;
+        overflow-wrap: anywhere;
         font-family: var(--font-mono);
         font-size: var(--text-xs);
+        line-height: 1.45;
+      }
+
+      .jobs-cell.arguments {
+        color: var(--accent-purple);
       }
 
       .jobs-cell.input {
         color: var(--status-pending);
-        white-space: normal;
-        word-break: break-word;
-        max-height: 140px;
-        overflow-y: auto;
-        font-family: var(--font-mono);
-        font-size: var(--text-xs);
       }
 
       .jobs-cell.created {

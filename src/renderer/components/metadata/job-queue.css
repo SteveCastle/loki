@@ -50,7 +50,7 @@
 
 .JobQueue .jq-job {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.5rem;
   padding: 0.4rem 0.5rem;
@@ -136,4 +136,67 @@
   opacity: 0.5;
   text-align: center;
   padding: 0.5rem;
+}
+
+/* Input / output files: one compact clickable row each. */
+.JobQueue .jq-files {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  margin-top: 3px;
+}
+
+.JobQueue .jq-files.expanded {
+  max-height: 10rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.JobQueue button.jq-file {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  min-width: 0;
+  height: auto;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 3px;
+  text-align: left;
+  font-size: 0.72rem;
+  opacity: 0.8;
+}
+
+.JobQueue .jq-file-kind {
+  flex-shrink: 0;
+  width: 1.8em;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+
+.JobQueue .jq-file.out .jq-file-kind {
+  color: #45c07a;
+  opacity: 0.85;
+}
+
+.JobQueue .jq-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.JobQueue button.jq-file:hover .jq-file-name {
+  text-decoration: underline;
+}
+
+.JobQueue button.jq-files-more {
+  align-self: flex-start;
+  height: auto;
+  border: none;
+  padding: 1px 4px;
+  font-size: 0.68rem;
+  opacity: 0.55;
 }

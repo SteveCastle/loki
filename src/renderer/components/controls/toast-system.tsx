@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { GlobalStateContext } from '../../state';
 import { send, mediaServerBase, isElectron, on } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
+import { navigateToMedia } from '../../job-paths';
 import './toast-system.css';
 
 type JobState =
@@ -263,7 +264,6 @@ const JobToast: React.FC<JobToastProps> = ({
   }, [job.state, job.progress_done, job.progress_total, hovered]);
 
   const { libraryService } = useContext(GlobalStateContext);
-  const library = useSelector(libraryService, (state) => state.context.library);
   const status = job.state;
   const title = getJobTitle(job);
   const subtitle = getJobSubtitle(job);
@@ -366,16 +366,7 @@ const JobToast: React.FC<JobToastProps> = ({
                 className="toast-file-path"
                 onClick={(e) => {
                   e.stopPropagation();
-                  const isInLibrary =
-                    Array.isArray(library) &&
-                    library.some((item) => item?.path === filePath);
-                  if (isInLibrary) {
-                    libraryService.send('RESET_CURSOR', {
-                      currentItem: { path: filePath },
-                    });
-                  } else {
-                    libraryService.send('SET_FILE', { path: filePath });
-                  }
+                  navigateToMedia(libraryService as any, filePath);
                 }}
                 title={filePath}
               >

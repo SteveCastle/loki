@@ -5,6 +5,7 @@ import { mediaServerBase, send } from '../../platform';
 import { subscribeStream } from '../../stream-bus';
 import { getJobTitle } from '../controls/toast-system';
 import { useCanWrite } from '../../hooks/useCanWrite';
+import { baseName, jobInputPaths, navigateToMedia } from '../../job-paths';
 import './job-queue.css';
 
 type QueueJob = {
@@ -16,7 +17,55 @@ type QueueJob = {
   created_at: string;
   progress_done?: number;
   progress_total?: number;
+  /** Files the job wrote (registered outputs). */
+  output_files?: string[] | null;
 };
+
+/** Paths shown per kind before "+N more". */
+const FILES_SHOWN = 3;
+
+/**
+ * A job's input and output files as clickable rows: clicking one shows it in
+ * the viewer. Long lists show the first few and expand into a scroll box.
+ */
+function JobFiles({ job, onOpen }: { job: QueueJob; onOpen: (path: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const inputs = jobInputPaths(job.input);
+  const outputs = (job.output_files || []).filter(Boolean);
+  if (!inputs.length && !outputs.length) return null;
+  const hidden =
+    Math.max(0, inputs.length - FILES_SHOWN) +
+    Math.max(0, outputs.length - FILES_SHOWN);
+  const rows = (kind: 'in' | 'out', paths: string[]) =>
+    (expanded ? paths : paths.slice(0, FILES_SHOWN)).map((p, i) => (
+      <button
+        // eslint-disable-next-line react/no-array-index-key
+        key={`${kind}-${i}-${p}`}
+        type="button"
+        className={`jq-file ${kind}`}
+        title={`Show ${p}`}
+        onClick={() => onOpen(p)}
+      >
+        <span className="jq-file-kind">{kind === 'in' ? 'in' : 'out'}</span>
+        <span className="jq-file-name">{baseName(p)}</span>
+      </button>
+    ));
+  return (
+    <div className={`jq-files${expanded ? ' expanded' : ''}`}>
+      {rows('in', inputs)}
+      {rows('out', outputs)}
+      {(hidden > 0 || expanded) && (
+        <button
+          type="button"
+          className="jq-files-more"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? 'show less' : `+ ${hidden} more`}
+        </button>
+      )}
+    </div>
+  );
+}
 
 const ACTIVE = new Set(['pending', 'in_progress', 'paused']);
 const MAX_FINISHED_SHOWN = 100;
@@ -162,6 +211,11 @@ export default function JobQueue() {
     };
   }, [jobs]);
 
+  const openFile = useCallback(
+    (path: string) => navigateToMedia(libraryService as any, path),
+    [libraryService]
+  );
+
   const renderJob = (job: QueueJob) => {
     const total = job.progress_total ?? 0;
     const done = job.progress_done ?? 0;
@@ -194,6 +248,7 @@ export default function JobQueue() {
                 />
               </div>
             )}
+            <JobFiles job={job} onOpen={openFile} />
           </div>
         </div>
         {canWrite && (

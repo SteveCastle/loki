@@ -265,6 +265,21 @@
         font-weight: 600;
       }
 
+      /* Arguments and input can be very long (prompts, recipe JSON, many
+         paths): wrap anywhere and scroll past a few lines, never overflow. */
+      .command-args,
+      .command-input {
+        flex: 1 1 100%;
+        min-width: 0;
+        max-width: 100%;
+        max-height: 12em;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        line-height: 1.45;
+      }
+
       .command-args {
         color: var(--accent-purple);
         font-family: var(--font-mono);
