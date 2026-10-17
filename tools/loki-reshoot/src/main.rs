@@ -95,6 +95,13 @@ struct Cli {
     /// Print one JSON object describing the result on stdout instead of the bare output path.
     #[arg(long)]
     json: bool,
+    /// Your own JSON object, stored verbatim as the `meta` field of the generation record stamped into the result (e.g. an
+    /// app's recipe for the run). Left out of the record's `args`.
+    #[arg(long, value_name = "JSON")]
+    meta: Option<String>,
+    /// Read --meta from a file.
+    #[arg(long, value_name = "FILE")]
+    meta_file: Option<String>,
     /// Print MiniMax's full reference-mode prompt-writing guide and exit.
     #[arg(long)]
     prompt_guide: bool,
@@ -219,6 +226,7 @@ fn run() -> Result<()> {
     }
     let mut cli = cli;
     loki_reshoot::log::set_quiet(cli.quiet);
+    let meta = genmeta::read_meta(cli.meta.as_deref(), cli.meta_file.as_deref()).map_err(anyhow::Error::msg)?;
     let _stdin_tmp = TempFile(resolve_stdin(&mut cli)?);
     if let Some(img) = cli.animate.clone() {
         cli.ref_image.insert(0, img);
@@ -360,7 +368,8 @@ fn run() -> Result<()> {
     // fail on bad geometry before touching models
     let (fc, _, _) = pipeline::temporal_shape(req.frames);
     pipeline::check_limits(req.width, req.height, fc)?;
-    let record = generation_record(&cli, &req, fc, fit_resolved, &ff, _stdin_tmp.0.as_deref());
+    let mut record = generation_record(&cli, &req, fc, fit_resolved, &ff, _stdin_tmp.0.as_deref());
+    record.set("meta", meta);
 
     let paths = Paths {
         dit: models::resolve(cli.dit.clone(), &models::DIT)?,

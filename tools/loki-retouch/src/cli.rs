@@ -134,6 +134,13 @@ struct Cli {
     /// Print one JSON object per result on stdout instead of the bare path.
     #[arg(long)]
     json: bool,
+    /// Your own JSON object, stored verbatim as the `meta` field of the generation record stamped into each result (e.g. an
+    /// app's recipe for the run). Left out of the record's `args`.
+    #[arg(long, value_name = "JSON")]
+    meta: Option<String>,
+    /// Read --meta from a file.
+    #[arg(long, value_name = "FILE")]
+    meta_file: Option<String>,
 
     /// Qwen Image 2.1 diffusion model (int8 convrot safetensors). Default: auto-discover next to the binary, or download.
     #[arg(long)]
@@ -340,6 +347,8 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
         return Ok(());
     }
 
+    let meta = genmeta::read_meta(cli.meta.as_deref(), cli.meta_file.as_deref()).map_err(anyhow::Error::msg)?;
+
     // preset resolution: --preset NAME | --phone | the binary's default
     let preset_name: Option<String> = match (cli.preset.as_deref().or(if cli.upscale.is_some() { Some("upscale") } else { None }), cli.phone) {
         (Some("none"), _) => None,
@@ -500,7 +509,8 @@ fn run(prog: &'static str, default_preset: Option<&'static str>) -> Result<()> {
             .set("generated_width", if (settings.target_w, settings.target_h) != (settings.out_w, settings.out_h) { Some(settings.target_w) } else { None })
             .set("generated_height", if (settings.target_w, settings.target_h) != (settings.out_w, settings.out_h) { Some(settings.target_h) } else { None })
             .set("ref_resolution", settings.ref_resolution)
-            .set("inputs", inputs.clone());
+            .set("inputs", inputs.clone())
+            .set("meta", meta.clone());
         let text = [(genmeta::PNG_KEYWORD.to_string(), rec.to_json())];
         match &dests[*i] {
             Dest::Stdout => {

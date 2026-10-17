@@ -7,6 +7,9 @@
 //!
 //! The record is recognised by its two marker fields: `"loki": <format version>` and `"tool": "<name>"`.
 //! Fields are added, never renamed: a reader of version 1 must keep working on later records.
+//!
+//! `meta` is the caller's own JSON object (`--meta` / `--meta-file`), stored verbatim: an app's recipe for the run in
+//! its own terms (the Lowkey Transform flow keeps the intent and settings there to rebuild a saved task from a result).
 use serde_json::{Map, Value};
 
 /// PNG text keyword and the JSON format version.
@@ -30,7 +33,7 @@ impl Record {
         r.set("version", version);
         r.set("model", model);
         r.set("created", iso8601_now());
-        r.set("args", std::env::args().skip(1).collect::<Vec<String>>());
+        r.set("args", command_line(std::env::args().skip(1)));
         r
     }
 
@@ -71,6 +74,39 @@ impl Record {
         }
         s.push('}');
         s
+    }
+}
+
+/// The command line for the record's `args`: as given, minus `--meta` / `--meta-file` (the object has its own field,
+/// and a temp file's path means nothing later).
+pub fn command_line<I: IntoIterator<Item = String>>(args: I) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut skip_value = false;
+    for a in args {
+        if skip_value {
+            skip_value = false;
+        } else if a == "--meta" || a == "--meta-file" {
+            skip_value = true;
+        } else if !(a.starts_with("--meta=") || a.starts_with("--meta-file=")) {
+            out.push(a);
+        }
+    }
+    out
+}
+
+/// The `meta` object from `--meta JSON` or `--meta-file FILE` (at most one is given): it must be a JSON object, so a
+/// mistake fails the run before any model loads instead of silently stamping nothing.
+pub fn read_meta(inline: Option<&str>, file: Option<&str>) -> Result<Option<Value>, String> {
+    let text = match (inline, file) {
+        (Some(_), Some(_)) => return Err("use --meta or --meta-file, not both".into()),
+        (Some(t), None) => t.to_string(),
+        (None, Some(f)) => std::fs::read_to_string(f).map_err(|e| format!("reading --meta-file {f}: {e}"))?,
+        (None, None) => return Ok(None),
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(v @ Value::Object(_)) => Ok(Some(v)),
+        Ok(_) => Err("--meta must be a JSON object".into()),
+        Err(e) => Err(format!("--meta is not valid JSON: {e}")),
     }
 }
 
@@ -125,5 +161,29 @@ mod tests {
         r.set("seed", 8u64);
         assert_eq!(r.to_value()["seed"], 8);
         assert_eq!(r.fields.iter().filter(|(k, _)| k == "seed").count(), 1);
+    }
+
+    #[test]
+    fn meta_is_an_object() {
+        assert_eq!(read_meta(None, None), Ok(None));
+        let v = read_meta(Some(r#"{"kind":"x","v":1}"#), None).unwrap().unwrap();
+        assert_eq!(v["kind"], "x");
+        assert!(read_meta(Some("[1]"), None).is_err());
+        assert!(read_meta(Some("{nope"), None).is_err());
+        assert!(read_meta(Some("{}"), Some("f")).is_err());
+        let dir = std::env::temp_dir().join(format!("genmeta-test-{}", std::process::id()));
+        std::fs::write(&dir, r#"{"from":"file"}"#).unwrap();
+        let v = read_meta(None, dir.to_str()).unwrap().unwrap();
+        std::fs::remove_file(&dir).ok();
+        assert_eq!(v["from"], "file");
+    }
+
+    #[test]
+    fn command_line_drops_meta() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            command_line(a(&["-p", "x", "--meta", "{}", "--meta-file", "/tmp/m.json", "--meta={}", "--meta-file=/t", "in.png"])),
+            a(&["-p", "x", "in.png"])
+        );
     }
 }

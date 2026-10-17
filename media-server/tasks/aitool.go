@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/stevecastle/shrike/deps"
@@ -139,4 +141,70 @@ func installDep(ctx context.Context, logf func(string, ...any), id string) error
 	}
 	models.RebuildState()
 	return nil
+}
+
+// metaSupport caches whether an engine binary accepts --meta, keyed by path
+// plus size and mtime so a rebuilt or updated engine is probed again.
+var (
+	metaSupportMu sync.Mutex
+	metaSupport   = map[string]bool{}
+)
+
+// probeAIToolHelp returns an engine's --help text; a variable so tests never
+// launch a real engine.
+var probeAIToolHelp = func(ctx context.Context, tool aiToolRun) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, tool.Bin, "--help")
+	cmd.Env = append(os.Environ(), tool.Env...)
+	platform.HideSubprocessWindow(cmd)
+	out, err := cmd.Output()
+	return string(out), err
+}
+
+// aiToolSupportsMeta reports whether the engine takes --meta (stamping a
+// caller's recipe into its generation record). Engines built before it
+// reject unknown flags, so the flag is only passed when --help lists it.
+func aiToolSupportsMeta(ctx context.Context, tool aiToolRun) bool {
+	key := tool.Bin
+	if st, err := os.Stat(tool.Bin); err == nil {
+		key = fmt.Sprintf("%s|%d|%d", tool.Bin, st.Size(), st.ModTime().UnixNano())
+	}
+	metaSupportMu.Lock()
+	ok, known := metaSupport[key]
+	metaSupportMu.Unlock()
+	if known {
+		return ok
+	}
+	help, err := probeAIToolHelp(ctx, tool)
+	if err != nil {
+		return false // not cached: a failed probe is retried next job
+	}
+	ok = strings.Contains(help, "--meta")
+	metaSupportMu.Lock()
+	metaSupport[key] = ok
+	metaSupportMu.Unlock()
+	return ok
+}
+
+// prepareMeta readies a task's recipe for the engine: it is dropped (with a
+// log line) when the engine is too old to take --meta, and a long one goes
+// through a temp file (*metaFile) like a long prompt. The returned func
+// removes that file.
+func prepareMeta(ctx context.Context, q *jobqueue.Queue, jobID, tag string, tool aiToolRun, meta, metaFile *string) (func(), error) {
+	noop := func() {}
+	if *meta == "" {
+		return noop, nil
+	}
+	if !aiToolSupportsMeta(ctx, tool) {
+		q.PushJobStdout(jobID, tag+": this engine build cannot stamp the Transform recipe (update it to save tasks from results); running without it")
+		*meta = ""
+		return noop, nil
+	}
+	f, err := writePromptFile(*meta)
+	if err != nil || f == "" {
+		return noop, err
+	}
+	*metaFile = f
+	return func() { os.Remove(f) }, nil
 }

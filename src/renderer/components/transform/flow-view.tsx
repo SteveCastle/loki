@@ -22,6 +22,7 @@ import {
   retouchPreset,
   runSummary,
   SAME_VIEW,
+  suggestTemplateName,
   tokenIssues,
   usesReferences,
   type IntentId,
@@ -30,7 +31,7 @@ import {
   type Shake,
   type TransformSettings,
 } from './intents';
-import { deleteTemplate, saveTemplate, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
+import { deleteTemplate, saveTemplate, templateSettings, templateSummary, useAllTemplates, useLastRun, useTemplates, type FlowPhase, type LastRun, type PromptTemplate } from './store';
 import { GlyphCheck, GlyphDie, GlyphMusic, GlyphPin, IntentIcon } from './icons';
 import CameraRig from './camera-rig';
 import './transform-flow.css';
@@ -150,14 +151,7 @@ function baseName(p: string): string {
   return p.split(/[\\/]/).pop() || p;
 }
 
-/** A name for a new saved prompt: its first few words. */
-export function suggestTemplateName(prompt: string): string {
-  const flat = prompt.replace(/\s+/g, ' ').trim();
-  if (flat.length <= 32) return flat;
-  const cut = flat.slice(0, 32);
-  const sp = cut.lastIndexOf(' ');
-  return `${(sp > 12 ? cut.slice(0, sp) : cut).replace(/[.,;:]+$/, '')}…`;
-}
+export { suggestTemplateName };
 
 /**
  * "☆ Save prompt": always shown where a custom prompt is written or reviewed (greyed out while empty, "★ Saved"
@@ -222,19 +216,20 @@ export function SavePrompt({ intent, settings }: { intent: IntentId; settings: T
   );
 }
 
-// The user's saved prompts for an intent, as a labelled chip row: click one to start from it (and its settings).
+// The user's saved tasks for an intent, as a labelled chip row: click one to start from it (and its settings). A
+// custom intent's are prompts (the one in the box is marked); a preset's are settings saved from a result.
 function SavedPrompts({ intent, prompt, onUse }: { intent: IntentId; prompt: string; onUse: (t: PromptTemplate) => void }) {
   const list = useTemplates(intent);
   const trimmed = prompt.trim();
   if (!list.length) return null;
   return (
-    <ChipRow label="Saved" hint="Your saved prompts: click one to start from it">
+    <ChipRow label="Saved" hint="Your saved tasks: click one to start from it">
       {list.map((t) => (
-        <span key={t.id} className={`ts-template${t.prompt === trimmed ? ' active' : ''}`}>
-          <button type="button" className="ts-template-use" title={`Start from your saved prompt:\n${t.prompt}`} onClick={() => onUse(t)}>
+        <span key={t.id} className={`ts-template${trimmed && t.prompt === trimmed ? ' active' : ''}`}>
+          <button type="button" className="ts-template-use" title={`Start from your saved task:\n${templateSummary(intent, t)}`} onClick={() => onUse(t)}>
             ☆ {t.name}
           </button>
-          <button type="button" className="ts-template-x" onClick={() => deleteTemplate(intent, t.id)} aria-label={`Delete saved prompt ${t.name}`} title="Delete">
+          <button type="button" className="ts-template-x" onClick={() => deleteTemplate(intent, t.id)} aria-label={`Delete saved task ${t.name}`} title="Delete">
             ×
           </button>
         </span>
@@ -591,14 +586,9 @@ export function TransformFlowView(props: FlowViewProps) {
 
 function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify> }) {
   const { inputs, intent } = props;
-  const savedEdit = useTemplates('edit');
-  const savedDirect = useTemplates('direct');
   const last = useLastRun();
   const lastOk = last ? availability(last.intent, inputs) : null;
-  const saved: Array<{ intent: IntentId; t: PromptTemplate }> = [
-    ...(availability('edit', inputs).ok ? savedEdit.map((t) => ({ intent: 'edit' as IntentId, t })) : []),
-    ...(availability('direct', inputs).ok ? savedDirect.map((t) => ({ intent: 'direct' as IntentId, t })) : []),
-  ];
+  const saved = useAllTemplates().filter(({ intent: id }) => availability(id, inputs).ok);
   const groups: Array<{ id: 'image' | 'video'; title: string; sub: string }> = [
     { id: 'image', title: 'Images', sub: 'loki-retouch · Qwen Image 2.1' },
     { id: 'video', title: 'Video', sub: 'loki-reshoot · MiniMax H3, with sound' },
@@ -615,7 +605,7 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
         </span>
         {saved.length ? (
           <span>
-            <KindBadge kind="saved" /> a prompt you saved
+            <KindBadge kind="saved" /> a task you saved
           </span>
         ) : null}
       </p>
@@ -684,12 +674,12 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
       {saved.length > 0 && (
         <section className="ts-group">
           <div className="ts-group-head">
-            <h3>Saved prompts</h3>
-            <span>your custom prompts · save one from the prompt box</span>
+            <h3>Saved tasks</h3>
+            <span>save one from the prompt box, or from a result&apos;s Generation info</span>
           </div>
           <div className="ts-cards">
             {saved.map(({ intent: id, t }) => (
-              <button key={t.id} type="button" className="ts-card ts-card-saved" onClick={() => props.onTemplate?.(id, t)} title={t.prompt}>
+              <button key={t.id} type="button" className="ts-card ts-card-saved" onClick={() => props.onTemplate?.(id, t)} title={templateSummary(id, t)}>
                 <span className="ts-card-icon">
                   <IntentIcon id={id} />
                 </span>
@@ -698,7 +688,7 @@ function ChooseView(props: FlowViewProps & { inputs: ReturnType<typeof classify>
                     ☆ {t.name} <KindBadge kind="saved" />
                   </strong>
                   <small>
-                    {intentById(id).title} · {t.prompt}
+                    {intentById(id).title} · {templateSummary(id, t)}
                   </small>
                 </span>
               </button>
@@ -779,6 +769,8 @@ function ShapeView(props: FlowViewProps & { def: ReturnType<typeof intentById> }
             <p>{def.blurb}</p>
           </div>
         </div>
+
+        {def.needsText !== 'prompt' && <SavedPrompts intent={def.id} prompt="" onUse={(t) => onSettings(templateSettings(def.id, t))} />}
 
         {def.needsText === 'prompt' && (
           <Field

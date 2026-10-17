@@ -42,6 +42,12 @@ and its inputs are tagged `<Picture n>` / `<Video n>` (`start`, `duration`, `aud
 reported as `-`. `--json` prints the same record under `generation`. Parsers: `src/renderer/generation-metadata.ts` (the app),
 writers: each tool's `src/genmeta.rs`.
 
+`--meta JSON` (or `--meta-file FILE`) stores the caller's own JSON object verbatim as the record's `meta` field, and is left out
+of `args`. A value that is not a JSON object fails the run before any model loads. The Lowkey Transform flow puts its recipe
+there (`{"kind": "loki-transform", "v": 1, "intent", "settings", "paths"}`: the intent and every setting as the user set them,
+and the job's inputs in order), which is what lets the Generation panel save a result as a Transform task again
+(`src/renderer/components/transform/recipe.ts`). The media server only passes `--meta` to an engine whose `--help` lists it.
+
 ## Environment
 - `LOKI_MODELS`: extra folder searched for model files (after the binary's folder and `./models`).
 - `LOKI_PROFILE=1`: per-kernel GPU timing report on stderr. Other `LOKI_*` variables are engine tuning knobs (see each README).

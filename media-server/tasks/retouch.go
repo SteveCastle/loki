@@ -56,6 +56,7 @@ var retouchOptions = []TaskOption{
 	{Name: "refs", Label: "Reference Images", Type: "string", Default: "", Description: "Extra reference images (<image2>, <image3>...), one absolute path per line"},
 	{Name: "combine", Label: "Combine Inputs", Type: "bool", Default: false, Description: "With several input images: the first is <image1>, the rest become references, one output"},
 	{Name: "time", Label: "Video Time", Type: "number", Default: 0.0, Description: "Seconds into a video input to sample the frame from (images ignore it)"},
+	{Name: "meta", Label: "Recipe (JSON)", Type: "string", Default: "", Description: "A JSON object stamped verbatim into the result's generation record as `meta` (the Transform flow's intent + settings, to rebuild a saved task from a result); dropped for engines too old to take it"},
 	{Name: "seq", Label: "Sequence Mode", Type: "bool", Default: false, Description: "Frames of a clip: stricter faithful prompt, framing pinned, one seed for all inputs"},
 }
 
@@ -75,6 +76,10 @@ type retouchParams struct {
 	Combine  bool
 	Time     float64
 	Seq      bool
+	// Meta is the caller's recipe (JSON object) for the generation record;
+	// MetaFile, when set by the task, carries a long one instead.
+	Meta     string
+	MetaFile string
 }
 
 func optString(opts map[string]any, k string) string {
@@ -137,6 +142,7 @@ func retouchParamsFromOptions(opts map[string]any) retouchParams {
 		Combine: optBool(opts, "combine"),
 		Seq:     optBool(opts, "seq"),
 		Refs:    splitPathList(optString(opts, "refs")),
+		Meta:    strings.TrimSpace(optString(opts, "meta")),
 	}
 	if p.Preset == "none" {
 		p.Preset = ""
@@ -220,6 +226,11 @@ func buildRetouchArgs(p retouchParams, input string, refs []string, output, prom
 	}
 	if p.Append != "" {
 		args = append(args, "--append="+p.Append)
+	}
+	if p.MetaFile != "" {
+		args = append(args, "--meta-file", p.MetaFile)
+	} else if p.Meta != "" {
+		args = append(args, "--meta="+p.Meta)
 	}
 	if p.Size != "" {
 		args = append(args, "--size", p.Size)
@@ -499,6 +510,11 @@ func runRetouchJob(j *jobqueue.Job, q *jobqueue.Queue, tag string, p retouchPara
 	if promptFile != "" {
 		defer os.Remove(promptFile)
 	}
+	cleanupMeta, merr := prepareMeta(ctx, q, j.ID, tag, bin, &p.Meta, &p.MetaFile)
+	if merr != nil {
+		return fail("failed to write recipe file: "+merr.Error(), merr)
+	}
+	defer cleanupMeta()
 
 	units := p.Steps + 1
 	totalUnits := len(items) * units

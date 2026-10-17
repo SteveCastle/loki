@@ -42,6 +42,7 @@ var reshootOptions = []TaskOption{
 	{Name: "refsize", Label: "Reference Image Size", Type: "enum", Choices: []string{"match", "max"}, Default: "match", Description: "match = scaled to the generation's area; max = up to 2048px (better identity, much slower)"},
 	{Name: "noaudio", Label: "No Audio", Type: "bool", Default: false, Description: "Do not generate/mux audio"},
 	{Name: "novideoaudio", Label: "Ignore Video Soundtracks", Type: "bool", Default: false, Description: "Do not use the soundtracks of reference videos"},
+	{Name: "meta", Label: "Recipe (JSON)", Type: "string", Default: "", Description: "A JSON object stamped verbatim into the result's generation record as `meta` (the Transform flow's intent + settings, to rebuild a saved task from a result); dropped for engines too old to take it"},
 	{Name: "refs", Label: "Extra References", Type: "string", Default: "", Description: "Extra reference images/videos/audio, one absolute path per line"},
 }
 
@@ -60,6 +61,10 @@ type reshootParams struct {
 	NoAudio      bool
 	NoVideoAudio bool
 	Refs         []string
+	// Meta is the caller's recipe (JSON object) for the generation record;
+	// MetaFile, when set by the task, carries a long one instead.
+	Meta     string
+	MetaFile string
 }
 
 func reshootParamsFromOptions(opts map[string]any) reshootParams {
@@ -75,6 +80,7 @@ func reshootParamsFromOptions(opts map[string]any) reshootParams {
 		NoAudio:      optBool(opts, "noaudio"),
 		NoVideoAudio: optBool(opts, "novideoaudio"),
 		Refs:         splitPathList(optString(opts, "refs")),
+		Meta:         strings.TrimSpace(optString(opts, "meta")),
 	}
 	if v, ok := opts["native"].(bool); ok {
 		p.Native = v
@@ -166,6 +172,11 @@ func buildReshootArgs(p reshootParams, images, videos, audios []string, output, 
 		args = append(args, "--prompt-file", promptFile)
 	} else if p.Prompt != "" {
 		args = append(args, "--prompt="+p.Prompt)
+	}
+	if p.MetaFile != "" {
+		args = append(args, "--meta-file", p.MetaFile)
+	} else if p.Meta != "" {
+		args = append(args, "--meta="+p.Meta)
 	}
 	args = append(args, "-d", formatFloatArg(p.Duration))
 	switch {
@@ -333,6 +344,11 @@ func reshootTask(j *jobqueue.Job, q *jobqueue.Queue, mu *sync.Mutex) error {
 	if promptFile != "" {
 		defer os.Remove(promptFile)
 	}
+	cleanupMeta, merr := prepareMeta(ctx, q, j.ID, tag, bin, &p.Meta, &p.MetaFile)
+	if merr != nil {
+		return fail("failed to write recipe file: "+merr.Error(), merr)
+	}
+	defer cleanupMeta()
 
 	args := buildReshootArgs(p, images, videos, audios, output, promptFile)
 	mode := "prompt"

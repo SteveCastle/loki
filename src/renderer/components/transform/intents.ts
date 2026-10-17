@@ -300,6 +300,15 @@ export function intentKind(id: IntentId): IntentKind {
   return intentById(id).needsText === 'prompt' ? 'custom' : 'preset';
 }
 
+/** A name for a new saved prompt: its first few words. */
+export function suggestTemplateName(prompt: string): string {
+  const flat = prompt.replace(/\s+/g, ' ').trim();
+  if (flat.length <= 32) return flat;
+  const cut = flat.slice(0, 32);
+  const sp = cut.lastIndexOf(' ');
+  return `${(sp > 12 ? cut.slice(0, sp) : cut).replace(/[.,;:]+$/, '')}…`;
+}
+
 function quoteSnippet(text: string, max = 48): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return `“${flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat}”`;
@@ -566,6 +575,23 @@ export interface BuildContext {
   videoTime?: number;
   /** Seed source for 'random' mode (injectable for tests). */
   random?: () => number;
+  /**
+   * Stamp the run's recipe into each job (`meta`, see recipeJson) so its results can be saved as a task again.
+   * true = these settings; the pinned-references pass hands down the settings as the user set them (pins included).
+   */
+  recipe?: true | TransformSettings;
+}
+
+/** `kind` of the recipe the Transform flow stamps into its results (the generation record's `meta`). */
+export const RECIPE_KIND = 'loki-transform';
+export const RECIPE_VERSION = 1;
+
+/**
+ * The recipe one job stamps into its results: the intent, every setting as the user set them, and the job's inputs in
+ * order (the first is the item the run was for; recipe.ts turns the rest into pinned references). See recipe.ts.
+ */
+export function recipeJson(id: IntentId, s: TransformSettings, paths: string[]): string {
+  return JSON.stringify({ kind: RECIPE_KIND, v: RECIPE_VERSION, intent: id, settings: s, paths });
 }
 
 const q = (paths: string[]) => `"${paths.join('\n')}"`;
@@ -622,7 +648,7 @@ export function buildJobs(
     const pins = activePins(id, s.pinned).length;
     const out: JobRequest[] = [];
     for (const g of groups) {
-      const b = buildJobs(id, { ...s, pinned: [] }, g, ctx);
+      const b = buildJobs(id, { ...s, pinned: [] }, g, ctx.recipe === true ? { ...ctx, recipe: s } : ctx);
       if (b.error) return b;
       b.jobs.forEach((j) => out.push({ ...j, label: `${def.title} · ${g[0].split(/[\\/]/).pop()} + ${pins} pinned` }));
     }
@@ -634,6 +660,10 @@ export function buildJobs(
   const steps = stepsFor(def.engine, s.quality);
   const seedList = seeds(s, ctx);
   const jobs: JobRequest[] = [];
+  const recipe = ctx.recipe === true ? s : ctx.recipe;
+  const stamp = (f: Record<string, string>, runPaths: string[]) => {
+    if (recipe) f.meta = recipeJson(id, recipe, runPaths);
+  };
 
   if (def.engine === 'retouch') {
     const manual = s.manualPrompt !== null ? s.manualPrompt.trim() : null;
@@ -659,6 +689,7 @@ export function buildJobs(
       // One run: targets[0] is <image1>, the others ride along as <image2>… (loki-retouch --ref).
       if (shared) put(f, 'combine', true);
       if (ctx.videoTime && inputs.images.length === 0) put(f, 'time', ctx.videoTime.toFixed(3));
+      stamp(f, targets);
       jobs.push({
         input: `retouch ${q(targets)}`,
         fields: f,
@@ -697,6 +728,7 @@ export function buildJobs(
           put(f, 'prompt', s.prompt.trim());
         }
         common(f, seed);
+        stamp(f, [img]);
         jobs.push({ input: `reshoot ${q([img])}`, fields: f, label: `Animate · ${img.split(/[\\/]/).pop()}` });
       });
     });
@@ -707,6 +739,7 @@ export function buildJobs(
     const f: Record<string, string> = {};
     put(f, 'prompt', manual ?? s.prompt.trim());
     common(f, seed);
+    stamp(f, all);
     jobs.push({ input: `reshoot ${q(all)}`, fields: f, label: `Direct · ${all.length} references` });
   });
   return { jobs };

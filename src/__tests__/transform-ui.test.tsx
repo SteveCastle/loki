@@ -67,6 +67,13 @@ describe('TransformSection (palette chips)', () => {
     expect(screen.queryByRole('button', { name: /Combine/ })).toBeNull();
   });
 
+  it("a preset's saved task (saved from a result) gets a chip that opens it with its settings", () => {
+    saveTemplate('upscale', 'Big and gentle', '', { ...settingsFor('upscale'), scale: 4, manualPrompt: 'upscale gently' });
+    setup([IMG]);
+    fireEvent.click(screen.getByRole('button', { name: /☆ Big and gentle/ }));
+    expect(getFlowRequest()).toMatchObject({ intent: 'upscale', phase: 'shape', settings: expect.objectContaining({ scale: 4, manualPrompt: 'upscale gently' }) });
+  });
+
   it('renders nothing for a selection no intent can use', () => {
     const { container } = render(
       <TransformSection paths={['C:/media/notes.txt']} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />
@@ -85,6 +92,8 @@ describe('TransformSection (palette chips)', () => {
     const body = JSON.parse(init.body);
     expect(body.input).toBe('retouch "C:/media/photo.jpg\nC:/media/other.png"');
     expect(body.fields).toMatchObject({ preset: 'restore', steps: '25' });
+    // the recipe rides along so the result can be saved as a task again (recipe.ts)
+    expect(JSON.parse(body.fields.meta)).toMatchObject({ kind: 'loki-transform', intent: 'restore', paths: [IMG, IMG2] });
     expect(init.headers.Authorization).toBe('Bearer tok');
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(getFlowRequest()).toBeNull();
@@ -478,7 +487,7 @@ describe('TransformFlowView: saved prompts', () => {
     render(<Harness intent="edit" initial="" />);
     expect(screen.getByText('☆ night')).toBeTruthy();
     expect(screen.queryByText('☆ Dolly')).toBeNull();
-    fireEvent.click(screen.getByLabelText('Delete saved prompt night'));
+    fireEvent.click(screen.getByLabelText('Delete saved task night'));
     expect(screen.queryByText('☆ night')).toBeNull();
     expect(loadTemplates('edit')).toEqual([]);
   });
@@ -532,14 +541,14 @@ describe('Transform: presets, custom and saved prompts are told apart', () => {
     expect(card('Animate').textContent).toMatch(/Preset/);
     expect(card('Edit').textContent).toMatch(/Custom/);
     expect(card('Direct').textContent).toMatch(/Custom/);
-    expect(screen.queryByText('Saved prompts')).toBeNull();
+    expect(screen.queryByText('Saved tasks')).toBeNull();
   });
 
   it('choose: saved prompts get their own section and start their intent with the prompt', () => {
     saveTemplate('edit', 'Watercolor', 'turn it into a watercolor painting');
     const props = chooseProps();
     render(<TransformFlowView {...props} />);
-    expect(screen.getByText('Saved prompts')).toBeTruthy();
+    expect(screen.getByText('Saved tasks')).toBeTruthy();
     fireEvent.click(screen.getByText(/☆ Watercolor/).closest('button') as HTMLButtonElement);
     expect(props.onTemplate).toHaveBeenCalledWith('edit', expect.objectContaining({ prompt: 'turn it into a watercolor painting' }));
   });

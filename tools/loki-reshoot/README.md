@@ -56,7 +56,7 @@ loki-reshoot --prompt TEXT [OPTIONS]
   -d, --duration SECONDS                default 5 (snapped up to the model's 17k+5 frame grid @ 24 fps)
       --frames N                        exact frame count instead of --duration
       --size WxH | --aspect W:H --megapixels F    output size (default: first reference's aspect at 0.4 MP)
-      --steps N (20)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)  -q  --json  --show-prompt  --prompt-guide
+      --steps N (20)  --seed N  --ref-image-size match|max  --no-audio  --crf N (18)  -q  --json  --show-prompt  --prompt-guide  --meta JSON|--meta-file FILE
       --dit / --text-encoder / --video-vae / --audio-vae PATH   model files
       --ffmpeg PATH
 ```

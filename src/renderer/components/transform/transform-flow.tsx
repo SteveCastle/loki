@@ -225,7 +225,7 @@ function FlowSession({ req }: { req: NonNullable<ReturnType<typeof useFlowReques
       if (validateShape(intent, settings, paths)) setPhase('shape');
       return;
     }
-    const built = buildJobs(intent, settings, paths, { videoTime: req.videoTime });
+    const built = buildJobs(intent, settings, paths, { videoTime: req.videoTime, recipe: true });
     if (built.error || built.jobs.length === 0) {
       setError(built.error || 'Nothing to run');
       return;

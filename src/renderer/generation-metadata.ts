@@ -27,6 +27,8 @@ export interface GenerationInfo {
   parametersText?: string;
   /** The loki- record itself, pretty-printed. */
   recordJson?: string;
+  /** The loki- record itself, parsed (Transform rebuilds a saved task from it: transform/recipe.ts). */
+  lokiRecord?: Record<string, any>;
   /** The command line that made the file, re-runnable in a shell. */
   commandLine?: string;
   /** Every raw record, for the fallback listing. */
@@ -146,6 +148,7 @@ function parseLoki(rec: Json): Omit<GenerationInfo, 'raw'> {
     prompt: typeof rec.prompt === 'string' ? rec.prompt : undefined,
     params,
     recordJson: pretty(rec),
+    lokiRecord: rec,
     commandLine: Array.isArray(rec.args) ? [rec.tool, ...args.map(shellQuote)].join(' ') : undefined,
   };
 }

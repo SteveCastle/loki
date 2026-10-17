@@ -64,3 +64,46 @@ test('WebUI files get the parameters block copy, and files without records rende
   const { container } = render(<GenerationInfo chunks={undefined} />);
   expect(container.innerHTML).toBe('');
 });
+
+describe('Save as Transform task', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    // eslint-disable-next-line global-require
+    require('../renderer/components/transform/store').resetTemplateCache();
+  });
+
+  const stamped = {
+    loki: 1, tool: 'loki-retouch', version: '0.2.0', model: 'Qwen Image 2.1', prompt: 'put the jacket of <image2> on <image1>', seed: 5, steps: 40,
+    args: ['--prompt=put the jacket of <image2> on <image1>', 'in.png'],
+    inputs: [{ tag: '<image1>', path: 'C:/m/me.png' }, { tag: '<image2>', path: 'C:/m/jacket.png' }],
+    meta: {
+      kind: 'loki-transform', v: 1, intent: 'edit', paths: ['C:/m/me.png', 'C:/m/jacket.png'],
+      settings: { prompt: 'put the jacket of <image2> on <image1>', quality: 'fine', sizeMode: 'same', variations: 2 },
+    },
+  };
+
+  test('saves the stamped recipe under a name, the other image pinned', () => {
+    const { getByText, getByLabelText, queryByText } = render(<GenerationInfo chunks={{ loki: JSON.stringify(stamped) }} />);
+    fireEvent.click(getByText('☆ Save as Edit task'));
+    const name = getByLabelText('Saved task name') as HTMLInputElement;
+    expect(name.value).toBe('put the jacket of <image2> on…');
+    expect(queryByText(/predates stamped recipes/)).toBeNull();
+    fireEvent.change(name, { target: { value: 'Jacket swap' } });
+    fireEvent.keyDown(name, { key: 'Enter' });
+    expect(getByText(/Saved as “Jacket swap”/)).toBeTruthy();
+    const saved = JSON.parse(window.localStorage.getItem('loki.transform.templates.v1') || '{}').edit;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ name: 'Jacket swap', prompt: 'put the jacket of <image2> on <image1>' });
+    expect(saved[0].settings).toMatchObject({ quality: 'fine', variations: 2, pinned: ['C:/m/jacket.png'] });
+  });
+
+  test('an older record is rebuilt and says so; other tools offer nothing', () => {
+    const { meta, ...older } = stamped;
+    const { getByText, unmount } = render(<GenerationInfo chunks={{ loki: JSON.stringify(older) }} />);
+    fireEvent.click(getByText('☆ Save as Edit task'));
+    expect(getByText(/predates stamped recipes/)).toBeTruthy();
+    unmount();
+    const { queryByText } = render(<GenerationInfo chunks={{ prompt: JSON.stringify(comfyPrompt) }} />);
+    expect(queryByText(/Save as/)).toBeNull();
+  });
+});

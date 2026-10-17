@@ -2,7 +2,7 @@
 // contents when it hides) opens the full options through here, and a root-level host
 // renders it. Also persists the last-used settings per intent.
 import { useSyncExternalStore } from 'react';
-import { pinnable, settingsFor, type IntentId, type TransformSettings, type JobRequest } from './intents';
+import { INTENTS, intentKind, pinnable, runSummary, settingsFor, type IntentId, type TransformSettings, type JobRequest } from './intents';
 import { EngineSetupDeferred, ensureEngines } from './engine-setup';
 
 export type FlowPhase = 'choose' | 'shape' | 'review';
@@ -130,13 +130,16 @@ export function saveRemembered(id: IntentId, s: TransformSettings): void {
 
 // --- saved prompt templates ---------------------------------------------------
 
-// Prompts the user saved to start from again, per intent: tags like <image1> or
-// <Picture 1> only mean something to the engine they were written for.
+// Configurations the user saved to start from again ("saved tasks"), per intent: tags like <image1> or
+// <Picture 1> only mean something to the engine they were written for. A custom intent's is its prompt (plus the
+// settings it goes with); a preset's (Restore, Upscale, New angle…) is its settings alone, saved from a result's
+// metadata (recipe.ts).
 const TEMPLATES_KEY = 'loki.transform.templates.v1';
 
 export interface PromptTemplate {
   id: string;
   name: string;
+  /** The custom prompt; '' for a preset intent's saved settings. */
   prompt: string;
   /**
    * The rest of the configuration the prompt goes with (output size, quality, variations, seed…), captured when it
@@ -145,17 +148,24 @@ export interface PromptTemplate {
   settings?: Partial<TransformSettings>;
 }
 
-// Everything but the prompt text itself (the template's own field) and the per-run preset rewrites.
-function templateConfig(s: TransformSettings): Partial<TransformSettings> {
+// Everything but the prompt text itself (the template's own field). A custom intent's hand-written review prompt is
+// a one-off rewrite and is dropped; a preset's is what the saved task runs instead of the built-in text, so it stays.
+function templateConfig(id: IntentId, s: TransformSettings): Partial<TransformSettings> {
   const rest: Partial<TransformSettings> = { ...s };
   delete rest.prompt;
-  delete rest.manualPrompt;
+  if (intentKind(id) === 'custom' || rest.manualPrompt === null) delete rest.manualPrompt;
   return rest;
 }
 
 /** The settings to start from for a saved prompt: its saved configuration, else this intent's remembered one. */
 export function templateSettings(id: IntentId, t: PromptTemplate): TransformSettings {
-  return { ...settingsFor(id, loadRemembered(id)), ...(t.settings || {}), prompt: t.prompt, manualPrompt: null };
+  const manual = intentKind(id) === 'custom' ? null : t.settings?.manualPrompt ?? null;
+  return { ...settingsFor(id, loadRemembered(id)), ...(t.settings || {}), prompt: t.prompt, manualPrompt: manual };
+}
+
+/** How a saved task reads in a list: its prompt, else (a preset's) what its settings do. */
+export function templateSummary(id: IntentId, t: PromptTemplate): string {
+  return t.prompt || runSummary(id, templateSettings(id, t));
 }
 
 type TemplateStore = Partial<Record<IntentId, PromptTemplate[]>>;
@@ -191,14 +201,14 @@ export function loadTemplates(id: IntentId): PromptTemplate[] {
 
 /**
  * Saves `prompt` under `name`, with the configuration it goes with when `settings` is given; a template with the
- * same name (case-insensitive) is replaced.
+ * same name (case-insensitive) is replaced. A custom intent needs a prompt; a preset's saved task may have none.
  */
 export function saveTemplate(id: IntentId, name: string, prompt: string, settings?: TransformSettings): PromptTemplate | null {
   const n = name.trim();
   const p = prompt.trim();
-  if (!n || !p) return null;
+  if (!n || (!p && intentKind(id) === 'custom')) return null;
   const tpl: PromptTemplate = { id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name: n, prompt: p };
-  if (settings) tpl.settings = templateConfig(settings);
+  if (settings) tpl.settings = templateConfig(id, settings);
   const list = loadTemplates(id).filter((t) => t.name.toLowerCase() !== n.toLowerCase());
   writeTemplates({ ...readTemplates(), [id]: [...list, tpl] });
   return tpl;
@@ -209,7 +219,7 @@ export function rememberTemplateRun(id: IntentId, settings: TransformSettings): 
   const p = settings.prompt.trim();
   const list = loadTemplates(id);
   if (!p || !list.some((t) => t.prompt === p)) return;
-  const config = templateConfig(settings);
+  const config = templateConfig(id, settings);
   writeTemplates({ ...readTemplates(), [id]: list.map((t) => (t.prompt === p ? { ...t, settings: config } : t)) });
 }
 
@@ -227,6 +237,21 @@ export function useTemplates(id: IntentId): PromptTemplate[] {
     () => NO_TEMPLATES
   );
 }
+
+/** Every saved task, in intent order then saving order. */
+export function useAllTemplates(): Array<{ intent: IntentId; t: PromptTemplate }> {
+  const all = useSyncExternalStore(
+    (cb) => {
+      templateListeners.add(cb);
+      return () => templateListeners.delete(cb);
+    },
+    readTemplates,
+    () => NO_STORE
+  );
+  return INTENTS.flatMap((i) => (all[i.id] || NO_TEMPLATES).map((t) => ({ intent: i.id, t })));
+}
+
+const NO_STORE: TemplateStore = {};
 
 /** Tests: forget the in-memory copy so the next read goes back to localStorage. */
 export function resetTemplateCache(): void {

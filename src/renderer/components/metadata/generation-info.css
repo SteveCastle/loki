@@ -118,3 +118,33 @@
 .GenerationInfo .gen-raw-toggle:hover {
   opacity: 1;
 }
+
+.GenerationInfo .gen-task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em;
+  margin-bottom: 0.6em;
+}
+
+.GenerationInfo .gen-task input {
+  flex: 1 1 12em;
+  min-width: 0;
+  padding: 0.35em 0.5em;
+  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  font: inherit;
+}
+
+.GenerationInfo .gen-copy:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.GenerationInfo .gen-task-note {
+  flex-basis: 100%;
+  font-size: 0.9em;
+  opacity: 0.6;
+}

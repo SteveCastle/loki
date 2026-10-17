@@ -116,7 +116,7 @@ fn main() -> Result<()> {
     }
     let got: Vec<f32> = rgb.iter().map(|v| *v as f32 / 255.0).collect();
     stats("vae decode", &got, &ref_dec);
-    Rgb8 { w: w * 16, h: h * 16, data: rgb }.save_png(&dit_dir.join("decoded_rust.png"))?;
+    Rgb8 { w: w * 16, h: h * 16, data: rgb }.save_png(&dit_dir.join("decoded_rust.png"), &[])?;
     println!("wrote {}", dit_dir.join("decoded_rust.png").display());
     Ok(())
 }

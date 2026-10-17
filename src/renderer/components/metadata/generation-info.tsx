@@ -1,5 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { parseGenerationMetadata } from '../../generation-metadata';
+import { suggestTaskName, taskFromRecord, type RebuiltTask } from '../transform/recipe';
+import { intentById } from '../transform/intents';
+import { saveTemplate } from '../transform/store';
 import copyIcon from '../../../../assets/copy.svg';
 
 import './generation-info.css';
@@ -40,6 +43,74 @@ function CopyButton({ text, label, title }: { text: string; label?: string; titl
   );
 }
 
+/* "Save as Transform task": the run that made this file, as a saved task to
+ * run on other images (transform/recipe.ts). It lands with the prompts saved
+ * from the Transform flow itself, in the palette's ☆ chips. */
+function SaveTask({ task }: { task: RebuiltTask }) {
+  const [naming, setNaming] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+  const title = intentById(task.intent).title;
+  const commit = () => {
+    if (naming === null) return;
+    const t = saveTemplate(task.intent, naming, task.settings.prompt, task.settings);
+    if (t) {
+      setSaved(t.name);
+      setNaming(null);
+    }
+  };
+  const note = task.approximate
+    ? 'Rebuilt from the engine settings (this file predates stamped recipes): check quality, size and seed before running.'
+    : null;
+  if (naming !== null) {
+    return (
+      <div className="gen-task">
+        <input
+          autoFocus
+          value={naming}
+          placeholder="Name"
+          aria-label="Saved task name"
+          onChange={(e) => setNaming(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={(e) => {
+            // typing here must not reach the viewer's own shortcuts
+            e.stopPropagation();
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              setNaming(null);
+            }
+          }}
+        />
+        <button type="button" className="gen-copy labelled" disabled={!naming.trim()} onClick={commit}>
+          Save
+        </button>
+        <button type="button" className="gen-copy labelled" onClick={() => setNaming(null)}>
+          Cancel
+        </button>
+        {note && <span className="gen-task-note">{note}</span>}
+      </div>
+    );
+  }
+  return (
+    <div className="gen-task">
+      <button
+        type="button"
+        className="gen-copy labelled"
+        title={`Save this ${title} run (its prompt and settings) as a Transform task, to run on other images from the palette's ☆ chips`}
+        onClick={() => {
+          setSaved(null);
+          setNaming(suggestTaskName(task));
+        }}
+      >
+        <span>☆ Save as {title} task</span>
+      </button>
+      {saved && <span className="gen-dim">★ Saved as “{saved}” · under Transform in the palette</span>}
+    </div>
+  );
+}
+
 const sizeOf = (text: string) => {
   const bytes = new Blob([text]).size;
   return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -47,6 +118,7 @@ const sizeOf = (text: string) => {
 
 export default function GenerationInfo({ chunks }: { chunks?: Record<string, string> | null }) {
   const info = useMemo(() => parseGenerationMetadata(chunks), [chunks]);
+  const task = useMemo(() => (info?.lokiRecord ? taskFromRecord(info.lokiRecord) : null), [info]);
   const [showRaw, setShowRaw] = useState(false);
   if (!info) return null;
 
@@ -107,6 +179,8 @@ export default function GenerationInfo({ chunks }: { chunks?: Record<string, str
           <div className="gen-text gen-mono">{info.commandLine}</div>
         </div>
       )}
+
+      {task && <SaveTask key={info.recordJson} task={task} />}
 
       {copyables.length > 0 && (
         <div className="gen-actions">

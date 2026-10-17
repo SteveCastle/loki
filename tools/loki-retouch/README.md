@@ -61,7 +61,7 @@ loki-retouch [OPTIONS] [INPUT]...
   --upscale [N]        = --preset upscale --scale N (faithful super-resolution, default 2x)
   --snap               keep the model's multiple-of-16 size (otherwise results are resampled to exactly the requested size)
   -o, --out PATH|DIR|- output (default <name>_edit.png next to the input; the preset's suffix e.g. _4k; stdin -> stdout)
-  --steps N (25)  --seed N  --shift F (0.69)  --ref-resolution N  --json  -q  --show-prompt
+  --steps N (25)  --seed N  --shift F (0.69)  --ref-resolution N  --json  -q  --show-prompt  --meta JSON|--meta-file FILE
   --dit / --text-encoder / --vae PATH   model files; by default discovered next to the binary or in ./models
 ```
 

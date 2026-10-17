@@ -20,8 +20,9 @@ import {
   saveLastRun,
   submitJobs,
   templateSettings,
+  templateSummary,
+  useAllTemplates,
   useLastRun,
-  useTemplates,
 } from './store';
 import { validateForRun } from './flow-view';
 import { GlyphReplay, IntentIcon } from './icons';
@@ -29,7 +30,7 @@ import './transform-section.css';
 
 // The palette's "Transform" row: one-click presets (run with the settings you
 // used last time), the custom intents (open the flow at their prompt), the
-// user's saved prompts, the last run (“… again”: same action and settings on this
+// user's saved tasks (prompts, and preset settings saved from a result), the last run (“… again”: same action and settings on this
 // selection), and "All options" for the full flow. Shift-click a preset or
 // the last run to adjust it first.
 const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'edit', 'alive'];
@@ -53,12 +54,7 @@ export default function TransformSection(props: TransformSectionProps) {
   const inputs = classify(paths);
   const chips = CHIP_ORDER.map(intentById).filter((i) => availability(i.id, inputs).ok);
   const hasVideoOnly = inputs.images.length === 0 && inputs.videos.length === 1;
-  const savedEdit = useTemplates('edit');
-  const savedDirect = useTemplates('direct');
-  const saved = [
-    ...(availability('edit', inputs).ok ? savedEdit.map((t) => ({ intent: 'edit' as IntentId, t })) : []),
-    ...(availability('direct', inputs).ok ? savedDirect.map((t) => ({ intent: 'direct' as IntentId, t })) : []),
-  ];
+  const saved = useAllTemplates().filter(({ intent }) => availability(intent, inputs).ok);
 
   const open = (intent: IntentId | undefined, start?: { prompt?: string; settings?: TransformSettings }) => {
     openTransformFlow({
@@ -73,7 +69,7 @@ export default function TransformSection(props: TransformSectionProps) {
   };
 
   const quickRun = async (id: IntentId, settings: TransformSettings = settingsFor(id, loadRemembered(id)), key: IntentId | 'last' = id) => {
-    const built = buildJobs(id, settings, paths, { videoTime: getVideoTime() });
+    const built = buildJobs(id, settings, paths, { videoTime: getVideoTime(), recipe: true });
     if (built.error || built.jobs.length === 0) {
       notify('error', 'Cannot run', built.error || 'Nothing to run');
       return;
@@ -158,7 +154,7 @@ export default function TransformSection(props: TransformSectionProps) {
             className="type-chip transform-chip transform-chip-saved"
             disabled={busy !== null}
             onClick={() => open(intent, { settings: templateSettings(intent, t) })}
-            title={`Saved prompt (${intentById(intent).title}): opens it to check and run\n${t.prompt}`}
+            title={`Saved task (${intentById(intent).title}): opens it to check and run\n${templateSummary(intent, t)}`}
           >
             ☆ {t.name}
           </button>
@@ -167,7 +163,7 @@ export default function TransformSection(props: TransformSectionProps) {
       <span className="merge-selection-note">
         {hasVideoOnly ? 'acts on the frame you are looking at · ' : ''}
         {last && lastOk ? '“again” repeats your last run · ' : ''}presets run with your last settings · Shift-click to adjust first
-        {saved.length ? ' · ☆ your saved prompts' : ''}
+        {saved.length ? ' · ☆ your saved tasks' : ''}
       </span>
     </div>
   );
