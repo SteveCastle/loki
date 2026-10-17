@@ -223,8 +223,22 @@ export function rememberTemplateRun(id: IntentId, settings: TransformSettings): 
   writeTemplates({ ...readTemplates(), [id]: list.map((t) => (t.prompt === p ? { ...t, settings: config } : t)) });
 }
 
-export function deleteTemplate(id: IntentId, templateId: string): void {
-  writeTemplates({ ...readTemplates(), [id]: loadTemplates(id).filter((t) => t.id !== templateId) });
+/** Deletes a saved task; returns it and where it was, so it can be put back (restoreTemplate). */
+export function deleteTemplate(id: IntentId, templateId: string): { template: PromptTemplate; index: number } | null {
+  const list = loadTemplates(id);
+  const index = list.findIndex((t) => t.id === templateId);
+  if (index < 0) return null;
+  writeTemplates({ ...readTemplates(), [id]: list.filter((t) => t.id !== templateId) });
+  return { template: list[index], index };
+}
+
+/** Undo a delete: the saved task goes back where it was (unless one with its id or name has appeared since). */
+export function restoreTemplate(id: IntentId, template: PromptTemplate, index: number): void {
+  const list = loadTemplates(id);
+  if (list.some((t) => t.id === template.id || t.name.toLowerCase() === template.name.toLowerCase())) return;
+  const next = [...list];
+  next.splice(Math.min(Math.max(0, index), next.length), 0, template);
+  writeTemplates({ ...readTemplates(), [id]: next });
 }
 
 export function useTemplates(id: IntentId): PromptTemplate[] {

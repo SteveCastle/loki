@@ -47,7 +47,9 @@ import {
   fmtSize,
 } from '../../onboarding/requirements';
 import TransformSection from '../transform/transform-section';
-import { mediaKind } from '../transform/intents';
+import { mediaKind, type IntentId } from '../transform/intents';
+import { openTransformFlow, templateSettings, type PromptTemplate } from '../transform/store';
+import SavedPicker, { type SavedWorkflow } from './saved-picker';
 import './context-palette.css';
 
 // Media types Lowkey Studio can actually import (mirrors the importFiles
@@ -279,11 +281,6 @@ function useActiveJobs(isOpen: boolean, authToken: string | null): JobInfo[] {
   return jobs;
 }
 
-interface SavedWorkflow {
-  id: string;
-  name: string;
-}
-
 function useSavedWorkflows(
   isOpen: boolean,
   authToken: string | null
@@ -416,86 +413,6 @@ function DepRequirementRows({
           </div>
         );
       })}
-    </div>
-  );
-}
-
-function WorkflowPicker({
-  workflows,
-  onRun,
-}: {
-  workflows: SavedWorkflow[];
-  onRun: (wf: SavedWorkflow) => void;
-}) {
-  const [search, setSearch] = useState('');
-  const [selectedIdx, setSelectedIdx] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
-
-  const filtered = search
-    ? workflows.filter((wf) =>
-        wf.name.toLowerCase().includes(search.toLowerCase())
-      )
-    : workflows;
-
-  // Reset selection when filter changes
-  useEffect(() => {
-    setSelectedIdx(0);
-  }, [search]);
-
-  // Keyboard navigation inside the picker
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setSelectedIdx((i) => Math.min(i + 1, filtered.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedIdx((i) => Math.max(i - 1, 0));
-    } else if (e.key === 'Enter' && filtered[selectedIdx]) {
-      e.preventDefault();
-      e.stopPropagation();
-      onRun(filtered[selectedIdx]);
-    }
-  };
-
-  // Scroll selected item into view
-  useEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const item = list.children[selectedIdx] as HTMLElement | undefined;
-    item?.scrollIntoView({ block: 'nearest' });
-  }, [selectedIdx]);
-
-  return (
-    <div className="context-palette-workflows" onKeyDown={handleKeyDown}>
-      <div className="workflow-picker-header">
-        <span className="action-group-title">Workflows</span>
-        <span className="workflow-count">{filtered.length}</span>
-      </div>
-      <input
-        ref={inputRef}
-        className="workflow-search"
-        type="text"
-        placeholder="Filter..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        autoFocus={false}
-      />
-      <div className="workflow-list" ref={listRef}>
-        {filtered.map((wf, i) => (
-          <div
-            key={wf.id}
-            className={`workflow-item${i === selectedIdx ? ' selected' : ''}`}
-            onClick={() => onRun(wf)}
-            onMouseEnter={() => setSelectedIdx(i)}
-          >
-            {wf.name}
-          </div>
-        ))}
-        {filtered.length === 0 && (
-          <div className="workflow-empty">No matches</div>
-        )}
-      </div>
     </div>
   );
 }
@@ -1407,6 +1324,18 @@ export default function ContextPalette() {
     }
   };
 
+  // A saved transform opens the Transform flow at its settings, to check and run.
+  const handleOpenSavedTransform = (intent: IntentId, t: PromptTemplate) => {
+    openTransformFlow({
+      paths: transformPaths,
+      videoTime: getTransformVideoTime(),
+      intent,
+      phase: 'shape',
+      settings: templateSettings(intent, t),
+    });
+    libraryService.send('HIDE_CONTEXT_PALETTE');
+  };
+
   const handleRunWorkflow = async (workflow: SavedWorkflow) => {
     try {
       const headers: HeadersInit = { 'Content-Type': 'application/json' };
@@ -1909,8 +1838,13 @@ export default function ContextPalette() {
         </div>
       )}
 
-      {serverAvailable && authToken && savedWorkflows.length > 0 && (
-        <WorkflowPicker workflows={savedWorkflows} onRun={handleRunWorkflow} />
+      {serverAvailable && authToken && (
+        <SavedPicker
+          workflows={savedWorkflows}
+          transformPaths={canTransform ? transformPaths : []}
+          onRunWorkflow={handleRunWorkflow}
+          onOpenTransform={handleOpenSavedTransform}
+        />
       )}
 
       {serverAvailable && authToken && activeJobs.length > 0 && (

@@ -465,6 +465,110 @@
   text-align: center;
 }
 
+/* Saved: transforms and workflows in one searchable list (saved-picker.tsx). */
+.saved-list {
+  max-height: 220px;
+}
+
+.workflow-item.saved-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: normal;
+}
+
+.saved-item-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  opacity: 0.7;
+}
+
+.saved-item-icon .ts-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.saved-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.saved-item-name,
+.saved-item-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-item-detail {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.saved-kind {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.saved-kind.transform {
+  background: var(--ctx-accent-soft);
+  color: var(--ctx-accent);
+}
+
+.saved-item-delete {
+  flex-shrink: 0;
+  visibility: hidden;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.saved-item:hover .saved-item-delete,
+.saved-item.selected .saved-item-delete {
+  visibility: visible;
+}
+
+.saved-item-delete:hover {
+  color: #ff8a8a;
+  background: rgba(255, 90, 90, 0.15);
+}
+
+.saved-undo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.saved-undo button {
+  background: none;
+  border: none;
+  color: var(--ctx-accent);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
 /* â”€â”€ Jobs footer â”€â”€ */
 
 .context-palette-footer {

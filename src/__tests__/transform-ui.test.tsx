@@ -67,13 +67,6 @@ describe('TransformSection (palette chips)', () => {
     expect(screen.queryByRole('button', { name: /Combine/ })).toBeNull();
   });
 
-  it("a preset's saved task (saved from a result) gets a chip that opens it with its settings", () => {
-    saveTemplate('upscale', 'Big and gentle', '', { ...settingsFor('upscale'), scale: 4, manualPrompt: 'upscale gently' });
-    setup([IMG]);
-    fireEvent.click(screen.getByRole('button', { name: /☆ Big and gentle/ }));
-    expect(getFlowRequest()).toMatchObject({ intent: 'upscale', phase: 'shape', settings: expect.objectContaining({ scale: 4, manualPrompt: 'upscale gently' }) });
-  });
-
   it('renders nothing for a selection no intent can use', () => {
     const { container } = render(
       <TransformSection paths={['C:/media/notes.txt']} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />
@@ -566,14 +559,6 @@ describe('Transform: presets, custom and saved prompts are told apart', () => {
     expect(screen.getByText('Add to the preset')).toBeTruthy();
   });
 
-  it('palette: saved prompts are chips that open the flow with the prompt filled in', () => {
-    saveTemplate('edit', 'Watercolor', 'turn it into a watercolor painting');
-    const onDone = jest.fn();
-    render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={onDone} notify={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /☆ Watercolor/ }));
-    expect(getFlowRequest()).toMatchObject({ intent: 'edit', phase: 'shape', settings: expect.objectContaining({ prompt: 'turn it into a watercolor painting' }) });
-    expect(onDone).toHaveBeenCalled();
-  });
 });
 
 describe('Transform: the last run', () => {
@@ -706,16 +691,6 @@ describe('Transform: saved prompts keep their settings', () => {
     const [night, other] = loadTemplates('edit');
     expect(night.settings).toMatchObject({ sizeMode: 'custom', customSize: '1920x1080' });
     expect(other.settings).toBeUndefined();
-  });
-
-  it('the palette chip opens the saved prompt with its saved size', () => {
-    saveTemplate('edit', 'Night', 'make it night', sized());
-    render(<TransformSection paths={[IMG]} authToken="tok" getVideoTime={() => undefined} onDone={() => {}} notify={() => {}} />);
-    fireEvent.click(screen.getByRole('button', { name: /☆ Night/ }));
-    expect(getFlowRequest()).toMatchObject({
-      intent: 'edit',
-      settings: expect.objectContaining({ prompt: 'make it night', sizeMode: 'custom', customSize: '1920x1080' }),
-    });
   });
 
   it('set up: picking a saved chip restores its size too', () => {

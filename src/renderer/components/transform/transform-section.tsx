@@ -19,9 +19,6 @@ import {
   rememberTemplateRun,
   saveLastRun,
   submitJobs,
-  templateSettings,
-  templateSummary,
-  useAllTemplates,
   useLastRun,
 } from './store';
 import { validateForRun } from './flow-view';
@@ -29,8 +26,7 @@ import { GlyphReplay, IntentIcon } from './icons';
 import './transform-section.css';
 
 // The palette's "Transform" row: one-click presets (run with the settings you
-// used last time), the custom intents (open the flow at their prompt), the
-// user's saved tasks (prompts, and preset settings saved from a result), the last run (“… again”: same action and settings on this
+// used last time), the custom intents (open the flow at their prompt), the last run (“… again”: same action and settings on this
 // selection), and "All options" for the full flow. Shift-click a preset or
 // the last run to adjust it first.
 const CHIP_ORDER: IntentId[] = ['restore', 'upscale', 'wallpaper', 'angle', 'edit', 'alive'];
@@ -54,7 +50,6 @@ export default function TransformSection(props: TransformSectionProps) {
   const inputs = classify(paths);
   const chips = CHIP_ORDER.map(intentById).filter((i) => availability(i.id, inputs).ok);
   const hasVideoOnly = inputs.images.length === 0 && inputs.videos.length === 1;
-  const saved = useAllTemplates().filter(({ intent }) => availability(intent, inputs).ok);
 
   const open = (intent: IntentId | undefined, start?: { prompt?: string; settings?: TransformSettings }) => {
     openTransformFlow({
@@ -147,23 +142,10 @@ export default function TransformSection(props: TransformSectionProps) {
             {busy === c.id ? 'Queuing…' : chipLabel(c.id, hasVideoOnly)}
           </button>
         ))}
-        {saved.map(({ intent, t }) => (
-          <button
-            key={t.id}
-            type="button"
-            className="type-chip transform-chip transform-chip-saved"
-            disabled={busy !== null}
-            onClick={() => open(intent, { settings: templateSettings(intent, t) })}
-            title={`Saved task (${intentById(intent).title}): opens it to check and run\n${templateSummary(intent, t)}`}
-          >
-            ☆ {t.name}
-          </button>
-        ))}
       </div>
       <span className="merge-selection-note">
         {hasVideoOnly ? 'acts on the frame you are looking at · ' : ''}
         {last && lastOk ? '“again” repeats your last run · ' : ''}presets run with your last settings · Shift-click to adjust first
-        {saved.length ? ' · ☆ your saved tasks' : ''}
       </span>
     </div>
   );
